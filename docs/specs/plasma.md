@@ -34,8 +34,25 @@ so responses are easily cachable.
 
 Any DA provider can implement the following endpoints to receive and serve input data:
 
-- `POST /put/<hex_encoded_commitment> -H "Content-Type: application/octet-stream"`
-- `GET /get/<hex_encoded_commitment> -H "Content-Type: application/octet-stream"`
+- ```
+  Request:
+    POST /put/<hex_encoded_commitment>
+    Content-Type: application/octet-stream
+    Body: <preimage_bytes>
+  
+  Response:
+    200 OK
+  ```
+
+- ```
+  Request:
+    GET /get/<hex_encoded_commitment>
+  
+  Response:
+    200 OK
+    Content-Type: application/octet-stream
+    Body: <preimage_bytes>
+  ```
 
 ## Input Commitment
 
