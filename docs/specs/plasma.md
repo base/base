@@ -10,7 +10,8 @@
 - [Data Availability Challenge Contract](#data-availability-challenge-contract)
   - [Parameters](#parameters)
 - [Derivation](#derivation)
-- [Safety and finality](#safety-and-finality)
+- [Safety and Finality](#safety-and-finality)
+- [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -103,10 +104,11 @@ function resolve(
 ) external
 ```
 
-In order to challenge a commitment, users must deposit a bond amount where `bond >= resolve_tx_gas_cost`.
+In order to challenge a commitment, users deposit a bond amount where `bond >= resolve_tx_gas_cost`.
 If the gas cost of resolving the challenge was lower than the bond, the difference is reimbursed to the challenger
 and the rest of the bond is burnt. If the challenge is not resolved in time and expired,
 the bond is returned and can be withdrawn by the challenger or used to challenge another commitment.
+See [Security Considerations](#security-considerations) for more details on bond management.
 
 The state of all challenges can be read from the contract state or by syncing contract events.
 `challengeWindow` and `resolveWindow` are constant values that currently cannot be changed
@@ -162,7 +164,7 @@ In that case, the DA manager has already synced the state of challenges during t
 so the pipeline can skip commitments with expired challenges and reorg the L2 chain
 or load input data from the resolving transaction calldata.
 
-## Safety and finality
+## Safety and Finality
 
 Similarly to rollup mode, the engine queue labels any new blocks derived from input data with a commitment
 on the L1 chain as “safe”. Although labeled as “safe”, the chain might still reorg in case of a faulty DA provider
@@ -171,3 +173,16 @@ and users must use the “finalized” label for a guarantee that their state ca
 With Plasma mode on, the engine queue does not receive finality signals from the L1 RPC
 but from the DA manager that keeps track of challenges. The engine queue will maintain a longer buffer
 of L2 blocks waiting for the DA windows to expire in order to be finalized.
+
+## Security Considerations
+
+The Data Availability Challenge contract mitigates DoS vulnerability with a payable bond requirement making
+challenging the availability of a commitment at least as expensive as submitting the data onchain to resolve
+the challenge.
+In addition, the reward is not net positive for the fisherman who forced the release of data
+by challenging thus preventing money pump vulnerability while still making challenging affordable to altruistic
+fishermen and users who desire to pay to guarrantee data availability on L1.
+Lastly, if needed a `resolver_refund_factor` can be dialed up such as `resolver_refund_factor * resolving_cost`
+is refunded to the resolver (where `0 <= refund_factor <= 1`) while the rest of the bond is burnt.
+
+
