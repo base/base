@@ -8,6 +8,7 @@
 - [DA Storage](#da-storage)
 - [Input Commitment](#input-commitment)
 - [Data Availability Challenge Contract](#data-availability-challenge-contract)
+  - [Parameters](#parameters)
 - [Derivation](#derivation)
 - [Safety and finality](#safety-and-finality)
 
@@ -34,7 +35,7 @@ so responses are easily cachable.
 
 Any DA provider can implement the following endpoints to receive and serve input data:
 
-- ```
+- ```text
   Request:
     POST /put/<hex_encoded_commitment>
     Content-Type: application/octet-stream
@@ -44,7 +45,7 @@ Any DA provider can implement the following endpoints to receive and serve input
     200 OK
   ```
 
-- ```
+- ```text
   Request:
     GET /get/<hex_encoded_commitment>
   
@@ -63,19 +64,44 @@ The batcher will not submit a commitment onchain unless input data was successfu
 
 ## Data Availability Challenge Contract
 
+### Parameters
+
+| Constant        | Type    |
+| --------------- | ------- |
+| challengeWindow | uint256 |
+| resolveWindow   | uint256 |
+| bondSize        | uint256 |
+
 Data availability is guaranteed via a permissionless challenge contract on the L1 chain.
-Users have a set number of L1 blocks (AKA `challenge_window`) during which they are able to call
+Users have a set number of L1 blocks (`challengeWindow`) during which they are able to call
 the `challenge` method of the contract with the following inputs:
 
-- A Commitment type (i.e. keccak256)
-- Commitment bytes
-- The L1 block number in which it was included.
+```js
+function challenge(
+    uint256 challengedBlockNumber,
+    bytes32 commitmentType,
+    bytes commitment
+) external payable
+```
 
-Users with access to the input data then have another window of L1 blocks (AKA `resolve_window`)
+- The L1 block number in which it was included.
+- A Commitment type (i.e. keccak256("keccak256"))
+- Commitment bytes
+
+Users with access to the input data then have another window of L1 blocks (`resolveWindow`)
 during which they can submit it as calldata to the chain by calling the `resolve` method of the contract.
 If the data is not included onchain by the time the resolve window is elapsed, derivation of the L2 canonical chain
 will omit the input data, hence any transaction included in the input data will be dropped
 causing a reorg of any L2 chain that previously had included that transaction.
+
+```js
+function resolve(
+    uint256 challengedBlockNumber,
+    bytes32 commitmentType,
+    bytes commitment,
+    bytes calldata preImage
+) external
+```
 
 In order to challenge a commitment, users must deposit a bond amount where `bond >= resolve_tx_gas_cost`.
 If the gas cost of resolving the challenge was lower than the bond, the difference is reimbursed to the challenger
@@ -83,7 +109,7 @@ and the rest of the bond is burnt. If the challenge is not resolved in time and 
 the bond is returned and can be withdrawn by the challenger or used to challenge another commitment.
 
 The state of all challenges can be read from the contract state or by syncing contract events.
-`challenge_window` and `resolve_window` are constant values that currently cannot be changed
+`challengeWindow` and `resolveWindow` are constant values that currently cannot be changed
 unless the contract is upgraded. A dynamic window mechanism may be explored in the future.
 
 ## Derivation
@@ -100,6 +126,22 @@ In addition, we filter events from the DA Challenge contract included in the blo
 and sync a local state of challenged input commitments. As the derivation pipeline steps through
 `challenge_window + resolve_window` amount of L1 blocks, any challenge marked as active
 becomes expired causing a reset of the derivation pipeline.
+
+```js
+// The status enum of a DA Challenge event
+enum ChallengeStatus {
+    Uninitialized,
+    Active,
+    Resolved,
+    Expired
+}
+
+// DA Challenge event filtered
+event ChallengeStatusChanged(
+  bytes32 indexed challengedHash, uint256 indexed challengedBlockNumber, ChallengeStatus status
+);
+
+```
 
 Derivation can either be driven by new L1 blocks or restarted (reset) from the L1 origin of the last
 L2 safe head known by the execution engine.
