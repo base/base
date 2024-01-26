@@ -61,7 +61,7 @@ Any DA provider can implement the following endpoints to receive and serve input
 The batching and compression of input data remain unchanged. When a batch is ready
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
 commitment (keccak256 hash) is submitted as the bacher inbox transaction call data.
-The batcher SHOULD not submit a commitment onchain unless input data was successfully stored on the service.
+The batcher SHOULD NOT submit a commitment onchain unless input data was successfully stored on the service.
 
 ## Data Availability Challenge Contract
 
@@ -79,16 +79,11 @@ Users have a set number of L1 blocks (`challengeWindow`) during which they are a
 the `challenge` method of the contract with the following inputs:
 
 ```js
-function challenge(
-    uint256 challengedBlockNumber,
-    bytes32 commitmentType,
-    bytes commitment
-) external payable
+function challenge(uint256 challengedBlockNumber, bytes32 commitment) external payable
 ```
 
 - The L1 block number in which it was included.
-- A Commitment type (i.e. keccak256("keccak256"))
-- Commitment bytes
+- Commitment bytes (keccak256)
 
 Users with access to the input data then have another window of L1 blocks (`resolveWindow`)
 during which they can submit it as calldata to the chain by calling the `resolve` method of the contract.
@@ -97,12 +92,7 @@ will omit the input data, hence any transaction included in the input data will 
 causing a reorg of any L2 chain that previously had included that transaction.
 
 ```js
-function resolve(
-    uint256 challengedBlockNumber,
-    bytes32 commitmentType,
-    bytes commitment,
-    bytes calldata preImage
-) external
+function resolve(uint256 challengedBlockNumber, bytes32 commitment, bytes calldata preImage) external
 ```
 
 In order to challenge a commitment, users deposit a bond amount where `bond >= resolve_tx_gas_cost`.
@@ -117,8 +107,8 @@ The state of all challenges can be read from the contract state or by syncing co
 unless the contract is upgraded. A dynamic window mechanism may be explored in the future.
 
 The contract is deployed behind upgradable proxy so the address can be hardcoded in the rollup config
-file and does not need to change. A future upgrade can support custom resolver functions to be chosen
-dynamically when a user calls the resolve function.
+file and does not need to change. A future upgrade can add custom resolver functions to be chosen
+dynamically when a user calls the resolve function to support other alt DA solutions.
 
 ## Derivation
 
@@ -177,8 +167,22 @@ on the L1 chain as “safe”. Although labeled as “safe”, the chain might s
 and users must use the “finalized” label for a guarantee that their state cannot revert.
 
 With Plasma mode on, the engine queue does not receive finality signals from the L1 RPC
-but from the DA manager that keeps track of challenges. The engine queue will maintain a longer buffer
-of L2 blocks waiting for the DA windows to expire in order to be finalized.
+but from the DA manager that keeps track of challenges.
+The DA manager maintains an internal state of all the input commitments in the current `challengeWindow`
+as they are validated by the derivation pipeline. In addition, it filters challenge events to calculate
+when commitments are challenged/resolved and elect the next finalized L1 block such that:
+
+```text
+if active_challenges_count > 0
+    challenge = findOldestActiveChallenge(active_challenges)
+    finality_delay = (challenge.block_number - challenge.commitment_block_number) + resolve_window + 1
+    l1_finalized_block_number = latest_l1_block_number - finality_delay
+else 
+    l1_finalized_block_number = latest_l1_block_number - challenge_window
+```
+
+The engine queue will maintain a longer buffer of L2 blocks waiting for the DA window to expire
+in order to be finalized.
 
 ## Security Considerations
 
@@ -191,6 +195,5 @@ while still making challenging affordable to altruistic fishermen and users who 
 to guarrantee data availability on L1.
 Lastly, if needed a `resolver_refund_factor` can be dialed up such as `resolver_refund_factor * resolving_cost`
 is refunded to the resolver (where `0 <= refund_factor <= 1`) while the rest of the bond is burnt.
-
 
 [vitalikblog]: https://vitalik.eth.limo/general/2023/11/14/neoplasma.html
