@@ -1,4 +1,4 @@
-# Plasma mode
+# Plasma Mode
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
@@ -26,6 +26,8 @@ can challenge a commitment `challenge_window` and the period during which any pa
 can submit the input data to resolve the challenge `resolve_window`.
 If a challenge is not resolved by the time `resolve_window` of L1 blocks have passed,
 chain derivation must be reset, omitting the input data when rederiving therefore causing a reorg.
+
+[vitalikblog]: https://vitalik.eth.limo/general/2023/11/14/neoplasma.html
 
 ## DA Storage
 
@@ -88,8 +90,8 @@ function challenge(uint256 challengedBlockNumber, bytes32 commitment) external p
 Users with access to the input data then have another window of L1 blocks (`resolveWindow`)
 during which they can submit it as calldata to the chain by calling the `resolve` method of the contract.
 If the data is not included onchain by the time the resolve window is elapsed, derivation of the L2 canonical chain
-will omit the input data, hence any transaction included in the input data will be dropped
-causing a reorg of any L2 chain that previously had included that transaction.
+will reorg starting from this first block derived from the challenged input data to the last block derived from the
+L1 block at which it expired. See more details about [Derivation](#derivation) in the following section.
 
 ```js
 function resolve(uint256 challengedBlockNumber, bytes32 commitment, bytes calldata preImage) external
@@ -154,11 +156,16 @@ starts a detached traversal of new L1 blocks until:
     input data is skipped from the derivation output.
 - Data is never challenged, derivation returns critical error.
 
-When derivation is reset, the pipeline steps through previously seen L1 origins so that
-`block_start = latest_l1_block - (challenge_window_size + resolve_window_size + sequencer_window_size)`.
+When [derivation is reset][pipeline], the pipeline steps through previously seen L1 origins so that:
+`sync_starting_point = latest_l1_block - (challenge_window_size + resolve_window_size + sequencer_window_size)`.
 In that case, the DA manager has already synced the state of challenges during the range of L1 blocks traversed
-so the pipeline can skip commitments with expired challenges and reorg the L2 chain
+so the pipeline can either skip commitments with expired challenges and reorg the L2 chain
 or load input data from the resolving transaction calldata.
+In addition, an expired challenge will reorg out `[r_start, r_end]` L2 blocks so that `r_start` is the first
+block derived from the expired challenge's input and `r_end` the last L2 block derived before the pipeline
+was reset.
+
+[pipeline]: specs/derivation.md#resetting-the-pipeline
 
 ## Safety and Finality
 
@@ -196,4 +203,3 @@ to guarrantee data availability on L1.
 Lastly, if needed a `resolver_refund_factor` can be dialed up such as `resolver_refund_factor * resolving_cost`
 is refunded to the resolver (where `0 <= refund_factor <= 1`) while the rest of the bond is burnt.
 
-[vitalikblog]: https://vitalik.eth.limo/general/2023/11/14/neoplasma.html
