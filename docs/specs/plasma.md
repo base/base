@@ -64,6 +64,10 @@ The batching and compression of input data remain unchanged. When a batch is rea
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
 commitment (keccak256 hash) is submitted as the bacher inbox transaction call data.
 The batcher SHOULD NOT submit a commitment onchain unless input data was successfully stored on the service.
+In addition, a DA provider storage service SHOULD return an error response if it is unable to properly
+store the request payload so as to signal to the batcher to retry.
+Input commitments submitted onchain without proper storage on the DA provider service are subject to 
+challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
 
 ## Data Availability Challenge Contract
 
