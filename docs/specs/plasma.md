@@ -66,7 +66,7 @@ commitment (keccak256 hash) is submitted as the bacher inbox transaction call da
 The batcher SHOULD NOT submit a commitment onchain unless input data was successfully stored on the service.
 In addition, a DA provider storage service SHOULD return an error response if it is unable to properly
 store the request payload so as to signal to the batcher to retry.
-Input commitments submitted onchain without proper storage on the DA provider service are subject to 
+Input commitments submitted onchain without proper storage on the DA provider service are subject to
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
 
 ## Data Availability Challenge Contract
@@ -206,4 +206,3 @@ while still making challenging affordable to altruistic fishermen and users who 
 to guarrantee data availability on L1.
 Lastly, if needed a `resolver_refund_factor` can be dialed up such as `resolver_refund_factor * resolving_cost`
 is refunded to the resolver (where `0 <= refund_factor <= 1`) while the rest of the bond is burnt.
-
