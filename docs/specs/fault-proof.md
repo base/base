@@ -409,8 +409,8 @@ Fault Proof VMs:
 [Interactive Dispute Game]: #Fault-Proof-Interactive-Dispute-Game
 
 The interactive dispute game allows actors to resolve a dispute with an onchain challenge-response game
-that bisects to a disagreed block $n \rarrow n + 1$ state transition, and then over the execution trace of the VM which
-models this state transition, bounded with a base-case that proves a single VM trace step.
+that bisects to a disagreed block $n \rightarrow n + 1$ state transition, and then over the execution trace of the VM
+which models this state transition, bounded with a base-case that proves a single VM trace step.
 
 The game is multi-player: different non-aligned actors may participate when bonded.
 

@@ -162,7 +162,7 @@ Moves within the fault dispute game can claim two separate values: [output roots
 commitments. At and above the `SPLIT_DEPTH`, claims correspond to output roots, while below the split depth, they
 correspond to execution trace commitments.
 
-Initially, claims added to the DAG are _uncontesteed_ (i.e. not **countered**). Once a move targets a claim, that claim
+Initially, claims added to the DAG are _uncontested_ (i.e. not **countered**). Once a move targets a claim, that claim
 is considered countered.
 The status of a claim &mdash; whether it's countered or not &mdash; helps determine its validity and, ultimately, the
 game's winner.
@@ -183,7 +183,7 @@ Attacking the node at 6 moves creates a new claim positioned at 12.
 #### Defend
 
 The logical move against a claim when you agree with both it and its parent.
-A defense at the relative position to a node, `n``, in the Game Tree commits to the first half of n + 1’s trace range.
+A defense at the relative position to a node, `n`, in the Game Tree commits to the first half of n + 1’s trace range.
 
 ![Defend at 4](assets/defend.png)
 
@@ -334,7 +334,7 @@ Uncontested claims are likely to result in a loss, as explained later under [Res
 
 ### Game Clock
 
-Every claim in the game has a Clock. A claim's inherits the clock of its grandparent claim in the
+Every claim in the game has a Clock. A claim inherits the clock of its grandparent claim in the
 DAG (and so on). Akin to a chess clock, it keeps track of the total time each team takes to make
 moves, preventing delays.
 Making a move resumes the clock for the disputed claim and puases it for the newly added one.
