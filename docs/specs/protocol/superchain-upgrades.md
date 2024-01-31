@@ -11,33 +11,9 @@ as well as the default Superchain Targets.
 Activation rule parameters of network upgrades are configured as part of the Superchain Target specification:
 chains following the same Superchain Target upgrade synchronously.
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Protocol Version](#protocol-version)
-  - [Protocol Version Format](#protocol-version-format)
-    - [Build identifier](#build-identifier)
-    - [Major versions](#major-versions)
-    - [Minor versions](#minor-versions)
-    - [Patch versions](#patch-versions)
-    - [Pre-releases](#pre-releases)
-  - [Protocol Version Exposure](#protocol-version-exposure)
-- [Superchain Target](#superchain-target)
-  - [Superchain Version signaling](#superchain-version-signaling)
-  - [`ProtocolVersions` L1 contract](#protocolversions-l1-contract)
-- [Activation rules](#activation-rules)
-  - [L2 Block-number based activation (deprecated)](#l2-block-number-based-activation-deprecated)
-  - [L2 Block-timestamp based activation](#l2-block-timestamp-based-activation)
-- [OP-Stack Protocol versions](#op-stack-protocol-versions)
-- [Post-Bedrock Network upgrades](#post-bedrock-network-upgrades)
-  - [Regolith](#regolith)
-- [Canyon](#canyon)
-- [Delta](#delta)
-- [Ecotone](#ecotone)
-- [Fjord](#fjord)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Protocol Version
 
@@ -147,7 +123,7 @@ hardforks already expose the change of functionality upon activation as required
 and the Protocol Version is meant for offchain usage only.
 The protocol version indicates support rather than activation of functionality.
 There is one exception however: signaling by onchain components to offchain components.
-More about this in [Superchain Version signaling].
+More about this in [Superchain Version signaling](#superchain-version-signaling).
 
 ## Superchain Target
 
@@ -280,7 +256,7 @@ Summary of changes:
 The [deposit specification](deposits.md) specifies the deposit changes of the Regolith upgrade in more detail.
 The [execution engine specification](exec-engine.md) specifies the L1 cost function difference.
 
-The Regolith upgrade uses a *L2 block-timestamp* activation-rule, and is specified in both the
+The Regolith upgrade uses a _L2 block-timestamp_ activation-rule, and is specified in both the
 rollup-node (`regolith_time`) and execution engine (`config.regolithTime`).
 
 ## Canyon
@@ -300,7 +276,7 @@ The Canyon upgrade contains the Shapella upgrade from L1 and some minor protocol
 - [Adds the deposit nonce & deposit nonce version to the deposit receipt hash](deposits.md#deposit-receipt)
 - [Deploys the create2Deployer to `0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2`](predeploys.md#create2deployer)
 
-The Canyon upgrade uses a *L2 block-timestamp* activation-rule, and is specified in both the
+The Canyon upgrade uses a _L2 block-timestamp_ activation-rule, and is specified in both the
 rollup-node (`canyon_time`) and execution engine (`config.canyonTime`). Shanghai time in the
 execution engine should be set to the same time as the Canyon time.
 
@@ -308,7 +284,7 @@ execution engine should be set to the same time as the Canyon time.
 
 The Delta upgrade consists of a single consensus-layer feature: [Span Batches](span-batches.md).
 
-The Delta upgrade uses a *L2 block-timestamp* activation-rule, and is specified only in the rollup-node (`delta_time`).
+The Delta upgrade uses a _L2 block-timestamp_ activation-rule, and is specified only in the rollup-node (`delta_time`).
 
 ## Ecotone
 
@@ -327,7 +303,7 @@ Dencun Upgrade:
   - [EIP-6780: SELFDESTRUCT only in same transaction](https://eips.ethereum.org/EIPS/eip-6780)
   - [EIP-7516: BLOBBASEFEE opcode](https://eips.ethereum.org/EIPS/eip-7516)
     - [BLOBBASEFEE always pushes 1 onto the stack](exec-engine.md#ecotone-disable-blob-transactions)
-- Deneb (Consensus Layer): *not applicable to L2*
+- Deneb (Consensus Layer): _not applicable to L2_
   - [EIP-7044: Perpetually Valid Signed Voluntary Exits](https://eips.ethereum.org/EIPS/eip-7044)
   - [EIP-7045: Increase Max Attestation Inclusion Slot](https://eips.ethereum.org/EIPS/eip-7045)
   - [EIP-7514: Add Max Epoch Churn Limit](https://eips.ethereum.org/EIPS/eip-7514)

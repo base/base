@@ -1,27 +1,8 @@
 # Safe Liveness Checking
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Liveness checking Mechanism](#liveness-checking-mechanism)
-- [Liveness checking methodology](#liveness-checking-methodology)
-  - [The liveness guard](#the-liveness-guard)
-  - [The liveness module](#the-liveness-module)
-  - [Owner removal call flow](#owner-removal-call-flow)
-  - [Shutdown](#shutdown)
-  - [Security Properties](#security-properties)
-    - [In the guard](#in-the-guard)
-    - [In the module](#in-the-module)
-  - [Interdependency between the guard and module](#interdependency-between-the-guard-and-module)
-- [Operational considerations](#operational-considerations)
-  - [Manual validation of new owner liveness](#manual-validation-of-new-owner-liveness)
-  - [Deploying the liveness checking system](#deploying-the-liveness-checking-system)
-  - [Modify the liveness checking system](#modify-the-liveness-checking-system)
-    - [Replacing the module](#replacing-the-module)
-    - [Replacing the guard](#replacing-the-guard)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Liveness checking Mechanism
 
@@ -101,8 +82,8 @@ sequenceDiagram
 ### Shutdown
 
 In the unlikely event that the signer set (`N`) is reduced below the allowed minimum number of
-   owners, then (and only then) is a shutdown mechanism activated which removes the existing
-   signers, and hands control of the multisig over to a predetermined entity.
+owners, then (and only then) is a shutdown mechanism activated which removes the existing
+signers, and hands control of the multisig over to a predetermined entity.
 
 ### Security Properties
 
@@ -126,7 +107,7 @@ The following security properties must be upheld:
 
 1. During a shutdown the module correctly removes all signers, and converts the safe to a 1 of 1.
 1. The module only removes an owner if they have not demonstrated liveness during the interval, or
-     if enough other owners have been removed to activate the shutdown mechanism.
+   if enough other owners have been removed to activate the shutdown mechanism.
 1. The module correctly sets the Safe's threshold upon removing a signer.
 
 Note: neither the module nor guard attempt to prevent a quorum of owners from removing either the liveness
@@ -158,8 +139,7 @@ therefore be done prior to adding a new owner.
 The module and guard are intended to be deployed and installed on the safe in the following
 sequence:
 
-1. Deploy the guard contract
-   2. The guard's constructor will read the Safe's owners and set a timestamp
+1. Deploy the guard contract 2. The guard's constructor will read the Safe's owners and set a timestamp
 1. Deploy the module.
 1. Set the guard on the safe.
 1. Enable the module on the safe.

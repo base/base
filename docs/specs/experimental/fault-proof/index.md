@@ -1,38 +1,8 @@
 # Fault Proof
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [Pre-image Oracle](#pre-image-oracle)
-  - [Pre-image key types](#pre-image-key-types)
-    - [Type `0`: Zero key](#type-0-zero-key)
-    - [Type `1`: Local key](#type-1-local-key)
-    - [Type `2`: Global keccak256 key](#type-2-global-keccak256-key)
-    - [Type `3`: Global generic key](#type-3-global-generic-key)
-    - [Type `4-128`: reserved range](#type-4-128-reserved-range)
-    - [Type `129-255`: application usage](#type-129-255-application-usage)
-  - [Bootstrapping](#bootstrapping)
-  - [Hinting](#hinting)
-  - [Pre-image communication](#pre-image-communication)
-- [Fault Proof Program](#fault-proof-program)
-  - [Prologue](#prologue)
-  - [Main content](#main-content)
-  - [Epilogue](#epilogue)
-  - [Pre-image hinting routes](#pre-image-hinting-routes)
-    - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
-    - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
-    - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
-    - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
-    - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
-    - [`l2-code <codehash>`](#l2-code-codehash)
-    - [`l2-state-node <nodehash>`](#l2-state-node-nodehash)
-    - [`l2-output <outputroot>`](#l2-output-outputroot)
-- [Fault Proof VM](#fault-proof-vm)
-- [Fault Proof Interactive Dispute Game](#fault-proof-interactive-dispute-game)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Overview
 
@@ -48,7 +18,7 @@ and contribute to proof diversity when resolving a dispute.
 "Stateless execution" of the program, and its individual instructions, refers to reproducing
 the exact same computation by authenticating the inputs with a [Pre-image Oracle][oracle].
 
-![Diagram of Program and VM architecture](assets/fault-proof.svg)
+![Diagram of Program and VM architecture](../../static/assets/fault-proof.svg)
 
 ## Pre-image Oracle
 
@@ -156,7 +126,7 @@ a local lookup for type `1`, or global one for `2`, and optionally support other
 ### Hinting
 
 There is one more form of optional communication between client and server: pre-image hinting.
-Hinting is optional, and *is a no-op* in a L1 VM implementation.
+Hinting is optional, and _is a no-op_ in a L1 VM implementation.
 
 The hint itself comes at very low cost onchain: the hint can be a single `write` sys-call,
 which is instant as the memory to write as hint does not actually need to be loaded as part of the onchain proof.
@@ -247,7 +217,7 @@ The program is bootstrapped with two primary inputs:
 
 Bootstrapping happens through special input requests to the host of the program.
 
-Additionally, there are *implied* inputs, which are *derived from the above primary inputs*,
+Additionally, there are _implied_ inputs, which are _derived from the above primary inputs_,
 but can be overridden for testing purposes:
 
 - `l2_head`: the L2 block hash that will be perceived as the previously agreed upon tip of the L2 chain,
@@ -273,8 +243,9 @@ During testing a simplified prologue that loads the overrides may be used.
 To verify a claim about L2 state, the program first reproduces
 the L2 state by applying L1 data to prior agreed L2 history.
 
-This process is also known as the [L2 derivation process](derivation.md),
-and matches the processing in the [rollup node](rollup-node.md) and [execution-engine](exec-engine.md).
+This process is also known as the [L2 derivation process](../../protocol/derivation.md),
+and matches the processing in the [rollup node](../../protocol/rollup-node.md) and
+[execution-engine](../../protocol/exec-engine.md).
 
 The difference is that rather than retrieving inputs from an RPC and applying state changes to disk,
 the inputs are loaded through the [pre-image oracle][oracle] and the changes accumulate in memory.
@@ -328,7 +299,8 @@ to then make a statement about the claim with the final exit code.
 A disputed output-root may be disproven by first producing the output-root, and then comparing it:
 
 1. Retrieve the output attributes from the L2 chain view: the state-root, block-hash, withdrawals storage-root.
-2. Compute the output-root, as the [proposer should compute it](proposals.md#l2-output-commitment-construction).
+2. Compute the output-root, as the
+   [proposer should compute it](../../protocol/proposals.md#l2-output-commitment-construction).
 3. If the output-root matches the `claim`, exit with code 0. Otherwise, exit with code 1.
 
 > Note: the dispute game interface is actively changing, and may require additional claim assertions.
@@ -376,7 +348,8 @@ Requests the host to prepare the L2 MPT node preimage with the given `<nodehash>
 #### `l2-output <outputroot>`
 
 Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
-The L2 Output is the preimage of a [computed output root](proposals.md#l2-output-commitment-construction).
+The L2 Output is the preimage of a
+[computed output root](../../protocol/proposals.md#l2-output-commitment-construction).
 
 ## Fault Proof VM
 
@@ -399,9 +372,11 @@ Refer to the documentation of the fault proof VM for further usage information.
 Fault Proof VMs:
 
 - [Cannon]: big-endian 32-bit MIPS proof, by OP Labs, in active development.
+- [cannon-rs]: Rust implementation of `Cannon`, by `@clabby`, in active development.
 - [Asterisc]: little-endian 64-bit RISC-V proof, by `@protolambda`, in active development.
 
 [Cannon]: https://github.com/ethereum-optimism/cannon
+[cannon-rs]: https://github.com/anton-rs/cannon-rs
 [Asterisc]: https://github.com/protolambda/asterisc
 
 ## Fault Proof Interactive Dispute Game

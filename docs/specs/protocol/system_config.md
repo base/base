@@ -1,20 +1,8 @@
 # System Config
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [System config contents (version 0)](#system-config-contents-version-0)
-  - [`batcherHash` (`bytes32`)](#batcherhash-bytes32)
-  - [Scalars](#scalars)
-    - [Pre-Ecotone `scalar`, `overhead` (`uint256,uint256`)](#pre-ecotone-scalar-overhead-uint256uint256)
-    - [Ecotone `scalar`, `overhead` (`uint256,uint256`) change](#ecotone-scalar-overhead-uint256uint256-change)
-  - [`gasLimit` (`uint64`)](#gaslimit-uint64)
-  - [`unsafeBlockSigner` (`address`)](#unsafeblocksigner-address)
-- [Writing the system config](#writing-the-system-config)
-- [Reading the system config](#reading-the-system-config)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 The `SystemConfig` is a contract on L1 that can emit rollup configuration changes as log events.
 The rollup [block derivation process](derivation.md) picks up on these log events and applies the changes.
@@ -36,7 +24,7 @@ to enable more extensive redundancy and/or rotation configurations.
 ### Scalars
 
 The L1 fee parameters, also known as Gas Price Oracle (GPO) parameters, are used to compute the L1
-data fee applied to an L2 transaction.  The specific parameters used depend on the upgrades that
+data fee applied to an L2 transaction. The specific parameters used depend on the upgrades that
 are active.
 
 Fee parameter updates are signaled to L2 through the `GAS_CONFIG` log-event of the `SystemConfig`.
@@ -56,7 +44,7 @@ After Ecotone activation:
 
 The `scalar` is encoded as big-endian `uint256`, interpreted as `bytes32`, and composed as following:
 
-*Byte ranges are indicated with `[` (inclusive) and `)` (exclusive).
+\*Byte ranges are indicated with `[` (inclusive) and `)` (exclusive).
 
 - `0`: scalar-version byte
 - `[1, 32)`: depending scalar-version:

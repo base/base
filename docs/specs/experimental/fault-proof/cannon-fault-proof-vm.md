@@ -1,24 +1,8 @@
-# Cannon Fault Proof Virtual Machine Specification
+# Cannon Fault Proof Virtual Machine
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [State](#state)
-  - [State Hash](#state-hash)
-- [Memory](#memory)
-  - [Heap](#heap)
-- [Delay Slots](#delay-slots)
-- [Syscalls](#syscalls)
-- [I/O](#io)
-  - [Standard Streams](#standard-streams)
-  - [Hint Communication](#hint-communication)
-  - [Pre-image Communication](#pre-image-communication)
-    - [Pre-image I/O Alignment](#pre-image-io-alignment)
-- [Exceptions](#exceptions)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Overview
 
@@ -27,7 +11,7 @@ a minimal Linux-based system running on big-endian 32-bit MIPS32 architecture.
 A lot of its behaviors are copied from Linux/MIPS with a few tweaks made for fault proofs.
 For the rest of this doc, we refer to the Cannon FPVM as simply the FPVM.
 
-Operationally, the FPVM is a state transition function. This state transition is referred to as a *Step*,
+Operationally, the FPVM is a state transition function. This state transition is referred to as a _Step_,
 that executes a single instruction. We say the VM is a function $f$, given an input state $S_{pre}$, steps on a
 single instruction encoded in the state to produce a new state $S_{post}$.
 $$f(S_{pre}) \rightarrow S_{post}$$
@@ -44,7 +28,7 @@ It consists of the following fields:
 3. `preimageOffset` - The 32-bit value of the last requested pre-image offset.
 4. `pc` - 32-bit program counter.
 5. `nextPC` - 32-bit next program counter. Note that this value may not always be $pc+4$
- when executing a branch/jump delay slot.
+   when executing a branch/jump delay slot.
 6. `lo` - 32-bit MIPS LO special register.
 7. `hi` - 32-bit MIPS HI special register.
 8. `heap` - 32-bit base address of the most recent memory allocation via mmap.
@@ -126,15 +110,15 @@ syscall calling conventions and general syscall handling behavior.
 However, the FPVM supports a subset of Linux/MIPS syscalls with slightly different behaviors.
 The following table list summarizes the supported syscalls and their behaviors.
 
-| $v0 | system call | $a0 | $a1 | $a2 | Effect |
-| -- | -- | -- | -- | -- | -- |
-| 4090 | mmap | uint32 addr | uint32 len | | Allocates a page from the heap. See [heap](#heap) for details. |
-| 4045 | brk | | | | Returns a fixed address for the program break at `0x40000000` |
-| 4120 | clone | | | | Returns 1 |
-| 4246 | exit_group | uint8 exit_code | | | Sets the Exited and ExitCode states to `true` and `$a0` respectively. |
-| 4003 | read | uint32 fd | char *buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details. |
-| 4004 | write | uint32 fd | char *buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details. |
-| 4055 | fcntl | uint32 fd | int32 cmd | | Similar behavior as Linux/MIPS. Only the `F_GETFL` (3) cmd is supported. Sets errno to `0x16` for all other commands |
+| \$v0 | system call | \$a0            | \$a1       | \$a2         | Effect                                                                                                               |
+| ---- | ----------- | --------------- | ---------- | ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| 4090 | mmap        | uint32 addr     | uint32 len | 🚫           | Allocates a page from the heap. See [heap](#heap) for details.                                                       |
+| 4045 | brk         | 🚫              | 🚫         | 🚫           | Returns a fixed address for the program break at `0x40000000`                                                        |
+| 4120 | clone       | 🚫              | 🚫         | 🚫           | Returns 1                                                                                                            |
+| 4246 | exit_group  | uint8 exit_code | 🚫         | 🚫           | Sets the Exited and ExitCode states to `true` and `$a0` respectively.                                                |
+| 4003 | read        | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details.                    |
+| 4004 | write       | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details.                   |
+| 4055 | fcntl       | uint32 fd       | int32 cmd  | 🚫           | Similar behavior as Linux/MIPS. Only the `F_GETFL` (3) cmd is supported. Sets errno to `0x16` for all other commands |
 
 For all of the above syscalls, an error is indicated by setting the return
 register (`$v0`) to `0xFFFFFFFF` (-1) and `errno` (`$a3`) is set accordingly.
@@ -147,15 +131,16 @@ Note that the above syscalls have identical syscall numbers and ABIs as Linux/MI
 ## I/O
 
 The VM does not support Linux open(2). However, the VM can read from and write to a predefined set of file descriptors.
-| Name | File descriptor | Description |
-| ---- | --------------- | ----------- |
-| stdin | 0 | read-only standard input stream. |
-| stdout | 1 | write-only standard output stream. |
-| stderr | 2 | write-only standard error stream. |
-| hint response | 3 | read-only. Used to read the status of [pre-image hinting](fault-proof.md#hinting). |
-| hint request | 4 | write-only. Used to provide [pre-image hints](fault-proof.md#hinting) |
-| pre-image response | 5 | read-only. Used to [read pre-images](fault-proof.md#pre-image-communication). |
-| pre-image request | 6 | write-only. Used to [request pre-images](fault-proof.md#pre-image-communication). |
+
+| Name               | File descriptor | Description                                                                  |
+| ------------------ | --------------- | ---------------------------------------------------------------------------- |
+| stdin              | 0               | read-only standard input stream.                                             |
+| stdout             | 1               | write-only standard output stream.                                           |
+| stderr             | 2               | write-only standard error stream.                                            |
+| hint response      | 3               | read-only. Used to read the status of [pre-image hinting](index.md#hinting). |
+| hint request       | 4               | write-only. Used to provide [pre-image hints](index.md#hinting)              |
+| pre-image response | 5               | read-only. Used to [read pre-images](index.md#pre-image-communication).      |
+| pre-image request  | 6               | write-only. Used to [request pre-images](index.md#pre-image-communication).  |
 
 Syscalls referencing unknown file descriptors fail with an `EBADF` errno as done on Linux.
 
@@ -209,7 +194,7 @@ The FPVM may raise an exception rather than output a post-state to signal an inv
 transition. Nominally, the FPVM must raise an exception in at least the following cases:
 
 - Invalid instruction (either via an invalid opcode or an instruction referencing registers
-outside the general purpose registers).
+  outside the general purpose registers).
 - Pre-image read at an offset larger than the size of the pre-image.
 - Delay slot contains branch/jump instruction types.
 

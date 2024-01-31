@@ -1,33 +1,19 @@
 # Preinstalls
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [Safe](#safe)
-- [SafeL2](#safel2)
-- [MultiSend](#multisend)
-- [MultiSendCallOnly](#multisendcallonly)
-- [SafeSingletonFactory](#safesingletonfactory)
-- [Multicall3](#multicall3)
-- [Arachnid's Deterministic Deployment Proxy](#arachnids-deterministic-deployment-proxy)
-- [Permit2](#permit2)
-- [ERC-4337 EntryPoint](#erc-4337-entrypoint)
-- [ERC-4337 SenderCreator](#erc-4337-sendercreator)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Overview
 
-[Preinstalled smart contracts](glossary.md#preinstalled-contract-preinstall) exist on Optimism
+[Preinstalled smart contracts](../glossary.md#preinstalled-contract-preinstall) exist on Optimism
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM and are developed by third
 parties unaffiliated with the Optimism Collective.
 
 These preinstalls are commonly deployed smart contracts that are being placed at genesis for convenience.
 It's important to note that these contracts do not have the same security guarantees
-as [Predeployed smart contracts](glossary.md#predeployed-contract-predeploy).
+as [Predeployed smart contracts](../glossary.md#predeployed-contract-predeploy).
 
 The following table includes each of the preinstalls.
 

@@ -3,17 +3,9 @@
 The SuperchainConfig contract is used to manage global configuration values for multiple OP Chains within
 a single Superchain network.
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Configurable values](#configurable-values)
-- [Configuration data flow](#configuration-data-flow)
-  - [Pausability](#pausability)
-    - [Paused identifiers](#paused-identifiers)
-    - [Scope of pausability](#scope-of-pausability)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Configurable values
 

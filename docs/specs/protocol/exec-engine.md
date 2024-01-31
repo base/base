@@ -1,38 +1,8 @@
 # L2 Execution Engine
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [1559 Parameters](#1559-parameters)
-- [Deposited transaction processing](#deposited-transaction-processing)
-  - [Deposited transaction boundaries](#deposited-transaction-boundaries)
-- [Fees](#fees)
-  - [Fee Vaults](#fee-vaults)
-  - [Priority fees (Sequencer Fee Vault)](#priority-fees-sequencer-fee-vault)
-  - [Base fees (Base Fee Vault)](#base-fees-base-fee-vault)
-  - [L1-Cost fees (L1 Fee Vault)](#l1-cost-fees-l1-fee-vault)
-    - [Pre-Ecotone](#pre-ecotone)
-    - [Ecotone L1-Cost fee changes (EIP-4844 DA)](#ecotone-l1-cost-fee-changes-eip-4844-da)
-- [Engine API](#engine-api)
-  - [`engine_forkchoiceUpdatedV2`](#engine_forkchoiceupdatedv2)
-    - [Extended PayloadAttributesV2](#extended-payloadattributesv2)
-  - [`engine_forkchoiceUpdatedV3`](#engine_forkchoiceupdatedv3)
-    - [Extended PayloadAttributesV3](#extended-payloadattributesv3)
-  - [`engine_newPayloadV2`](#engine_newpayloadv2)
-  - [`engine_newPayloadV3`](#engine_newpayloadv3)
-  - [`engine_getPayloadV2`](#engine_getpayloadv2)
-  - [`engine_getPayloadV3`](#engine_getpayloadv3)
-    - [Extended Response](#extended-response)
-  - [`engine_signalSuperchainV1`](#engine_signalsuperchainv1)
-- [Networking](#networking)
-- [Sync](#sync)
-  - [Happy-path sync](#happy-path-sync)
-  - [Worst-case sync](#worst-case-sync)
-- [Ecotone: disable Blob-transactions](#ecotone-disable-blob-transactions)
-- [Ecotone: Beacon Block Root](#ecotone-beacon-block-root)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 This document outlines the modifications, configuration and usage of a L1 execution engine for L2.
 
@@ -68,7 +38,7 @@ To process deposited transactions safely, the deposits MUST be authenticated fir
 - Part of sync towards a trusted block hash (trusted through previous Engine API instruction)
 
 Deposited transactions MUST never be consumed from the transaction pool.
-*The transaction pool can be disabled in a deposits-only rollup*
+_The transaction pool can be disabled in a deposits-only rollup_
 
 ## Fees
 
@@ -83,8 +53,8 @@ fee payments are not registered as internal EVM calls, and thus distinguished be
 These are hardcoded addresses, pointing at pre-deployed proxy contracts.
 The proxies are backed by vault contract deployments, based on `FeeVault`, to route vault funds to L1 securely.
 
-| Vault Name          | Predeploy                                                |
-|---------------------|----------------------------------------------------------|
+| Vault Name          | Predeploy                                              |
+| ------------------- | ------------------------------------------------------ |
 | Sequencer Fee Vault | [`SequencerFeeVault`](predeploys.md#SequencerFeeVault) |
 | Base Fee Vault      | [`BaseFeeVault`](predeploys.md#BaseFeeVault)           |
 | L1 Fee Vault        | [`L1FeeVault`](predeploys.md#L1FeeVault)               |
@@ -115,11 +85,11 @@ Before Ecotone activation, L1 cost is calculated as:
 in Wei and `uint256` range)
 Where:
 
-- `rollupDataGas` is determined from the *full* encoded transaction
+- `rollupDataGas` is determined from the _full_ encoded transaction
   (standard EIP-2718 transaction encoding, including signature fields):
   - Before Regolith fork: `rollupDataGas = zeroes * 4 + (ones + 68) * 16`
     - The addition of `68` non-zero bytes is a remnant of a pre-Bedrock L1-cost accounting function,
-       which accounted for the worst-case non-zero bytes addition to complement unsigned transactions, unlike Bedrock.
+      which accounted for the worst-case non-zero bytes addition to complement unsigned transactions, unlike Bedrock.
   - With Regolith fork: `rollupDataGas = zeroes * 4 + ones * 16`
 - `l1FeeOverhead` is the Gas Price Oracle `overhead` value.
 - `l1FeeScalar` is the Gas Price Oracle `scalar` value.
@@ -155,7 +125,7 @@ Where:
 - the computation is an unlimited precision integer computation, with the result in Wei and having
   `uint256` range.
 
-- zeoroes and ones are the count of zero and non-zero bytes respectively in the *full* encoded
+- zeoroes and ones are the count of zero and non-zero bytes respectively in the _full_ encoded
   signed transaction.
 
 - `l1BaseFee` is the L1 base fee of the latest L1 origin registered in the L2 chain.
@@ -196,7 +166,7 @@ and optionally initiates block production (`payloadAttributes` argument).
 Within the rollup, the types of forkchoice updates translate as:
 
 - `headBlockHash`: block hash of the head of the canonical chain. Labeled `"unsafe"` in user JSON-RPC.
-   Nodes may apply L2 blocks out of band ahead of time, and then reorg when L1 data conflicts.
+  Nodes may apply L2 blocks out of band ahead of time, and then reorg when L1 data conflicts.
 - `safeBlockHash`: block hash of the canonical chain, derived from L1 data, unlikely to reorg.
 - `finalizedBlockHash`: irreversible block hash, matches lower boundary of the dispute period.
 
@@ -275,7 +245,7 @@ PayloadAttributesV3: {
 }
 ```
 
-The requirements of this object are the same as extended [`PayloadAttributesV2`][#extended-payloadattributesv2] with
+The requirements of this object are the same as extended [`PayloadAttributesV2`](#extended-payloadattributesv2) with
 the addition of `parentBeaconBlockRoot` which is the parent beacon block root from the L1 origin block of the L2 block.
 
 The `parentBeaconBlockRoot` must be nil for Bedrock/Canyon/Delta payloads.
@@ -333,8 +303,8 @@ Types:
 
 ```javascript
 SuperchainSignal: {
-    recommended: ProtocolVersion
-    required: ProtocolVersion
+  recommended: ProtocolVersion;
+  required: ProtocolVersion;
 }
 ```
 
@@ -358,7 +328,7 @@ This may include halting the engine, with consent of the execution engine operat
 ## Networking
 
 The execution engine can acquire all data through the rollup node, as derived from L1:
-*P2P networking is strictly optional.*
+_P2P networking is strictly optional._
 
 However, to not bottleneck on L1 data retrieval speed, the P2P network functionality SHOULD be enabled, serving:
 
@@ -367,7 +337,7 @@ However, to not bottleneck on L1 data retrieval speed, the P2P network functiona
   - Transaction pool (consumed by sequencer nodes)
   - State sync (happy-path for fast trustless db replication)
   - Historical block header and body retrieval
-  - *New blocks are acquired through the consensus layer instead (rollup node)*
+  - _New blocks are acquired through the consensus layer instead (rollup node)_
 
 No modifications to L1 network functionality are required, except configuration:
 
@@ -400,17 +370,17 @@ as the engine implementation can sync state faster through methods like [snap-sy
 
 1. The rollup node informs the engine of the L2 chain head, unconditionally (part of regular node operation):
    - Bedrock / Canyon / Delta Payloads
-      - [`engine_newPayloadV2`][engine_newPayloadV2] is called with latest L2 block received from P2P.
-      - [`engine_forkchoiceUpdatedV2`][engine_forkchoiceUpdatedV2] is called with the current
-        `unsafe`/`safe`/`finalized` L2 block hashes.
+     - [`engine_newPayloadV2`][engine_newPayloadV2] is called with latest L2 block received from P2P.
+     - [`engine_forkchoiceUpdatedV2`][engine_forkchoiceUpdatedV2] is called with the current
+       `unsafe`/`safe`/`finalized` L2 block hashes.
    - Ecotone Payloads
-      - [`engine_newPayloadV3`][engine_newPayloadV3] is called with latest L2 block received from P2P.
-      - [`engine_forkchoiceUpdatedV3`][engine_forkchoiceUpdatedV3] is called with the current
-        `unsafe`/`safe`/`finalized` L2 block hashes.
+     - [`engine_newPayloadV3`][engine_newPayloadV3] is called with latest L2 block received from P2P.
+     - [`engine_forkchoiceUpdatedV3`][engine_forkchoiceUpdatedV3] is called with the current
+       `unsafe`/`safe`/`finalized` L2 block hashes.
 2. The engine requests headers from peers, in reverse till the parent hash matches the local chain
 3. The engine catches up:
-    a) A form of state sync is activated towards the finalized or head block hash
-    b) A form of block sync pulls block bodies and processes towards head block hash
+   a) A form of state sync is activated towards the finalized or head block hash
+   b) A form of block sync pulls block bodies and processes towards head block hash
 
 The exact P2P based sync is out of scope for the L2 specification:
 the operation within the engine is the exact same as with L1 (although with an EVM that supports deposits).
@@ -471,6 +441,7 @@ For the Ecotone upgrade, this entails that:
 [PayloadAttributesV3]: https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#payloadattributesv3
 [PayloadAttributesV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#PayloadAttributesV2
 [ExecutionPayloadV1]: https://github.com/ethereum/execution-apis/blob/769c53c94c4e487337ad0edea9ee0dce49c79bfa/src/engine/specification.md#ExecutionPayloadV1
+[ExecutionPayloadV2]: https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#executionpayloadv2
 [engine_forkchoiceUpdatedV3]: https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#engine_forkchoiceupdatedv3
 [engine_forkchoiceUpdatedV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_forkchoiceupdatedv2
 [engine_newPayloadV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2

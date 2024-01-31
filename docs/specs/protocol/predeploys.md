@@ -1,35 +1,12 @@
 # Predeploys
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [LegacyMessagePasser](#legacymessagepasser)
-- [L2ToL1MessagePasser](#l2tol1messagepasser)
-- [DeployerWhitelist](#deployerwhitelist)
-- [LegacyERC20ETH](#legacyerc20eth)
-- [WETH9](#weth9)
-- [L2CrossDomainMessenger](#l2crossdomainmessenger)
-- [L2StandardBridge](#l2standardbridge)
-- [L1BlockNumber](#l1blocknumber)
-- [GasPriceOracle](#gaspriceoracle)
-- [L1Block](#l1block)
-- [ProxyAdmin](#proxyadmin)
-- [SequencerFeeVault](#sequencerfeevault)
-- [OptimismMintableERC20Factory](#optimismmintableerc20factory)
-- [OptimismMintableERC721Factory](#optimismmintableerc721factory)
-- [BaseFeeVault](#basefeevault)
-- [L1FeeVault](#l1feevault)
-- [SchemaRegistry](#schemaregistry)
-- [EAS](#eas)
-- [create2Deployer](#create2deployer)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Overview
 
-[Predeployed smart contracts](glossary.md#predeployed-contract-predeploy) exist on Optimism
+[Predeployed smart contracts](../glossary.md#predeployed-contract-predeploy) exist on Optimism
 at predetermined addresses in the genesis state. They are similar to precompiles but instead run
 directly in the EVM instead of running native code outside of the EVM.
 
@@ -48,29 +25,29 @@ The following table includes each of the predeploys. The system version
 indicates when the predeploy was introduced. The possible values are `Legacy`
 or `Bedrock` or `Canyon`. Deprecated contracts should not be used.
 
-| Name                                      | Address                                    | Introduced  | Deprecated | Proxied |
-| ----------------------------------------- | ------------------------------------------ | ----------- | ---------- | ------- |
-| LegacyMessagePasser                       | 0x4200000000000000000000000000000000000000 | Legacy      | Yes        | Yes     |
-| DeployerWhitelist                         | 0x4200000000000000000000000000000000000002 | Legacy      | Yes        | Yes     |
-| LegacyERC20ETH                            | 0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000 | Legacy      | Yes        | No      |
-| WETH9                                     | 0x4200000000000000000000000000000000000006 | Legacy      | No         | No      |
-| L2CrossDomainMessenger                    | 0x4200000000000000000000000000000000000007 | Legacy      | No         | Yes     |
-| L2StandardBridge                          | 0x4200000000000000000000000000000000000010 | Legacy      | No         | Yes     |
-| SequencerFeeVault                         | 0x4200000000000000000000000000000000000011 | Legacy      | No         | Yes     |
-| OptimismMintableERC20Factory              | 0x4200000000000000000000000000000000000012 | Legacy      | No         | Yes     |
-| L1BlockNumber                             | 0x4200000000000000000000000000000000000013 | Legacy      | Yes        | Yes     |
-| GasPriceOracle                            | 0x420000000000000000000000000000000000000F | Legacy      | No         | Yes     |
-| GovernanceToken                           | 0x4200000000000000000000000000000000000042 | Legacy      | No         | No      |
-| L1Block                                   | 0x4200000000000000000000000000000000000015 | Bedrock     | No         | Yes     |
-| L2ToL1MessagePasser                       | 0x4200000000000000000000000000000000000016 | Bedrock     | No         | Yes     |
-| L2ERC721Bridge                            | 0x4200000000000000000000000000000000000014 | Legacy      | No         | Yes     |
-| OptimismMintableERC721Factory             | 0x4200000000000000000000000000000000000017 | Bedrock     | No         | Yes     |
-| ProxyAdmin                                | 0x4200000000000000000000000000000000000018 | Bedrock     | No         | Yes     |
-| BaseFeeVault                              | 0x4200000000000000000000000000000000000019 | Bedrock     | No         | Yes     |
-| L1FeeVault                                | 0x420000000000000000000000000000000000001a | Bedrock     | No         | Yes     |
-| SchemaRegistry                            | 0x4200000000000000000000000000000000000020 | Bedrock     | No         | Yes     |
-| EAS                                       | 0x4200000000000000000000000000000000000021 | Bedrock     | No         | Yes     |
-| create2Deployer                           | 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2 | Canyon      | No         | No      |
+| Name                          | Address                                    | Introduced | Deprecated | Proxied |
+| ----------------------------- | ------------------------------------------ | ---------- | ---------- | ------- |
+| LegacyMessagePasser           | 0x4200000000000000000000000000000000000000 | Legacy     | Yes        | Yes     |
+| DeployerWhitelist             | 0x4200000000000000000000000000000000000002 | Legacy     | Yes        | Yes     |
+| LegacyERC20ETH                | 0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000 | Legacy     | Yes        | No      |
+| WETH9                         | 0x4200000000000000000000000000000000000006 | Legacy     | No         | No      |
+| L2CrossDomainMessenger        | 0x4200000000000000000000000000000000000007 | Legacy     | No         | Yes     |
+| L2StandardBridge              | 0x4200000000000000000000000000000000000010 | Legacy     | No         | Yes     |
+| SequencerFeeVault             | 0x4200000000000000000000000000000000000011 | Legacy     | No         | Yes     |
+| OptimismMintableERC20Factory  | 0x4200000000000000000000000000000000000012 | Legacy     | No         | Yes     |
+| L1BlockNumber                 | 0x4200000000000000000000000000000000000013 | Legacy     | Yes        | Yes     |
+| GasPriceOracle                | 0x420000000000000000000000000000000000000F | Legacy     | No         | Yes     |
+| GovernanceToken               | 0x4200000000000000000000000000000000000042 | Legacy     | No         | No      |
+| L1Block                       | 0x4200000000000000000000000000000000000015 | Bedrock    | No         | Yes     |
+| L2ToL1MessagePasser           | 0x4200000000000000000000000000000000000016 | Bedrock    | No         | Yes     |
+| L2ERC721Bridge                | 0x4200000000000000000000000000000000000014 | Legacy     | No         | Yes     |
+| OptimismMintableERC721Factory | 0x4200000000000000000000000000000000000017 | Bedrock    | No         | Yes     |
+| ProxyAdmin                    | 0x4200000000000000000000000000000000000018 | Bedrock    | No         | Yes     |
+| BaseFeeVault                  | 0x4200000000000000000000000000000000000019 | Bedrock    | No         | Yes     |
+| L1FeeVault                    | 0x420000000000000000000000000000000000001a | Bedrock    | No         | Yes     |
+| SchemaRegistry                | 0x4200000000000000000000000000000000000020 | Bedrock    | No         | Yes     |
+| EAS                           | 0x4200000000000000000000000000000000000021 | Bedrock    | No         | Yes     |
+| create2Deployer               | 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2 | Canyon     | No         | No      |
 
 ## LegacyMessagePasser
 
@@ -257,7 +234,7 @@ to 6, and the old `scalar` and `overhead` values are ignored.
 
 Address: `0x4200000000000000000000000000000000000015`
 
-[l1-block-predeploy]: glossary.md#l1-attributes-predeployed-contract
+[l1-block-predeploy]: ../glossary.md#l1-attributes-predeployed-contract
 
 The [L1Block][l1-block-predeploy] was introduced in Bedrock and is responsible for
 maintaining L1 context in L2. This allows for L1 state to be accessed in L2.

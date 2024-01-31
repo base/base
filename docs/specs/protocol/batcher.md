@@ -1,4 +1,3 @@
-<!-- DOCTOC SKIP -->
 # Batch Submitter
 
 The batch submitter, also referred to as the batcher, is the entity submitting the L2 sequencer data to L1,

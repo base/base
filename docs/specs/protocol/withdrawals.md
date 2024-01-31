@@ -2,13 +2,13 @@
 
 <!-- All glossary references in this file. -->
 
-[g-deposits]: glossary.md#deposits
-[g-deposited]: glossary.md#deposited-transaction
-[deposit-tx-type]: glossary.md#deposited-transaction-type
-[g-withdrawal]: glossary.md#withdrawal
-[g-mpt]: glossary.md#merkle-patricia-trie
-[g-relayer]: glossary.md#withdrawals
-[g-execution-engine]: glossary.md#execution-engine
+[g-deposits]: ../glossary.md#deposits
+[g-deposited]: ../glossary.md#deposited-transaction
+[deposit-tx-type]: ../glossary.md#deposited-transaction-type
+[g-withdrawal]: ../glossary.md#withdrawal
+[g-mpt]: ../glossary.md#merkle-patricia-trie
+[g-relayer]: ../glossary.md#withdrawals
+[g-execution-engine]: ../glossary.md#execution-engine
 
 [Withdrawals][g-withdrawal] are cross domain transactions which are initiated on L2, and finalized by a transaction
 executed on L1. Notably, withdrawals may be used by an L2 account to call an L1 contract, or to transfer ETH from
@@ -34,23 +34,9 @@ In this way, withdrawals are different from [deposits][g-deposits] which make us
 [execution engine][g-execution-engine] client. Rather, withdrawals transaction must use smart contracts on L1 for
 finalization.
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Withdrawal Flow](#withdrawal-flow)
-  - [On L2](#on-l2)
-  - [On L1](#on-l1)
-- [The L2ToL1MessagePasser Contract](#the-l2tol1messagepasser-contract)
-  - [Addresses are not Aliased on Withdrawals](#addresses-are-not-aliased-on-withdrawals)
-- [The Optimism Portal Contract](#the-optimism-portal-contract)
-- [Withdrawal Verification and Finalization](#withdrawal-verification-and-finalization)
-- [Security Considerations](#security-considerations)
-  - [Key Properties of Withdrawal Verification](#key-properties-of-withdrawal-verification)
-  - [Handling Successfully Verified Messages That Fail When Relayed](#handling-successfully-verified-messages-that-fail-when-relayed)
-  - [OptimismPortal can send arbitrary messages on L1](#optimismportal-can-send-arbitrary-messages-on-l1)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## Withdrawal Flow
 

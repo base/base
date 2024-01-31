@@ -1,80 +1,10 @@
 # Glossary
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [General Terms](#general-terms)
-  - [Layer 1 (L1)](#layer-1-l1)
-  - [Layer 2 (L2)](#layer-2-l2)
-  - [Block](#block)
-  - [EOA](#eoa)
-  - [Merkle Patricia Trie](#merkle-patricia-trie)
-  - [Chain Re-Organization](#chain-re-organization)
-  - [Predeployed Contract ("Predeploy")](#predeployed-contract-predeploy)
-  - [Preinstalled Contract ("Preinstall")](#preinstalled-contract-preinstall)
-  - [Receipt](#receipt)
-  - [Transaction Type](#transaction-type)
-  - [Fork Choice Rule](#fork-choice-rule)
-  - [Priority Gas Auction](#priority-gas-auction)
-- [Sequencing](#sequencing)
-  - [Sequencer](#sequencer)
-  - [Sequencing Window](#sequencing-window)
-  - [Sequencing Epoch](#sequencing-epoch)
-  - [L1 Origin](#l1-origin)
-- [Deposits](#deposits)
-  - [Deposited Transaction](#deposited-transaction)
-  - [L1 Attributes Deposited Transaction](#l1-attributes-deposited-transaction)
-  - [User-Deposited Transaction](#user-deposited-transaction)
-  - [Depositing Call](#depositing-call)
-  - [Depositing Transaction](#depositing-transaction)
-  - [Depositor](#depositor)
-  - [Deposited Transaction Type](#deposited-transaction-type)
-  - [Deposit Contract](#deposit-contract)
-- [Withdrawals](#withdrawals)
-  - [Relayer](#relayer)
-  - [Finalization Period](#finalization-period)
-- [Batch Submission](#batch-submission)
-  - [Data Availability](#data-availability)
-  - [Data Availability Provider](#data-availability-provider)
-  - [Sequencer Batch](#sequencer-batch)
-  - [Channel](#channel)
-  - [Channel Frame](#channel-frame)
-  - [Batcher](#batcher)
-  - [Batcher Transaction](#batcher-transaction)
-  - [Channel Timeout](#channel-timeout)
-- [L2 Output Root Proposals](#l2-output-root-proposals)
-  - [Proposer](#proposer)
-- [L2 Chain Derivation](#l2-chain-derivation)
-  - [L2 Derivation Inputs](#l2-derivation-inputs)
-  - [System Configuration](#system-configuration)
-  - [Payload Attributes](#payload-attributes)
-  - [L2 Genesis Block](#l2-genesis-block)
-  - [L2 Chain Inception](#l2-chain-inception)
-  - [Safe L2 Block](#safe-l2-block)
-  - [Safe L2 Head](#safe-l2-head)
-  - [Unsafe L2 Block](#unsafe-l2-block)
-  - [Unsafe L2 Head](#unsafe-l2-head)
-  - [Unsafe Block Consolidation](#unsafe-block-consolidation)
-  - [Finalized L2 Head](#finalized-l2-head)
-- [Other L2 Chain Concepts](#other-l2-chain-concepts)
-  - [Address Aliasing](#address-aliasing)
-  - [Rollup Node](#rollup-node)
-  - [Rollup Driver](#rollup-driver)
-  - [L1 Attributes Predeployed Contract](#l1-attributes-predeployed-contract)
-  - [L2 Output Root](#l2-output-root)
-  - [L2 Output Oracle Contract](#l2-output-oracle-contract)
-  - [Validator](#validator)
-  - [Fault Proof](#fault-proof)
-  - [Time Slot](#time-slot)
-  - [Block Time](#block-time)
-  - [Unsafe Sync](#unsafe-sync)
-- [Execution Engine Concepts](#execution-engine-concepts)
-  - [Execution Engine](#execution-engine)
+<!-- toc -->
 
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # General Terms
 
@@ -97,7 +27,7 @@ refers to the Ethereum blockchain.
 
 Can refer to an [L1] block, or to an [L2] block, which are structured similarly.
 
-A block is a sequential list of transactions, along with a couple of properties stored in the *header* of the block. A
+A block is a sequential list of transactions, along with a couple of properties stored in the _header_ of the block. A
 description of these properties can be found in code comments [here][nano-header], or in the [Ethereum yellow paper
 (pdf)][yellow], section 4.3.
 
@@ -136,7 +66,7 @@ L1 re-orgs can happen because of network conditions or attacks. L2 re-orgs are a
 
 A contract placed in the L2 genesis state (i.e. at the start of the chain).
 
-All predeploy contracts are specified in the [predeploys specification][./predeploys.md].
+All predeploy contracts are specified in the [predeploys specification](./protocol/predeploys.md).
 
 ## Preinstalled Contract ("Preinstall")
 
@@ -146,7 +76,7 @@ A contract placed in the L2 genesis state (i.e. at the start of the chain). Thes
 security guarantees as [predeploys](#predeployed-contract-predeploy), but are general use contracts made
 available to improve the L2's UX.
 
-All preinstall contracts are specified in the [preinstalls specification][./preinstalls.md].
+All preinstall contracts are specified in the [preinstalls specification](./protocol/preinstalls.md).
 
 ## Receipt
 
@@ -188,7 +118,7 @@ parties (like being the first deposit or submitting a deposit before there is no
 PGAs tend to have negative externalities on the network due to a large amount of transactions being submitted in a
 very short amount of time.
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Sequencing
 
@@ -244,7 +174,7 @@ for more details.
 
 The L1 origin of an L2 block is the L1 block corresponding to its [sequencing epoch][sequencing-epoch].
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Deposits
 
@@ -253,30 +183,28 @@ The L1 origin of an L2 block is the L1 block corresponding to its [sequencing ep
 In general, a deposit is an L2 transaction derived from an L1 block (by the [rollup driver]).
 
 While transaction deposits are notably (but not only) used to "deposit" (bridge) ETH and tokens to L2, the word
-*deposit* should be understood as "a transaction *deposited* to L2 from L1".
+_deposit_ should be understood as "a transaction _deposited_ to L2 from L1".
 
-This term *deposit* is somewhat ambiguous as these "transactions" exist at multiple levels. This section disambiguates
+This term _deposit_ is somewhat ambiguous as these "transactions" exist at multiple levels. This section disambiguates
 all deposit-related terms.
 
-Notably, a *deposit* can refer to:
+Notably, a _deposit_ can refer to:
 
-- A [deposited transaction][deposited] (on L2) that is part of a [deposit block][deposit-block].
+- A [deposited transaction][deposited] (on L2) that is part of a deposit block.
 - A [depositing call][depositing-call] that causes a [deposited transaction][deposited] to be derived.
 - The event/log data generated by the [depositing call][depositing-call], which is what the [rollup driver] reads to
   derive the [deposited transaction][deposited].
 
-We sometimes also talk about *user deposit* which is a similar term that explicitly excludes [L1 attributes deposited
+We sometimes also talk about _user deposit_ which is a similar term that explicitly excludes [L1 attributes deposited
 transactions][l1-attr-deposit].
 
 Deposits are specified in the [deposits specification][deposits-spec].
-
-[deposits-spec]: deposits.md
 
 ## Deposited Transaction
 
 [deposited]: glossary.md#deposited-transaction
 
-A *deposited transaction* is a L2 transaction that was derived from L1 and included in a L2 block.
+A _deposited transaction_ is a L2 transaction that was derived from L1 and included in a L2 block.
 
 There are two kinds of deposited transactions:
 
@@ -285,38 +213,36 @@ There are two kinds of deposited transactions:
 - [User-deposited transactions][user-deposited], which are transactions derived from an L1 call to the [deposit
   contract][deposit-contract].
 
-[deposits-spec]: deposits.md
-
 ## L1 Attributes Deposited Transaction
 
 [l1-attr-deposit]: glossary.md#l1-attributes-deposited-transaction
 
-An *L1 attributes deposited transaction* is [deposited transaction][deposited] that is used to register the L1 block
+An _L1 attributes deposited transaction_ is [deposited transaction][deposited] that is used to register the L1 block
 attributes (number, timestamp, ...) on L2 via a call to the [L1 Attributes Predeployed Contract][l1-attr-predeploy].
 That contract can then be used to read the attributes of the L1 block corresponding to the current L2 block.
 
 L1 attributes deposited transactions are specified in the [L1 Attributes Deposit][l1-attributes-tx-spec] section of the
 deposits specification.
 
-[l1-attributes-tx-spec]: deposits.md#l1-attributes-deposited-transaction
+[l1-attributes-tx-spec]: ./protocol/deposits.md#l1-attributes-deposited-transaction
 
 ## User-Deposited Transaction
 
 [user-deposited]: glossary.md#user-deposited-transaction
 
-A *user-deposited transaction* is a [deposited transaction][deposited] which is derived from an L1 call to the [deposit
-  contract][deposit-contract] (a [depositing call][depositing-call]).
+A _user-deposited transaction_ is a [deposited transaction][deposited] which is derived from an L1 call to the [deposit
+contract][deposit-contract] (a [depositing call][depositing-call]).
 
 User-deposited transactions are specified in the [Transaction Deposits][tx-deposits-spec] section of the deposits
 specification.
 
-[tx-deposits-spec]: deposits.md#user-deposited-transactions
+[tx-deposits-spec]: ./protocol/deposits.md#user-deposited-transactions
 
 ## Depositing Call
 
 [depositing-call]: glossary.md#depositing-call
 
-A *depositing call* is an L1 call to the [deposit contract][deposit-contract], which will be derived to a
+A _depositing call_ is an L1 call to the [deposit contract][deposit-contract], which will be derived to a
 [user-deposited transaction][user-deposited] by the [rollup driver].
 
 This call specifies all the data (destination, value, calldata, ...) for the deposited transaction.
@@ -325,40 +251,40 @@ This call specifies all the data (destination, value, calldata, ...) for the dep
 
 [depositing-tx]: glossary.md#depositing-transaction
 
-A *depositing transaction* is an L1 transaction that makes one or more [depositing calls][depositing-call].
+A _depositing transaction_ is an L1 transaction that makes one or more [depositing calls][depositing-call].
 
 ## Depositor
 
 [depositor]: glossary.md#depositor
 
-The *depositor* is the L1 account (contract or [EOA]) that makes (is the `msg.sender` of) the [depositing
-call][depositing-call]. The *depositor* is **NOT** the originator of the depositing transaction (i.e. `tx.origin`).
+The _depositor_ is the L1 account (contract or [EOA]) that makes (is the `msg.sender` of) the [depositing
+call][depositing-call]. The _depositor_ is **NOT** the originator of the depositing transaction (i.e. `tx.origin`).
 
 ## Deposited Transaction Type
 
 [deposit-tx-type]: glossary.md#deposited-transaction-type
 
-The *deposited transaction type* is an [EIP-2718] [transaction type][transaction-type], which specifies the input fields
+The _deposited transaction type_ is an [EIP-2718] [transaction type][transaction-type], which specifies the input fields
 and correct handling of a [deposited transaction][deposited].
 
 See the [corresponding section][spec-deposit-tx-type] of the deposits spec for more information.
 
-[spec-deposit-tx-type]: deposits.md#the-deposited-transaction-type
+[spec-deposit-tx-type]: ./protocol/deposits.md#the-deposited-transaction-type
 
 ## Deposit Contract
 
 [deposit-contract]: glossary.md#deposit-contract
 
-The *deposit contract* is an [L1] contract to which [EOAs][EOA] and contracts may send [deposits]. The deposits are
-emitted as log records (in Solidity, these are called *events*) for consumption by [rollup nodes][rollup-node].
+The _deposit contract_ is an [L1] contract to which [EOAs][EOA] and contracts may send [deposits]. The deposits are
+emitted as log records (in Solidity, these are called _events_) for consumption by [rollup nodes][rollup-node].
 
 Advanced note: the deposits are not stored in calldata because they can be sent by contracts, in which case the calldata
-is part of the *internal* execution between contracts, and this intermediate calldata is not captured in one of the
+is part of the _internal_ execution between contracts, and this intermediate calldata is not captured in one of the
 [Merkle Patricia Trie roots][mpt] included in the L1 block.
 
-cf. [Deposits Specification](deposits.md)
+cf. [Deposits Specification][deposits-spec]
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Withdrawals
 
@@ -368,11 +294,11 @@ cf. [Deposits Specification](deposits.md)
 
 In general, a withdrawal is a transaction sent from L2 to L1 that may transfer data and/or value.
 
-The term *withdrawal* is somewhat ambiguous as these "transactions" exist at multiple levels. In order to differentiate
- between the L1 and L2 components of a withdrawal we introduce the following terms:
+The term _withdrawal_ is somewhat ambiguous as these "transactions" exist at multiple levels. In order to differentiate
+between the L1 and L2 components of a withdrawal we introduce the following terms:
 
-- A *withdrawal initiating transaction* refers specifically to a transaction on L2 sent to the Withdrawals predeploy.
-- A *withdrawal finalizing transaction* refers specifically to an L1 transaction which finalizes and relays the
+- A _withdrawal initiating transaction_ refers specifically to a transaction on L2 sent to the Withdrawals predeploy.
+- A _withdrawal finalizing transaction_ refers specifically to an L1 transaction which finalizes and relays the
   withdrawal.
 
 ## Relayer
@@ -385,15 +311,15 @@ An EOA on L1 which finalizes a withdrawal by submitting the data necessary to ve
 
 [finalization-period]: glossary.md#finalization-period
 
-The finalization period — sometimes also called *withdrawal delay* — is the minimum amount of time (in seconds) that
-must elapse before a [withdrawal][withrawals] can be finalized.
+The finalization period — sometimes also called _withdrawal delay_ — is the minimum amount of time (in seconds) that
+must elapse before a [withdrawal][withdrawals] can be finalized.
 
 The finalization period is necessary to afford sufficient time for [validators][validator] to make a [fault
 proof][fault-proof].
 
 > **TODO** specify current value for finalization period
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Batch Submission
 
@@ -401,9 +327,9 @@ proof][fault-proof].
 
 ## Data Availability
 
- [data-availability]: glossary.md#data-availability
+[data-availability]: glossary.md#data-availability
 
-Data availability is the guarantee that some data will be "available" (i.e. *retrievable*) during a reasonably long time
+Data availability is the guarantee that some data will be "available" (i.e. _retrievable_) during a reasonably long time
 window. In Optimism's case, the data in question are [sequencer batches][sequencer-batch] that [validators][validator]
 need in order to verify the sequencer's work and validate the L2 chain.
 
@@ -419,7 +345,7 @@ that is when data availability is the most crucial, as it is needed to perform a
 A data availability provider is a service that can be used to make data available. See the [Data
 Availability][data-availability] for more information on what this means.
 
-Ideally, a good data availability provider provides strong *verifiable* guarantees of data availability
+Ideally, a good data availability provider provides strong _verifiable_ guarantees of data availability
 
 Currently, the only supported data availability provider is Ethereum call data. [Ethereum data blobs][eip4844] will be
 supported when they get deployed on Ethereum.
@@ -451,10 +377,10 @@ include in a single batcher transaction.
 A channel is uniquely identified by its timestamp (UNIX time at which the channel was created) and a random value. See
 the [Frame Format][frame-format] section of the L2 Chain Derivation specification for more information.
 
-[frame-format]: derivation.md#frame-format
+[frame-format]: ./protocol/derivation.md#frame-format
 
 On the side of the [rollup node][rollup-node] (which is the consumer of channels), a channel is considered to be
-*opened* if its final frame (explicitly marked as such) has not been read, or closed otherwise.
+_opened_ if its final frame (explicitly marked as such) has not been read, or closed otherwise.
 
 ## Channel Frame
 
@@ -507,11 +433,11 @@ The purpose of channel timeouts is dual:
   channels. This is particularly relevant during L1 re-orgs, see the [Resetting Channel Buffering][reset-channel-buffer]
   section of the L2 Chain Derivation specification for more information.
 
-[reset-channel-buffer]: derivation.md#resetting-channel-buffering
+[reset-channel-buffer]: ./protocol/derivation.md#resetting-channel-buffering
 
 > **TODO** specify `CHANNEL_TIMEOUT`
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # L2 Output Root Proposals
 
@@ -526,7 +452,7 @@ L2OutputOracle contract on L1 (the settlement layer). To do this, the proposer p
 the latest output root derived from the latest finalized L1 block. It then takes the output root and submits it to the
 L2OutputOracle contract on the settlement layer (L1).
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # L2 Chain Derivation
 
@@ -560,7 +486,7 @@ L2 derivation inputs include:
 [system-config]: glossary.md#system-configuration
 
 This term refers to the collection of dynamically configurable rollup parameters maintained
-by the [`SystemConfig`](system_config.md) contract on L1 and read by the L2 [derivation] process.
+by the [`SystemConfig`][system-config] contract on L1 and read by the L2 [derivation] process.
 These parameters enable keys to be rotated regularly and external cost parameters to be adjusted
 without the network upgrade overhead of a hardfork.
 
@@ -574,11 +500,11 @@ then passed to the [execution engine][execution-engine] to construct L2 blocks.
 The payload attributes object essentially encodes [a block without output properties][block].
 
 Payload attributes are originally specified in the [Ethereum Engine API specification][engine-api], which we expand in
-the [Execution Engine Specification](exec-engine.md).
+the [Execution Engine Specification][exec-engine].
 
 See also the [Building The Payload Attributes][building-payload-attr] section of the rollup node specification.
 
-[building-payload-attr]: rollup-node.md#building-the-payload-attributes
+[building-payload-attr]: ./protocol/rollup-node.md#building-the-payload-attributes
 
 ## L2 Genesis Block
 
@@ -596,11 +522,11 @@ The state of the L2 genesis block comprises:
 The timestamp of the L2 genesis block must be a multiple of the [block time][block-time] (i.e. a even number, since the
 block time is 2 seconds).
 
-When updating the rollup protocol to a new version, we may perform a *squash fork*, a process that entails the creation
+When updating the rollup protocol to a new version, we may perform a _squash fork_, a process that entails the creation
 of a new L2 genesis block. This new L2 genesis block will have block number `X + 1`, where `X` is the block number of
 the final L2 block before the update.
 
-A squash fork is not to be confused with a *re-genesis*, a similar process that we employed in the past, which also
+A squash fork is not to be confused with a _re-genesis_, a similar process that we employed in the past, which also
 resets L2 block numbers, such that the new L2 genesis block has number 0. We will not employ re-genesis in the future.
 
 Squash forks are superior to re-geneses because they avoid duplicating L2 block numbers, which breaks a lot of external
@@ -654,18 +580,18 @@ chain match the oldest unsafe L2 block exactly.
 
 See the [Engine Queue section][engine-queue] of the L2 chain derivatiaon spec for more information.
 
-[engine-queue]: derivation.md#engine-queue
+[engine-queue]: ./protocol/derivation.md#engine-queue
 
 ## Finalized L2 Head
 
 [finalized-l2-head]: glossary.md#finalized-l2-head
 
-The finalized L2 head is the highest L2 block that can be derived from *[finalized][finality]* L1 blocks — i.e. L1
+The finalized L2 head is the highest L2 block that can be derived from _[finalized][finality]_ L1 blocks — i.e. L1
 blocks older than two L1 epochs (64 L1 [time slots][time-slot]).
 
 [finality]: https://hackmd.io/@prysmaticlabs/finality
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Other L2 Chain Concepts
 
@@ -676,7 +602,7 @@ blocks older than two L1 epochs (64 L1 [time slots][time-slot]).
 When a contract submits a [deposit][deposits] from L1 to L2, its address (as returned by `ORIGIN` and `CALLER`) will be
 aliased with a modified representation of the address of a contract.
 
-- cf. [Deposit Specification](deposits.md#address-aliasing)
+- cf. [Deposit Specification](./protocol/deposits.md#address-aliasing)
 
 ## Rollup Node
 
@@ -685,7 +611,7 @@ aliased with a modified representation of the address of a contract.
 The rollup node is responsible for [deriving the L2 chain][derivation] from the L1 chain (L1 [blocks][block] and their
 associated [receipts][receipt]).
 
-The rollup node can run either in *validator* or *sequencer* mode.
+The rollup node can run either in _validator_ or _sequencer_ mode.
 
 In sequencer mode, the rollup node receives L2 transactions from users, which it uses to create L2 blocks. These are
 then submitted to a [data availability provider][avail-provider] via [batch submission][batch-submission]. The L2 chain
@@ -695,7 +621,7 @@ In validator mode, the rollup node performs derivation as indicated above, but i
 chain by getting blocks directly from the sequencer, in which case derivation serves to validate the sequencer's
 behaviour.
 
-A rollup node running in validator mode is sometimes called *a replica*.
+A rollup node running in validator mode is sometimes called _a replica_.
 
 > **TODO** expand this to include output root submission
 
@@ -718,7 +644,7 @@ from the L1 chain (L1 [blocks][block] and their associated [receipts][receipt]).
 A [predeployed contract][predeploy] on L2 that can be used to retrieve the L1 block attributes of L1 blocks with a given
 block number or a given block hash.
 
-cf. [L1 Attributes Predeployed Contract Specification](deposits.md#l1-attributes-predeployed-contract)
+cf. [L1 Attributes Predeployed Contract Specification](./protocol/deposits.md#l1-attributes-predeployed-contract)
 
 ## L2 Output Root
 
@@ -726,7 +652,7 @@ cf. [L1 Attributes Predeployed Contract Specification](deposits.md#l1-attributes
 
 A 32 byte value which serves as a commitment to the current state of the L2 chain.
 
-cf. [Proposing L2 output commitments](proposals.md#l2-output-root-proposals-specification)
+cf. [Proposing L2 output commitments](./protocol/proposals.md#l2-output-root-proposals-specification)
 
 ## L2 Output Oracle Contract
 
@@ -751,10 +677,10 @@ proof][fault-proof].
 
 [fault-proof]: glossary.md#fault-proof
 
-An on-chain *interactive* proof, performed by [validators][validator], that demonstrates that a [sequencer] provided
+An on-chain _interactive_ proof, performed by [validators][validator], that demonstrates that a [sequencer] provided
 erroneous [output roots][l2-output].
 
-cf. [Fault Proofs](fault-proof.md)
+cf. [Fault Proofs](./experimental/fault-proof/index.md)
 
 ## Time Slot
 
@@ -787,7 +713,7 @@ the [sequencer][sequencer].
 
 These unsafe blocks will later need to be confirmed by the L1 chain (via [unsafe block consolidation][consolidation]).
 
-------------------------------------------------------------------------------------------------------------------------
+---
 
 # Execution Engine Concepts
 
@@ -808,13 +734,18 @@ using transactions [derived from L1 blocks][derivation].
 
 In these specifications, "execution engine" always refer to the L2 execution engine, unless otherwise specified.
 
-- cf. [Execution Engine Specification](exec-engine.md)
+- cf. [Execution Engine Specification][exec-engine]
 
 <!-- Internal Links -->
-[derivation-spec]: derivation.md
-[rollup-node-spec]: rollup-node.md
+
+[deposits-spec]: ./protocol/deposits.md
+[system-config]: ./protocol/system_config.md
+[exec-engine]: ./protocol/exec-engine.md
+[derivation-spec]: ./protocol/derivation.md
+[rollup-node-spec]: ./protocol/rollup-node.md
 
 <!-- External Links -->
+
 [mpt-details]: https://github.com/norswap/nanoeth/blob/d4c0c89cc774d4225d16970aa44c74114c1cfa63/src/com/norswap/nanoeth/trees/patricia/README.md
 [trie]: https://en.wikipedia.org/wiki/Trie
 [bloom filter]: https://en.wikipedia.org/wiki/Bloom_filter

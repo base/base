@@ -1,65 +1,51 @@
 # Optimism Overview
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Architecture Design Goals](#architecture-design-goals)
-- [Components](#components)
-  - [L1 Components](#l1-components)
-  - [L2 Components](#l2-components)
-  - [Transaction/Block Propagation](#transactionblock-propagation)
-- [Key Interactions In Depth](#key-interactions-in-depth)
-  - [Deposits](#deposits)
-  - [Block Derivation](#block-derivation)
-    - [Overview](#overview)
-    - [Epochs and the Sequencing Window](#epochs-and-the-sequencing-window)
-    - [Block Derivation Loop](#block-derivation-loop)
-  - [Engine API](#engine-api)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 This document is a high-level technical overview of the Optimism protocol. It aims to explain how the protocol works in
 an informal manner, and direct readers to other parts of the specification so that they may learn more.
 
-This document assumes you've read the [introduction](introduction.md).
+This document assumes you've read the [introduction](../introduction.md).
 
 ## Architecture Design Goals
 
 - **Execution-Level EVM Equivalence:** The developer experience should be identical to L1 except where L2 introduces a
-fundamental difference.
+  fundamental difference.
   - No special compiler.
   - No unexpected gas costs.
   - Transaction traces work out-of-the-box.
   - All existing Ethereum tooling works - all you have to do is change the chain ID.
 - **Maximal compatibility with ETH1 nodes:** The implementation should minimize any differences with a vanilla Geth
-node, and leverage as many existing L1 standards as possible.
+  node, and leverage as many existing L1 standards as possible.
   - The execution engine/rollup node uses the ETH2 Engine API to build the canonical L2 chain.
   - The execution engine leverages Geth's existing mempool and sync implementations, including snap sync.
 - **Minimize state and complexity:**
   - Whenever possible, services contributing to the rollup infrastructure are stateless.
   - Stateful services can recover to full operation from a fresh DB using the peer-to-peer network and on-chain sync
-mechanisms.
+    mechanisms.
   - Running a replica is as simple as running a Geth node.
 
 ## Components
 
-![Components](assets/components.svg)
+![Components](../static/assets/components.svg)
 
 ### L1 Components
 
 - **OptimismPortal**: A feed of L2 transactions which originated as smart contract calls in the L1 state.
   - The `OptimismPortal` contract emits `TransactionDeposited` events, which the rollup driver reads in order to process
-deposits.
+    deposits.
   - Deposits are guaranteed to be reflected in the L2 state within the _sequencing window_.
   - Beware that _transactions_ are deposited, not tokens. However deposited transactions are a key part of implementing
-token deposits (tokens are locked on L1, then minted on L2 via a deposited transaction).
+    token deposits (tokens are locked on L1, then minted on L2 via a deposited transaction).
 - **BatchInbox**: An L1 address to which the Batch Submitter submits transaction batches.
+
   - Transaction batches include L2 transaction calldata, timestamps, and ordering information.
   - The BatchInbox is a regular EOA address. This lets us pass on gas cost savings by not executing any EVM code.
 
-- **L2OutputOracle**: A smart contract that stores [L2 output roots](glossary.md#l2-output) for use with withdrawals
-and fault proofs.
+- **L2OutputOracle**: A smart contract that stores [L2 output roots](../glossary.md#l2-output) for use with withdrawals
+  and fault proofs.
 
 ### L2 Components
 
@@ -77,7 +63,7 @@ and fault proofs.
   - Sync state to other L2 nodes for fast onboarding.
   - Serves the Engine API to the rollup node.
 - **Batch Submitter**
-  - A background process that submits [transaction batches](glossary.md#sequencer-batch) to the `BatchInbox` address.
+  - A background process that submits [transaction batches](../glossary.md#sequencer-batch) to the `BatchInbox` address.
 - **Output Submitter**
   - A background process that submits L2 output commitments to the `L2OutputOracle`.
 
@@ -95,7 +81,7 @@ however, and is provided as a convenience to lower latency for verifiers and the
 
 The below diagram illustrates how the sequencer and verifiers fit together:
 
-![Propagation](assets/propagation.svg)
+![Propagation](../static/assets/propagation.svg)
 
 ## Key Interactions In Depth
 
@@ -142,7 +128,7 @@ worth of blocks has passed, i.e. after L1 block number `n + SEQUENCING_WINDOW_SI
 Each epoch contains at least one block. Every block in the epoch contains an L1 info transaction which contains
 contextual information about L1 such as the block hash and timestamp. The first block in the epoch also contains all
 deposits initiated via the `OptimismPortal` contract on L1. All L2 blocks can also contain _sequenced transactions_,
-i.e.  transactions submitted directly to the sequencer.
+i.e. transactions submitted directly to the sequencer.
 
 Whenever the sequencer creates a new L2 block for a given epoch, it must submit it to L1 as part of a _batch_, within
 the epoch's sequencing window (i.e. the batch must land before L1 block `n + SEQUENCING_WINDOW_SIZE`). These batches are
@@ -163,7 +149,7 @@ the L2 chain at worst after `SEQUENCING_WINDOW_SIZE` L1 blocks have passed.
 The following diagram describes this relationship, and how L2 blocks are derived from L1 blocks (L1 info transactions
 have been elided):
 
-![Epochs and Sequencing Windows](assets/sequencer-block-gen.svg)
+![Epochs and Sequencing Windows](../static/assets/sequencer-block-gen.svg)
 
 #### Block Derivation Loop
 
@@ -174,7 +160,7 @@ derivation function performs the following steps:
 1. Downloads deposit and transaction batch data for each block in the sequencing window.
 2. Converts the deposit and transaction batch data into payload attributes for the Engine API.
 3. Submits the payload attributes to the Engine API, where they are converted into blocks and added to the canonical
-chain.
+   chain.
 
 This process is then repeated with incrementing epochs until the tip of L1 is reached.
 
@@ -186,17 +172,17 @@ object and send it to the execution engine. The execution engine will then conve
 block, and add it to the chain. The basic sequence of the rollup driver is as follows:
 
 1. Call [fork choice updated][EngineAPIVersion] with the payload attributes object. We'll skip over the details of the
-fork choice state parameter for now - just know that one of its fields is the L2 chain's `headBlockHash`, and that it
-is set to the block hash of the tip of the L2 chain. The Engine API returns a payload ID.
+   fork choice state parameter for now - just know that one of its fields is the L2 chain's `headBlockHash`, and that it
+   is set to the block hash of the tip of the L2 chain. The Engine API returns a payload ID.
 2. Call [get payload][EngineAPIVersion] with the payload ID returned in step 1. The engine API returns a payload object
-that includes a block hash as one of its fields.
+   that includes a block hash as one of its fields.
 3. Call [new payload][EngineAPIVersion] with the payload returned in step 2. (Ectone blocks, must use V3, pre-Ecotone
-blocks MUST use the V2 version)
+   blocks MUST use the V2 version)
 4. Call [fork choice updated][EngineAPIVersion] with the fork choice parameter's `headBlockHash` set to the block hash
-returned in step 2. The tip of the L2 chain is now the block created in step 1.
+   returned in step 2. The tip of the L2 chain is now the block created in step 1.
 
 [EngineAPIVersion]: derivation.md#engine-api-usage
 
 The swimlane diagram below visualizes the process:
 
-![Engine API](assets/engine.svg)
+![Engine API](../static/assets/engine.svg)

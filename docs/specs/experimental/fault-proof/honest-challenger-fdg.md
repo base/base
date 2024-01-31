@@ -1,17 +1,8 @@
 # Honest Challenger (Fault Dispute Game)
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [FDG Responses](#fdg-responses)
-  - [Root Claims](#root-claims)
-  - [Counter Claims](#counter-claims)
-  - [Steps](#steps)
-- [Resolution](#resolution)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 The honest challenger is an agent interacting in the [Fault Dispute Game](fault-dispute-game.md)
 (FDG) that supports honest claims and disputes false claims.
@@ -42,13 +33,13 @@ When a `FaultDisputeGame` is created, the honest challenger has two possible cor
 to its root claim:
 
 1. [**Attack**](fault-dispute-game.md#attack) if they disagree with the root claim.
-The root claim commits to the entire execution trace, so the first move here is to
-attack with the [ClaimHash](fault-dispute-game.md#claims) at the midpoint
-instruction within their execution trace.
+   The root claim commits to the entire execution trace, so the first move here is to
+   attack with the [ClaimHash](fault-dispute-game.md#claims) at the midpoint
+   instruction within their execution trace.
 2. **Do Nothing** if they agree with the root claim. They do nothing because if the root
-claim is left un-countered, the game resolves to their agreement.
-NOTE: The honest challenger will still track this game in order to defend any subsequent
-claims made against the root claim - in effect, "playing the game".
+   claim is left un-countered, the game resolves to their agreement.
+   NOTE: The honest challenger will still track this game in order to defend any subsequent
+   claims made against the root claim - in effect, "playing the game".
 
 ### Counter Claims
 

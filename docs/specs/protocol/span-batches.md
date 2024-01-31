@@ -1,37 +1,16 @@
 # Span-batches
 
 <!-- All glossary references in this file. -->
-[g-deposit-tx-type]: glossary.md#deposited-transaction-type
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+[g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
+
 **Table of Contents**
 
-- [Introduction](#introduction)
-- [Span batch format](#span-batch-format)
-  - [Max span-batch size](#max-span-batch-size)
-  - [Future batch-format extension](#future-batch-format-extension)
-- [Span batch Activation Rule](#span-batch-activation-rule)
-- [Optimization Strategies](#optimization-strategies)
-  - [Truncating information and storing only necessary data](#truncating-information-and-storing-only-necessary-data)
-  - [`tx_data_headers` removal from initial specs](#tx_data_headers-removal-from-initial-specs)
-  - [`Chain ID` removal from initial specs](#chain-id-removal-from-initial-specs)
-  - [Reorganization of constant length transaction fields](#reorganization-of-constant-length-transaction-fields)
-  - [RLP encoding for only variable length fields](#rlp-encoding-for-only-variable-length-fields)
-  - [Store `y_parity` and `protected_bit` instead of `v`](#store-y_parity-and-protected_bit-instead-of-v)
-  - [Adjust `txs` Data Layout for Better Compression](#adjust-txs-data-layout-for-better-compression)
-  - [`fee_recipients` Encoding Scheme](#fee_recipients-encoding-scheme)
-- [How derivation works with Span Batch?](#how-derivation-works-with-span-batch)
-- [Integration](#integration)
-  - [Channel Reader (Batch Decoding)](#channel-reader-batch-decoding)
-  - [Batch Queue](#batch-queue)
-  - [Batcher](#batcher)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 > The span-batches spec is experimental :shipit:
 >
-> *this feature is in active R&D and not yet part of any hard fork
+> \*this feature is in active R&D and not yet part of any hard fork
 
 ## Introduction
 
@@ -69,12 +48,12 @@ Span-batches address these inefficiencies, with a new batch format version.
 [span-batch-format]: #span-batch-format
 
 Note that span-batches, unlike previous singular batches,
-encode *a range of consecutive* L2 blocks at the same time.
+encode _a range of consecutive_ L2 blocks at the same time.
 
 Introduce version `1` to the [batch-format](derivation.md#batch-format) table:
 
 | `batch_version` | `content`           |
-|-----------------|---------------------|
+| --------------- | ------------------- |
 | 1               | `prefix ++ payload` |
 
 Notation:
@@ -83,7 +62,7 @@ Notation:
 - `span_start`: first L2 block in the span
 - `span_end`: last L2 block in the span
 - `uvarint`: unsigned Base128 varint, as defined in [protobuf spec]
-- `rlp_encode`: a function that encodes a batch according to the [RLP format],
+- `rlp_encode`: a function that encodes a batch according to the RLP format,
   and `[x, y, z]` denotes a list containing items `x`, `y` and `z`
 
 [protobuf spec]: https://protobuf.dev/programming-guides/encoding/#varints
@@ -108,7 +87,7 @@ Where:
   - `block_tx_counts`: for each block, a `uvarint` of `len(block.transactions)`.
   - `txs`: L2 transactions which is reorganized and encoded as below.
 - `txs = contract_creation_bits ++ y_parity_bits ++
-        tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
+tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
   - `contract_creation_bits`: standard bitlist of `sum(block_tx_counts)` bits:
     1 bit per L2 transactions, indicating if transaction is a contract creation transaction.
   - `y_parity_bits`: standard bitlist of `sum(block_tx_counts)` bits:
@@ -123,7 +102,7 @@ Where:
     - `1`: ([EIP-2930]): `0x01 ++ rlp_encode(value, gasPrice, data, accessList)`
     - `2`: ([EIP-1559]): `0x02 ++ rlp_encode(value, max_priority_fee_per_gas, max_fee_per_gas, data, access_list)`
   - `tx_nonces`: concatenated list of `uvarint` of `nonce` field.
-  - `tx_gases`:  concatenated list of `uvarint` of gas limits.
+  - `tx_gases`: concatenated list of `uvarint` of gas limits.
     - `legacy`: `gasLimit`
     - `1`: ([EIP-2930]): `gasLimit`
     - `2`: ([EIP-1559]): `gas_limit`
@@ -153,7 +132,7 @@ This is an experimental extension of the span-batch format, and not activated wi
 Introduce version `2` to the [batch-format](derivation.md#batch-format) table:
 
 | `batch_version` | `content`           |
-|-----------------|---------------------|
+| --------------- | ------------------- |
 | 2               | `prefix ++ payload` |
 
 Where:
@@ -227,7 +206,7 @@ Deposit transactions are excluded in batches and are never written at L1 so excl
 
 ### Adjust `txs` Data Layout for Better Compression
 
-There are (8 choose 2) * 6! = 20160 permutations of ordering fields of `txs`.
+There are (8 choose 2) \* 6! = 20160 permutations of ordering fields of `txs`.
 It is not 8! because `contract_creation_bits` must be first decoded in order to decode `tx_tos`.
 We experimented to find out the best layout for compression.
 It turned out placing random data together(`TxSigs`, `TxTos`, `TxDatas`),
@@ -309,7 +288,7 @@ Span-batch rules, in validation order:
 - `batch.parent_check != prev_l2_block.hash[:20]` -> `drop`:
   i.e. the checked part of the parent hash must be equal to the same part of the corresponding L2 block hash.
 - Sequencing-window checks:
-  - Note: The sequencing window is enforced for the *batch as a whole*:
+  - Note: The sequencing window is enforced for the _batch as a whole_:
     if the batch was partially invalid instead, it would drop the oldest L2 blocks,
     which makes the later L2 blocks invalid.
   - Variables:
@@ -330,7 +309,7 @@ Span-batch rules, in validation order:
     - `start_epoch_num < prev_l2_block.l1_origin.number` -> `drop`:
       epoch number cannot be older than the origin of parent block
 - Max Sequencer time-drift checks:
-  - Note: The max time-drift is enforced for the *batch as a whole*, to keep the possible output variants small.
+  - Note: The max time-drift is enforced for the _batch as a whole_, to keep the possible output variants small.
   - Variables:
     - `block_input`: an L2 block from the span-batch,
       with L1 origin as derived from the `origin_bits` and now established canonical L1 chain.

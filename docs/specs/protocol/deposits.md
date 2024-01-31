@@ -1,49 +1,27 @@
 # Deposits
 
 <!-- All glossary references in this file. -->
-[g-transaction-type]: glossary.md#transaction-type
-[g-derivation]:  glossary.md#L2-chain-derivation
-[g-deposited]: glossary.md#deposited
-[g-deposits]: glossary.md#deposits
-[g-l1-attr-deposit]: glossary.md#l1-attributes-deposited-transaction
-[g-user-deposited]: glossary.md#user-deposited-transaction
-[g-eoa]: glossary.md#eoa
-[g-exec-engine]: glossary.md#execution-engine
+
+[g-transaction-type]: ../glossary.md#transaction-type
+[g-derivation]: ../glossary.md#L2-chain-derivation
+[g-deposited]: ../glossary.md#deposited
+[g-deposits]: ../glossary.md#deposits
+[g-l1-attr-deposit]: ../glossary.md#l1-attributes-deposited-transaction
+[g-user-deposited]: ../glossary.md#user-deposited-transaction
+[g-eoa]: ../glossary.md#eoa
+[g-exec-engine]: ../glossary.md#execution-engine
 
 [Deposited transactions][g-deposited], also known as [deposits][g-deposits] are transactions which
 are initiated on L1, and executed on L2. This document outlines a new [transaction
 type][g-transaction-type] for deposits. It also describes how deposits are initiated on L1, along
 with the authorization and validation conditions on L2.
 
-**Vocabulary note**: *deposited transaction* refers specifically to an L2 transaction, while
-*deposit* can refer to the transaction at various stages (for instance when it is deposited on L1).
+**Vocabulary note**: _deposited transaction_ refers specifically to an L2 transaction, while
+_deposit_ can refer to the transaction at various stages (for instance when it is deposited on L1).
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [The Deposited Transaction Type](#the-deposited-transaction-type)
-  - [Source hash computation](#source-hash-computation)
-  - [Kinds of Deposited Transactions](#kinds-of-deposited-transactions)
-  - [Validation and Authorization of Deposited Transactions](#validation-and-authorization-of-deposited-transactions)
-  - [Execution](#execution)
-    - [Nonce Handling](#nonce-handling)
-- [Deposit Receipt](#deposit-receipt)
-- [L1 Attributes Deposited Transaction](#l1-attributes-deposited-transaction)
-  - [L1 Attributes Deposited Transaction Calldata](#l1-attributes-deposited-transaction-calldata)
-    - [L1 Attributes - Bedrock, Canyon, Delta](#l1-attributes---bedrock-canyon-delta)
-    - [L1 Attributes - Ecotone](#l1-attributes---ecotone)
-- [Special Accounts on L2](#special-accounts-on-l2)
-  - [L1 Attributes Depositor Account](#l1-attributes-depositor-account)
-  - [L1 Attributes Predeployed Contract](#l1-attributes-predeployed-contract)
-    - [L1 Attributes Predeployed Contract: Reference Implementation](#l1-attributes-predeployed-contract-reference-implementation)
-    - [Ecotone L1Block upgrade](#ecotone-l1block-upgrade)
-- [User-Deposited Transactions](#user-deposited-transactions)
-  - [Deposit Contract](#deposit-contract)
-    - [Address Aliasing](#address-aliasing)
-    - [Deposit Contract Implementation: Optimism Portal](#deposit-contract-implementation-optimism-portal)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 ## The Deposited Transaction Type
 
@@ -86,7 +64,7 @@ In contrast to [EIP-155] transactions, this transaction type:
 - Includes new `sourceHash`, `from`, `mint`, and `isSystemTx` attributes.
   API responses contain these as additional fields.
 
-[EIP-155]:https://eips.ethereum.org/EIPS/eip-155
+[EIP-155]: https://eips.ethereum.org/EIPS/eip-155
 
 We select `0x7E` because transaction type identifiers are currently allowed to go up to `0x7F`.
 Picking a high identifier minimizes the risk that the identifier will be used be claimed by another
@@ -183,7 +161,7 @@ Any non-EVM state-transition error emitted by the EVM execution is processed in 
 Finally, after the above processing, the execution post-processing runs the same:
 i.e. the gas pool and receipt are processed identical to a regular transaction.
 Starting with the Regolith upgrade however, the receipt of deposit transactions is extended with an additional
-`depositNonce` value, storing the `nonce` value of the `from` sender as registered *before* the EVM processing.
+`depositNonce` value, storing the `nonce` value of the `from` sender as registered _before_ the EVM processing.
 
 Note that the gas used as stated by the execution output is subtracted from the gas pool,
 but this execution output value has special edge cases before the Regolith upgrade.
@@ -243,7 +221,7 @@ attributes predeployed contract][predeploy].
 This transaction MUST have the following values:
 
 1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001` (the address of the
-[L1 Attributes depositor account][depositor-account])
+   [L1 Attributes depositor account][depositor-account])
 2. `to` is `0x4200000000000000000000000000000000000015` (the address of the [L1 attributes predeployed
    contract][predeploy]).
 3. `mint` is `0`
@@ -251,7 +229,7 @@ This transaction MUST have the following values:
 5. `gasLimit` is set to 150,000,000 prior to the Regolith upgrade, and 1,000,000 after.
 6. `isSystemTx` is set to `true` prior to the Regolith upgrade, and `false` after.
 7. `data` is an encoded call to the [L1 attributes predeployed contract][predeploy] that
-depends on the upgrades that are active (see below).
+   depends on the upgrades that are active (see below).
 
 This system-initiated transaction for L1 attributes is not charged any ETH for its allocated
 `gasLimit`, as it is considered part of state-transition processing.
@@ -262,7 +240,7 @@ This system-initiated transaction for L1 attributes is not charged any ETH for i
 
 The `data` field of the L1 attributes deposited transaction is an [ABI][ABI] encoded call to the
 `setL1BlockValues()` function with correct values associated with the corresponding L1 block
-(cf.  [reference implementation][l1-attr-ref-implem]).
+(cf. [reference implementation][l1-attr-ref-implem]).
 
 #### L1 Attributes - Ecotone
 
@@ -279,18 +257,18 @@ The overall calldata layout is as follows:
 
 [ecotone-upgrade-txs]: derivation.md#network-upgrade-automation-transactions
 
-| Input arg         | Type        | Calldata bytes | Segment |
-| ----------------- | ----------- | -------------- | --------|
-| {0x440a5e20}      |             | 0-3            | n/a     |
-| baseFeeScalar     | uint32      | 4-7            | 1       |
-| blobBaseFeeScalar | uint32      | 8-11           |         |
-| sequenceNumber    | uint64      | 12-19          |         |
-| l1BlockTimestamp  | uint64      | 20-27          |         |
-| l1BlockNumber     | uint64      | 28-35          |         |
-| basefee           | uint256     | 36-67          | 2       |
-| blobBaseFee       | uint256     | 68-99          | 3       |
-| l1BlockHash       | bytes32     | 100-131        | 4       |
-| batcherHash       | bytes32     | 132-163        | 5       |
+| Input arg         | Type    | Calldata bytes | Segment |
+| ----------------- | ------- | -------------- | ------- |
+| {0x440a5e20}      |         | 0-3            | n/a     |
+| baseFeeScalar     | uint32  | 4-7            | 1       |
+| blobBaseFeeScalar | uint32  | 8-11           |         |
+| sequenceNumber    | uint64  | 12-19          |         |
+| l1BlockTimestamp  | uint64  | 20-27          |         |
+| l1BlockNumber     | uint64  | 28-35          |         |
+| basefee           | uint256 | 36-67          | 2       |
+| blobBaseFee       | uint256 | 68-99          | 3       |
+| l1BlockHash       | bytes32 | 100-131        | 4       |
+| batcherHash       | bytes32 | 132-163        | 5       |
 
 Total calldata length MUST be exactly 164 bytes, implying the sixth and final segment is only
 partially filled. This helps to slow database growth as every L2 block includes a L1 Attributes
@@ -412,7 +390,7 @@ transaction are determined by the corresponding `TransactionDeposited` event emi
 1. `from` is unchanged from the emitted value (though it may
    have been transformed to an alias in `OptimismPortal`, the deposit feed contract).
 2. `to` is any 20-byte address (including the zero address)
-    - In case of a contract creation (cf. `isCreation`), this address is set to `null`.
+   - In case of a contract creation (cf. `isCreation`), this address is set to `null`.
 3. `mint` is set to the emitted value.
 4. `value` is set to the emitted value.
 5. `gaslimit` is unchanged from the emitted value. It must be at least 21000.
@@ -420,7 +398,7 @@ transaction are determined by the corresponding `TransactionDeposited` event emi
 7. `data` is unchanged from the emitted value. Depending on the value of `isCreation` it is handled
    as either calldata or contract initialization code.
 8. `isSystemTx` is set by the rollup node for certain transactions that have unmetered execution.
-  It is `false` for user deposited transactions
+   It is `false` for user deposited transactions
 
 ### Deposit Contract
 

@@ -2,22 +2,12 @@
 
 <!-- All glossary references in this file. -->
 
-[g-rollup-node]: glossary.md#rollup-node
-[g-mpt]: glossary.md#merkle-patricia-trie
+[g-rollup-node]: ../glossary.md#rollup-node
+[g-mpt]: ../glossary.md#merkle-patricia-trie
 
-<!-- START doctoc generated TOC please keep comment here to allow auto update -->
-<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Proposing L2 Output Commitments](#proposing-l2-output-commitments)
-  - [L2OutputOracle v1.0.0](#l2outputoracle-v100)
-- [L2 Output Commitment Construction](#l2-output-commitment-construction)
-- [L2 Output Oracle Smart Contract](#l2-output-oracle-smart-contract)
-  - [Configuration](#configuration)
-- [Security Considerations](#security-considerations)
-  - [L1 Reorgs](#l1-reorgs)
-
-<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- toc -->
 
 After processing one or more blocks the outputs will need to be synchronized with the settlement layer (L1)
 for trustless execution of L2-to-L1 messaging, such as withdrawals.
