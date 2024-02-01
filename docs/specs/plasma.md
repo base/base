@@ -6,7 +6,7 @@
 
 - [Overview](#overview)
 - [DA Storage](#da-storage)
-- [Input Commitment](#input-commitment)
+- [Input Commitment Submission](#input-commitment-submission)
 - [Data Availability Challenge Contract](#data-availability-challenge-contract)
   - [Parameters](#parameters)
 - [Derivation](#derivation)
@@ -58,7 +58,7 @@ Any DA provider can implement the following endpoints to receive and serve input
     Body: <preimage_bytes>
   ```
 
-## Input Commitment
+## Input Commitment Submission
 
 The batching and compression of input data remain unchanged. When a batch is ready
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
