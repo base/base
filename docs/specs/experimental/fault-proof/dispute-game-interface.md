@@ -1,8 +1,15 @@
 # Dispute Game Interface
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Types](#types)
+- [`DisputeGameFactory` Interface](#disputegamefactory-interface)
+- [`DisputeGame` Interface](#disputegame-interface)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 

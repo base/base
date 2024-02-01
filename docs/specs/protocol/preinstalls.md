@@ -1,8 +1,22 @@
 # Preinstalls
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Safe](#safe)
+- [SafeL2](#safel2)
+- [MultiSend](#multisend)
+- [MultiSendCallOnly](#multisendcallonly)
+- [SafeSingletonFactory](#safesingletonfactory)
+- [Multicall3](#multicall3)
+- [Arachnid's Deterministic Deployment Proxy](#arachnids-deterministic-deployment-proxy)
+- [Permit2](#permit2)
+- [ERC-4337 EntryPoint](#erc-4337-entrypoint)
+- [ERC-4337 SenderCreator](#erc-4337-sendercreator)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 

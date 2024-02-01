@@ -1,5 +1,33 @@
 # Deposits
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [The Deposited Transaction Type](#the-deposited-transaction-type)
+  - [Source hash computation](#source-hash-computation)
+  - [Kinds of Deposited Transactions](#kinds-of-deposited-transactions)
+  - [Validation and Authorization of Deposited Transactions](#validation-and-authorization-of-deposited-transactions)
+  - [Execution](#execution)
+    - [Nonce Handling](#nonce-handling)
+- [Deposit Receipt](#deposit-receipt)
+- [L1 Attributes Deposited Transaction](#l1-attributes-deposited-transaction)
+  - [L1 Attributes Deposited Transaction Calldata](#l1-attributes-deposited-transaction-calldata)
+    - [L1 Attributes - Bedrock, Canyon, Delta](#l1-attributes---bedrock-canyon-delta)
+    - [L1 Attributes - Ecotone](#l1-attributes---ecotone)
+- [Special Accounts on L2](#special-accounts-on-l2)
+  - [L1 Attributes Depositor Account](#l1-attributes-depositor-account)
+  - [L1 Attributes Predeployed Contract](#l1-attributes-predeployed-contract)
+    - [L1 Attributes Predeployed Contract: Reference Implementation](#l1-attributes-predeployed-contract-reference-implementation)
+    - [Ecotone L1Block upgrade](#ecotone-l1block-upgrade)
+- [User-Deposited Transactions](#user-deposited-transactions)
+  - [Deposit Contract](#deposit-contract)
+    - [Address Aliasing](#address-aliasing)
+    - [Deposit Contract Implementation: Optimism Portal](#deposit-contract-implementation-optimism-portal)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 <!-- All glossary references in this file. -->
 
 [g-transaction-type]: ../glossary.md#transaction-type
@@ -11,6 +39,8 @@
 [g-eoa]: ../glossary.md#eoa
 [g-exec-engine]: ../glossary.md#execution-engine
 
+## Overview
+
 [Deposited transactions][g-deposited], also known as [deposits][g-deposits] are transactions which
 are initiated on L1, and executed on L2. This document outlines a new [transaction
 type][g-transaction-type] for deposits. It also describes how deposits are initiated on L1, along
@@ -18,10 +48,6 @@ with the authorization and validation conditions on L2.
 
 **Vocabulary note**: _deposited transaction_ refers specifically to an L2 transaction, while
 _deposit_ can refer to the transaction at various stages (for instance when it is deposited on L1).
-
-**Table of Contents**
-
-<!-- toc -->
 
 ## The Deposited Transaction Type
 

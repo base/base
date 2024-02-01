@@ -1,12 +1,29 @@
 # Introduction
 
-**Table of Contents**
-
-<!-- toc -->
-
 Optimism is an _EVM equivalent_, _optimistic rollup_ protocol designed to _scale Ethereum_ while remaining maximally
 compatible with existing Ethereum infrastructure. This document provides an overview of the protocol to provide context
 for the rest of the specification.
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Foundations](#foundations)
+  - [What is Ethereum scalability?](#what-is-ethereum-scalability)
+  - [What is an Optimistic Rollup?](#what-is-an-optimistic-rollup)
+  - [What is EVM Equivalence?](#what-is-evm-equivalence)
+  - [🎶 All together now 🎶](#-all-together-now-)
+- [Protocol Guarantees](#protocol-guarantees)
+- [Network Participants](#network-participants)
+  - [Users](#users)
+  - [Sequencers](#sequencers)
+  - [Verifiers](#verifiers)
+- [Key Interaction Diagrams](#key-interaction-diagrams)
+  - [Depositing and Sending Transactions](#depositing-and-sending-transactions)
+  - [Withdrawing](#withdrawing)
+- [Next Steps](#next-steps)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Foundations
 

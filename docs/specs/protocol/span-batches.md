@@ -1,12 +1,34 @@
 # Span-batches
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Introduction](#introduction)
+- [Span batch format](#span-batch-format)
+  - [Max span-batch size](#max-span-batch-size)
+  - [Future batch-format extension](#future-batch-format-extension)
+- [Span batch Activation Rule](#span-batch-activation-rule)
+- [Optimization Strategies](#optimization-strategies)
+  - [Truncating information and storing only necessary data](#truncating-information-and-storing-only-necessary-data)
+  - [`tx_data_headers` removal from initial specs](#tx_data_headers-removal-from-initial-specs)
+  - [`Chain ID` removal from initial specs](#chain-id-removal-from-initial-specs)
+  - [Reorganization of constant length transaction fields](#reorganization-of-constant-length-transaction-fields)
+  - [RLP encoding for only variable length fields](#rlp-encoding-for-only-variable-length-fields)
+  - [Store `y_parity` and `protected_bit` instead of `v`](#store-y_parity-and-protected_bit-instead-of-v)
+  - [Adjust `txs` Data Layout for Better Compression](#adjust-txs-data-layout-for-better-compression)
+  - [`fee_recipients` Encoding Scheme](#fee_recipients-encoding-scheme)
+- [How derivation works with Span Batch?](#how-derivation-works-with-span-batch)
+- [Integration](#integration)
+  - [Channel Reader (Batch Decoding)](#channel-reader-batch-decoding)
+  - [Batch Queue](#batch-queue)
+  - [Batcher](#batcher)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 <!-- All glossary references in this file. -->
 
 [g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
-
-**Table of Contents**
-
-<!-- toc -->
 
 > The span-batches spec is experimental :shipit:
 >

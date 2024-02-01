@@ -1,5 +1,59 @@
 # L2 Chain Derivation Specification
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+  - [Eager Block Derivation](#eager-block-derivation)
+- [Batch Submission](#batch-submission)
+  - [Sequencing & Batch Submission Overview](#sequencing--batch-submission-overview)
+  - [Batch Submission Wire Format](#batch-submission-wire-format)
+    - [Batcher Transaction Format](#batcher-transaction-format)
+    - [Frame Format](#frame-format)
+    - [Channel Format](#channel-format)
+    - [Batch Format](#batch-format)
+- [Architecture](#architecture)
+  - [L2 Chain Derivation Pipeline](#l2-chain-derivation-pipeline)
+    - [L1 Traversal](#l1-traversal)
+    - [L1 Retrieval](#l1-retrieval)
+      - [Ecotone: Blob Retrieval](#ecotone-blob-retrieval)
+        - [Blob Encoding](#blob-encoding)
+    - [Frame Queue](#frame-queue)
+    - [Channel Bank](#channel-bank)
+      - [Pruning](#pruning)
+      - [Timeouts](#timeouts)
+      - [Reading](#reading)
+      - [Loading frames](#loading-frames)
+    - [Channel Reader (Batch Decoding)](#channel-reader-batch-decoding)
+    - [Batch Queue](#batch-queue)
+    - [Payload Attributes Derivation](#payload-attributes-derivation)
+    - [Engine Queue](#engine-queue)
+      - [Engine API usage](#engine-api-usage)
+        - [Bedrock, Canyon, Delta: API Usage](#bedrock-canyon-delta-api-usage)
+        - [Ecotone: API Usage](#ecotone-api-usage)
+      - [Forkchoice synchronization](#forkchoice-synchronization)
+      - [L1-consolidation: payload attributes matching](#l1-consolidation-payload-attributes-matching)
+      - [L1-sync: payload attributes processing](#l1-sync-payload-attributes-processing)
+      - [Processing unsafe payload attributes](#processing-unsafe-payload-attributes)
+    - [Resetting the Pipeline](#resetting-the-pipeline)
+      - [Finding the sync starting point](#finding-the-sync-starting-point)
+      - [Resetting derivation stages](#resetting-derivation-stages)
+      - [About reorgs Post-Merge](#about-reorgs-post-merge)
+- [Deriving Payload Attributes](#deriving-payload-attributes)
+  - [Deriving the Transaction List](#deriving-the-transaction-list)
+    - [Network upgrade automation transactions](#network-upgrade-automation-transactions)
+      - [Ecotone](#ecotone)
+        - [L1Block Deployment](#l1block-deployment)
+        - [GasPriceOracle Deployment](#gaspriceoracle-deployment)
+        - [L1Block Proxy Update](#l1block-proxy-update)
+        - [GasPriceOracle Proxy Update](#gaspriceoracle-proxy-update)
+        - [GasPriceOracle Enable Ecotone](#gaspriceoracle-enable-ecotone)
+        - [Beacon block roots contract deployment (EIP-4788)](#beacon-block-roots-contract-deployment-eip-4788)
+  - [Building Individual Payload Attributes](#building-individual-payload-attributes)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 <!-- All glossary references in this file. -->
 
 [g-derivation]: ../glossary.md#L2-chain-derivation
@@ -48,10 +102,6 @@
 [g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
 [g-finalized-l2-head]: ../glossary.md#finalized-l2-head
 [g-system-config]: ../glossary.md#system-configuration
-
-**Table of Contents**
-
-<!-- toc -->
 
 # Overview
 

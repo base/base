@@ -1,8 +1,38 @@
 # Fault Proof
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Pre-image Oracle](#pre-image-oracle)
+  - [Pre-image key types](#pre-image-key-types)
+    - [Type `0`: Zero key](#type-0-zero-key)
+    - [Type `1`: Local key](#type-1-local-key)
+    - [Type `2`: Global keccak256 key](#type-2-global-keccak256-key)
+    - [Type `3`: Global generic key](#type-3-global-generic-key)
+    - [Type `4-128`: reserved range](#type-4-128-reserved-range)
+    - [Type `129-255`: application usage](#type-129-255-application-usage)
+  - [Bootstrapping](#bootstrapping)
+  - [Hinting](#hinting)
+  - [Pre-image communication](#pre-image-communication)
+- [Fault Proof Program](#fault-proof-program)
+  - [Prologue](#prologue)
+  - [Main content](#main-content)
+  - [Epilogue](#epilogue)
+  - [Pre-image hinting routes](#pre-image-hinting-routes)
+    - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
+    - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
+    - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
+    - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
+    - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
+    - [`l2-code <codehash>`](#l2-code-codehash)
+    - [`l2-state-node <nodehash>`](#l2-state-node-nodehash)
+    - [`l2-output <outputroot>`](#l2-output-outputroot)
+- [Fault Proof VM](#fault-proof-vm)
+- [Fault Proof Interactive Dispute Game](#fault-proof-interactive-dispute-game)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 

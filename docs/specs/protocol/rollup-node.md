@@ -1,5 +1,23 @@
 # Rollup Node Specification
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [Driver](#driver)
+  - [Derivation](#derivation)
+- [L2 Output RPC method](#l2-output-rpc-method)
+  - [Structures](#structures)
+    - [BlockID](#blockid)
+    - [L1BlockRef](#l1blockref)
+    - [L2BlockRef](#l2blockref)
+    - [SyncStatus](#syncstatus)
+  - [Output Method API](#output-method-api)
+- [Protocol Version tracking](#protocol-version-tracking)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 <!-- All glossary references in this file. -->
 
 [g-rollup-node]: ../glossary.md#rollup-node
@@ -11,15 +29,13 @@
 [g-rollup-driver]: ../glossary.md#rollup-driver
 [g-receipts]: ../glossary.md#receipt
 
+## Overview
+
 The [rollup node][g-rollup-node] is the component responsible for [deriving the L2 chain][g-derivation] from L1 blocks
 (and their associated [receipts][g-receipts]).
 
 The part of the rollup node that derives the L2 chain is called the [rollup driver][g-rollup-driver]. This document is
 currently only concerned with the specification of the rollup driver.
-
-**Table of Contents**
-
-<!-- toc -->
 
 ## Driver
 

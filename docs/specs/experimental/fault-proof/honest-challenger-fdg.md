@@ -1,8 +1,19 @@
 # Honest Challenger (Fault Dispute Game)
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [FDG Responses](#fdg-responses)
+  - [Root Claims](#root-claims)
+  - [Counter Claims](#counter-claims)
+  - [Steps](#steps)
+- [Resolution](#resolution)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
 
 The honest challenger is an agent interacting in the [Fault Dispute Game](fault-dispute-game.md)
 (FDG) that supports honest claims and disputes false claims.
@@ -10,8 +21,6 @@ An honest challenger strives to ensure a correct, truthful, game resolution.
 The honest challenger is also _rational_ as any deviation from its behavior will result in
 negative outcomes.
 This document specifies the expected behavior of an honest challenger.
-
-## Overview
 
 The Honest Challenger has two primary duties:
 

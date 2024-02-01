@@ -1,8 +1,31 @@
 # Predeploys
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [LegacyMessagePasser](#legacymessagepasser)
+- [L2ToL1MessagePasser](#l2tol1messagepasser)
+- [DeployerWhitelist](#deployerwhitelist)
+- [LegacyERC20ETH](#legacyerc20eth)
+- [WETH9](#weth9)
+- [L2CrossDomainMessenger](#l2crossdomainmessenger)
+- [L2StandardBridge](#l2standardbridge)
+- [L1BlockNumber](#l1blocknumber)
+- [GasPriceOracle](#gaspriceoracle)
+- [L1Block](#l1block)
+- [ProxyAdmin](#proxyadmin)
+- [SequencerFeeVault](#sequencerfeevault)
+- [OptimismMintableERC20Factory](#optimismmintableerc20factory)
+- [OptimismMintableERC721Factory](#optimismmintableerc721factory)
+- [BaseFeeVault](#basefeevault)
+- [L1FeeVault](#l1feevault)
+- [SchemaRegistry](#schemaregistry)
+- [EAS](#eas)
+- [create2Deployer](#create2deployer)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 

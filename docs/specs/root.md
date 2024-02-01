@@ -3,6 +3,16 @@
 This directory contains the plain english specs for Optimism, a minimal optimistic rollup protocol
 that maintains 1:1 compatibility with Ethereum.
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Specification Contents](#specification-contents)
+  - [Experimental](#experimental)
+- [Design Goals](#design-goals)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 ## Specification Contents
 
 - [Introduction](introduction.md)

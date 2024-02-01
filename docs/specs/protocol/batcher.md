@@ -1,9 +1,19 @@
 # Batch Submitter
 
-The batch submitter, also referred to as the batcher, is the entity submitting the L2 sequencer data to L1,
-to make it available for verifiers.
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 [derivation spec]: derivation.md
+
+## Overview
+
+The batch submitter, also referred to as the batcher, is the entity submitting the L2 sequencer data to L1,
+to make it available for verifiers.
 
 The format of the data transactions is defined in the [derivation spec]:
 the data is constructed from L2 blocks in the reverse order as it is derived from data into L2 blocks.

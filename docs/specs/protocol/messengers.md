@@ -1,8 +1,20 @@
 # Cross Domain Messengers
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Message Passing](#message-passing)
+- [Upgradability](#upgradability)
+- [Message Versioning](#message-versioning)
+  - [Message Version 0](#message-version-0)
+  - [Message Version 1](#message-version-1)
+- [Backwards Compatibility Notes](#backwards-compatibility-notes)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
 
 The cross domain messengers are responsible for providing a higher level API for
 developers who are interested in sending cross domain messages. They allow for

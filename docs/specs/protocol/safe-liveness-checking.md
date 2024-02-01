@@ -1,8 +1,27 @@
 # Safe Liveness Checking
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Liveness checking Mechanism](#liveness-checking-mechanism)
+- [Liveness checking methodology](#liveness-checking-methodology)
+  - [The liveness guard](#the-liveness-guard)
+  - [The liveness module](#the-liveness-module)
+  - [Owner removal call flow](#owner-removal-call-flow)
+  - [Shutdown](#shutdown)
+  - [Security Properties](#security-properties)
+    - [In the guard](#in-the-guard)
+    - [In the module](#in-the-module)
+  - [Interdependency between the guard and module](#interdependency-between-the-guard-and-module)
+- [Operational considerations](#operational-considerations)
+  - [Manual validation of new owner liveness](#manual-validation-of-new-owner-liveness)
+  - [Deploying the liveness checking system](#deploying-the-liveness-checking-system)
+  - [Modify the liveness checking system](#modify-the-liveness-checking-system)
+    - [Replacing the module](#replacing-the-module)
+    - [Replacing the guard](#replacing-the-guard)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Liveness checking Mechanism
 

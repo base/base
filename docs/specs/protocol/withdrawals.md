@@ -1,5 +1,24 @@
 # Withdrawals
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [Withdrawal Flow](#withdrawal-flow)
+  - [On L2](#on-l2)
+  - [On L1](#on-l1)
+- [The L2ToL1MessagePasser Contract](#the-l2tol1messagepasser-contract)
+  - [Addresses are not Aliased on Withdrawals](#addresses-are-not-aliased-on-withdrawals)
+- [The Optimism Portal Contract](#the-optimism-portal-contract)
+- [Withdrawal Verification and Finalization](#withdrawal-verification-and-finalization)
+- [Security Considerations](#security-considerations)
+  - [Key Properties of Withdrawal Verification](#key-properties-of-withdrawal-verification)
+  - [Handling Successfully Verified Messages That Fail When Relayed](#handling-successfully-verified-messages-that-fail-when-relayed)
+  - [OptimismPortal can send arbitrary messages on L1](#optimismportal-can-send-arbitrary-messages-on-l1)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
 <!-- All glossary references in this file. -->
 
 [g-deposits]: ../glossary.md#deposits
@@ -9,6 +28,8 @@
 [g-mpt]: ../glossary.md#merkle-patricia-trie
 [g-relayer]: ../glossary.md#withdrawals
 [g-execution-engine]: ../glossary.md#execution-engine
+
+## Overview
 
 [Withdrawals][g-withdrawal] are cross domain transactions which are initiated on L2, and finalized by a transaction
 executed on L1. Notably, withdrawals may be used by an L2 account to call an L1 contract, or to transfer ETH from
@@ -33,10 +54,6 @@ which verifies that the fault challenge period has passed since the withdrawal m
 In this way, withdrawals are different from [deposits][g-deposits] which make use of a special transaction type in the
 [execution engine][g-execution-engine] client. Rather, withdrawals transaction must use smart contracts on L1 for
 finalization.
-
-**Table of Contents**
-
-<!-- toc -->
 
 ## Withdrawal Flow
 

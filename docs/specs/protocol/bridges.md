@@ -1,8 +1,16 @@
 # Standard Bridges
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Token Depositing](#token-depositing)
+- [Upgradability](#upgradability)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
 
 The standard bridges are responsible for allowing cross domain
 ETH and ERC20 token transfers. They are built on top of the cross domain

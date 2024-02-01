@@ -1,8 +1,23 @@
 # Optimism Overview
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Architecture Design Goals](#architecture-design-goals)
+- [Components](#components)
+  - [L1 Components](#l1-components)
+  - [L2 Components](#l2-components)
+  - [Transaction/Block Propagation](#transactionblock-propagation)
+- [Key Interactions In Depth](#key-interactions-in-depth)
+  - [Deposits](#deposits)
+  - [Block Derivation](#block-derivation)
+    - [Overview](#overview)
+    - [Epochs and the Sequencing Window](#epochs-and-the-sequencing-window)
+    - [Block Derivation Loop](#block-derivation-loop)
+  - [Engine API](#engine-api)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 This document is a high-level technical overview of the Optimism protocol. It aims to explain how the protocol works in
 an informal manner, and direct readers to other parts of the specification so that they may learn more.

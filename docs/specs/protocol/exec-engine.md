@@ -1,8 +1,38 @@
 # L2 Execution Engine
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [1559 Parameters](#1559-parameters)
+- [Deposited transaction processing](#deposited-transaction-processing)
+  - [Deposited transaction boundaries](#deposited-transaction-boundaries)
+- [Fees](#fees)
+  - [Fee Vaults](#fee-vaults)
+  - [Priority fees (Sequencer Fee Vault)](#priority-fees-sequencer-fee-vault)
+  - [Base fees (Base Fee Vault)](#base-fees-base-fee-vault)
+  - [L1-Cost fees (L1 Fee Vault)](#l1-cost-fees-l1-fee-vault)
+    - [Pre-Ecotone](#pre-ecotone)
+    - [Ecotone L1-Cost fee changes (EIP-4844 DA)](#ecotone-l1-cost-fee-changes-eip-4844-da)
+- [Engine API](#engine-api)
+  - [`engine_forkchoiceUpdatedV2`](#engine_forkchoiceupdatedv2)
+    - [Extended PayloadAttributesV2](#extended-payloadattributesv2)
+  - [`engine_forkchoiceUpdatedV3`](#engine_forkchoiceupdatedv3)
+    - [Extended PayloadAttributesV3](#extended-payloadattributesv3)
+  - [`engine_newPayloadV2`](#engine_newpayloadv2)
+  - [`engine_newPayloadV3`](#engine_newpayloadv3)
+  - [`engine_getPayloadV2`](#engine_getpayloadv2)
+  - [`engine_getPayloadV3`](#engine_getpayloadv3)
+    - [Extended Response](#extended-response)
+  - [`engine_signalSuperchainV1`](#engine_signalsuperchainv1)
+- [Networking](#networking)
+- [Sync](#sync)
+  - [Happy-path sync](#happy-path-sync)
+  - [Worst-case sync](#worst-case-sync)
+- [Ecotone: disable Blob-transactions](#ecotone-disable-blob-transactions)
+- [Ecotone: Beacon Block Root](#ecotone-beacon-block-root)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 This document outlines the modifications, configuration and usage of a L1 execution engine for L2.
 

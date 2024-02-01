@@ -1,5 +1,36 @@
 # Superchain Upgrades
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [Protocol Version](#protocol-version)
+  - [Protocol Version Format](#protocol-version-format)
+    - [Build identifier](#build-identifier)
+    - [Major versions](#major-versions)
+    - [Minor versions](#minor-versions)
+    - [Patch versions](#patch-versions)
+    - [Pre-releases](#pre-releases)
+  - [Protocol Version Exposure](#protocol-version-exposure)
+- [Superchain Target](#superchain-target)
+  - [Superchain Version signaling](#superchain-version-signaling)
+  - [`ProtocolVersions` L1 contract](#protocolversions-l1-contract)
+- [Activation rules](#activation-rules)
+  - [L2 Block-number based activation (deprecated)](#l2-block-number-based-activation-deprecated)
+  - [L2 Block-timestamp based activation](#l2-block-timestamp-based-activation)
+- [OP-Stack Protocol versions](#op-stack-protocol-versions)
+- [Post-Bedrock Network upgrades](#post-bedrock-network-upgrades)
+  - [Regolith](#regolith)
+- [Canyon](#canyon)
+- [Delta](#delta)
+- [Ecotone](#ecotone)
+- [Fjord](#fjord)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
+
 Superchain upgrades, also known as forks or hardforks, implement consensus-breaking changes.
 
 A Superchain upgrade requires the node software to support up to a given Protocol Version.
@@ -10,10 +41,6 @@ as well as the default Superchain Targets.
 
 Activation rule parameters of network upgrades are configured as part of the Superchain Target specification:
 chains following the same Superchain Target upgrade synchronously.
-
-**Table of Contents**
-
-<!-- toc -->
 
 ## Protocol Version
 

@@ -1,5 +1,47 @@
 # Rollup-node P2P interface
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [P2P configuration](#p2p-configuration)
+  - [Identification](#identification)
+  - [Discv5](#discv5)
+    - [Structure](#structure)
+  - [LibP2P](#libp2p)
+    - [Transport](#transport)
+    - [Dialing](#dialing)
+    - [NAT](#nat)
+    - [Peer management](#peer-management)
+    - [Transport security](#transport-security)
+    - [Protocol negotiation](#protocol-negotiation)
+    - [Identify](#identify)
+    - [Ping](#ping)
+    - [Multiplexing](#multiplexing)
+    - [GossipSub](#gossipsub)
+      - [Content-based message identification](#content-based-message-identification)
+      - [Message compression and limits](#message-compression-and-limits)
+      - [Message ID computation](#message-id-computation)
+    - [Heartbeat and parameters](#heartbeat-and-parameters)
+    - [Topic configuration](#topic-configuration)
+    - [Topic validation](#topic-validation)
+- [Gossip Topics](#gossip-topics)
+  - [`blocksv1`](#blocksv1)
+  - [`blocksv2`](#blocksv2)
+  - [`blocksv3`](#blocksv3)
+  - [Block encoding](#block-encoding)
+  - [Block signatures](#block-signatures)
+  - [Block validation](#block-validation)
+    - [Block processing](#block-processing)
+    - [Block topic scoring parameters](#block-topic-scoring-parameters)
+- [Req-Resp](#req-resp)
+  - [`payload_by_number`](#payload_by_number)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
+
 The [rollup node](rollup-node.md) has an optional peer-to-peer (P2P) network service to improve the latency between
 the view of sequencers and the rest of the network by bypassing the L1 in the happy case,
 without relying on a single centralized endpoint.
@@ -24,10 +66,6 @@ In summary, the P2P stack looks like:
 This document only specifies the composition and configuration of these network libraries.
 These components have their own standards, implementations in Go/Rust/Java/Nim/JS/more,
 and are adopted by several other blockchains, most notably the [L1 consensus layer (Eth2)][eth2-p2p].
-
-**Table of Contents**
-
-<!-- toc -->
 
 ## P2P configuration
 

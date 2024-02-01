@@ -1,8 +1,24 @@
 # Cannon Fault Proof Virtual Machine
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [State](#state)
+  - [State Hash](#state-hash)
+- [Memory](#memory)
+  - [Heap](#heap)
+- [Delay Slots](#delay-slots)
+- [Syscalls](#syscalls)
+- [I/O](#io)
+  - [Standard Streams](#standard-streams)
+  - [Hint Communication](#hint-communication)
+  - [Pre-image Communication](#pre-image-communication)
+    - [Pre-image I/O Alignment](#pre-image-io-alignment)
+- [Exceptions](#exceptions)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 

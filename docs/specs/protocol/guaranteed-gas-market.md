@@ -1,8 +1,19 @@
 # Guaranteed Gas Fee Market
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Gas Stipend](#gas-stipend)
+- [Default Values](#default-values)
+- [Limiting Guaranteed Gas](#limiting-guaranteed-gas)
+- [Rationale for burning L1 Gas](#rationale-for-burning-l1-gas)
+- [On Preventing Griefing Attacks](#on-preventing-griefing-attacks)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
 
 [Deposited transactions](../glossary.md#deposited-transaction) are transactions on L2 that are
 initiated on L1. The gas that they use on L2 is bought on L1 via a gas burn (or a direct payment

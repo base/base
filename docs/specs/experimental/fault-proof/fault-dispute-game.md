@@ -1,8 +1,33 @@
 # Fault Dispute Game
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-<!-- toc -->
+- [Overview](#overview)
+- [Definitions](#definitions)
+  - [Virtual Machine (VM)](#virtual-machine-vm)
+  - [PreimageOracle](#preimageoracle)
+  - [Execution Trace](#execution-trace)
+  - [Claims](#claims)
+  - [DAG](#dag)
+  - [Subgame](#subgame)
+  - [Game Tree](#game-tree)
+  - [Position](#position)
+  - [GAME_DURATION](#game_duration)
+- [Game Mechanics](#game-mechanics)
+  - [Actors](#actors)
+  - [Moves](#moves)
+    - [Attack](#attack)
+    - [Defend](#defend)
+  - [Step](#step)
+  - [Step Types](#step-types)
+  - [PreimageOracle Interaction](#preimageoracle-interaction)
+  - [Team Dynamics](#team-dynamics)
+  - [Game Clock](#game-clock)
+  - [Resolution](#resolution)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 <!-- Glossary References -->
 
