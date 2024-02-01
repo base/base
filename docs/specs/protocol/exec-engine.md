@@ -224,6 +224,7 @@ If not specified as rollup, a `STATUS_INVALID` is returned.
 ### `engine_forkchoiceUpdatedV3`
 
 See [`engine_forkchoiceUpdatedV2`](#engine_forkchoiceUpdatedV2) for a description of the forkchoice updated method.
+`engine_forkchoiceUpdatedV3` **must only be called with Ecotone payload.**
 
 To support rollup functionality, one backwards-compatible change is introduced
 to [`engine_forkchoiceUpdatedV3`][engine_forkchoiceUpdatedV3]: the extended `PayloadAttributesV3`
@@ -248,7 +249,6 @@ PayloadAttributesV3: {
 The requirements of this object are the same as extended [`PayloadAttributesV2`](#extended-payloadattributesv2) with
 the addition of `parentBeaconBlockRoot` which is the parent beacon block root from the L1 origin block of the L2 block.
 
-The `parentBeaconBlockRoot` must be nil for Bedrock/Canyon/Delta payloads.
 Starting at Ecotone, the `parentBeaconBlockRoot` must be set to the L1 origin `parentBeaconBlockRoot`,
 or a zero `bytes32` if the Dencun functionality with `parentBeaconBlockRoot` is not active on L1.
 
@@ -260,7 +260,10 @@ Applies a L2 block to the engine state.
 ### `engine_newPayloadV3`
 
 [`engine_newPayloadV3`][engine_newPayloadV3] applies an Ecotone L2 block to the engine state. There are no
-modifications to this API. The additional parameters should be set as follows:
+modifications to this API.
+`engine_newPayloadV3` **must only be called with Ecotone payload.**
+
+The additional parameters should be set as follows:
 
 - `expectedBlobVersionedHashes` MUST be an empty array.
 - `parentBeaconBlockRoot` MUST be the parent beacon block root from the L1 origin block of the L2 block.
@@ -274,6 +277,7 @@ Retrieves a payload by ID, prepared by `engine_forkchoiceUpdatedV2` when called 
 
 [`engine_getPayloadV3`][engine_getPayloadV3] retrieves a payload by ID, prepared by `engine_forkchoiceUpdatedV3`
 when called with `payloadAttributes`.
+`engine_getPayloadV3` **must only be called with Ecotone payload.**
 
 #### Extended Response
 
@@ -291,8 +295,7 @@ The [response][GetPayloadV3Response] is extended to:
 
 [GetPayloadV3Response]: https://github.com/ethereum/execution-apis/blob/main/src/engine/cancun.md#response-2
 
-For Bedrock and Canyon `parentBeaconBlockRoot` MUST be nil and in Ecotone it MUST be set to the parentBeaconBlockRoot
-from the L1 Origin block of the L2 block.
+In Ecotone it MUST be set to the parentBeaconBlockRoot from the L1 Origin block of the L2 block.
 
 ### `engine_signalSuperchainV1`
 
