@@ -242,8 +242,8 @@ has been hardcoded to 6.
 
 Following the Ecotone upgrade, the values used for L1 fee computation are:
 
-- l1BaseFeeScalar
-- l1BlobBaseFeeScalar
+- baseFeeScalar
+- blobBaseFeeScalar
 - decimals
 
 [ecotone-scalars]: system_config.md#ecotone-scalar-overhead-uint256uint256-change
