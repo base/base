@@ -10,6 +10,9 @@
 - [Data Availability Challenge Contract](#data-availability-challenge-contract)
   - [Parameters](#parameters)
 - [Derivation](#derivation)
+- [Fault Proof](#fault-proof)
+  - [`l2-input <commitment>`](#l2-input-commitment)
+  - [`l1-challenge-status <commitment> <blocknumber>`](#l1-challenge-status-commitment-blocknumber)
 - [Safety and Finality](#safety-and-finality)
 - [Security Considerations](#security-considerations)
 
@@ -60,14 +63,17 @@ Any DA provider can implement the following endpoints to receive and serve input
 
 ## Input Commitment Submission
 
-The batching and compression of input data remain unchanged. When a batch is ready
+The [batching][batcher] and compression of input data remain unchanged. When a batch is ready
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
 commitment (keccak256 hash) is submitted as the bacher inbox transaction call data.
+
 The batcher SHOULD NOT submit a commitment onchain unless input data was successfully stored on the service.
 In addition, a DA provider storage service SHOULD return an error response if it is unable to properly
 store the request payload so as to signal to the batcher to retry.
 Input commitments submitted onchain without proper storage on the DA provider service are subject to
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
+
+[batcher]: specs/derivation.md#batch-submission
 
 ## Data Availability Challenge Contract
 
@@ -119,8 +125,9 @@ dynamically when a user calls the resolve function to support other alt DA solut
 ## Derivation
 
 Input data is retrieved during derivation of L2 blocks. The changes to the derivation pipeline
-when using the alt DA source are limited to swapping out the L1 based `DataAvailabilitySource` step
-in the pipeline with a module that enables pulling the data from the offchain DA source.
+when using the alt DA source are limited to wrapping the L1 based `DataAvailabilitySource` step
+in the pipeline with a module that enables pulling the data from the offchain DA source once
+we've extracted the commitment from L1 DA.
 
 Similarly to L1 based DA, for each L1 block we open a calldata source to retrieve the input commitments
 from the transactions and use each commitment with its l1 origin block number to resolve
@@ -148,7 +155,11 @@ event ChallengeStatusChanged(
 ```
 
 Derivation can either be driven by new L1 blocks or restarted (reset) from the L1 origin of the last
-L2 safe head known by the execution engine.
+L2 safe head known by the execution engine. The model here is of weak subjectivity whereby a new node
+coming onto the network can connect to at least 1 honest peer and sync blocks in the `challenge_window`
+to reconstruct the same state as the rest of the network. As with [EIP-4844][eip4844],
+applications SHOULD take on the burden of storing historical data relevant to themselves beyond
+the challenge window.
 
 When stepping through new L1 origin blocks, input data is loaded from the DA storage service.
 If the service responds with a 404 (not found) error, derivation stalls and the DA Manager
@@ -170,6 +181,23 @@ block derived from the expired challenge's input and `r_end` the last L2 block d
 was reset.
 
 [pipeline]: specs/derivation.md#resetting-the-pipeline
+[eip4844]: https://eips.ethereum.org/EIPS/eip-4844
+
+## Fault Proof
+
+The derivation pipeline is integrated with [fault proofs][faultproofs] by adding additional hint types to the
+preimage oracle in order to query the input data from the DA provider as well as onchain challenge status.
+
+### `l2-input <commitment>`
+
+The input data stored on the DA storage for the given `<commitment>`.
+
+### `l1-challenge-status <commitment> <blocknumber>`
+
+The status of the challenge for the given `<commitment>` at the given `<blocknumber>` on the L1
+DataAvailabilityChallenge contract.
+
+[faultproofs]: specs/fault-proof.md
 
 ## Safety and Finality
 
@@ -177,8 +205,8 @@ Similarly to rollup mode, the engine queue labels any new blocks derived from in
 on the L1 chain as “safe”. Although labeled as “safe”, the chain might still reorg in case of a faulty DA provider
 and users must use the “finalized” label for a guarantee that their state cannot revert.
 
-With Plasma mode on, the engine queue does not receive finality signals from the L1 RPC
-but from the DA manager that keeps track of challenges.
+With Plasma mode on, the engine queue does receives finality signals from the L1 RPC AND
+from the DA manager that keeps track of challenges.
 The DA manager maintains an internal state of all the input commitments in the current `challengeWindow`
 as they are validated by the derivation pipeline. In addition, it filters challenge events to calculate
 when commitments are challenged/resolved and elect the next finalized L1 block such that:
@@ -187,13 +215,13 @@ when commitments are challenged/resolved and elect the next finalized L1 block s
 if active_challenges_count > 0
     challenge = findOldestActiveChallenge(active_challenges)
     finality_delay = (challenge.block_number - challenge.commitment_block_number) + resolve_window + 1
-    l1_finalized_block_number = latest_l1_block_number - finality_delay
+    l1_finalized_block_number = min(latest_l1_block_number - finality_delay, finalized_l1_block_number)
 else 
-    l1_finalized_block_number = latest_l1_block_number - challenge_window
+    l1_finalized_block_number = min(latest_l1_block_number - challenge_window, finalized_l1_block_number)
 ```
 
 The engine queue will maintain a longer buffer of L2 blocks waiting for the DA window to expire
-in order to be finalized.
+and the L1 block with the commitment to be finalized in order to signal finality.
 
 ## Security Considerations
 
