@@ -81,8 +81,8 @@ challenges if the input cannot be retrieved during the challenge window, as deta
 
 | Variable                      | Description                                                                 |
 | ----------------------------- | --------------------------------------------------------------------------- |
-| challengeWindow:  uint256 | L1 blocks period a commitment MAY be challenged after it's included onchain |
-| resolveWindow:  uint256 | L1 blocks period input data SHOULD be submitted onchain after a challenge   |
+| challengeWindow:  uint256 | Number of L1 blocks whereby a commitment MAY be challenged after it's included onchain |
+| resolveWindow:  uint256 | Number of L1 blocks whereby input data SHOULD be submitted onchain after a challenge   |
 | bondSize:   uint256 | Bond amount in Wei posted by the challenger so that bondSize >= resolveCost |
 | resolverRefundFactor: uint256 | Factor defining the portion of the resolving cost refunded to the resolver  |
 
