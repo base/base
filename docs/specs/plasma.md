@@ -73,7 +73,7 @@ store the request payload so as to signal to the batcher to retry.
 Input commitments submitted onchain without proper storage on the DA provider service are subject to
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
 
-[batcher]: specs/derivation.md#batch-submission
+[batcher]: derivation.md#batch-submission
 
 ## Data Availability Challenge Contract
 
@@ -197,7 +197,7 @@ The input data stored on the DA storage for the given `<commitment>`.
 The status of the challenge for the given `<commitment>` at the given `<blocknumber>` on the L1
 DataAvailabilityChallenge contract.
 
-[faultproofs]: specs/fault-proof.md
+[faultproofs]: fault-proof.md
 
 ## Safety and Finality
 
