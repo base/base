@@ -35,7 +35,7 @@ chain derivation must be reset, omitting the input data when rederiving therefor
 ## DA Storage
 
 Input data is uploaded to the storage layer via plain HTTP calls to the DA storage service.
-This service is horizontally scalable and concerned with replicating the data across prefered storage layers
+This service is horizontally scalable and concerned with replicating the data across preferred storage layers
 such as IPFS or any S3 compatible storage. Input data is content addressed by its hash in the request url
 so responses are easily cachable.
 
@@ -231,6 +231,6 @@ the challenge.
 In addition, the reward is not net positive for the [fisherman](https://arxiv.org/abs/1809.09044)
 who forced the release of data by challenging thus preventing money pump vulnerability
 while still making challenging affordable to altruistic fishermen and users who desire to pay
-to guarrantee data availability on L1.
+to guarantee data availability on L1.
 Lastly, if needed a `resolver_refund_factor` can be dialed up such as `resolver_refund_factor * resolving_cost`
 is refunded to the resolver (where `0 <= refund_factor <= 1`) while the rest of the bond is burnt.
