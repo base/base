@@ -317,7 +317,7 @@ proposal in the `PreimageOracle`. This involves:
 
 The challenger then submits this data to the `PreimageOracle`, where the post state leaf's claimed input is absored into
 the pre state leaf's state matrix and the SHA3 permutation is executed on-chain. After that, the resulting state matrix
-is hashed and and compared with the proposer's claim in the post state leaf. If the hash does not match, the proposal
+is hashed and compared with the proposer's claim in the post state leaf. If the hash does not match, the proposal
 is marked as challenged, and it may not be finalized. If, after the challenge period is concluded, a proposal has no
 challenges, it may be finalized and the preimage part may be placed into the authorized mappings for the FPVM to read.
 
@@ -337,7 +337,7 @@ Uncontested claims are likely to result in a loss, as explained later under [Res
 Every claim in the game has a Clock. A claim inherits the clock of its grandparent claim in the
 DAG (and so on). Akin to a chess clock, it keeps track of the total time each team takes to make
 moves, preventing delays.
-Making a move resumes the clock for the disputed claim and puases it for the newly added one.
+Making a move resumes the clock for the disputed claim and pauses it for the newly added one.
 
 A move against a particular claim is no longer possible once the parent of the disputed claim's Clock
 has exceeded half of the `GAME_DURATION`. By which point, the claim's clock has _expired_.
