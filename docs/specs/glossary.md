@@ -648,7 +648,7 @@ head][safe-l2-head] a block forward, so that the oldest [unsafe L2 block][unsafe
 In order to perform consolidation, the node verifies that the [payload attributes][payload-attr] derived from the L1
 chain match the oldest unsafe L2 block exactly.
 
-See the [Engine Queue section][engine-queue] of the L2 chain derivatiaon spec for more information.
+See the [Engine Queue section][engine-queue] of the L2 chain derivation spec for more information.
 
 [engine-queue]: ./protocol/derivation.md#engine-queue
 
