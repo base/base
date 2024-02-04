@@ -48,7 +48,7 @@ Specifications of new features in active development.
 Our aim is to design a protocol specification that is:
 
 - **Fast:** When users send transactions, they get reliable confirmations with low-latency.
-  For example when swapping on Uniswap you should see that your transaction succeed in less than 2
+  For example when swapping on Uniswap you should see that your transaction succeeds in less than 2
   seconds.
 - **Scalable:** It should be possible to handle an enormous number of transactions
   per second which will enable the system to charge low fees.
