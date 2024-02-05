@@ -143,7 +143,11 @@ Note that there can be multiple positions covering the same _trace index_.
 This is an immutable, preset to a FDG implementation, representing the duration of the game. Each top level team will
 receive half of this duration on their initial chess clocks.
 
-## Game Mechanics
+## Core Game Mechanics
+
+This section specifies the core game mechanics of the FDG. The full FDG mechanics includes a
+[specification for Bonds](./bond-incentives.md). Readers should understand basic game mechanics before
+reading up on the Bond specification.
 
 ### Actors
 

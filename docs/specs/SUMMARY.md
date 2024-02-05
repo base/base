@@ -30,6 +30,7 @@
     - [Dispute Game Interface](./experimental/fault-proof/dispute-game-interface.md)
     - [Fault Dispute Game](./experimental/fault-proof/fault-dispute-game.md)
       - [Honest Challenger](./experimental/fault-proof/honest-challenger-fdg.md)
+      - [Bond Incentives](./experimental/fault-proof/bond-incentives.md)
 - [Glossary](./glossary.md)
 - [Meta](./meta/index.md)
   - [Linting](./meta/linting.md)

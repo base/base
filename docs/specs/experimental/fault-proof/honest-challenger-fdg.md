@@ -50,7 +50,7 @@ to its root claim:
    NOTE: The honest challenger will still track this game in order to defend any subsequent
    claims made against the root claim - in effect, "playing the game".
 
-### Counter Claims
+### Countering Invalid Claims
 
 For every claim made in a dispute game with a [game tree](fault-dispute-game.md#game-tree)
 depth in the range of `[1, MAX_DEPTH]`, the honest challenger processes them and performs
@@ -62,7 +62,8 @@ This determines the set of claims it should respond to in the FDG.
 If the agent determines itself to be a Defender, which aims to support the root claim,
 then it must dispute claims positioned at odd depths in the game tree.
 Otherwise, it disputes claims positioned at even depths in the game tree.
-This means an honest challenger only responds to claims made by the opposing team.
+This means an honest challenger will typically only respond to claims made by the opposing team.
+(See [Countering Freeloaders](#countering-freeloaders) for exceptions to this).
 
 The next step is to determine if the claim, now known to be for the opposing team,
 disputes another claim the honest challenger _agrees_ with.
@@ -77,6 +78,23 @@ If the `ClaimHash` matches the honest challenger's at the same trace index, then
 disagree with the claim's stance by moving to [defend](fault-dispute-game.md#defend).
 Otherwise, the claim is [attacked](fault-dispute-game.md#attack).
 
+### Countering Freeloaders
+
+Freeloaders are claims that exist at the correct depth and on the same team as honest challengers
+but are positioned incorrectly or commit to an invalid `ClaimHash`.
+The honest challenger must dispute freeloaders to claim the bond of the subgame root.
+If not disputed, the bond may be awarded to the freeloader, depending on their position.
+See [Bond incentives for subgame Resolution](./bond-incentives.md) for details.
+
+The honest challenger achieves this by disputing any freeloader claim that is not invalidly positioned
+in a defensive position. This includes disputing the following types of claims:
+
+- Claims at an invalid attack position
+- Claims with an invalid `ClaimHash` at a valid attack position
+- Claims with a valid `ClaimHash` at a valid defense position
+
+Doing so ensures that the leftmost claim is the hoenst challenger's.
+
 The following pseudocode illustrates the response logic.
 
 ```python
@@ -89,24 +107,44 @@ class Claim:
     position: uint64
     claim_hash: ClaimHash
 
+class Response(Enum):
+    ATTACK = 0
+    DEFEND = 1
+    NOP = 2
+
 MAX_TRACE = 2**MAX_GAME_DEPTH
 
-def agree_with(claim: Claim, chal_trace: List[ClaimHash, MAX_TRACE]):
-    if chal_trace[claim.trace_index] != claim.claim_hash:
+def agree_with(claim: Claim, chal_trace: List[ClaimHash, MAX_TRACE]) -> bool:
+    if chal_trace[trace_index(claim.position)] != claim.claim_hash:
         return False
     grand_parent = claim.parent.parent if claim.parent is not None else None
     if grand_parent is not None:
         return agree_with(grand_parent)
     return True
 
-def respond(claim: Claim, chal: Team, chal_trace: List[ClaimHash, MAX_TRACE]):
+def is_attack(claim: Claim) -> bool:
+    return claim.position == claim.parent.position << 1
+
+def respond_claim(claim: Claim, correct_trace: List[ClaimHash, MAX_TRACE]) -> Response:
+    if chal_trace[trace_index(claim.position)] == claim.claim_hash:
+        return Response.DEFEND
+    else:
+        return Response.ATTACK
+
+def respond(claim: Claim, chal: Team, chal_trace: List[ClaimHash, MAX_TRACE]) -> Response:
     if depth(claim.position) % 2 != chal.value:
         if claim.parent is None or agree_with(claim.parent, chal_trace):
-            if chal_trace[trace_index(claim.position)] == claim.claim_hash:
-                defend()
-            else:
-                attack()
-        else: pass # avoid supporting invalid claims on the same team
+            return respond_claim(claim, chal_trace)
+        else:
+            return Response.NOP # avoid supporting invalid claims on the same team
+    else:
+        correct_response = respond(claim.parent, chal, chal_trace)
+        claim_response = Response.ATTACK if is_attack(claim) else Response.DEFEND
+        invalid_defense = claim_response == Response.DEFEND and correct_response == Respond.ATTACK
+        if not invalid_defense:
+            return respond_claim(claim, chal_trace)
+        else:
+            return Response.NOP
 ```
 
 In attack or defense, the honest challenger submit a `ClaimHash` corresponding to the
