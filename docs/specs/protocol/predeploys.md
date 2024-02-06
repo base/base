@@ -248,8 +248,11 @@ Following the Ecotone upgrade, the values used for L1 fee computation are:
 - l1BlobBaseFeeScalar
 - decimals
 
-These values are managed by the `SystemConfig` contract on the L1. The`decimals` remains hardcoded
-to 6, and the old `scalar` and `overhead` values are ignored.
+[ecotone-scalars]: system_config.html#ecotone-scalar-overhead-uint256uint256-change
+
+These new scalar values are managed by the `SystemConfig` contract on the L1 by introducing a
+backwards compatible [versioned encoding scheme][ecotone-scalars] of its `scalars` storage
+slot. The `decimals` remains hardcoded to 6, and the `overhead` value is ignored.
 
 ## L1Block
 
