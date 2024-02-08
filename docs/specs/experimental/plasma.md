@@ -73,24 +73,24 @@ store the request payload so as to signal to the batcher to retry.
 Input commitments submitted onchain without proper storage on the DA provider service are subject to
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
 
-[batcher]: derivation.md#batch-submission
+[batcher]: ../protocol/derivation.md#batch-submission
 
 ## Data Availability Challenge Contract
 
 ### Parameters
 
-| Variable                      | Description                                                                 |
-| ----------------------------- | --------------------------------------------------------------------------- |
-| challengeWindow:  uint256 | Number of L1 blocks whereby a commitment MAY be challenged after it's included onchain |
-| resolveWindow:  uint256 | Number of L1 blocks whereby input data SHOULD be submitted onchain after a challenge   |
-| bondSize:   uint256 | Bond amount in Wei posted by the challenger so that bondSize >= resolveCost |
-| resolverRefundFactor: uint256 | Factor defining the portion of the resolving cost refunded to the resolver  |
+| Variable  | Type                     | Description                                                                 |
+| --------- | ----------------- | --------------------------------------------------------------------------- |
+| challengeWindow |  `uint256` | Number of L1 blocks whereby a commitment MAY be challenged after it's included onchain |
+| resolveWindow |  `uint256` | Number of L1 blocks whereby input data SHOULD be submitted onchain after a challenge   |
+| bondSize |   `uint256` | Bond amount in Wei posted by the challenger so that bondSize >= resolveCost |
+| resolverRefundFactor | `uint256` | Factor defining the portion of the resolving cost refunded to the resolver  |
 
 Data availability is guaranteed via a permissionless challenge contract on the L1 chain.
 Users have a set number of L1 blocks (`challengeWindow`) during which they are able to call
 the `challenge` method of the contract with the following inputs:
 
-```js
+```solidity
 function challenge(uint256 challengedBlockNumber, bytes32 commitment) external payable
 ```
 
@@ -103,7 +103,7 @@ If the data is not included onchain by the time the resolve window is elapsed, d
 will reorg starting from this first block derived from the challenged input data to the last block derived from the
 L1 block at which it expired. See more details about [Derivation](#derivation) in the following section.
 
-```js
+```solidity
 function resolve(uint256 challengedBlockNumber, bytes32 commitment, bytes calldata preImage) external
 ```
 
@@ -111,7 +111,7 @@ In order to challenge a commitment, users deposit a bond amount where `bond >= r
 If the gas cost of resolving the challenge was lower than the bond, the difference is reimbursed to the challenger
 and the rest of the bond is burnt. If the challenge is not resolved in time and expired,
 the bond is returned and can be withdrawn by the challenger or used to challenge another commitment.
-`bondSize` can be updated by the contract owner similar to [SystemConfig](specs/system-config.mg) variables.
+`bondSize` can be updated by the contract owner similar to [SystemConfig](../protocol/system_config.md) variables.
 See [Security Considerations](#security-considerations) for more details on bond management.
 
 The state of all challenges can be read from the contract state or by syncing contract events.
@@ -138,7 +138,7 @@ and sync a local state of challenged input commitments. As the derivation pipeli
 `challenge_window + resolve_window` amount of L1 blocks, any challenge marked as active
 becomes expired causing a reset of the derivation pipeline.
 
-```js
+```solidity
 // The status enum of a DA Challenge event
 enum ChallengeStatus {
     Uninitialized,
@@ -180,7 +180,7 @@ In addition, an expired challenge will reorg out `[r_start, r_end]` L2 blocks so
 block derived from the expired challenge's input and `r_end` the last L2 block derived before the pipeline
 was reset.
 
-[pipeline]: specs/derivation.md#resetting-the-pipeline
+[pipeline]: ../protocol/derivation.md#resetting-the-pipeline
 [eip4844]: https://eips.ethereum.org/EIPS/eip-4844
 
 ## Fault Proof
@@ -197,7 +197,7 @@ The input data stored on the DA storage for the given `<commitment>`.
 The status of the challenge for the given `<commitment>` at the given `<blocknumber>` on the L1
 DataAvailabilityChallenge contract.
 
-[faultproofs]: fault-proof.md
+[faultproofs]: ./fault-proof/index.md
 
 ## Safety and Finality
 
@@ -211,7 +211,7 @@ The DA manager maintains an internal state of all the input commitments in the c
 as they are validated by the derivation pipeline. In addition, it filters challenge events to calculate
 when commitments are challenged/resolved and elect the next finalized L1 block such that:
 
-```text
+```python
 if active_challenges_count > 0
     challenge = findOldestActiveChallenge(active_challenges)
     finality_delay = (challenge.block_number - challenge.commitment_block_number) + resolve_window + 1

@@ -42,6 +42,7 @@ Specifications of new features in active development.
   - [Fault Dispute Game](./experimental/fault-proof/fault-dispute-game.md)
     - [Honest Challenger Behavior](./experimental/fault-proof/honest-challenger-fdg.md)
   - [Cannon VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
+- [Plasma](./experimental/plasma.md)
 
 ## Design Goals
 
