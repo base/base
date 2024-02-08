@@ -15,7 +15,7 @@
   - [Game Tree](#game-tree)
   - [Position](#position)
   - [GAME_DURATION](#game_duration)
-- [Game Mechanics](#game-mechanics)
+- [Core Game Mechanics](#core-game-mechanics)
   - [Actors](#actors)
   - [Moves](#moves)
     - [Attack](#attack)
