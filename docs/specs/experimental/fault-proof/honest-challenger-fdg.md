@@ -7,7 +7,8 @@
 - [Overview](#overview)
 - [FDG Responses](#fdg-responses)
   - [Root Claims](#root-claims)
-  - [Counter Claims](#counter-claims)
+  - [Countering Invalid Claims](#countering-invalid-claims)
+  - [Countering Freeloaders](#countering-freeloaders)
   - [Steps](#steps)
 - [Resolution](#resolution)
 

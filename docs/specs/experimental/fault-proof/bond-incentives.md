@@ -1,5 +1,18 @@
 # Bond Incentives
 
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+**Table of Contents**
+
+- [Overview](#overview)
+- [Moves](#moves)
+- [Subgame Resolution](#subgame-resolution)
+  - [Leftmost Claim Incentives](#leftmost-claim-incentives)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
+
 Bonds is an add-on to the core [Fault Dispute Game](./fault-dispute-game.md). The core game mechanics are
 designed to ensure honesty as the best response to winning subgames. By introducing financial incentives,
 Bonds makes it worthwhile for honest challengers to participate.
