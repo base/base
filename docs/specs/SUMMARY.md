@@ -33,7 +33,3 @@
       - [Bond Incentives](./experimental/fault-proof/bond-incentives.md)
   - [Plasma](./experimental/plasma.md)
 - [Glossary](./glossary.md)
-- [Meta](./meta/index.md)
-  - [Linting](./meta/linting.md)
-  - [Versioning](./meta/versioning.md)
-  - [Markdown Style](./meta/markdown-style.md)
