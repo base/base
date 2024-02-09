@@ -13,7 +13,9 @@
     - [Type `3`: Global generic key](#type-3-global-generic-key)
     - [Type `4`: Global SHA2-256 key](#type-4-global-sha2-256-key)
     - [Type `5`: Global EIP-4844 Point-evaluation key](#type-5-global-eip-4844-point-evaluation-key)
-    - [Type `6-128`: reserved range](#type-6-128-reserved-range)
+    - [Type `6`: Global EIP-4844 Point-evaluation precompile key](
+      #type-6-global-eip-4844-point-evaluation-precompile-key)
+    - [Type `7-128`: reserved range](#type-7-128-reserved-range)
     - [Type `129-255`: application usage](#type-129-255-application-usage)
   - [Bootstrapping](#bootstrapping)
   - [Hinting](#hinting)
@@ -26,6 +28,7 @@
     - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
+    - [`l1-kzg-point-evaluation <bytes>`](#l1-kzg-point-evaluation-bytes)
     - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
     - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
     - [`l2-code <codehash>`](#l2-code-codehash)
@@ -156,7 +159,24 @@ Key: `5 ++ keccak256(commitment ++ z)[1:]`, where:
 - `commitment` is a bytes48, representing the KZG commitment.
 - `z` is a big-endian `uint256`
 
-#### Type `6-128`: reserved range
+#### Type `6`: Global EIP-4844 Point-evaluation precompile key
+
+An EIP-4844 point-evaluation precompile result.
+
+It returns the result of the EIP-4844 point-evaluation precompile introduced in Cancun.
+
+Key: `6 ++ keccak256(input)[1:]`, where:
+
+- `6` is the type byte
+- `++` is concatenation
+- `input` is the 192 byte input to the KZG point evaluation precompile
+
+The result has two possible 1-byte values:
+
+- `0` if the point evaluation precompile fails
+- `1` - otherwise
+
+#### Type `7-128`: reserved range
 
 Range start and end both inclusive.
 
@@ -384,6 +404,11 @@ prepare the RLP pre-images of each of them, including transactions-list MPT node
 
 Requests the host to prepare the list of receipts of the L1 block with `<blockhash>`:
 prepare the RLP pre-images of each of them, including receipts-list MPT nodes.
+
+#### `l1-kzg-point-evaluation <bytes>`
+
+Requests the host to prepare the result of the L1 KZG point evaluation precompile given
+`<bytes>` as the input.
 
 #### `l2-block-header <blockhash>`
 
