@@ -440,7 +440,7 @@ The L2 Output is the preimage of a
 
 Precompiles that are too expensive to be executed in a fault-proof VM can be executed
 more efficiently using the pre-image oracle.
-This approach ensures that the fault proof program can complete a state transition in some
+This approach ensures that the fault proof program can complete a state transition in a reasonable
 amount of time.
 
 During program execution, the precompiles are substituted with interactions with pre-image oracle.
