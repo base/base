@@ -161,7 +161,7 @@ Key: `5 ++ keccak256(commitment ++ z)[1:]`, where:
 
 #### Type `6`: Global EIP-4844 Point-evaluation precompile key
 
-An EIP-4844 point-evaluation precompile result. It result maps directly to the EIP-4844
+An EIP-4844 point-evaluation precompile result. It maps directly to the EIP-4844
 point-evaluation precompile introduced in Cancun.
 
 This preimage key can be used to avoid running expensive point-evaluation routine in
