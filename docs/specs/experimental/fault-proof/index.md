@@ -447,7 +447,7 @@ During program execution, the precompiles are substituted with interactions with
 An example of this is the KZG point evaluation precompile, where the program provides
 the host with a hint for the point evaluation input. This allows it to subsequently retrieve the result
 using a [type `6` pre-image key](#type-6-global-eip-4844-point-evaluation-precompile-key) from the oracle.
-All accelerated  precompiles must be functionally equivalent to their EVM equivalent.
+All accelerated precompiles must be functionally equivalent to their EVM equivalent.
 
 ## Fault Proof VM
 
