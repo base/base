@@ -13,7 +13,9 @@
     - [Type `3`: Global generic key](#type-3-global-generic-key)
     - [Type `4`: Global SHA2-256 key](#type-4-global-sha2-256-key)
     - [Type `5`: Global EIP-4844 Point-evaluation key](#type-5-global-eip-4844-point-evaluation-key)
-    - [Type `6-128`: reserved range](#type-6-128-reserved-range)
+    - [Type `6`: Global EIP-4844 Point-evaluation precompile key](
+      #type-6-global-eip-4844-point-evaluation-precompile-key)
+    - [Type `7-128`: reserved range](#type-7-128-reserved-range)
     - [Type `129-255`: application usage](#type-129-255-application-usage)
   - [Bootstrapping](#bootstrapping)
   - [Hinting](#hinting)
@@ -26,6 +28,7 @@
     - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
+    - [`l1-kzg-point-evaluation <bytes>`](#l1-kzg-point-evaluation-bytes)
     - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
     - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
     - [`l2-code <codehash>`](#l2-code-codehash)
@@ -156,7 +159,26 @@ Key: `5 ++ keccak256(commitment ++ z)[1:]`, where:
 - `commitment` is a bytes48, representing the KZG commitment.
 - `z` is a big-endian `uint256`
 
-#### Type `6-128`: reserved range
+#### Type `6`: Global EIP-4844 Point-evaluation precompile key
+
+An EIP-4844 point-evaluation precompile result. It maps directly to the EIP-4844
+point-evaluation precompile introduced in Cancun.
+
+This preimage key can be used to avoid running expensive point-evaluation routine in
+ a program.
+
+Key: `6 ++ keccak256(input)[1:]`, where:
+
+- `6` is the type byte
+- `++` is concatenation
+- `input` is the 192 byte input to the KZG point evaluation precompile
+
+The result has two possible 1-byte values:
+
+- `0` if the point evaluation precompile fails
+- `1` - otherwise
+
+#### Type `7-128`: reserved range
 
 Range start and end both inclusive.
 
@@ -385,6 +407,12 @@ prepare the RLP pre-images of each of them, including transactions-list MPT node
 Requests the host to prepare the list of receipts of the L1 block with `<blockhash>`:
 prepare the RLP pre-images of each of them, including receipts-list MPT nodes.
 
+#### `l1-kzg-point-evaluation <inputbytes>`
+
+Requests the host to prepare the result of the L1 KZG point evaluation precompile given
+`<inputbytes>` as the input. The host also prepares a [global keccak256 preimage](#type-2-global-keccak256-key)
+of the input.
+
 #### `l2-block-header <blockhash>`
 
 Requests the host to prepare the L2 block header RLP pre-image of the block `<blockhash>`.
@@ -407,6 +435,19 @@ Requests the host to prepare the L2 MPT node preimage with the given `<nodehash>
 Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
 [computed output root](../../protocol/proposals.md#l2-output-commitment-construction).
+
+### Precompile Accelerators
+
+Precompiles that are too expensive to be executed in a fault-proof VM can be executed
+more efficiently using the pre-image oracle.
+This approach ensures that the fault proof program can complete a state transition in a reasonable
+amount of time.
+
+During program execution, the precompiles are substituted with interactions with pre-image oracle.
+An example of this is the KZG point evaluation precompile, where the program provides
+the host with a hint for the point evaluation input. This allows it to subsequently retrieve the result
+using a [type `6` pre-image key](#type-6-global-eip-4844-point-evaluation-precompile-key) from the oracle.
+All accelerated precompiles must be functionally equivalent to their EVM equivalent.
 
 ## Fault Proof VM
 
