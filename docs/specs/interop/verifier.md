@@ -140,53 +140,6 @@ follows. The main difference is that the validity of included executing
 messages is verified instead of verifying possible executing messages before
 inclusion.
 
-```python
-deps = get_transitive_dependency_set()
-
-blocks = {}
-
-while True:
-  for dep in deps:
-    if dep.has_new_block():
-      block = dep.get_earliest_unseen_block()
-      is_valid_block = True
-      for tx in block.transactions:
-        if is_executing_message(tx):
-          if not is_valid_executing_message(tx):
-            is_valid_block = False
-      if is_valid_block:
-        blocks[dep.chainid][block.number] = block
-
-  block = chain.next_unsafe_block():
-  can_promote = True
-  for tx in block.txs:
-    if is_executing_message(tx):
-      if not is_valid_executing_message(tx):
-        can_promote = False
-        break
-
-      target, message, id = abi.decode(tx.calldata)
-
-      if id.chainid not in get_transitive_dependency_set():
-        can_promote = False
-        break
-
-      remote_block = blocks[id.chainid][id.blocknumber]
-      if remote_block is None:
-        can_promote = False
-        break
-
-      messages = []
-      for receipt in remote_block.receipts:
-        for log in receipt:
-          messages.append(encode(log))
-      if message not in messages:
-        can_promote = False
-
-  if can_promote:
-    promote(block)
-```
-
 ## Security Considerations
 
 ### Forced Inclusion of Cross Chain Messages
