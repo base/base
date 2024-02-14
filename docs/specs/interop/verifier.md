@@ -11,8 +11,10 @@
     - [`cross-unsafe` Inputs](#cross-unsafe-inputs)
     - [`safe` Inputs](#safe-inputs)
     - [`finalized` Inputs](#finalized-inputs)
+  - [Honest Verifier](#honest-verifier)
 - [Security Considerations](#security-considerations)
   - [Forced Inclusion of Cross Chain Messages](#forced-inclusion-of-cross-chain-messages)
+    - [What if Safety isn't Enough?](#what-if-safety-isnt-enough)
   - [Reliance on History](#reliance-on-history)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -44,8 +46,7 @@ Deposit transactions (force inclusion transactions) give censorship resistance t
 The derivation pipeline must gracefully handle the case in which a user uses a deposit transaction to
 relay a cross chain message. To not couple preconfirmation security to consensus, deposit transactions
 that execute cross chain messages MUST have an initiating message that is considered [safe](#safety) by the remote
-chain's derivation pipeline. This means that the remote chain's data including the initiating message
-MUST be posted to the data availability layer. This relaxes a strict synchrony assumption on the sequencer
+chain's derivation pipeline. This relaxes a strict synchrony assumption on the sequencer
 that it MUST have all unsafe blocks of destination chains as fast as possible to ensure that it is building
 correct blocks.
 
@@ -77,7 +78,7 @@ technically policy and may be changed in the future.
 
 The `unsafe` label has the lowest latency while the `finalized` label has the highest latency.
 A set of invariants must be held true before an input or an output can be promoted to the next
-label.
+label, starting at `unsafe`.
 
 The initiating messages for all dependent executing messages MUST be resolved as safe before an L2 block can transition
 from being unsafe to safe. Users MAY optimistically accept unsafe blocks without any verification of the
@@ -94,7 +95,8 @@ to more quickly reorganize out invalid blocks.
 be signed by the sequencer. This signature represents the sequencer's claim that it
 built a block that conforms to the protocol. `unsafe` blocks exist to give low latency access to the
 latest information. To keep the latency as low as possible, cross chain messages are assumed valid
-at this stage. This means that the remote unsafe inputs are trusted.
+at this stage. This means that the remote unsafe inputs are trusted soley because they were
+included in a block by the sequencer.
 
 An alternative approach to `unsafe` inputs would be to include an SGX proof that the sequencer ran
 particular software when building the block.
@@ -112,6 +114,10 @@ An input can be promoted from `safe` to `cross-unsafe` when the full dependency 
 such that all cross chain messages are verified to be valid and at least one message in the dependency
 graph is still `unsafe`.
 
+Note that the `cross-unsafe` is not meant to be exposed to the end user via the RPC label. It is
+meant for internal usage. All `cross-unsafe` inputs are still considered `unsafe` by the execution
+layer RPC.
+
 #### `safe` Inputs
 
 - MUST be available
@@ -128,6 +134,14 @@ in a way where all of the data has been published to the data availability layer
 `finalized` represents full Proof of Stake economic security on top of the data. This means that
 if the data is reorganized, then validators will be slashed.
 
+### Honest Verifier
+
+The honest verifier follows a naive verification algorithm. That is similar
+to the block building code that the [sequencer](./sequencer.md#direct-dependency-confirmation)
+follows. The main difference is that the validity of included executing
+messages is verified instead of verifying possible executing messages before
+inclusion.
+
 ## Security Considerations
 
 ### Forced Inclusion of Cross Chain Messages
@@ -143,9 +157,19 @@ sequencing window that includes the deposit transaction. If the executing transa
 another sequencing window of time to force the inclusion of the executing message per the
 [spec][depositing-an-executing-message].
 
-TODO: verify exact timing of when reorg happens with deposits that are skipped
-
 [depositing-an-executing-message]: #depositing-an-executing-message
+
+#### What if Safety isn't Enough?
+
+It is possible that small latency differences may impact the allowance of deposited executing messages
+if the rule is that the initiating message is safe. A more strict invariant may be introduced:
+
+```text
+identifier.timestamp + sequencer_window <= block.timestamp
+```
+
+This says that a sequencer window must elapse before the initiating message can be referenced
+in an executing message.
 
 ### Reliance on History
 
