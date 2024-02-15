@@ -49,8 +49,9 @@ It consists of the following fields:
 7. `hi` - 32-bit MIPS HI special register.
 8. `heap` - 32-bit base address of the most recent memory allocation via mmap.
 9. `exitCode` - 8-bit exit code.
-10. `exited` - 1-bit indicator that the VM has exited.
-11. `registers` - General-purpose MIPS32 registers. Each register is a 32-bit value.
+10. `exited` - 8-bit indicator that the VM has exited.
+11. `step` - 8-byte step counter.
+12. `registers` - General-purpose MIPS32 registers. Each register is a 32-bit value.
 
 The state is represented by packing the above fields, in order, into a 226-byte buffer.
 
