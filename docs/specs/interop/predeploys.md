@@ -119,7 +119,7 @@ properties about the `_msg`.
 
 | Constant          | Value                                        |
 |-------------------|----------------------------------------------|
-| Address           | `0x4200000000000000000000000000000000000024` |
+| Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
 | `INITIAL_BALANCE` | `type(uint248).max`                          |
 
