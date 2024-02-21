@@ -89,6 +89,12 @@ challenges if the input cannot be retrieved during the challenge window, as deta
 
 ### Parameters
 
+| Constant | Type | Description     |
+| -------- | ---- | ---------------- |
+| fixedResolutionCost | `uint256` | Fixed gas cost of resolving a challenge, set to 72925 |
+| variableResolutionCost | `uint256` | Upper limit gas cost per byte scaled by precision constant, set to 16640 |
+| variableResolutionCostPrecision | `uint256` | Precision of the variable resolution cost, set to 1000 |
+
 | Variable  | Type                     | Description                                                                 |
 | --------- | ----------------- | --------------------------------------------------------------------------- |
 | challengeWindow |  `uint256` | Number of L1 blocks whereby a commitment MAY be challenged after it's included onchain |
@@ -101,7 +107,7 @@ Users have a set number of L1 blocks (`challengeWindow`) during which they are a
 the `challenge` method of the contract with the following inputs:
 
 ```solidity
-function challenge(uint256 challengedBlockNumber, bytes commitment) external payable
+function challenge(uint256 challengedBlockNumber, bytes calldata challengedCommitment) external payable
 ```
 
 - The L1 block number in which it was included.
@@ -114,11 +120,12 @@ will reorg starting from this first block derived from the challenged input data
 L1 block at which it expired. See more details about [Derivation](#derivation) in the following section.
 
 ```solidity
-function resolve(uint256 challengedBlockNumber, bytes commitment, bytes calldata preImage) external
+function resolve(uint256 challengedBlockNumber, bytes calldata challengedCommitment, bytes calldata resolveData) external
 ```
 
 In order to challenge a commitment, users deposit a bond amount where `bond >= resolve_tx_gas_cost`.
-If the gas cost of resolving the challenge was lower than the bond, the difference is reimbursed to the challenger
+If the gas cost of resolving the challenge was lower than the bond, the difference is reimbursed to the challenger where
+`cost = (fixedResolutionCost + preImageLength * variableResolutionCost / variableResolutionCostPrecision) * gasPrice`
 and the rest of the bond is burnt. If the challenge is not resolved in time and expired,
 the bond is returned and can be withdrawn by the challenger or used to challenge another commitment.
 `bondSize` can be updated by the contract owner similar to [SystemConfig](../protocol/system_config.md) variables.
