@@ -33,6 +33,7 @@
       - [Fault Dispute Game](./experimental/fault-proof/stage-one/fault-dispute-game.md)
         - [Honest Challenger](./experimental/fault-proof/stage-one/honest-challenger-fdg.md)
         - [Bond Incentives](./experimental/fault-proof/stage-one/bond-incentives.md)
+      - [Bridge Integration](./experimental/fault-proof/stage-one/bridge-integration.md)
   - [Plasma](./experimental/plasma.md)
   - [Interoperability](./interop/README.md)
     - [Dependency Set](./interop/dependency_set.md)
