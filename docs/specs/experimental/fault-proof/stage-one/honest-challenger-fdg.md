@@ -2,6 +2,7 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [Overview](#overview)
@@ -31,7 +32,7 @@ The Honest Challenger has two primary duties:
 The honest challenger polls the `DisputeGameFactory` contract for new and on-going Fault
 Dispute Games.
 For verifying the legitimacy of claims, it relies on a synced, trusted rollup node
-as well as a trace provider (ex: [Cannon](cannon-fault-proof-vm.md)).
+as well as a trace provider (ex: [Cannon](../cannon-fault-proof-vm.md)).
 The trace provider must be configured with the [ABSOLUTE_PRESTATE](fault-dispute-game.md#execution-trace)
 of the FDG being interacted with to generate the traces needed to make truthful claims.
 

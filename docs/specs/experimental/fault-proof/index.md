@@ -3,6 +3,7 @@
 <!-- markdownlint-disable -->
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [Overview](#overview)
@@ -310,7 +311,7 @@ but can be overridden for testing purposes:
   - `rollup_config`: The rollup configuration used by the rollup-node (also known as `rollup.json`)
 
 The implied inputs rely on L1-introspection to load attributes of the `dispute` through the
-[dispute game interface](dispute-game-interface.md), in the L1 history up and till the specified `l1_head`.
+[dispute game interface](./stage-one/dispute-game-interface.md), in the L1 history up and till the specified `l1_head`.
 The `dispute` may be the claim itself, or a pointer to specific prior claimed data in L1,
 depending on the dispute game interface.
 
@@ -494,5 +495,5 @@ The allocated response time is limited by the dispute-game window,
 and any additional time necessary based on L1 fee changes when bonds are insufficient.
 
 > Note: the timed, bonded, bisection dispute game is in development.
-> Also see [fault dispute-game specs](fault-dispute-game.md) for fault dispute game system specifications,
-> And [dispute-game-interface specs](dispute-game-interface.md) for dispute game interface specifications.
+> Also see [fault dispute-game specs](./stage-one/fault-dispute-game.md) for fault dispute game system specifications,
+> And [dispute-game-interface specs](./stage-one/dispute-game-interface.md)

@@ -5,6 +5,7 @@ that maintains 1:1 compatibility with Ethereum.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [Specification Contents](#specification-contents)
@@ -38,9 +39,11 @@ that maintains 1:1 compatibility with Ethereum.
 Specifications of new features in active development.
 
 - [Fault Proof](./experimental/fault-proof/index.md)
-  - [Dispute Game Interface](./experimental/fault-proof/dispute-game-interface.md)
-  - [Fault Dispute Game](./experimental/fault-proof/fault-dispute-game.md)
-    - [Honest Challenger Behavior](./experimental/fault-proof/honest-challenger-fdg.md)
+  - [Stage One Decentralization]()
+    - [Dispute Game Interface](./experimental/fault-proof/stage-one/dispute-game-interface.md)
+    - [Fault Dispute Game](./experimental/fault-proof/stage-one/fault-dispute-game.md)
+      - [Bond Incentives](./experimental/fault-proof/stage-one/bond-incentives.md)
+      - [Honest Challenger Behavior](./experimental/fault-proof/stage-one/honest-challenger-fdg.md)
   - [Cannon VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
 - [Plasma](./experimental/plasma.md)
 - [Interoperability](./interop/README.md)
