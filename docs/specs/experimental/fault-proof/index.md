@@ -1,5 +1,6 @@
 # Fault Proof
 
+<!-- markdownlint-disable -->
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
@@ -13,8 +14,7 @@
     - [Type `3`: Global generic key](#type-3-global-generic-key)
     - [Type `4`: Global SHA2-256 key](#type-4-global-sha2-256-key)
     - [Type `5`: Global EIP-4844 Point-evaluation key](#type-5-global-eip-4844-point-evaluation-key)
-    - [Type `6`: Global EIP-4844 Point-evaluation precompile key](
-      #type-6-global-eip-4844-point-evaluation-precompile-key)
+    - [Type `6`: Global EIP-4844 Point-evaluation precompile key](#type-6-global-eip-4844-point-evaluation-precompile-key)
     - [Type `7-128`: reserved range](#type-7-128-reserved-range)
     - [Type `129-255`: application usage](#type-129-255-application-usage)
   - [Bootstrapping](#bootstrapping)
@@ -28,16 +28,18 @@
     - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
-    - [`l1-kzg-point-evaluation <bytes>`](#l1-kzg-point-evaluation-bytes)
+    - [`l1-kzg-point-evaluation <inputbytes>`](#l1-kzg-point-evaluation-inputbytes)
     - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
     - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
     - [`l2-code <codehash>`](#l2-code-codehash)
     - [`l2-state-node <nodehash>`](#l2-state-node-nodehash)
     - [`l2-output <outputroot>`](#l2-output-outputroot)
+  - [Precompile Accelerators](#precompile-accelerators)
 - [Fault Proof VM](#fault-proof-vm)
 - [Fault Proof Interactive Dispute Game](#fault-proof-interactive-dispute-game)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- markdownlint-enable -->
 
 ## Overview
 
@@ -165,7 +167,7 @@ An EIP-4844 point-evaluation precompile result. It maps directly to the EIP-4844
 point-evaluation precompile introduced in Cancun.
 
 This preimage key can be used to avoid running expensive point-evaluation routine in
- a program.
+a program.
 
 Key: `6 ++ keccak256(input)[1:]`, where:
 
