@@ -1,5 +1,6 @@
 # Fault Proof
 
+<!-- markdownlint-disable -->
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
@@ -38,6 +39,7 @@
 - [Fault Proof Interactive Dispute Game](#fault-proof-interactive-dispute-game)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<!-- markdownlint-enable -->
 
 ## Overview
 
@@ -165,7 +167,7 @@ An EIP-4844 point-evaluation precompile result. It maps directly to the EIP-4844
 point-evaluation precompile introduced in Cancun.
 
 This preimage key can be used to avoid running expensive point-evaluation routine in
- a program.
+a program.
 
 Key: `6 ++ keccak256(input)[1:]`, where:
 
