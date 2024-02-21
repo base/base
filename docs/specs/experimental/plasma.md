@@ -67,6 +67,16 @@ The [batching][batcher] and compression of input data remain unchanged. When a b
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
 commitment (keccak256 hash) is submitted as the bacher inbox transaction call data.
 
+Commitments are encoded as `commitment_type_byte ++ commitment_bytes`, where `commitment_bytes` depends
+on the `commitment_type_byte` where [0, 128) are reserved for official implementations:
+
+| `commitment_type` | `commitment`                    |
+| ----------------- | ------------------------------- |
+| 0                 | `keccak256(tx_payload)`         |
+
+The batcher SHOULD cap input payloads to the maximum L1 tx size or the input will be skipped
+during derivation. See [derivation section](#derivation) for more details.
+
 The batcher SHOULD NOT submit a commitment onchain unless input data was successfully stored on the service.
 In addition, a DA provider storage service SHOULD return an error response if it is unable to properly
 store the request payload so as to signal to the batcher to retry.
@@ -91,11 +101,11 @@ Users have a set number of L1 blocks (`challengeWindow`) during which they are a
 the `challenge` method of the contract with the following inputs:
 
 ```solidity
-function challenge(uint256 challengedBlockNumber, bytes32 commitment) external payable
+function challenge(uint256 challengedBlockNumber, bytes commitment) external payable
 ```
 
 - The L1 block number in which it was included.
-- Commitment bytes (keccak256)
+- Versioned commitment bytes (i.e. `0 ++ keccak256(frame.. )`)
 
 Users with access to the input data then have another window of L1 blocks (`resolveWindow`)
 during which they can submit it as calldata to the chain by calling the `resolve` method of the contract.
@@ -104,7 +114,7 @@ will reorg starting from this first block derived from the challenged input data
 L1 block at which it expired. See more details about [Derivation](#derivation) in the following section.
 
 ```solidity
-function resolve(uint256 challengedBlockNumber, bytes32 commitment, bytes calldata preImage) external
+function resolve(uint256 challengedBlockNumber, bytes commitment, bytes calldata preImage) external
 ```
 
 In order to challenge a commitment, users deposit a bond amount where `bond >= resolve_tx_gas_cost`.
@@ -149,7 +159,7 @@ enum ChallengeStatus {
 
 // DA Challenge event filtered
 event ChallengeStatusChanged(
-  bytes32 indexed challengedHash, uint256 indexed challengedBlockNumber, ChallengeStatus status
+  bytes indexed challengedCommitment, uint256 indexed challengedBlockNumber, ChallengeStatus status
 );
 
 ```
@@ -179,6 +189,11 @@ or load input data from the resolving transaction calldata.
 In addition, an expired challenge will reorg out `[r_start, r_end]` L2 blocks so that `r_start` is the first
 block derived from the expired challenge's input and `r_end` the last L2 block derived before the pipeline
 was reset.
+
+Derivation MUST skip input data such as `input_data_size > MAX_L1_TX_SIZE` where `MAX_L1_TX_SIZE` is a consensus
+constant of 131072 bytes. In theory `MAX_L1_TX_SIZE` could be increased up to
+`(tx_gas_limit - fixed_resolution_cost) / dynamic_resolution_cost` based on the cost of resolving challenges in
+the contract implementation however to make challenging accessible it is capped based on geth's txMaxSize.
 
 [pipeline]: ../protocol/derivation.md#resetting-the-pipeline
 [eip4844]: https://eips.ethereum.org/EIPS/eip-4844
