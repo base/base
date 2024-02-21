@@ -1,3 +1,5 @@
+<!-- DOCTOC SKIP -->
+
 # Stage One Decentralization
 
 [g-l2-proposal]: ../../../glossary.md#l2-output-root-proposals
