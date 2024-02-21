@@ -30,13 +30,10 @@
 
 [g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
 
-> The span-batches spec is experimental :shipit:
->
-> \*this feature is in active R&D and not yet part of any hard fork
-
 ## Introduction
 
-Span-batches reduce overhead of OP-stack chains.
+Span-batch is a new batching spec that reduces overhead of OP-stack chains,
+introduced in [Delta](superchain-upgrades.md#delta) network upgrade.
 This enables sparse and low-throughput OP-stack chains.
 
 The overhead is reduced by representing a span of
