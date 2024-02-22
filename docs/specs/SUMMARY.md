@@ -35,7 +35,7 @@
         - [Bond Incentives](./experimental/fault-proof/stage-one/bond-incentives.md)
       - [Bridge Integration](./experimental/fault-proof/stage-one/bridge-integration.md)
   - [Plasma](./experimental/plasma.md)
-  - [Interoperability](./interop/README.md)
+  - [Interoperability](./interop/overview.md)
     - [Dependency Set](./interop/dependency_set.md)
     - [Messaging](./interop/messaging.md)
     - [Predeploys](./interop/predeploys.md)

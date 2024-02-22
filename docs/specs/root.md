@@ -45,7 +45,7 @@ Specifications of new features in active development.
       - [Honest Challenger Behavior](./experimental/fault-proof/stage-one/honest-challenger-fdg.md)
   - [Cannon VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
 - [Plasma](./experimental/plasma.md)
-- [Interoperability](./interop/README.md)
+- [Interoperability](./interop/overview.md)
 
 ## Design Goals
 
