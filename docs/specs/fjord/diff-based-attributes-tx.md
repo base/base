@@ -1,15 +1,14 @@
+# Diff Based L1Attributes Transaction
+
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Diff Based L1Attributes Transaction](#diff-based-l1attributes-transaction)
-  - [Implementation](#implementation)
-    - [Ecotone L1Attributes Example](#ecotone-l1attributes-example)
-  - [Node Implementation](#node-implementation)
+- [Implementation](#implementation)
+  - [Ecotone L1Attributes Example](#ecotone-l1attributes-example)
+- [Node Implementation](#node-implementation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-# Diff Based L1Attributes Transaction
 
 The `L1Attributes` transaction is the first transaction included in every L2 block.
 It can be thought of as an extension to the L2 block header that is 100% backwards
