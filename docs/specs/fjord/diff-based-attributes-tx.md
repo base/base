@@ -6,6 +6,7 @@
 
 - [Implementation](#implementation)
   - [Ecotone L1Attributes Example](#ecotone-l1attributes-example)
+  - [Optimization](#optimization)
 - [Node Implementation](#node-implementation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -53,6 +54,17 @@ it indicates that the value is present and the the `size` number of bytes should
 be read from the `calldata` and the offset of the next read from the calldata is
 incremented by the `size`. If the value in the bitfield is a `0`, then the data
 is not present and any reading/seeking is skipped.
+
+### Optimization
+
+The above example can be optimized by grouping the attributes that always change together
+into a single bit. This would be the `l1BlockTimestamp`, the `l1BlockNumber` and `l1BlockHash`.
+In the case of a missed L1 slot or L1 reorg, it is possible to have the `l1BlockNumber` not change but
+the others may change. This case doesn't happen often and would result in some repeat data being
+posted.
+
+It is not safe to omit the `sequenceNumber` due to the fact that it always increases because we need
+to guarantee that L1 Attributes Transactions have unique transaction hashes. In this way it acts as a nonce.
 
 ## Node Implementation
 
