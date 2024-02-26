@@ -212,7 +212,7 @@ correctly), and so are individual transactions within the batch (e.g. signatures
 invalid individual transactions within an otherwise valid batch are discarded by correct nodes.
 
 If the sequencer applies a state transition incorrectly and posts an [output root][g-l2-output], then this output root
-will be incorrect. The incorrect output root which will be challenged by a [fault proof][g-fault-proof], then replaced
+will be incorrect. The incorrect output root will be challenged by a [fault proof][g-fault-proof], then replaced
 by a correct output root **for the existing sequencer batches.**
 
 Refer to the [Batch Submission specification][batcher-spec] for more information.
