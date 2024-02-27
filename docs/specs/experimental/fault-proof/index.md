@@ -14,7 +14,7 @@
     - [Type `3`: Global generic key](#type-3-global-generic-key)
     - [Type `4`: Global SHA2-256 key](#type-4-global-sha2-256-key)
     - [Type `5`: Global EIP-4844 Point-evaluation key](#type-5-global-eip-4844-point-evaluation-key)
-    - [Type `6`: Global EIP-4844 Point-evaluation precompile key](#type-6-global-eip-4844-point-evaluation-precompile-key)
+    - [Type `6`: Global Precompile key](#type-6-global-precompile-key)
     - [Type `7-128`: reserved range](#type-7-128-reserved-range)
     - [Type `129-255`: application usage](#type-129-255-application-usage)
   - [Bootstrapping](#bootstrapping)
@@ -28,7 +28,7 @@
     - [`l1-block-header <blockhash>`](#l1-block-header-blockhash)
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
-    - [`l1-kzg-point-evaluation <inputbytes>`](#l1-kzg-point-evaluation-inputbytes)
+    - [`l1-precompile <precompile ++ inputbytes>`](#l1-precompile-precompile--inputbytes)
     - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
     - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
     - [`l2-code <codehash>`](#l2-code-codehash)
@@ -161,24 +161,24 @@ Key: `5 ++ keccak256(commitment ++ z)[1:]`, where:
 - `commitment` is a bytes48, representing the KZG commitment.
 - `z` is a big-endian `uint256`
 
-#### Type `6`: Global EIP-4844 Point-evaluation precompile key
+#### Type `6`: Global Precompile key
 
-An EIP-4844 point-evaluation precompile result. It maps directly to the EIP-4844
-point-evaluation precompile introduced in Cancun.
+A precompile result. It maps directly to precompiles on Ethereum.
 
-This preimage key can be used to avoid running expensive point-evaluation routine in
-a program.
+This preimage key can be used to avoid running expensive precompile operations in the program.
 
-Key: `6 ++ keccak256(input)[1:]`, where:
+Key: `6 ++ keccak256(precompile ++ input)[1:]`, where:
 
 - `6` is the type byte
 - `++` is concatenation
-- `input` is the 192 byte input to the KZG point evaluation precompile
+- `precompile` is the 20-byte address of the precompile contract
+- `input` is the input to the precompile contract
 
-The result has two possible 1-byte values:
+The result is identical to that of a call to the precompile contract, prefixed with a revert indicator:
 
-- `0` if the point evaluation precompile fails
-- `1` - otherwise
+- `reverted ++ precompile_result`.
+
+`reverted` is a 1-byte indicator with a `0` value if the precompile reverts for the given input, otherwise it's `1`.
 
 #### Type `7-128`: reserved range
 
@@ -409,11 +409,11 @@ prepare the RLP pre-images of each of them, including transactions-list MPT node
 Requests the host to prepare the list of receipts of the L1 block with `<blockhash>`:
 prepare the RLP pre-images of each of them, including receipts-list MPT nodes.
 
-#### `l1-kzg-point-evaluation <inputbytes>`
+#### `l1-precompile <precompile ++ inputbytes>`
 
-Requests the host to prepare the result of the L1 KZG point evaluation precompile given
+Requests the host to prepare the result of an L1 call to the `precompile` address given
 `<inputbytes>` as the input. The host also prepares a [global keccak256 preimage](#type-2-global-keccak256-key)
-of the input.
+of the hint data `<precompile ++ inputbytes>`.
 
 #### `l2-block-header <blockhash>`
 
@@ -446,9 +446,8 @@ This approach ensures that the fault proof program can complete a state transiti
 amount of time.
 
 During program execution, the precompiles are substituted with interactions with pre-image oracle.
-An example of this is the KZG point evaluation precompile, where the program provides
-the host with a hint for the point evaluation input. This allows it to subsequently retrieve the result
-using a [type `6` pre-image key](#type-6-global-eip-4844-point-evaluation-precompile-key) from the oracle.
+The program hints the host for a precompile input. Which it the subsequently retrieves the result of the precompile
+opereation using the [type 6 global precompile key](#type-6-global-precompile-key).
 All accelerated precompiles must be functionally equivalent to their EVM equivalent.
 
 ## Fault Proof VM
