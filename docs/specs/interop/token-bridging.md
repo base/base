@@ -8,6 +8,7 @@
 - [Implementation](#implementation)
 - [L1 Native Tokens](#l1-native-tokens)
 - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
+- [Factory](#factory)
 - [Upgrading Existing `OptimismMintableERC20Token`s](#upgrading-existing-optimismmintableerc20tokens)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -82,6 +83,15 @@ Should an overloaded `approve` method be added to the interface so that a user c
 approve a contract on a remote domain to bridge on their behalf? A new `allowances`
 mapping could be added to the contract to enable this.
 
+## Factory
+
+A token factory predeploy can be used to ensure that `SuperchainERC20` tokens
+can be permissionlessly and deterministically deployed. If a deterministic deployment
+scheme is not used, maintaining a mapping of the token addresses between all of the
+chains will not be scalable.
+
 ## Upgrading Existing `OptimismMintableERC20Token`s
 
-TODO
+An `OptimismMintableERC20Token` does not natively have the functionality
+to be sent between L2s. There are a few approaches to migrating L1 native tokens
+to L2 ERC20 tokens that support the `SuperchainERC20` interface.
