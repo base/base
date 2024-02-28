@@ -4,10 +4,9 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Token Bridging](#token-bridging)
-  - [Interface](#interface)
-  - [Implementation](#implementation)
-    - [L1 Native Tokens](#l1-native-tokens)
+- [Interface](#interface)
+- [Implementation](#implementation)
+  - [L1 Native Tokens](#l1-native-tokens)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
