@@ -6,7 +6,9 @@
 
 - [Interface](#interface)
 - [Implementation](#implementation)
-  - [L1 Native Tokens](#l1-native-tokens)
+- [L1 Native Tokens](#l1-native-tokens)
+- [Cross Chain `transferFrom`](#cross-chain-transferfrom)
+- [Upgrading Existing `OptimismMintableERC20Token`s](#upgrading-existing-optimismmintableerc20tokens)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -28,23 +30,29 @@ tokens, the user instead calls methods on the token contract directly.
 
 ```solidity
 interface ISuperchainERC20 {
-  function initiateTransfer(address to, uint256 amount, uint256 chainId) external;
-  function executeTransfer(address to, uint256 amount) external;
+  function bridgeERC20(uint256 amount, uint256 chainId) external;
+  function bridgeERC20To(address to, uint256 amount, uint256 chainId) external;
+  function finalizeBridgeERC20(address to, uint256 amount) external;
 }
 ```
-
-The `initiate` and `execute` language is used to keep standard language with
-the lower level messaging specification. Note that this interface can be used
-for both OP Stack native interoperability and application layer interoperability.
 
 ## Implementation
 
 An example implementation that depends on deterministic deployments across chains
-for security is provided.
+for security is provided. This construction builds on top of the [L2ToL2CrossDomainMessenger][l2-to-l2]
+for both replay protection and domain binding.
+
+[l2-to-l2]: ./predeploys.md#l2tol2crossdomainmessenger
 
 ```solidity
 contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
-  function initiateTransfer(address to, uint256 amount, uint256 chainId) external {
+  constructor(string memory _name, string memory _symbol, uint256 _decimals) ERC20(_name, _symbol, _decimals) {}
+
+  function bridgeERC20(uint256 _amount, uint256 _chainId) external {
+    bridgeERC20To(msg.sender, _amount, _chainId);
+  }
+
+  function bridgeERC20To(address _to, uint256 _amount, uint256 _chainId) public {
     _burn(msg.sender, amount);
 
     L2ToL2CrossDomainMessenger.sendMessage({
@@ -54,7 +62,7 @@ contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
     });
   }
 
-  function executeTransfer(address to, uint256 amount) external {
+  function finalizeBridgeERC20(address to, uint256 amount) external {
     require(msg.sender == address(L2ToL2CrossChainMessenger));
     require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
 
@@ -63,7 +71,17 @@ contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
 }
 ```
 
-### L1 Native Tokens
+## L1 Native Tokens
 
 To support L1 native tokens with cross chain liquidity, the `OptimismMintableERC20Token`
 interface MUST be supported in addition to the `SuperchainERC20` interface.
+
+## Cross Chain `transferFrom`
+
+Should an overloaded `approve` method be added to the interface so that a user can
+approve a contract on a remote domain to bridge on their behalf? A new `allowances`
+mapping could be added to the contract to enable this.
+
+## Upgrading Existing `OptimismMintableERC20Token`s
+
+TODO
