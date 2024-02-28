@@ -72,3 +72,17 @@ Previously, the node could read the calldata from the latest `L1Attributes` tran
 to be able to populate it's internal view of the `SystemConfig`. This will not be possible
 with a diff based `L1Attributes` transaction implementation, but the problem can be solved
 easily with a batch RPC call that reads each value directly from state using `eth_call`.
+
+The RPC receipts are hydrated with the L1 fee parameters such that it is possible to
+compute the L1 portion of the fee based on observing the receipt. These fields are not
+part of the consensus encoding of the receipt, simply to provide better UX. These fields
+are populated by deserializing the L1Attributes transaction's calldata. If the L1Attributes
+transaction no longer always contains the latest values, then this approach is no longer feasible.
+This means that the values would need to be instead read directly from state.
+To prevent the need of an archive node to read the values from state for historical receipts,
+an event can be emitted that contains the values required to hydrate this data.
+Ideally this event does not need to be emitted for every L1Attributes transaction, but a simple
+implementation may do so. It could be emitted everytime that the `sequenceNumber` is `0` and
+the rehydration method could observe the L1Attributes transactions from the last L1 origin
+update to the block including the receipt being hydrated and apply the diffs against the value
+that was emitted from the event.
