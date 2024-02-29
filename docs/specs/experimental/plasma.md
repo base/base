@@ -201,8 +201,8 @@ Derivation MUST skip input data such as `input_data_size > MAX_L1_TX_SIZE` where
 constant of 130872 bytes. In theory `MAX_L1_TX_SIZE` could be increased up to
 `(tx_gas_limit - fixed_resolution_cost) / dynamic_resolution_cost` based on the cost of resolving challenges in
 the contract implementation however to make challenging accessible it is capped based on geth's txMaxSize.
-130872 is chosen as 131072 - 200. Geth rejects transactions from the mempool with a total serialized size over
-131072. 200 bytes are allocated as overhead (signature, to address, metadata).
+130672 is chosen as 131072 - 400. Geth rejects transactions from the mempool with a total serialized size over
+131072. 400 bytes are allocated as overhead (signature, to address, metadata).
 
 [pipeline]: ../protocol/derivation.md#resetting-the-pipeline
 [eip4844]: https://eips.ethereum.org/EIPS/eip-4844
