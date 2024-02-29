@@ -198,9 +198,11 @@ block derived from the expired challenge's input and `r_end` the last L2 block d
 was reset.
 
 Derivation MUST skip input data such as `input_data_size > MAX_L1_TX_SIZE` where `MAX_L1_TX_SIZE` is a consensus
-constant of 131072 bytes. In theory `MAX_L1_TX_SIZE` could be increased up to
+constant of 130672 bytes. In theory `MAX_L1_TX_SIZE` could be increased up to
 `(tx_gas_limit - fixed_resolution_cost) / dynamic_resolution_cost` based on the cost of resolving challenges in
 the contract implementation however to make challenging accessible it is capped based on geth's txMaxSize.
+130672 is chosen as 131072 - 400. Geth rejects transactions from the mempool with a total serialized size over
+131072. 400 bytes are allocated as overhead (signature, to address, metadata).
 
 [pipeline]: ../protocol/derivation.md#resetting-the-pipeline
 [eip4844]: https://eips.ethereum.org/EIPS/eip-4844
