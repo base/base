@@ -16,5 +16,3 @@ This document is not finalized and should be considered experimental.
 - [RIP-7212: Precompile for secp256r1 Curve Support](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md)
 
 ## Consensus Layer
-
-- [Diff Based L1Attributes Transaction](./diff-based-attributes-tx.md)
