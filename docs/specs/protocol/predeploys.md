@@ -129,7 +129,7 @@ This contract is deprecated and its usage should be avoided.
 
 ## LegacyERC20ETH
 
-[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/legacy/LegacyERC20ETH.sol)
+[Implementation](https://github.com/ethereum-optimism/optimism/blob/a4524ac152b4c9e8eb80beadc9cd772b96243aa2/packages/contracts-bedrock/src/legacy/LegacyERC20ETH.sol)
 
 Address: `0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000`
 
@@ -248,7 +248,7 @@ Following the Ecotone upgrade, the values used for L1 fee computation are:
 - l1BlobBaseFeeScalar
 - decimals
 
-[ecotone-scalars]: system_config.html#ecotone-scalar-overhead-uint256uint256-change
+[ecotone-scalars]: system_config.md#ecotone-scalar-overhead-uint256uint256-change
 
 These new scalar values are managed by the `SystemConfig` contract on the L1 by introducing a
 backwards compatible [versioned encoding scheme][ecotone-scalars] of its `scalars` storage
