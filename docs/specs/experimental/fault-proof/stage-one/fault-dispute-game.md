@@ -268,12 +268,12 @@ can write to and reference unique local keys in the `PreimageOracle` for each of
 transitions.
 
 | Identifier | Description                                            |
-| ---------- | ------------------------------------------------------ |
+| ---------- |--------------------------------------------------------|
 | `1`        | Parent L1 head hash at the time of the proposal        |
 | `2`        | Starting output root hash (commits to block # `n`)     |
 | `3`        | Disputed output root hash (commits to block # `n + 1`) |
 | `4`        | Disputed L2 block number (block # `n + 1`)             |
-| `5`        | Chain ID                                               |
+| `5`        | L2 Chain ID                                            |
 
 For global `keccak256` preimages, there are two routes for players to submit:
 
