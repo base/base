@@ -172,11 +172,18 @@ are prefixed to the abi encoded call.
 An explicit `_destination` chain and `nonce` are used to ensure that the message can only be played on a single remote
 chain a single time. The `_destination` is enforced to not be the local chain to avoid edge cases.
 
+There is no need for address aliasing as the aliased address would need to commit to the source chain's chain id
+to create a unique alias that commits to a particular sender on a particular domain and it is far more simple
+to assert on both the address and the source chain's chain id rather than assert on an unaliased address.
+In both cases, the source chain's chain id is required for security. Executing messages will never be able to
+assume the identity of an account because `msg.sender` will never be the identity that initiated the message,
+it will be the `L2ToL2CrossDomainMessenger` and users will need to callback to get the initiator of the message.
+
 ```solidity
 function sendMessage(uint256 _destination, address _target, bytes calldata _message) external {
     require(_destination != block.chainid);
 
-    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, messageNonce(), msg.sender, _target, _message));
+    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, block.chainid, messageNonce(), msg.sender, _target, _message));
     emit SentMessage(data);
     nonce++;
 }
@@ -194,17 +201,18 @@ It is important to ensure that the source chain is in the dependency set of the 
 it is possible to send a message that is not playable.
 
 ```solidity
-function relayMessage(uint256 _destination, uint256 _nonce, address _sender, address _target, bytes memory _message) external payable {
+function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, address _sender, address _target, bytes memory _message) external payable {
     require(msg.sender == address(CROSS_L2_INBOX));
     require(_destination == block.chainid);
     require(CROSS_L2_INBOX.origin() == address(this));
     require(_target != address(this));
 
-    bytes32 messageHash = keccak256(abi.encode(_destination, _nonce, _sender, _target, _message));
+    bytes32 messageHash = keccak256(abi.encode(_destination, _source, _nonce, _sender, _target, _message));
     require(sentMessages[messageHash] == false);
 
     assembly {
       tstore(CROSS_DOMAIN_MESSAGE_SENDER_SLOT, _sender)
+      tstore(CROSS_DOMAIN_MESSAGE_SOURCE_SLOT, _source)
     }
 
     bool success = SafeCall.call({
@@ -220,6 +228,9 @@ function relayMessage(uint256 _destination, uint256 _nonce, address _sender, add
 ```
 
 Note that the `relayMessage` function is `payable` to enable relayers to earn in the gas paying asset.
+
+To enable cross chain authorization patterns, both the `_sender` and the `_source` MUST be exposed via `public`
+getters.
 
 ## L1Block
 
