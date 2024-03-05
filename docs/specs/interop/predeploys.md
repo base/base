@@ -14,7 +14,7 @@
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
   - [Message Versioning](#message-versioning)
-  - [Transferring Ether in a Cross Chain Message](#transferring-ether-in-a-cross-chain-message)
+  - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
@@ -110,6 +110,8 @@ function executeMessage(address _target, bytes calldata _msg, Identifier calldat
 }
 ```
 
+Note that the `executeMessage` function is `payable` to enable relayers to earn in the gas paying asset.
+
 ### `Identifier` Getters
 
 The `Identifier` MUST be exposed via `public` getters so that contracts can call back to authenticate
@@ -121,10 +123,9 @@ properties about the `_msg`.
 |-------------------|----------------------------------------------|
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
-| `INITIAL_BALANCE` | `type(uint248).max`                          |
 
 The `L2ToL2CrossDomainMessenger` is a higher level abstraction on top of the `CrossL2Inbox` that
-provides features necessary for secure transfers of `ether` and ERC20 tokens between L2 chains.
+provides features necessary for secure transfers ERC20 tokens between L2 chains.
 Messages sent through the `L2ToL2CrossDomainMessenger` on the source chain receive both replay protection
 as well as domain binding, ie the executing transaction can only be valid on a single chain.
 
@@ -146,15 +147,10 @@ function messageNonce() public view returns (uint256) {
 }
 ```
 
-### Transferring Ether in a Cross Chain Message
+### No Native Support for Cross Chain Ether Sends
 
-The `L2ToL2CrossDomainMessenger` MUST be initially set in state with an ether balance of `INITIAL_BALANCE`.
-This initial balance exists to provide liquidity for cross chain transfers. It is large enough to always have
-ether present to dispurse while still being able to accept inbound transfers of ether without overflowing.
-The `L2ToL2CrossDomainMessenger` MUST only ensure all invariants are held before transferring out any ether.
-
-The `L2CrossDomainMessenger` is not updated to include the `L2ToL2CrossDomainMessenger` functionality because
-there is no need to introduce complexity between the L1 to L2 messages and the L2 to L2 liquidity.
+To enable interoperability between chains that use a custom gas token, there is no native support for
+sending `ether` between chains. `ether` must first be wrapped into WETH before sending between chains.
 
 ### Interfaces
 
@@ -177,14 +173,16 @@ An explicit `_destination` chain and `nonce` are used to ensure that the message
 chain a single time. The `_destination` is enforced to not be the local chain to avoid edge cases.
 
 ```solidity
-function sendMessage(uint256 _destination, address _target, bytes calldata _message) external payable {
+function sendMessage(uint256 _destination, address _target, bytes calldata _message) external {
     require(_destination != block.chainid);
 
-    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, messageNonce(), msg.sender, _target, msg.value, _message));
+    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, messageNonce(), msg.sender, _target, _message));
     emit SentMessage(data);
     nonce++;
 }
 ```
+
+Note that `sendMessage` is not `payable`.
 
 #### Relaying Messages
 
@@ -196,13 +194,13 @@ It is important to ensure that the source chain is in the dependency set of the 
 it is possible to send a message that is not playable.
 
 ```solidity
-function relayMessage(uint256 _destination, uint256 _nonce, address _sender, address _target, uint256 _value, bytes memory _message) external {
+function relayMessage(uint256 _destination, uint256 _nonce, address _sender, address _target, bytes memory _message) external payable {
     require(msg.sender == address(CROSS_L2_INBOX));
     require(_destination == block.chainid);
     require(CROSS_L2_INBOX.origin() == address(this));
     require(_target != address(this));
 
-    bytes32 messageHash = keccak256(abi.encode(_destination, _nonce, _sender, _target, _value, _message));
+    bytes32 messageHash = keccak256(abi.encode(_destination, _nonce, _sender, _target, _message));
     require(sentMessages[messageHash] == false);
 
     assembly {
@@ -211,7 +209,7 @@ function relayMessage(uint256 _destination, uint256 _nonce, address _sender, add
 
     bool success = SafeCall.call({
        _target: _target,
-       _value: _value,
+       _value: msg.value,
        _calldata: _message
     });
 
@@ -220,6 +218,8 @@ function relayMessage(uint256 _destination, uint256 _nonce, address _sender, add
     sentMessages[messageHash] = true;
 }
 ```
+
+Note that the `relayMessage` function is `payable` to enable relayers to earn in the gas paying asset.
 
 ## L1Block
 
