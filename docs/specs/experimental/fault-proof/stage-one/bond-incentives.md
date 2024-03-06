@@ -13,6 +13,7 @@
   - [Base Fee Assumption](#base-fee-assumption)
   - [Bond Scaling](#bond-scaling)
   - [Required Bond Formula](#required-bond-formula)
+  - [Other Incentives](#other-incentives)
   - [DelayedWETH](#delayedweth)
     - [Sub-Account Model](#sub-account-model)
     - [Delay Period](#delay-period)
@@ -116,6 +117,13 @@ def get_required_bond(position):
     gas_charged = 400_000 * (1.089 ** position.depth)
     return gas_charged * assumed_gas_price
 ```
+
+### Other Incentives
+
+There are other costs associated with participating in the game, including operating a challenger agent and the
+opportunity cost of locking up capital in the dispute game. While we do not explicitly create incentives to cover
+these costs, we assume that the current bond rewards, based on this specification, are enough as a whole to cover
+all other costs of participation.
 
 ### DelayedWETH
 
