@@ -142,7 +142,6 @@ incorrectly distribute bonds.
 `withdrawals[msg.sender][guy] => WithdrawalRequest` where `WithdrawalRequest` is
 `struct Withdrawal Request { uint256 amount, uint256 timestamp }`. When `unlock` is called, the timestamp for
 `withdrawals[msg.sender][guy]` is set to the current timestamp and the amount is increased by the given amount.
-`unlock(guy,wad)` is not callable when `SuperchainConfig.paused()` is `true`.
 - `DelayedWETH` modifies the `WETH.withdraw` function such that an address *must* provide a "sub-account" to withdraw
 from. The function signature becomes `withdraw(guy,wad)`. The function retrieves `withdrawals[msg.sender][guy]` and
 checks that the current `block.timestamp` is greater than the timestamp on the withdrawal request plus the `delay()`
