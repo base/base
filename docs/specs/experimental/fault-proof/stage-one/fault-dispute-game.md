@@ -10,6 +10,8 @@
   - [PreimageOracle](#preimageoracle)
   - [Execution Trace](#execution-trace)
   - [Claims](#claims)
+  - [Anchor State](#anchor-state)
+  - [Anchor State Registry](#anchor-state-registry)
   - [DAG](#dag)
   - [Subgame](#subgame)
   - [Game Tree](#game-tree)
@@ -26,6 +28,7 @@
   - [Team Dynamics](#team-dynamics)
   - [Game Clock](#game-clock)
   - [Resolution](#resolution)
+  - [Finalization](#finalization)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -79,6 +82,26 @@ trace. A FDG is initialized with an output root that corresponds to the state of
 execution trace subgames at `SPLIT_DEPTH + 1` are initialized with a claim that commits to the entire execution trace
 between two consecutive output roots (a block `n -> n+1` state transition). As we'll see later, there can be multiple
 claims, committing to different output roots and FPVM states in the FDG.
+
+### Anchor State
+
+An anchor state, or anchor output root, is a previous output root that is assumed to be valid. An
+FDG is always initialized with an anchor state and execution is carried out between this anchor
+state and the [claimed output root](#claims). FDG contracts pull their anchor state from the
+[Anchor State Registry](#anchor-state-registry) contract. The initial anchor state for a FDG is the
+genesis state of the L2.
+
+Clients must currently gather L1 data for the window between the anchor state and the claimed
+state. In order to reduce this L1 data requirement, [claims](#claims) about the state of the L2
+become new anchor states when dispute games resolve in their favor. FDG contracts set their anchor
+states at initialization time so that these updates do not impact active games.
+
+### Anchor State Registry
+
+The Anchor State Registry is a registry that maps FDG types to their current [anchor states](#anchor-state).
+The Anchor State Registry is specific to Fault Dispute Game contracts and may not be applicable to
+other types of dispute game contracts that do not have the same concept of state that progresses
+over time.
 
 ### DAG
 
@@ -262,7 +285,7 @@ function addLocalData(uint256 _ident, uint256 _execLeafIdx, uint256 _partOffset)
 
 The `addLocalData` function loads local data into the VM's `PreimageOracle`. This data consists of bootstrap data for
 the program. There are multiple sets of local preimage keys that belong to the `FaultDisputeGame` contract due to the
-ability for players to bisect to any block $n \rightarrow n + 1$ state transition since the configured genesis, the
+ability for players to bisect to any block $n \rightarrow n + 1$ state transition since the configured anchor state, the
 `_execLeafIdx` parameter enables a search for the starting / disputed outputs to be performed such that the contract
 can write to and reference unique local keys in the `PreimageOracle` for each of these $n \rightarrow n + 1$
 transitions.
@@ -459,3 +482,17 @@ Each move bisects the historical state of L2 and eventually, `MAX_GAME_DEPTH` is
 can be settled conclusively. Dishonest players are disincentivized to participate, via backwards induction,
 as an invalid claim won't remain uncontested. Further incentives can be added to the game by requiring
 claims to be bonded, while rewarding game winners using the bonds of dishonest claims.
+
+### Finalization
+
+Once the game is resolved, if the claim is shown to be valid, the FDG reports its state to the
+Anchor State Registry. The Anchor State Registry verifies that the request to update an anchor
+state comes from a FDG contract created by the Dispute Game Factory contract, confirms that the
+game resolved in favor of the defender, and confirms that the updated state would be newer than
+the current anchor state (based on the result of `FaultDisputeGame.l2BlockNumber()`). If these
+conditions are true, the Anchor State Registry updates the anchor state for the given game type.
+
+Note that the dependency of the Anchor State Registry on the `l2BlockNumber()` function means that
+the registry may not be applicable to dispute game types that do not have a similar sense of
+progressing state over time. Currently, the Anchor State Registry is therefore assumed to be
+specific to the Fault Dispute Game contract and not to other dispute game types.
