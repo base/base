@@ -67,6 +67,16 @@ The [batching][batcher] and compression of input data remain unchanged. When a b
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
 commitment (keccak256 hash) is submitted as the bacher inbox transaction call data.
 
+Commitment txdata introduces version `1` to the [transaction format][batchertx], in order to interpret
+the txdata as a commitment during the l1 retrieval step of the derivation pipeline:
+
+| `version_byte` | `tx_data`   |
+| -------------- | -------------------- |
+| 1              | `encoded_commitment` |
+
+The `derivationVersion0` byte is still prefixed to the input data stored in the DA provider so the frames
+can be decoded downstream.
+
 Commitments are encoded as `commitment_type_byte ++ commitment_bytes`, where `commitment_bytes` depends
 on the `commitment_type_byte` where [0, 128) are reserved for official implementations:
 
@@ -84,6 +94,7 @@ Input commitments submitted onchain without proper storage on the DA provider se
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
 
 [batcher]: ../protocol/derivation.md#batch-submission
+[batchertx]: ../protocol/derivation.md#batcher-transaction-format
 
 ## Data Availability Challenge Contract
 
@@ -148,7 +159,9 @@ we've extracted the commitment from L1 DA.
 
 Similarly to L1 based DA, for each L1 block we open a calldata source to retrieve the input commitments
 from the transactions and use each commitment with its l1 origin block number to resolve
-the input data from the storage service.
+the input data from the storage service. To enable smooth transition between plasma and rollup mode, any L1 data
+retrieved from the batcher inbox that is not prefixed with `txDataVersion1` is forwarded downstream
+to be parsed as input frames or skipped as invalid data.
 
 In addition, we filter events from the DA Challenge contract included in the block
 and sync a local state of challenged input commitments. As the derivation pipeline steps through
