@@ -198,7 +198,6 @@ function relayMessage(uint256 _destination, uint256 _nonce, address _sender, add
     require(msg.sender == address(CROSS_L2_INBOX));
     require(_destination == block.chainid);
     require(CROSS_L2_INBOX.origin() == address(this));
-    require(_target != address(CROSS_L2_INBOX));
 
     bytes32 messageHash = keccak256(abi.encode(_destination, _nonce, _sender, _target, _message));
     require(sentMessages[messageHash] == false);
