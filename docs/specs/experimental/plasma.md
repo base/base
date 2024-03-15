@@ -146,6 +146,12 @@ The state of all challenges can be read from the contract state or by syncing co
 `challengeWindow` and `resolveWindow` are constant values that currently cannot be changed
 unless the contract is upgraded. A dynamic window mechanism may be explored in the future.
 
+Any challenge with a properly encoded commitment, a bond amount associated with the challenger
+address and a block number within the challenge window is accepted by the contract.
+However, a challenge is only valid if the commitment and block number pairing map to a valid commitment
+and its L1 origin block number during derivation. Challenges associated with an illegal commitment
+or block number will be ignored during derivation and have no impact on the state of the chain.
+
 The contract is deployed behind upgradable proxy so the address can be hardcoded in the rollup config
 file and does not need to change. A future upgrade can add custom resolver functions to be chosen
 dynamically when a user calls the resolve function to support other alt DA solutions.
