@@ -87,7 +87,7 @@ properties about the `_msg` using the information in the `Identifier`.
 A simple implementation of the `executeMessage` function is included below.
 
 ```solidity
-function executeMessage(address _target, bytes calldata _msg, Identifier calldata _id) public payable {
+function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
     require(msg.sender == tx.origin);
     require(_id.timestamp <= block.timestamp);
     require(L1Block.isInDependencySet(_id.chainid));
