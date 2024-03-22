@@ -46,6 +46,7 @@ Specifications of new features in active development.
   - [Cannon VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
 - [Plasma](./experimental/plasma.md)
 - [Interoperability](./interop/overview.md)
+- [Security Council Safe](./experimental/security-council-safe.md)
 
 ## Design Goals
 
