@@ -291,7 +291,7 @@ can write to and reference unique local keys in the `PreimageOracle` for each of
 transitions.
 
 | Identifier | Description                                            |
-| ---------- |--------------------------------------------------------|
+| ---------- | ------------------------------------------------------ |
 | `1`        | Parent L1 head hash at the time of the proposal        |
 | `2`        | Starting output root hash (commits to block # `n`)     |
 | `3`        | Disputed output root hash (commits to block # `n + 1`) |
@@ -375,8 +375,11 @@ Resolving the FDG determines which team won the game. To do this, we use the int
 Each claim within the game is the root of its own sub game. These subgames are modeled as nested DAGs, each with a max
 depth of 1. In order for a claim to be considered countered, only one of its children must be uncountered. Subgames
 can also not be resolved until all of their children, which are subgames themselves, have been resolved and
-the potential opponent's chess clock has run out. Because each claim is the root of its own sub-game,
-truth percolates upwards towards the root claim by resolving each individual sub-game bottom-up.
+the potential opponent's chess clock has run out. To determine if the potential opponent's chess clock has ran out, and
+therefore no more moves against the subgame are possible, the duration elapsed on the subgame root's parent clock is
+added to the difference between the current time and the timestamp of the subgame root's creation. Because each claim
+is the root of its own sub-game, truth percolates upwards towards the root claim by resolving each individual sub-game
+bottom-up.
 
 In a game like the one below, we can resolve up from the deepest subgames. Here, we'd resolve `b0`
 to uncountered and `a0` to countered by walking up from their deepest children, and once all children of the
