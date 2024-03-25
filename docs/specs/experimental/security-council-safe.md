@@ -28,36 +28,45 @@ guarantees on top of those provided by the Safe contract.
 
 ## Deputy guardian module
 
-The Security Council acts as the Guardian, which is authorized to activate the [Superchain Pause](../protocol/superchain-configuration.md#pausability) functionality and for [blacklisting](../experimental/fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute game contracts.
+The Security Council acts as the Guardian, which is authorized to activate the [Superchain
+Pause](../protocol/superchain-configuration.md#pausability) functionality and for
+[blacklisting](../experimental/fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
+game contracts.
 
 However the Security Council cannot be expected to react quickly in an emergency situation.
-Therefore the Pausability Pass Through module enables the Security Council to delegate share this
+Therefore the Deputy Guardian module enables the Security Council to share this
 authorization with another account.
 
 The module has the following minimal interface:
 
 ```solidity
 interface DeputyGuardianModule {
+
    /// @dev The address of the Security Council Safe
    function safe() external view returns(address);
 
    /// @dev The address of the account which can pause superchain withdrawals by calling this module
    function deputyGuardian() external view returns(address);
 
-   /// @dev Calls to the Security Council's `execTransactionFromModule()`, with the arguments
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
    ///      necessary to call `pause()` on the `SuperchainConfig` contract.
-   ////     Only the deputy guardian can call this function.
+   ///      Only the deputy guardian can call this function.
    function pause() external;
 
-   /// @dev Calls to the Security Council's `execTransactionFromModule()`, with the arguments
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
    ///      necessary to call `unpause()` on the `SuperchainConfig` contract.
-   ////     Only the deputy guardian can call this function.
+   ///      Only the deputy guardian can call this function.
    function unpause() external;
 
-   /// @dev When called, this function will call to the Security Council's `execTransactionFromModule()`
-   ///      with the arguments necessary to call `pause()` on the `SuperchainConfig` contract.
-   ////     Only the deputy guardian can call this function.
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      with the arguments necessary to call `blacklistDisputeGame()` on the `DisputeGameFactory` contract.
+   ///      Only the deputy guardian can call this function.
    function blacklistDisputeGame(address) external;
+
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      with the arguments necessary to call `setRespectedGameType()` on the `DisputeGameFactory` contract.
+   ///      Only the deputy guardian can call this function.
+   function setRespectedGameType(uint32) external;
 }
 ```
 
@@ -66,9 +75,8 @@ For simplicity, the `DeputyGuardianModule` module does not have functions for up
 
 ## Liveness checking mechanism
 
-The Security Council uses a specially extended Safe multisig contract to ensure that
-any loss of access to a signer's keys is identified and addressed within a predictable period of
-time.
+The Security Council's liveness checking mechanism is intended to ensure that any loss of access to
+a signer's keys is identified and addressed within a predictable period of time.
 
 This mechanism is intended only to be used to remove signers who have lost access to their keys, or
 are otherwise inactive. It is not intended to be used to remove signers who are acting in bad faith,
