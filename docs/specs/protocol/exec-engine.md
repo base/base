@@ -155,7 +155,7 @@ Where:
 - the computation is an unlimited precision integer computation, with the result in Wei and having
   `uint256` range.
 
-- zeoroes and ones are the count of zero and non-zero bytes respectively in the _full_ encoded
+- zeroes and ones are the count of zero and non-zero bytes respectively in the _full_ encoded
   signed transaction.
 
 - `l1BaseFee` is the L1 base fee of the latest L1 origin registered in the L2 chain.
