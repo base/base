@@ -4,7 +4,8 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Liveness checking Mechanism](#liveness-checking-mechanism)
+- [Deputy guardian module](#deputy-guardian-module)
+- [Liveness checking mechanism](#liveness-checking-mechanism)
 - [Liveness checking methodology](#liveness-checking-methodology)
   - [The liveness guard](#the-liveness-guard)
   - [The liveness module](#the-liveness-module)
@@ -41,7 +42,6 @@ The module has the following minimal interface:
 
 ```solidity
 interface DeputyGuardianModule {
-
    /// @dev The address of the Security Council Safe
    function safe() external view returns(address);
 
@@ -61,12 +61,16 @@ interface DeputyGuardianModule {
    /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
    ///      with the arguments necessary to call `blacklistDisputeGame()` on the `DisputeGameFactory` contract.
    ///      Only the deputy guardian can call this function.
-   function blacklistDisputeGame(address) external;
+   /// @param _portal The `OptimismPortal2` contract instance.
+   /// @param _game The `IDisputeGame` contract instance.
+   function blacklistDisputeGame(address _portal, address _game) external;
 
-   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      with the arguments necessary to call `setRespectedGameType()` on the `DisputeGameFactory` contract.
+   /// @dev When called, this function will call to the Security Council's `execTransactionFromModule()`
+   ///      with the arguments necessary to call `setRespectedGameType()` on the `OptimismPortal2` contract.
    ///      Only the deputy guardian can call this function.
-   function setRespectedGameType(uint32) external;
+   /// @param _portal The `OptimismPortal2` contract instance.
+   /// @param _gameType The `GameType` to set as the respected game type
+   function setRespectedGameType(address _portal, uint32 _gameType) external;
 }
 ```
 
