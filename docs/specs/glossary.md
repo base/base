@@ -418,8 +418,7 @@ Availability][data-availability] for more information on what this means.
 
 Ideally, a good data availability provider provides strong _verifiable_ guarantees of data availability
 
-Currently, the only supported data availability provider is Ethereum call data. [Ethereum data blobs][eip4844] will be
-supported when they get deployed on Ethereum.
+At present, the supported data availability providers include Ethereum call data and blob data.
 
 ## Sequencer Batch
 
