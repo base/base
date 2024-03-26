@@ -25,6 +25,7 @@
     - [Superchain Configuration](./protocol/superchain-configuration.md)
     - [Superchain Upgrades](./protocol/superchain-upgrades.md)
   - [System Config](./protocol/system_config.md)
+  - [Configurability](./protocol/configurability.md)
 - [Experimental]()
   - [Fault Proof](./experimental/fault-proof/index.md)
     - [Cannon Fault Proof VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
