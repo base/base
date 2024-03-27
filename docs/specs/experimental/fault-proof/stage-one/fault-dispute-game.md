@@ -70,7 +70,7 @@ The method for key-based retrieval of these pre-images varies according to the s
 ### Execution Trace
 
 An execution trace $T$ is a sequence $(S_0,S_1,S_2,...,S_n)$ where each $S_i$ is a VM state and
-for each $i$, $0 \le i \lt n$, $S_{n+1} = VM(S_i, P_i)$.
+for each $i$, $0 \le i \lt n$, $S_{i+1} = VM(S_i, P_i)$.
 Every execution trace has a unique starting state, $S_0$, that's preset to a FDG implementation.
 We refer to this state as the **ABSOLUTE_PRESTATE**.
 
