@@ -1,10 +1,11 @@
-# Safe Liveness Checking
+# Security Council Safe
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Liveness checking Mechanism](#liveness-checking-mechanism)
+- [Deputy guardian module](#deputy-guardian-module)
+- [Liveness checking mechanism](#liveness-checking-mechanism)
 - [Liveness checking methodology](#liveness-checking-methodology)
   - [The liveness guard](#the-liveness-guard)
   - [The liveness module](#the-liveness-module)
@@ -23,11 +24,63 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## Liveness checking Mechanism
+The Security Council uses a specially extended Safe multisig contract to provide additional security
+guarantees on top of those provided by the Safe contract.
 
-The Security Council uses a specially extended Safe multisig contract to ensure that
-any loss of access to a signer's keys is identified and addressed within a predictable period of
-time.
+## Deputy guardian module
+
+The Security Council acts as the Guardian, which is authorized to activate the [Superchain
+Pause](../protocol/superchain-configuration.md#pausability) functionality and for
+[blacklisting](../experimental/fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
+game contracts.
+
+However the Security Council cannot be expected to react quickly in an emergency situation.
+Therefore the Deputy Guardian module enables the Security Council to share this
+authorization with another account.
+
+The module has the following minimal interface:
+
+```solidity
+interface DeputyGuardianModule {
+   /// @dev The address of the Security Council Safe
+   function safe() external view returns(address);
+
+   /// @dev The address of the account which can pause superchain withdrawals by calling this module
+   function deputyGuardian() external view returns(address);
+
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      necessary to call `pause()` on the `SuperchainConfig` contract.
+   ///      Only the deputy guardian can call this function.
+   function pause() external;
+
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      necessary to call `unpause()` on the `SuperchainConfig` contract.
+   ///      Only the deputy guardian can call this function.
+   function unpause() external;
+
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      with the arguments necessary to call `blacklistDisputeGame()` on the `DisputeGameFactory` contract.
+   ///      Only the deputy guardian can call this function.
+   /// @param _portal The `OptimismPortal2` contract instance.
+   /// @param _game The `IDisputeGame` contract instance.
+   function blacklistDisputeGame(address _portal, address _game) external;
+
+   /// @dev When called, this function will call to the Security Council's `execTransactionFromModule()`
+   ///      with the arguments necessary to call `setRespectedGameType()` on the `OptimismPortal2` contract.
+   ///      Only the deputy guardian can call this function.
+   /// @param _portal The `OptimismPortal2` contract instance.
+   /// @param _gameType The `GameType` to set as the respected game type
+   function setRespectedGameType(address _portal, uint32 _gameType) external;
+}
+```
+
+For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe` and
+`deputyGuardian` addresses. If necessary these can be modified by swapping out with a new module.
+
+## Liveness checking mechanism
+
+The Security Council's liveness checking mechanism is intended to ensure that any loss of access to
+a signer's keys is identified and addressed within a predictable period of time.
 
 This mechanism is intended only to be used to remove signers who have lost access to their keys, or
 are otherwise inactive. It is not intended to be used to remove signers who are acting in bad faith,
