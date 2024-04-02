@@ -1,26 +1,26 @@
+# Custom Gas Token
+
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Custom Gas Token](#custom-gas-token)
-  - [Overview](#overview)
-  - [Constants](#constants)
-  - [Properties of a Gas Paying Token](#properties-of-a-gas-paying-token)
-  - [Configuring the Gas Paying Token](#configuring-the-gas-paying-token)
-  - [OptimismPortal](#optimismportal)
-    - [`depositERC20Transaction`](#depositerc20transaction)
-    - [`depositTransaction`](#deposittransaction)
-  - [StandardBridge](#standardbridge)
-  - [CrossDomainMessenger](#crossdomainmessenger)
-  - [User Flow](#user-flow)
-  - [Security Considerations](#security-considerations)
-    - [OptimismPortal Token Allowance](#optimismportal-token-allowance)
-    - [Decimal Scaling](#decimal-scaling)
-    - [Interoperability Support](#interoperability-support)
+- [Overview](#overview)
+- [Constants](#constants)
+- [Properties of a Gas Paying Token](#properties-of-a-gas-paying-token)
+- [Configuring the Gas Paying Token](#configuring-the-gas-paying-token)
+- [OptimismPortal](#optimismportal)
+  - [`depositERC20Transaction`](#depositerc20transaction)
+  - [`depositTransaction`](#deposittransaction)
+- [StandardBridge](#standardbridge)
+- [CrossDomainMessenger](#crossdomainmessenger)
+- [User Flow](#user-flow)
+- [Security Considerations](#security-considerations)
+  - [OptimismPortal Token Allowance](#optimismportal-token-allowance)
+  - [Decimal Scaling](#decimal-scaling)
+  - [Interoperability Support](#interoperability-support)
+  - [Wrapped Ether](#wrapped-ether)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
-
-# Custom Gas Token
 
 ## Overview
 
@@ -144,3 +144,8 @@ loss of precision due to sending in too small of a unit.
 Interop is supported between chains that use a custom gas token. The token address and the number of decimals are legible on
 chain. In the future we may add the ability to poke a chain such that it emits an event that includes the custom gas token address
 and its number of decimals to easily be able to introspect on the native asset of another chain.
+
+### Wrapped Ether
+
+The `WETH9` predeploy at `0x4200000000000000000000000000000000000006` represents wrapped native asset and not wrapped `ether`.
+Portable and fungible `ether` across different domains is left for a future project.
