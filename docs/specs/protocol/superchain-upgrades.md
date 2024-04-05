@@ -256,7 +256,7 @@ but the matching L1-origin information may not be present at the time of activat
   [Governance Proposal](https://gov.optimism.io/t/final-upgrade-proposal-2-canyon-network-upgrade/7088).
 - `v5.0.0`: 2024 Feb 22nd - Delta network upgrade (Span Batches).
   [Governance Proposal](https://gov.optimism.io/t/final-upgrade-proposal-3-delta-network-upgrade/7310).
-- `v6.0.0`: 2024 Mar 14th - _Proposed_ Ecotone network upgrade (4844 Blob Batches + Cancun).
+- `v6.0.0`: 2024 Mar 14th - Ecotone network upgrade (4844 Blob Batches + Cancun).
   Still under review by governance.
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-5-ecotone-network-upgrade/7669).
 
