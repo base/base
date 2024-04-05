@@ -46,4 +46,5 @@
     - [Rollup Node P2P](./interop/rollup_node_p2p.md)
     - [Fault Proof](./interop/fault_proof.md)
     - [Upgrade](./interop/upgrade.md)
+  - [Security Council Safe](./experimental/security-council-safe.md)
 - [Glossary](./glossary.md)
