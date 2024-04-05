@@ -18,7 +18,6 @@
       - [Derivation](./protocol/derivation.md)
       - [Span Batches](./protocol/span-batches.md)
     - [Batch Submitter](./protocol/batcher.md)
-  - [Safe Liveness Checking](./protocol/safe-liveness-checking.md)
   - [Predeploys](./protocol/predeploys.md)
   - [Preinstalls](./protocol/preinstalls.md)
   - [Superchain]()
