@@ -18,7 +18,6 @@
       - [Derivation](./protocol/derivation.md)
       - [Span Batches](./protocol/span-batches.md)
     - [Batch Submitter](./protocol/batcher.md)
-  - [Safe Liveness Checking](./protocol/safe-liveness-checking.md)
   - [Predeploys](./protocol/predeploys.md)
   - [Preinstalls](./protocol/preinstalls.md)
   - [Superchain]()
@@ -46,4 +45,5 @@
     - [Rollup Node P2P](./interop/rollup_node_p2p.md)
     - [Fault Proof](./interop/fault_proof.md)
     - [Upgrade](./interop/upgrade.md)
+  - [Security Council Safe](./experimental/security-council-safe.md)
 - [Glossary](./glossary.md)
