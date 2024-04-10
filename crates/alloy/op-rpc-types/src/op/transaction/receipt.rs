@@ -3,6 +3,32 @@ use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 use alloy::serde as alloy_serde;
+
+/// Transaction Type
+///
+/// Currently being used as 2-bit type when encoding it to [`Compact`] on
+/// [`crate::TransactionSignedNoHash`]. Adding more transaction types will break the codec and
+/// database format.
+///
+/// Other required changes when adding a new type can be seen on [PR#3953](https://github.com/paradigmxyz/reth/pull/3953/files).
+#[derive_arbitrary(compact)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash,
+)]
+pub enum TxType {
+    /// Legacy transaction pre EIP-2929
+    #[default]
+    Legacy = 0_isize,
+    /// AccessList transaction
+    Eip2930 = 1_isize,
+    /// Transaction with Priority fee
+    Eip1559 = 2_isize,
+    /// Shard Blob Transactions - EIP-4844
+    Eip4844 = 3_isize,
+    /// Optimism Deposit transaction.
+    Deposit = 126_isize,
+}
+
 /// Transaction receipt
 ///
 /// This type is generic over an inner [`ReceiptEnvelope`] which contains
@@ -74,6 +100,19 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     /// The amount of gas consumed by a transaction on the Layer 1
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
     pub l1_gas_used: Option<u128>,
+    /// Deposit nonce for Optimism deposit transactions
+    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]
+    pub deposit_nonce: Option<u64>,
+    /// Deposit receipt version for Optimism deposit transactions
+    ///
+    ///
+    /// The deposit receipt version was introduced in Canyon to indicate an update to how
+    /// receipt hashes should be computed when set. The state transition process
+    /// ensures this is only set for post-Canyon deposit transactions.
+    /// The value is always equal to `1` when present.
+    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]
+    pub deposit_receipt_version: Option<u64>,
+    pub tx_type: TxType;
 }
 
 impl AsRef<ReceiptEnvelope<Log>> for TransactionReceipt {
@@ -89,6 +128,7 @@ impl TransactionReceipt {
             ReceiptEnvelope::Eip1559(receipt)
             | ReceiptEnvelope::Eip2930(receipt)
             | ReceiptEnvelope::Eip4844(receipt)
+            | ReceiptEnvelope::Deposit(receipt)
             | ReceiptEnvelope::Legacy(receipt) => receipt.receipt.status,
             _ => false,
         }
@@ -135,6 +175,8 @@ impl<T> TransactionReceipt<T> {
             l1_fee_scalar: self.l1_fee_scalar,
             l1_gas_price: self.l1_gas_price,
             l1_gas_used: self.l1_gas_used,
+            deposit_nonce: self.deposit_nonce,
+            deposit_receipt_version: self.deposit_receipt_version,
         }
     }
 }
