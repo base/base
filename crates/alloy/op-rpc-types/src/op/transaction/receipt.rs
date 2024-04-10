@@ -1,4 +1,4 @@
-use crate::{op::log::Log, op::transaction::tx_type, WithOtherFields};
+use crate::{op::log::Log, op::transaction::tx_type};
 use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
@@ -64,16 +64,16 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     #[serde(skip_serializing_if = "Option::is_none", rename = "root")]
     pub state_root: Option<B256>,
     /// The fee associated with a transaction on the Layer 1
-    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
     pub l1_fee: Option<u128>,
     /// A multiplier applied to the actual gas usage on Layer 1 to calculate the dynamic costs.
-    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
-    pub l1_fee_scalar: Option<u128>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "l1_fee_scalar_serde")]
+    pub l1_fee_scalar: Option<f64>,
     /// The gas price for transactions on the Layer 1
-    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
     pub l1_gas_price: Option<u128>,
     /// The amount of gas consumed by a transaction on the Layer 1
-    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
     pub l1_gas_used: Option<u128>,
     /// Deposit nonce for Optimism deposit transactions
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]
@@ -152,6 +152,34 @@ impl<T> TransactionReceipt<T> {
             l1_gas_used: self.l1_gas_used,
             deposit_nonce: self.deposit_nonce,
             deposit_receipt_version: self.deposit_receipt_version,
+            tx_type: self.tx_type,
         }
+    }
+}
+
+/// Serialize/Deserialize l1FeeScalar to/from string
+mod l1_fee_scalar_serde {
+    use serde::{de, Deserialize};
+
+    pub(super) fn serialize<S>(value: &Option<f64>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if let Some(v) = value {
+            return s.serialize_str(&v.to_string());
+        }
+        s.serialize_none()
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: Option<String> = Option::deserialize(deserializer)?;
+        if let Some(s) = s {
+            return Ok(Some(s.parse::<f64>().map_err(de::Error::custom)?));
+        }
+
+        Ok(None)
     }
 }
