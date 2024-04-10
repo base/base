@@ -18,12 +18,6 @@ pub const EIP4844_TX_TYPE_ID: u8 = 3;
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126;
 
 /// Transaction Type
-///
-/// Currently being used as 2-bit type when encoding it to [`Compact`] on
-/// [`crate::TransactionSignedNoHash`]. Adding more transaction types will break the codec and
-/// database format.
-///
-/// Other required changes when adding a new type can be seen on [PR#3953](https://github.com/paradigmxyz/reth/pull/3953/files).
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash,
 )]
