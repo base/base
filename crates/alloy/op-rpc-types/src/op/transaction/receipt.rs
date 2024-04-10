@@ -1,33 +1,8 @@
-use crate::{op::log::Log, WithOtherFields};
+use crate::{op::log::Log, op::transaction::tx_type, WithOtherFields};
 use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 use alloy::serde as alloy_serde;
-
-/// Transaction Type
-///
-/// Currently being used as 2-bit type when encoding it to [`Compact`] on
-/// [`crate::TransactionSignedNoHash`]. Adding more transaction types will break the codec and
-/// database format.
-///
-/// Other required changes when adding a new type can be seen on [PR#3953](https://github.com/paradigmxyz/reth/pull/3953/files).
-#[derive_arbitrary(compact)]
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize, Hash,
-)]
-pub enum TxType {
-    /// Legacy transaction pre EIP-2929
-    #[default]
-    Legacy = 0_isize,
-    /// AccessList transaction
-    Eip2930 = 1_isize,
-    /// Transaction with Priority fee
-    Eip1559 = 2_isize,
-    /// Shard Blob Transactions - EIP-4844
-    Eip4844 = 3_isize,
-    /// Optimism Deposit transaction.
-    Deposit = 126_isize,
-}
 
 /// Transaction receipt
 ///
@@ -112,7 +87,7 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     /// The value is always equal to `1` when present.
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]
     pub deposit_receipt_version: Option<u64>,
-    pub tx_type: TxType;
+    pub tx_type: tx_type::TxType,
 }
 
 impl AsRef<ReceiptEnvelope<Log>> for TransactionReceipt {
