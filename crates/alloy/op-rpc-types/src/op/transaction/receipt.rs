@@ -1,4 +1,4 @@
-use crate::{Log, WithOtherFields};
+use crate::{op::log::Log, WithOtherFields};
 use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
