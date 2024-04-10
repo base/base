@@ -10,3 +10,7 @@ homepage.workspace = true
 authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
