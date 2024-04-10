@@ -1,9 +1,8 @@
-use crate::{op::log::Log, op::transaction::tx_type};
+use crate::op::transaction::tx_type;
+use alloy::{rpc::types::eth::Log, serde as alloy_serde};
 use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
-use alloy::serde as alloy_serde;
-
 /// Transaction receipt
 ///
 /// This type is generic over an inner [`ReceiptEnvelope`] which contains
@@ -64,16 +63,28 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     #[serde(skip_serializing_if = "Option::is_none", rename = "root")]
     pub state_root: Option<B256>,
     /// The fee associated with a transaction on the Layer 1
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "alloy_serde::u128_hex_or_decimal_opt"
+    )]
     pub l1_fee: Option<u128>,
     /// A multiplier applied to the actual gas usage on Layer 1 to calculate the dynamic costs.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "l1_fee_scalar_serde")]
     pub l1_fee_scalar: Option<f64>,
     /// The gas price for transactions on the Layer 1
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "alloy_serde::u128_hex_or_decimal_opt"
+    )]
     pub l1_gas_price: Option<u128>,
     /// The amount of gas consumed by a transaction on the Layer 1
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::u128_hex_or_decimal_opt")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "alloy_serde::u128_hex_or_decimal_opt"
+    )]
     pub l1_gas_used: Option<u128>,
     /// Deposit nonce for Optimism deposit transactions
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]

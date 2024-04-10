@@ -1,2 +1,3 @@
 mod transaction;
-mod log;
+mod block;
+pub use alloy::rpc::types::eth::{Header, Log};

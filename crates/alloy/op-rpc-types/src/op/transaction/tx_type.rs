@@ -42,7 +42,7 @@ impl From<TxType> for u8 {
             TxType::EIP2930 => EIP2930_TX_TYPE_ID,
             TxType::EIP1559 => EIP1559_TX_TYPE_ID,
             TxType::EIP4844 => EIP4844_TX_TYPE_ID,
-            TxType::Deposit => DEPOSIT_TX_TYPE_ID
+            TxType::Deposit => DEPOSIT_TX_TYPE_ID,
         }
     }
 }

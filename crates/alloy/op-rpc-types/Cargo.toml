@@ -21,9 +21,8 @@ alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
 # alloy-eips = { workspace = true, features = ["std", "serde"] }
 
 serde = { workspace = true, features = ["derive"] }
-alloy = { workspace = true , features = ["serde"]}
+alloy = { workspace = true , features = ["serde", "rpc-types", "rpc-types-eth"]}
 serde_json.workspace = true
-
 
 # arbitrary
 arbitrary = { version = "1.3", features = ["derive"], optional = true }
