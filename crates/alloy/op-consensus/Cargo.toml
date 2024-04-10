@@ -1,0 +1,45 @@
+[package]
+name = "op-alloy-consensus"
+description = "Optimism alloy consensus types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-serde = { workspace = true, optional = true }
+
+sha2 = { version = "0.10", default-features = false }
+
+# kzg
+thiserror = { workspace = true, optional = true }
+c-kzg = { workspace = true, features = ["serde"], optional = true }
+
+# arbitrary
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+
+# serde
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[dev-dependencies]
+alloy-signer.workspace = true
+arbitrary = { workspace = true, features = ["derive"] }
+k256.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+serde_json.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloy-eips/std", "sha2/std", "c-kzg?/std"]
+k256 = ["alloy-primitives/k256"]
+kzg = ["dep:c-kzg", "dep:thiserror", "alloy-eips/kzg", "std"]
+arbitrary = ["std", "dep:arbitrary", "alloy-eips/arbitrary"]
+serde = ["dep:serde", "alloy-primitives/serde", "dep:alloy-serde", "alloy-eips/serde"]
