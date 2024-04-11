@@ -1,8 +1,8 @@
 use crate::op::transaction::tx_type;
 use alloy::{rpc::types::eth::Log, serde as alloy_serde};
-use op_consensus::receipt::ReceiptEnvelope;
 use alloy_consensus::{AnyReceiptEnvelope, ReceiptEnvelope, TxType};
 use alloy_primitives::{Address, B256};
+use op_consensus::receipt::ReceiptEnvelope;
 use serde::{Deserialize, Serialize};
 /// Transaction receipt
 ///

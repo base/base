@@ -14,7 +14,8 @@ use alloy::rpc::types::eth::Log;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
 #[non_exhaustive]
-pub enum ReceiptEnvelope { // TODO: Add T<Log> and receiptbloom
+pub enum ReceiptEnvelope {
+    // TODO: Add T<Log> and receiptbloom
     /// Receipt envelope with no type flag.
     #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
     Legacy,

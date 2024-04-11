@@ -1,5 +1,7 @@
-use alloy::serde as alloy_serde;
-use alloy::rpc::types::eth::{AccessList, Signature};
+use alloy::{
+    rpc::types::eth::{AccessList, Signature},
+    serde as alloy_serde,
+};
 use alloy_primitives::{Address, Bytes, B256, U128, U256, U64};
 use serde::{Deserialize, Serialize};
 
