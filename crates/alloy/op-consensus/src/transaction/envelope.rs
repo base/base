@@ -1,5 +1,6 @@
 use crate::{
-    Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
+    Signed, TxDeposit, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar,
+    TxLegacy,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
@@ -23,6 +24,8 @@ pub enum TxType {
     Eip1559 = 2,
     /// EIP-4844 transaction type.
     Eip4844 = 3,
+    /// Optimism Deposit transaction type.
+    Deposit = 0x7E,
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
@@ -33,6 +36,7 @@ impl<'a> arbitrary::Arbitrary<'a> for TxType {
             1 => TxType::Eip2930,
             2 => TxType::Eip1559,
             3 => TxType::Eip4844,
+            0x7E => TxType::Deposit,
             _ => unreachable!(),
         })
     }
@@ -84,6 +88,9 @@ pub enum TxEnvelope {
     /// send transactions to the network.
     #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
     Eip4844(Signed<TxEip4844Variant>),
+    /// A [`TxDeposit`] tagged with type 0x7E.
+    #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
+    Deposit(TxDeposit),
 }
 
 impl From<Signed<TxLegacy>> for TxEnvelope {
@@ -128,6 +135,12 @@ impl From<Signed<TxEip4844WithSidecar>> for TxEnvelope {
     }
 }
 
+impl From<TxDeposit> for TxEnvelope {
+    fn from(v: TxDeposit) -> Self {
+        Self::Deposit(v)
+    }
+}
+
 impl TxEnvelope {
     /// Return the [`TxType`] of the inner txn.
     pub const fn tx_type(&self) -> TxType {
@@ -136,6 +149,7 @@ impl TxEnvelope {
             Self::Eip2930(_) => TxType::Eip2930,
             Self::Eip1559(_) => TxType::Eip1559,
             Self::Eip4844(_) => TxType::Eip4844,
+            Self::Deposit(_) => TxType::Deposit,
         }
     }
 
@@ -167,6 +181,7 @@ impl TxEnvelope {
                     outer_header.length() + outer_payload_length
                 }
             },
+            Self::Deposit(t) => t.fields_len(),
         }
     }
 
@@ -210,6 +225,7 @@ impl Decodable2718 for TxEnvelope {
             TxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
             TxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
             TxType::Eip4844 => Ok(Self::Eip4844(TxEip4844Variant::decode_signed_fields(buf)?)),
+            TxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
             TxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
             }
@@ -228,6 +244,7 @@ impl Encodable2718 for TxEnvelope {
             Self::Eip2930(_) => Some(TxType::Eip2930 as u8),
             Self::Eip1559(_) => Some(TxType::Eip1559 as u8),
             Self::Eip4844(_) => Some(TxType::Eip4844 as u8),
+            Self::Deposit(_) => Some(TxType::Deposit as u8),
         }
     }
 
@@ -248,6 +265,7 @@ impl Encodable2718 for TxEnvelope {
             TxEnvelope::Eip4844(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
+            TxEnvelope::Deposit(tx) => tx.encode(out),
         }
     }
 }

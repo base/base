@@ -165,6 +165,9 @@ impl Decodable2718 for ReceiptEnvelope {
             TxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
             }
+            TxType::Deposit => {
+                Err(alloy_rlp::Error::Custom("deposit transactions are not supported"))
+            }
         }
     }
 

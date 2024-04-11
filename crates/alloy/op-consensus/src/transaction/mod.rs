@@ -19,6 +19,9 @@ pub use eip4844::{
     SimpleCoder, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar,
 };
 
+mod optimism;
+pub use optimism::TxDeposit;
+
 mod envelope;
 pub use envelope::{TxEnvelope, TxType};
 

@@ -1,4 +1,6 @@
-use crate::{Transaction, TxEip1559, TxEip2930, TxEip4844Variant, TxEnvelope, TxLegacy, TxType};
+use crate::{
+    Transaction, TxDeposit, TxEip1559, TxEip2930, TxEip4844Variant, TxEnvelope, TxLegacy, TxType,
+};
 use alloy_primitives::TxKind;
 
 /// The TypedTransaction enum represents all Ethereum transaction request types.
@@ -24,6 +26,9 @@ pub enum TypedTransaction {
     /// EIP-4844 transaction
     #[cfg_attr(feature = "serde", serde(rename = "0x03", alias = "0x3"))]
     Eip4844(TxEip4844Variant),
+    /// Optimism deposit transaction
+    #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
+    Deposit(TxDeposit),
 }
 
 impl From<TxLegacy> for TypedTransaction {
@@ -50,6 +55,12 @@ impl From<TxEip4844Variant> for TypedTransaction {
     }
 }
 
+impl From<TxDeposit> for TypedTransaction {
+    fn from(tx: TxDeposit) -> Self {
+        Self::Deposit(tx)
+    }
+}
+
 impl From<TxEnvelope> for TypedTransaction {
     fn from(envelope: TxEnvelope) -> Self {
         match envelope {
@@ -57,6 +68,7 @@ impl From<TxEnvelope> for TypedTransaction {
             TxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
             TxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
             TxEnvelope::Eip4844(tx) => Self::Eip4844(tx.strip_signature()),
+            TxEnvelope::Deposit(tx) => Self::Deposit(tx),
         }
     }
 }
@@ -69,6 +81,7 @@ impl TypedTransaction {
             Self::Eip2930(_) => TxType::Eip2930,
             Self::Eip1559(_) => TxType::Eip1559,
             Self::Eip4844(_) => TxType::Eip4844,
+            Self::Deposit(_) => TxType::Deposit,
         }
     }
 
@@ -104,6 +117,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.chain_id(),
             Self::Eip1559(tx) => tx.chain_id(),
             Self::Eip4844(tx) => tx.chain_id(),
+            Self::Deposit(tx) => tx.chain_id(),
         }
     }
 
@@ -113,6 +127,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.gas_limit(),
             Self::Eip1559(tx) => tx.gas_limit(),
             Self::Eip4844(tx) => tx.gas_limit(),
+            Self::Deposit(tx) => tx.gas_limit(),
         }
     }
 
@@ -122,6 +137,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.gas_price(),
             Self::Eip1559(tx) => tx.gas_price(),
             Self::Eip4844(tx) => tx.gas_price(),
+            Self::Deposit(tx) => tx.gas_price(),
         }
     }
 
@@ -131,6 +147,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.input(),
             Self::Eip1559(tx) => tx.input(),
             Self::Eip4844(tx) => tx.input(),
+            Self::Deposit(tx) => tx.input(),
         }
     }
 
@@ -140,6 +157,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.nonce(),
             Self::Eip1559(tx) => tx.nonce(),
             Self::Eip4844(tx) => tx.nonce(),
+            Self::Deposit(tx) => tx.nonce(),
         }
     }
 
@@ -149,6 +167,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.to(),
             Self::Eip1559(tx) => tx.to(),
             Self::Eip4844(tx) => tx.to(),
+            Self::Deposit(tx) => tx.to(),
         }
     }
 
@@ -158,6 +177,7 @@ impl Transaction for TypedTransaction {
             Self::Eip2930(tx) => tx.value(),
             Self::Eip1559(tx) => tx.value(),
             Self::Eip4844(tx) => tx.value(),
+            Self::Deposit(tx) => tx.value(),
         }
     }
 }
