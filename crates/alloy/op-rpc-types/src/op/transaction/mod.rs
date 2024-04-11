@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use self::{request::TransactionRequest, tx_type::TxType};
 
-mod receipt;
-mod request;
-mod tx_type;
+pub mod receipt;
+pub mod request;
+pub mod tx_type;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
