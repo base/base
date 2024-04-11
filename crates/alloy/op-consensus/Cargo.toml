@@ -12,7 +12,7 @@ repository.workspace = true
 exclude.workspace = true
 
 [dependencies]
-alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-primitives = { workspace = true, features = ["rlp", "rand"] }
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-serde = { workspace = true, optional = true }
@@ -41,5 +41,5 @@ default = ["std"]
 std = ["alloy-eips/std", "sha2/std", "c-kzg?/std"]
 k256 = ["alloy-primitives/k256"]
 kzg = ["dep:c-kzg", "dep:thiserror", "alloy-eips/kzg", "std"]
-arbitrary = ["std", "dep:arbitrary", "alloy-eips/arbitrary"]
+arbitrary = ["std", "dep:arbitrary", "alloy-eips/arbitrary", "alloy-primitives/arbitrary"]
 serde = ["dep:serde", "alloy-primitives/serde", "dep:alloy-serde", "alloy-eips/serde"]

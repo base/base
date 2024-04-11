@@ -189,7 +189,7 @@ impl alloy_rlp::Decodable for ReceiptWithBloom {
     }
 }
 
-#[cfg(any(test, feature = "arbitrary"))]
+#[cfg(all(test, feature = "arbitrary"))]
 impl<'a, T> arbitrary::Arbitrary<'a> for ReceiptWithBloom<T>
 where
     T: arbitrary::Arbitrary<'a>,
