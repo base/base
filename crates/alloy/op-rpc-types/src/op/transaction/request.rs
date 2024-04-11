@@ -6,6 +6,8 @@ use alloy_primitives::{Address, Bytes, ChainId, TxHash, TxKind, U256};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
+use super::tx_type::TxType;
+
 /// Represents _all_ transaction requests to/from RPC.
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,7 +56,7 @@ pub struct TransactionRequest {
     pub access_list: Option<AccessList>,
     /// The EIP-2718 transaction type. See [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) for more information.
     #[serde(default, rename = "type", with = "alloy_serde::num::u8_hex_opt")]
-    pub transaction_type: Option<TxHash>,
+    pub transaction_type: Option<TxType>,
 }
 
 impl Hash for TransactionRequest {
