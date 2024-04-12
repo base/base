@@ -200,14 +200,14 @@ function setGasPayingToken(address _token, uint8 _decimals, bytes32 _name, bytes
 The `StandardBridge` contracts on both L1 and L2 MUST be aware of the custom gas token. The `ether` specific ABI on the
 `StandardBridge` is disabled when custom gas token is enabled.
 
-The following methods MUST revert when `CALLVALUE` is non zero:
+The following methods MUST revert when custom gas token is being used:
 
 - `bridgeETH(uint32,bytes)`
 - `bridgeETHTo(address,uint32,bytes)`
 - `receive()`
 - `finalizeBridgeETH(address, address, uint256, bytes)`
 
-The following legacy methods MUST also revert when `CALLVALUE` is non zero:
+The following legacy methods MUST also revert when custom gas token is being used:
 
 - `depositETH(uint32,bytes)`
 - `depositETHTo(address,uint32,bytes)`
