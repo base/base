@@ -1,7 +1,14 @@
 //! Alloy basic Transaction Request type.
 
 use crate::op::transaction::Transaction;
-use alloy::{consensus::{BlobTransactionSidecar, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TypedTransaction}, rpc::types::eth::{transaction::AccessList, TransactionInput}, serde as alloy_serde};
+use alloy::{
+    consensus::{
+        BlobTransactionSidecar, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant,
+        TxEip4844WithSidecar, TxEnvelope, TxLegacy, TypedTransaction,
+    },
+    rpc::types::eth::{transaction::AccessList, TransactionInput},
+    serde as alloy_serde,
+};
 use alloy_primitives::{Address, ChainId, TxKind, B256, U256};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
@@ -64,12 +71,12 @@ pub struct TransactionRequest {
     /// The EIP-2718 transaction type. See [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) for more information.
     #[serde(default, rename = "type", with = "alloy_serde::num::u8_hex_opt")]
     pub transaction_type: Option<TxType>,
-        /// Blob versioned hashes for EIP-4844 transactions.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub blob_versioned_hashes: Option<Vec<B256>>,
-        /// Blob sidecar for EIP-4844 transactions.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub sidecar: Option<BlobTransactionSidecar>,
+    /// Blob versioned hashes for EIP-4844 transactions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blob_versioned_hashes: Option<Vec<B256>>,
+    /// Blob sidecar for EIP-4844 transactions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidecar: Option<BlobTransactionSidecar>,
 }
 
 impl Hash for TransactionRequest {
@@ -279,7 +286,9 @@ impl From<TxEip4844Variant> for TransactionRequest {
     }
 }
 
-impl From<TypedTransaction> for TransactionRequest { // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TypedTransaction does not have the DEPOSIT type
+impl From<TypedTransaction> for TransactionRequest {
+    // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TypedTransaction
+    // does not have the DEPOSIT type
     fn from(tx: TypedTransaction) -> TransactionRequest {
         match tx {
             TypedTransaction::Legacy(tx) => tx.into(),
@@ -291,7 +300,9 @@ impl From<TypedTransaction> for TransactionRequest { // TODO: Replace the import
     }
 }
 
-impl From<TxEnvelope> for TransactionRequest { // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TxEnvelope does not have the DEPOSIT type
+impl From<TxEnvelope> for TransactionRequest {
+    // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TxEnvelope does
+    // not have the DEPOSIT type
     fn from(envelope: TxEnvelope) -> TransactionRequest {
         match envelope {
             TxEnvelope::Legacy(tx) => {

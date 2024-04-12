@@ -1,5 +1,7 @@
 use alloy::{
-    consensus::{Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEnvelope, TxLegacy}, rpc::types::eth::{AccessList, ConversionError, Signature}, serde as alloy_serde
+    consensus::{Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEnvelope, TxLegacy},
+    rpc::types::eth::{AccessList, ConversionError, Signature},
+    serde as alloy_serde,
 };
 use alloy_primitives::{Address, Bytes, B256, U128, U256, U64};
 use serde::{Deserialize, Serialize};
@@ -233,7 +235,9 @@ impl TryFrom<Transaction> for Signed<TxEip4844Variant> {
     }
 }
 
-impl TryFrom<Transaction> for TxEnvelope { // TODO: When the TxEnvelope is implemented for op-consensus, import it from there. This envelope doesn't handle DEPOSIT
+impl TryFrom<Transaction> for TxEnvelope {
+    // TODO: When the TxEnvelope is implemented for op-consensus, import it from there. This
+    // envelope doesn't handle DEPOSIT
     type Error = ConversionError;
 
     fn try_from(tx: Transaction) -> Result<Self, Self::Error> {

@@ -3,13 +3,11 @@
 #![allow(unknown_lints, non_local_definitions)]
 
 use crate::op::transaction::Transaction;
-use alloy::rpc::types::eth::{BlockTransactionHashes, BlockTransactionHashesMut, Header, Rich, Withdrawal};
-use alloy_primitives::{
-B256, U256,
+use alloy::rpc::types::eth::{
+    BlockTransactionHashes, BlockTransactionHashesMut, Header, Rich, Withdrawal,
 };
-use serde::{
-    Deserialize, Serialize,
-};
+use alloy_primitives::{B256, U256};
+use serde::{Deserialize, Serialize};
 
 /// Block representation
 #[derive(Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -106,13 +104,15 @@ impl BlockTransactions {
     /// Returns an iterator over references to the transaction hashes.
     #[inline]
     pub fn hashes(&self) -> BlockTransactionHashes<'_> {
-        BlockTransactionHashes::new(self) // TODO: The `new` method is not public, so cannot be used here. Make a PR to alloy to make this public
+        BlockTransactionHashes::new(self) // TODO: The `new` method is not public, so cannot be used
+                                          // here. Make a PR to alloy to make this public
     }
 
     /// Returns an iterator over mutable references to the transaction hashes.
     #[inline]
     pub fn hashes_mut(&mut self) -> BlockTransactionHashesMut<'_> {
-        BlockTransactionHashesMut::new(self) // TODO: The `new` method is not public, so cannot be used here. Make a PR to alloy to make this public
+        BlockTransactionHashesMut::new(self) // TODO: The `new` method is not public, so cannot be
+                                             // used here. Make a PR to alloy to make this public
     }
 
     /// Returns an instance of BlockTransactions with the Uncle special case.
@@ -133,7 +133,6 @@ impl BlockTransactions {
         self.len() == 0
     }
 }
-
 
 /// A Block representation that allows to include additional fields
 pub type RichBlock = Rich<Block>;
