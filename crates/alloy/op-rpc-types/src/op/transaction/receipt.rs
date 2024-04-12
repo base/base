@@ -1,17 +1,13 @@
 use crate::op::transaction::tx_type::TxType;
 use alloy::{rpc::types::eth::Log, serde as alloy_serde};
 use alloy_primitives::{Address, B256};
-use op_consensus::receipt::ReceiptEnvelope;
+use op_consensus::receipt::envelope::ReceiptEnvelope;
 use serde::{Deserialize, Serialize};
 /// Transaction receipt
 ///
 /// This type is generic over an inner [`ReceiptEnvelope`] which contains
 /// consensus data and metadata.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    any(test, feature = "arbitrary"),
-    derive(proptest_derive::Arbitrary, arbitrary::Arbitrary)
-)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     /// The receipt envelope, which contains the consensus receipt data..
@@ -98,7 +94,7 @@ pub struct TransactionReceipt<T = ReceiptEnvelope<Log>> {
     /// The value is always equal to `1` when present.
     #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::u64_hex_opt")]
     pub deposit_receipt_version: Option<u64>,
-    pub tx_type: tx_type::TxType,
+    pub tx_type: TxType,
 }
 
 impl AsRef<ReceiptEnvelope<Log>> for TransactionReceipt {

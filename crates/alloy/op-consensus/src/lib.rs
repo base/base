@@ -1,1 +1,1 @@
-mod receipt;
+pub mod receipt;
