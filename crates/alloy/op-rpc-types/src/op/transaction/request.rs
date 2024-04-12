@@ -1,8 +1,8 @@
 //! Alloy basic Transaction Request type.
 
 use crate::op::transaction::Transaction;
-use alloy::{rpc::types::eth::transaction::AccessList, serde as alloy_serde};
-use alloy_primitives::{Address, Bytes, ChainId, TxHash, TxKind, U256};
+use alloy::{consensus::{BlobTransactionSidecar, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TypedTransaction}, rpc::types::eth::{transaction::AccessList, TransactionInput}, serde as alloy_serde};
+use alloy_primitives::{Address, ChainId, TxKind, B256, U256};
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
@@ -37,6 +37,13 @@ pub struct TransactionRequest {
         with = "alloy_serde::num::u128_hex_or_decimal_opt"
     )]
     pub max_priority_fee_per_gas: Option<u128>,
+    /// The max fee per blob gas for EIP-4844 blob transactions.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "alloy_serde::num::u128_hex_or_decimal_opt"
+    )]
+    pub max_fee_per_blob_gas: Option<u128>,
     /// The gas limit for the transaction.
     #[serde(default, with = "alloy_serde::num::u128_hex_or_decimal_opt")]
     pub gas: Option<u128>,
@@ -57,6 +64,12 @@ pub struct TransactionRequest {
     /// The EIP-2718 transaction type. See [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) for more information.
     #[serde(default, rename = "type", with = "alloy_serde::num::u8_hex_opt")]
     pub transaction_type: Option<TxType>,
+        /// Blob versioned hashes for EIP-4844 transactions.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub blob_versioned_hashes: Option<Vec<B256>>,
+        /// Blob sidecar for EIP-4844 transactions.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub sidecar: Option<BlobTransactionSidecar>,
 }
 
 impl Hash for TransactionRequest {
@@ -153,92 +166,6 @@ impl TransactionRequest {
     pub const fn transaction_type(mut self, transaction_type: u8) -> Self {
         self.transaction_type = Some(transaction_type);
         self
-    }
-}
-
-/// Helper type that supports both `data` and `input` fields that map to transaction input data.
-///
-/// This is done for compatibility reasons where older implementations used `data` instead of the
-/// newer, recommended `input` field.
-///
-/// If both fields are set, it is expected that they contain the same value, otherwise an error is
-/// returned.
-#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize, Hash)]
-pub struct TransactionInput {
-    /// Transaction data
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input: Option<Bytes>,
-    /// Transaction data
-    ///
-    /// This is the same as `input` but is used for backwards compatibility: <https://github.com/ethereum/go-ethereum/issues/15628>
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<Bytes>,
-}
-
-impl TransactionInput {
-    /// Creates a new instance with the given input data.
-    pub const fn new(data: Bytes) -> Self {
-        Self::maybe_input(Some(data))
-    }
-
-    /// Creates a new instance with the given input data.
-    pub const fn maybe_input(input: Option<Bytes>) -> Self {
-        Self { input, data: None }
-    }
-
-    /// Consumes the type and returns the optional input data.
-    #[inline]
-    pub fn into_input(self) -> Option<Bytes> {
-        self.input.or(self.data)
-    }
-
-    /// Consumes the type and returns the optional input data.
-    ///
-    /// Returns an error if both `data` and `input` fields are set and not equal.
-    #[inline]
-    pub fn try_into_unique_input(self) -> Result<Option<Bytes>, TransactionInputError> {
-        self.check_unique_input().map(|()| self.into_input())
-    }
-
-    /// Returns the optional input data.
-    #[inline]
-    pub fn input(&self) -> Option<&Bytes> {
-        self.input.as_ref().or(self.data.as_ref())
-    }
-
-    /// Returns the optional input data.
-    ///
-    /// Returns an error if both `data` and `input` fields are set and not equal.
-    #[inline]
-    pub fn unique_input(&self) -> Result<Option<&Bytes>, TransactionInputError> {
-        self.check_unique_input().map(|()| self.input())
-    }
-
-    fn check_unique_input(&self) -> Result<(), TransactionInputError> {
-        if let (Some(input), Some(data)) = (&self.input, &self.data) {
-            if input != data {
-                return Err(TransactionInputError::default());
-            }
-        }
-        Ok(())
-    }
-}
-
-impl From<Vec<u8>> for TransactionInput {
-    fn from(input: Vec<u8>) -> Self {
-        Self { input: Some(input.into()), data: None }
-    }
-}
-
-impl From<Bytes> for TransactionInput {
-    fn from(input: Bytes) -> Self {
-        Self { input: Some(input), data: None }
-    }
-}
-
-impl From<Option<Bytes>> for TransactionInput {
-    fn from(input: Option<Bytes>) -> Self {
-        Self { input, data: None }
     }
 }
 
@@ -352,18 +279,19 @@ impl From<TxEip4844Variant> for TransactionRequest {
     }
 }
 
-impl From<TypedTransaction> for TransactionRequest {
+impl From<TypedTransaction> for TransactionRequest { // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TypedTransaction does not have the DEPOSIT type
     fn from(tx: TypedTransaction) -> TransactionRequest {
         match tx {
             TypedTransaction::Legacy(tx) => tx.into(),
             TypedTransaction::Eip2930(tx) => tx.into(),
             TypedTransaction::Eip1559(tx) => tx.into(),
             TypedTransaction::Eip4844(tx) => tx.into(),
+            // TODO: After changing the import to op-consensus, handle DEPOSIT here.
         }
     }
 }
 
-impl From<TxEnvelope> for TransactionRequest {
+impl From<TxEnvelope> for TransactionRequest { // TODO: Replace the import from alloy-consensus with the op-consensus, the eth TxEnvelope does not have the DEPOSIT type
     fn from(envelope: TxEnvelope) -> TransactionRequest {
         match envelope {
             TxEnvelope::Legacy(tx) => {
@@ -434,13 +362,8 @@ impl From<TxEnvelope> for TransactionRequest {
                     tx.strip_signature().into()
                 }
             }
+            // TODO: After changing the import to op-consensus, handle DEPOSIT here.
             _ => Default::default(),
         }
     }
 }
-
-/// Error thrown when both `data` and `input` fields are set and not equal.
-#[derive(Debug, Default, thiserror::Error)]
-#[error("both \"data\" and \"input\" are set and not equal. Please use \"input\" to pass transaction call data")]
-#[non_exhaustive]
-pub struct TransactionInputError;
