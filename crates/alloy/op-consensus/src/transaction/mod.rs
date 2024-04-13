@@ -1,6 +1,3 @@
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-
 mod optimism;
 pub use optimism::TxDeposit;
 

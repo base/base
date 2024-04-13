@@ -44,7 +44,7 @@ pub enum OpReceiptEnvelope<T = Log> {
 }
 
 impl<T> OpReceiptEnvelope<T> {
-    /// Return the [`TxType`] of the inner receipt.
+    /// Return the [`OpTxType`] of the inner receipt.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
             Self::Legacy(_) => OpTxType::Legacy,

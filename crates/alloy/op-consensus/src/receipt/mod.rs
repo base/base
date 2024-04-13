@@ -41,6 +41,9 @@ mod tests {
     use alloy_primitives::{address, b256, bytes, hex, Bytes, LogData};
     use alloy_rlp::{Decodable, Encodable};
 
+    #[cfg(not(feature = "std"))]
+    use alloc::{vec, vec::Vec};
+
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]
     fn encode_legacy_receipt() {

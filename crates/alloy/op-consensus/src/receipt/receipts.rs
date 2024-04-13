@@ -34,13 +34,13 @@ pub struct OpReceipt<T = Log> {
 }
 
 impl OpReceipt {
-    /// Calculates [`Log`]'s bloom filter. this is slow operation and [ReceiptWithBloom] can
+    /// Calculates [`Log`]'s bloom filter. this is slow operation and [OpReceiptWithBloom] can
     /// be used to cache this value.
     pub fn bloom_slow(&self) -> Bloom {
         self.logs.iter().collect()
     }
 
-    /// Calculates the bloom filter for the receipt and returns the [ReceiptWithBloom] container
+    /// Calculates the bloom filter for the receipt and returns the [OpReceiptWithBloom] container
     /// type.
     pub fn with_bloom(self) -> OpReceiptWithBloom {
         self.into()
@@ -73,12 +73,12 @@ impl OpTxReceipt for OpReceipt {
     }
 }
 
-/// [`Receipt`] with calculated bloom filter, modified for the OP Stack.
+/// [`OpReceipt`] with calculated bloom filter, modified for the OP Stack.
 ///
 /// This convenience type allows us to lazily calculate the bloom filter for a
 /// receipt, similar to [`Sealed`].
 ///
-/// [`Sealed`]: crate::sealed::Sealed
+/// [`Sealed`]: alloy_consensus::Sealed
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -128,7 +128,7 @@ impl From<OpReceipt> for OpReceiptWithBloom {
 }
 
 impl OpReceiptWithBloom {
-    /// Create new [ReceiptWithBloom]
+    /// Create new [OpReceiptWithBloom]
     pub const fn new(receipt: OpReceipt, bloom: Bloom) -> Self {
         Self { receipt, logs_bloom: bloom }
     }

@@ -75,7 +75,7 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
 }
 
 impl OpTypedTransaction {
-    /// Return the [`TxType`] of the inner txn.
+    /// Return the [`OpTxType`] of the inner txn.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
             Self::Legacy(_) => OpTxType::Legacy,
@@ -106,6 +106,22 @@ impl OpTypedTransaction {
     pub const fn eip1559(&self) -> Option<&TxEip1559> {
         match self {
             Self::Eip1559(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Return the inner EIP-4844 transaction if it exists.
+    pub const fn eip4844(&self) -> Option<&TxEip4844Variant> {
+        match self {
+            Self::Eip4844(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Return the inner deposit transaction if it exists.
+    pub const fn deposit(&self) -> Option<&TxDeposit> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
             _ => None,
         }
     }

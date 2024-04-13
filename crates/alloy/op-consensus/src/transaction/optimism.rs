@@ -5,9 +5,6 @@ use alloy_rlp::{
 };
 use core::mem;
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -22,14 +19,7 @@ pub struct TxDeposit {
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub to: TxKind,
     /// The ETH value to mint on L2.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::u128_hex_or_decimal_opt"
-        )
-    )]
+    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::u128_hex_or_decimal_opt"))]
     pub mint: Option<u128>,
     ///  The ETH value to send to the recipient account.
     pub value: U256,
