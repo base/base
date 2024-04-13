@@ -1,16 +1,13 @@
 use alloy_primitives::{Bloom, Log};
 
-mod any;
-pub use any::AnyReceiptEnvelope;
-
 mod envelope;
-pub use envelope::ReceiptEnvelope;
+pub use envelope::OpReceiptEnvelope;
 
 mod receipts;
-pub use receipts::{Receipt, ReceiptWithBloom};
+pub use receipts::{OpReceipt, OpReceiptWithBloom};
 
 /// Receipt is the result of a transaction execution.
-pub trait TxReceipt {
+pub trait OpTxReceipt {
     /// Returns true if the transaction was successful.
     fn success(&self) -> bool;
 
@@ -29,6 +26,12 @@ pub trait TxReceipt {
 
     /// Returns the logs emitted by this transaction.
     fn logs(&self) -> &[Log];
+
+    /// Returns the deposit nonce of the transaction.
+    fn deposit_nonce(&self) -> Option<u64>;
+
+    /// Returns the deposit receipt version of the transaction.
+    fn deposit_receipt_version(&self) -> Option<u64>;
 }
 
 #[cfg(test)]
@@ -45,8 +48,8 @@ mod tests {
 
         let mut data = vec![];
         let receipt =
-            ReceiptEnvelope::Legacy(ReceiptWithBloom {
-                receipt: Receipt {
+            OpReceiptEnvelope::Legacy(OpReceiptWithBloom {
+                receipt: OpReceipt {
                     cumulative_gas_used: 0x1u128,
                     logs: vec![Log {
                         address: address!("0000000000000000000000000000000000000011"),
@@ -59,6 +62,8 @@ mod tests {
                         ),
                     }],
                     status: false,
+                    deposit_nonce: None,
+                    deposit_receipt_version: None,
                 },
                 logs_bloom: [0; 256].into(),
             });
@@ -77,8 +82,8 @@ mod tests {
 
         // EIP658Receipt
         let expected =
-            ReceiptWithBloom {
-                receipt: Receipt {
+            OpReceiptWithBloom {
+                receipt: OpReceipt {
                     cumulative_gas_used: 0x1u128,
                     logs: vec![Log {
                         address: address!("0000000000000000000000000000000000000011"),
@@ -91,17 +96,19 @@ mod tests {
                         ),
                     }],
                     status: false,
+                    deposit_nonce: None,
+                    deposit_receipt_version: None,
                 },
                 logs_bloom: [0; 256].into(),
             };
 
-        let receipt = ReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
     }
 
     #[test]
     fn gigantic_receipt() {
-        let receipt = Receipt {
+        let receipt = OpReceipt {
             cumulative_gas_used: 16747627,
             status: true,
             logs: vec![
@@ -124,13 +131,15 @@ mod tests {
                     ),
                 },
             ],
+            deposit_nonce: None,
+            deposit_receipt_version: None,
         }
         .with_bloom();
 
         let mut data = vec![];
 
         receipt.encode(&mut data);
-        let decoded = ReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let decoded = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
 
         // receipt.clone().to_compact(&mut data);
         // let (decoded, _) = Receipt::from_compact(&data[..], data.len());

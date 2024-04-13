@@ -1,4 +1,4 @@
-use crate::{SignableTransaction, Signed, Transaction, TxType};
+use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
@@ -236,8 +236,8 @@ impl TxEip1559 {
     }
 
     /// Get transaction type
-    pub(crate) const fn tx_type(&self) -> TxType {
-        TxType::Eip1559
+    pub(crate) const fn tx_type(&self) -> OpTxType {
+        OpTxType::Eip1559
     }
 
     /// Calculates a heuristic for the in-memory size of the [TxEip1559] transaction.
@@ -255,7 +255,7 @@ impl TxEip1559 {
     }
 }
 
-impl Transaction for TxEip1559 {
+impl OpTransaction for TxEip1559 {
     fn input(&self) -> &[u8] {
         &self.input
     }

@@ -3,7 +3,7 @@ pub use builder::{SidecarBuilder, SidecarCoder, SimpleCoder};
 
 pub mod utils;
 
-use crate::{SignableTransaction, Signed, Transaction, TxType};
+use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
 
 use alloy_eips::{
     eip2930::AccessList,
@@ -135,8 +135,8 @@ impl TxEip4844Variant {
     }
 
     /// Get the transaction type.
-    pub const fn tx_type(&self) -> TxType {
-        TxType::Eip4844
+    pub const fn tx_type(&self) -> OpTxType {
+        OpTxType::Eip4844
     }
 
     /// Get access to the inner tx [TxEip4844].
@@ -227,7 +227,7 @@ impl TxEip4844Variant {
     }
 }
 
-impl Transaction for TxEip4844Variant {
+impl OpTransaction for TxEip4844Variant {
     fn chain_id(&self) -> Option<ChainId> {
         match self {
             TxEip4844Variant::TxEip4844(tx) => Some(tx.chain_id),
@@ -297,7 +297,7 @@ impl SignableTransaction<Signature> for TxEip4844Variant {
     fn into_signed(self, signature: Signature) -> Signed<Self> {
         let payload_length = 1 + self.fields_len() + signature.rlp_vrs_len();
         let mut buf = Vec::with_capacity(payload_length);
-        buf.put_u8(TxType::Eip4844 as u8);
+        buf.put_u8(OpTxType::Eip4844 as u8);
         // we use the inner tx to encode the fields
         self.tx().encode_with_signature(&signature, &mut buf, false);
         let hash = keccak256(&buf);
@@ -648,8 +648,8 @@ impl TxEip4844 {
     }
 
     /// Get transaction type
-    pub const fn tx_type(&self) -> TxType {
-        TxType::Eip4844
+    pub const fn tx_type(&self) -> OpTxType {
+        OpTxType::Eip4844
     }
 
     /// Encodes the EIP-4844 transaction in RLP for signing.
@@ -698,7 +698,7 @@ impl SignableTransaction<Signature> for TxEip4844 {
     }
 }
 
-impl Transaction for TxEip4844 {
+impl OpTransaction for TxEip4844 {
     fn input(&self) -> &[u8] {
         &self.input
     }
@@ -792,7 +792,7 @@ impl TxEip4844WithSidecar {
     }
 
     /// Get the transaction type.
-    pub const fn tx_type(&self) -> TxType {
+    pub const fn tx_type(&self) -> OpTxType {
         self.tx.tx_type()
     }
 
@@ -929,7 +929,7 @@ impl SignableTransaction<Signature> for TxEip4844WithSidecar {
     }
 }
 
-impl Transaction for TxEip4844WithSidecar {
+impl OpTransaction for TxEip4844WithSidecar {
     fn chain_id(&self) -> Option<ChainId> {
         self.tx.chain_id()
     }
@@ -1097,7 +1097,7 @@ pub(crate) fn kzg_to_versioned_hash(commitment: &[u8]) -> B256 {
 #[cfg(test)]
 mod tests {
     use super::{BlobTransactionSidecar, TxEip4844, TxEip4844WithSidecar};
-    use crate::{SignableTransaction, TxEnvelope};
+    use crate::{OpTxEnvelope, SignableTransaction};
     use alloy_primitives::{Signature, U256};
     use alloy_rlp::{Decodable, Encodable};
 
@@ -1149,8 +1149,8 @@ mod tests {
         assert_eq!(expected_signed.hash(), actual_signed.hash());
 
         // convert to envelopes
-        let expected_envelope: TxEnvelope = expected_signed.into();
-        let actual_envelope: TxEnvelope = actual_signed.into();
+        let expected_envelope: OpTxEnvelope = expected_signed.into();
+        let actual_envelope: OpTxEnvelope = actual_signed.into();
 
         // now encode the transaction and check the length
         let mut buf = Vec::new();
@@ -1162,7 +1162,7 @@ mod tests {
         assert_eq!(buf.len(), actual_envelope.length());
 
         // now decode the transaction and check the values
-        let decoded = TxEnvelope::decode(&mut &buf[..]).unwrap();
+        let decoded = OpTxEnvelope::decode(&mut &buf[..]).unwrap();
         assert_eq!(decoded, expected_envelope);
     }
 }

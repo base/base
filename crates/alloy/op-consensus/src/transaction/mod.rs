@@ -23,16 +23,16 @@ mod optimism;
 pub use optimism::TxDeposit;
 
 mod envelope;
-pub use envelope::{TxEnvelope, TxType};
+pub use envelope::{OpTxEnvelope, OpTxType};
 
 mod legacy;
 pub use legacy::TxLegacy;
 
 mod typed;
-pub use typed::TypedTransaction;
+pub use typed::OpTypedTransaction;
 
 /// Represents a minimal EVM transaction.
-pub trait Transaction: any::Any + Send + Sync + 'static {
+pub trait OpTransaction: any::Any + Send + Sync + 'static {
     /// Get `data`.
     fn input(&self) -> &[u8];
 
@@ -61,7 +61,7 @@ pub trait Transaction: any::Any + Send + Sync + 'static {
 /// [`alloy_primitives::Signature`], however, it may be different for future EIP-2718 transaction
 /// types, or in other networks. For example, in Optimism, the deposit transaction signature is the
 /// unit type `()`.
-pub trait SignableTransaction<Signature>: Transaction {
+pub trait SignableTransaction<Signature>: OpTransaction {
     /// Sets `chain_id`.
     ///
     /// Prefer [`set_chain_id_checked`](Self::set_chain_id_checked).

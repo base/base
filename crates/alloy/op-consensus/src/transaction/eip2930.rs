@@ -1,4 +1,4 @@
-use crate::{SignableTransaction, Signed, Transaction, TxType};
+use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, Header};
@@ -214,12 +214,12 @@ impl TxEip2930 {
     }
 
     /// Get transaction type.
-    pub const fn tx_type(&self) -> TxType {
-        TxType::Eip2930
+    pub const fn tx_type(&self) -> OpTxType {
+        OpTxType::Eip2930
     }
 }
 
-impl Transaction for TxEip2930 {
+impl OpTransaction for TxEip2930 {
     fn input(&self) -> &[u8] {
         &self.input
     }
@@ -306,7 +306,7 @@ impl Decodable for TxEip2930 {
 #[cfg(test)]
 mod tests {
     use super::TxEip2930;
-    use crate::{SignableTransaction, TxEnvelope};
+    use crate::{OpTxEnvelope, SignableTransaction};
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
 
@@ -349,7 +349,7 @@ mod tests {
 
         let tx = request.into_signed(signature);
 
-        let envelope = TxEnvelope::Eip2930(tx);
+        let envelope = OpTxEnvelope::Eip2930(tx);
 
         let mut encoded = Vec::new();
         envelope.encode(&mut encoded);
@@ -360,7 +360,7 @@ mod tests {
             "b86401f8610180010294000000000000000000000000000000000000000003820102c080a0840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565a025e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1"
         );
 
-        let decoded = TxEnvelope::decode(&mut encoded.as_ref()).unwrap();
+        let decoded = OpTxEnvelope::decode(&mut encoded.as_ref()).unwrap();
         assert_eq!(decoded, envelope);
     }
 }

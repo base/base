@@ -1,4 +1,4 @@
-use crate::Transaction;
+use crate::OpTransaction;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, B256, U256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
@@ -19,13 +19,23 @@ pub struct TxDeposit {
     pub from: Address,
     /// The address of the recipient account, or the null (zero-length) address if the deposited
     /// transaction is a contract creation.
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub to: TxKind,
     /// The ETH value to mint on L2.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::u128_hex_or_decimal_opt"
+        )
+    )]
     pub mint: Option<u128>,
     ///  The ETH value to send to the recipient account.
     pub value: U256,
     /// The gas limit for the L2 transaction.
-    pub gas_limit: u64,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::u128_hex_or_decimal"))]
+    pub gas_limit: u128,
     /// Field indicating if this transaction is exempt from the L2 gas limit.
     pub is_system_transaction: bool,
     /// Input has two uses depending if transaction is Create or Call (if `to` field is None or
@@ -103,13 +113,13 @@ impl TxDeposit {
         self.to.size() + // to
         mem::size_of::<Option<u128>>() + // mint
         mem::size_of::<U256>() + // value
-        mem::size_of::<u64>() + // gas_limit
+        mem::size_of::<u128>() + // gas_limit
         mem::size_of::<bool>() + // is_system_transaction
         self.input.len() // input
     }
 }
 
-impl Transaction for TxDeposit {
+impl OpTransaction for TxDeposit {
     fn input(&self) -> &[u8] {
         &self.input
     }
@@ -131,7 +141,7 @@ impl Transaction for TxDeposit {
     }
 
     fn gas_limit(&self) -> u128 {
-        self.gas_limit.into()
+        self.gas_limit
     }
 
     fn gas_price(&self) -> Option<u128> {
@@ -174,10 +184,10 @@ mod tests {
     #[test]
     fn test_rlp_roundtrip() {
         let bytes = Bytes::from_static(&hex!("7ef9015aa044bae9d41b8380d781187b426c6fe43df5fb2fb57bd4466ef6a701e1f01e015694deaddeaddeaddeaddeaddeaddeaddeaddead000194420000000000000000000000000000000000001580808408f0d18001b90104015d8eb900000000000000000000000000000000000000000000000000000000008057650000000000000000000000000000000000000000000000000000000063d96d10000000000000000000000000000000000000000000000000000000000009f35273d89754a1e0387b89520d989d3be9c37c1f32495a88faf1ea05c61121ab0d1900000000000000000000000000000000000000000000000000000000000000010000000000000000000000002d679b567db6187c0c8323fa982cfb88b74dbcc7000000000000000000000000000000000000000000000000000000000000083400000000000000000000000000000000000000000000000000000000000f4240"));
-        let tx_a = TxDeposit::decode(&mut bytes.as_ref()).unwrap();
+        let tx_a = TxDeposit::decode(&mut bytes[1..].as_ref()).unwrap();
         let mut buf_a = BytesMut::default();
         tx_a.encode(&mut buf_a);
-        assert_eq!(&buf_a[..], &bytes[..]);
+        assert_eq!(&buf_a[..], &bytes[1..]);
     }
 
     #[test]
@@ -195,7 +205,7 @@ mod tests {
 
         let mut buffer = BytesMut::new();
         original.encode_fields(&mut buffer);
-        let decoded = TxDeposit::decode(&mut &buffer[..]).expect("Failed to decode");
+        let decoded = TxDeposit::decode_fields(&mut &buffer[..]).expect("Failed to decode");
 
         assert_eq!(original, decoded);
     }

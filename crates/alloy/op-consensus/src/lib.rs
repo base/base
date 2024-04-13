@@ -19,19 +19,14 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
-pub mod constants;
-
-mod header;
-pub use header::{Header, EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH};
-
 mod receipt;
-pub use receipt::{AnyReceiptEnvelope, Receipt, ReceiptEnvelope, ReceiptWithBloom, TxReceipt};
+pub use receipt::{OpReceipt, OpReceiptEnvelope, OpReceiptWithBloom, OpTxReceipt};
 
 mod transaction;
 pub use transaction::{
-    eip4844_utils, Blob, BlobTransactionSidecar, Bytes48, SidecarBuilder, SidecarCoder,
-    SignableTransaction, SimpleCoder, Transaction, TxDeposit, TxEip1559, TxEip2930, TxEip4844,
-    TxEip4844Variant, TxEip4844WithSidecar, TxEnvelope, TxLegacy, TxType, TypedTransaction,
+    eip4844_utils, Blob, BlobTransactionSidecar, Bytes48, OpTransaction, OpTxEnvelope, OpTxType,
+    OpTypedTransaction, SidecarBuilder, SidecarCoder, SignableTransaction, SimpleCoder, TxDeposit,
+    TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
 };
 
 #[cfg(feature = "kzg")]
@@ -39,9 +34,6 @@ pub use transaction::BlobTransactionValidationError;
 
 #[cfg(feature = "kzg")]
 pub use alloy_eips::eip4844::env_settings::EnvKzgSettings;
-
-mod sealed;
-pub use sealed::{Sealable, Sealed};
 
 mod signed;
 pub use signed::Signed;

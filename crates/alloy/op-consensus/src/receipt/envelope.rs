@@ -1,9 +1,9 @@
-use crate::{Receipt, ReceiptWithBloom, TxType};
+use crate::{OpReceipt, OpReceiptWithBloom, OpTxType};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
-/// Receipt envelope, as defined in [EIP-2718].
+/// Receipt envelope, as defined in [EIP-2718], modified for OP Stack chains.
 ///
 /// This enum distinguishes between tagged and untagged legacy receipts, as the
 /// in-protocol merkle tree may commit to EITHER 0-prefixed or raw. Therefore
@@ -17,35 +17,41 @@ use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
 #[non_exhaustive]
-pub enum ReceiptEnvelope<T = Log> {
+pub enum OpReceiptEnvelope<T = Log> {
     /// Receipt envelope with no type flag.
     #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
-    Legacy(ReceiptWithBloom<T>),
+    Legacy(OpReceiptWithBloom<T>),
     /// Receipt envelope with type flag 1, containing a [EIP-2930] receipt.
     ///
     /// [EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
     #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
-    Eip2930(ReceiptWithBloom<T>),
+    Eip2930(OpReceiptWithBloom<T>),
     /// Receipt envelope with type flag 2, containing a [EIP-1559] receipt.
     ///
     /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
     #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
-    Eip1559(ReceiptWithBloom<T>),
-    /// Receipt envelope with type flag 2, containing a [EIP-4844] receipt.
+    Eip1559(OpReceiptWithBloom<T>),
+    /// Receipt envelope with type flag 3, containing a [EIP-4844] receipt.
     ///
     /// [EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
     #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
-    Eip4844(ReceiptWithBloom<T>),
+    Eip4844(OpReceiptWithBloom<T>),
+    /// Receipt envelope with type flag 126, containing a [deposit] receipt.
+    ///
+    /// [deposit]: https://specs.optimism.io/protocol/deposits.html
+    #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
+    Deposit(OpReceiptWithBloom<T>),
 }
 
-impl<T> ReceiptEnvelope<T> {
+impl<T> OpReceiptEnvelope<T> {
     /// Return the [`TxType`] of the inner receipt.
-    pub const fn tx_type(&self) -> TxType {
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => TxType::Legacy,
-            Self::Eip2930(_) => TxType::Eip2930,
-            Self::Eip1559(_) => TxType::Eip1559,
-            Self::Eip4844(_) => TxType::Eip4844,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip4844(_) => OpTxType::Eip4844,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -74,26 +80,42 @@ impl<T> ReceiptEnvelope<T> {
         &self.as_receipt_with_bloom().unwrap().logs_bloom
     }
 
+    /// Return the receipt's deposit_nonce.
+    pub fn deposit_nonce(&self) -> Option<u64> {
+        self.as_receipt().unwrap().deposit_nonce
+    }
+
+    /// Return the receipt's deposit version.
+    pub fn deposit_receipt_version(&self) -> Option<u64> {
+        self.as_receipt().unwrap().deposit_receipt_version
+    }
+
     /// Return the inner receipt with bloom. Currently this is infallible,
     /// however, future receipt types may be added.
-    pub const fn as_receipt_with_bloom(&self) -> Option<&ReceiptWithBloom<T>> {
+    pub const fn as_receipt_with_bloom(&self) -> Option<&OpReceiptWithBloom<T>> {
         match self {
-            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip4844(t) => Some(t),
+            Self::Legacy(t)
+            | Self::Eip2930(t)
+            | Self::Eip1559(t)
+            | Self::Eip4844(t)
+            | Self::Deposit(t) => Some(t),
         }
     }
 
     /// Return the inner receipt. Currently this is infallible, however, future
     /// receipt types may be added.
-    pub const fn as_receipt(&self) -> Option<&Receipt<T>> {
+    pub const fn as_receipt(&self) -> Option<&OpReceipt<T>> {
         match self {
-            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip4844(t) => {
-                Some(&t.receipt)
-            }
+            Self::Legacy(t)
+            | Self::Eip2930(t)
+            | Self::Eip1559(t)
+            | Self::Eip4844(t)
+            | Self::Deposit(t) => Some(&t.receipt),
         }
     }
 }
 
-impl ReceiptEnvelope {
+impl OpReceiptEnvelope {
     /// Get the length of the inner receipt in the 2718 encoding.
     pub fn inner_length(&self) -> usize {
         self.as_receipt_with_bloom().unwrap().length()
@@ -109,7 +131,7 @@ impl ReceiptEnvelope {
     }
 }
 
-impl Encodable for ReceiptEnvelope {
+impl Encodable for OpReceiptEnvelope {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.network_encode(out)
     }
@@ -123,7 +145,7 @@ impl Encodable for ReceiptEnvelope {
     }
 }
 
-impl Decodable for ReceiptEnvelope {
+impl Decodable for OpReceiptEnvelope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         match Self::network_decode(buf) {
             Ok(t) => Ok(t),
@@ -132,13 +154,14 @@ impl Decodable for ReceiptEnvelope {
     }
 }
 
-impl Encodable2718 for ReceiptEnvelope {
+impl Encodable2718 for OpReceiptEnvelope {
     fn type_flag(&self) -> Option<u8> {
         match self {
             Self::Legacy(_) => None,
-            Self::Eip2930(_) => Some(TxType::Eip2930 as u8),
-            Self::Eip1559(_) => Some(TxType::Eip1559 as u8),
-            Self::Eip4844(_) => Some(TxType::Eip4844 as u8),
+            Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
+            Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
+            Self::Eip4844(_) => Some(OpTxType::Eip4844 as u8),
+            Self::Deposit(_) => Some(OpTxType::Deposit as u8),
         }
     }
 
@@ -155,19 +178,17 @@ impl Encodable2718 for ReceiptEnvelope {
     }
 }
 
-impl Decodable2718 for ReceiptEnvelope {
+impl Decodable2718 for OpReceiptEnvelope {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let receipt = Decodable::decode(buf)?;
         match ty.try_into().map_err(|_| alloy_rlp::Error::Custom("Unexpected type"))? {
-            TxType::Eip2930 => Ok(Self::Eip2930(receipt)),
-            TxType::Eip1559 => Ok(Self::Eip1559(receipt)),
-            TxType::Eip4844 => Ok(Self::Eip4844(receipt)),
-            TxType::Legacy => {
+            OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
             }
-            TxType::Deposit => {
-                Err(alloy_rlp::Error::Custom("deposit transactions are not supported"))
-            }
+            OpTxType::Eip2930 => Ok(Self::Eip2930(receipt)),
+            OpTxType::Eip1559 => Ok(Self::Eip1559(receipt)),
+            OpTxType::Eip4844 => Ok(Self::Eip4844(receipt)),
+            OpTxType::Deposit => Ok(Self::Deposit(receipt)),
         }
     }
 
@@ -177,18 +198,19 @@ impl Decodable2718 for ReceiptEnvelope {
 }
 
 #[cfg(all(test, feature = "arbitrary"))]
-impl<'a, T> arbitrary::Arbitrary<'a> for ReceiptEnvelope<T>
+impl<'a, T> arbitrary::Arbitrary<'a> for OpReceiptEnvelope<T>
 where
     T: arbitrary::Arbitrary<'a>,
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        let receipt = ReceiptWithBloom::<T>::arbitrary(u)?;
+        let receipt = OpReceiptWithBloom::<T>::arbitrary(u)?;
 
         match u.int_in_range(0..=3)? {
             0 => Ok(Self::Legacy(receipt)),
             1 => Ok(Self::Eip2930(receipt)),
             2 => Ok(Self::Eip1559(receipt)),
             3 => Ok(Self::Eip4844(receipt)),
+            0x7E => Ok(Self::Deposit(receipt)),
             _ => unreachable!(),
         }
     }

@@ -6,16 +6,17 @@ use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
 use core::mem;
 
-/// Ethereum `TransactionType` flags as specified in EIPs [2718], [1559], and
-/// [2930].
+/// Optimism `TransactionType` flags as specified in EIPs [2718], [1559], and
+/// [2930], as well as the [deposit transaction spec][deposit-spec]
 ///
 /// [2718]: https://eips.ethereum.org/EIPS/eip-2718
 /// [1559]: https://eips.ethereum.org/EIPS/eip-1559
 /// [2930]: https://eips.ethereum.org/EIPS/eip-2930
 /// [4844]: https://eips.ethereum.org/EIPS/eip-4844
+/// [deposit-spec]: https://specs.optimism.io/protocol/deposits.html
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
-pub enum TxType {
+pub enum OpTxType {
     /// Legacy transaction type.
     Legacy = 0,
     /// EIP-2930 transaction type.
@@ -29,32 +30,32 @@ pub enum TxType {
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for TxType {
+impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         Ok(match u.int_in_range(0..=3)? {
-            0 => TxType::Legacy,
-            1 => TxType::Eip2930,
-            2 => TxType::Eip1559,
-            3 => TxType::Eip4844,
-            0x7E => TxType::Deposit,
+            0 => OpTxType::Legacy,
+            1 => OpTxType::Eip2930,
+            2 => OpTxType::Eip1559,
+            3 => OpTxType::Eip4844,
+            0x7E => OpTxType::Deposit,
             _ => unreachable!(),
         })
     }
 }
 
-impl TryFrom<u8> for TxType {
+impl TryFrom<u8> for OpTxType {
     type Error = Eip2718Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             // SAFETY: repr(u8) with explicit discriminant
-            0..=3 => Ok(unsafe { mem::transmute::<u8, TxType>(value) }),
+            0..=3 | 0x7E => Ok(unsafe { mem::transmute::<u8, OpTxType>(value) }),
             _ => Err(Eip2718Error::UnexpectedType(value)),
         }
     }
 }
 
-/// The Ethereum [EIP-2718] Transaction Envelope.
+/// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
 ///
 /// # Note:
 ///
@@ -69,7 +70,7 @@ impl TryFrom<u8> for TxType {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
 #[non_exhaustive]
-pub enum TxEnvelope {
+pub enum OpTxEnvelope {
     /// An untagged [`TxLegacy`].
     #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
     Legacy(Signed<TxLegacy>),
@@ -93,38 +94,38 @@ pub enum TxEnvelope {
     Deposit(TxDeposit),
 }
 
-impl From<Signed<TxLegacy>> for TxEnvelope {
+impl From<Signed<TxLegacy>> for OpTxEnvelope {
     fn from(v: Signed<TxLegacy>) -> Self {
         Self::Legacy(v)
     }
 }
 
-impl From<Signed<TxEip2930>> for TxEnvelope {
+impl From<Signed<TxEip2930>> for OpTxEnvelope {
     fn from(v: Signed<TxEip2930>) -> Self {
         Self::Eip2930(v)
     }
 }
 
-impl From<Signed<TxEip1559>> for TxEnvelope {
+impl From<Signed<TxEip1559>> for OpTxEnvelope {
     fn from(v: Signed<TxEip1559>) -> Self {
         Self::Eip1559(v)
     }
 }
 
-impl From<Signed<TxEip4844Variant>> for TxEnvelope {
+impl From<Signed<TxEip4844Variant>> for OpTxEnvelope {
     fn from(v: Signed<TxEip4844Variant>) -> Self {
         Self::Eip4844(v)
     }
 }
 
-impl From<Signed<TxEip4844>> for TxEnvelope {
+impl From<Signed<TxEip4844>> for OpTxEnvelope {
     fn from(v: Signed<TxEip4844>) -> Self {
         let (tx, signature, hash) = v.into_parts();
         Self::Eip4844(Signed::new_unchecked(TxEip4844Variant::TxEip4844(tx), signature, hash))
     }
 }
 
-impl From<Signed<TxEip4844WithSidecar>> for TxEnvelope {
+impl From<Signed<TxEip4844WithSidecar>> for OpTxEnvelope {
     fn from(v: Signed<TxEip4844WithSidecar>) -> Self {
         let (tx, signature, hash) = v.into_parts();
         Self::Eip4844(Signed::new_unchecked(
@@ -135,21 +136,21 @@ impl From<Signed<TxEip4844WithSidecar>> for TxEnvelope {
     }
 }
 
-impl From<TxDeposit> for TxEnvelope {
+impl From<TxDeposit> for OpTxEnvelope {
     fn from(v: TxDeposit) -> Self {
         Self::Deposit(v)
     }
 }
 
-impl TxEnvelope {
+impl OpTxEnvelope {
     /// Return the [`TxType`] of the inner txn.
-    pub const fn tx_type(&self) -> TxType {
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => TxType::Legacy,
-            Self::Eip2930(_) => TxType::Eip2930,
-            Self::Eip1559(_) => TxType::Eip1559,
-            Self::Eip4844(_) => TxType::Eip4844,
-            Self::Deposit(_) => TxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip4844(_) => OpTxType::Eip4844,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -181,7 +182,10 @@ impl TxEnvelope {
                     outer_header.length() + outer_payload_length
                 }
             },
-            Self::Deposit(t) => t.fields_len(),
+            Self::Deposit(t) => {
+                let payload_length = t.fields_len();
+                Header { list: true, payload_length }.length() + payload_length
+            }
         }
     }
 
@@ -198,7 +202,7 @@ impl TxEnvelope {
     }
 }
 
-impl Encodable for TxEnvelope {
+impl Encodable for OpTxEnvelope {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.network_encode(out)
     }
@@ -213,38 +217,38 @@ impl Encodable for TxEnvelope {
     }
 }
 
-impl Decodable for TxEnvelope {
+impl Decodable for OpTxEnvelope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Self::network_decode(buf)
     }
 }
 
-impl Decodable2718 for TxEnvelope {
+impl Decodable2718 for OpTxEnvelope {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         match ty.try_into().map_err(|_| alloy_rlp::Error::Custom("unexpected tx type"))? {
-            TxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
-            TxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
-            TxType::Eip4844 => Ok(Self::Eip4844(TxEip4844Variant::decode_signed_fields(buf)?)),
-            TxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
-            TxType::Legacy => {
+            OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
+            OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
+            OpTxType::Eip4844 => Ok(Self::Eip4844(TxEip4844Variant::decode_signed_fields(buf)?)),
+            OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
+            OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
             }
         }
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Ok(TxEnvelope::Legacy(TxLegacy::decode_signed_fields(buf)?))
+        Ok(OpTxEnvelope::Legacy(TxLegacy::decode_signed_fields(buf)?))
     }
 }
 
-impl Encodable2718 for TxEnvelope {
+impl Encodable2718 for OpTxEnvelope {
     fn type_flag(&self) -> Option<u8> {
         match self {
             Self::Legacy(_) => None,
-            Self::Eip2930(_) => Some(TxType::Eip2930 as u8),
-            Self::Eip1559(_) => Some(TxType::Eip1559 as u8),
-            Self::Eip4844(_) => Some(TxType::Eip4844 as u8),
-            Self::Deposit(_) => Some(TxType::Deposit as u8),
+            Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
+            Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
+            Self::Eip4844(_) => Some(OpTxType::Eip4844 as u8),
+            Self::Deposit(_) => Some(OpTxType::Deposit as u8),
         }
     }
 
@@ -255,17 +259,20 @@ impl Encodable2718 for TxEnvelope {
     fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
         match self {
             // Legacy transactions have no difference between network and 2718
-            TxEnvelope::Legacy(tx) => tx.tx().encode_with_signature_fields(tx.signature(), out),
-            TxEnvelope::Eip2930(tx) => {
+            OpTxEnvelope::Legacy(tx) => tx.tx().encode_with_signature_fields(tx.signature(), out),
+            OpTxEnvelope::Eip2930(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            TxEnvelope::Eip1559(tx) => {
+            OpTxEnvelope::Eip1559(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            TxEnvelope::Eip4844(tx) => {
+            OpTxEnvelope::Eip4844(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            TxEnvelope::Deposit(tx) => tx.encode(out),
+            OpTxEnvelope::Deposit(tx) => {
+                out.put_u8(OpTxType::Deposit as u8);
+                tx.encode(out);
+            }
         }
     }
 }
@@ -288,12 +295,12 @@ mod tests {
         use alloy_primitives::address;
 
         let raw_tx = alloy_primitives::hex::decode("02f86f0102843b9aca0085029e7822d68298f094d9e1459a7a482635700cbc20bbaf52d495ab9c9680841b55ba3ac080a0c199674fcb29f353693dd779c017823b954b3c69dffa3cd6b2a6ff7888798039a028ca912de909e7e6cdef9cdcaf24c54dd8c1032946dfa1d85c206b32a9064fe8").unwrap();
-        let res = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+        let res = OpTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
 
-        assert_eq!(res.tx_type(), TxType::Eip1559);
+        assert_eq!(res.tx_type(), OpTxType::Eip1559);
 
         let tx = match res {
-            TxEnvelope::Eip1559(tx) => tx,
+            OpTxEnvelope::Eip1559(tx) => tx,
             _ => unreachable!(),
         };
 
@@ -309,11 +316,11 @@ mod tests {
         use alloy_primitives::address;
 
         let raw_tx = alloy_primitives::hex::decode("f9015482078b8505d21dba0083022ef1947a250d5630b4cf539739df2c5dacb4c659f2488d880c46549a521b13d8b8e47ff36ab50000000000000000000000000000000000000000000066ab5a608bd00a23f2fe000000000000000000000000000000000000000000000000000000000000008000000000000000000000000048c04ed5691981c42154c6167398f95e8f38a7ff00000000000000000000000000000000000000000000000000000000632ceac70000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000006c6ee5e31d828de241282b9606c8e98ea48526e225a0c9077369501641a92ef7399ff81c21639ed4fd8fc69cb793cfa1dbfab342e10aa0615facb2f1bcf3274a354cfe384a38d0cc008a11c2dd23a69111bc6930ba27a8").unwrap();
-        let res = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
-        assert_eq!(res.tx_type(), TxType::Legacy);
+        let res = OpTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+        assert_eq!(res.tx_type(), OpTxType::Legacy);
 
         let tx = match res {
-            TxEnvelope::Legacy(tx) => tx,
+            OpTxEnvelope::Legacy(tx) => tx,
             _ => unreachable!(),
         };
 
@@ -331,16 +338,16 @@ mod tests {
     // Test vector from https://sepolia.etherscan.io/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     fn test_decode_live_4844_tx() {
-        use crate::Transaction;
+        use crate::OpTransaction;
         use alloy_primitives::{address, b256};
 
         // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
         let raw_tx = alloy_primitives::hex::decode("0x03f9011d83aa36a7820fa28477359400852e90edd0008252089411e9ca82a3a762b4b5bd264d4173a242e7a770648080c08504a817c800f8a5a0012ec3d6f66766bedb002a190126b3549fce0047de0d4c25cffce0dc1c57921aa00152d8e24762ff22b1cfd9f8c0683786a7ca63ba49973818b3d1e9512cd2cec4a0013b98c6c83e066d5b14af2b85199e3d4fc7d1e778dd53130d180f5077e2d1c7a001148b495d6e859114e670ca54fb6e2657f0cbae5b08063605093a4b3dc9f8f1a0011ac212f13c5dff2b2c6b600a79635103d6f580a4221079951181b25c7e654901a0c8de4cced43169f9aa3d36506363b2d2c44f6c49fc1fd91ea114c86f3757077ea01e11fdd0d1934eda0492606ee0bb80a7bf8f35cc5f86ec60fe5031ba48bfd544").unwrap();
-        let res = TxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
-        assert_eq!(res.tx_type(), TxType::Eip4844);
+        let res = OpTxEnvelope::decode(&mut raw_tx.as_slice()).unwrap();
+        assert_eq!(res.tx_type(), OpTxType::Eip4844);
 
         let tx = match res {
-            TxEnvelope::Eip4844(tx) => tx,
+            OpTxEnvelope::Eip4844(tx) => tx,
             _ => unreachable!(),
         };
 
@@ -369,13 +376,13 @@ mod tests {
 
     fn test_encode_decode_roundtrip<T: SignableTransaction<Signature>>(tx: T)
     where
-        Signed<T>: Into<TxEnvelope>,
+        Signed<T>: Into<OpTxEnvelope>,
     {
         let signature = Signature::test_signature();
         let tx_signed = tx.into_signed(signature);
-        let tx_envelope: TxEnvelope = tx_signed.into();
+        let tx_envelope: OpTxEnvelope = tx_signed.into();
         let encoded = tx_envelope.encoded_2718();
-        let decoded = TxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
+        let decoded = OpTxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
         assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
         assert_eq!(decoded, tx_envelope);
     }
@@ -415,9 +422,28 @@ mod tests {
     }
 
     #[test]
+    fn test_encode_decode_deposit() {
+        let tx = TxDeposit {
+            source_hash: B256::left_padding_from(&[0xde, 0xad]),
+            from: Address::left_padding_from(&[0xbe, 0xef]),
+            mint: Some(1),
+            gas_limit: 2,
+            to: TxKind::Call(Address::left_padding_from(&[3])),
+            value: U256::from(4_u64),
+            input: Bytes::from(vec![5]),
+            is_system_transaction: false,
+        };
+        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        let encoded = tx_envelope.encoded_2718();
+        let decoded = OpTxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
+        assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
+        assert_eq!(decoded, tx_envelope);
+    }
+
+    #[test]
     fn test_encode_decode_transaction_list() {
         let signature = Signature::test_signature();
-        let tx = TxEnvelope::Eip1559(
+        let tx = OpTxEnvelope::Eip1559(
             TxEip1559 {
                 chain_id: 1u64,
                 nonce: 2,
@@ -433,7 +459,7 @@ mod tests {
         );
         let transactions = vec![tx.clone(), tx];
         let encoded = alloy_rlp::encode(&transactions);
-        let decoded = Vec::<TxEnvelope>::decode(&mut &encoded[..]).unwrap();
+        let decoded = Vec::<OpTxEnvelope>::decode(&mut &encoded[..]).unwrap();
         assert_eq!(transactions, decoded);
     }
 
@@ -445,7 +471,7 @@ mod tests {
         let data = fs::read_to_string(network_data_path).expect("Unable to read file");
         let hex_data = hex::decode(data.trim()).unwrap();
 
-        let tx: TxEnvelope = TxEnvelope::decode_2718(&mut hex_data.as_slice()).unwrap();
+        let tx: OpTxEnvelope = OpTxEnvelope::decode_2718(&mut hex_data.as_slice()).unwrap();
         let encoded = tx.encoded_2718();
         assert_eq!(encoded, hex_data);
         assert_eq!(tx.encode_2718_len(), hex_data.len());
@@ -454,13 +480,13 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_serde_roundtrip<T: SignableTransaction<Signature>>(tx: T)
     where
-        Signed<T>: Into<TxEnvelope>,
+        Signed<T>: Into<OpTxEnvelope>,
     {
         let signature = Signature::test_signature();
-        let tx_envelope: TxEnvelope = tx.into_signed(signature).into();
+        let tx_envelope: OpTxEnvelope = tx.into_signed(signature).into();
 
         let serialized = serde_json::to_string(&tx_envelope).unwrap();
-        let deserialized: TxEnvelope = serde_json::from_str(&serialized).unwrap();
+        let deserialized: OpTxEnvelope = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(tx_envelope, deserialized);
     }
@@ -559,5 +585,26 @@ mod tests {
             sidecar: BlobTransactionSidecar { ..Default::default() },
         });
         test_serde_roundtrip(tx);
+    }
+
+    #[test]
+    #[cfg(feature = "serde")]
+    fn test_serde_roundtrip_deposit() {
+        let tx = TxDeposit {
+            gas_limit: u128::MAX,
+            to: TxKind::Call(Address::random()),
+            value: U256::MAX,
+            input: Bytes::new(),
+            source_hash: U256::MAX.into(),
+            from: Address::random(),
+            mint: Some(u128::MAX),
+            is_system_transaction: false,
+        };
+        let tx_envelope = OpTxEnvelope::Deposit(tx);
+
+        let serialized = serde_json::to_string(&tx_envelope).unwrap();
+        let deserialized: OpTxEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(tx_envelope, deserialized);
     }
 }

@@ -1,19 +1,22 @@
 use crate::{
-    Transaction, TxDeposit, TxEip1559, TxEip2930, TxEip4844Variant, TxEnvelope, TxLegacy, TxType,
+    OpTransaction, OpTxEnvelope, OpTxType, TxDeposit, TxEip1559, TxEip2930, TxEip4844Variant,
+    TxLegacy,
 };
 use alloy_primitives::TxKind;
 
-/// The TypedTransaction enum represents all Ethereum transaction request types.
+/// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
+/// Stack.
 ///
 /// Its variants correspond to specific allowed transactions:
 /// 1. Legacy (pre-EIP2718) [`TxLegacy`]
 /// 2. EIP2930 (state access lists) [`TxEip2930`]
 /// 3. EIP1559 [`TxEip1559`]
 /// 4. EIP4844 [`TxEip4844Variant`]
+/// 4. Deposit [`TxDeposit`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
-pub enum TypedTransaction {
+pub enum OpTypedTransaction {
     /// Legacy transaction
     #[cfg_attr(feature = "serde", serde(rename = "0x00", alias = "0x0"))]
     Legacy(TxLegacy),
@@ -31,57 +34,57 @@ pub enum TypedTransaction {
     Deposit(TxDeposit),
 }
 
-impl From<TxLegacy> for TypedTransaction {
+impl From<TxLegacy> for OpTypedTransaction {
     fn from(tx: TxLegacy) -> Self {
         Self::Legacy(tx)
     }
 }
 
-impl From<TxEip2930> for TypedTransaction {
+impl From<TxEip2930> for OpTypedTransaction {
     fn from(tx: TxEip2930) -> Self {
         Self::Eip2930(tx)
     }
 }
 
-impl From<TxEip1559> for TypedTransaction {
+impl From<TxEip1559> for OpTypedTransaction {
     fn from(tx: TxEip1559) -> Self {
         Self::Eip1559(tx)
     }
 }
 
-impl From<TxEip4844Variant> for TypedTransaction {
+impl From<TxEip4844Variant> for OpTypedTransaction {
     fn from(tx: TxEip4844Variant) -> Self {
         Self::Eip4844(tx)
     }
 }
 
-impl From<TxDeposit> for TypedTransaction {
+impl From<TxDeposit> for OpTypedTransaction {
     fn from(tx: TxDeposit) -> Self {
         Self::Deposit(tx)
     }
 }
 
-impl From<TxEnvelope> for TypedTransaction {
-    fn from(envelope: TxEnvelope) -> Self {
+impl From<OpTxEnvelope> for OpTypedTransaction {
+    fn from(envelope: OpTxEnvelope) -> Self {
         match envelope {
-            TxEnvelope::Legacy(tx) => Self::Legacy(tx.strip_signature()),
-            TxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
-            TxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
-            TxEnvelope::Eip4844(tx) => Self::Eip4844(tx.strip_signature()),
-            TxEnvelope::Deposit(tx) => Self::Deposit(tx),
+            OpTxEnvelope::Legacy(tx) => Self::Legacy(tx.strip_signature()),
+            OpTxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
+            OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
+            OpTxEnvelope::Eip4844(tx) => Self::Eip4844(tx.strip_signature()),
+            OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
         }
     }
 }
 
-impl TypedTransaction {
+impl OpTypedTransaction {
     /// Return the [`TxType`] of the inner txn.
-    pub const fn tx_type(&self) -> TxType {
+    pub const fn tx_type(&self) -> OpTxType {
         match self {
-            Self::Legacy(_) => TxType::Legacy,
-            Self::Eip2930(_) => TxType::Eip2930,
-            Self::Eip1559(_) => TxType::Eip1559,
-            Self::Eip4844(_) => TxType::Eip4844,
-            Self::Deposit(_) => TxType::Deposit,
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip4844(_) => OpTxType::Eip4844,
+            Self::Deposit(_) => OpTxType::Deposit,
         }
     }
 
@@ -110,7 +113,7 @@ impl TypedTransaction {
     }
 }
 
-impl Transaction for TypedTransaction {
+impl OpTransaction for OpTypedTransaction {
     fn chain_id(&self) -> Option<alloy_primitives::ChainId> {
         match self {
             Self::Legacy(tx) => tx.chain_id(),
