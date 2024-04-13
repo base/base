@@ -3,15 +3,12 @@
 OP Stack consensus interface.
 
 This crate contains constants, types, and functions for implementing Optimism EL consensus and communication. This
-includes transactions, [EIP-2718] envelopes, [EIP-2930], [EIP-4844], [deposit transactions][deposit], and receipts.
+includes an extended `OpTxEnvelope` type with [deposit transactions][deposit], and receipts containing OP Stack
+specific fields (`deposit_nonce` + `deposit_receipt_version`).
 
 In general a type belongs in this crate if it exists in the `alloy-consensus` crate, but was modified from the base Ethereum protocol in the OP Stack.
 For consensus types that are not modified by the OP Stack, the `alloy-consensus` types should be used instead.
 
-[alloy-network]: ../network
-[EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-[EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
-[EIP-4844]: https://eips.ethereum.org/EIPS/eip-4844
 [deposit]: https://specs.optimism.io/protocol/deposits.html
 
 ## Provenance

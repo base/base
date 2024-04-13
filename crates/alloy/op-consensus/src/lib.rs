@@ -23,14 +23,4 @@ mod receipt;
 pub use receipt::{OpReceipt, OpReceiptEnvelope, OpReceiptWithBloom, OpTxReceipt};
 
 mod transaction;
-pub use transaction::{
-    eip4844_utils, Blob, BlobTransactionSidecar, Bytes48, OpTxEnvelope, OpTxType,
-    OpTypedTransaction, SidecarBuilder, SidecarCoder, SimpleCoder, TxDeposit, TxEip1559, TxEip2930,
-    TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
-};
-
-#[cfg(feature = "kzg")]
-pub use transaction::BlobTransactionValidationError;
-
-#[cfg(feature = "kzg")]
-pub use alloy_eips::eip4844::env_settings::EnvKzgSettings;
+pub use transaction::{OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit};

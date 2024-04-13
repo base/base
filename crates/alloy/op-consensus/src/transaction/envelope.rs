@@ -1,7 +1,7 @@
-use crate::{
-    TxDeposit, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
+use crate::TxDeposit;
+use alloy_consensus::{
+    Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
 };
-use alloy_consensus::Signed;
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
 use core::mem;
@@ -338,7 +338,7 @@ mod tests {
     // Test vector from https://sepolia.etherscan.io/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     // Blobscan: https://sepolia.blobscan.com/tx/0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
     fn test_decode_live_4844_tx() {
-        use crate::OpTransaction;
+        use alloy_consensus::Transaction;
         use alloy_primitives::{address, b256};
 
         // https://sepolia.etherscan.io/getRawTx?tx=0x9a22ccb0029bc8b0ddd073be1a1d923b7ae2b2ea52100bae0db4424f9107e9c0
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_serde_roundtrip_eip4844() {
-        use crate::BlobTransactionSidecar;
+        use alloy_consensus::BlobTransactionSidecar;
 
         let tx = TxEip4844Variant::TxEip4844(TxEip4844 {
             chain_id: 1,
