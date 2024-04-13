@@ -145,4 +145,52 @@ mod tests {
         // let (decoded, _) = Receipt::from_compact(&data[..], data.len());
         assert_eq!(decoded, receipt);
     }
+
+    #[test]
+    fn regolith_receipt_roundtrip() {
+        let data = hex!("f9010c0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf");
+
+        // Deposit Receipt (post-regolith)
+        let expected = OpReceiptWithBloom {
+            receipt: OpReceipt {
+                cumulative_gas_used: 46913,
+                logs: vec![],
+                status: true,
+                deposit_nonce: Some(4012991),
+                deposit_receipt_version: None,
+            },
+            logs_bloom: [0; 256].into(),
+        };
+
+        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        assert_eq!(receipt, expected);
+
+        let mut buf = Vec::new();
+        receipt.encode(&mut buf);
+        assert_eq!(buf, &data[..]);
+    }
+
+    #[test]
+    fn post_canyon_receipt_roundtrip() {
+        let data = hex!("f9010d0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf01");
+
+        // Deposit Receipt (post-regolith)
+        let expected = OpReceiptWithBloom {
+            receipt: OpReceipt {
+                cumulative_gas_used: 46913,
+                logs: vec![],
+                status: true,
+                deposit_nonce: Some(4012991),
+                deposit_receipt_version: Some(1),
+            },
+            logs_bloom: [0; 256].into(),
+        };
+
+        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        assert_eq!(receipt, expected);
+
+        let mut buf = Vec::new();
+        expected.encode(&mut buf);
+        assert_eq!(buf, &data[..]);
+    }
 }
