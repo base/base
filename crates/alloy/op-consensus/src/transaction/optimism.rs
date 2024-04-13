@@ -1,4 +1,4 @@
-use crate::OpTransaction;
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, B256, U256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
@@ -119,7 +119,7 @@ impl TxDeposit {
     }
 }
 
-impl OpTransaction for TxDeposit {
+impl Transaction for TxDeposit {
     fn input(&self) -> &[u8] {
         &self.input
     }

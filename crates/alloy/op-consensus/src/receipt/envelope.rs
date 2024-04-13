@@ -205,13 +205,12 @@ where
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         let receipt = OpReceiptWithBloom::<T>::arbitrary(u)?;
 
-        match u.int_in_range(0..=3)? {
+        match u.int_in_range(0..=4)? {
             0 => Ok(Self::Legacy(receipt)),
             1 => Ok(Self::Eip2930(receipt)),
             2 => Ok(Self::Eip1559(receipt)),
             3 => Ok(Self::Eip4844(receipt)),
-            0x7E => Ok(Self::Deposit(receipt)),
-            _ => unreachable!(),
+            _ => Ok(Self::Deposit(receipt)),
         }
     }
 }

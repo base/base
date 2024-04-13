@@ -3,8 +3,8 @@ pub use builder::{SidecarBuilder, SidecarCoder, SimpleCoder};
 
 pub mod utils;
 
-use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
-
+use crate::OpTxType;
+use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_eips::{
     eip2930::AccessList,
     eip4844::{BYTES_PER_BLOB, BYTES_PER_COMMITMENT, BYTES_PER_PROOF, DATA_GAS_PER_BLOB},
@@ -227,7 +227,7 @@ impl TxEip4844Variant {
     }
 }
 
-impl OpTransaction for TxEip4844Variant {
+impl Transaction for TxEip4844Variant {
     fn chain_id(&self) -> Option<ChainId> {
         match self {
             TxEip4844Variant::TxEip4844(tx) => Some(tx.chain_id),
@@ -698,7 +698,7 @@ impl SignableTransaction<Signature> for TxEip4844 {
     }
 }
 
-impl OpTransaction for TxEip4844 {
+impl Transaction for TxEip4844 {
     fn input(&self) -> &[u8] {
         &self.input
     }
@@ -929,7 +929,7 @@ impl SignableTransaction<Signature> for TxEip4844WithSidecar {
     }
 }
 
-impl OpTransaction for TxEip4844WithSidecar {
+impl Transaction for TxEip4844WithSidecar {
     fn chain_id(&self) -> Option<ChainId> {
         self.tx.chain_id()
     }
@@ -1097,7 +1097,8 @@ pub(crate) fn kzg_to_versioned_hash(commitment: &[u8]) -> B256 {
 #[cfg(test)]
 mod tests {
     use super::{BlobTransactionSidecar, TxEip4844, TxEip4844WithSidecar};
-    use crate::{OpTxEnvelope, SignableTransaction};
+    use crate::OpTxEnvelope;
+    use alloy_consensus::SignableTransaction;
     use alloy_primitives::{Signature, U256};
     use alloy_rlp::{Decodable, Encodable};
 

@@ -1,4 +1,5 @@
-use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
+use crate::OpTxType;
+use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
@@ -255,7 +256,7 @@ impl TxEip1559 {
     }
 }
 
-impl OpTransaction for TxEip1559 {
+impl Transaction for TxEip1559 {
     fn input(&self) -> &[u8] {
         &self.input
     }

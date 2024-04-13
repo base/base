@@ -1,7 +1,5 @@
-use crate::{
-    OpTransaction, OpTxEnvelope, OpTxType, TxDeposit, TxEip1559, TxEip2930, TxEip4844Variant,
-    TxLegacy,
-};
+use crate::{OpTxEnvelope, OpTxType, TxDeposit, TxEip1559, TxEip2930, TxEip4844Variant, TxLegacy};
+use alloy_consensus::Transaction;
 use alloy_primitives::TxKind;
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
@@ -113,7 +111,7 @@ impl OpTypedTransaction {
     }
 }
 
-impl OpTransaction for OpTypedTransaction {
+impl Transaction for OpTypedTransaction {
     fn chain_id(&self) -> Option<alloy_primitives::ChainId> {
         match self {
             Self::Legacy(tx) => tx.chain_id(),

@@ -1,4 +1,4 @@
-use crate::{OpTransaction, SignableTransaction, Signed};
+use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, Header, Result};
 use core::mem;
@@ -195,7 +195,7 @@ impl TxLegacy {
     }
 }
 
-impl OpTransaction for TxLegacy {
+impl Transaction for TxLegacy {
     fn input(&self) -> &[u8] {
         &self.input
     }

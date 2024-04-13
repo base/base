@@ -1,4 +1,5 @@
-use crate::{OpTransaction, OpTxType, SignableTransaction, Signed};
+use crate::OpTxType;
+use alloy_consensus::{SignableTransaction, Signed, Transaction};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{keccak256, Bytes, ChainId, Signature, TxKind, U256};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable, Header};
@@ -219,7 +220,7 @@ impl TxEip2930 {
     }
 }
 
-impl OpTransaction for TxEip2930 {
+impl Transaction for TxEip2930 {
     fn input(&self) -> &[u8] {
         &self.input
     }
@@ -306,7 +307,8 @@ impl Decodable for TxEip2930 {
 #[cfg(test)]
 mod tests {
     use super::TxEip2930;
-    use crate::{OpTxEnvelope, SignableTransaction};
+    use crate::OpTxEnvelope;
+    use alloy_consensus::SignableTransaction;
     use alloy_primitives::{Address, Bytes, Signature, TxKind, U256};
     use alloy_rlp::{Decodable, Encodable};
 
