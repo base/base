@@ -1,4 +1,4 @@
-use super::transaction::Transaction;
+use crate::op::Transaction;
 use alloy::rpc::types::eth::Log as RpcLog;
 use alloy_primitives::B256;
 use serde::{Deserialize, Deserializer, Serialize};
