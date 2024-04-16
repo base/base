@@ -1,4 +1,5 @@
 use super::OpTxReceipt;
+use alloy_consensus::TxReceipt;
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
@@ -47,7 +48,7 @@ impl OpReceipt {
     }
 }
 
-impl OpTxReceipt for OpReceipt {
+impl TxReceipt for OpReceipt {
     fn success(&self) -> bool {
         self.status
     }
@@ -63,7 +64,9 @@ impl OpTxReceipt for OpReceipt {
     fn logs(&self) -> &[Log] {
         &self.logs
     }
+}
 
+impl OpTxReceipt for OpReceipt {
     fn deposit_nonce(&self) -> Option<u64> {
         self.deposit_nonce
     }
@@ -90,7 +93,7 @@ pub struct OpReceiptWithBloom<T = Log> {
     pub logs_bloom: Bloom,
 }
 
-impl OpTxReceipt for OpReceiptWithBloom {
+impl TxReceipt for OpReceiptWithBloom {
     fn success(&self) -> bool {
         self.receipt.status
     }
@@ -110,7 +113,9 @@ impl OpTxReceipt for OpReceiptWithBloom {
     fn logs(&self) -> &[Log] {
         &self.receipt.logs
     }
+}
 
+impl OpTxReceipt for OpReceiptWithBloom {
     fn deposit_nonce(&self) -> Option<u64> {
         self.receipt.deposit_nonce
     }
