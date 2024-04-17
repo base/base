@@ -21,11 +21,12 @@
   - [L2 Block-timestamp based activation](#l2-block-timestamp-based-activation)
 - [OP-Stack Protocol versions](#op-stack-protocol-versions)
 - [Post-Bedrock Network upgrades](#post-bedrock-network-upgrades)
+  - [Activation Timestamps](#activation-timestamps)
   - [Regolith](#regolith)
-- [Canyon](#canyon)
-- [Delta](#delta)
-- [Ecotone](#ecotone)
-- [Fjord](#fjord)
+  - [Canyon](#canyon)
+  - [Delta](#delta)
+  - [Ecotone](#ecotone)
+  - [Fjord](#fjord)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -262,6 +263,18 @@ but the matching L1-origin information may not be present at the time of activat
 
 ## Post-Bedrock Network upgrades
 
+### Activation Timestamps
+
+Governance approves all network upgrades & the time at which the upgrade activates. The approved governance
+proposal is the canonoical document for the timestamp; however, the timestamps are replicated here for ease of use.
+
+|Network Upgrade|Mainnet Upgrade Timestamp|Sepolia Upgrade Timestamp|Goerli Upgrade Timestamp|
+|---------------|-------------------------|-------------------------|------------------------|
+|Canyon         |               1704992401|               1699981200|              1699981200|
+|Delta          |               1708560000|               1703203200|              1703116800|
+|Ecotone        |               1710374401|               1708534800|              1707238800|
+|Fjord          |                      n/a|                      n/a|                     n/a|
+
 ### Regolith
 
 The Regolith upgrade, named after a material best described as "deposited dust on top of a layer of bedrock",
@@ -288,7 +301,7 @@ The [execution engine specification](exec-engine.md) specifies the L1 cost funct
 The Regolith upgrade uses a _L2 block-timestamp_ activation-rule, and is specified in both the
 rollup-node (`regolith_time`) and execution engine (`config.regolithTime`).
 
-## Canyon
+### Canyon
 
 The Canyon upgrade contains the Shapella upgrade from L1 and some minor protocol fixes.
 
@@ -309,13 +322,13 @@ The Canyon upgrade uses a _L2 block-timestamp_ activation-rule, and is specified
 rollup-node (`canyon_time`) and execution engine (`config.canyonTime`). Shanghai time in the
 execution engine should be set to the same time as the Canyon time.
 
-## Delta
+### Delta
 
 The Delta upgrade consists of a single consensus-layer feature: [Span Batches](span-batches.md).
 
 The Delta upgrade uses a _L2 block-timestamp_ activation-rule, and is specified only in the rollup-node (`delta_time`).
 
-## Ecotone
+### Ecotone
 
 The Ecotone upgrade contains the Dencun upgrade from L1, and adopts EIP-4844 blobs for data-availability.
 
@@ -345,6 +358,6 @@ Data Availability (DA) upgrade:
 - Auto-upgrading and extension of the [L1 Attributes Predeployed Contract](deposits.md#ecotone-l1block-upgrade)
   (also known as `L1Block` predeploy)
 
-## Fjord
+### Fjord
 
 Name of the next upgrade after Ecotone. Placeholder for development coordination.
