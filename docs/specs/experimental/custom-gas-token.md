@@ -208,13 +208,14 @@ The following methods MUST revert when custom gas token is being used:
 - `finalizeBridgeETH(address, address, uint256, bytes)`
 
 The following legacy methods MUST also revert when custom gas token is being used:
-
-- `depositETH(uint32,bytes)`
-- `depositETHTo(address,uint32,bytes)`
-- `finalizeETHWithdrawal(address,address,uint256,bytes)`
-- `withdraw(address,uint256,uint32,bytes)`
-- `withdrawTo(address,address,uint256,uint32,bytes)`
-- `finalizeDeposit(address,address,address,address,uint256,bytes)`
+1. In `L1StandardBridge`:
+    * `depositETH(uint32,bytes)`
+    * `depositETHTo(address,uint32,bytes)`
+    * `finalizeETHWithdrawal(address,address,uint256,bytes)`
+2. In `L2StandardBridge`:
+    * `withdraw(address,uint256,uint32,bytes)`
+    * `withdrawTo(address,address,uint256,uint32,bytes)`
+    * `finalizeDeposit(address,address,address,address,uint256,bytes)`
 
 ### CrossDomainMessenger
 
