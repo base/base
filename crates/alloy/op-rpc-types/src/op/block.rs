@@ -3,16 +3,14 @@
 #![allow(unknown_lints, non_local_definitions)]
 
 use crate::op::transaction::Transaction;
-use alloy::rpc::types::eth::{
-    BlockTransactions, Header, Rich, Withdrawal
-};
+use alloy::rpc::types::eth::{BlockTransactions, Header, Rich, WithOtherFields, Withdrawal};
 use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 
 /// Block representation
 #[derive(Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Block{
+pub struct Block {
     /// Header of the block.
     #[serde(flatten)]
     pub header: Header,
@@ -46,6 +44,7 @@ pub type RichBlock = Rich<Block>;
 
 impl From<Block> for RichBlock {
     fn from(block: Block) -> Self {
-        Rich { inner: block, extra_info: Default::default() }
+        let a = WithOtherFields::new(block);
+        a.other = Rich { inner: block, extra_info: Default::default() }
     }
 }

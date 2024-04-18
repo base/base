@@ -12,7 +12,6 @@ repository.workspace = true
 exclude.workspace = true
 
 [dependencies]
-op-consensus = { workspace = true, features = ["serde"]}
 # alloy-rlp = { workspace = true, features = ["arrayvec", "derive"] }
 alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
 # alloy-serde.workspace = true
