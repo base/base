@@ -91,7 +91,7 @@ It MAY be possible to support ERC20 tokens with varying amounts of decimals in t
 
 Ideally it is possible to have automated validation of custom gas paying tokens to know that the token satisfies the
 above properties. Due to the nature of the EVM, it may not always be possible to do so. [ERC-165][erc165]
-isn't always used by ERC20 tokens and isn't guaranteed to tell the truth. [USDT](usdt)
+isn't always used by ERC20 tokens and isn't guaranteed to tell the truth. [USDT][usdt]
 does not correctly implement the ERC20 spec. It may be possible to use execution traces to observe the
 properties of the ERC20 tokens but some degree of social consensus will be required for determining
 the validity of an ERC20 token.
@@ -206,14 +206,15 @@ The following methods MUST revert when custom gas token is being used:
 - `finalizeBridgeETH(address, address, uint256, bytes)`
 
 The following legacy methods MUST also revert when custom gas token is being used:
+
 1. In `L1StandardBridge`:
-    * `depositETH(uint32,bytes)`
-    * `depositETHTo(address,uint32,bytes)`
-    * `finalizeETHWithdrawal(address,address,uint256,bytes)`
+    - `depositETH(uint32,bytes)`
+    - `depositETHTo(address,uint32,bytes)`
+    - `finalizeETHWithdrawal(address,address,uint256,bytes)`
 2. In `L2StandardBridge`:
-    * `withdraw(address,uint256,uint32,bytes)`
-    * `withdrawTo(address,address,uint256,uint32,bytes)`
-    * `finalizeDeposit(address,address,address,address,uint256,bytes)`
+    - `withdraw(address,uint256,uint32,bytes)`
+    - `withdrawTo(address,address,uint256,uint32,bytes)`
+    - `finalizeDeposit(address,address,address,address,uint256,bytes)`
 
 ### CrossDomainMessenger
 
@@ -231,6 +232,7 @@ The following methods MUST revert when `CALLVALUE` is non zero:
 It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack.
 
 The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs a tuple of the address and decimals of the custom gas token.
+
 - The `L1CrossDomainMessenger` fetches this tuple from the `SystemConfig` contract.
 - The `L2CrossDomainMessenger` fetches this tuple from the `L1Block` contract.
 
