@@ -111,9 +111,7 @@ do so and appropriately handle the consequences of the action.
 The gas paying token address is network specific configuration, therefore it MUST be set in storage and not
 as an immutable. This ensures that the same contract bytecode can be used by multiple OP Stack chains.
 
-If the gas paying token address is set to the `ETHER_TOKEN_ADDRESS` then the system is configured to use `ether` as the
-native asset on L2. Note that if nothing is stored in state at the `GAS_PAYING_TOKEN_SLOT` then it is considered that
-`ether` is used to pay for gas and getters on smart contracts SHOULD return the `ETHER_TOKEN_ADDRESS`.
+If the address in the `GAS_PAYING_TOKEN_SLOT` slot is `address(0)`, the system is configured to use `ether` as the paying token, and the token address getter should return `ETHER_TOKEN_ADDRESS`. If the address in the `GAS_PAYING_TOKEN_SLOT` slot is not `address(0)`, the system is configured to use a custom gas paying token, in which case the getter should return the address stored in slot `GAS_PAYING_TOKEN_SLOT`.
 
 ```mermaid
 ---
