@@ -232,6 +232,10 @@ The following methods MUST revert when `CALLVALUE` is non zero:
 
 It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack.
 
+The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs a tuple of the address and decimals of the custom gas token.
+- The `L1CrossDomainMessenger` fetches this tuple from the `SystemConfig` contract.
+- The `L2CrossDomainMessenger` fetches this tuple from the `L1Block` contract.
+
 ### SystemConfig
 
 The `SystemConfig` is the source of truth for the address of the custom gas token. It does on chain validation,
