@@ -83,6 +83,16 @@ on the `commitment_type_byte` where [0, 128) are reserved for official implement
 | `commitment_type` | `commitment`                    |
 | ----------------- | ------------------------------- |
 | 0                 | `keccak256(tx_payload)`         |
+| 1                 | `da-service`                     |
+
+The `da-service` commitment is as follows: `da_layer_byte ++ payload`.
+The DA layer byte must be initially restricted to the range `[0, 127)`.
+This specification will not apportion DA layer bytes, but different DA layers should coordinate to ensure that the
+DA layer bytes do not conflict. DA Layers can do so in
+[this discussion](https://github.com/ethereum-optimism/specs/discussions/135).
+The payload is a bytestring which is up to the DA layer to specify.
+The DA server should be able to parse the payload, find the data on the DA layer, and verify that the data returned
+from the DA layer matches what was committed to in the payload.
 
 The batcher SHOULD cap input payloads to the maximum L1 tx size or the input will be skipped
 during derivation. See [derivation section](#derivation) for more details.
