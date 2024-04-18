@@ -70,7 +70,7 @@ Ether is not a token.
 The gas paying token MUST satisfy the standard [ERC20](https://eips.ethereum.org/EIPS/eip-20) interface
 and implementation. It MUST be a L1 contract.
 
-The gas paying token cannot:
+The gas paying token MUST NOT:
 
 - Have a fee on transfer
 - Have rebasing logic
