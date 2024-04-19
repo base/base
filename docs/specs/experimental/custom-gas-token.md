@@ -35,6 +35,7 @@
   - [L2StandardBridge Proxy Update](#l2standardbridge-proxy-update)
 - [Selection of `ETHER_TOKEN_ADDRESS`](#selection-of-ether_token_address)
 - [Standard Config](#standard-config)
+- [Fees](#fees)
 - [Security Considerations](#security-considerations)
   - [OptimismPortal Token Allowance](#optimismportal-token-allowance)
   - [Interoperability Support](#interoperability-support)
@@ -454,6 +455,13 @@ or [APIs][execution-api-pr].
 
 There is currently no strong definition of what it means to be part of the standard config when using
 the OP Stack with custom gas token enabled. This will be defined in the future.
+
+## Fees
+
+The OP Stack natively charges fees in terms of ether due to the fee formula taking into account the basefee and
+blobbasefee. When a custom gas token is used, fees are paid in the custom gas token but the conversion rate to ether
+is not taken into account as part of the protocol. It is assumed that the fees will be configured by the chain
+operator such that the revenue earned in custom gas token can be swapped into ether to pay for posting the data to L1.
 
 ## Security Considerations
 
