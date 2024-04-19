@@ -263,7 +263,7 @@ function gasPayingTokenSymbol() public view returns (string);
 ```
 
 If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
-`gasPayingTokenName` should return `ether` and `gasPayingTokenSymbol` should return `ETH`.
+`gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 ### L1Block
 
@@ -283,7 +283,7 @@ function gasPayingTokenSymbol() public view returns (string);
 ```
 
 If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
-`gasPayingTokenName` should return `ether` and `gasPayingTokenSymbol` should return `ETH`.
+`gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 ### WETH9
 
