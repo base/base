@@ -327,7 +327,7 @@ meaning that "sending to the other domain" indicates it can be used for both dep
 | Scenario | Method | Prerequisites |
 |----------|--------|---------------|
 | Native Asset Send to Other Domain | `L1StandardBridge.bridgeETH(uint32,bytes) payable` | None |
-| Native Asset Send to Other Domain | `L1CrossDomainMessenger.sendMessage(address,bytes,uint32) payable` | None |
+| Native Asset and/or Message Send to Other Domain | `L1CrossDomainMessenger.sendMessage(address,bytes,uint32) payable` | None |
 | Native Asset Deposit | `OptimismPortal.depositTransaction(address,uint256,uint64,bool,bytes) payable` | None |
 | ERC20 Send to Other Domain | `L1StandardBridge.bridgeERC20(address,address,uint256,uint32,bytes)` | Approve `L1StandardBridge` for ERC20 |
 | Native Asset Withdrawal | `L2ToL1MessagePasser.initiateWithdrawal(address,uint256,bytes) payable` | None |
