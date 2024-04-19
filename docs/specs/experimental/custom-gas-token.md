@@ -141,6 +141,22 @@ flowchart LR
 
 ## Contract Modifications
 
+### Interface
+The following methods make up the gas paying token interface:
+
+- `gasPayingToken`
+- `gasPayingTokenName`
+- `gasPayingTokenSymbol`
+- `isCustomGasToken`
+
+This interface is on
+
+- `StandardBridge`
+- `CrossDomainMessenger`
+- `L1Block`
+- `SystemConfig`
+
+
 ### OptimismPortal
 
 The `OptimismPortal` is updated with a new interface specifically for depositing custom tokens.
