@@ -232,7 +232,7 @@ The following legacy methods in `L1StandardBridge` MUST revert when custom gas t
 - `finalizeETHWithdrawal(address,address,uint256,bytes)`
 
 The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the
-CALLVALUE is nonzer:
+CALLVALUE is nonzero:
 
 - `withdraw(address,uint256,uint32,bytes)`
 - `withdrawTo(address,address,uint256,uint32,bytes)`
