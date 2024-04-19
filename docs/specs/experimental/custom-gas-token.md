@@ -112,7 +112,10 @@ do so and appropriately handle the consequences of the action.
 The gas paying token address is network specific configuration, therefore it MUST be set in storage and not
 as an immutable. This ensures that the same contract bytecode can be used by multiple OP Stack chains.
 
-If the address in the `GAS_PAYING_TOKEN_SLOT` slot is `address(0)`, the system is configured to use `ether` as the gas paying token, and the getter for the token returns `ETHER_TOKEN_ADDRESS`. If the address in the `GAS_PAYING_TOKEN_SLOT` slot is not `address(0)`, the system is configured to use a custom gas paying token, and the getter returns the address in the slot.
+If the address in the `GAS_PAYING_TOKEN_SLOT` slot is `address(0)`, the system is configured to use `ether` as the gas
+paying token, and the getter for the token returns `ETHER_TOKEN_ADDRESS`. If the address in the `GAS_PAYING_TOKEN_SLOT`
+slot is not `address(0)`, the system is configured to use a custom gas paying token, and the getter returns the address
+in the slot.
 
 ```mermaid
 ---
@@ -232,7 +235,8 @@ The following methods MUST revert when `CALLVALUE` is non zero:
 
 It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack.
 
-The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs a tuple of the address and decimals of the custom gas token.
+The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs
+a tuple of the address and decimals of the custom gas token.
 
 - The `L1CrossDomainMessenger` fetches this tuple from the `SystemConfig` contract.
 - The `L2CrossDomainMessenger` fetches this tuple from the `L1Block` contract.
