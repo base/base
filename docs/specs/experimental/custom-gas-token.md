@@ -102,20 +102,20 @@ the validity of an ERC20 token.
 
 ## Configuring the Gas Paying Token
 
-The gas paying token is set within the L1 `SystemConfig` smart contract. This allows for easy access to the information
-required to know if an OP Stack chain is configured to use a custom gas paying token. The gas paying token is set
-during initialization and cannot be modified by the `SystemConfig` bytecode. Since the `SystemConfig` is proxied,
-it is always possible to modify the storage slot that holds the gas paying token address directly during an upgrade.
-It is assumed that the chain operator will not modify the gas paying token address unless they specifically decide to
-do so and appropriately handle the consequences of the action.
+The gas paying token is set within the L1 `SystemConfig` smart contract. This allows for easy access to the
+information required to know if an OP Stack chain is configured to use a custom gas paying token. The gas paying
+token is set during initialization and cannot be modified by the `SystemConfig` bytecode. Since the `SystemConfig`
+is proxied, it is always possible to modify the storage slot that holds the gas paying token address directly
+during an upgrade. It is assumed that the chain operator will not modify the gas paying token address unless they
+specifically decide to do so and appropriately handle the consequences of the action.
 
 The gas paying token address is network specific configuration, therefore it MUST be set in storage and not
 as an immutable. This ensures that the same contract bytecode can be used by multiple OP Stack chains.
 
-If the address in the `GAS_PAYING_TOKEN_SLOT` slot for `SystemConfig` is `address(0)`, the system is configured to use `ether` as the gas
-paying token, and the getter for the token returns `ETHER_TOKEN_ADDRESS`. If the address in the `GAS_PAYING_TOKEN_SLOT`
-slot for `SystemConfig` is not `address(0)`, the system is configured to use a custom gas paying token, and the getter returns the address
-in the slot.
+If the address in the `GAS_PAYING_TOKEN_SLOT` slot for `SystemConfig` is `address(0)`, the system is configured to
+use `ether` as the gas paying token, and the getter for the token returns `ETHER_TOKEN_ADDRESS`. If the address in
+the `GAS_PAYING_TOKEN_SLOT` slot for `SystemConfig` is not `address(0)`, the system is configured to use a custom
+gas paying token, and the getter returns the address in the slot.
 
 ```mermaid
 ---
@@ -142,6 +142,7 @@ flowchart LR
 ## Contract Modifications
 
 ### Interface
+
 The following methods make up the gas paying token interface:
 
 - `gasPayingToken`
@@ -155,7 +156,6 @@ This interface is on
 - `CrossDomainMessenger`
 - `L1Block`
 - `SystemConfig`
-
 
 ### OptimismPortal
 
@@ -231,7 +231,8 @@ The following legacy methods in `L1StandardBridge` MUST revert when custom gas t
 - `depositETHTo(address,uint32,bytes)`
 - `finalizeETHWithdrawal(address,address,uint256,bytes)`
 
-The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the CALLVALUE is nonzer:
+The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the
+CALLVALUE is nonzer:
 
 - `withdraw(address,uint256,uint32,bytes)`
 - `withdrawTo(address,address,uint256,uint32,bytes)`
@@ -250,7 +251,9 @@ The following methods MUST revert when `CALLVALUE` is non zero:
 - `sendMessage(address,bytes,uint32)`
 - `relayMessage(uint256,address,address,uint256,uint256,bytes)`
 
-It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack. For example, if implemented correctly, there can never be a call to `relayMessage` when `CALLVALUE` is non zero, even if `relayMessage` doesn't have this check explicitly.
+It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack.
+For example, if implemented correctly, there can never be a call to `relayMessage` when `CALLVALUE` is non zero, even if
+`relayMessage` doesn't have this check explicitly.
 
 The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs
 a tuple of the address and decimals of the custom gas token.
