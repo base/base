@@ -249,7 +249,7 @@ The following methods MUST revert when `CALLVALUE` is non zero:
 - `sendMessage(address,bytes,uint32)`
 - `relayMessage(uint256,address,address,uint256,uint256,bytes)`
 
-It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack.
+It MAY be safe to not always directly revert in these implementations if the revert happens elsewhere in the callstack. For example, if implemented correctly, there can never be a call to `relayMessage` when `CALLVALUE` is non zero, even if `relayMessage` doesn't have this check explicitly.
 
 The `CrossDomainMessenger` also has the API for _getting_ the custom gas token, namely `gasPayingToken()`, which outputs
 a tuple of the address and decimals of the custom gas token.
