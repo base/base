@@ -225,16 +225,17 @@ The following methods MUST revert when custom gas token is being used:
 - `receive()`
 - `finalizeBridgeETH(address, address, uint256, bytes)`
 
-The following legacy methods MUST also revert when custom gas token is being used:
+The following legacy methods in `L1StandardBridge` MUST revert when custom gas token is being used:
 
-1. In `L1StandardBridge`:
-    - `depositETH(uint32,bytes)`
-    - `depositETHTo(address,uint32,bytes)`
-    - `finalizeETHWithdrawal(address,address,uint256,bytes)`
-2. In `L2StandardBridge`:
-    - `withdraw(address,uint256,uint32,bytes)`
-    - `withdrawTo(address,address,uint256,uint32,bytes)`
-    - `finalizeDeposit(address,address,address,address,uint256,bytes)`
+- `depositETH(uint32,bytes)`
+- `depositETHTo(address,uint32,bytes)`
+- `finalizeETHWithdrawal(address,address,uint256,bytes)`
+
+The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the CALLVALUE is nonzer:
+
+- `withdraw(address,uint256,uint32,bytes)`
+- `withdrawTo(address,address,uint256,uint32,bytes)`
+- `finalizeDeposit(address,address,address,address,uint256,bytes)`
 
 ### CrossDomainMessenger
 
