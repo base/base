@@ -1,15 +1,13 @@
 use alloy::{
     consensus::{Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEnvelope, TxLegacy},
-    rpc::types::eth::{ConversionError, Signature},
-    serde as alloy_serde,
+    rpc::types::eth::{ConversionError, TransactionRequest},
 };
 use alloy_primitives::{B256, U128, U64};
 use serde::{Deserialize, Serialize};
 
-use self::{request::TransactionRequest, tx_type::TxType};
+use self::tx_type::TxType;
 
 pub mod receipt;
-pub mod request;
 pub mod tx_type;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,17 +17,6 @@ pub struct Transaction {
     /// Ethereum Transaction Types
     #[serde(flatten)]
     pub inner: alloy::rpc::types::eth::Transaction,
-    /// EIP2718
-    ///
-    /// Transaction type, Some(2) for EIP-1559 transaction,
-    /// Some(1) for AccessList transaction, None for Legacy
-    #[serde(
-        default,
-        rename = "type",
-        skip_serializing_if = "Option::is_none",
-        with = "alloy_serde::num::u8_hex_opt"
-    )]
-    pub transaction_type: Option<TxType>,
     /// The ETH value to mint on L2
     #[serde(rename = "mint", skip_serializing_if = "Option::is_none")]
     pub mint: Option<U128>,
@@ -76,6 +63,7 @@ impl Transaction {
             max_fee_per_blob_gas: self.max_fee_per_blob_gas,
             blob_versioned_hashes: self.blob_versioned_hashes,
             sidecar: self.sidecar,
+            transaction_type: self.transaction_type,
         }
     }
 }
@@ -179,6 +167,8 @@ impl TryFrom<Transaction> for Signed<TxEip4844Variant> {
         Ok(tx.into_signed(signature))
     }
 }
+
+// TODO: Implement a impl TryFrom<Transaction> for Signed<Deposit> when the consensus types are ready
 
 impl TryFrom<Transaction> for TxEnvelope {
     // TODO: When the TxEnvelope is implemented for op-consensus, import it from there. This

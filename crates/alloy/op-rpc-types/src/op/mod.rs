@@ -1,6 +1,5 @@
-mod block;
-mod call;
-mod filters;
-mod pubsub;
 mod transaction;
-pub use alloy::rpc::types::eth::*;
+use alloy::rpc::types::eth::FilterChanges as EthFilterChanges;
+use crate::op::transaction::Transaction;
+
+pub type FilterChanges = EthFilterChanges<Transaction>;
