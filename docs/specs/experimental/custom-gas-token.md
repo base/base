@@ -10,6 +10,7 @@
   - [Automated Validation](#automated-validation)
 - [Configuring the Gas Paying Token](#configuring-the-gas-paying-token)
 - [Contract Modifications](#contract-modifications)
+  - [IGasToken Interface](#igastoken-interface)
   - [OptimismPortal](#optimismportal)
     - [`depositERC20Transaction`](#depositerc20transaction)
       - [Function Arguments](#function-arguments)
@@ -141,7 +142,7 @@ flowchart LR
 
 ## Contract Modifications
 
-## IGasToken Interface
+### IGasToken Interface
 
 This interface encapsulates the shared interface.
 
