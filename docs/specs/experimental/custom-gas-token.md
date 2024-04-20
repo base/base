@@ -150,10 +150,12 @@ The following methods make up the gas paying token interface:
 - `gasPayingTokenSymbol`
 - `isCustomGasToken`
 
-This interface is on
+This interface applies to the following contracts:
 
-- `StandardBridge`
-- `CrossDomainMessenger`
+- `L1StandardBridge`
+- `L2StandardBridge`
+- `L1CrossDomainMessenger`
+- `L2CrossDomainMessenger`
 - `L1Block`
 - `SystemConfig`
 
