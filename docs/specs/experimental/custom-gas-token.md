@@ -141,14 +141,25 @@ flowchart LR
 
 ## Contract Modifications
 
-### Interface
+## IGasToken Interface
 
-The following methods make up the gas paying token interface:
+This interface encapsulates the shared interface.
 
-- `gasPayingToken`
-- `gasPayingTokenName`
-- `gasPayingTokenSymbol`
-- `isCustomGasToken`
+```solidity
+interface IGasToken {
+    /// @notice Returns the gas token address and its decimals.
+    function getToken() external view returns (address, uint8);
+
+    /// @notice Returns the gas token name.
+    function getName() external view returns (string memory);
+
+    /// @notice Returns the gas token symbol.
+    function getSymbol() external view returns (string memory);
+
+    /// @notice Returns true if the network uses a custom gas token. False otherwise.
+    function isCustomGasToken() external view returns (bool);
+}
+```
 
 This interface applies to the following contracts:
 
