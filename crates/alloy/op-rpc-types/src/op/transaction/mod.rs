@@ -168,7 +168,8 @@ impl TryFrom<Transaction> for Signed<TxEip4844Variant> {
     }
 }
 
-// TODO: Implement a impl TryFrom<Transaction> for Signed<Deposit> when the consensus types are ready
+// TODO: Implement a impl TryFrom<Transaction> for Signed<Deposit> when the consensus types are
+// ready
 
 impl TryFrom<Transaction> for TxEnvelope {
     // TODO: When the TxEnvelope is implemented for op-consensus, import it from there. This
