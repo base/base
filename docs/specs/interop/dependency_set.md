@@ -26,7 +26,7 @@ of executing messages.
 
 The dependency set is configured on a per chain basis.
 
-The chainid of the local chain MUST be considered as part of its own dependency set.
+The chain id of the local chain MUST be considered as part of its own dependency set.
 
 While the dependency set explicitly defines the set of chains that are depended on for incoming messages,
 the full set of transitive dependencies must be known to allow for the progression of [safety](#safety).
