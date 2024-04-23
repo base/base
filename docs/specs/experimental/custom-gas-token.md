@@ -70,7 +70,7 @@ Note, Ether is not a **custom** gas token, but may be used to pay gas. More on t
 ## Properties of a Gas Paying Token
 
 The gas paying token MUST satisfy the standard [ERC20](https://eips.ethereum.org/EIPS/eip-20) interface
-and implementation. It MUST be a L1 contract.
+and implementation. It MUST be an L1 contract.
 
 The gas paying token MUST NOT:
 
