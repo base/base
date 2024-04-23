@@ -75,7 +75,7 @@ struct Identifier {
 | `blocknumber` | `uint256` | Block number in which the log was emitted                                       |
 | `logIndex`    | `uint256` | The index of the log in the array of all logs emitted in the block              |
 | `timestamp`   | `uint256` | The timestamp that the log was emitted. Used to enforce the timestamp invariant |
-| `chainid`     | `uint256` | The chainid of the chain that emitted the log                                   |
+| `chainid`     | `uint256` | The chain id of the chain that emitted the log                                  |
 
 The [`Identifier`] includes the set of information to uniquely identify a log. When using an absolute
 log index within a particular block, it makes ahead of time coordination more complex. Ideally there

@@ -262,7 +262,7 @@ The assumption makes upper inequality to hold. Therefore, we decided to manage `
 - Transactions
   - Deposit transactions can be derived from its L1 origin, identical with V0 batch.
   - User transactions can be derived by following way:
-    - Recover `V` value of TX signature from `y_parity_bits` and L2 chainId, as described in optimization strategies.
+    - Recover `V` value of TX signature from `y_parity_bits` and L2 chain id, as described in optimization strategies.
     - When parsing `tx_tos`, `contract_creation_bits` is used to determine if the TX has `to` value or not.
 
 ## Integration

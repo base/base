@@ -133,7 +133,7 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 
 - Only callable by the `CrossL2Inbox`
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
-- The `_destination` chainid MUST be equal to the local chainid
+- The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
 
 ### Message Versioning
