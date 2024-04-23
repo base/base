@@ -252,11 +252,14 @@ CALLVALUE is nonzero:
 
 ### CrossDomainMessenger
 
-The `CrossDomainMessenger` contracts on both L1 and L2 MUST not be able to faciliate the transfer of native asset
+The `CrossDomainMessenger` contracts on both L1 and L2 MUST NOT be able to faciliate the transfer of native asset
 on custom gas token chains due to their tight coupling with `ether` and the `OptimismPortal` and `L2ToL1MessagePasser`
 contracts.
 
 It is possible to support this in the future with a redesign of the `CrossDomainMessenger` contract.
+It would need to have conditional logic based on being a custom gas token chain and faciliate transfer
+of the ERC20 token to the end user on the other side. It adds a layer of extra state modifying calls
+so it may not be worth adding.
 
 The following methods MUST revert when `CALLVALUE` is non zero:
 
