@@ -11,6 +11,7 @@
 - [Configuring the Gas Paying Token](#configuring-the-gas-paying-token)
 - [Contract Modifications](#contract-modifications)
   - [IGasToken Interface](#igastoken-interface)
+  - [Gas Token Aware](#gas-token-aware)
   - [OptimismPortal](#optimismportal)
     - [`depositERC20Transaction`](#depositerc20transaction)
       - [Function Arguments](#function-arguments)
@@ -163,12 +164,19 @@ If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_T
 
 This interface applies to the following contracts:
 
+- `L1Block`
+- `SystemConfig`
+
+### Gas Token Aware
+
+The following contracts are aware internally if the chain is using a custom gas token
+but do not expose anything as part of their ABI that indicates awareness.
+
 - `L1StandardBridge`
 - `L2StandardBridge`
 - `L1CrossDomainMessenger`
 - `L2CrossDomainMessenger`
-- `L1Block`
-- `SystemConfig`
+- `OptimismPortal`
 
 ### OptimismPortal
 
