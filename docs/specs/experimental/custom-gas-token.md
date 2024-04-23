@@ -159,7 +159,7 @@ interface IGasToken {
 }
 ```
 
-If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
+If a custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS, 18)`,
 `gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 This interface applies to the following contracts:
