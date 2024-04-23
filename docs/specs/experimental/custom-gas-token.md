@@ -55,7 +55,7 @@ ensure the security of the system. The source of truth for the configuration of 
 in the L1 `SystemConfig` smart contract.
 
 The terms "custom gas token", "gas paying token", "native asset" and "gas paying asset" can all be used interchangebly.
-Ether is not a token.
+Note, Ether is not a **custom** gas token, but may be used to pay gas. More on this in [## Configuring the Gas Paying Token](#-Configuring-the-Gas-Paying-Token).
 
 ## Constants
 
