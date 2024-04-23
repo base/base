@@ -14,7 +14,7 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-The dependency set defines the set of chains that a destination chains allows as source chains. Another way of
+The dependency set defines the set of chains that destination chains allow as source chains. Another way of
 saying it is that the dependency set defines the set of initiating messages that are valid for an executing
 message to be included. An executing message MUST have an initiating message that is included in a chain
 in the dependency set.
