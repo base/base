@@ -178,8 +178,7 @@ The `OptimismPortal` is updated with a new interface specifically for depositing
 
 The `depositERC20Transaction` function is useful for sending custom gas tokens to L2. It is broken out into its
 own interface to maintain backwards compatibility with chains that use `ether`, to help simplify the implementation
-and to prevent footguns when trying to deposit an ERC20 native asset into a chain that uses `ether` as its native
-asset.
+and make it explicit for callers that are trying to deposit an ERC20 native asset.
 
 ```solidity
 function depositERC20Transaction(
