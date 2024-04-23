@@ -20,7 +20,6 @@
   - [CrossDomainMessenger](#crossdomainmessenger)
   - [SystemConfig](#systemconfig)
     - [initialize](#initialize)
-    - [Getters](#getters)
   - [L1Block](#l1block)
   - [WETH9](#weth9)
 - [User Flow](#user-flow)
@@ -148,19 +147,19 @@ This interface encapsulates the shared interface.
 
 ```solidity
 interface IGasToken {
-    /// @notice Returns the gas token address and its decimals.
-    function getToken() external view returns (address, uint8);
-
+    /// @notice Getter for the ERC20 token address that is used to pay for gas and its decimals.
+    function gasPayingToken() external view returns (address, uint8);
     /// @notice Returns the gas token name.
-    function getName() external view returns (string memory);
-
+    function gasPayingTokenName() external view returns (string memory);
     /// @notice Returns the gas token symbol.
-    function getSymbol() external view returns (string memory);
-
-    /// @notice Returns true if the network uses a custom gas token. False otherwise.
+    function gasPayingTokenSymbol() external view returns (string memory);
+    /// @notice Returns true if the network uses a custom gas token.
     function isCustomGasToken() external view returns (bool);
 }
 ```
+
+If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
+`gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 This interface applies to the following contracts:
 
@@ -284,22 +283,9 @@ to `initialize`. Using a custom gas token is indicated by passing an address oth
 or `address(0)`. If `address(0)` is used for initialization, it MUST be mapped into `ETHER_TOKEN_ADDRESS`
 before being forwarded to the rest of the system. When a custom gas token is set, the number of decimals
 on the token MUST be exactly 18, the name of the token MUST be less than or equal to 32 bytes and the
-symbol MUST be less than or equal to 32 bytes. If the token passes all of these checks,\
+symbol MUST be less than or equal to 32 bytes. If the token passes all of these checks,
 `OptimismPortal.setGasPayingToken` is called. The implementation of `initialize` MUST not allow the chain
 operator to change the address of the custom gas token if it is already set.
-
-#### Getters
-
-Some getters are added to the `SystemConfig`:
-
-```solidity
-function gasPayingToken() public view returns (address, uint8);
-function gasPayingTokenName() public view returns (string);
-function gasPayingTokenSymbol() public view returns (string);
-```
-
-If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
-`gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 ### L1Block
 
@@ -313,13 +299,7 @@ Any L2 contract that wants to learn the address of the gas paying token can call
 
 ```solidity
 function setGasPayingToken(address _token, uint8 _decimals, byte32 _name, bytes32 _symbol) external;
-function gasPayingToken() public view returns (address, uint8);
-function gasPayingTokenName() public view returns (string);
-function gasPayingTokenSymbol() public view returns (string);
 ```
-
-If custom gas token is not used, then `gasPayingToken()` should return `(ETHER_TOKEN_ADDRESS,18)`,
-`gasPayingTokenName` should return `Ether` and `gasPayingTokenSymbol` should return `ETH`.
 
 ### WETH9
 
