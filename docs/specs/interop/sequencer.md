@@ -30,11 +30,17 @@ without adding additional state-transition complexity or cross-chain synchronici
 ## Block Building
 
 The goal is to present information in a way where it is as efficient as possible for the block builder to only include
-executing messages that have a corresponding initiating message.
+executing messages that have a corresponding initiating message. It is not possible to enforce the ability to
+statically analyze a transaction, so execution MAY be required to determine the information required to include
+executing messages.
 
 ### Static analysis
 
-The block builder SHOULD use static analysis on executing messages to determine the dependency of the message.
+Note that static analysis is not always reliable, but it is far faster than having to perform
+execution to get the data required to validate an executing message.
+
+The block builder SHOULD use static analysis when possible on executing messages to determine
+the dependency of the message.
 
 When a transaction has a top level [to][tx-to] field that is equal to the `CrossL2Inbox`
 and the 4-byte selector in the calldata matches the entrypoint interface,
@@ -94,27 +100,36 @@ The block builder MAY also trust a remote RPC and use the following algorithm
 to verify the existence of the log.
 
 The following pseudocode represents how to check existence of a log based on an `Identifier`.
+If the value `True` is returned, then it is safe to include the transaction.
 
 ```python
-target, message, id = abi.decode(calldata)
+success, receipt = evm.apply_transaction(tx)
 
-eth = clients[id.chainid]
+if not success:
+  return True
 
-if eth is None:
-  return False
+for log in receipt.logs:
+  if is_executing_message(log):
+      id, message = abi.decode(log.data)
 
-logs = eth.getLogs(id.origin, from=id.blocknumber, to=id.blocknumber)
-log = filter(lambda x: x.index == id.logIndex && x.address == id.origin)
-if len(log) == 0:
-  return False
+      # assumes there is a client for each chain in the dependency set
+      eth = clients[id.chainid]
 
-if message != encode(log[0]):
-  return False
+      if eth is None:
+        return False
 
-block = eth.getBlockByNumber(id.blocknumber)
+      logs = eth.getLogs(id.origin, from=id.blocknumber, to=id.blocknumber)
+      log = filter(lambda x: x.index == id.logIndex && x.address == id.origin)
+      if len(log) == 0:
+        return False
 
-if id.timestamp != block.timestamp:
-  return False
+      if message != encode(log[0]):
+        return False
+
+      block = eth.getBlockByNumber(id.blocknumber)
+
+      if id.timestamp != block.timestamp:
+        return False
 
 return True
 ```

@@ -9,6 +9,7 @@
     - [`_msg`](#_msg)
     - [`_id`](#_id)
     - [`_target`](#_target)
+  - [`ExecutingMessage` Event](#executingmessage-event)
   - [Reference implementation](#reference-implementation)
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
@@ -83,13 +84,28 @@ In practice, the `_target` will be a contract that needs to know the schema of t
 It MAY call back to the `CrossL2Inbox` to authenticate
 properties about the `_msg` using the information in the `Identifier`.
 
+### `ExecutingMessage` Event
+
+The `ExecutingMessage` event represents an executing message. It MUST be emitted on every call
+to `executeMessage`.
+
+```solidity
+event ExecutingMessage(bytes,bytes);
+```
+The data encoded in the event contains the `Identifier` and the `msg`.
+The following pseudocode shows the serialization:
+
+```solidity
+(bytes memory identifier, bytes memory log) = abi.decode(receipt.data, (bytes, bytes));
+Identifier id = abi.decode(identifier, (Identifier));
+```
+
 ### Reference implementation
 
 A simple implementation of the `executeMessage` function is included below.
 
 ```solidity
 function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
-    require(msg.sender == tx.origin);
     require(_id.timestamp <= block.timestamp);
     require(L1Block.isInDependencySet(_id.chainid));
 
@@ -108,6 +124,8 @@ function executeMessage(Identifier calldata _id, address _target, bytes calldata
     });
 
     require(success);
+
+    emit ExecutingMessage(abi.encode(_id), _msg);
 }
 ```
 
@@ -215,6 +233,8 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
       tstore(CROSS_DOMAIN_MESSAGE_SOURCE_SLOT, _source)
     }
 
+    sentMessages[messageHash] = true;
+
     bool success = SafeCall.call({
        _target: _target,
        _value: msg.value,
@@ -222,8 +242,6 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
     });
 
     require(success);
-
-    sentMessages[messageHash] = true;
 }
 ```
 
