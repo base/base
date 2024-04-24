@@ -84,7 +84,7 @@ Common representations of network identity:
 
 ### Discv5
 
-#### Structure
+#### Consesus Layer Structure
 
 The Ethereum Node Record (ENR) for an Optimism rollup node must contain the following values, identified by unique keys:
 
@@ -110,6 +110,19 @@ The discovery process in Optimism is a pipeline of node records:
 3. Pull records from the DiscV5 module when looking for peers
 4. Check if the record contains the `opstack` entry, verify it matches the chain ID and current or future fork number
 5. If not already connected, and not recently disconnected or put on deny-list, attempt to dial.
+
+#### Execution Layer Structure
+
+The Ethereum Node Record (ENR) for an Optimism execution node must contain the following values, identified by unique keys:
+
+- An OpStack (`opel` field) L2 network identifier.
+
+The EL uses a different key from the CL in order to stop EL and CL nodes from connecting to each other.
+
+The `opel` value is encoded as a single RLP `bytes` value, the concatenation of:
+
+- chain ID (`unsigned varint`)
+- fork ID (`unsigned varint`)
 
 ### LibP2P
 
