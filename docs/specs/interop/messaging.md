@@ -112,6 +112,9 @@ Both the block builder and the verifier use this information to ensure that all 
 The executing message is verified by checking if there is an existing initiating-message
 that originates at [`Identifier`] with matching [Message Payload](#message-payload).
 
+Since an executing message is defined by a log, it means that reverting calls to the `CrossL2Inbox`
+do not count as executing messages.
+
 ## Messaging Invariants
 
 - [Timestamp Invariant](#timestamp-invariant): The timestamp at the time of inclusion of the executing message MUST
