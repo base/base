@@ -152,7 +152,7 @@ All preinstall contracts are specified in the [preinstalls specification](./prot
 
 ## Precompiled Contract ("Precompile")
 
-[predeploy]: glossary.md#precompiled-contract-precompile
+[precompile]: glossary.md#precompiled-contract-precompile
 
 A contract implemented natively in the EVM that performs a specific operation more efficiently than a bytecode
 (e.g. Solidity) implementation. Precompiles exist at predefined addresses. They are created and modified through
