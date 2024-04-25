@@ -19,7 +19,7 @@ pub struct Transaction {
     pub inner: alloy::rpc::types::eth::Transaction,
     /// The ETH value to mint on L2
     #[serde(rename = "mint", skip_serializing_if = "Option::is_none")]
-    pub mint: Option<U128>,
+    pub mint: Option<u128>,
     /// Hash that uniquely identifies the source of the deposit.
     #[serde(rename = "sourceHash", skip_serializing_if = "Option::is_none")]
     pub source_hash: Option<B256>,
@@ -29,7 +29,7 @@ pub struct Transaction {
     pub is_system_tx: Option<bool>,
     /// Deposit receipt version for deposit transactions post-canyon
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub deposit_receipt_version: Option<U64>,
+    pub deposit_receipt_version: Option<u64>,
 }
 
 impl Transaction {
