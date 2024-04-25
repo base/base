@@ -211,7 +211,7 @@ therefore be done prior to adding a new owner.
 The module and guard are intended to be deployed and installed on the safe in the following
 sequence:
 
-1. Deploy the guard contract 2. The guard's constructor will read the Safe's owners and set a timestamp
+1. Deploy the guard contract. The guard's constructor will read the Safe's owners and set a timestamp.
 1. Deploy the module.
 1. Set the guard on the safe.
 1. Enable the module on the safe.
