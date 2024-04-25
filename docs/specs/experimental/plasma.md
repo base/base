@@ -106,12 +106,12 @@ Any DA provider can implement the following endpoints to receive and serve input
   Request:
     POST /put
     Content-Type: application/octet-stream
-    Body: <encoded_commitment>
+    Body: <preimage_bytes>
 
   Response:
     200 OK
     Content-Type: application/octet-stream
-    Body: <preimage_bytes>
+    Body: <hex_encoded_commitment>
   ```
 
 - ```text
