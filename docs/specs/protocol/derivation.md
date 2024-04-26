@@ -6,6 +6,7 @@
 
 - [Overview](#overview)
   - [Eager Block Derivation](#eager-block-derivation)
+  - [Protocol Parameters](#protocol-parameters)
 - [Batch Submission](#batch-submission)
   - [Sequencing & Batch Submission Overview](#sequencing--batch-submission-overview)
   - [Batch Submission Wire Format](#batch-submission-wire-format)
@@ -187,6 +188,15 @@ before derivation only in the very worst case where some portion of the sequence
 first block of the epoch appears in the very last L1 block of the window. Note that this only
 applies to _block_ derivation. Sequencer batches can still be derived and tentatively queued
 without deriving blocks from them.
+
+## Protocol Parameters
+
+The following table gives an overview of some protocol parameters, and how they are affected by
+protocol upgrades.
+
+| Parameter | Bedrock (default) value | Latest (default) value | Changes | Notes |
+| --------- | ----------------------- | ---------------------- | ------- | ----- |
+| `max_sequencer_drift` | 600 | 1800 | [Fjord](../fjord/derivation.md#constant-maximum-sequencer-drift) | Changed from a chain parameter to a constant with Fjord. |
 
 ---
 
