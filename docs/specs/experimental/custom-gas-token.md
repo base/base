@@ -120,9 +120,6 @@ the `GAS_PAYING_TOKEN_SLOT` slot for `SystemConfig` is not `address(0)`, the sys
 gas paying token, and the getter returns the address in the slot.
 
 ```mermaid
----
-title: Custom Gas Token Configuration
----
 flowchart LR
     subgraph Layer One
         OP[OptimismPortal]
@@ -360,9 +357,6 @@ The following diagram shows the control flow for when a user attempts to send `e
 the `StandardBridge`, either on L1 or L2.
 
 ```mermaid
----
-title: Control Flow for Custom Gas Token Chain
----
 flowchart TD
     A1(User) -->|Attempts to deposit/withdraw ether| A2(StandardBridge or CrossDomainMessenger)
     A2 -->|Is chain using custom gas token?| A3{SystemConfig or L1Block}
