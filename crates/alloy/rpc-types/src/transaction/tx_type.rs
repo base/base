@@ -1,3 +1,5 @@
+//! OP transaction identifiers.
+
 use serde::{Deserialize, Serialize};
 
 /// Identifier for legacy transaction, however a legacy tx is technically not
@@ -13,7 +15,7 @@ pub const EIP1559_TX_TYPE_ID: u8 = 2;
 /// Identifier for an EIP4844 transaction.
 pub const EIP4844_TX_TYPE_ID: u8 = 3;
 
-// Identifier for an Optimism deposit transaction
+/// Identifier for an Optimism deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126;
 
 /// Transaction Type
@@ -38,9 +40,9 @@ impl From<TxType> for u8 {
     fn from(value: TxType) -> Self {
         match value {
             TxType::Legacy => LEGACY_TX_TYPE_ID,
-            TxType::EIP2930 => EIP2930_TX_TYPE_ID,
-            TxType::EIP1559 => EIP1559_TX_TYPE_ID,
-            TxType::EIP4844 => EIP4844_TX_TYPE_ID,
+            TxType::Eip2930 => EIP2930_TX_TYPE_ID,
+            TxType::Eip1559 => EIP1559_TX_TYPE_ID,
+            TxType::Eip4844 => EIP4844_TX_TYPE_ID,
             TxType::Deposit => DEPOSIT_TX_TYPE_ID,
         }
     }
