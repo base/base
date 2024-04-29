@@ -41,7 +41,7 @@ type Hash is bytes32;
 type Timestamp is uint64;
 
 /// @notice A `GameType` represents the type of game being played.
-type GameType is uint8;
+type GameType is uint32;
 
 /// @title GameTypes
 /// @notice A library that defines the IDs of games that can be played.
@@ -78,8 +78,8 @@ The dispute game factory is responsible for creating new `DisputeGame` contracts
 given a `GameType` and a root `Claim`. Challenger agents listen to the `DisputeGameCreated` events in order to
 keep up with on-going disputes in the protocol and participate accordingly.
 
-A [`clones-with-immutable-args`](https://github.com/Saw-mon-and-Natalie/clones-with-immutable-args) factory
-(originally by @wighawag, but forked by @Saw-mon-and-Natalie) is used to create Clones. Each `GameType` has
+A [`clones-with-immutable-args`](https://github.com/Vectorized/solady/blob/main/src/utils/LibClone.sol) factory
+(originally by @wighawag, but forked and improved by @Vectorized) is used to create Clones. Each `GameType` has
 a corresponding implementation within the factory, and when a new game is created, the factory creates a
 clone of the `GameType`'s pre-deployed implementation contract.
 
@@ -108,6 +108,15 @@ interface IDisputeGameFactory {
     /// @param gameType The type of the DisputeGame.
     /// @param newBond The new bond (in wei) for initializing the game type.
     event InitBondUpdated(GameType indexed gameType, uint256 indexed newBond);
+
+    /// @notice Information about a dispute game found in a `findLatestGames` search.
+    struct GameSearchResult {
+        uint256 index;
+        GameId metadata;
+        Timestamp timestamp;
+        Claim rootClaim;
+        bytes extraData;
+    }
 
     /// @notice The total number of dispute games created by this factory.
     /// @return gameCount_ The total number of dispute games created by this factory.
@@ -196,6 +205,20 @@ interface IDisputeGameFactory {
         external
         pure
         returns (Hash uuid_);
+
+    /// @notice Finds the `_n` most recent `GameId`'s of type `_gameType` starting at `_start`. If there are less than
+    ///         `_n` games of type `_gameType` starting at `_start`, then the returned array will be shorter than `_n`.
+    /// @param _gameType The type of game to find.
+    /// @param _start The index to start the reverse search from.
+    /// @param _n The number of games to find.
+    function findLatestGames(
+        GameType _gameType,
+        uint256 _start,
+        uint256 _n
+    )
+        external
+        view
+        returns (GameSearchResult[] memory games_);
 }
 ```
 
@@ -221,6 +244,10 @@ interface IDisputeGame is IInitializable {
     /// @return createdAt_ The timestamp that the DisputeGame contract was created at.
     function createdAt() external view returns (Timestamp createdAt_);
 
+    /// @notice Returns the timestamp that the DisputeGame contract was resolved at.
+    /// @return resolvedAt_ The timestamp that the DisputeGame contract was resolved at.
+    function resolvedAt() external view returns (Timestamp resolvedAt_);
+
     /// @notice Returns the current status of the game.
     /// @return status_ The current status of the game.
     function status() external view returns (GameStatus status_);
@@ -231,13 +258,23 @@ interface IDisputeGame is IInitializable {
     /// @return gameType_ The type of proof system being used.
     function gameType() external view returns (GameType gameType_);
 
-    /// @notice Getter for the root claim.
+    /// @notice Getter for the creator of the dispute game.
     /// @dev `clones-with-immutable-args` argument #1
+    /// @return creator_ The creator of the dispute game.
+    function gameCreator() external pure returns (address creator_);
+
+    /// @notice Getter for the root claim.
+    /// @dev `clones-with-immutable-args` argument #2
     /// @return rootClaim_ The root claim of the DisputeGame.
     function rootClaim() external pure returns (Claim rootClaim_);
 
+    /// @notice Getter for the parent hash of the L1 block when the dispute game was created.
+    /// @dev `clones-with-immutable-args` argument #3
+    /// @return l1Head_ The parent hash of the L1 block when the dispute game was created.
+    function l1Head() external pure returns (Hash l1Head_);
+
     /// @notice Getter for the extra data.
-    /// @dev `clones-with-immutable-args` argument #2
+    /// @dev `clones-with-immutable-args` argument #4
     /// @return extraData_ Any extra data supplied to the dispute game contract by the creator.
     function extraData() external pure returns (bytes memory extraData_);
 
