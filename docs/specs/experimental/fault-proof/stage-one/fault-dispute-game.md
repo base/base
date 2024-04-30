@@ -16,7 +16,9 @@
   - [Subgame](#subgame)
   - [Game Tree](#game-tree)
   - [Position](#position)
-  - [GAME_DURATION](#game_duration)
+  - [MAX_CLOCK_DURATION](#max_clock_duration)
+  - [CLOCK_EXTENSION](#clock_extension)
+  - [Freeloader Claims](#freeloader-claims)
 - [Core Game Mechanics](#core-game-mechanics)
   - [Actors](#actors)
   - [Moves](#moves)
@@ -161,10 +163,34 @@ We refer to this coverage as the **trace index** of a Position.
 
 Note that there can be multiple positions covering the same _trace index_.
 
-### GAME_DURATION
+### MAX_CLOCK_DURATION
 
-This is an immutable, preset to a FDG implementation, representing the duration of the game. Each top level team will
-receive half of this duration on their initial chess clocks.
+This is an immutable, preset to a FDG implementation, representing the maximum amount of time that may accumulate on a
+team's [chess clock](#game-clock).
+
+### CLOCK_EXTENSION
+
+This is an immutable, preset to a FDG implementation, representing the flat credit that is given to a team's clock if
+their clock has less than `CLOCK_EXTENSION` seconds remaining.
+
+### Freeloader Claims
+
+Due to the subgame resolution logic, there are certain moves which result in the correct final resolution of the game,
+but do not pay out bonds to the correct parties.
+
+An example of this is as follows:
+
+1. Alice creates a dispute game with an honest root claim.
+1. Bob counters the honest root with a correct claim at the implied L2 block number.
+1. Alice performs a defense move against Bob's counter, as the divergence exists later in Bob's view of the chain state.
+1. Bob attacks his own claim.
+
+Bob's attack against his own claim _is_ a counter to a bad claim, but with the incorrect pivot direction. If left
+untouched, because it exists at a position further left than Alice's, he will reclaim his own bond upon resolution.
+Because of this, the honest challenger must always counter freeloader claims for incentive compatibility to be
+preserved.
+
+Critically, freeloader claims, if left untouched, do not influence incorrect resolution of the game globally.
 
 ## Core Game Mechanics
 
@@ -363,11 +389,20 @@ Uncontested claims are likely to result in a loss, as explained later under [Res
 
 Every claim in the game has a Clock. A claim inherits the clock of its grandparent claim in the
 DAG (and so on). Akin to a chess clock, it keeps track of the total time each team takes to make
-moves, preventing delays.
-Making a move resumes the clock for the disputed claim and pauses it for the newly added one.
+moves, preventing delays. Making a move resumes the clock for the disputed claim and pauses it for the newly added one.
+
+If a move is performed, where the potential grandchild's clock has less time than `CLOCK_EXTENSION` seconds remaining,
+the potential grandchild's clock is granted exactly `CLOCK_EXTENSION` seconds remaining. This is to combat the situation
+where a challenger must inherit a malicious party's clock when countering a [freeloader claim](#freeloader-claims), in
+order to preserve incentive compatibility for the honest party. As the extension only applies to the potential
+grandchild's clock, the max possible extension for the game is bounded, and scales with the `MAX_GAME_DEPTH`.
+
+If the potential grandchild is an execution trace bisection root claim and their clock has less than `CLOCK_EXTENSION`
+seconds remaining, exactly `CLOCK_EXTENSION * 2` seconds are allocated for the potential grandchild. This extra time
+is alloted to allow for completion of the off-chain FPVM run to generate the initial instruction trace.
 
 A move against a particular claim is no longer possible once the parent of the disputed claim's Clock
-has exceeded half of the `GAME_DURATION`. By which point, the claim's clock has _expired_.
+has accumulated `MAX_CLOCK_DURATION` seconds. By which point, the claim's clock has _expired_.
 
 ### Resolution
 
