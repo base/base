@@ -24,8 +24,10 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-The Security Council uses a specially extended Safe multisig contract to provide additional security
-guarantees on top of those provided by the Safe contract.
+The Security Council (at
+[eth:0xc2819DC788505Aac350142A7A707BF9D03E3Bd03](https://etherscan.io/address/0xc2819DC788505Aac350142A7A707BF9D03E3Bd03))
+uses a specially extended Safe multisig contract to provide additional security guarantees on top of
+those provided by the Safe contract.
 
 ## Deputy guardian module
 
@@ -76,6 +78,18 @@ interface DeputyGuardianModule {
 
 For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe` and
 `deputyGuardian` addresses. If necessary these can be modified by swapping out with a new module.
+
+### Deputy Guardian Module Security Properties
+
+The following security properties must be upheld by the `DeputyGuardianModule`:
+
+1. The module must correctly enforce access controls so that only the Deputy Guardian can call state
+   modifying functions.
+2. The module must be safely removable.
+3. The module must not introduce any possibility of disabling the the Safe so that it can no longer
+   forward transactions.
+4. The module must format calldata correctly such that the target it calls performs the expected
+   action.
 
 ## Liveness checking mechanism
 
@@ -157,7 +171,7 @@ In the unlikely event that the signer set (`N`) is reduced below the allowed min
 owners, then (and only then) is a shutdown mechanism activated which removes the existing
 signers, and hands control of the multisig over to a predetermined entity.
 
-### Security Properties
+### Liveness Security Properties
 
 The following security properties must be upheld:
 
