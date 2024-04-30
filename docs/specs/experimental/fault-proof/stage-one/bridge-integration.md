@@ -190,8 +190,8 @@ timestamp of re-proven withdrawals is still reset.
 
 1. **Old:** Re-proving is allowed if the output root at the proven withdrawal's `l2OutputIndex` changed in the
    `L2OutputOracle`.
-2. **New:** Re-proving is allowed if the output proposal's dispute game has resolved against the output root's favor,
-   the respected game type changed since the withdrawal was proven, or the game that was proven against was blacklisted.
+2. **New:** Re-proving is allowed at any time by the user. When a withdrawal is re-proven, its proof maturity delay is
+   reset.
 
 ### `finalizeWithdrawalTransaction` modifications
 
