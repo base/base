@@ -373,28 +373,34 @@ where:
 - `is_last` is a single byte with a value of 1 if the frame is the last in the channel, 0 if there are frames in the
   channel. Any other value makes the frame invalid (it must be ignored by the rollup node).
 
-[batcher-spec]: batching.md
-
 ### Channel Format
 
-A channel is encoded as `channel_encoding`, defined as:
+[channel-format]: #channel-format
+
+A channel is encoded by applying a streaming compression algorithm to a list of batches:
 
 ```text
 rlp_batches = []
 for batch in batches:
     rlp_batches.append(batch)
-channel_encoding = compress(rlp_batches)
 ```
 
 where:
 
 - `batches` is the input, a sequence of batches byte-encoded as per the next section ("Batch Encoding")
 - `rlp_batches` is the concatenation of the RLP-encoded batches
-- `compress` is a function performing compression, using the ZLIB algorithm (as specified in [RFC-1950][rfc1950]) with
-  no dictionary
-- `channel_encoding` is the compressed version of `rlp_batches`
+
+```text
+channel_encoding = zlib_compress(rlp_batches)
+```
+
+where zlib_compress is the ZLIB algorithm (as specified in [RFC-1950][rfc1950]) with no dictionary.
 
 [rfc1950]: https://www.rfc-editor.org/rfc/rfc1950.html
+
+The Fjord upgrade introduces an additional [versioned channel encoding
+format](../fjord/derivation.md#brotli-channel-compression) to support alternate compression
+algorithms.
 
 When decompressing a channel, we limit the amount of decompressed data to `MAX_RLP_BYTES_PER_CHANNEL` (currently
 10,000,000 bytes), in order to avoid "zip-bomb" types of attack (where a small compressed input decompresses to a
@@ -414,7 +420,8 @@ contain.
 
 Recall that a batch contains a list of transactions to be included in a specific L2 block.
 
-A batch is encoded as `batch_version ++ content`, where `content` depends on the `batch_version`:
+A batch is encoded as `batch_version ++ content`, where `content` depends on the `batch_version`.
+Prior to the Delta upgrade, batches all have batch_version 0 and are encoded as described below.
 
 | `batch_version` | `content`                                                                          |
 | --------------- | ---------------------------------------------------------------------------------- |
@@ -433,6 +440,10 @@ where:
 
 [RLP format]: https://ethereum.org/en/developers/docs/data-structures-and-encoding/rlp/
 [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
+
+The Delta upgrade introduced an additional batch type, [span batches][span-batches].
+
+[span-batches]: span-batches.md
 
 Unknown versions make the batch invalid (it must be ignored by the rollup node), as do malformed contents.
 
@@ -686,7 +697,8 @@ that batcher implementations use unique channel IDs.
 In this stage, we decompress the channel we pull from the last stage, and then parse
 [batches][g-sequencer-batch] from the decompressed byte stream.
 
-See [Batch Format][batch-format] for decompression and decoding specification.
+See [Channel Format][channel-format] and [Batch Format][batch-format] for decompression and
+decoding specification.
 
 ### Batch Queue
 

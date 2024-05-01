@@ -225,11 +225,10 @@ Deposit transactions are excluded in batches and are never written at L1 so excl
 
 ### Adjust `txs` Data Layout for Better Compression
 
-There are (8 choose 2) \* 6! = 20160 permutations of ordering fields of `txs`.
-It is not 8! because `contract_creation_bits` must be first decoded in order to decode `tx_tos`.
-We experimented to find out the best layout for compression.
-It turned out placing random data together(`TxSigs`, `TxTos`, `TxDatas`),
-then placing leftovers helped gzip to gain more size reduction.
+There are (8 choose 2) \* 6! = 20160 permutations of ordering fields of `txs`.  It is not 8!
+because `contract_creation_bits` must be first decoded in order to decode `tx_tos`.  We
+experimented with different data layouts and found that segregating random data (`tx_sigs`,
+`tx_tos`, `tx_datas`) from the rest most improved the zlib compression ratio.
 
 ### `fee_recipients` Encoding Scheme
 

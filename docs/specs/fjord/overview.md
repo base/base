@@ -18,3 +18,5 @@ This document is not finalized and should be considered experimental.
 ## Consensus Layer
 
 - [Constant maximum sequencer drift](./derivation.md#batch-queue)
+
+- [Channel encoding format](./derivation.md#channel-format)
