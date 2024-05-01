@@ -82,6 +82,7 @@ The gas paying token MUST NOT:
 - Have out of band methods for modifying balance or allowance
 - Have a `name()` that is more than 32 bytes long
 - Have a `symbol()` this is more than 32 bytes long
+- Be a [double entrypoint token](https://stermi.xyz/blog/ethernaut-challenge-24-solution-double-entry-point)
 
 It MUST be enforced on chain that the token has exactly 18 decimals to guarantee no losses of precision when
 depositing a token that has a different number of decimals. It MUST be enforced on chain that the
