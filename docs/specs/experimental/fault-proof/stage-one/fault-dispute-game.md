@@ -79,7 +79,7 @@ We refer to this state as the **ABSOLUTE_PRESTATE**.
 ### Claims
 
 Claims assert an [output root][g-output-root] or the state of the FPVM at a given instruction. This is represented as
-`ClaimHash`, a `bytes32` representing either an [output root][g-output-root] or a commitment to the last VM state in a
+a `Hash` type, a `bytes32` representing either an [output root][g-output-root] or a commitment to the last VM state in a
 trace. A FDG is initialized with an output root that corresponds to the state of L2 at a given L2 block number, and
 execution trace subgames at `SPLIT_DEPTH + 1` are initialized with a claim that commits to the entire execution trace
 between two consecutive output roots (a block `n -> n+1` state transition). As we'll see later, there can be multiple
@@ -159,7 +159,7 @@ Positions higher up the game tree also cover the deepest, right-most positions r
 We refer to this coverage as the **trace index** of a Position.
 
 > This means claims commit to an execution trace that terminates at the same index as their Position's trace index.
-> That is, for a given trace index $n$, its ClaimHash corresponds to the $S_n$ th state in the trace.
+> That is, for a given trace index $n$, its state witness hash corresponds to the $S_n$ th state in the trace.
 
 Note that there can be multiple positions covering the same _trace index_.
 
@@ -247,7 +247,7 @@ trace index as another Position with gindex 2. We can verify that all trace indi
 
 ![Game Tree Showing All Valid Move Positions](../../../static/assets/valid-moves.png)
 
-There may be multiple claims at the same position, so long as their `ClaimHash` are unique.
+There may be multiple claims at the same position, so long as their state witness hashes are unique.
 
 Each move adds new claims to the Game Tree at strictly increasing depth.
 Once a claim is at `MAX_GAME_DEPTH`, the only way to dispute such claims is to **step**.

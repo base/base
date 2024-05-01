@@ -51,8 +51,9 @@ in the contract. This ordering ensures that a claim's ancestors are processed pr
 the honest challenger determines and tracks the set of honest responses to all claims, regardless of whether that
 response already exists in the full game state.
 
-The root claim is considered to be an honest claim if and only if it has a [ClaimHash](fault-dispute-game.md#claims)
-that agrees with the honest challenger's ClaimHash for the root claim.
+The root claim is considered to be an honest claim if and only if it has a
+[state witness Hash](fault-dispute-game.md#claims) that agrees with the honest challenger's state witness hash for the
+root claim.
 
 The honest challenger should counter a claim if and only if:
 
@@ -66,8 +67,8 @@ each claim, so an honest claim never has an honest sibling.
 ### Moves
 
 To respond to a claim with a depth in the range of `[1, MAX_DEPTH]`, the honest challenger determines if the claim
-has a valid commitment (i.e. `ClaimHash`). If the `ClaimHash` matches the honest challenger's at teh same trace index,
-then we disagree with the claim's stance by move to [defend](fault-dispute-game.md#defend).
+has a valid commitment. If the state witness hash matches the honest challenger's at the same trace
+index, then we disagree with the claim's stance by move to [defend](fault-dispute-game.md#defend).
 Otherwise, the claim is [attacked](fault-dispute-game.md#attack).
 
 The claim that would be added as a result of the move is added to the set of honest moves being tracked.
@@ -87,7 +88,7 @@ challenger does not perform any action.
 
 Otherwise, similar to the above section, the honest challenger will issue an
 [attack step](fault-dispute-game.md#step-types) when in response to such claims with
-invalid `ClaimHash` commitments. Otherwise, it issues a _defense step_.
+invalid state witness commitments. Otherwise, it issues a _defense step_.
 
 ### Timeliness
 
