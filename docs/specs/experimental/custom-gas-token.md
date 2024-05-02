@@ -250,12 +250,13 @@ The following legacy methods in `L1StandardBridge` MUST revert when custom gas t
 - `depositETHTo(address,uint32,bytes)`
 - `finalizeETHWithdrawal(address,address,uint256,bytes)`
 
-The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the
-CALLVALUE is nonzero:
+The following legacy methods in `L2StandardBridge` MUST always revert when custom gas token is being used:
 
 - `withdraw(address,uint256,uint32,bytes)`
 - `withdrawTo(address,address,uint256,uint32,bytes)`
 - `finalizeDeposit(address,address,address,address,uint256,bytes)`
+
+These methods are deprecated and subject to be removed in the future.
 
 ### CrossDomainMessenger
 
