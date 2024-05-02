@@ -8,7 +8,7 @@
   - [Constant Maximum Sequencer Drift](#constant-maximum-sequencer-drift)
     - [Rationale](#rationale)
     - [Security Considerations](#security-considerations)
-  - [Brotli Channel Compression](#brotli-channel-compression)
+- [Brotli Channel Compression](#brotli-channel-compression)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
