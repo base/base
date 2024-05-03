@@ -8,6 +8,7 @@
   - [Constant Maximum Sequencer Drift](#constant-maximum-sequencer-drift)
     - [Rationale](#rationale)
     - [Security Considerations](#security-considerations)
+- [Brotli Channel Compression](#brotli-channel-compression)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -48,3 +49,25 @@ be in the same epoch as the the last pre-Fjord blocks, even if these blocks woul
 have these L1-origin timestamps according to pre-Fjord rules. So the same L1 timestamp would be
 shared within a pre- and post-Fjord mixed epoch. This is considered a feature and is not considered
 a security issue.
+
+# Brotli Channel Compression
+
+[legacy-channel-format]: ../protocol/derivation.md#channel-format
+
+Fjord introduces a new versioned channel encoding format to support alternate compression
+algorithms, with the [legacy channel format][legacy-channel-format] remaining supported. The
+versioned format is as follows:
+
+```text
+channel_encoding = `channel_version_byte ++ compress(rlp_batches)`
+```
+
+The `channel_version_byte` must never have its 4 lower order bits set to `0b1000 = 8` or `0b1111 =
+15`, which are reserved for usage by the header byte of zlib encoded data (see page 5 of
+[RFC-1950][rfc1950]). This allows a channel decoder to determine if a channel encoding is legacy or
+versioned format by testing for these bit values. If the channel encoding is determined to be
+versioned format, the only valid `channel_version_byte` is `1`, which indicates `compress()` is the
+Brotli compression algorithm (as specified in [RFC-7932][rfc7932]) with no custom dictionary.
+
+[rfc7932]: https://datatracker.ietf.org/doc/html/rfc7932
+[rfc1950]: https://www.rfc-editor.org/rfc/rfc1950.html
