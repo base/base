@@ -197,6 +197,8 @@ protocol upgrades.
 | Parameter | Bedrock (default) value | Latest (default) value | Changes | Notes |
 | --------- | ----------------------- | ---------------------- | ------- | ----- |
 | `max_sequencer_drift` | 600 | 1800 | [Fjord](../fjord/derivation.md#constant-maximum-sequencer-drift) | Changed from a chain parameter to a constant with Fjord. |
+| `MAX_RLP_BYTES_PER_CHANNEL` | 10,000,000 | 100,000,000 | [Fjord](../fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
+| `MAX_CHANNEL_BANK_SIZE` | 100,000,000 | 1,000,000,000 | [Fjord](../fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
 
 ---
 
@@ -402,9 +404,10 @@ The Fjord upgrade introduces an additional [versioned channel encoding
 format](../fjord/derivation.md#brotli-channel-compression) to support alternate compression
 algorithms.
 
-When decompressing a channel, we limit the amount of decompressed data to `MAX_RLP_BYTES_PER_CHANNEL` (currently
-10,000,000 bytes), in order to avoid "zip-bomb" types of attack (where a small compressed input decompresses to a
-humongous amount of data). If the decompressed data exceeds the limit, things proceeds as though the channel contained
+When decompressing a channel, we limit the amount of decompressed data to `MAX_RLP_BYTES_PER_CHANNEL` (defined in the
+[Protocol Parameters table](#protocol-parameters)), in order to avoid "zip-bomb" types of attack (where a small
+compressed input decompresses to a humongous amount of data).
+If the decompressed data exceeds the limit, things proceeds as though the channel contained
 only the first `MAX_RLP_BYTES_PER_CHANNEL` decompressed bytes. The limit is set on RLP decoding, so all batches that
 can be decoded in `MAX_RLP_BYTES_PER_CHANNEL` will be accepted even if the size of the channel is greater than
 `MAX_RLP_BYTES_PER_CHANNEL`. The exact requirement is that `length(input) <= MAX_RLP_BYTES_PER_CHANNEL`.
@@ -643,7 +646,7 @@ channels are dropped in FIFO order, until `total_size <= MAX_CHANNEL_BANK_SIZE`,
 
 - `total_size` is the sum of the sizes of each channel, which is the sum of all buffered frame data of the channel,
   with an additional frame-overhead of `200` bytes per frame.
-- `MAX_CHANNEL_BANK_SIZE` is a protocol constant of 100,000,000 bytes.
+- `MAX_CHANNEL_BANK_SIZE` is a protocol constant defined in the [Protocol Parameters table](#protocol-parameters).
 
 #### Timeouts
 

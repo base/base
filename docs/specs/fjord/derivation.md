@@ -5,9 +5,13 @@
 **Table of Contents**
 
 - [Protocol Parameter Changes](#protocol-parameter-changes)
+  - [Timestamp Activation](#timestamp-activation)
   - [Constant Maximum Sequencer Drift](#constant-maximum-sequencer-drift)
     - [Rationale](#rationale)
     - [Security Considerations](#security-considerations)
+  - [Increasing `MAX_RLP_BYTES_PER_CHANNEL` and `MAX_CHANNEL_BANK_SIZE`](#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)
+    - [Rationale](#rationale-1)
+    - [Security Considerations](#security-considerations-1)
 - [Brotli Channel Compression](#brotli-channel-compression)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -19,6 +23,15 @@ The following table gives an overview of the changes in parameters.
 | Parameter | Pre-Fjord (default) value | Fjord value | Notes |
 | --------- | ------------------------- | ----------- | ----- |
 | `max_sequencer_drift` | 600 | 1800 | Was a protocol parameter since Bedrock. Now becomes a constant. |
+| `MAX_RLP_BYTES_PER_CHANNEL` | 10,000,000 | 100,000,000 | Protocol Constant is increasing. |
+| `MAX_CHANNEL_BANK_SIZE` | 100,000,000 | 1,000,000,000 | Protocol Constant is increasing. |
+
+## Timestamp Activation
+
+Fjord, like other network upgrades, is activated at a timestamp.
+Changes to the L2 Block execution rules are applied when the `L2 Timestamp >= activation time`.
+Changes to derivation are applied when it is considering data from a L1 Block whose timestamp
+is greater than or equal to the activation timestamp.
 
 ## Constant Maximum Sequencer Drift
 
@@ -49,6 +62,54 @@ be in the same epoch as the the last pre-Fjord blocks, even if these blocks woul
 have these L1-origin timestamps according to pre-Fjord rules. So the same L1 timestamp would be
 shared within a pre- and post-Fjord mixed epoch. This is considered a feature and is not considered
 a security issue.
+
+## Increasing `MAX_RLP_BYTES_PER_CHANNEL` and `MAX_CHANNEL_BANK_SIZE`
+
+With Fjord, `MAX_RLP_BYTES_PER_CHANNEL` will be increased from 10,000,000 bytes to 100,000,000 bytes,
+and `MAX_CHANNEL_BANK_SIZE` will be increased from 100,000,000 bytes to 1,000,000,000 bytes.
+
+The usage of `MAX_RLP_BYTES_PER_CHANNEL` is defined in [Channel Format](../protocol/derivation.md#channel-format).
+The usage of `MAX_CHANNEL_BANK_SIZE` is defined in [Channel Bank Pruning](../protocol/derivation.md#pruning).
+
+The new value will be used when the timestamp of the L1 origin of the derivation pipeline >= the Fjord activation
+timestamp.
+
+### Rationale
+
+A block with a gas limit of 30 Million gas has a maximum theoretical size of 7.5 Megabytes by being filled up
+with transactions have only zeroes. Currently, a byte with the value `0` consumes 4 gas.
+If the block gas limit is raised above 40 Million gas, it is possible to create a block that is large than
+`MAX_RLP_BYTES_PER_CHANNEL`.
+L2 blocks cannot be split across channels which means that a block that is larger than `MAX_RLP_BYTES_PER_CHANNEL`
+cannot be batch submitted.
+By raising this limit to 100,000,000 bytes, we can batch submit blocks with a gas limit of up to 400 Million Gas.
+In addition, we are able to improve compression ratios by increasing the amount of data that can be inserted into a
+single channel.
+With 33% compression ratio over 6 blobs, we are currently submitting 2.2 MB of compressed data & 0.77 MB of uncompressed
+data per channel.
+This will allow use to use up to approximately 275 blobs per channel.
+
+Raising `MAX_CHANNEL_BANK_SIZE` is helpful to ensure that we are able to process these larger channels. We retain the
+same ratio of 10 between `MAX_RLP_BYTES_PER_CHANNEL` and `MAX_CHANNEL_BANK_SIZE`.
+
+### Security Considerations
+
+Raising the these limits increases the amount of resources a rollup node would require.
+Specifically nodes may have to allocate large chunks of memory for a channel and will have to potentially allocate more
+memory to the channel bank.
+`MAX_RLP_BYTES_PER_CHANNEL` was originally added to avoid zip bomb attacks.
+The system is still exposed to these attacks, but these limits are straightforward to handle in a node.
+
+The Fault Proof environment is more constrained than a typical node and increasing these limits will require more
+resources than are currently required.
+The change in `MAX_CHANNEL_BANK_SIZE` is not relevant to the first implementation of Fault Proofs because this limit
+only tells the node when to start pruning & once memory is allocated in the FPVM, it is not garbage collected.
+This means that increasing `MAX_CHANNEL_BANK_SIZE` does not increase the maximum resource usage of the FPP.
+
+Increasing `MAX_RLP_BYTES_PER_CHANNEL` could cause more resource usage in FPVM; however, we consider this
+increase reasonable because this increase is in the amount of data handled at once rather than the total
+amount of data handled in the program. Instead of using a single channel, the batcher could submit 10 channels
+prior to this change which would cause the Fault Proof Program to consume a very similar amount of resources.
 
 # Brotli Channel Compression
 

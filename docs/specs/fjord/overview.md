@@ -19,3 +19,4 @@ This document is not finalized and should be considered experimental.
 
 - [Constant maximum sequencer drift](./derivation.md#constant-maximum-sequencer-drift)
 - [Brotli channel compression](./derivation.md#brotli-channel-compression)
+- [Increase Max Bytes Per Channel and Max Channel Bank Size](./derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)
