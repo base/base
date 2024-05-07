@@ -71,6 +71,10 @@ and `MAX_CHANNEL_BANK_SIZE` will be increased from 100,000,000 bytes to 1,000,00
 The usage of `MAX_RLP_BYTES_PER_CHANNEL` is defined in [Channel Format](../protocol/derivation.md#channel-format).
 The usage of `MAX_CHANNEL_BANK_SIZE` is defined in [Channel Bank Pruning](../protocol/derivation.md#pruning).
 
+Span Batches previously had a limit `MAX_SPAN_BATCH_SIZE` which was equal to `MAX_RLP_BYTES_PER_CHANNEL`.
+Fjord creates a new constant `MAX_SPAN_BATCH_ELEMENT_COUNT` for the element count limit & removes
+`MAX_SPAN_BATCH_SIZE`. The size of the channel is still checked with `MAX_RLP_BYTES_PER_CHANNEL`.
+
 The new value will be used when the timestamp of the L1 origin of the derivation pipeline >= the Fjord activation
 timestamp.
 

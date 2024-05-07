@@ -6,9 +6,9 @@
 
 - [Introduction](#introduction)
 - [Span batch format](#span-batch-format)
-  - [Max span-batch size](#max-span-batch-size)
+  - [Span Batch Size Limits](#span-batch-size-limits)
   - [Future batch-format extension](#future-batch-format-extension)
-- [Span batch Activation Rule](#span-batch-activation-rule)
+- [Span Batch Activation Rule](#span-batch-activation-rule)
 - [Optimization Strategies](#optimization-strategies)
   - [Truncating information and storing only necessary data](#truncating-information-and-storing-only-necessary-data)
   - [`tx_data_headers` removal from initial specs](#tx_data_headers-removal-from-initial-specs)
@@ -18,7 +18,7 @@
   - [Store `y_parity` and `protected_bit` instead of `v`](#store-y_parity-and-protected_bit-instead-of-v)
   - [Adjust `txs` Data Layout for Better Compression](#adjust-txs-data-layout-for-better-compression)
   - [`fee_recipients` Encoding Scheme](#fee_recipients-encoding-scheme)
-- [How derivation works with Span Batch?](#how-derivation-works-with-span-batch)
+- [How Derivation works with Span Batches](#how-derivation-works-with-span-batches)
 - [Integration](#integration)
   - [Channel Reader (Batch Decoding)](#channel-reader-batch-decoding)
   - [Batch Queue](#batch-queue)
@@ -133,16 +133,15 @@ tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
 [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 [EIP-155]: https://eips.ethereum.org/EIPS/eip-155
 
-### Max span-batch size
+### Span Batch Size Limits
 
-Total size of encoded span batch is limited to `MAX_SPAN_BATCH_SIZE` (currently 10,000,000 bytes,
-equal to `MAX_RLP_BYTES_PER_CHANNEL`). Therefore every field size of span batch will be implicitly limited to
-`MAX_SPAN_BATCH_SIZE` . There can be at least single span batch per channel, and channel size is limited
-to `MAX_RLP_BYTES_PER_CHANNEL` and you may think that there is already an implicit limit. However, having an explicit
-limit for span batch is helpful for several reasons. We may save computation costs by avoiding malicious input while
-decoding. For example, let's say bad batcher wrote span batch which `block_count = max.Uint64`. We may early return
-using the explicit limit, not trying to consume data until EOF is reached. We can also safely preallocate memory for
-decoding because we know the upper limit of memory usage.
+The total size of an encoded span batch is limited to `MAX_RLP_BYTES_PER_CHANNEL`, which is defined in the
+[Protocol Parameters table](#protocol-parameters).
+This is done at the channel level rather than at the span batch level.
+
+In addition to the byte limit, the number of blocks, and total transactions is limited to `MAX_SPAN_BATCH_ELEMENT_COUNT`.
+This does imply that the max number of transactions per block is also `MAX_SPAN_BATCH_ELEMENT_COUNT`.
+`MAX_SPAN_BATCH_ELEMENT_COUNT` is defined in [Protocol Parameters table](#protocol-parameters).
 
 ### Future batch-format extension
 
@@ -167,7 +166,7 @@ Where:
     - `fee_recipients_idxs`: for each block,
       `uvarint` number of index to decode fee recipients from `fee_recipients_set`.
 
-## Span batch Activation Rule
+## Span Batch Activation Rule
 
 The span batch upgrade is activated based on timestamp.
 
@@ -241,7 +240,7 @@ we thought sequencer rotation happens not much often, so assumed that `K` will b
 The assumption makes upper inequality to hold. Therefore, we decided to manage `fee_recipients_idxs` and
 `fee_recipients_set` separately. This adds complexity but reduces data.
 
-## How derivation works with Span Batch?
+## How Derivation works with Span Batches
 
 - Block Timestamp
   - The first L2 block's block timestamp is `rel_timestamp + L2Genesis.Timestamp`.
