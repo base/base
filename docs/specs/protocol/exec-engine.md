@@ -31,6 +31,7 @@
   - [Worst-case sync](#worst-case-sync)
 - [Ecotone: disable Blob-transactions](#ecotone-disable-blob-transactions)
 - [Ecotone: Beacon Block Root](#ecotone-beacon-block-root)
+- [P2P Modifications](#p2p-modifications)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -483,3 +484,12 @@ For the Ecotone upgrade, this entails that:
 [engine_getPayloadV3]: https://github.com/ethereum/execution-apis/blob/a0d03086564ab1838b462befbc083f873dcf0c0f/src/engine/cancun.md#engine_getpayloadv3
 [HEX value encoding]: https://eth.wiki/json-rpc/API#hex-value-encoding
 [JSON-RPC-API]: https://github.com/ethereum/execution-apis
+
+## P2P Modifications
+
+The Ethereum Node Record (ENR) for an Optimism execution node must contain an `opel` key-value pair where the key is
+`opel` and the value is a [EIP-2124](https://eips.ethereum.org/EIPS/eip-2124) fork id.
+
+TODO: Do we actually want to just use chainID + use the native EIP-2124 checking to differentiate based on the chain?
+
+The EL uses a different key from the CL in order to stop EL and CL nodes from connecting to each other.
