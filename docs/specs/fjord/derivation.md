@@ -38,6 +38,9 @@ Changes to derivation are applied when it is considering data from a L1 Block wh
 is greater than or equal to the activation timestamp.
 The change of the `max_sequencer_drift` parameter activates with the L1 origin block timestamp.
 
+If Fjord is not activated at genesis, it must be activated at least one block after the Ecotone
+activation block. This ensures that the network upgrade transactions don't conflict.
+
 ## Constant Maximum Sequencer Drift
 
 With Fjord, the `max_sequencer_drift` parameter becomes a constant of value `1800` _seconds_,
