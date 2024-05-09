@@ -237,6 +237,11 @@ getters.
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000015` |
 
+The `setL1BlockValuesHolocene()` function MUST be called on every block after the interop upgrade block.
+The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone`.
+
+### Static Values
+
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used
 by the system. The `ConfigType` enum is defined as follows:
 
@@ -252,14 +257,13 @@ enum ConfigType {
 The second argument of `setConfig` is the encoded value being set.
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
+### Dependency Set
+
 `L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig`
 calls with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 
 `L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
 `isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument.
-
-The `setL1BlockValuesHolocene()` function MUST be called on every block after the interop upgrade block.
-The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone`.
 
 ### L1Attributes
 
