@@ -248,6 +248,8 @@ by the system. The `ConfigType` enum is defined as follows:
 ```solidity
 enum ConfigType {
     GAS_PAYING_TOKEN,
+    BASE_FEE_SCALAR,
+    BLOB_BASE_FEE_SCALAR,
     BATCHER_HASH,
     ADD_DEPENDENCY,
     REMOVE_DEPENDENCY
@@ -273,14 +275,12 @@ the interop dependency set, are set through the `setConfig` method.
 | Input arg         | Type                     | Calldata bytes          | Segment |
 |-------------------|--------------------------|-------------------------|---------|
 | {0x760ee04d}      | bytes4                   | 0-3                     | n/a     |
-| baseFeeScalar     | uint32                   | 4-7                     | 1       |
-| blobBaseFeeScalar | uint32                   | 8-11                    |         |
-| sequenceNumber    | uint64                   | 12-19                   |         |
-| l1BlockTimestamp  | uint64                   | 20-27                   |         |
-| l1BlockNumber     | uint64                   | 28-35                   |         |
-| basefee           | uint256                  | 36-67                   | 2       |
-| blobBaseFee       | uint256                  | 68-99                   | 3       |
-| l1BlockHash       | bytes32                  | 100-131                 | 4       |
+| sequenceNumber    | uint64                   | 4-11                    | 1       |
+| l1BlockTimestamp  | uint64                   | 12-19                   |         |
+| l1BlockNumber     | uint64                   | 20-27                   |         |
+| basefee           | uint256                  | 28-59                   | 2       |
+| blobBaseFee       | uint256                  | 60-91                   | 3       |
+| l1BlockHash       | bytes32                  | 92-123                  | 4       |
 
 ## Security Considerations
 
