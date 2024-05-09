@@ -19,6 +19,8 @@
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
 - [L1Block](#l1block)
+  - [Static Values](#static-values)
+  - [Dependency Set](#dependency-set)
   - [L1Attributes](#l1attributes)
 - [Security Considerations](#security-considerations)
 
