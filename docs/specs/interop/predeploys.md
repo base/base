@@ -266,7 +266,6 @@ The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone
 The L1 Attributes transaction is updated to only include dynamic values. Static values, such as `batcherHash` and
 the interop dependency set, are set through the `setConfig` method.
 
-
 | Input arg         | Type                     | Calldata bytes          | Segment |
 |-------------------|--------------------------|-------------------------|---------|
 | {0x760ee04d}      | bytes4                   | 0-3                     | n/a     |
