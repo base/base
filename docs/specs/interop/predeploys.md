@@ -247,8 +247,9 @@ The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone
 
 ### L1Attributes
 
-The L1 Atrributes transaction is updated to include the dependency set. Since the dependency set is dynamically sized,
-a `uint8` "interopSetSize" parameter prefixes tightly packed `uint256` values that represent each chain id.
+The L1 Attributes transaction is updated to only include dynamic values. Static values, such as `batcherHash` and
+the interop dependency set, are set through the `setConfig` method.
+
 
 | Input arg         | Type                     | Calldata bytes          | Segment |
 |-------------------|--------------------------|-------------------------|---------|
@@ -261,9 +262,6 @@ a `uint8` "interopSetSize" parameter prefixes tightly packed `uint256` values th
 | basefee           | uint256                  | 36-67                   | 2       |
 | blobBaseFee       | uint256                  | 68-99                   | 3       |
 | l1BlockHash       | bytes32                  | 100-131                 | 4       |
-| batcherHash       | bytes32                  | 132-163                 | 5       |
-| interopSetSize    | uint8                    | 164-165                 | 6       |
-| chainIds          | uint256\[interopSetSize] | 165-(32*interopSetSize) | 6+      |
 
 ## Security Considerations
 
