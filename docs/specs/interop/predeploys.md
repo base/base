@@ -240,9 +240,9 @@ getters.
 
 ### setConfig
 
-The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used
-by the system. This function serves to reduce the size of the L1 Attributes transaction, as well as to reduce the
-need to add specific one off functions.
+The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used by the
+system. This function serves to reduce the size of the L1 Attributes transaction, as well as to reduce the need to add
+specific one off functions.
 
 The `ConfigType` enum is defined as follows:
 
@@ -254,16 +254,20 @@ enum ConfigType {
 }
 ```
 
-For `GAS_PAYING_TOKEN`, let `token` be the gas paying token's address (type `address`), `decimals` be the token's decimals (type `uint8`),  `name` be the token's name (type `bytes32`), and `symbol` be the token's symbol (type `bytes32`). The value passed to `setConfig` as the second argument would then be `abi.encode(token, decimals, name, symbol)`.
+For `GAS_PAYING_TOKEN`, let `token` be the gas paying token's address (type `address`), `decimals` be the token's
+decimals (type `uint8`), `name` be the token's name (type `bytes32`), and `symbol` be the token's symbol (type
+`bytes32`). The value passed to `setConfig` as the second argument would then be
+`abi.encode(token, decimals, name, symbol)`.
 
-On the other hand, for `ADD_DEPENDENCY` and `REMOVE_DEPENDENCY`, let `chainId` be the chain id intended to be added or removed from the dependency set. The value passed to `setConfig` as the second argument would be `abi.encode(chainId)`.
+On the other hand, for `ADD_DEPENDENCY` and `REMOVE_DEPENDENCY`, let `chainId` be the chain id intended to be added or
+removed from the dependency set. The value passed to `setConfig` as the second argument would be `abi.encode(chainId)`.
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
 ### Dependency Set
 
-`L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig`
-calls with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
+`L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig` calls
+with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 
 `L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
 `isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument.
