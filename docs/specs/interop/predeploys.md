@@ -21,7 +21,6 @@
 - [L1Block](#l1block)
   - [Static Values](#static-values)
   - [Dependency Set](#dependency-set)
-  - [L1Attributes](#l1attributes)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
