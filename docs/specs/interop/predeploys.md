@@ -238,26 +238,26 @@ getters.
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000015` |
 
-The `setL1BlockValuesHolocene()` function MUST be called on every block after the interop upgrade block.
-The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone`.
-
-### Static Values
+### setConfig
 
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used
-by the system. The `ConfigType` enum is defined as follows:
+by the system. This function serves to reduce the size of the L1 Attributes transaction, as well as to reduce the
+need to add specific one off functions.
+
+The `ConfigType` enum is defined as follows:
 
 ```solidity
 enum ConfigType {
     GAS_PAYING_TOKEN,
-    BASE_FEE_SCALAR,
-    BLOB_BASE_FEE_SCALAR,
-    BATCHER_HASH,
     ADD_DEPENDENCY,
     REMOVE_DEPENDENCY
 }
 ```
 
-The second argument of `setConfig` is the encoded value being set.
+The second argument of `setConfig` is the encoded value being set:
+- For `GAS_PAYING_TOKEN`, this value contains the address of the gas paying token, its decimals, name, and symbol.
+- For `ADD_DEPENDENCY` and `REMOVE_DEPENDENCY`, this value contains the chain id being added or removed.
+
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
 ### Dependency Set
