@@ -269,21 +269,6 @@ calls with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 `L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
 `isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument.
 
-### L1Attributes
-
-The L1 Attributes transaction is updated to only include dynamic values. Static values, such as `batcherHash` and
-the interop dependency set, are set through the `setConfig` method.
-
-| Input arg         | Type                     | Calldata bytes          | Segment |
-|-------------------|--------------------------|-------------------------|---------|
-| {0x760ee04d}      | bytes4                   | 0-3                     | n/a     |
-| sequenceNumber    | uint64                   | 4-11                    | 1       |
-| l1BlockTimestamp  | uint64                   | 12-19                   |         |
-| l1BlockNumber     | uint64                   | 20-27                   |         |
-| basefee           | uint256                  | 28-59                   | 2       |
-| blobBaseFee       | uint256                  | 60-91                   | 3       |
-| l1BlockHash       | bytes32                  | 92-123                  | 4       |
-
 ## Security Considerations
 
 TODO
