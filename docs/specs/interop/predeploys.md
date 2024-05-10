@@ -255,7 +255,9 @@ enum ConfigType {
 ```
 
 The second argument of `setConfig` is the encoded value being set:
+
 - For `GAS_PAYING_TOKEN`, this value contains the address of the gas paying token, its decimals, name, and symbol.
+
 - For `ADD_DEPENDENCY` and `REMOVE_DEPENDENCY`, this value contains the chain id being added or removed.
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
