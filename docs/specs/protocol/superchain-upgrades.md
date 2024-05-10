@@ -22,11 +22,6 @@
 - [OP-Stack Protocol versions](#op-stack-protocol-versions)
 - [Post-Bedrock Network upgrades](#post-bedrock-network-upgrades)
   - [Activation Timestamps](#activation-timestamps)
-  - [Regolith](#regolith)
-  - [Canyon](#canyon)
-  - [Delta](#delta)
-  - [Ecotone](#ecotone)
-  - [Fjord](#fjord)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 

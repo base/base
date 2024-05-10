@@ -4,6 +4,7 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
+- [Overview](#overview)
 - [L1 Attributes Predeployed Contract](#l1-attributes-predeployed-contract)
   - [Ecotone L1Block upgrade](#ecotone-l1block-upgrade)
 

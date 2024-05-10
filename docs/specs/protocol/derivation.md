@@ -18,8 +18,6 @@
   - [L2 Chain Derivation Pipeline](#l2-chain-derivation-pipeline)
     - [L1 Traversal](#l1-traversal)
     - [L1 Retrieval](#l1-retrieval)
-      - [Ecotone: Blob Retrieval](#ecotone-blob-retrieval)
-        - [Blob Encoding](#blob-encoding)
     - [Frame Queue](#frame-queue)
     - [Channel Bank](#channel-bank)
       - [Pruning](#pruning)

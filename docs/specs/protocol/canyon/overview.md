@@ -4,7 +4,8 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Canyon](#canyon)
+- [Execution Layer](#execution-layer)
+- [Consensus Layer](#consensus-layer)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -43,4 +44,3 @@ execution engine should be set to the same time as the Canyon time.
 ## Consensus Layer
 
 - [Channel Ordering Fix][channel-reading]
-
