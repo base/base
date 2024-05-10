@@ -22,7 +22,7 @@
 This document is a high-level technical overview of the Optimism protocol. It aims to explain how the protocol works in
 an informal manner, and direct readers to other parts of the specification so that they may learn more.
 
-This document assumes you've read the [introduction](../introduction.md).
+This document assumes you've read the [background](../background.md).
 
 ## Architecture Design Goals
 
