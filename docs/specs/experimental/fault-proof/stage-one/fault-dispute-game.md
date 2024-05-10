@@ -24,12 +24,14 @@
   - [Moves](#moves)
     - [Attack](#attack)
     - [Defend](#defend)
+  - [L2 Block Number Challenge](#l2-block-number-challenge)
   - [Step](#step)
   - [Step Types](#step-types)
   - [PreimageOracle Interaction](#preimageoracle-interaction)
   - [Team Dynamics](#team-dynamics)
   - [Game Clock](#game-clock)
   - [Resolution](#resolution)
+    - [Resolving the L2 Block Number Challenge](#resolving-the-l2-block-number-challenge)
   - [Finalization](#finalization)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -251,6 +253,23 @@ There may be multiple claims at the same position, so long as their state witnes
 
 Each move adds new claims to the Game Tree at strictly increasing depth.
 Once a claim is at `MAX_GAME_DEPTH`, the only way to dispute such claims is to **step**.
+
+### L2 Block Number Challenge
+
+This is a special type of action, made by the Challenger, to counter a root claim.
+
+Given an output root preimage and its corresponding RLP-encoded L2 block header, the L2 block number can be verified.
+This process ensures the integrity and authenticity of an L2 block number.
+The procedure for this verification involves three steps: checking the output root preimage, validating the block hash preimage,
+and extracting the block number from the RLP-encoded header.
+By comparing the challenger-supplied preimages and the extracted block number against their claimed values,
+the consistency of the L2 block number with the one in the provided header can be confirmed, detecting any discrepancies.
+
+Root claims made with an invalid L2 block number can be disputed through a special challenge.
+This challenge is validated in the FDG contract using the aforementioned procedure.
+However, it is crucial to note that this challenge can only be issued against the root claim,
+as it's the only entity making explicit claims on the L2 block number.
+A successful challenge effectively disputes the root claim once its subgame is resolved.
 
 ### Step
 
@@ -520,6 +539,12 @@ Each move bisects the historical state of L2 and eventually, `MAX_GAME_DEPTH` is
 can be settled conclusively. Dishonest players are disincentivized to participate, via backwards induction,
 as an invalid claim won't remain uncontested. Further incentives can be added to the game by requiring
 claims to be bonded, while rewarding game winners using the bonds of dishonest claims.
+
+#### Resolving the L2 Block Number Challenge
+
+The resolution of an L2 block number challenge occurs in the same manner as subgame resolution, with one caveat;
+the L2 block number challenger, if it exist, must be the winner of a root subgame.
+Thus, no moves against the root, including uncontested ones, can win a root subgame that has an L2 block number challenge.
 
 ### Finalization
 
