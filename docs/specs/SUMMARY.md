@@ -3,7 +3,7 @@
 # Summary
 
 - [Root](./root.md)
-- [Introduction](./introduction.md)
+- [Background](./background.md)
 - [OP Stack Protocol](./protocol/overview.md)
   - [Network Upgrades]()
     - [Regolith](./protocol/regolith/overview.md)
