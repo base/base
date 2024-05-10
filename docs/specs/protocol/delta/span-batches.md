@@ -28,23 +28,30 @@
 
 <!-- All glossary references in this file. -->
 
-[g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
+[g-deposit-tx-type]: ../../glossary.md#deposited-transaction-type
+[derivation]: ../derivation.md
+[channel-format]: ../derivation.md#channel-format
+[batch-format]: ../derivation.md#batch-format
+[frame-format]: ../derivation.md#frame-format
+[batch-queue]: ../derivation.md#batch-queue
+[batcher]: ../batcher.md
+[delta-upgrade]: ../superchain-upgrades.md#delta
 
 ## Introduction
 
 Span-batch is a new batching spec that reduces overhead of OP-stack chains,
-introduced in [Delta](superchain-upgrades.md#delta) network upgrade.
+introduced in [Delta][delta-upgrade] network upgrade.
 This enables sparse and low-throughput OP-stack chains.
 
 The overhead is reduced by representing a span of
 consecutive L2 blocks in a more efficient manner,
 while preserving the same consistency checks as regular batch data.
 
-Note that the [channel](derivation.md#channel-format) and
-[frame](derivation.md#frame-format) formats stay the same:
+Note that the [channel][channel-format] and
+[frame][frame-format] formats stay the same:
 data slicing, packing and multi-transaction transport is already optimized.
 
-The overhead in the [V0 batch format](derivation.md) comes from:
+The overhead in the [V0 batch format][derivation] comes from:
 
 - The meta-data attributes are repeated for every L2 block, while these are mostly implied already:
   - parent hash (32 bytes)
@@ -69,7 +76,7 @@ Span-batches address these inefficiencies, with a new batch format version.
 Note that span-batches, unlike previous singular batches,
 encode _a range of consecutive_ L2 blocks at the same time.
 
-Introduce version `1` to the [batch-format](derivation.md#batch-format) table:
+Introduce version `1` to the [batch-format][batch-format] table:
 
 | `batch_version` | `content`           |
 | --------------- | ------------------- |
@@ -147,7 +154,7 @@ This does imply that the max number of transactions per block is also `MAX_SPAN_
 
 This is an experimental extension of the span-batch format, and not activated with the Delta upgrade yet.
 
-Introduce version `2` to the [batch-format](derivation.md#batch-format) table:
+Introduce version `2` to the [batch-format][batch-format] table:
 
 | `batch_version` | `content`           |
 | --------------- | ------------------- |
@@ -280,7 +287,7 @@ Span-batches share the same queue with v0 batches: batches are processed in L1 i
 
 A set of modified validation rules apply to the span-batches.
 
-Rules are enforced with the [contextual definitions](derivation.md#batch-queue) as v0-batch validation:
+Rules are enforced with the [contextual definitions][batch-queue] as v0-batch validation:
 `epoch`, `inclusion_block_number`, `next_timestamp`
 
 Definitions:
@@ -381,6 +388,6 @@ not directly call `(co *ChannelOut) AddBatch` but defer that until a minimum num
 Output-size estimation of the queued up blocks is not possible until the span-batch is written to the channel.
 Past a given number of blocks, the channel may be written for estimation, and then re-written if more blocks arrive.
 
-The [batcher functionality](batcher.md) stays the same otherwise: unsafe blocks are transformed into batches,
+The [batcher functionality][batcher] stays the same otherwise: unsafe blocks are transformed into batches,
 encoded in compressed channels, and then split into frames for submission to L1.
 Batcher implementations can implement different heuristics and re-attempts to build the most gas-efficient data-txs.
