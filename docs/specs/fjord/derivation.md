@@ -199,7 +199,7 @@ jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOrac
 ```
 
 This transaction MUST deploy a contract with the following code hash
-`0x58e192326ee67ed52b7add91e4640024cbd1b21528a0ff1e1d21b7ca54e3ee62`.
+`0xa8682d0cb2cf24478bda32c1058ed3ca741134c5a319e80f29a30f45fe5b8245`.
 
 ## GasPriceOracle Proxy Update
 
