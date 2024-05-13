@@ -234,16 +234,18 @@ getters.
 
 ## L1Block
 
-| Constant | Value                                        |
-|----------|----------------------------------------------|
-| Address  | `0x4200000000000000000000000000000000000015` |
+| Constant            | Value                                        |
+|---------------------|----------------------------------------------|
+| Address             | `0x4200000000000000000000000000000000000015` |
+| `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
+
 
 ### Static Configuration
 
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
 are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
 the L1 Attributes transaction, as well as to reduce the need to add specific one off functions. It can only be called by
-the special depositor account.
+`DEPOSITOR_ACCOUNT`.
 
 The `ConfigType` enum is defined as follows:
 
