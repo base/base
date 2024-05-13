@@ -242,7 +242,8 @@ getters.
 
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
 are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
-the L1 Attributes transaction, as well as to reduce the need to add specific one off functions.
+the L1 Attributes transaction, as well as to reduce the need to add specific one off functions. It can only be called by
+the special depositor account.
 
 The `ConfigType` enum is defined as follows:
 
