@@ -4,24 +4,26 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [CrossL2Inbox](#crossl2inbox)
-  - [Message execution arguments](#message-execution-arguments)
-    - [`_msg`](#_msg)
-    - [`_id`](#_id)
-    - [`_target`](#_target)
-  - [Reference implementation](#reference-implementation)
-  - [`Identifier` Getters](#identifier-getters)
-- [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
-  - [`relayMessage` Invariants](#relaymessage-invariants)
-  - [Message Versioning](#message-versioning)
-  - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
-  - [Interfaces](#interfaces)
-    - [Sending Messages](#sending-messages)
-    - [Relaying Messages](#relaying-messages)
-- [L1Block](#l1block)
-  - [setConfig](#setconfig)
-  - [Dependency Set](#dependency-set)
-- [Security Considerations](#security-considerations)
+  - [CrossL2Inbox](#crossl2inbox)
+    - [Message execution arguments](#message-execution-arguments)
+      - [`_msg`](#_msg)
+      - [`_id`](#_id)
+      - [`_target`](#_target)
+    - [Reference implementation](#reference-implementation)
+    - [`Identifier` Getters](#identifier-getters)
+  - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
+    - [`relayMessage` Invariants](#relaymessage-invariants)
+    - [Message Versioning](#message-versioning)
+    - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
+    - [Interfaces](#interfaces)
+      - [Sending Messages](#sending-messages)
+      - [Relaying Messages](#relaying-messages)
+  - [L1Block](#l1block)
+    - [Static Configuration](#static-configuration)
+    - [Dependency Set](#dependency-set)
+  - [Security Considerations](#security-considerations)
+- [Appendix](#appendix)
+  - [Static Values](#static-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -273,7 +275,6 @@ where
 - `symbol` is the gas paying token's symbol (type `bytes32`)
 
 - `chainId` is the chain id intended to be added or removed from the dependency set
-
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
