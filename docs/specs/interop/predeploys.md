@@ -284,9 +284,11 @@ Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1
 with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 
 `L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
-`isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument. 
-Additionally, `L1Block` MUST provide a public getter to return the dependency set called `dependencySet()`. This
-function MUST return the array of chain ids that are in the dependency set.
+`isInDependencySet(uint256)`. This function MUST return true when a chain id in the dependency set, or the chain's chain
+id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MUST provide a public getter to return the
+dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
+`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function 
+MUST return the length of the dependency set array.
 
 ## Security Considerations
 
