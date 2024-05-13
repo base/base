@@ -242,9 +242,9 @@ getters.
 
 ### Static Configuration
 
-The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used by the
-system. This function serves to reduce the size of the L1 Attributes transaction, as well as to reduce the need to add
-specific one off functions.
+The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
+are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
+the L1 Attributes transaction, as well as to reduce the need to add specific one off functions.
 
 The `ConfigType` enum is defined as follows:
 
@@ -293,11 +293,3 @@ MUST return the length of the dependency set array.
 ## Security Considerations
 
 TODO
-
-## Appendix
-
-### Static Values
-
-Static values are values that only change based on the chain operator's input, such as the gas paying token and the
-dependency set. This contrasts with dynamic values, which change automatically based on the L1 origin's updates, such
-as the sequence number and the L1 block number.
