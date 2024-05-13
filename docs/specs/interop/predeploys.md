@@ -254,13 +254,18 @@ enum ConfigType {
 }
 ```
 
-For `GAS_PAYING_TOKEN`, let `token` be the gas paying token's address (type `address`), `decimals` be the token's
-decimals (type `uint8`), `name` be the token's name (type `bytes32`), and `symbol` be the token's symbol (type
-`bytes32`). The value passed to `setConfig` as the second argument would then be
-`abi.encode(token, decimals, name, symbol)`.
+The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
-On the other hand, for `ADD_DEPENDENCY` and `REMOVE_DEPENDENCY`, let `chainId` be the chain id intended to be added or
-removed from the dependency set. The value passed to `setConfig` as the second argument would be `abi.encode(chainId)`.
+| ConfigType          | Value                                       |
+|---------------------|---------------------------------------------|
+| `GAS_PAYING_TOKEN`  | `abi.encode(token, decimals, name, symbol)` |
+| `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
+| `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
+
+where `token` is the gas paying token's address (type `address`), `decimals` is the token's decimals (type `uint8`),
+`name` is the token's name (type `bytes32`), `symbol` is the token's symbol (type `bytes32`), and `chainId` is the chain
+id intended to be added or removed from the dependency set.
+
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
