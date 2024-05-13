@@ -4,24 +4,24 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-  - [CrossL2Inbox](#crossl2inbox)
-    - [Message execution arguments](#message-execution-arguments)
-      - [`_msg`](#_msg)
-      - [`_id`](#_id)
-      - [`_target`](#_target)
-    - [Reference implementation](#reference-implementation)
-    - [`Identifier` Getters](#identifier-getters)
-  - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
-    - [`relayMessage` Invariants](#relaymessage-invariants)
-    - [Message Versioning](#message-versioning)
-    - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
-    - [Interfaces](#interfaces)
-      - [Sending Messages](#sending-messages)
-      - [Relaying Messages](#relaying-messages)
-  - [L1Block](#l1block)
-    - [Static Configuration](#static-configuration)
-    - [Dependency Set](#dependency-set)
-  - [Security Considerations](#security-considerations)
+- [CrossL2Inbox](#crossl2inbox)
+  - [Message execution arguments](#message-execution-arguments)
+    - [`_msg`](#_msg)
+    - [`_id`](#_id)
+    - [`_target`](#_target)
+  - [Reference implementation](#reference-implementation)
+  - [`Identifier` Getters](#identifier-getters)
+- [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
+  - [`relayMessage` Invariants](#relaymessage-invariants)
+  - [Message Versioning](#message-versioning)
+  - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
+  - [Interfaces](#interfaces)
+    - [Sending Messages](#sending-messages)
+    - [Relaying Messages](#relaying-messages)
+- [L1Block](#l1block)
+  - [Static Configuration](#static-configuration)
+  - [Dependency Set](#dependency-set)
+- [Security Considerations](#security-considerations)
 - [Appendix](#appendix)
   - [Static Values](#static-values)
 
@@ -290,9 +290,9 @@ with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 
 TODO
 
-# Appendix
+## Appendix
 
-## Static Values
+### Static Values
 
 Static values are values that only change based on the chain operator's input, such as the gas paying token and the
 dependency set. This contrasts with dynamic values, which change automatically based on the L1 origin's updates, such
