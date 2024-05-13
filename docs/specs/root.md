@@ -17,7 +17,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 
 ## Specification Contents
 
-- [Introduction](introduction.md)
+- [Background](background.md)
 - [Overview](protocol/overview.md)
 - [Deposits](protocol/deposits.md)
 - [Withdrawals](protocol/withdrawals.md)

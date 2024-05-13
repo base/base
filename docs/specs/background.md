@@ -1,4 +1,4 @@
-# Introduction
+# Background
 
 Optimism is an _EVM equivalent_, _optimistic rollup_ protocol designed to _scale Ethereum_ while remaining maximally
 compatible with existing Ethereum infrastructure. This document provides an overview of the protocol to provide context
