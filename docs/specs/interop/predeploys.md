@@ -262,9 +262,17 @@ The second argument to `setConfig` is a `bytes` value that is ABI encoded with t
 | `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
 | `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
 
-where `token` is the gas paying token's address (type `address`), `decimals` is the token's decimals (type `uint8`),
-`name` is the token's name (type `bytes32`), `symbol` is the token's symbol (type `bytes32`), and `chainId` is the chain
-id intended to be added or removed from the dependency set.
+where
+
+- `token` is the gas paying token's address (type `address`)
+
+- `decimals` is the gas paying token's decimals (type `uint8`)
+
+- `name` is the gas paying token's name (type `bytes32`)
+
+- `symbol` is the gas paying token's symbol (type `bytes32`)
+
+- `chainId` is the chain id intended to be added or removed from the dependency set
 
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
