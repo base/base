@@ -238,7 +238,7 @@ getters.
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000015` |
 
-### setConfig
+### Static Configuration
 
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting static values that are used by the
 system. This function serves to reduce the size of the L1 Attributes transaction, as well as to reduce the need to add
