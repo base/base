@@ -273,7 +273,7 @@ where
 
 - `symbol` is the gas paying token's symbol (type `bytes32`)
 
-- `chainId` is the chain id intended to be added or removed from the dependency set
+- `chainId` is the chain id intended to be added or removed from the dependency set (type `uint256`)
 
 Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
 
