@@ -41,7 +41,7 @@
         - [Honest Challenger](./experimental/fault-proof/stage-one/honest-challenger-fdg.md)
         - [Bond Incentives](./experimental/fault-proof/stage-one/bond-incentives.md)
       - [Bridge Integration](./experimental/fault-proof/stage-one/bridge-integration.md)
-  - [Custom Gas Token](./granite/custom-gas-token.md)
+  - [Custom Gas Token](./protocol/granite/custom-gas-token.md)
   - [Plasma](./experimental/plasma.md)
   - [Interoperability](./interop/overview.md)
     - [Dependency Set](./interop/dependency_set.md)
