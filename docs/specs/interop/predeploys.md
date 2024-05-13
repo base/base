@@ -22,8 +22,6 @@
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
 - [Security Considerations](#security-considerations)
-- [Appendix](#appendix)
-  - [Static Values](#static-values)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
