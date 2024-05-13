@@ -287,7 +287,7 @@ with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 `isInDependencySet(uint256)`. This function MUST return true when a chain id in the dependency set, or the chain's chain
 id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MUST provide a public getter to return the
 dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
-`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function 
+`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
 MUST return the length of the dependency set array.
 
 ## Security Considerations
