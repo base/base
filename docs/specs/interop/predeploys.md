@@ -284,7 +284,9 @@ Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1
 with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 
 `L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
-`isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument.
+`isInDependencySet(uint256)`. This function MUST return true when the chain's chain id is passed in as an argument. 
+Additionally, `L1Block` MUST provide a public getter to return the dependency set called `dependencySet()`. This
+function MUST return the array of chain ids that are in the dependency set.
 
 ## Security Considerations
 
