@@ -280,3 +280,11 @@ with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
 ## Security Considerations
 
 TODO
+
+# Appendix
+
+## Static Values
+
+Static values are values that only change based on the chain operator's input, such as the gas paying token and the
+dependency set. This contrasts with dynamic values, which change automatically based on the L1 origin's updates, such
+as the sequence number and the L1 block number.
