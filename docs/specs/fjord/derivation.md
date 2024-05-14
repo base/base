@@ -193,13 +193,13 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 Verify `data`:
 
 ```bash
-git checkout fbdba16ce5fe0207ceeb8487d762807888aa43f5 (update once merged)
+git checkout 52abfb507342191ae1f960b443ae8aec7598755c
 pnpm clean && pnpm install && pnpm build
 jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json
 ```
 
 This transaction MUST deploy a contract with the following code hash
-`0xa8682d0cb2cf24478bda32c1058ed3ca741134c5a319e80f29a30f45fe5b8245`.
+`0xa88fa50a2745b15e6794247614b5298483070661adacb8d32d716434ed24c6b2`.
 
 ## GasPriceOracle Proxy Update
 
