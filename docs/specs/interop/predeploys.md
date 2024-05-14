@@ -19,7 +19,8 @@
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
 - [L1Block](#l1block)
-  - [L1Attributes](#l1attributes)
+  - [Static Configuration](#static-configuration)
+  - [Dependency Set](#dependency-set)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -233,37 +234,61 @@ getters.
 
 ## L1Block
 
-| Constant | Value                                        |
-|----------|----------------------------------------------|
-| Address  | `0x4200000000000000000000000000000000000015` |
+| Constant            | Value                                        |
+|---------------------|----------------------------------------------|
+| Address             | `0x4200000000000000000000000000000000000015` |
+| `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
-The `L1Block` contract is updated to include the set of allowed chains. The L1 Attributes transaction
-sets the set of allowed chains. The `L1Block` contract MUST provide a public getter to check if a particular
-chain is in the dependency set called `isInDependencySet(uint256)`. This function MUST return true when
-the chain's chain id is passed in as an argument.
+### Static Configuration
 
-The `setL1BlockValuesInterop()` function MUST be called on every block after the interop upgrade block.
-The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone`.
+The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
+are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
+the L1 Attributes transaction, as well as to reduce the need to add specific one off functions. It can only be called by
+`DEPOSITOR_ACCOUNT`.
 
-### L1Attributes
+The `ConfigType` enum is defined as follows:
 
-The L1 Atrributes transaction is updated to include the dependency set. Since the dependency set is dynamically sized,
-a `uint8` "interopSetSize" parameter prefixes tightly packed `uint256` values that represent each chain id.
+```solidity
+enum ConfigType {
+    GAS_PAYING_TOKEN,
+    ADD_DEPENDENCY,
+    REMOVE_DEPENDENCY
+}
+```
 
-| Input arg         | Type                     | Calldata bytes          | Segment |
-|-------------------|--------------------------|-------------------------|---------|
-| {0x760ee04d}      | bytes4                   | 0-3                     | n/a     |
-| baseFeeScalar     | uint32                   | 4-7                     | 1       |
-| blobBaseFeeScalar | uint32                   | 8-11                    |         |
-| sequenceNumber    | uint64                   | 12-19                   |         |
-| l1BlockTimestamp  | uint64                   | 20-27                   |         |
-| l1BlockNumber     | uint64                   | 28-35                   |         |
-| basefee           | uint256                  | 36-67                   | 2       |
-| blobBaseFee       | uint256                  | 68-99                   | 3       |
-| l1BlockHash       | bytes32                  | 100-131                 | 4       |
-| batcherHash       | bytes32                  | 132-163                 | 5       |
-| interopSetSize    | uint8                    | 164-165                 | 6       |
-| chainIds          | uint256\[interopSetSize] | 165-(32*interopSetSize) | 6+      |
+The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
+
+| ConfigType          | Value                                       |
+|---------------------|---------------------------------------------|
+| `GAS_PAYING_TOKEN`  | `abi.encode(token, decimals, name, symbol)` |
+| `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
+| `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
+
+where
+
+- `token` is the gas paying token's address (type `address`)
+
+- `decimals` is the gas paying token's decimals (type `uint8`)
+
+- `name` is the gas paying token's name (type `bytes32`)
+
+- `symbol` is the gas paying token's symbol (type `bytes32`)
+
+- `chainId` is the chain id intended to be added or removed from the dependency set (type `uint256`)
+
+Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
+
+### Dependency Set
+
+`L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig` calls
+with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively.
+
+`L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
+`isInDependencySet(uint256)`. This function MUST return true when a chain id in the dependency set, or the chain's chain
+id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MUST provide a public getter to return the
+dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
+`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
+MUST return the length of the dependency set array.
 
 ## Security Considerations
 
