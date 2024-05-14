@@ -239,7 +239,6 @@ getters.
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
-
 ### Static Configuration
 
 The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
