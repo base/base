@@ -92,6 +92,7 @@ to `executeMessage`.
 ```solidity
 event ExecutingMessage(bytes,bytes);
 ```
+
 The data encoded in the event contains the `Identifier` and the `msg`.
 The following pseudocode shows the serialization:
 
