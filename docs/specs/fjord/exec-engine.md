@@ -76,4 +76,5 @@ multiplying the `estimatedSize` of the transaction from the above L1 cost formul
 of the bytes in the compressed data are non-zero.
 
 The `L1GasUsed` property will be deprecated due to it not accurately calculating the L1 gas used
-by a transaction. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given transaction.
+by a transaction. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given transaction. This field
+will be removed in a future network upgrade.
