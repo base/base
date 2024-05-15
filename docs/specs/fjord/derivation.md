@@ -13,6 +13,10 @@
     - [Rationale](#rationale-1)
     - [Security Considerations](#security-considerations-1)
 - [Brotli Channel Compression](#brotli-channel-compression)
+- [Network upgrade automation transactions](#network-upgrade-automation-transactions)
+  - [GasPriceOracle Deployment](#gaspriceoracle-deployment)
+  - [GasPriceOracle Proxy Update](#gaspriceoracle-proxy-update)
+  - [GasPriceOracle Enable Fjord](#gaspriceoracle-enable-fjord)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -33,6 +37,9 @@ Changes to the L2 Block execution rules are applied when the `L2 Timestamp >= ac
 Changes to derivation are applied when it is considering data from a L1 Block whose timestamp
 is greater than or equal to the activation timestamp.
 The change of the `max_sequencer_drift` parameter activates with the L1 origin block timestamp.
+
+If Fjord is not activated at genesis, it must be activated at least one block after the Ecotone
+activation block. This ensures that the network upgrade transactions don't conflict.
 
 ## Constant Maximum Sequencer Drift
 
@@ -137,3 +144,118 @@ Brotli compression algorithm (as specified in [RFC-7932][rfc7932]) with no custo
 
 [rfc7932]: https://datatracker.ietf.org/doc/html/rfc7932
 [rfc1950]: https://www.rfc-editor.org/rfc/rfc1950.html
+
+# Network upgrade automation transactions
+
+The Fjord hardfork activation block contains the following transactions, in this order:
+
+- L1 Attributes Transaction
+- User deposits from L1
+- Network Upgrade Transactions
+  - GasPriceOracle deployment
+  - Update GasPriceOracle Proxy ERC-1967 Implementation Slot
+  - GasPriceOracle Enable Fjord
+
+To not modify or interrupt the system behavior around gas computation, this block will not include any sequenced
+transactions by setting `noTxPool: true`.
+
+## GasPriceOracle Deployment
+
+The `GasPriceOracle` contract is upgraded to support the new Fjord L1 data fee computation. Post fork this contract
+will use FastLZ to compute the L1 data fee.
+
+To perform this upgrade, a deposit transaction is derived with the following attributes:
+
+- `from`: `0x4210000000000000000000000000000000000002`
+- `to`: `null`,
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `1,450,000`
+- `data`: `0x60806040523...` ([full bytecode](../static/bytecode/fjord-gas-price-oracle-deployment.txt))
+- `sourceHash`: `0x86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3`
+  computed with the "Upgrade-deposited" type, with `intent = "Fjord: Gas Price Oracle Deployment"
+
+This results in the Fjord GasPriceOracle contract being deployed to `0xa919894851548179A0750865e7974DA599C0Fac7`,
+to verify:
+
+```bash
+cast compute-address --nonce=0 0x4210000000000000000000000000000000000002
+Computed Address: 0xa919894851548179A0750865e7974DA599C0Fac7
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Fjord: Gas Price Oracle Deployment"))
+# 0x86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3
+```
+
+Verify `data`:
+
+```bash
+git checkout 52abfb507342191ae1f960b443ae8aec7598755c
+pnpm clean && pnpm install && pnpm build
+jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json
+```
+
+This transaction MUST deploy a contract with the following code hash
+`0xa88fa50a2745b15e6794247614b5298483070661adacb8d32d716434ed24c6b2`.
+
+## GasPriceOracle Proxy Update
+
+This transaction updates the GasPriceOracle Proxy ERC-1967 implementation slot to point to the new GasPriceOracle
+deployment.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x0000000000000000000000000000000000000000`
+- `to`: `0x420000000000000000000000000000000000000F` (Gas Price Oracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `50,000`
+- `data`: `0x3659cfe6000000000000000000000000a919894851548179a0750865e7974da599c0fac7`
+- `sourceHash`: `0x1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6`
+  computed with the "Upgrade-deposited" type, with `intent = "Fjord: Gas Price Oracle Proxy Update"`
+
+Verify data:
+
+```bash
+cast concat-hex $(cast sig "upgradeTo(address)") $(cast abi-encode "upgradeTo(address)" 0xa919894851548179A0750865e7974DA599C0Fac7)
+# 0x3659cfe6000000000000000000000000a919894851548179a0750865e7974da599c0fac7
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Fjord: Gas Price Oracle Proxy Update"))
+# 0x1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6
+```
+
+## GasPriceOracle Enable Fjord
+
+This transaction informs the GasPriceOracle to start using the Fjord gas calculation formula.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (Depositer Account)
+- `to`: `0x420000000000000000000000000000000000000F` (Gas Price Oracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `90,000`
+- `data`: `0x8e98b106`
+- `sourceHash`: `0xbac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b`,
+  computed with the "Upgrade-deposited" type, with `intent = "Fjord: Gas Price Oracle Set Fjord"
+
+Verify data:
+
+```bash
+cast sig "setFjord()"
+0x8e98b106
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Fjord: Gas Price Oracle Set Fjord"))
+# 0xbac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b
+```

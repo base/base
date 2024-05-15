@@ -1040,7 +1040,7 @@ special transactions may be inserted as part of the derivation process.
 
 #### Ecotone
 
-The Ecotone hardfork activation block, contains the following transactions in this order:
+The Ecotone hardfork activation block contains the following transactions, in this order:
 
 - L1 Attributes Transaction, using the pre-Ecotone `setL1BlockValues`
 - User deposits from L1
