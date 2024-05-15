@@ -63,7 +63,7 @@ contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
     });
   }
 
-  function finalizeBridgeERC20(address to, uint256 amount) external {
+  function finalizeBridgeERC20(address _to, uint256 _amount) external {
     require(msg.sender == address(L2ToL2CrossChainMessenger));
     require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
 
