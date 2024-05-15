@@ -23,6 +23,7 @@
 - [L1FeeVault](#l1feevault)
 - [SchemaRegistry](#schemaregistry)
 - [EAS](#eas)
+- [Beacon Block Root](#beacon-block-root)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -48,7 +49,7 @@ indicates when the predeploy was introduced. The possible values are `Legacy`
 or `Bedrock` or `Canyon`. Deprecated contracts should not be used.
 
 | Name                          | Address                                    | Introduced | Deprecated | Proxied |
-| ----------------------------- | ------------------------------------------ | ---------- | ---------- | ------- |
+|-------------------------------|--------------------------------------------|------------| ---------- |---------|
 | LegacyMessagePasser           | 0x4200000000000000000000000000000000000000 | Legacy     | Yes        | Yes     |
 | DeployerWhitelist             | 0x4200000000000000000000000000000000000002 | Legacy     | Yes        | Yes     |
 | LegacyERC20ETH                | 0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000 | Legacy     | Yes        | No      |
@@ -69,6 +70,7 @@ or `Bedrock` or `Canyon`. Deprecated contracts should not be used.
 | L1FeeVault                    | 0x420000000000000000000000000000000000001a | Bedrock    | No         | Yes     |
 | SchemaRegistry                | 0x4200000000000000000000000000000000000020 | Bedrock    | No         | Yes     |
 | EAS                           | 0x4200000000000000000000000000000000000021 | Bedrock    | No         | Yes     |
+| BeaconBlockRoot               | 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02 | Ecotone    | No         | No      |
 
 ## LegacyMessagePasser
 
@@ -344,3 +346,10 @@ protocol.
 Address: `0x4200000000000000000000000000000000000021`
 
 The `EAS` predeploy implements the `Ethereum Attestation Service` protocol.
+
+## Beacon Block Root
+
+Address: `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02`
+
+The `BeaconBlockRoot` predeploy provides access to the L1 beacon block roots. This was added during the
+Ecotone network upgrade and is specified in [EIP-4788](https://eips.ethereum.org/EIPS/eip-4788).

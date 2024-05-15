@@ -25,6 +25,7 @@
       - [Rollup Node P2P](./protocol/rollup-node-p2p.md)
       - [Derivation](./protocol/derivation.md)
     - [Batch Submitter](./protocol/batcher.md)
+  - [Precompiles](./protocol/precompiles.md)
   - [Predeploys](./protocol/predeploys.md)
   - [Preinstalls](./protocol/preinstalls.md)
   - [Superchain]()
