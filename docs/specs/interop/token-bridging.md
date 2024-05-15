@@ -59,7 +59,7 @@ contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
     L2ToL2CrossDomainMessenger.sendMessage({
       _destination: chainId,
       _target: address(this),
-      _message: abi.encodeCall(this.executeTransfer, (to, amount))
+      _message: abi.encodeCall(this.finalizeBridgeERC20, (to, amount))
     });
   }
 
