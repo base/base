@@ -36,16 +36,9 @@ executing messages.
 
 ### Static analysis
 
-Note that static analysis is not always reliable, but it is far faster than having to perform
-execution to get the data required to validate an executing message.
-
-The block builder SHOULD use static analysis when possible on executing messages to determine
-the dependency of the message.
-
-When a transaction has a top level [to][tx-to] field that is equal to the `CrossL2Inbox`
-and the 4-byte selector in the calldata matches the entrypoint interface,
-the block builder should use the chain-ID that is encoded in the `Identifier` to determine which chain includes
-the initiating transaction.
+Note that static analysis is never reliable because even if the top level `transaction.to`
+is equal to the `CrossL2Inbox`, it is possible that there is a reentrant `CALL`. The block
+builder SHOULD NOT rely on static analysis for building blocks.
 
 ### Dependency confirmations
 
