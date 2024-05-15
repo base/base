@@ -13,7 +13,7 @@ network upgrade will be included in this document in the future.
 | Source Chain        | A blockchain that includes an initiating message                                                    |
 | Destination Chain   | A blockchain that includes an executing message                                                     |
 | Initiating Message  | An event emitted from a source chain                                                                |
-| Executing Message   | An event emitted from a destination chain that includes an initiating message                       |
+| Executing Message   | An event emitted from a destination chain's `CrossL2Inbox` that includes an initiating message                       |
 | Cross Chain Message | The cumulative execution and side effects of the initiating message and executing message           |
 | Dependency Set      | The set of chains that originate initiating transactions where the executing transactions are valid |
 
