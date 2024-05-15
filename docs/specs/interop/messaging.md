@@ -246,7 +246,7 @@ The graph is bounded in 4 ways:
   as per the [ChainID invariant](#chainid-invariant).
 - Every block cannot depend on future blocks, as per the [Timestamp invariant](#timestamp-invariant).
 - Every block has a maximum gas limit, an intrinsic cost per transaction,
-  and thus a maximum inward degree of dependencies
+  and thus a maximum inward degree of dependencies.
 - Every block cannot depend on expired messages, as per the [Message expiry invariant](#message-expiry-invariant).
 
 The verifier is responsible for filtering out non-canonical parts of the graph.
