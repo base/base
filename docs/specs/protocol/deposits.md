@@ -91,7 +91,7 @@ In contrast to [EIP-155] transactions, this transaction type:
 [EIP-155]: https://eips.ethereum.org/EIPS/eip-155
 
 We select `0x7E` because transaction type identifiers are currently allowed to go up to `0x7F`.
-Picking a high identifier minimizes the risk that the identifier will be used be claimed by another
+Picking a high identifier minimizes the risk that the identifier will be used by another
 transaction type on the L1 chain in the future. We don't pick `0x7F` itself in case it becomes used
 for a variable-length encoding scheme.
 
