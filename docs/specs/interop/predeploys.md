@@ -94,12 +94,15 @@ event ExecutingMessage(bytes,bytes);
 ```
 
 The data encoded in the event contains the `Identifier` and the `msg`.
-The following pseudocode shows the serialization:
+The following pseudocode shows the deserialization:
 
 ```solidity
-(bytes memory identifier, bytes memory log) = abi.decode(receipt.data, (bytes, bytes));
+(bytes memory identifier, bytes memory log) = abi.decode(log.data, (bytes, bytes));
 Identifier id = abi.decode(identifier, (Identifier));
 ```
+
+It is not possible to use solidity structs directly in events, which is why it is ABI encoded
+into `bytes` first.
 
 ### Reference implementation
 
