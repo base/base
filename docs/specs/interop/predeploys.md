@@ -300,7 +300,7 @@ Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1
 ### Dependency Set
 
 `L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig` calls
-with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively. The maximum size of the dependency set is `type(uint256).max`,
+with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively. The maximum size of the dependency set is `type(uint8).max`,
 and adding a chain id when the dependency set size is at its maximum MUST revert. If a chain id not in the dependency
 set is attempted to be removed, the call MUST revert. If the chain's chain id is attempted to be removed, the call also
 MUST revert.
