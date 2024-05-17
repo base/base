@@ -75,6 +75,6 @@ The `L1GasUsed` property on the transaction receipt is updated to take into acco
 multiplying the `estimatedSize` of the transaction from the above L1 cost formula by 16. The value of 16 assumes most
 of the bytes in the compressed data are non-zero.
 
-The `L1GasUsed` property will be deprecated due to it not accurately calculating the L1 gas used
-by a transaction. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given transaction. This field
-will be removed in a future network upgrade.
+The `L1GasUsed` property is deprecated due to it not capturing the L1 blob gas used by a transaction, and will be
+removed in a future network upgrade. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given
+transaction.
