@@ -303,7 +303,6 @@ The predeploy stores the following values:
   - `batcherHash` (`bytes32`): A versioned commitment to the batch-submitter(s) currently operating.
   - `overhead` (`uint256`): The L1 fee overhead to apply to L1 cost computation of transactions in this L2 block.
   - `scalar` (`uint256`): The L1 fee scalar to apply to L1 cost computation of transactions in this L2 block.
-- With the Ecotone upgrade, the predeploy additionally stores:
 
 The contract implements an authorization scheme, such that it only accepts state-changing calls from
 the [depositor account][depositor-account].
