@@ -5,7 +5,6 @@
 **Table of Contents**
 
 - [Consensus Parameters](#consensus-parameters)
-  - [Resource Config](#resource-config)
 - [Policy Parameters](#policy-parameters)
 - [Admin Roles](#admin-roles)
 - [Service Roles](#service-roles)
@@ -48,23 +47,11 @@ These requirements are currently a draft, pending governance approval.
 | [Gas Limit](./system_config.md#gaslimit-uint64) | Gas limit of the L2 blocks is configured through the system config. | [System Config Owner](#admin-roles) | No higher than 200_000_000 gas | Chain operators are driven to maintain a stable and reliable chain. When considering to change this value, careful deliberation is necessary. |
 | Genesis state                         | Initial state at chain genesis, including code and storage of predeploys (all L2 smart contracts). See [Predeploy](../glossary.md#l2-genesis-block). | Static | Only standard predeploys and preinstalls, no additional state. | Homogeneity & standardization, ensures initial state is secure. |
 | [L2 block time](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/L2OutputOracle.sol#L105)                         | Frequency with which blocks are produced as a result of derivation.                                                          | [L1 Proxy Admin](#admin-roles)                      | 2 seconds | High security & [interoperability](../interop/overview.md) compatibility requirement, until de-risked/solved at app layer. |
-| [Resource config](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L338-L340)                       | Config for the EIP-1559 based curve used for the deposit gas market.                                                         | [L1 Proxy Admin](#admin-roles)                 | See [resource config table](#resource-config). | Constraints are imposed in [code](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L345-L365) when setting the resource config. |
 | [Sequencing window Size](../glossary.md#sequencing-window)                  | Maximum allowed batch submission gap, after which L1 fallback is triggered in derivation.                                    | Static | 3_600 base layer blocks (12 hours for an L2 on Ethereum, assuming 12 second L1 blocktime). e.g. 12 second blocks, $3600 * 12\ seconds \div 60\frac{seconds}{minute} \div 60\frac{minute}{hour} = 12\ hours$. | This is an important value for constraining the sequencer's ability to re-order transactions; higher values would pose a risk to user protections. |
 | [Start block](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L184)                           | Block at which the system config was initialized the first time.                                                             | [L1 Proxy Admin](#admin-roles)                      | The block where the SystemConfig was initialized. | Simple clear restriction. |
 | [Superchain target](../protocol/superchain-upgrades.md#superchain-target)  | Choice of cross-L2 configuration. May be omitted in isolated OP Stack deployments. Includes SuperchainConfig and ProtocolVersions contract addresses. | Static | Mainnet or Sepolia | A superchain target defines a set of layer 2 chains which share `SuperchainConfig` and `ProtocolVersions` contracts deployed on layer 1. |
 
 [^chain-id]: The chain ID must be globally unique among all EVM chains.
-
-### Resource Config
-
-| Config Property                       | Standard Config Requirement |
-|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| maxResourceLimit | $2*10^7$ | |
-| elasticityMultiplier | $10$ | |
-| baseFeeMaxChangeDenominator | $8$ | |
-| minimumBaseFee | $1*10^9$ | |
-| systemTxMaxGas | $1*10^6$ | |
-| maximumBaseFee | $2^{128}$-1 | |
 
 ## Policy Parameters
 
@@ -82,7 +69,7 @@ These requirements are currently a draft, pending governance approval.
 | L1 ProxyAdmin owner                   | Account authorized to update the L1 Proxy Admin.  | | [L1 Proxy Admin](#admin-roles) | [0x5a0Aae59D09fccBdDb6C6CcEB07B7279367C3d2A](https://etherscan.io/address/0x5a0Aae59D09fccBdDb6C6CcEB07B7279367C3d2A) [^of-sc-gnosis-safe-l1] | Governance-controlled, high security. |
 | L2 Proxy Admin | Account authorized to upgrade L2 contracts. | [L2 Proxy Admin Owner](#admin-roles) | [Predeploys](./predeploys.md#overview) | [ProxyAdmin.sol](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.3.0/packages/contracts-bedrock/src/universal/ProxyAdmin.sol) from the latest `op-contracts/vX.Y.X` release of source code in [Optimism repository](https://github.com/ethereum-optimism/optimism). Predeploy address:  [0x4200000000000000000000000000000000000018](https://docs.optimism.io/chain/addresses#op-mainnet-l2). | Governance-controlled, high security. |
 | L2 ProxyAdmin owner                   | Account authorized to update the L2 Proxy Admin.                                                                             |                                     | [L2 Proxy Admin](#admin-roles) | Optimism Foundation Gnosis Safe e.g. [0x7871d1187A97cbbE40710aC119AA3d412944e4Fe](https://optimistic.etherscan.io/address/0x7871d1187A97cbbE40710aC119AA3d412944e4Fe) [^of-gnosis-safe-l2] | Governance-controlled, high security. |
-| [System Config Owner](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L14C26-L14C44)                   | Account authorized to change values in the SystemConfig contract. All configuration is stored on L1 and picked up by L2 as part of the [derviation](./derivation.md) of the L2 chain. |                                     | [Batch submitter address](#service-roles), [Sequencer P2P / Unsafe head signer](#service-roles), [Fee Margin](#consensus-parameters), [Gas limit](#consensus-parameters), [Resource config](#consensus-parameters), [System Config Owner](#admin-roles) | Chain Governor or Servicer | As defined in the [Law of Chains](https://github.com/ethereum-optimism/OPerating-manual/blob/main/Law%20of%20Chains.md) |
+| [System Config Owner](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L14C26-L14C44)                   | Account authorized to change values in the SystemConfig contract. All configuration is stored on L1 and picked up by L2 as part of the [derviation](./derivation.md) of the L2 chain. |                                     | [Batch submitter address](#service-roles), [Sequencer P2P / Unsafe head signer](#service-roles), [Fee Margin](#consensus-parameters), [Gas limit](#consensus-parameters), [System Config Owner](#admin-roles) | Chain Governor or Servicer | As defined in the [Law of Chains](https://github.com/ethereum-optimism/OPerating-manual/blob/main/Law%20of%20Chains.md) |
 
 [^of-sc-gnosis-safe-l1]: 2 of 2 GnosisSafe between Optimism Foundation (OF) and the Security Council (SC) on L1. Mainnet and Sepolia addresses can be found at [priviledged roles](https://docs.optimism.io/chain/security/privileged-roles#l1-proxy-admin).
 [^of-gnosis-safe-l2]: 5 of 7 GnosisSafe for Optimism Foundation  on L2. Mainnet and Sepolia addresses can be found at [priviledged roles](https://docs.optimism.io/chain/security/privileged-roles#l2-proxy-admin).
