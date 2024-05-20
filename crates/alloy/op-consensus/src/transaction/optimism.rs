@@ -19,12 +19,12 @@ pub struct TxDeposit {
     #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "TxKind::is_create"))]
     pub to: TxKind,
     /// The ETH value to mint on L2.
-    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::u128_hex_or_decimal_opt"))]
+    #[cfg_attr(feature = "serde", serde(default, with = "alloy_serde::u128_opt_via_ruint"))]
     pub mint: Option<u128>,
     ///  The ETH value to send to the recipient account.
     pub value: U256,
     /// The gas limit for the L2 transaction.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::u128_hex_or_decimal"))]
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::u128_via_ruint"))]
     pub gas_limit: u128,
     /// Field indicating if this transaction is exempt from the L2 gas limit.
     pub is_system_transaction: bool,
