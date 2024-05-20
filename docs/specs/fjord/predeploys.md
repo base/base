@@ -71,7 +71,9 @@ function getL1GasUsed(bytes memory _data) public view returns (uint256) {
 }
 ```
 
-The `getL1GasUsed` method will be deprecated. This is due to it not accurately estimating the
-L1 gas used, for a transaction. In a future network upgrade this function will revert when called.
+The `getL1GasUsed` method is deprecated as of Fjord because it does not capture that there are
+two kinds of gas being consumed due to the introduction of blobs. This function will revert when
+called in a future upgrade.
 
-Users can continue to use the `getL1FeeUpperBound` or `getL1Fee` method to estimate the L1 fee for a given transaction.
+Users can continue to use the `getL1Fee` method to estimate the L1 fee for a given transaction, or the
+new `getL1FeeUpperBound` method introduced by Fjord as a lower gas alternative.
