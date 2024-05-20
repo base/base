@@ -68,7 +68,7 @@ impl OpTxReceipt for OpDepositReceipt {
     }
 }
 
-/// [`OpReceipt`] with calculated bloom filter, modified for the OP Stack.
+/// [`OpDepositReceipt`] with calculated bloom filter, modified for the OP Stack.
 ///
 /// This convenience type allows us to lazily calculate the bloom filter for a
 /// receipt, similar to [`Sealed`].
