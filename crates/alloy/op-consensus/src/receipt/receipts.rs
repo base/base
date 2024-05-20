@@ -49,10 +49,6 @@ impl OpReceipt {
 }
 
 impl TxReceipt for OpReceipt {
-    fn success(&self) -> bool {
-        self.status
-    }
-
     fn bloom(&self) -> Bloom {
         self.bloom_slow()
     }
@@ -63,6 +59,10 @@ impl TxReceipt for OpReceipt {
 
     fn logs(&self) -> &[Log] {
         &self.logs
+    }
+
+    fn status(&self) -> bool {
+        self.status
     }
 }
 
@@ -94,7 +94,7 @@ pub struct OpReceiptWithBloom<T = Log> {
 }
 
 impl TxReceipt for OpReceiptWithBloom {
-    fn success(&self) -> bool {
+    fn status(&self) -> bool {
         self.receipt.status
     }
 
