@@ -1,5 +1,5 @@
 use super::OpTxReceipt;
-use alloy_consensus::TxReceipt;
+use alloy_consensus::{Receipt, TxReceipt};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
@@ -10,22 +10,14 @@ use alloc::vec::Vec;
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OpReceipt<T = Log> {
-    /// If transaction is executed successfully.
-    ///
-    /// This is the `statusCode`
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity_bool"))]
-    pub status: bool,
-    /// Gas used
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::u128_hex_or_decimal"))]
-    pub cumulative_gas_used: u128,
-    /// Log send from contracts.
-    pub logs: Vec<T>,
+pub struct OpDepositReceipt<T = Log> {
+    /// The inner receipt type.
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    pub inner: Receipt<T>,
     /// Deposit nonce for Optimism deposit transactions
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub deposit_nonce: Option<u64>,
     /// Deposit receipt version for Optimism deposit transactions
-    ///
     ///
     /// The deposit receipt version was introduced in Canyon to indicate an update to how
     /// receipt hashes should be computed when set. The state transition process
@@ -34,11 +26,11 @@ pub struct OpReceipt<T = Log> {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl OpReceipt {
+impl OpDepositReceipt {
     /// Calculates [`Log`]'s bloom filter. this is slow operation and [OpReceiptWithBloom] can
     /// be used to cache this value.
     pub fn bloom_slow(&self) -> Bloom {
-        self.logs.iter().collect()
+        self.inner.logs.iter().collect()
     }
 
     /// Calculates the bloom filter for the receipt and returns the [OpReceiptWithBloom] container
@@ -48,25 +40,25 @@ impl OpReceipt {
     }
 }
 
-impl TxReceipt for OpReceipt {
+impl TxReceipt for OpDepositReceipt {
     fn bloom(&self) -> Bloom {
         self.bloom_slow()
     }
 
     fn cumulative_gas_used(&self) -> u128 {
-        self.cumulative_gas_used
+        self.inner.cumulative_gas_used
     }
 
     fn logs(&self) -> &[Log] {
-        &self.logs
+        &self.inner.logs
     }
 
     fn status(&self) -> bool {
-        self.status
+        self.inner.status
     }
 }
 
-impl OpTxReceipt for OpReceipt {
+impl OpTxReceipt for OpDepositReceipt {
     fn deposit_nonce(&self) -> Option<u64> {
         self.deposit_nonce
     }
@@ -88,14 +80,14 @@ impl OpTxReceipt for OpReceipt {
 pub struct OpReceiptWithBloom<T = Log> {
     #[cfg_attr(feature = "serde", serde(flatten))]
     /// The receipt.
-    pub receipt: OpReceipt<T>,
+    pub receipt: OpDepositReceipt<T>,
     /// The bloom filter.
     pub logs_bloom: Bloom,
 }
 
 impl TxReceipt for OpReceiptWithBloom {
     fn status(&self) -> bool {
-        self.receipt.status
+        self.receipt.inner.status
     }
 
     fn bloom(&self) -> Bloom {
@@ -107,11 +99,11 @@ impl TxReceipt for OpReceiptWithBloom {
     }
 
     fn cumulative_gas_used(&self) -> u128 {
-        self.receipt.cumulative_gas_used
+        self.receipt.inner.cumulative_gas_used
     }
 
     fn logs(&self) -> &[Log] {
-        &self.receipt.logs
+        &self.receipt.inner.logs
     }
 }
 
@@ -125,8 +117,8 @@ impl OpTxReceipt for OpReceiptWithBloom {
     }
 }
 
-impl From<OpReceipt> for OpReceiptWithBloom {
-    fn from(receipt: OpReceipt) -> Self {
+impl From<OpDepositReceipt> for OpReceiptWithBloom {
+    fn from(receipt: OpDepositReceipt) -> Self {
         let bloom = receipt.bloom_slow();
         OpReceiptWithBloom { receipt, logs_bloom: bloom }
     }
@@ -134,27 +126,27 @@ impl From<OpReceipt> for OpReceiptWithBloom {
 
 impl OpReceiptWithBloom {
     /// Create new [OpReceiptWithBloom]
-    pub const fn new(receipt: OpReceipt, bloom: Bloom) -> Self {
+    pub const fn new(receipt: OpDepositReceipt, bloom: Bloom) -> Self {
         Self { receipt, logs_bloom: bloom }
     }
 
     /// Consume the structure, returning only the receipt
     #[allow(clippy::missing_const_for_fn)] // false positive
-    pub fn into_receipt(self) -> OpReceipt {
+    pub fn into_receipt(self) -> OpDepositReceipt {
         self.receipt
     }
 
     /// Consume the structure, returning the receipt and the bloom filter
     #[allow(clippy::missing_const_for_fn)] // false positive
-    pub fn into_components(self) -> (OpReceipt, Bloom) {
+    pub fn into_components(self) -> (OpDepositReceipt, Bloom) {
         (self.receipt, self.logs_bloom)
     }
 
     fn payload_len(&self) -> usize {
-        self.receipt.status.length()
-            + self.receipt.cumulative_gas_used.length()
+        self.receipt.inner.status.length()
+            + self.receipt.inner.cumulative_gas_used.length()
             + self.logs_bloom.length()
-            + self.receipt.logs.length()
+            + self.receipt.inner.logs.length()
             + self.receipt.deposit_nonce.map_or(0, |nonce| nonce.length())
             + self.receipt.deposit_receipt_version.map_or(0, |version| version.length())
     }
@@ -167,10 +159,10 @@ impl OpReceiptWithBloom {
     /// Encodes the receipt data.
     fn encode_fields(&self, out: &mut dyn BufMut) {
         self.receipt_rlp_header().encode(out);
-        self.receipt.status.encode(out);
-        self.receipt.cumulative_gas_used.encode(out);
+        self.receipt.inner.status.encode(out);
+        self.receipt.inner.cumulative_gas_used.encode(out);
         self.logs_bloom.encode(out);
-        self.receipt.logs.encode(out);
+        self.receipt.inner.logs.encode(out);
         if let Some(nonce) = self.receipt.deposit_nonce {
             nonce.encode(out);
         }
@@ -198,10 +190,8 @@ impl OpReceiptWithBloom {
         let deposit_receipt_version =
             remaining(b).then(|| alloy_rlp::Decodable::decode(b)).transpose()?;
 
-        let receipt = OpReceipt {
-            status: success,
-            cumulative_gas_used,
-            logs,
+        let receipt = OpDepositReceipt {
+            inner: Receipt { status: success, cumulative_gas_used, logs },
             deposit_nonce,
             deposit_receipt_version,
         };
@@ -225,10 +215,10 @@ impl alloy_rlp::Encodable for OpReceiptWithBloom {
     }
 
     fn length(&self) -> usize {
-        let payload_length = self.receipt.status.length()
-            + self.receipt.cumulative_gas_used.length()
+        let payload_length = self.receipt.inner.status.length()
+            + self.receipt.inner.cumulative_gas_used.length()
             + self.logs_bloom.length()
-            + self.receipt.logs.length()
+            + self.receipt.inner.logs.length()
             + self.receipt.deposit_nonce.map_or(0, |nonce| nonce.length())
             + self.receipt.deposit_receipt_version.map_or(0, |version| version.length());
         payload_length + length_of_length(payload_length)
@@ -242,7 +232,7 @@ impl alloy_rlp::Decodable for OpReceiptWithBloom {
 }
 
 #[cfg(all(test, feature = "arbitrary"))]
-impl<'a, T> arbitrary::Arbitrary<'a> for OpReceipt<T>
+impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceipt<T>
 where
     T: arbitrary::Arbitrary<'a>,
 {
@@ -251,9 +241,11 @@ where
         let deposit_receipt_version =
             deposit_nonce.is_some().then(|| u64::arbitrary(u)).transpose()?;
         Ok(Self {
-            status: bool::arbitrary(u)?,
-            cumulative_gas_used: u128::arbitrary(u)?,
-            logs: Vec::<T>::arbitrary(u)?,
+            inner: Receipt {
+                status: bool::arbitrary(u)?,
+                cumulative_gas_used: u128::arbitrary(u)?,
+                logs: Vec::<T>::arbitrary(u)?,
+            },
             deposit_nonce,
             deposit_receipt_version,
         })
@@ -266,6 +258,6 @@ where
     T: arbitrary::Arbitrary<'a>,
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self { receipt: OpReceipt::<T>::arbitrary(u)?, logs_bloom: Bloom::arbitrary(u)? })
+        Ok(Self { receipt: OpDepositReceipt::<T>::arbitrary(u)?, logs_bloom: Bloom::arbitrary(u)? })
     }
 }

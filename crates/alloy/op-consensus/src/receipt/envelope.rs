@@ -1,4 +1,4 @@
-use crate::{OpReceipt, OpReceiptWithBloom, OpTxType};
+use crate::{OpDepositReceipt, OpReceiptWithBloom, OpTxType};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
@@ -62,17 +62,17 @@ impl<T> OpReceiptEnvelope<T> {
 
     /// Returns the success status of the receipt's transaction.
     pub fn status(&self) -> bool {
-        self.as_receipt().unwrap().status
+        self.as_receipt().unwrap().inner.status
     }
 
     /// Returns the cumulative gas used at this receipt.
     pub fn cumulative_gas_used(&self) -> u128 {
-        self.as_receipt().unwrap().cumulative_gas_used
+        self.as_receipt().unwrap().inner.cumulative_gas_used
     }
 
     /// Return the receipt logs.
     pub fn logs(&self) -> &[T] {
-        &self.as_receipt().unwrap().logs
+        &self.as_receipt().unwrap().inner.logs
     }
 
     /// Return the receipt's bloom.
@@ -104,7 +104,7 @@ impl<T> OpReceiptEnvelope<T> {
 
     /// Return the inner receipt. Currently this is infallible, however, future
     /// receipt types may be added.
-    pub const fn as_receipt(&self) -> Option<&OpReceipt<T>> {
+    pub const fn as_receipt(&self) -> Option<&OpDepositReceipt<T>> {
         match self {
             Self::Legacy(t)
             | Self::Eip2930(t)

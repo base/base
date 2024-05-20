@@ -4,7 +4,7 @@ mod envelope;
 pub use envelope::OpReceiptEnvelope;
 
 mod receipts;
-pub use receipts::{OpReceipt, OpReceiptWithBloom};
+pub use receipts::{OpDepositReceipt, OpReceiptWithBloom};
 
 /// Receipt is the result of a transaction execution.
 pub trait OpTxReceipt: TxReceipt {
@@ -18,6 +18,7 @@ pub trait OpTxReceipt: TxReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::Receipt;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, b256, bytes, hex, Bytes, Log, LogData};
     use alloy_rlp::{Decodable, Encodable};
@@ -31,26 +32,27 @@ mod tests {
         let expected = hex!("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff");
 
         let mut data = vec![];
-        let receipt =
-            OpReceiptEnvelope::Legacy(OpReceiptWithBloom {
-                receipt: OpReceipt {
+        let receipt = OpReceiptEnvelope::Legacy(OpReceiptWithBloom {
+            receipt: OpDepositReceipt {
+                inner: Receipt {
+                    status: false,
                     cumulative_gas_used: 0x1u128,
                     logs: vec![Log {
                         address: address!("0000000000000000000000000000000000000011"),
                         data: LogData::new_unchecked(
                             vec![
-                    b256!("000000000000000000000000000000000000000000000000000000000000dead"),
-                    b256!("000000000000000000000000000000000000000000000000000000000000beef"),
-                ],
+                        b256!("000000000000000000000000000000000000000000000000000000000000dead"),
+                        b256!("000000000000000000000000000000000000000000000000000000000000beef"),
+                    ],
                             bytes!("0100ff"),
                         ),
                     }],
-                    status: false,
-                    deposit_nonce: None,
-                    deposit_receipt_version: None,
                 },
-                logs_bloom: [0; 256].into(),
-            });
+                deposit_nonce: None,
+                deposit_receipt_version: None,
+            },
+            logs_bloom: [0; 256].into(),
+        });
 
         receipt.network_encode(&mut data);
 
@@ -67,19 +69,21 @@ mod tests {
         // EIP658Receipt
         let expected =
             OpReceiptWithBloom {
-                receipt: OpReceipt {
-                    cumulative_gas_used: 0x1u128,
-                    logs: vec![Log {
-                        address: address!("0000000000000000000000000000000000000011"),
-                        data: LogData::new_unchecked(
-                            vec![
-                        b256!("000000000000000000000000000000000000000000000000000000000000dead"),
-                        b256!("000000000000000000000000000000000000000000000000000000000000beef"),
-                    ],
-                            bytes!("0100ff"),
-                        ),
-                    }],
-                    status: false,
+                receipt: OpDepositReceipt {
+                    inner: Receipt {
+                        status: false,
+                        cumulative_gas_used: 0x1u128,
+                        logs: vec![Log {
+                            address: address!("0000000000000000000000000000000000000011"),
+                            data: LogData::new_unchecked(
+                                vec![
+                            b256!("000000000000000000000000000000000000000000000000000000000000dead"),
+                            b256!("000000000000000000000000000000000000000000000000000000000000beef"),
+                        ],
+                                bytes!("0100ff"),
+                            ),
+                        }],
+                    },
                     deposit_nonce: None,
                     deposit_receipt_version: None,
                 },
@@ -92,29 +96,31 @@ mod tests {
 
     #[test]
     fn gigantic_receipt() {
-        let receipt = OpReceipt {
-            cumulative_gas_used: 16747627,
-            status: true,
-            logs: vec![
-                Log {
-                    address: address!("4bf56695415f725e43c3e04354b604bcfb6dfb6e"),
-                    data: LogData::new_unchecked(
-                        vec![b256!(
-                            "c69dc3d7ebff79e41f525be431d5cd3cc08f80eaf0f7819054a726eeb7086eb9"
-                        )],
-                        Bytes::from(vec![1; 0xffffff]),
-                    ),
-                },
-                Log {
-                    address: address!("faca325c86bf9c2d5b413cd7b90b209be92229c2"),
-                    data: LogData::new_unchecked(
-                        vec![b256!(
-                            "8cca58667b1e9ffa004720ac99a3d61a138181963b294d270d91c53d36402ae2"
-                        )],
-                        Bytes::from(vec![1; 0xffffff]),
-                    ),
-                },
-            ],
+        let receipt = OpDepositReceipt {
+            inner: Receipt {
+                cumulative_gas_used: 16747627,
+                status: true,
+                logs: vec![
+                    Log {
+                        address: address!("4bf56695415f725e43c3e04354b604bcfb6dfb6e"),
+                        data: LogData::new_unchecked(
+                            vec![b256!(
+                                "c69dc3d7ebff79e41f525be431d5cd3cc08f80eaf0f7819054a726eeb7086eb9"
+                            )],
+                            Bytes::from(vec![1; 0xffffff]),
+                        ),
+                    },
+                    Log {
+                        address: address!("faca325c86bf9c2d5b413cd7b90b209be92229c2"),
+                        data: LogData::new_unchecked(
+                            vec![b256!(
+                                "8cca58667b1e9ffa004720ac99a3d61a138181963b294d270d91c53d36402ae2"
+                            )],
+                            Bytes::from(vec![1; 0xffffff]),
+                        ),
+                    },
+                ],
+            },
             deposit_nonce: None,
             deposit_receipt_version: None,
         }
@@ -136,10 +142,8 @@ mod tests {
 
         // Deposit Receipt (post-regolith)
         let expected = OpReceiptWithBloom {
-            receipt: OpReceipt {
-                cumulative_gas_used: 46913,
-                logs: vec![],
-                status: true,
+            receipt: OpDepositReceipt {
+                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true },
                 deposit_nonce: Some(4012991),
                 deposit_receipt_version: None,
             },
@@ -160,10 +164,8 @@ mod tests {
 
         // Deposit Receipt (post-regolith)
         let expected = OpReceiptWithBloom {
-            receipt: OpReceipt {
-                cumulative_gas_used: 46913,
-                logs: vec![],
-                status: true,
+            receipt: OpDepositReceipt {
+                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true },
                 deposit_nonce: Some(4012991),
                 deposit_receipt_version: Some(1),
             },
