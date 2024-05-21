@@ -2,6 +2,7 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [CrossL2Inbox](#crossl2inbox)
@@ -14,11 +15,15 @@
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
+  - [`sendHashToRollbackInbox` Invariants](#sendhashtorollbackinbox-invariants)
+  - [`receiveMessageHash` Invariants](#receivemessagehash-invariants)
   - [Message Versioning](#message-versioning)
   - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
+    - [Sending Back Messages](#sending-back-messages)
+    - [Storing Sent-back Messages](#storing-sent-back-messages)
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
@@ -32,7 +37,7 @@ an update to the `L1Block` contract with additional functionality.
 ## CrossL2Inbox
 
 | Constant | Value                                        |
-|----------|----------------------------------------------|
+| -------- | -------------------------------------------- |
 | Address  | `0x4200000000000000000000000000000000000022` |
 
 The `CrossL2Inbox` is responsible for executing a cross chain message on the destination chain.
@@ -48,7 +53,7 @@ The following fields are required for executing a cross chain message:
 [`Identifier`]: ./messaging.md#message-identifier
 
 | Name      | Type         | Description                                             |
-|-----------|--------------|---------------------------------------------------------|
+| --------- | ------------ | ------------------------------------------------------- |
 | `_msg`    | `bytes`      | The [message payload], matching the initiating message. |
 | `_id`     | `Identifier` | A [`Identifier`] pointing to the initiating message.    |
 | `_target` | `address`    | Account that is called with `_msg`.                     |
@@ -143,7 +148,7 @@ properties about the `_msg`.
 ## L2ToL2CrossDomainMessenger
 
 | Constant          | Value                                        |
-|-------------------|----------------------------------------------|
+| ----------------- | -------------------------------------------- |
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
 
@@ -158,6 +163,21 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
+
+### `sendHashToRollbackInbox` Invariants
+
+- The Source chain id MUST not be `block.chainid`
+- The `_destination` chain id MUST be equal to the local chain id
+- The message MUST have not been successfully relayed
+- The `RETURN_DELAY` MUST have elapsed since the message first failed to be relayed
+
+### `receiveMessageHash` Invariants
+
+- Only callable by the `CrossL2Inbox`
+- The message source MUST be `block.chainid`
+- The sender MUST be `address(L2ToL2CrossDomainMessenger)`
+- The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
+- The `Identifier.chainId` MUST be `_destination`
 
 ### Message Versioning
 
@@ -254,10 +274,67 @@ Note that the `relayMessage` function is `payable` to enable relayers to earn in
 To enable cross chain authorization patterns, both the `_sender` and the `_source` MUST be exposed via `public`
 getters.
 
+#### Sending Back Messages Hashes
+
+When sending back a message that failed to be relayed on the destination chain
+to the source chain, it's crucial to ensure the message can only be sent back
+to the `L2ToL2CrossDomainMessenger` contract in its source chain.
+
+```solidity
+function sendHashToRollbackInbox(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external {
+    if (_source == block.chainid) revert MessageSourceSameChain();
+
+    bytes32 messageHash = keccak256(abi.encode(block.chainid, _messageSource, _nonce, _sender, _target, _message));
+
+    if (successfulMessages[messageHash]) revert MessageAlreadyRelayed();
+    if (block.timestamp <  returnableMessageHashes[messageHash] + RETURN_DELAY) revert DelayHasNotEnsued();
+
+    returnableMessageHashes[messageHash] = 0;
+    successfulMessages[messageHash] = true;
+
+    bytes memory data = abi.encodeCall(
+        L2ToL2CrossDomainMessenger.receiveMessageHash,
+        (_messageSource, Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER, messageHash)
+    );
+    emit SentMessage(data);
+    msgNonce++;
+}
+```
+
+#### Storing Sent-back Messages Hashes
+
+When receiving a sent-back message from the destination chain, it's
+crucial to ensure:
+
+- The `L2_TO_L2_CROSS_DOMAIN_MESSENGER` from the destination chain is the `sender`
+- The message loc containing the message hash originated in the `L2_TO_L2_CROSS_DOMAIN_MESSENGER`.
+- The `msg.sender` is the `CrossL2Inbox`.
+- Message hashes can only be returned to the chain where the message was emitted.
+
+```solidity
+function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination, address _sender, bytes32 _messageHash) external {
+    if (_messageSource != block.chainid) revert IncorrectMessageSource();
+    if (_sender != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) revert SenderIsNotCrossDomainMesenger();
+    if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ReceiveMessageHashCallerNotCrossL2Inbox();
+
+    if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).origin() != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) {
+        revert CrossL2InboxOriginNotL2ToL2CrossDomainMessenger();
+    }
+
+    if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).chainid() != _messageDestination) {
+        revert CrossL2InboxDestinationDoesntMatch();
+    }
+
+    returnedMessageHashes[_messageHash] = block.timestamp;
+
+    emit MessageHashReceived(_messageHash);
+}
+```
+
 ## L1Block
 
 | Constant            | Value                                        |
-|---------------------|----------------------------------------------|
+| ------------------- | -------------------------------------------- |
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
@@ -281,7 +358,7 @@ enum ConfigType {
 The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
 | ConfigType          | Value                                       |
-|---------------------|---------------------------------------------|
+| ------------------- | ------------------------------------------- |
 | `GAS_PAYING_TOKEN`  | `abi.encode(token, decimals, name, symbol)` |
 | `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
 | `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
