@@ -267,6 +267,7 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
     });
 
     if (!success) {
+      // Will set the timestamp only once on the *first* failed execution to protect against extending the time-window and blocking the rollback.
       if (failedMessages[messageHash] == 0) {
         failedMessages[messageHash] = block.timestamp;
       }
