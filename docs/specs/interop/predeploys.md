@@ -163,7 +163,7 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
 
-### `sendHashToRollbackInbox` Invariants
+### `sendMessageHashBack` Invariants
 
 - The Source chain id MUST not be `block.chainid`
 - The `_destination` chain id MUST be equal to the local chain id
@@ -264,7 +264,11 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
        _calldata: _message
     });
 
-    require(success);
+    if (!success) {
+      if (failedMessages[messageHash] == 0) {
+        failedMessages[messageHash] = block.timestamp;
+      }
+    };
 }
 ```
 
@@ -280,13 +284,13 @@ to the source chain, it's crucial to ensure the message can only be sent back
 to the `L2ToL2CrossDomainMessenger` contract in its source chain.
 
 ```solidity
-function sendHashToRollbackInbox(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external {
+function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external {
     if (_source == block.chainid) revert MessageSourceSameChain();
 
     bytes32 messageHash = keccak256(abi.encode(block.chainid, _messageSource, _nonce, _sender, _target, _message));
 
     if (successfulMessages[messageHash]) revert MessageAlreadyRelayed();
-    if (block.timestamp <  returnableMessageHashes[messageHash] + RETURN_DELAY) revert DelayHasNotEnsued();
+    if (block.timestamp <  failedMessages[messageHash] + RETURN_DELAY) revert DelayHasNotEnsued();
 
     returnableMessageHashes[messageHash] = 0;
     successfulMessages[messageHash] = true;
@@ -300,15 +304,15 @@ function sendHashToRollbackInbox(uint256 _messageSource, uint256 _nonce, address
 }
 ```
 
-#### Storing Sent-back Messages Hashes
+#### Storing Sent-back Message Hashes
 
-When receiving a sent-back message from the destination chain, it's
-crucial to ensure:
+When receiving a sent-back message only message hashes
+of actual failed messages should be stored, for this we must ensure the origin,
+sender and caller are all the expected contracts.
 
-- The `L2_TO_L2_CROSS_DOMAIN_MESSENGER` from the destination chain is the `sender`
-- The message loc containing the message hash originated in the `L2_TO_L2_CROSS_DOMAIN_MESSENGER`.
-- The `msg.sender` is the `CrossL2Inbox`.
-- Message hashes can only be returned to the chain where the message was emitted.
+It's also important to ensure only the hashes of messages that were initiated
+in this chain are accepted and that they come from the correct destination
+chain id.
 
 ```solidity
 function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination, address _sender, bytes32 _messageHash) external {
@@ -324,7 +328,7 @@ function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination,
         revert CrossL2InboxDestinationDoesntMatch();
     }
 
-    returnedMessageHashes[_messageHash] = block.timestamp;
+    returnedMessages[_messageHash] = block.timestamp;
 
     emit MessageHashReceived(_messageHash);
 }
