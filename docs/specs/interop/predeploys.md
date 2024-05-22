@@ -284,7 +284,7 @@ to the source chain, it's crucial to ensure the message can only be sent back
 to the `L2ToL2CrossDomainMessenger` contract in its source chain.
 
 ```solidity
-function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external {
+function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external nonReentrant {
     if (_source == block.chainid) revert MessageSourceSameChain();
 
     bytes32 messageHash = keccak256(abi.encode(block.chainid, _messageSource, _nonce, _sender, _target, _message));
@@ -300,7 +300,6 @@ function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _se
         (_messageSource, Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER, messageHash)
     );
     emit SentMessage(data);
-    msgNonce++;
 }
 ```
 
