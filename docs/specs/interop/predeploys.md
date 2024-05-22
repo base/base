@@ -14,7 +14,7 @@
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
-  - [`sendMessageHashBack` Invariants](#sendhashtorollbackinbox-invariants)
+  - [`revert` Invariants](#revert-invariants)
   - [`receiveMessageHash` Invariants](#receivemessagehash-invariants)
   - [Message Versioning](#message-versioning)
   - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
@@ -163,7 +163,7 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
 
-### `sendMessageHashBack` Invariants
+### `revert` Invariants
 
 - The Source chain id MUST not be `block.chainid`
 - The `_destination` chain id MUST be equal to the local chain id
@@ -179,6 +179,7 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The sender MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `Identifier.chainId` MUST be `_destination`
+- The `returnedMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
 
 ### Message Versioning
 
@@ -266,12 +267,19 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
        _calldata: _message
     });
 
-    if (!success) {
-      // Will set the timestamp only once on the *first* failed execution to protect against extending the time-window and blocking the rollback.
-      if (failedMessages[messageHash] == 0) {
-        failedMessages[messageHash] = block.timestamp;
-      }
-    };
+    if (success) {
+        successfulMessages[messageHash] = true;
+        delete failedMessages[messageHash];
+        emit RelayedMessage(messageHash);
+    } else {
+        // Will set the timestamp only once on the *first* failed execution to protect against extending
+        // the time-window and blocking the rollback.
+        if (failedMessages[messageHash].timestamp == 0) {
+             // sourceChainId is needed to revert the message without having to recreate the digest from the message preimage.
+            failedMessages[messageHash] = FailedMessage({timestamp: block.timestamp, sourceChainId: _source});
+        }
+        emit FailedRelayedMessage(messageHash);
+    }
 }
 ```
 
@@ -286,20 +294,32 @@ When sending back a message that failed to be relayed on the destination chain
 to the source chain, it's crucial to ensure the message can only be sent back
 to the `L2ToL2CrossDomainMessenger` contract in its source chain.
 
+This function has no auth, which allows anyone to send back a given message hash.
+The `RETURN_DELAY` variable is added to give the users enough time to replay their
+failed messages and to prevent malicious actors from performing a griefing attack
+by sending messages back immediately.
+
+Once the message is returned to the source chain, the message on the local chain is set
+as successful in the `successfulMessages` mapping to ensure non-replayability.
+
 ```solidity
-function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _sender, address _target, bytes calldata _message) external nonReentrant {
-    if (_source == block.chainid) revert MessageSourceSameChain();
-
-    bytes32 messageHash = keccak256(abi.encode(block.chainid, _messageSource, _nonce, _sender, _target, _message));
-
+function revert(bytes32 _messageHash) external nonReentrant {
     if (successfulMessages[messageHash]) revert MessageAlreadyRelayed();
-    if (block.timestamp <  failedMessages[messageHash] + RETURN_DELAY) revert DelayHasNotEnsued();
 
+    (uint256 messageTimestamp, uint256 messageSource) = failedMessages[messageHash];
+
+    // Return delay is necessary to avoid griefing attacks by providing users with time to
+    // replay their transactions give this function has no auth
+    if (block.timestamp <  messageTimestamp + RETURN_DELAY) revert DelayHasNotEnsued();
+
+    delete failedMessages[messageHash];
+
+    // This is set to true to ensure non-replayability on this chain
     successfulMessages[messageHash] = true;
 
     bytes memory data = abi.encodeCall(
         L2ToL2CrossDomainMessenger.receiveMessageHash,
-        (_messageSource, Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER, messageHash)
+        (messageSource, block.chainid, Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER, messageHash)
     );
     emit SentMessage(data);
 }
@@ -314,6 +334,10 @@ sender and caller are all the expected contracts.
 It's also important to ensure only the hashes of messages that were initiated
 in this chain are accepted and that they come from the correct destination
 chain id.
+
+If all checks have been successful, the message has is stored in the
+`returnedMessages` mapping. This enables smart contracts to read from it and
+check whether a message failed or not, and handle the failing case accordingly.
 
 ```solidity
 function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination, address _sender, bytes32 _messageHash) external {
