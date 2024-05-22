@@ -280,11 +280,11 @@ enum ConfigType {
 
 The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
-| ConfigType          | Value                                       |
-|---------------------|---------------------------------------------|
-| `SET_GAS_PAYING_TOKEN`  | `abi.encode(token, decimals, name, symbol)` |
-| `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
-| `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
+| ConfigType             | Value                                       |
+|------------------------|---------------------------------------------|
+| `SET_GAS_PAYING_TOKEN` | `abi.encode(token, decimals, name, symbol)` |
+| `ADD_DEPENDENCY`       | `abi.encode(chainId)`                       |
+| `REMOVE_DEPENDENCY`    | `abi.encode(chainId)`                       |
 
 where
 
