@@ -294,7 +294,6 @@ function sendMessageHashBack(uint256 _messageSource, uint256 _nonce, address _se
     if (successfulMessages[messageHash]) revert MessageAlreadyRelayed();
     if (block.timestamp <  failedMessages[messageHash] + RETURN_DELAY) revert DelayHasNotEnsued();
 
-    returnableMessageHashes[messageHash] = 0;
     successfulMessages[messageHash] = true;
 
     bytes memory data = abi.encodeCall(
