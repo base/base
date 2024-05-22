@@ -2,7 +2,6 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-
 **Table of Contents**
 
 - [CrossL2Inbox](#crossl2inbox)
@@ -37,7 +36,7 @@ an update to the `L1Block` contract with additional functionality.
 ## CrossL2Inbox
 
 | Constant | Value                                        |
-| -------- | -------------------------------------------- |
+|----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000022` |
 
 The `CrossL2Inbox` is responsible for executing a cross chain message on the destination chain.
@@ -53,7 +52,7 @@ The following fields are required for executing a cross chain message:
 [`Identifier`]: ./messaging.md#message-identifier
 
 | Name      | Type         | Description                                             |
-| --------- | ------------ | ------------------------------------------------------- |
+|-----------|--------------|---------------------------------------------------------|
 | `_msg`    | `bytes`      | The [message payload], matching the initiating message. |
 | `_id`     | `Identifier` | A [`Identifier`] pointing to the initiating message.    |
 | `_target` | `address`    | Account that is called with `_msg`.                     |
@@ -148,7 +147,7 @@ properties about the `_msg`.
 ## L2ToL2CrossDomainMessenger
 
 | Constant          | Value                                        |
-| ----------------- | -------------------------------------------- |
+|-------------------|----------------------------------------------|
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
 
@@ -339,7 +338,7 @@ function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination,
 ## L1Block
 
 | Constant            | Value                                        |
-| ------------------- | -------------------------------------------- |
+|---------------------|----------------------------------------------|
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
@@ -363,7 +362,7 @@ enum ConfigType {
 The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
 | ConfigType          | Value                                       |
-| ------------------- | ------------------------------------------- |
+|---------------------|---------------------------------------------|
 | `GAS_PAYING_TOKEN`  | `abi.encode(token, decimals, name, symbol)` |
 | `ADD_DEPENDENCY`    | `abi.encode(chainId)`                       |
 | `REMOVE_DEPENDENCY` | `abi.encode(chainId)`                       |
