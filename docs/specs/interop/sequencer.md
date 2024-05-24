@@ -24,7 +24,7 @@ Sequencer Policy is the process of optimistically enacting rules outside of cons
 (the state-transition function in this context), and the choices can then be asynchronously validated
 by [verifiers](./verifier.md) and [the fault-proof](./fault_proof.md).
 
-In the context of superchain interopability, sequencer policy is utilized to enable cross-chain message relay
+In the context of superchain interoperability, sequencer policy is utilized to enable cross-chain message relay
 without adding additional state-transition complexity or cross-chain synchronicity to the protocol.
 
 ## Block Building
