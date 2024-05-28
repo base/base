@@ -150,7 +150,7 @@ properties about the `_msg`.
 |-------------------|----------------------------------------------|
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
-| `EXPIRY_WINDOW`   | `TBD`                                        |
+| `EXPIRY_WINDOW`   | `uint256(7200)`                              |
 
 The `L2ToL2CrossDomainMessenger` is a higher level abstraction on top of the `CrossL2Inbox` that
 provides features necessary for secure transfers ERC20 tokens between L2 chains.
@@ -337,6 +337,7 @@ check whether a message expired or not, and handle this case accordingly.
 ```solidity
 function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
     if (_messageSource != block.chainid) revert IncorrectMessageSource();
+    if (expiredMessages[_expiredHash] != 0) revert ExpiredMessageAlreadyRelayed();
     if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ExpiredMessageCallerNotCrossL2Inbox();
 
     if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).origin() != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) {
