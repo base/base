@@ -14,15 +14,15 @@
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
-  - [`revert` Invariants](#revert-invariants)
-  - [`receiveMessageHash` Invariants](#receivemessagehash-invariants)
+  - [`expire` Invariants](#expire-invariants)
+  - [`expired` Invariants](#expired-invariants)
   - [Message Versioning](#message-versioning)
   - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
-    - [Sending Back Messages](#sending-back-messages)
-    - [Storing Sent-back Messages](#storing-sent-back-messages)
+    - [Expiring Messages](#expiring-messages)
+    - [Storing Expired Messages](#storing-expired-messages)
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
@@ -163,23 +163,23 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
 
-### `revert` Invariants
+### `expire` Invariants
 
 - The Source chain id MUST not be `block.chainid`
 - The `_destination` chain id MUST be equal to the local chain id
 - The message MUST have not been successfully relayed
-- The `RETURN_DELAY` MUST have elapsed since the message first failed to be relayed
+- The `EXPIRY_WINDOW` MUST have elapsed since the message first failed to be relayed
 - The sent-back message MUST not have been previously relayed
 - The sent-back message MUST not be relayable after being sent back
 
-### `receiveMessageHash` Invariants
+### `expired` Invariants
 
 - Only callable by the `CrossL2Inbox`
 - The message source MUST be `block.chainid`
 - The sender MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `Identifier.chainId` MUST be `_destination`
-- The `returnedMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
+- The `expiredMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
 
 ### Message Versioning
 
@@ -288,29 +288,29 @@ Note that the `relayMessage` function is `payable` to enable relayers to earn in
 To enable cross chain authorization patterns, both the `_sender` and the `_source` MUST be exposed via `public`
 getters.
 
-#### Sending Back Messages Hashes
+#### Expiring Messages Hashes
 
-When sending back a message that failed to be relayed on the destination chain
+When expiring a message that failed to be relayed on the destination chain
 to the source chain, it's crucial to ensure the message can only be sent back
 to the `L2ToL2CrossDomainMessenger` contract in its source chain.
 
-This function has no auth, which allows anyone to send back a given message hash.
-The `RETURN_DELAY` variable is added to give the users enough time to replay their
+This function has no auth, which allows anyone to `expire` a given message hash.
+The `EXPIRY_WINDOW` variable is added to give the users enough time to replay their
 failed messages and to prevent malicious actors from performing a griefing attack
-by sending messages back immediately.
+by expiring messages immediately.
 
-Once the message is returned to the source chain, the message on the local chain is set
+Once the expired message is sent to the source chain, the message on the local chain is set
 as successful in the `successfulMessages` mapping to ensure non-replayability.
 
 ```solidity
-function revert(bytes32 _messageHash) external nonReentrant {
+function expire(bytes32 _messageHash) external nonReentrant {
     if (successfulMessages[messageHash]) revert MessageAlreadyRelayed();
 
     (uint256 messageTimestamp, uint256 messageSource) = failedMessages[messageHash];
 
-    // Return delay is necessary to avoid griefing attacks by providing users with time to
+    // Expiry delay is necessary to avoid griefing attacks by providing users with time to
     // replay their transactions give this function has no auth
-    if (block.timestamp <  messageTimestamp + RETURN_DELAY) revert DelayHasNotEnsued();
+    if (block.timestamp <  messageTimestamp + EXPIRY_WINDOW) revert ExpiryWindowHasNotEnsued();
 
     delete failedMessages[messageHash];
 
@@ -318,16 +318,16 @@ function revert(bytes32 _messageHash) external nonReentrant {
     successfulMessages[messageHash] = true;
 
     bytes memory data = abi.encodeCall(
-        L2ToL2CrossDomainMessenger.receiveMessageHash,
+        L2ToL2CrossDomainMessenger.expired,
         (messageSource, block.chainid, Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER, messageHash)
     );
     emit SentMessage(data);
 }
 ```
 
-#### Storing Sent-back Message Hashes
+#### Storing Expired Message Hashes
 
-When receiving a sent-back message only message hashes
+When receiving an expired message, only message hashes
 of actual failed messages should be stored, for this we must ensure the origin,
 sender and caller are all the expected contracts.
 
@@ -336,14 +336,14 @@ in this chain are accepted and that they come from the correct destination
 chain id.
 
 If all checks have been successful, the message has is stored in the
-`returnedMessages` mapping. This enables smart contracts to read from it and
+`expiredMessages` mapping. This enables smart contracts to read from it and
 check whether a message failed or not, and handle the failing case accordingly.
 
 ```solidity
-function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination, address _sender, bytes32 _messageHash) external {
+function expired(uint256 _messageSource, uint256 _messageDestination, address _sender, bytes32 _messageHash) external {
     if (_messageSource != block.chainid) revert IncorrectMessageSource();
     if (_sender != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) revert SenderIsNotCrossDomainMesenger();
-    if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ReceiveMessageHashCallerNotCrossL2Inbox();
+    if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ExpiredMessageCallerNotCrossL2Inbox();
 
     if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).origin() != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) {
         revert CrossL2InboxOriginNotL2ToL2CrossDomainMessenger();
@@ -353,9 +353,9 @@ function receiveMessageHash(uint256 _messageSource, uint256 _messageDestination,
         revert CrossL2InboxDestinationDoesntMatch();
     }
 
-    returnedMessages[_messageHash] = block.timestamp;
+    expiredMessages[_messageHash] = block.timestamp;
 
-    emit MessageHashReceived(_messageHash);
+    emit MessageHashExpired(_messageHash);
 }
 ```
 
