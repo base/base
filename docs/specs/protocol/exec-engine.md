@@ -489,7 +489,4 @@ For the Ecotone upgrade, this entails that:
 
 The Ethereum Node Record (ENR) for an Optimism execution node must contain an `opel` key-value pair where the key is
 `opel` and the value is a [EIP-2124](https://eips.ethereum.org/EIPS/eip-2124) fork id.
-
-TODO: Do we actually want to just use chainID + use the native EIP-2124 checking to differentiate based on the chain?
-
 The EL uses a different key from the CL in order to stop EL and CL nodes from connecting to each other.
