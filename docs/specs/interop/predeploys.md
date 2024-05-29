@@ -177,6 +177,7 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The message source MUST be `block.chainid`
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `expiredMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
+- Already expired messages MUST NOT be relayed.
 
 ### Message Versioning
 
@@ -269,17 +270,20 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
        _calldata: _message
     });
 
-    if (success) {
-        successfulMessages[messageHash] = true;
-        delete failedMessages[messageHash];
-        emit RelayedMessage(messageHash);
-    } else {
-        if (failedMessages[messageHash].timestamp == 0) {
-            failedMessages[messageHash] = FailedMessage({timestamp: block.timestamp, sourceChainId: _source});
-        }
-        emit FailedRelayedMessage(messageHash);
+    if (!success) {
+      emit FailedRelayedMessage(messageHash);
+
+      if (failedMessages[messageHash].timestamp == 0) {
+        failedMessages[messageHash] = FailedMessage({timestamp: block.timestamp, sourceChainId: _source});
+      }
+
+      return;
     }
-}
+
+    successfulMessages[messageHash] = true;
+    delete failedMessages[messageHash];
+    emit RelayedMessage(messageHash);
+};
 ```
 
 Note that the `relayMessage` function is `payable` to enable relayers to earn in the gas paying asset.
