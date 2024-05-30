@@ -35,7 +35,7 @@ capability.
 ### Token Minting
 
 The contract MUST have a `mint` function with external visibility that allows the contract owner to mint new tokens to an
-arbitrary address. This function MUST only be called by the contract owner, as enforced by the `onlyOwner` modifier inherited
+arbitrary address. This function MUST only be called by the contract owner, the `MintManager`, as enforced by the `onlyOwner` modifier inherited
 from the `Ownable` contract. When tokens are minted, the voting power of the recipient address MUST be updated accordingly.
 
 ### Token Burning
