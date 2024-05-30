@@ -18,11 +18,11 @@
 
 ## Overview
 
-| Constants          | Value                                        |
-|-------------------|----------------------------------------------|
-| Address           | `0x4200000000000000000000000000000000000042` |
-| Token name        | `Optimism`                                   |
-| Token symbol      | `OP`                                         |
+| Constants    | Value                                        |
+|--------------|----------------------------------------------|
+| Address      | `0x4200000000000000000000000000000000000042` |
+| Token name   | `Optimism`                                   |
+| Token symbol | `OP`                                         |
 
 `GovernanceToken` is an [ERC20](https://eips.ethereum.org/EIPS/eip-20) token contract that inherits from `ERC20Burnable`,
 `ERC20Votes`, and `Ownable`. It allows token holders to delegate their voting power to other addresses, enabling a representative
