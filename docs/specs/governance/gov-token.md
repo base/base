@@ -75,18 +75,6 @@ The contract MUST maintain a mapping of addresses to their checkpoint history. A
 provide functions `numCheckpoints` and `checkpoints` to allow retrieving the number of checkpoints for an account
 and the details of a specific checkpoint.
 
-### Overrides
-
-The contract overrides several functions from the inherited contracts to prevent collisions between the inherited contracts
-methods. The following functions are overridden:
-
-- `_afterTokenTransfer`: Called after each token transfer to update the voting power. Concretely, the contract uses
-  the `ERC20Votes` implementation to override the `_afterTokenTransfer` function.
-- `_mint`: Called when new tokens are minted to update the voting power and total supply. The contract uses the
-  `ERC20Votes` implementation to override the `_mint` function.
-- `_burn`: Called when tokens are burned to update the voting power and total supply. The contract uses the `ERC20Votes`
-  implementation to override the `_burn` function.
-
 ### Supply Cap
 
 The total token supply is capped to `2^208^ - 1` to prevent overflow risks in the voting system.
