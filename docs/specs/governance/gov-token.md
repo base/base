@@ -43,24 +43,21 @@ struct Checkpoint {
 }
 ```
 
-Checkpoints correrspond to a mapping of an address to an append-only list of checkpoints, which are updated when tokens
-are transferred, minted, burned, or delegated. Generically, updating checkpoints happens by means of the `_moveVotingPower`
-function.
+Checkpoints are organized by a mapping of an address to an append-only list of checkpoints, one for each user. When a
+user is involved in a token transfer, mint, burn, or vote delegation, their checkpoint list is incremented with a new
+checkpoint reflecting the user's updated voting power.
 
 ```solidity
 mapping(address => Checkpoint[]) private _checkpoints;
 ```
 
-An account's checkpoints' `fromBlock` values are strictly increasing, which means checkpoints at the same block number get
-overwritten by the new one, ensuring there's always at most one checkpoint per block number. This is enforced by the `_writeCheckpoint`
-function.
-
-Additionally, the contract MUST provide functions `numCheckpoints` and `checkpoints` to allow retrieving the number of
-checkpoints for an account and the details of a specific checkpoint.
+For any checkpoint list, the `fromBlock` value of each checkpoint is strictly increasing as a factor of the checkpoint's
+index in the list. Additionally, if a checkpoint is created when there's already a checkpoint at the same block number,
+the new checkpoint replaces the old one.
 
 ### Token Minting
 
-The contract MUST have a `mint` function with external visibility that allows the contract owner to mint new tokens to an
+`GovernanceToken` MUST have a `mint` function with external visibility that allows the contract owner to mint new tokens to an
 arbitrary address. This function MUST only be called by the contract owner, the `MintManager`, as enforced by the
 `onlyOwner` modifier inherited from the `Ownable` contract. When tokens are minted, the voting power of the recipient
 address MUST be updated accordingly.
