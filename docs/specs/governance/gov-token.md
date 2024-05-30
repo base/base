@@ -29,8 +29,28 @@
 voting system.
 
 The specific implementation details of the voting and delegation logic are inherited from the `ERC20Votes` contract. The
-`GovernanceToken` contract focuses on integrating this functionality with the ERC20 token standard and adding the minting
+`GovernanceToken` contract focuses on integrating this functionality with `ERC20Burnable` and adding the minting
 capability.
+
+### Checkpoints
+
+`ERC20Votes` uses checkpoints to track voting power history. A checkpoint is a "snapshot" of the voting power of an address at a specific
+block number.
+```solidity
+struct Checkpoint {
+    uint32 fromBlock;
+    uint224 votes;
+}
+```
+Checkpoints correrspond to a mapping of an address to an append-only list of checkpoints, which are updated when tokens
+are transferred, minted, burned, or delegated. Generically, updating checkpoints happens by means of the `_moveVotingPower` function.
+
+```solidity
+mapping(address => Checkpoint[]) private _checkpoints;
+```
+
+An account's checkpoints' `fromBlock` values are strictly increasing, which means checkpoints at the same block number get
+overwritten by the new one, ensuring there's always at most one checkpoint per block number. This is enforced by the `_writeCheckpoint` function.
 
 ### Token Minting
 
@@ -59,12 +79,12 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 ### Delegation
 
 Vote power can be delegated either by calling the `delegate` function directly or by providing a signature to be used
-with `delegateBySig`, as inherited from `ERC20Votes`.
+with `delegateBySig`, as inherited from `ERC20Votes`. 
 
-When a token holder delegates their voting power, the delegated address receives the voting power corresponding to the token
-holder's balance.
-
-Delegation is recorded in checkpoints, which store the voting power of each address at specific points in time.
+The delegation is recorded in a checkpoint. When a token holder delegates their voting power, the delegated address receives
+the voting power corresponding to the token holder's balance. These tokens become independent of the user's balance, so their
+transfers do not affect the voting power of the delegated address. The delegated address can further transfer these tokens,
+which would move the voting power to the new recipient address
 
 ### Checkpoints
 
