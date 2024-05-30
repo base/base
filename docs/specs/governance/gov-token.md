@@ -5,11 +5,14 @@
 **Table of Contents**
 
 - [Overview](#overview)
-- [Composition](#composition)
-  - [Inherited contracts](#inherited-contracts)
-    - [Overrides](#overrides)
-  - [Constructor](#constructor)
-  - [New functions](#new-functions)
+  - [Token Minting](#token-minting)
+  - [Token Burning](#token-burning)
+  - [Voting Power](#voting-power)
+    - [Queries](#queries)
+  - [Delegation](#delegation)
+  - [Checkpoints](#checkpoints)
+  - [Overrides](#overrides)
+  - [Supply Cap](#supply-cap)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -18,39 +21,73 @@
 | Constant          | Value                                        |
 |-------------------|----------------------------------------------|
 | Address           | `0x4200000000000000000000000000000000000042` |
+| Token name        | `Optimism`                                   |
+| Token symbol      | `OP`                                         |
 
-The `GovernanceToken` is a contract on L2 for the OP token, which is used to govern the OP-Stack protocol.
+`GovernanceToken` is an [ERC20](https://eips.ethereum.org/EIPS/eip-20) token contract that inherits from `ERC20Burnable`,
+`ERC20Votes`, and `Ownable`. It allows token holders to delegate their voting power to other addresses, enabling a representative
+voting system.
 
-## Composition
+The specific implementation details of the voting and delegation logic are inherited from the `ERC20Votes` contract. The
+`GovernanceToken` contract focuses on integrating this functionality with the ERC20 token standard and adding the minting
+capability.
 
-### Inherited contracts
+### Token Minting
 
-`GovernanceToken` inherits from `ERC20Burnable`, `ERC20Votes`, and `Ownable`.
+The contract MUST have a `mint` function with external visibility that allows the contract owner to mint new tokens to an
+arbitrary address. This function MUST only be called by the contract owner, as enforced by the `onlyOwner` modifier inherited
+from the `Ownable` contract. When tokens are minted, the voting power of the recipient address MUST be updated accordingly.
 
-#### Overrides
+### Token Burning
 
-The contract overrides the following functions in order to resolve collisions between `ERC20` and `ERC20Votes`:
+The contract MUST allow token holders to burn their own tokens using the inherited `burn` function from `ERC20Burnable`.
+When tokens are burned, the total supply and the holder's voting power MUST be reduced accordingly.
 
-- `_afterTokenTransfer`: point to `ERC20Votes._afterTokenTransfer`
-- `_mint`: point to `ERC20Votes._mint`
-- `_burn`: point to `ERC20Votes._burn`
+### Voting Power
 
-### Constructor
+Each token corresponds to one unit of voting power.
+By default, token balance does not account for voting power. To have their voting power counted, token holders MUST delegate
+their voting power to an address (can be their own address).
+The contract MUST offer public accessors for quering voting power, as outlined below.
 
-The constructor of `GovernanceToken` is as follows:
+#### Queries
 
-```solidity
-    constructor() ERC20("Optimism", "OP") ERC20Permit("Optimism") {}
-```
+- The `getVotes` function MUST return the current voting power of an address.
+- The `getPastVotes` function MUST allow querying the voting power of an address at a specific block number in the past.
+- The `getPastTotalSupply` function MUST return the total voting power at a specific block number in the past.
 
-### New functions
+### Delegation
 
-The contract introduces the following functions:
+Vote power can be delegated either by calling the `delegate` function directly or by providing a signature to be used
+with `delegateBySig`, as inherited from `ERC20Votes`.
 
-```solidity
-    function mint(address _account, uint256 _amount) public onlyOwner {
-        _mint(_account, _amount);
-    }
-```
+When a token holder delegates their voting power, the delegated address receives the voting power corresponding to the token
+holder's balance.
 
-which allows the owner to mint tokens.
+Delegation is recorded in checkpoints, which store the voting power of each address at specific points in time.
+
+### Checkpoints
+
+The contract keeps a history of each account's voting power using checkpoints.
+Checkpoints are recorded whenever tokens are transferred, minted, or burned, and when delegation occurs.
+Each checkpoint represents the voting power of an address at a specific block number.
+The contract MUST maintain a mapping of addresses to their checkpoint history. Additionally, the contract MUST
+provide functions `numCheckpoints` and `checkpoints` to allow retrieving the number of checkpoints for an account
+and the details of a specific checkpoint.
+
+### Overrides
+
+The contract overrides several functions from the inherited contracts to prevent collisions between the inherited contracts
+methods. The following functions are overridden:
+
+- `_afterTokenTransfer`: Called after each token transfer to update the voting power. Concretely, the contract uses
+  the `ERC20Votes` implementation to override the `_afterTokenTransfer` function.
+- `_mint`: Called when new tokens are minted to update the voting power and total supply. The contract uses the
+  `ERC20Votes` implementation to override the `_mint` function.
+- `_burn`: Called when tokens are burned to update the voting power and total supply. The contract uses the `ERC20Votes`
+  implementation to override the `_burn` function.
+
+### Supply Cap
+
+The total token supply is capped to `2^208^ - 1` to prevent overflow risks in the voting system.
+If the total supply exceeds this limit, the `_mint` function MUST revert with an `ERC20ExceededSafeSupply` error.
