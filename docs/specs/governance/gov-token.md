@@ -72,9 +72,9 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 
 #### Queries
 
-- The `getVotes` function MUST return the current voting power of an address.
-- The `getPastVotes` function MUST allow querying the voting power of an address at a specific block number in the past.
-- The `getPastTotalSupply` function MUST return the total voting power at a specific block number in the past.
+- The `getVotes()(uint256)` function MUST return the current voting power of an address.
+- The `getPastVotes(address, uint256)` function MUST allow querying the voting power of an address at a specific block number in the past.
+- The `getPastTotalSupply(uint256)` function MUST return the total voting power at a specific block number in the past.
 
 ### Delegation
 
