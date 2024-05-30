@@ -38,7 +38,7 @@
 
 <!-- Glossary References -->
 
-[g-output-root]: ../../../glossary.md#L2-output-root
+[g-output-root]: ../../../glossary.md#l2-output-root
 
 ## Overview
 
