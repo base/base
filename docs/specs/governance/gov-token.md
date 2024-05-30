@@ -11,7 +11,6 @@
   - [Voting Power](#voting-power)
     - [Queries](#queries)
   - [Delegation](#delegation)
-  - [Supply Cap](#supply-cap)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -57,15 +56,18 @@ the new checkpoint replaces the old one.
 
 ### Token Minting
 
-`GovernanceToken` MUST have a `mint` function with external visibility that allows the contract owner to mint new tokens to an
-arbitrary address. This function MUST only be called by the contract owner, the `MintManager`, as enforced by the
-`onlyOwner` modifier inherited from the `Ownable` contract. When tokens are minted, the voting power of the recipient
-address MUST be updated accordingly.
+`GovernanceToken` MUST have a `mint(address,uint256)` function with external visibility that allows the contract owner
+to mint an arbitrary number of new tokens to an specific address. This function MUST only be called by the contract
+owner, the `MintManager`, as enforced by the `onlyOwner` modifier inherited from the `Ownable` contract. When tokens
+are minted, the voting power of the recipient address MUST be updated accordingly. The total token supply is capped to
+`2^208^ - 1` to prevent overflow risks in the voting system. If the total supply exceeds this limit,
+`_mint(address,uint256)`, as inherited from `ERC20Votes`, MUST revert.
 
 ### Token Burning
 
-The contract MUST allow token holders to burn their own tokens using the inherited `burn` function from `ERC20Burnable`.
-When tokens are burned, the total supply and the holder's voting power MUST be reduced accordingly.
+The contract MUST allow token holders to burn their own tokens using the inherited `burn(uint256)` or
+`burnFrom(address,uint256)` functions inherited from `ERC20Burnable`. When tokens are burned, the total supply and the
+holder's voting power MUST be reduced accordingly.
 
 ### Voting Power
 
@@ -77,22 +79,18 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 #### Queries
 
 - The `getVotes()(uint256)` function MUST return the current voting power of an address.
-- The `getPastVotes(address, uint256)` function MUST allow querying the voting power of an address at a specific block number
-  in the past.
-- The `getPastTotalSupply(uint256)` function MUST return the total voting power at a specific block number in the past.
+- The `getPastVotes(address, uint256)(uint256)` function MUST allow querying the voting power of an address at a specific
+  block number in the past.
+- The `getPastTotalSupply(uint256)(uint256)` function MUST return the total voting power at a specific block number in
+  the past.
 
 ### Delegation
 
 Vote power can be delegated either by calling the `delegate(address)` function directly (to delegate as the `msg.sender`)
-or by providing a signature to be used with `function delegateBySig(address, uint256, uint256, uint8, bytes32, bytes32)`,
+or by providing a signature to be used with function `delegateBySig(address, uint256, uint256, uint8, bytes32, bytes32)`,
 as inherited from `ERC20Votes`.
 
 The delegation is recorded in a checkpoint. When a token holder delegates their voting power, the delegated address receives
-the voting power corresponding to the token holder's balance. These tokens become independent of the user's balance, so their
-transfers do not affect the voting power of the delegated address. The delegated address can further transfer these tokens,
-which would move the voting power to the new recipient address
-
-### Supply Cap
-
-The total token supply is capped to `2^208^ - 1` to prevent overflow risks in the voting system.
-If the total supply exceeds this limit, `_mint` MUST revert.
+the voting power corresponding to the token holder's balance. These tokens become independent of the user's balance, so the
+user's future transfers do not affect the voting power of the delegated address. The delegated address can further transfer
+these tokens, which would move the voting power to the new recipient.
