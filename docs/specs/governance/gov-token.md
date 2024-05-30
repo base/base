@@ -28,7 +28,7 @@ voting system.
 
 The specific implementation details of the voting and delegation logic are inherited from the `ERC20Votes` contract. The
 `GovernanceToken` contract focuses on integrating this functionality with `ERC20Burnable` and adding the minting
-capability.
+capability. EIP-712 permit functionality is also inherited from `ERC20Permit`, which is imported by `ERC20Votes`.
 
 ### Checkpoints
 
