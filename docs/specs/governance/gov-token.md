@@ -98,4 +98,4 @@ which would move the voting power to the new recipient address
 ### Supply Cap
 
 The total token supply is capped to `2^208^ - 1` to prevent overflow risks in the voting system.
-If the total supply exceeds this limit, the `_mint` function MUST revert with an `ERC20ExceededSafeSupply` error.
+If the total supply exceeds this limit, `_mint` MUST revert.
