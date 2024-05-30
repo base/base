@@ -91,6 +91,5 @@ or by providing a signature to be used with function `delegateBySig(address, uin
 as inherited from `ERC20Votes`.
 
 The delegation is recorded in a checkpoint. When a token holder delegates their voting power, the delegated address receives
-the voting power corresponding to the token holder's balance. These tokens become independent of the user's balance, so the
-user's future transfers do not affect the voting power of the delegated address. The delegated address can further transfer
-these tokens, which would move the voting power to the new recipient.
+the voting power corresponding to the token holder's balance. Under token transfers, the voting power associated with the
+tokens is moved from the delegate of the sender to that of the recipient.
