@@ -78,8 +78,8 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 
 ### Delegation
 
-Vote power can be delegated either by calling the `delegate` function directly or by providing a signature to be used
-with `delegateBySig`, as inherited from `ERC20Votes`. 
+Vote power can be delegated either by calling the `delegate(address)` function directly (to delegate as the `msg.sender`) or by providing
+a signature to be used with `function delegateBySig(address, uint256, uint256, uint8, bytes32, bytes32)`, as inherited from `ERC20Votes`. 
 
 The delegation is recorded in a checkpoint. When a token holder delegates their voting power, the delegated address receives
 the voting power corresponding to the token holder's balance. These tokens become independent of the user's balance, so their
