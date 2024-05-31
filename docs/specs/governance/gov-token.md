@@ -79,7 +79,7 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 #### Queries
 
 - The `getVotes()(uint256)` function MUST return the current voting power of an address.
-- The `getPastVotes(address, uint256)(uint256)` function MUST allow querying the voting power of an address at a specific
+- The `getPastVotes(address,uint256)(uint256)` function MUST allow querying the voting power of an address at a specific
   block number in the past.
 - The `getPastTotalSupply(uint256)(uint256)` function MUST return the total voting power at a specific block number in
   the past.
@@ -87,7 +87,7 @@ The contract MUST offer public accessors for quering voting power, as outlined b
 ### Delegation
 
 Vote power can be delegated either by calling the `delegate(address)` function directly (to delegate as the `msg.sender`)
-or by providing a signature to be used with function `delegateBySig(address, uint256, uint256, uint8, bytes32, bytes32)`,
+or by providing a signature to be used with function `delegateBySig(address,uint256,uint256,uint8,bytes32,bytes32)`,
 as inherited from `ERC20Votes`.
 
 The delegation is recorded in a checkpoint. When a token holder delegates their voting power, the delegated address receives
