@@ -42,9 +42,9 @@ struct Checkpoint {
 }
 ```
 
-Checkpoints are organized by a mapping of an address to an append-only list of checkpoints, one for each user. When a
-user is involved in a token transfer, mint, burn, or vote delegation, their checkpoint list is incremented with a new
-checkpoint reflecting the user's updated voting power.
+Checkpoints are organized as a one-to-one mapping of user addresses to append-only lists of checkpoints. When a
+user is involved in a token transfer, mint, burn, or vote delegation, a new checkpoint is added to their corresponding
+list of checkpoints, reflecting the user's updated voting power at the current block number.
 
 ```solidity
 mapping(address => Checkpoint[]) private _checkpoints;
