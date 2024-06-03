@@ -18,7 +18,9 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-Note: Plasma Mode is a Beta feature of the MIT licensed OP Stack.  While it has received initial review from core contributors, it is still undergoing testing, and may have bugs or other issues.
+Note: Plasma Mode is a Beta feature of the MIT licensed OP Stack.
+While it has received initial review from core contributors, it is still undergoing testing,
+and may have bugs or other issues.
 
 ## Overview
 
