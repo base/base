@@ -254,6 +254,8 @@ but the matching L1-origin information may not be present at the time of activat
   [Governance Proposal](https://gov.optimism.io/t/final-upgrade-proposal-3-delta-network-upgrade/7310).
 - `v6.0.0`: 2024 Mar 14th - Ecotone network upgrade (4844 Blob Batches + Cancun).
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-5-ecotone-network-upgrade/7669).
+- `v7.0.0`: 2024 Jul 10th (optimistic[^1]) - Fjord network upgrade (RIP-7212 precompile + FastLZ cost fn + Brotli compression).
+  [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-9-fjord-network-upgrade/8236).
 
 ## Post-Bedrock Network upgrades
 
@@ -267,4 +269,6 @@ proposal is the canonoical document for the timestamp; however, the timestamps a
 |Canyon         |               1704992401|               1699981200|              1699981200|
 |Delta          |               1708560000|               1703203200|              1703116800|
 |Ecotone        |               1710374401|               1708534800|              1707238800|
-|Fjord          |                      n/a|                      n/a|                     n/a|
+|Fjord          |           1720627201[^1]|               1716998400|                     n/a|
+
+[^1]: Governance vote and veto still have to pass.
