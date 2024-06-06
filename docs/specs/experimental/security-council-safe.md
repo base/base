@@ -34,7 +34,7 @@ those provided by the Safe contract.
 
 The Security Council acts as the Guardian, which is authorized to activate the [Superchain
 Pause](../protocol/superchain-configuration.md#pausability) functionality and for
-[blacklisting](../experimental/fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
+[blacklisting](../fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
 game contracts.
 
 However the Security Council cannot be expected to react quickly in an emergency situation.

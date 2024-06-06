@@ -274,7 +274,7 @@ The input data stored on the DA storage for the given `<commitment>`.
 The status of the challenge for the given `<commitment>` at the given `<blocknumber>` on the L1
 DataAvailabilityChallenge contract.
 
-[faultproofs]: ./fault-proof/index.md
+[faultproofs]: ../fault-proof/index.md
 
 ## Safety and Finality
 

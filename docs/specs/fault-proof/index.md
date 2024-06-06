@@ -55,7 +55,7 @@ and contribute to proof diversity when resolving a dispute.
 "Stateless execution" of the program, and its individual instructions, refers to reproducing
 the exact same computation by authenticating the inputs with a [Pre-image Oracle][oracle].
 
-![Diagram of Program and VM architecture](../../static/assets/fault-proof.svg)
+![Diagram of Program and VM architecture](../static/assets/fault-proof.svg)
 
 ## Pre-image Oracle
 
@@ -310,7 +310,7 @@ but can be overridden for testing purposes:
   - `rollup_config`: The rollup configuration used by the rollup-node (also known as `rollup.json`)
 
 The implied inputs rely on L1-introspection to load attributes of the `dispute` through the
-[dispute game interface](./stage-one/dispute-game-interface.md), in the L1 history up and till the specified `l1_head`.
+[dispute game interface](stage-one/dispute-game-interface.md), in the L1 history up and till the specified `l1_head`.
 The `dispute` may be the claim itself, or a pointer to specific prior claimed data in L1,
 depending on the dispute game interface.
 
@@ -324,9 +324,9 @@ During testing a simplified prologue that loads the overrides may be used.
 To verify a claim about L2 state, the program first reproduces
 the L2 state by applying L1 data to prior agreed L2 history.
 
-This process is also known as the [L2 derivation process](../../protocol/derivation.md),
-and matches the processing in the [rollup node](../../protocol/rollup-node.md) and
-[execution-engine](../../protocol/exec-engine.md).
+This process is also known as the [L2 derivation process](../protocol/derivation.md),
+and matches the processing in the [rollup node](../protocol/rollup-node.md) and
+[execution-engine](../protocol/exec-engine.md).
 
 The difference is that rather than retrieving inputs from an RPC and applying state changes to disk,
 the inputs are loaded through the [pre-image oracle][oracle] and the changes accumulate in memory.
@@ -381,7 +381,7 @@ A disputed output-root may be disproven by first producing the output-root, and 
 
 1. Retrieve the output attributes from the L2 chain view: the state-root, block-hash, withdrawals storage-root.
 2. Compute the output-root, as the
-   [proposer should compute it](../../protocol/proposals.md#l2-output-commitment-construction).
+   [proposer should compute it](../protocol/proposals.md#l2-output-commitment-construction).
 3. If the output-root matches the `claim`, exit with code 0. Otherwise, exit with code 1.
 
 > Note: the dispute game interface is actively changing, and may require additional claim assertions.
@@ -436,7 +436,7 @@ Requests the host to prepare the L2 MPT node preimage with the given `<nodehash>
 
 Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
-[computed output root](../../protocol/proposals.md#l2-output-commitment-construction).
+[computed output root](../protocol/proposals.md#l2-output-commitment-construction).
 
 ### Precompile Accelerators
 
@@ -493,5 +493,5 @@ The allocated response time is limited by the dispute-game window,
 and any additional time necessary based on L1 fee changes when bonds are insufficient.
 
 > Note: the timed, bonded, bisection dispute game is in development.
-> Also see [fault dispute-game specs](./stage-one/fault-dispute-game.md) for fault dispute game system specifications,
-> And [dispute-game-interface specs](./stage-one/dispute-game-interface.md)
+> Also see [fault dispute-game specs](stage-one/fault-dispute-game.md) for fault dispute game system specifications,
+> And [dispute-game-interface specs](stage-one/dispute-game-interface.md)

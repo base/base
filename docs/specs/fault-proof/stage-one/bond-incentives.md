@@ -23,7 +23,7 @@
 
 ## Overview
 
-Bonds is an add-on to the core [Fault Dispute Game](./fault-dispute-game.md). The core game mechanics are
+Bonds is an add-on to the core [Fault Dispute Game](fault-dispute-game.md). The core game mechanics are
 designed to ensure honesty as the best response to winning subgames. By introducing financial incentives,
 Bonds makes it worthwhile for honest challengers to participate.
 Without the bond reward incentive, the FDG will be too costly for honest players to participate in given the
@@ -128,7 +128,7 @@ all other costs of participation.
 ### DelayedWETH
 
 FPM introduces a contract `DelayedWETH` designed to hold the bonded ETH for each
-[Fault Dispute Game](./fault-dispute-game.md).
+[Fault Dispute Game](fault-dispute-game.md).
 `DelayedWETH` is an extended version of the standard `WETH` contract that introduces a delayed unwrap mechanism that
 allows an owner address to function as a backstop in the case that a Fault Dispute Game would
 incorrectly distribute bonds.

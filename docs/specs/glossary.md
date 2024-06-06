@@ -777,7 +777,7 @@ proof][fault-proof].
 An on-chain _interactive_ proof, performed by [validators][validator], that demonstrates that a [sequencer] provided
 erroneous [output roots][l2-output].
 
-cf. [Fault Proofs](./experimental/fault-proof/index.md)
+cf. [Fault Proofs](fault-proof/index.md)
 
 ## Time Slot
 

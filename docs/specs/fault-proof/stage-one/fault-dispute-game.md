@@ -38,7 +38,7 @@
 
 <!-- Glossary References -->
 
-[g-output-root]: ../../../glossary.md#l2-output-root
+[g-output-root]: ../../glossary.md#l2-output-root
 
 ## Overview
 
@@ -142,7 +142,7 @@ $2^{d+1}-1$ positions, where $d$ is the `MAX_GAME_DEPTH` (unless $d=0$, in which
 The full game tree, with a layer of the tree allocated to output bisection, and sub-trees after an arbitrary split
 depth, looks like:
 
-![ob-tree](../../../static/assets/ob-tree.png)
+![ob-tree](../../static/assets/ob-tree.png)
 
 ### Position
 
@@ -197,7 +197,7 @@ Critically, freeloader claims, if left untouched, do not influence incorrect res
 ## Core Game Mechanics
 
 This section specifies the core game mechanics of the FDG. The full FDG mechanics includes a
-[specification for Bonds](./bond-incentives.md). Readers should understand basic game mechanics before
+[specification for Bonds](bond-incentives.md). Readers should understand basic game mechanics before
 reading up on the Bond specification.
 
 ### Actors
@@ -231,7 +231,7 @@ The attack position relative to a node can be calculated by multiplying its gind
 
 To illustrate this, here's a Game Tree highlighting an attack on a Claim positioned at 6.
 
-![Attacking node 6](../../../static/assets/attack.png)
+![Attacking node 6](../../static/assets/attack.png)
 
 Attacking the node at 6 moves creates a new claim positioned at 12.
 
@@ -240,14 +240,14 @@ Attacking the node at 6 moves creates a new claim positioned at 12.
 The logical move against a claim when you agree with both it and its parent.
 A defense at the relative position to a node, `n`, in the Game Tree commits to the first half of n + 1’s trace range.
 
-![Defend at 4](../../../static/assets/defend.png)
+![Defend at 4](../../static/assets/defend.png)
 
 Note that because of this, some nodes may never exist within the Game Tree.
 However, they're not necessary as these nodes have complimentary, valid positions
 with the same trace index within the tree. For example, a Position with gindex 5 has the same
 trace index as another Position with gindex 2. We can verify that all trace indices have valid moves within the game:
 
-![Game Tree Showing All Valid Move Positions](../../../static/assets/valid-moves.png)
+![Game Tree Showing All Valid Move Positions](../../static/assets/valid-moves.png)
 
 There may be multiple claims at the same position, so long as their state witness hashes are unique.
 
