@@ -47,8 +47,8 @@ The following table includes each of the preinstalls.
 | Permit2                                   | 0x000000000022D473030F116dDEE9F6B43aC78BA3 |
 | ERC-4337 v0.6.0 EntryPoint                | 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789 |
 | ERC-4337 v0.6.0 SenderCreator             | 0x7fc98430eaedbb6070b35b39d798725049088348 |
-| ERC-4337 v0.7.0 EntryPoint                | 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789 |
-| ERC-4337 v0.7.0 SenderCreator             | 0x7fc98430eaedbb6070b35b39d798725049088348 |
+| ERC-4337 v0.7.0 EntryPoint                | 0x0000000071727De22E5E9d8BAf0edAc6f37da032 |
+| ERC-4337 v0.7.0 SenderCreator             | 0xEFC2c1444eBCC4Db75e7613d20C6a62fF67A167C |
 
 ## Safe
 
