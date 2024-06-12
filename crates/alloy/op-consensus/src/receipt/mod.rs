@@ -4,7 +4,7 @@ mod envelope;
 pub use envelope::OpReceiptEnvelope;
 
 mod receipts;
-pub use receipts::{OpDepositReceipt, OpReceiptWithBloom};
+pub use receipts::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
 /// Receipt is the result of a transaction execution.
 pub trait OpTxReceipt: TxReceipt {
@@ -18,7 +18,7 @@ pub trait OpTxReceipt: TxReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::Receipt;
+    use alloy_consensus::{Receipt, ReceiptWithBloom};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{address, b256, bytes, hex, Bytes, Log, LogData};
     use alloy_rlp::{Decodable, Encodable};
@@ -32,10 +32,10 @@ mod tests {
         let expected = hex!("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff");
 
         let mut data = vec![];
-        let receipt = OpReceiptEnvelope::Legacy(OpReceiptWithBloom {
-            receipt: OpDepositReceipt {
-                inner: Receipt {
-                    status: false,
+        let receipt =
+            OpReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: false.into(),
                     cumulative_gas_used: 0x1u128,
                     logs: vec![Log {
                         address: address!("0000000000000000000000000000000000000011"),
@@ -48,11 +48,8 @@ mod tests {
                         ),
                     }],
                 },
-                deposit_nonce: None,
-                deposit_receipt_version: None,
-            },
-            logs_bloom: [0; 256].into(),
-        });
+                logs_bloom: [0; 256].into(),
+            });
 
         receipt.network_encode(&mut data);
 
@@ -68,10 +65,10 @@ mod tests {
 
         // EIP658Receipt
         let expected =
-            OpReceiptWithBloom {
+            OpDepositReceiptWithBloom {
                 receipt: OpDepositReceipt {
                     inner: Receipt {
-                        status: false,
+                        status: false.into(),
                         cumulative_gas_used: 0x1u128,
                         logs: vec![Log {
                             address: address!("0000000000000000000000000000000000000011"),
@@ -90,7 +87,7 @@ mod tests {
                 logs_bloom: [0; 256].into(),
             };
 
-        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
     }
 
@@ -99,7 +96,7 @@ mod tests {
         let receipt = OpDepositReceipt {
             inner: Receipt {
                 cumulative_gas_used: 16747627,
-                status: true,
+                status: true.into(),
                 logs: vec![
                     Log {
                         address: address!("4bf56695415f725e43c3e04354b604bcfb6dfb6e"),
@@ -129,7 +126,7 @@ mod tests {
         let mut data = vec![];
 
         receipt.encode(&mut data);
-        let decoded = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let decoded = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
 
         // receipt.clone().to_compact(&mut data);
         // let (decoded, _) = Receipt::from_compact(&data[..], data.len());
@@ -141,16 +138,16 @@ mod tests {
         let data = hex!("f9010c0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf");
 
         // Deposit Receipt (post-regolith)
-        let expected = OpReceiptWithBloom {
+        let expected = OpDepositReceiptWithBloom {
             receipt: OpDepositReceipt {
-                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true },
+                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true.into() },
                 deposit_nonce: Some(4012991),
                 deposit_receipt_version: None,
             },
             logs_bloom: [0; 256].into(),
         };
 
-        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
 
         let mut buf = Vec::new();
@@ -163,16 +160,16 @@ mod tests {
         let data = hex!("f9010d0182b741b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0833d3bbf01");
 
         // Deposit Receipt (post-regolith)
-        let expected = OpReceiptWithBloom {
+        let expected = OpDepositReceiptWithBloom {
             receipt: OpDepositReceipt {
-                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true },
+                inner: Receipt { cumulative_gas_used: 46913, logs: vec![], status: true.into() },
                 deposit_nonce: Some(4012991),
                 deposit_receipt_version: Some(1),
             },
             logs_bloom: [0; 256].into(),
         };
 
-        let receipt = OpReceiptWithBloom::decode(&mut &data[..]).unwrap();
+        let receipt = OpDepositReceiptWithBloom::decode(&mut &data[..]).unwrap();
         assert_eq!(receipt, expected);
 
         let mut buf = Vec::new();

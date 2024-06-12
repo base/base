@@ -27,26 +27,32 @@ pub struct OpDepositReceipt<T = Log> {
 }
 
 impl OpDepositReceipt {
-    /// Calculates [`Log`]'s bloom filter. this is slow operation and [OpReceiptWithBloom] can
-    /// be used to cache this value.
+    /// Calculates [`Log`]'s bloom filter. this is slow operation and [OpDepositReceiptWithBloom]
+    /// can be used to cache this value.
     pub fn bloom_slow(&self) -> Bloom {
         self.inner.logs.iter().collect()
     }
 
-    /// Calculates the bloom filter for the receipt and returns the [OpReceiptWithBloom] container
-    /// type.
-    pub fn with_bloom(self) -> OpReceiptWithBloom {
+    /// Calculates the bloom filter for the receipt and returns the [OpDepositReceiptWithBloom]
+    /// container type.
+    pub fn with_bloom(self) -> OpDepositReceiptWithBloom {
         self.into()
+    }
+}
+
+impl<T> AsRef<Receipt<T>> for OpDepositReceipt<T> {
+    fn as_ref(&self) -> &Receipt<T> {
+        &self.inner
     }
 }
 
 impl TxReceipt for OpDepositReceipt {
     fn status_or_post_state(&self) -> &Eip658Value {
-        todo!()
+        self.inner.status_or_post_state()
     }
 
     fn status(&self) -> bool {
-        todo!()
+        self.inner.status()
     }
 
     fn bloom(&self) -> Bloom {
@@ -81,7 +87,7 @@ impl OpTxReceipt for OpDepositReceipt {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-pub struct OpReceiptWithBloom<T = Log> {
+pub struct OpDepositReceiptWithBloom<T = Log> {
     #[cfg_attr(feature = "serde", serde(flatten))]
     /// The receipt.
     pub receipt: OpDepositReceipt<T>,
@@ -89,13 +95,13 @@ pub struct OpReceiptWithBloom<T = Log> {
     pub logs_bloom: Bloom,
 }
 
-impl TxReceipt for OpReceiptWithBloom {
+impl TxReceipt for OpDepositReceiptWithBloom {
     fn status_or_post_state(&self) -> &Eip658Value {
-        todo!()
+        self.receipt.status_or_post_state()
     }
 
     fn status(&self) -> bool {
-        todo!()
+        self.receipt.status()
     }
 
     fn bloom(&self) -> Bloom {
@@ -115,7 +121,7 @@ impl TxReceipt for OpReceiptWithBloom {
     }
 }
 
-impl OpTxReceipt for OpReceiptWithBloom {
+impl OpTxReceipt for OpDepositReceiptWithBloom {
     fn deposit_nonce(&self) -> Option<u64> {
         self.receipt.deposit_nonce
     }
@@ -125,15 +131,15 @@ impl OpTxReceipt for OpReceiptWithBloom {
     }
 }
 
-impl From<OpDepositReceipt> for OpReceiptWithBloom {
+impl From<OpDepositReceipt> for OpDepositReceiptWithBloom {
     fn from(receipt: OpDepositReceipt) -> Self {
         let bloom = receipt.bloom_slow();
-        OpReceiptWithBloom { receipt, logs_bloom: bloom }
+        OpDepositReceiptWithBloom { receipt, logs_bloom: bloom }
     }
 }
 
-impl OpReceiptWithBloom {
-    /// Create new [OpReceiptWithBloom]
+impl OpDepositReceiptWithBloom {
+    /// Create new [OpDepositReceiptWithBloom]
     pub const fn new(receipt: OpDepositReceipt, bloom: Bloom) -> Self {
         Self { receipt, logs_bloom: bloom }
     }
@@ -217,7 +223,7 @@ impl OpReceiptWithBloom {
     }
 }
 
-impl alloy_rlp::Encodable for OpReceiptWithBloom {
+impl alloy_rlp::Encodable for OpDepositReceiptWithBloom {
     fn encode(&self, out: &mut dyn BufMut) {
         self.encode_fields(out);
     }
@@ -233,7 +239,7 @@ impl alloy_rlp::Encodable for OpReceiptWithBloom {
     }
 }
 
-impl alloy_rlp::Decodable for OpReceiptWithBloom {
+impl alloy_rlp::Decodable for OpDepositReceiptWithBloom {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Self::decode_receipt(buf)
     }
@@ -250,7 +256,7 @@ where
             deposit_nonce.is_some().then(|| u64::arbitrary(u)).transpose()?;
         Ok(Self {
             inner: Receipt {
-                status: bool::arbitrary(u)?,
+                status: Eip658Value::arbitrary(u)?,
                 cumulative_gas_used: u128::arbitrary(u)?,
                 logs: Vec::<T>::arbitrary(u)?,
             },
@@ -261,7 +267,7 @@ where
 }
 
 #[cfg(all(test, feature = "arbitrary"))]
-impl<'a, T> arbitrary::Arbitrary<'a> for OpReceiptWithBloom<T>
+impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceiptWithBloom<T>
 where
     T: arbitrary::Arbitrary<'a>,
 {
