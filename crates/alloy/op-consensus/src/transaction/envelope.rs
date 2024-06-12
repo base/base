@@ -28,7 +28,7 @@ pub enum OpTxType {
     /// EIP-4844 transaction type.
     Eip4844 = 3,
     /// Optimism Deposit transaction type.
-    Deposit = 127,
+    Deposit = 126,
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
@@ -39,7 +39,7 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
             1 => OpTxType::Eip2930,
             2 => OpTxType::Eip1559,
             3 => OpTxType::Eip4844,
-            127 => OpTxType::Deposit,
+            126 => OpTxType::Deposit,
             _ => unreachable!(),
         })
     }
@@ -54,7 +54,7 @@ impl TryFrom<u8> for OpTxType {
             1 => Self::Eip2930,
             2 => Self::Eip1559,
             3 => Self::Eip4844,
-            127 => Self::Deposit,
+            126 => Self::Deposit,
             _ => return Err(Eip2718Error::UnexpectedType(value)),
         })
     }
