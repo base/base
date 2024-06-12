@@ -2,19 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Identifier for legacy transaction, however a legacy tx is technically not
-/// typed.
-pub const LEGACY_TX_TYPE_ID: u8 = 0;
-
-/// Identifier for an EIP2930 transaction.
-pub const EIP2930_TX_TYPE_ID: u8 = 1;
-
-/// Identifier for an EIP1559 transaction.
-pub const EIP1559_TX_TYPE_ID: u8 = 2;
-
-/// Identifier for an EIP4844 transaction.
-pub const EIP4844_TX_TYPE_ID: u8 = 3;
-
 /// Identifier for an Optimism deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126;
 
@@ -39,10 +26,10 @@ pub enum TxType {
 impl From<TxType> for u8 {
     fn from(value: TxType) -> Self {
         match value {
-            TxType::Legacy => LEGACY_TX_TYPE_ID,
-            TxType::Eip2930 => EIP2930_TX_TYPE_ID,
-            TxType::Eip1559 => EIP1559_TX_TYPE_ID,
-            TxType::Eip4844 => EIP4844_TX_TYPE_ID,
+            TxType::Legacy => 0,
+            TxType::Eip2930 => 1,
+            TxType::Eip1559 => 2,
+            TxType::Eip4844 => 3,
             TxType::Deposit => DEPOSIT_TX_TYPE_ID,
         }
     }

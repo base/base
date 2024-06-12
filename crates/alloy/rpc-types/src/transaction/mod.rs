@@ -14,7 +14,7 @@ pub mod tx_type;
 pub struct Transaction {
     /// Ethereum Transaction Types
     #[serde(flatten)]
-    pub inner: alloy_rpc_types::Transaction,
+    pub inner: alloy_rpc_types_eth::Transaction,
     /// The ETH value to mint on L2
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mint: Option<u128>,

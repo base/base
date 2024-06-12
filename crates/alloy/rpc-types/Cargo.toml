@@ -13,11 +13,9 @@ exclude.workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
-alloy-consensus = { workspace = true, features = ["std", "serde"] }
-alloy-rpc-types.workspace = true
+alloy-rpc-types-eth.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 
 # arbitrary
 arbitrary = { version = "1.3", features = ["derive"], optional = true }
