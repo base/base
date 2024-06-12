@@ -32,6 +32,5 @@ rand.workspace = true
 arbitrary = [
     "dep:arbitrary",
     "alloy-primitives/arbitrary",
-    "alloy-consensus/arbitrary",
-    "alloy-rpc-types/arbitrary",
+    "alloy-rpc-types-eth/arbitrary",
 ]
