@@ -13,14 +13,12 @@ exclude.workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
-alloy-consensus = { workspace = true, features = ["std", "serde"] }
-alloy-rpc-types.workspace = true
+alloy-rpc-types-eth.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 
 # arbitrary
-arbitrary = { version = "1.3", features = ["derive"], optional = true }
+arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
@@ -34,6 +32,5 @@ rand.workspace = true
 arbitrary = [
     "dep:arbitrary",
     "alloy-primitives/arbitrary",
-    "alloy-consensus/arbitrary",
-    "alloy-rpc-types/arbitrary",
+    "alloy-rpc-types-eth/arbitrary",
 ]

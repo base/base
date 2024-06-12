@@ -1,0 +1,39 @@
+[package]
+name = "op-alloy-consensus"
+description = "Optimism alloy consensus types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["rlp"] }
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+alloy-serde = { workspace = true, optional = true }
+
+# arbitrary
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+
+# serde
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[dev-dependencies]
+alloy-signer.workspace = true
+arbitrary = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["macros"] }
+serde_json.workspace = true
+
+[features]
+default = ["std"]
+std = ["alloy-eips/std", "alloy-consensus/std"]
+k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
+kzg = ["alloy-eips/kzg", "alloy-consensus/kzg", "std"]
+arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/rand"]
+serde = ["dep:serde", "dep:alloy-serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-eips/serde"]

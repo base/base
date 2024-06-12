@@ -3,10 +3,6 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
-pub use self::tx_type::TxType;
-
-pub mod tx_type;
-
 /// OP Transaction type
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
@@ -14,7 +10,7 @@ pub mod tx_type;
 pub struct Transaction {
     /// Ethereum Transaction Types
     #[serde(flatten)]
-    pub inner: alloy_rpc_types::Transaction,
+    pub inner: alloy_rpc_types_eth::Transaction,
     /// The ETH value to mint on L2
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mint: Option<u128>,
