@@ -3,10 +3,6 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 
-pub use self::tx_type::TxType;
-
-pub mod tx_type;
-
 /// OP Transaction type
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
