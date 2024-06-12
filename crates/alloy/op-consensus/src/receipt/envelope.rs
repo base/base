@@ -1,5 +1,5 @@
 use crate::{OpDepositReceipt, OpReceiptWithBloom, OpTxType};
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
@@ -62,7 +62,7 @@ impl<T> OpReceiptEnvelope<T> {
 
     /// Returns the success status of the receipt's transaction.
     pub fn status(&self) -> bool {
-        self.as_receipt().unwrap().inner.status
+       todo!()
     }
 
     /// Returns the cumulative gas used at this receipt.
@@ -179,11 +179,12 @@ impl Encodable2718 for OpReceiptEnvelope {
 }
 
 impl Decodable2718 for OpReceiptEnvelope {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         let receipt = Decodable::decode(buf)?;
-        match ty.try_into().map_err(|_| alloy_rlp::Error::Custom("Unexpected type"))? {
+        match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
             OpTxType::Legacy => {
-                Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
+                Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
+                    .into())
             }
             OpTxType::Eip2930 => Ok(Self::Eip2930(receipt)),
             OpTxType::Eip1559 => Ok(Self::Eip1559(receipt)),
@@ -192,7 +193,7 @@ impl Decodable2718 for OpReceiptEnvelope {
         }
     }
 
-    fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(Self::Legacy(Decodable::decode(buf)?))
     }
 }

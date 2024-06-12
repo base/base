@@ -23,4 +23,4 @@ mod receipt;
 pub use receipt::{OpDepositReceipt, OpReceiptEnvelope, OpReceiptWithBloom, OpTxReceipt};
 
 mod transaction;
-pub use transaction::{OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit};
+pub use transaction::{OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit, DEPOSIT_TX_TYPE_ID};

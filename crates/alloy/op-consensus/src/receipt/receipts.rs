@@ -1,5 +1,5 @@
 use super::OpTxReceipt;
-use alloy_consensus::{Receipt, TxReceipt};
+use alloy_consensus::{Eip658Value, Receipt, TxReceipt};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
@@ -41,6 +41,14 @@ impl OpDepositReceipt {
 }
 
 impl TxReceipt for OpDepositReceipt {
+    fn status_or_post_state(&self) -> &Eip658Value {
+        todo!()
+    }
+
+    fn status(&self) -> bool {
+        todo!()
+    }
+
     fn bloom(&self) -> Bloom {
         self.bloom_slow()
     }
@@ -51,10 +59,6 @@ impl TxReceipt for OpDepositReceipt {
 
     fn logs(&self) -> &[Log] {
         &self.inner.logs
-    }
-
-    fn status(&self) -> bool {
-        self.inner.status
     }
 }
 
@@ -86,8 +90,12 @@ pub struct OpReceiptWithBloom<T = Log> {
 }
 
 impl TxReceipt for OpReceiptWithBloom {
+    fn status_or_post_state(&self) -> &Eip658Value {
+        todo!()
+    }
+
     fn status(&self) -> bool {
-        self.receipt.inner.status
+        todo!()
     }
 
     fn bloom(&self) -> Bloom {

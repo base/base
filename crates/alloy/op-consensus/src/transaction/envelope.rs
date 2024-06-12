@@ -2,9 +2,11 @@ use crate::TxDeposit;
 use alloy_consensus::{
     Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
 };
-use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Encodable2718};
+use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
-use core::mem;
+
+/// Identifier for an Optimism deposit transaction
+pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 
 /// Optimism `TransactionType` flags as specified in EIPs [2718], [1559], and
 /// [2930], as well as the [deposit transaction spec][deposit-spec]
@@ -26,7 +28,7 @@ pub enum OpTxType {
     /// EIP-4844 transaction type.
     Eip4844 = 3,
     /// Optimism Deposit transaction type.
-    Deposit = 0x7E,
+    Deposit = 127,
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
@@ -37,7 +39,7 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
             1 => OpTxType::Eip2930,
             2 => OpTxType::Eip1559,
             3 => OpTxType::Eip4844,
-            0x7E => OpTxType::Deposit,
+            127 => OpTxType::Deposit,
             _ => unreachable!(),
         })
     }
@@ -47,11 +49,14 @@ impl TryFrom<u8> for OpTxType {
     type Error = Eip2718Error;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            // SAFETY: repr(u8) with explicit discriminant
-            0..=3 | 0x7E => Ok(unsafe { mem::transmute::<u8, OpTxType>(value) }),
-            _ => Err(Eip2718Error::UnexpectedType(value)),
-        }
+        Ok(match value {
+            0 => Self::Legacy,
+            1 => Self::Eip2930,
+            2 => Self::Eip1559,
+            3 => Self::Eip4844,
+            127 => Self::Deposit,
+            _ => return Err(Eip2718Error::UnexpectedType(value)),
+        })
     }
 }
 
@@ -219,24 +224,32 @@ impl Encodable for OpTxEnvelope {
 
 impl Decodable for OpTxEnvelope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Self::network_decode(buf)
+        match Self::network_decode(buf) {
+            Ok(t) => Ok(t),
+            Err(Eip2718Error::RlpError(e)) => Err(e),
+            Err(Eip2718Error::UnexpectedType(_)) => {
+                Err(alloy_rlp::Error::Custom("unexpected tx type"))
+            }
+            _ => Err(alloy_rlp::Error::Custom("unknown error decoding tx envelope")),
+        }
     }
 }
 
 impl Decodable2718 for OpTxEnvelope {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        match ty.try_into().map_err(|_| alloy_rlp::Error::Custom("unexpected tx type"))? {
+    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
+        match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
             OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
             OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
             OpTxType::Eip4844 => Ok(Self::Eip4844(TxEip4844Variant::decode_signed_fields(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
             OpTxType::Legacy => {
-                Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported"))
+                Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
+                    .into())
             }
         }
     }
 
-    fn fallback_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(OpTxEnvelope::Legacy(TxLegacy::decode_signed_fields(buf)?))
     }
 }
