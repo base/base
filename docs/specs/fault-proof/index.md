@@ -59,7 +59,7 @@ the exact same computation by authenticating the inputs with a [Pre-image Oracle
 
 ## Pre-image Oracle
 
-[oracle]: #Pre-image-Oracle
+[oracle]: #pre-image-oracle
 
 The pre-image oracle is the only form of communication between
 the [Program] (in the [Client](#client) role) and the [VM] (in the [Server](#server) role).
@@ -275,7 +275,7 @@ and thus keep the proof size per instruction bounded.
 
 ## Fault Proof Program
 
-[Program]: #Fault-Proof-Program
+[Program]: #fault-proof-program
 
 The Fault Proof Program defines the verification of claims of the state-transition outputs
 of the L2 rollup as a pure function of L1 data.
@@ -452,7 +452,7 @@ All accelerated precompiles must be functionally equivalent to their EVM equival
 
 ## Fault Proof VM
 
-[VM]: #Fault-Proof-VM
+[VM]: #fault-proof-vm
 
 A fault proof VM implements:
 
@@ -480,7 +480,7 @@ Fault Proof VMs:
 
 ## Fault Proof Interactive Dispute Game
 
-[Interactive Dispute Game]: #Fault-Proof-Interactive-Dispute-Game
+[Interactive Dispute Game]: #fault-proof-interactive-dispute-game
 
 The interactive dispute game allows actors to resolve a dispute with an onchain challenge-response game
 that bisects to a disagreed block $n \rightarrow n + 1$ state transition, and then over the execution trace of the VM
