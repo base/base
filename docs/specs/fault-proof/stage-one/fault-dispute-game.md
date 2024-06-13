@@ -16,25 +16,29 @@
   - [Subgame](#subgame)
   - [Game Tree](#game-tree)
   - [Position](#position)
-  - [GAME_DURATION](#game_duration)
+  - [MAX_CLOCK_DURATION](#max_clock_duration)
+  - [CLOCK_EXTENSION](#clock_extension)
+  - [Freeloader Claims](#freeloader-claims)
 - [Core Game Mechanics](#core-game-mechanics)
   - [Actors](#actors)
   - [Moves](#moves)
     - [Attack](#attack)
     - [Defend](#defend)
+  - [L2 Block Number Challenge](#l2-block-number-challenge)
   - [Step](#step)
   - [Step Types](#step-types)
   - [PreimageOracle Interaction](#preimageoracle-interaction)
   - [Team Dynamics](#team-dynamics)
   - [Game Clock](#game-clock)
   - [Resolution](#resolution)
+    - [Resolving the L2 Block Number Challenge](#resolving-the-l2-block-number-challenge)
   - [Finalization](#finalization)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 <!-- Glossary References -->
 
-[g-output-root]: ../../../glossary.md#L2-output-root
+[g-output-root]: ../../glossary.md#l2-output-root
 
 ## Overview
 
@@ -77,7 +81,7 @@ We refer to this state as the **ABSOLUTE_PRESTATE**.
 ### Claims
 
 Claims assert an [output root][g-output-root] or the state of the FPVM at a given instruction. This is represented as
-`ClaimHash`, a `bytes32` representing either an [output root][g-output-root] or a commitment to the last VM state in a
+a `Hash` type, a `bytes32` representing either an [output root][g-output-root] or a commitment to the last VM state in a
 trace. A FDG is initialized with an output root that corresponds to the state of L2 at a given L2 block number, and
 execution trace subgames at `SPLIT_DEPTH + 1` are initialized with a claim that commits to the entire execution trace
 between two consecutive output roots (a block `n -> n+1` state transition). As we'll see later, there can be multiple
@@ -138,7 +142,7 @@ $2^{d+1}-1$ positions, where $d$ is the `MAX_GAME_DEPTH` (unless $d=0$, in which
 The full game tree, with a layer of the tree allocated to output bisection, and sub-trees after an arbitrary split
 depth, looks like:
 
-![ob-tree](../../../static/assets/ob-tree.png)
+![ob-tree](../../static/assets/ob-tree.png)
 
 ### Position
 
@@ -157,19 +161,43 @@ Positions higher up the game tree also cover the deepest, right-most positions r
 We refer to this coverage as the **trace index** of a Position.
 
 > This means claims commit to an execution trace that terminates at the same index as their Position's trace index.
-> That is, for a given trace index $n$, its ClaimHash corresponds to the $S_n$ th state in the trace.
+> That is, for a given trace index $n$, its state witness hash corresponds to the $S_n$ th state in the trace.
 
 Note that there can be multiple positions covering the same _trace index_.
 
-### GAME_DURATION
+### MAX_CLOCK_DURATION
 
-This is an immutable, preset to a FDG implementation, representing the duration of the game. Each top level team will
-receive half of this duration on their initial chess clocks.
+This is an immutable, preset to a FDG implementation, representing the maximum amount of time that may accumulate on a
+team's [chess clock](#game-clock).
+
+### CLOCK_EXTENSION
+
+This is an immutable, preset to a FDG implementation, representing the flat credit that is given to a team's clock if
+their clock has less than `CLOCK_EXTENSION` seconds remaining.
+
+### Freeloader Claims
+
+Due to the subgame resolution logic, there are certain moves which result in the correct final resolution of the game,
+but do not pay out bonds to the correct parties.
+
+An example of this is as follows:
+
+1. Alice creates a dispute game with an honest root claim.
+1. Bob counters the honest root with a correct claim at the implied L2 block number.
+1. Alice performs a defense move against Bob's counter, as the divergence exists later in Bob's view of the chain state.
+1. Bob attacks his own claim.
+
+Bob's attack against his own claim _is_ a counter to a bad claim, but with the incorrect pivot direction. If left
+untouched, because it exists at a position further left than Alice's, he will reclaim his own bond upon resolution.
+Because of this, the honest challenger must always counter freeloader claims for incentive compatibility to be
+preserved.
+
+Critically, freeloader claims, if left untouched, do not influence incorrect resolution of the game globally.
 
 ## Core Game Mechanics
 
 This section specifies the core game mechanics of the FDG. The full FDG mechanics includes a
-[specification for Bonds](./bond-incentives.md). Readers should understand basic game mechanics before
+[specification for Bonds](bond-incentives.md). Readers should understand basic game mechanics before
 reading up on the Bond specification.
 
 ### Actors
@@ -203,7 +231,7 @@ The attack position relative to a node can be calculated by multiplying its gind
 
 To illustrate this, here's a Game Tree highlighting an attack on a Claim positioned at 6.
 
-![Attacking node 6](../../../static/assets/attack.png)
+![Attacking node 6](../../static/assets/attack.png)
 
 Attacking the node at 6 moves creates a new claim positioned at 12.
 
@@ -212,19 +240,36 @@ Attacking the node at 6 moves creates a new claim positioned at 12.
 The logical move against a claim when you agree with both it and its parent.
 A defense at the relative position to a node, `n`, in the Game Tree commits to the first half of n + 1’s trace range.
 
-![Defend at 4](../../../static/assets/defend.png)
+![Defend at 4](../../static/assets/defend.png)
 
 Note that because of this, some nodes may never exist within the Game Tree.
 However, they're not necessary as these nodes have complimentary, valid positions
 with the same trace index within the tree. For example, a Position with gindex 5 has the same
 trace index as another Position with gindex 2. We can verify that all trace indices have valid moves within the game:
 
-![Game Tree Showing All Valid Move Positions](../../../static/assets/valid-moves.png)
+![Game Tree Showing All Valid Move Positions](../../static/assets/valid-moves.png)
 
-There may be multiple claims at the same position, so long as their `ClaimHash` are unique.
+There may be multiple claims at the same position, so long as their state witness hashes are unique.
 
 Each move adds new claims to the Game Tree at strictly increasing depth.
 Once a claim is at `MAX_GAME_DEPTH`, the only way to dispute such claims is to **step**.
+
+### L2 Block Number Challenge
+
+This is a special type of action, made by the Challenger, to counter a root claim.
+
+Given an output root preimage and its corresponding RLP-encoded L2 block header, the L2 block number can be verified.
+This process ensures the integrity and authenticity of an L2 block number.
+The procedure for this verification involves three steps: checking the output root preimage, validating the block hash preimage,
+and extracting the block number from the RLP-encoded header.
+By comparing the challenger-supplied preimages and the extracted block number against their claimed values,
+the consistency of the L2 block number with the one in the provided header can be confirmed, detecting any discrepancies.
+
+Root claims made with an invalid L2 block number can be disputed through a special challenge.
+This challenge is validated in the FDG contract using the aforementioned procedure.
+However, it is crucial to note that this challenge can only be issued against the root claim,
+as it's the only entity making explicit claims on the L2 block number.
+A successful challenge effectively disputes the root claim once its subgame is resolved.
 
 ### Step
 
@@ -363,11 +408,20 @@ Uncontested claims are likely to result in a loss, as explained later under [Res
 
 Every claim in the game has a Clock. A claim inherits the clock of its grandparent claim in the
 DAG (and so on). Akin to a chess clock, it keeps track of the total time each team takes to make
-moves, preventing delays.
-Making a move resumes the clock for the disputed claim and pauses it for the newly added one.
+moves, preventing delays. Making a move resumes the clock for the disputed claim and pauses it for the newly added one.
+
+If a move is performed, where the potential grandchild's clock has less time than `CLOCK_EXTENSION` seconds remaining,
+the potential grandchild's clock is granted exactly `CLOCK_EXTENSION` seconds remaining. This is to combat the situation
+where a challenger must inherit a malicious party's clock when countering a [freeloader claim](#freeloader-claims), in
+order to preserve incentive compatibility for the honest party. As the extension only applies to the potential
+grandchild's clock, the max possible extension for the game is bounded, and scales with the `MAX_GAME_DEPTH`.
+
+If the potential grandchild is an execution trace bisection root claim and their clock has less than `CLOCK_EXTENSION`
+seconds remaining, exactly `CLOCK_EXTENSION * 2` seconds are allocated for the potential grandchild. This extra time
+is alloted to allow for completion of the off-chain FPVM run to generate the initial instruction trace.
 
 A move against a particular claim is no longer possible once the parent of the disputed claim's Clock
-has exceeded half of the `GAME_DURATION`. By which point, the claim's clock has _expired_.
+has accumulated `MAX_CLOCK_DURATION` seconds. By which point, the claim's clock has _expired_.
 
 ### Resolution
 
@@ -485,6 +539,12 @@ Each move bisects the historical state of L2 and eventually, `MAX_GAME_DEPTH` is
 can be settled conclusively. Dishonest players are disincentivized to participate, via backwards induction,
 as an invalid claim won't remain uncontested. Further incentives can be added to the game by requiring
 claims to be bonded, while rewarding game winners using the bonds of dishonest claims.
+
+#### Resolving the L2 Block Number Challenge
+
+The resolution of an L2 block number challenge occurs in the same manner as subgame resolution, with one caveat;
+the L2 block number challenger, if it exist, must be the winner of a root subgame.
+Thus, no moves against the root, including uncontested ones, can win a root subgame that has an L2 block number challenge.
 
 ### Finalization
 

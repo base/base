@@ -110,7 +110,7 @@ The network can be represented as a graph where each block across all chains are
 a node and then a directed edge between two blocks represents the source block of the initiating
 message and the block that included the executing message.
 
-An input can be promoted from `safe` to `cross-unsafe` when the full dependency graph is resolved
+An input can be promoted from `unsafe` to `cross-unsafe` when the full dependency graph is resolved
 such that all cross chain messages are verified to be valid and at least one message in the dependency
 graph is still `unsafe`.
 

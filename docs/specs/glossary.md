@@ -13,6 +13,7 @@
   - [Chain Re-Organization](#chain-re-organization)
   - [Predeployed Contract ("Predeploy")](#predeployed-contract-predeploy)
   - [Preinstalled Contract ("Preinstall")](#preinstalled-contract-preinstall)
+  - [Precompiled Contract ("Precompile")](#precompiled-contract-precompile)
   - [Receipt](#receipt)
   - [Transaction Type](#transaction-type)
   - [Fork Choice Rule](#fork-choice-rule)
@@ -148,6 +149,16 @@ security guarantees as [predeploys](#predeployed-contract-predeploy), but are ge
 available to improve the L2's UX.
 
 All preinstall contracts are specified in the [preinstalls specification](./protocol/preinstalls.md).
+
+## Precompiled Contract ("Precompile")
+
+[precompile]: glossary.md#precompiled-contract-precompile
+
+A contract implemented natively in the EVM that performs a specific operation more efficiently than a bytecode
+(e.g. Solidity) implementation. Precompiles exist at predefined addresses. They are created and modified through
+network upgrades.
+
+All precompile contracts are specified in the [precompiles specification](./protocol/precompiles.md).
 
 ## Receipt
 
@@ -766,7 +777,7 @@ proof][fault-proof].
 An on-chain _interactive_ proof, performed by [validators][validator], that demonstrates that a [sequencer] provided
 erroneous [output roots][l2-output].
 
-cf. [Fault Proofs](./experimental/fault-proof/index.md)
+cf. [Fault Proofs](fault-proof/index.md)
 
 ## Time Slot
 

@@ -5,13 +5,14 @@
 **Table of Contents**
 
 - [Deputy guardian module](#deputy-guardian-module)
+  - [Deputy Guardian Module Security Properties](#deputy-guardian-module-security-properties)
 - [Liveness checking mechanism](#liveness-checking-mechanism)
 - [Liveness checking methodology](#liveness-checking-methodology)
   - [The liveness guard](#the-liveness-guard)
   - [The liveness module](#the-liveness-module)
   - [Owner removal call flow](#owner-removal-call-flow)
   - [Shutdown](#shutdown)
-  - [Security Properties](#security-properties)
+  - [Liveness Security Properties](#liveness-security-properties)
     - [In the guard](#in-the-guard)
     - [In the module](#in-the-module)
   - [Interdependency between the guard and module](#interdependency-between-the-guard-and-module)
@@ -24,14 +25,16 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-The Security Council uses a specially extended Safe multisig contract to provide additional security
-guarantees on top of those provided by the Safe contract.
+The Security Council (at
+[eth:0xc2819DC788505Aac350142A7A707BF9D03E3Bd03](https://etherscan.io/address/0xc2819DC788505Aac350142A7A707BF9D03E3Bd03))
+uses a specially extended Safe multisig contract to provide additional security guarantees on top of
+those provided by the Safe contract.
 
 ## Deputy guardian module
 
 The Security Council acts as the Guardian, which is authorized to activate the [Superchain
 Pause](../protocol/superchain-configuration.md#pausability) functionality and for
-[blacklisting](../experimental/fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
+[blacklisting](../fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
 game contracts.
 
 However the Security Council cannot be expected to react quickly in an emergency situation.
@@ -59,14 +62,14 @@ interface DeputyGuardianModule {
    function unpause() external;
 
    /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      with the arguments necessary to call `blacklistDisputeGame()` on the `DisputeGameFactory` contract.
+   ///      necessary to call `blacklistDisputeGame()` on the `OptimismPortal2` contract.
    ///      Only the deputy guardian can call this function.
    /// @param _portal The `OptimismPortal2` contract instance.
    /// @param _game The `IDisputeGame` contract instance.
    function blacklistDisputeGame(address _portal, address _game) external;
 
-   /// @dev When called, this function will call to the Security Council's `execTransactionFromModule()`
-   ///      with the arguments necessary to call `setRespectedGameType()` on the `OptimismPortal2` contract.
+   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
+   ///      necessary to call `setRespectedGameType()` on the `OptimismPortal2` contract.
    ///      Only the deputy guardian can call this function.
    /// @param _portal The `OptimismPortal2` contract instance.
    /// @param _gameType The `GameType` to set as the respected game type
@@ -76,6 +79,22 @@ interface DeputyGuardianModule {
 
 For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe` and
 `deputyGuardian` addresses. If necessary these can be modified by swapping out with a new module.
+
+### Deputy Guardian Module Security Properties
+
+The following security properties must be upheld by the `DeputyGuardianModule`:
+
+1. The module must correctly enforce access controls so that only the Deputy Guardian can call state
+   modifying functions on the `DeputyGuardianModule`.
+1. The module must be able to cause the Safe to make calls to all of the functions which the
+   Guardian role is authorized to make.
+1. The module must not be able to cause the Safe to make calls to functions which the Guardian role
+   is not authorized to make.
+1. The module must be safely removable.
+1. The module must not introduce any possibility of disabling the the Safe so that it can no longer
+   forward transactions.
+1. The module must format calldata correctly such that the target it calls performs the expected
+   action.
 
 ## Liveness checking mechanism
 
@@ -157,7 +176,7 @@ In the unlikely event that the signer set (`N`) is reduced below the allowed min
 owners, then (and only then) is a shutdown mechanism activated which removes the existing
 signers, and hands control of the multisig over to a predetermined entity.
 
-### Security Properties
+### Liveness Security Properties
 
 The following security properties must be upheld:
 
@@ -211,7 +230,7 @@ therefore be done prior to adding a new owner.
 The module and guard are intended to be deployed and installed on the safe in the following
 sequence:
 
-1. Deploy the guard contract 2. The guard's constructor will read the Safe's owners and set a timestamp
+1. Deploy the guard contract. The guard's constructor will read the Safe's owners and set a timestamp.
 1. Deploy the module.
 1. Set the guard on the safe.
 1. Enable the module on the safe.

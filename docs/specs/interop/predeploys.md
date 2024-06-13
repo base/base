@@ -9,17 +9,23 @@
     - [`_msg`](#_msg)
     - [`_id`](#_id)
     - [`_target`](#_target)
+  - [`ExecutingMessage` Event](#executingmessage-event)
   - [Reference implementation](#reference-implementation)
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
+  - [`sendExpire` Invariants](#sendexpire-invariants)
+  - [`relayExpire` Invariants](#relayexpire-invariants)
   - [Message Versioning](#message-versioning)
   - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
+    - [Sending Expired Message Hashes](#sending-expired-message-hashes)
+    - [Relaying Expired Message Hashes](#relaying-expired-message-hashes)
 - [L1Block](#l1block)
-  - [L1Attributes](#l1attributes)
+  - [Static Configuration](#static-configuration)
+  - [Dependency Set](#dependency-set)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -82,13 +88,32 @@ In practice, the `_target` will be a contract that needs to know the schema of t
 It MAY call back to the `CrossL2Inbox` to authenticate
 properties about the `_msg` using the information in the `Identifier`.
 
+### `ExecutingMessage` Event
+
+The `ExecutingMessage` event represents an executing message. It MUST be emitted on every call
+to `executeMessage`.
+
+```solidity
+event ExecutingMessage(bytes,bytes);
+```
+
+The data encoded in the event contains the `Identifier` and the `msg`.
+The following pseudocode shows the deserialization:
+
+```solidity
+(bytes memory identifier, bytes memory log) = abi.decode(log.data, (bytes, bytes));
+Identifier id = abi.decode(identifier, (Identifier));
+```
+
+It is not possible to use solidity structs directly in events, which is why it is ABI encoded
+into `bytes` first.
+
 ### Reference implementation
 
 A simple implementation of the `executeMessage` function is included below.
 
 ```solidity
 function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
-    require(msg.sender == tx.origin);
     require(_id.timestamp <= block.timestamp);
     require(L1Block.isInDependencySet(_id.chainid));
 
@@ -107,6 +132,8 @@ function executeMessage(Identifier calldata _id, address _target, bytes calldata
     });
 
     require(success);
+
+    emit ExecutingMessage(abi.encode(_id), _msg);
 }
 ```
 
@@ -123,6 +150,7 @@ properties about the `_msg`.
 |-------------------|----------------------------------------------|
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
+| `EXPIRY_WINDOW`   | `uint256(7200)`                              |
 
 The `L2ToL2CrossDomainMessenger` is a higher level abstraction on top of the `CrossL2Inbox` that
 provides features necessary for secure transfers ERC20 tokens between L2 chains.
@@ -135,6 +163,21 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `_destination` chain id MUST be equal to the local chain id
 - The `CrossL2Inbox` cannot call itself
+
+### `sendExpire` Invariants
+
+- The message MUST have not been successfully relayed
+- The `EXPIRY_WINDOW` MUST have elapsed since the message first failed to be relayed
+- The expired message MUST not have been previously sent back to source
+- The expired message MUST not be relayable after being sent back
+
+### `relayExpire` Invariants
+
+- Only callable by the `CrossL2Inbox`
+- The message source MUST be `block.chainid`
+- The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
+- The `expiredMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
+- Already expired messages MUST NOT be relayed.
 
 ### Message Versioning
 
@@ -200,6 +243,11 @@ chain. The hash of the message is used for replay protection.
 It is important to ensure that the source chain is in the dependency set of the destination chain, otherwise
 it is possible to send a message that is not playable.
 
+When a message fails to be relayed, only the timestamp at which it
+first failed along with its source chain id are stored. This is
+needed for calculation of the failed message's expiry. The source chain id
+is also required to simplify the function signature of `sendExpire`.
+
 ```solidity
 function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, address _sender, address _target, bytes memory _message) external payable {
     require(msg.sender == address(CROSS_L2_INBOX));
@@ -214,16 +262,28 @@ function relayMessage(uint256 _destination, uint256 _source, uint256 _nonce, add
       tstore(CROSS_DOMAIN_MESSAGE_SOURCE_SLOT, _source)
     }
 
+    sentMessages[messageHash] = true;
+
     bool success = SafeCall.call({
        _target: _target,
        _value: msg.value,
        _calldata: _message
     });
 
-    require(success);
+    if (!success) {
+      emit FailedRelayedMessage(messageHash);
 
-    sentMessages[messageHash] = true;
-}
+      if (failedMessages[messageHash].timestamp == 0) {
+        failedMessages[messageHash] = FailedMessage({timestamp: block.timestamp, sourceChainId: _source});
+      }
+
+      return;
+    }
+
+    successfulMessages[messageHash] = true;
+    delete failedMessages[messageHash];
+    emit RelayedMessage(messageHash);
+};
 ```
 
 Note that the `relayMessage` function is `payable` to enable relayers to earn in the gas paying asset.
@@ -231,39 +291,130 @@ Note that the `relayMessage` function is `payable` to enable relayers to earn in
 To enable cross chain authorization patterns, both the `_sender` and the `_source` MUST be exposed via `public`
 getters.
 
+#### Sending Expired Message Hashes
+
+When expiring a message that failed to be relayed on the destination chain
+to the source chain, it's crucial to ensure the message can only be sent back
+to the `L2ToL2CrossDomainMessenger` contract in its source chain.
+
+This function has no auth, which allows anyone to expire a given message hash.
+The `EXPIRY_WINDOW` variable is added to give the users enough time to replay their
+failed messages and to prevent malicious actors from performing a griefing attack
+by expiring messages upon arrival.
+
+Once the expired message is sent to the source chain, the message on the local chain is set
+as successful in the `successfulMessages` mapping to ensure non-replayability and deleted
+from `failedMessages`. An initiating message is then emitted to `relayExpire`
+
+```solidity
+function sendExpire(bytes32 _expiredHash) external nonReentrant {
+    if (successfulMessages[_expiredHash]) revert MessageAlreadyRelayed();
+
+    (uint256 messageTimestamp, uint256 messageSource) = failedMessages[_expiredHash];
+
+    if (block.timestamp <  messageTimestamp + EXPIRY_WINDOW) revert ExpiryWindowHasNotEnsued();
+
+    delete failedMessages[_expiredHash];
+    successfulMessages[_expiredHash] = true;
+
+    bytes memory data = abi.encodeCall(
+        L2ToL2CrossDomainMessenger.expired,
+        (_expiredHash, messageSource)
+    );
+    emit SentMessage(data);
+}
+```
+
+#### Relaying Expired Message Hashes
+
+When relaying an expired message, only message hashes
+of actual failed messages should be stored, for this we must ensure the origin
+of the log, and caller are all expected contracts.
+
+It's also important to ensure only the hashes of messages that were initiated
+in this chain are accepted.
+
+If all checks have been successful, the message has is stored in the
+`expiredMessages` mapping. This enables smart contracts to read from it and
+check whether a message expired or not, and handle this case accordingly.
+
+```solidity
+function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
+    if (_messageSource != block.chainid) revert IncorrectMessageSource();
+    if (expiredMessages[_expiredHash] != 0) revert ExpiredMessageAlreadyRelayed();
+    if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ExpiredMessageCallerNotCrossL2Inbox();
+
+    if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).origin() != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) {
+        revert CrossL2InboxOriginNotL2ToL2CrossDomainMessenger();
+    }
+
+    expiredMessages[_expiredHash] = block.timestamp;
+
+    emit MessageHashExpired(_expiredHash);
+}
+```
+
 ## L1Block
 
-| Constant | Value                                        |
-|----------|----------------------------------------------|
-| Address  | `0x4200000000000000000000000000000000000015` |
+| Constant            | Value                                        |
+|---------------------|----------------------------------------------|
+| Address             | `0x4200000000000000000000000000000000000015` |
+| `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
-The `L1Block` contract is updated to include the set of allowed chains. The L1 Attributes transaction
-sets the set of allowed chains. The `L1Block` contract MUST provide a public getter to check if a particular
-chain is in the dependency set called `isInDependencySet(uint256)`. This function MUST return true when
-the chain's chain id is passed in as an argument.
+### Static Configuration
 
-The `setL1BlockValuesInterop()` function MUST be called on every block after the interop upgrade block.
-The interop upgrade block itself MUST include a call to `setL1BlockValuesEcotone`.
+The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
+are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
+the L1 Attributes transaction, as well as to reduce the need to add specific one off functions. It can only be called by
+`DEPOSITOR_ACCOUNT`.
 
-### L1Attributes
+The `ConfigType` enum is defined as follows:
 
-The L1 Atrributes transaction is updated to include the dependency set. Since the dependency set is dynamically sized,
-a `uint8` "interopSetSize" parameter prefixes tightly packed `uint256` values that represent each chain id.
+```solidity
+enum ConfigType {
+    SET_GAS_PAYING_TOKEN,
+    ADD_DEPENDENCY,
+    REMOVE_DEPENDENCY
+}
+```
 
-| Input arg         | Type                     | Calldata bytes          | Segment |
-|-------------------|--------------------------|-------------------------|---------|
-| {0x760ee04d}      | bytes4                   | 0-3                     | n/a     |
-| baseFeeScalar     | uint32                   | 4-7                     | 1       |
-| blobBaseFeeScalar | uint32                   | 8-11                    |         |
-| sequenceNumber    | uint64                   | 12-19                   |         |
-| l1BlockTimestamp  | uint64                   | 20-27                   |         |
-| l1BlockNumber     | uint64                   | 28-35                   |         |
-| basefee           | uint256                  | 36-67                   | 2       |
-| blobBaseFee       | uint256                  | 68-99                   | 3       |
-| l1BlockHash       | bytes32                  | 100-131                 | 4       |
-| batcherHash       | bytes32                  | 132-163                 | 5       |
-| interopSetSize    | uint8                    | 164-165                 | 6       |
-| chainIds          | uint256\[interopSetSize] | 165-(32*interopSetSize) | 6+      |
+The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
+
+| ConfigType             | Value                                       |
+|------------------------|---------------------------------------------|
+| `SET_GAS_PAYING_TOKEN` | `abi.encode(token, decimals, name, symbol)` |
+| `ADD_DEPENDENCY`       | `abi.encode(chainId)`                       |
+| `REMOVE_DEPENDENCY`    | `abi.encode(chainId)`                       |
+
+where
+
+- `token` is the gas paying token's address (type `address`)
+
+- `decimals` is the gas paying token's decimals (type `uint8`)
+
+- `name` is the gas paying token's name (type `bytes32`)
+
+- `symbol` is the gas paying token's symbol (type `bytes32`)
+
+- `chainId` is the chain id intended to be added or removed from the dependency set (type `uint256`)
+
+Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
+
+### Dependency Set
+
+`L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig` calls
+with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively. The maximum size of the dependency set is `type(uint8).max`,
+and adding a chain id when the dependency set size is at its maximum MUST revert. If a chain id already in the
+dependency set, such as the chain's chain id, is attempted to be added, the call MUST revert. If a chain id that is not
+in the dependency set is attempted to be removed, the call MUST revert. If the chain's chain id is attempted to be
+removed, the call also MUST revert.
+
+`L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
+`isInDependencySet(uint256)`. This function MUST return true when a chain id in the dependency set, or the chain's chain
+id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MUST provide a public getter to return the
+dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
+`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
+MUST return the length of the dependency set array.
 
 ## Security Considerations
 

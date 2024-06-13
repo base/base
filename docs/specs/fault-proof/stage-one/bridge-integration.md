@@ -32,11 +32,11 @@
 
 <!-- all glossary references -->
 
-[g-l2-proposal]: ../../../glossary.md#l2-output-root-proposals
+[g-l2-proposal]: ../../glossary.md#l2-output-root-proposals
 
 <!-- all links -->
 
-[fdg]: ./fault-dispute-game.md
+[fdg]: fault-dispute-game.md
 
 ## Overview
 
@@ -55,7 +55,7 @@ L1 by a permissioned PROPOSER key. The list in the contract has the following pr
 - All outputs in the list that are > `FINALIZATION_PERIOD_SECONDS` old are considered "finalized." The separator
   between unfinalized/finalized outputs moves forwards implicitly as time passes.
 
-![legacy-l2oo-list](../../../static/assets/legacy-l2oo-list.png)
+![legacy-l2oo-list](../../static/assets/legacy-l2oo-list.png)
 
 Currently, if there is a faulty output proposed by the permissioned `PROPOSER` key, a separate permissioned
 `CHALLENGER` key may intervene. Note that the `CHALLENGER` role effectively has god-mode privileges, and can currently
@@ -190,8 +190,8 @@ timestamp of re-proven withdrawals is still reset.
 
 1. **Old:** Re-proving is allowed if the output root at the proven withdrawal's `l2OutputIndex` changed in the
    `L2OutputOracle`.
-2. **New:** Re-proving is allowed if the output proposal's dispute game has resolved against the output root's favor,
-   the respected game type changed since the withdrawal was proven, or the game that was proven against was blacklisted.
+2. **New:** Re-proving is allowed at any time by the user. When a withdrawal is re-proven, its proof maturity delay is
+   reset.
 
 ### `finalizeWithdrawalTransaction` modifications
 

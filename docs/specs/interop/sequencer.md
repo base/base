@@ -24,22 +24,21 @@ Sequencer Policy is the process of optimistically enacting rules outside of cons
 (the state-transition function in this context), and the choices can then be asynchronously validated
 by [verifiers](./verifier.md) and [the fault-proof](./fault_proof.md).
 
-In the context of superchain interopability, sequencer policy is utilized to enable cross-chain message relay
+In the context of superchain interoperability, sequencer policy is utilized to enable cross-chain message relay
 without adding additional state-transition complexity or cross-chain synchronicity to the protocol.
 
 ## Block Building
 
 The goal is to present information in a way where it is as efficient as possible for the block builder to only include
-executing messages that have a corresponding initiating message.
+executing messages that have a corresponding initiating message. It is not possible to enforce the ability to
+statically analyze a transaction, so execution MAY be required to determine the information required to include
+executing messages.
 
 ### Static analysis
 
-The block builder SHOULD use static analysis on executing messages to determine the dependency of the message.
-
-When a transaction has a top level [to][tx-to] field that is equal to the `CrossL2Inbox`
-and the 4-byte selector in the calldata matches the entrypoint interface,
-the block builder should use the chain-ID that is encoded in the `Identifier` to determine which chain includes
-the initiating transaction.
+Note that static analysis is never reliable because even if the top level `transaction.to`
+is equal to the `CrossL2Inbox`, it is possible that there is a reentrant `CALL`. The block
+builder SHOULD NOT rely on static analysis for building blocks.
 
 ### Dependency confirmations
 
@@ -94,27 +93,36 @@ The block builder MAY also trust a remote RPC and use the following algorithm
 to verify the existence of the log.
 
 The following pseudocode represents how to check existence of a log based on an `Identifier`.
+If the value `True` is returned, then it is safe to include the transaction.
 
 ```python
-target, message, id = abi.decode(calldata)
+success, receipt = evm.apply_transaction(tx)
 
-eth = clients[id.chainid]
+if not success:
+  return True
 
-if eth is None:
-  return False
+for log in receipt.logs:
+  if is_executing_message(log):
+      id, message = abi.decode(log.data)
 
-logs = eth.getLogs(id.origin, from=id.blocknumber, to=id.blocknumber)
-log = filter(lambda x: x.index == id.logIndex && x.address == id.origin)
-if len(log) == 0:
-  return False
+      # assumes there is a client for each chain in the dependency set
+      eth = clients[id.chainid]
 
-if message != encode(log[0]):
-  return False
+      if eth is None:
+        return False
 
-block = eth.getBlockByNumber(id.blocknumber)
+      logs = eth.getLogs(id.origin, from=id.blocknumber, to=id.blocknumber)
+      log = filter(lambda x: x.index == id.logIndex && x.address == id.origin)
+      if len(log) == 0:
+        return False
 
-if id.timestamp != block.timestamp:
-  return False
+      if message != encode(log[0]):
+        return False
+
+      block = eth.getBlockByNumber(id.blocknumber)
+
+      if id.timestamp != block.timestamp:
+        return False
 
 return True
 ```

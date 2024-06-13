@@ -104,6 +104,9 @@ The gas limit of the L2 blocks is configured through the system config.
 Changes to the L2 gas limit are fully applied in the first L2 block with the L1 origin that introduced the change,
 as opposed to the 1/1024 adjustments towards a target as seen in limit updates of L1 blocks.
 
+The gas limit may not be set to a value larger than `200_000_000`. This is to ensure that the L2 blocks are fault
+provable and of reasonable size to be processed by the client software. Over time, this value will be increased.
+
 ### `unsafeBlockSigner` (`address`)
 
 Blocks are gossiped around the p2p network before they are made available on L1.

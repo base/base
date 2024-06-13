@@ -13,6 +13,13 @@ This document is not finalized and should be considered experimental.
 
 ## Execution Layer
 
-- [RIP-7212: Precompile for secp256r1 Curve Support](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md)
+- [RIP-7212: Precompile for secp256r1 Curve Support](../protocol/precompiles.md#P256VERIFY)
+- [FastLZ compression for L1 data fee calculation](./exec-engine.md#fees)
+- [Deprecate the `getL1GasUsed` method on the `GasPriceOracle` contract](./predeploys.md#l1-gas-usage-estimation)
+- [Deprecate the `L1GasUsed` field on the transaction receipt](./exec-engine.md#l1-gas-usage-estimation)
 
 ## Consensus Layer
+
+- [Constant maximum sequencer drift](./derivation.md#constant-maximum-sequencer-drift)
+- [Brotli channel compression](./derivation.md#brotli-channel-compression)
+- [Increase Max Bytes Per Channel and Max Channel Bank Size](./derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)

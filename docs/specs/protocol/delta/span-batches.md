@@ -6,9 +6,9 @@
 
 - [Introduction](#introduction)
 - [Span batch format](#span-batch-format)
-  - [Max span-batch size](#max-span-batch-size)
+  - [Span Batch Size Limits](#span-batch-size-limits)
   - [Future batch-format extension](#future-batch-format-extension)
-- [Span batch Activation Rule](#span-batch-activation-rule)
+- [Span Batch Activation Rule](#span-batch-activation-rule)
 - [Optimization Strategies](#optimization-strategies)
   - [Truncating information and storing only necessary data](#truncating-information-and-storing-only-necessary-data)
   - [`tx_data_headers` removal from initial specs](#tx_data_headers-removal-from-initial-specs)
@@ -18,7 +18,7 @@
   - [Store `y_parity` and `protected_bit` instead of `v`](#store-y_parity-and-protected_bit-instead-of-v)
   - [Adjust `txs` Data Layout for Better Compression](#adjust-txs-data-layout-for-better-compression)
   - [`fee_recipients` Encoding Scheme](#fee_recipients-encoding-scheme)
-- [How derivation works with Span Batch?](#how-derivation-works-with-span-batch)
+- [How Derivation works with Span Batches](#how-derivation-works-with-span-batches)
 - [Integration](#integration)
   - [Channel Reader (Batch Decoding)](#channel-reader-batch-decoding)
   - [Batch Queue](#batch-queue)
@@ -28,23 +28,30 @@
 
 <!-- All glossary references in this file. -->
 
-[g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
+[g-deposit-tx-type]: ../../glossary.md#deposited-transaction-type
+[derivation]: ../derivation.md
+[channel-format]: ../derivation.md#channel-format
+[batch-format]: ../derivation.md#batch-format
+[frame-format]: ../derivation.md#frame-format
+[batch-queue]: ../derivation.md#batch-queue
+[batcher]: ../batcher.md
+[delta-upgrade]: ../superchain-upgrades.md#delta
 
 ## Introduction
 
 Span-batch is a new batching spec that reduces overhead of OP-stack chains,
-introduced in [Delta](superchain-upgrades.md#delta) network upgrade.
+introduced in [Delta][delta-upgrade] network upgrade.
 This enables sparse and low-throughput OP-stack chains.
 
 The overhead is reduced by representing a span of
 consecutive L2 blocks in a more efficient manner,
 while preserving the same consistency checks as regular batch data.
 
-Note that the [channel](derivation.md#channel-format) and
-[frame](derivation.md#frame-format) formats stay the same:
+Note that the [channel][channel-format] and
+[frame][frame-format] formats stay the same:
 data slicing, packing and multi-transaction transport is already optimized.
 
-The overhead in the [V0 batch format](derivation.md) comes from:
+The overhead in the [V0 batch format][derivation] comes from:
 
 - The meta-data attributes are repeated for every L2 block, while these are mostly implied already:
   - parent hash (32 bytes)
@@ -69,7 +76,7 @@ Span-batches address these inefficiencies, with a new batch format version.
 Note that span-batches, unlike previous singular batches,
 encode _a range of consecutive_ L2 blocks at the same time.
 
-Introduce version `1` to the [batch-format](derivation.md#batch-format) table:
+Introduce version `1` to the [batch-format][batch-format] table:
 
 | `batch_version` | `content`           |
 | --------------- | ------------------- |
@@ -133,22 +140,21 @@ tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
 [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 [EIP-155]: https://eips.ethereum.org/EIPS/eip-155
 
-### Max span-batch size
+### Span Batch Size Limits
 
-Total size of encoded span batch is limited to `MAX_SPAN_BATCH_SIZE` (currently 10,000,000 bytes,
-equal to `MAX_RLP_BYTES_PER_CHANNEL`). Therefore every field size of span batch will be implicitly limited to
-`MAX_SPAN_BATCH_SIZE` . There can be at least single span batch per channel, and channel size is limited
-to `MAX_RLP_BYTES_PER_CHANNEL` and you may think that there is already an implicit limit. However, having an explicit
-limit for span batch is helpful for several reasons. We may save computation costs by avoiding malicious input while
-decoding. For example, let's say bad batcher wrote span batch which `block_count = max.Uint64`. We may early return
-using the explicit limit, not trying to consume data until EOF is reached. We can also safely preallocate memory for
-decoding because we know the upper limit of memory usage.
+The total size of an encoded span batch is limited to `MAX_RLP_BYTES_PER_CHANNEL`, which is defined in the
+[Protocol Parameters table](#protocol-parameters).
+This is done at the channel level rather than at the span batch level.
+
+In addition to the byte limit, the number of blocks, and total transactions is limited to `MAX_SPAN_BATCH_ELEMENT_COUNT`.
+This does imply that the max number of transactions per block is also `MAX_SPAN_BATCH_ELEMENT_COUNT`.
+`MAX_SPAN_BATCH_ELEMENT_COUNT` is defined in [Protocol Parameters table](#protocol-parameters).
 
 ### Future batch-format extension
 
 This is an experimental extension of the span-batch format, and not activated with the Delta upgrade yet.
 
-Introduce version `2` to the [batch-format](derivation.md#batch-format) table:
+Introduce version `2` to the [batch-format][batch-format] table:
 
 | `batch_version` | `content`           |
 | --------------- | ------------------- |
@@ -167,7 +173,7 @@ Where:
     - `fee_recipients_idxs`: for each block,
       `uvarint` number of index to decode fee recipients from `fee_recipients_set`.
 
-## Span batch Activation Rule
+## Span Batch Activation Rule
 
 The span batch upgrade is activated based on timestamp.
 
@@ -225,11 +231,10 @@ Deposit transactions are excluded in batches and are never written at L1 so excl
 
 ### Adjust `txs` Data Layout for Better Compression
 
-There are (8 choose 2) \* 6! = 20160 permutations of ordering fields of `txs`.
-It is not 8! because `contract_creation_bits` must be first decoded in order to decode `tx_tos`.
-We experimented to find out the best layout for compression.
-It turned out placing random data together(`TxSigs`, `TxTos`, `TxDatas`),
-then placing leftovers helped gzip to gain more size reduction.
+There are (8 choose 2) \* 6! = 20160 permutations of ordering fields of `txs`.  It is not 8!
+because `contract_creation_bits` must be first decoded in order to decode `tx_tos`.  We
+experimented with different data layouts and found that segregating random data (`tx_sigs`,
+`tx_tos`, `tx_datas`) from the rest most improved the zlib compression ratio.
 
 ### `fee_recipients` Encoding Scheme
 
@@ -242,7 +247,7 @@ we thought sequencer rotation happens not much often, so assumed that `K` will b
 The assumption makes upper inequality to hold. Therefore, we decided to manage `fee_recipients_idxs` and
 `fee_recipients_set` separately. This adds complexity but reduces data.
 
-## How derivation works with Span Batch?
+## How Derivation works with Span Batches
 
 - Block Timestamp
   - The first L2 block's block timestamp is `rel_timestamp + L2Genesis.Timestamp`.
@@ -282,7 +287,7 @@ Span-batches share the same queue with v0 batches: batches are processed in L1 i
 
 A set of modified validation rules apply to the span-batches.
 
-Rules are enforced with the [contextual definitions](derivation.md#batch-queue) as v0-batch validation:
+Rules are enforced with the [contextual definitions][batch-queue] as v0-batch validation:
 `epoch`, `inclusion_block_number`, `next_timestamp`
 
 Definitions:
@@ -383,6 +388,6 @@ not directly call `(co *ChannelOut) AddBatch` but defer that until a minimum num
 Output-size estimation of the queued up blocks is not possible until the span-batch is written to the channel.
 Past a given number of blocks, the channel may be written for estimation, and then re-written if more blocks arrive.
 
-The [batcher functionality](batcher.md) stays the same otherwise: unsafe blocks are transformed into batches,
+The [batcher functionality][batcher] stays the same otherwise: unsafe blocks are transformed into batches,
 encoded in compressed channels, and then split into frames for submission to L1.
 Batcher implementations can implement different heuristics and re-attempts to build the most gas-efficient data-txs.

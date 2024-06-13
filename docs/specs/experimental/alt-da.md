@@ -1,4 +1,4 @@
-# Plasma Mode
+# Alt-DA Mode
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
@@ -18,9 +18,13 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+Note: Alt-DA Mode is a Beta feature of the MIT licensed OP Stack.
+While it has received initial review from core contributors, it is still undergoing testing,
+and may have bugs or other issues.
+
 ## Overview
 
-Using [Plasma][vitalikblog] mode means switching to an offchain data availability provider.
+Using [Alt-DA][vitalikblog] mode means switching to an offchain data availability provider.
 The protocol guarantees availability with a challenge contract on L1 where users
 can challenge the availability of input data used to derive the chain.
 Challenging an input commitment means forcing providers to submit the input data on chain
@@ -106,12 +110,12 @@ Any DA provider can implement the following endpoints to receive and serve input
   Request:
     POST /put
     Content-Type: application/octet-stream
-    Body: <encoded_commitment>
+    Body: <preimage_bytes>
 
   Response:
     200 OK
     Content-Type: application/octet-stream
-    Body: <preimage_bytes>
+    Body: <hex_encoded_commitment>
   ```
 
 - ```text
@@ -193,7 +197,7 @@ we've extracted the commitment from L1 DA.
 
 Similarly to L1 based DA, for each L1 block we open a calldata source to retrieve the input commitments
 from the transactions and use each commitment with its l1 origin block number to resolve
-the input data from the storage service. To enable smooth transition between plasma and rollup mode, any L1 data
+the input data from the storage service. To enable smooth transition between alt-da and rollup mode, any L1 data
 retrieved from the batcher inbox that is not prefixed with `txDataVersion1` is forwarded downstream
 to be parsed as input frames or skipped as invalid data.
 
@@ -270,7 +274,7 @@ The input data stored on the DA storage for the given `<commitment>`.
 The status of the challenge for the given `<commitment>` at the given `<blocknumber>` on the L1
 DataAvailabilityChallenge contract.
 
-[faultproofs]: ./fault-proof/index.md
+[faultproofs]: ../fault-proof/index.md
 
 ## Safety and Finality
 
@@ -278,20 +282,16 @@ Similarly to rollup mode, the engine queue labels any new blocks derived from in
 on the L1 chain as “safe”. Although labeled as “safe”, the chain might still reorg in case of a faulty DA provider
 and users must use the “finalized” label for a guarantee that their state cannot revert.
 
-With Plasma mode on, the engine queue does receives finality signals from the L1 RPC AND
+With Alt-DA mode on, the engine queue does receives finality signals from the L1 RPC AND
 from the DA manager that keeps track of challenges.
 The DA manager maintains an internal state of all the input commitments in the current `challengeWindow`
-as they are validated by the derivation pipeline. In addition, it filters challenge events to calculate
-when commitments are challenged/resolved and elect the next finalized L1 block such that:
+as they are validated by the derivation pipeline.
 
-```python
-if active_challenges_count > 0
-    challenge = findOldestActiveChallenge(active_challenges)
-    finality_delay = (challenge.block_number - challenge.commitment_block_number) + resolve_window + 1
-    l1_finalized_block_number = min(latest_l1_block_number - finality_delay, finalized_l1_block_number)
-else 
-    l1_finalized_block_number = min(latest_l1_block_number - challenge_window, finalized_l1_block_number)
-```
+The L2 chain can be marked as finalized when the L1 block in which commitments can no longer be invalidated
+becomes finalized. Without Alt-DA Mode, L2 blocks are safe when the batch is on L1. Plasma commitments are
+only "optimistically safe" when the commitment is found in a L1 block. Commitments then become safe
+when that commitment can no longer be invalidated. Then finalization can proceed as normal: when the L1 block
+that an L2 block is derived from becomes finalized, the L2 block can be marked as finalized.
 
 The engine queue will maintain a longer buffer of L2 blocks waiting for the DA window to expire
 and the L1 block with the commitment to be finalized in order to signal finality.

@@ -23,7 +23,7 @@
 
 ## Overview
 
-Bonds is an add-on to the core [Fault Dispute Game](./fault-dispute-game.md). The core game mechanics are
+Bonds is an add-on to the core [Fault Dispute Game](fault-dispute-game.md). The core game mechanics are
 designed to ensure honesty as the best response to winning subgames. By introducing financial incentives,
 Bonds makes it worthwhile for honest challengers to participate.
 Without the bond reward incentive, the FDG will be too costly for honest players to participate in given the
@@ -93,17 +93,17 @@ For the moment, we suppose that the `Guardian` address may account for increased
 FPM bonds are priced in the amount of gas that they are intended to cover.
 Bonds start at the very first depth of the game at a baseline of `400_000` gas.
 The `400_000` value is chosen as a deterrence amount that is approximately double the cost to respond at the top level.
-Bonds scale up to a value of `200_000_000` gas, a value chosen to cover approximately double the cost of a max-size
+Bonds scale up to a value of `300_000_000` gas, a value chosen to cover approximately double the cost of a max-size
 Large Preimage Proposal.
 
 We use a multiplicative scaling mechanism to guarantee that the ratio between bonds remains constant.
 We determine the multiplier based on the proposed `MAX_DEPTH` of 73.
-We can use the formula `x = (200_000_000 / 400_000) ** (1 / 73)` to determine that `x = 1.089`.
-At each depth `N`, the amount of gas charged is therefore `400_000 * (1.089 ** N)`
+We can use the formula `x = (300_000_000 / 400_000) ** (1 / 73)` to determine that `x = 1.09493`.
+At each depth `N`, the amount of gas charged is therefore `400_000 * (1.09493 ** N)`
 
 Below is a diagram demonstrating this curve for a max depth of 73.
 
-![bond scaling curve](https://github.com/ethereum-optimism/specs/assets/14298799/acc02dd8-1b7a-4c1d-9c44-4abdc0965d52)
+![bond scaling curve](https://github.com/ethereum-optimism/specs/assets/14298799/b381037b-193d-42c5-9a9c-9cc5f43b255f)
 
 ### Required Bond Formula
 
@@ -114,7 +114,7 @@ Applying the [Base Fee Assumption](#base-fee-assumption) and [Bond Scaling](#bon
 def get_required_bond(position):
     assumed_gas_price = 200 gwei
     base_gas_charged = 400_000
-    gas_charged = 400_000 * (1.089 ** position.depth)
+    gas_charged = 400_000 * (1.09493 ** position.depth)
     return gas_charged * assumed_gas_price
 ```
 
@@ -128,7 +128,7 @@ all other costs of participation.
 ### DelayedWETH
 
 FPM introduces a contract `DelayedWETH` designed to hold the bonded ETH for each
-[Fault Dispute Game](./fault-dispute-game.md).
+[Fault Dispute Game](fault-dispute-game.md).
 `DelayedWETH` is an extended version of the standard `WETH` contract that introduces a delayed unwrap mechanism that
 allows an owner address to function as a backstop in the case that a Fault Dispute Game would
 incorrectly distribute bonds.

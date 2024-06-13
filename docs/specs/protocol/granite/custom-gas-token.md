@@ -82,6 +82,7 @@ The gas paying token MUST NOT:
 - Have out of band methods for modifying balance or allowance
 - Have a `name()` that is more than 32 bytes long
 - Have a `symbol()` this is more than 32 bytes long
+- Be a [double entrypoint token](https://stermi.xyz/blog/ethernaut-challenge-24-solution-double-entry-point)
 
 It MUST be enforced on chain that the token has exactly 18 decimals to guarantee no losses of precision when
 depositing a token that has a different number of decimals. It MUST be enforced on chain that the
@@ -120,9 +121,6 @@ the `GAS_PAYING_TOKEN_SLOT` slot for `SystemConfig` is not `address(0)`, the sys
 gas paying token, and the getter returns the address in the slot.
 
 ```mermaid
----
-title: Custom Gas Token Configuration
----
 flowchart LR
     subgraph Layer One
         OP[OptimismPortal]
@@ -252,12 +250,13 @@ The following legacy methods in `L1StandardBridge` MUST revert when custom gas t
 - `depositETHTo(address,uint32,bytes)`
 - `finalizeETHWithdrawal(address,address,uint256,bytes)`
 
-The following legacy methods in `L2StandardBridge` MUST also revert when custom gas token is being used and the
-CALLVALUE is nonzero:
+The following legacy methods in `L2StandardBridge` MUST always revert when custom gas token is being used:
 
 - `withdraw(address,uint256,uint32,bytes)`
 - `withdrawTo(address,address,uint256,uint32,bytes)`
 - `finalizeDeposit(address,address,address,address,uint256,bytes)`
+
+These methods are deprecated and subject to be removed in the future.
 
 ### CrossDomainMessenger
 
@@ -360,9 +359,6 @@ The following diagram shows the control flow for when a user attempts to send `e
 the `StandardBridge`, either on L1 or L2.
 
 ```mermaid
----
-title: Control Flow for Custom Gas Token Chain
----
 flowchart TD
     A1(User) -->|Attempts to deposit/withdraw ether| A2(StandardBridge or CrossDomainMessenger)
     A2 -->|Is chain using custom gas token?| A3{SystemConfig or L1Block}

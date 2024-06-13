@@ -17,7 +17,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 
 ## Specification Contents
 
-- [Introduction](introduction.md)
+- [Background](background.md)
 - [Overview](protocol/overview.md)
 - [Deposits](protocol/deposits.md)
 - [Withdrawals](protocol/withdrawals.md)
@@ -34,20 +34,20 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 - [Bridges](protocol/bridges.md)
 - [Predeploys](protocol/predeploys.md)
 - [Preinstalls](protocol/preinstalls.md)
+- [Fault Proof](fault-proof/index.md)
+  - [Stage One Decentralization]()
+    - [Dispute Game Interface](fault-proof/stage-one/dispute-game-interface.md)
+    - [Fault Dispute Game](fault-proof/stage-one/fault-dispute-game.md)
+      - [Bond Incentives](fault-proof/stage-one/bond-incentives.md)
+      - [Honest Challenger Behavior](fault-proof/stage-one/honest-challenger-fdg.md)
+  - [Cannon VM](fault-proof/cannon-fault-proof-vm.md)
 - [Glossary](glossary.md)
 
 ### Experimental
 
 Specifications of new features in active development.
 
-- [Fault Proof](./experimental/fault-proof/index.md)
-  - [Stage One Decentralization]()
-    - [Dispute Game Interface](./experimental/fault-proof/stage-one/dispute-game-interface.md)
-    - [Fault Dispute Game](./experimental/fault-proof/stage-one/fault-dispute-game.md)
-      - [Bond Incentives](./experimental/fault-proof/stage-one/bond-incentives.md)
-      - [Honest Challenger Behavior](./experimental/fault-proof/stage-one/honest-challenger-fdg.md)
-  - [Cannon VM](./experimental/fault-proof/cannon-fault-proof-vm.md)
-- [Plasma](./experimental/plasma.md)
+- [Alt-DA](./experimental/alt-da.md)
 - [Interoperability](./interop/overview.md)
 - [Security Council Safe](./experimental/security-council-safe.md)
 
