@@ -47,7 +47,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 
 Specifications of new features in active development.
 
-- [Plasma](./experimental/plasma.md)
+- [Alt-DA](./experimental/alt-da.md)
 - [Interoperability](./interop/overview.md)
 - [Security Council Safe](./experimental/security-council-safe.md)
 

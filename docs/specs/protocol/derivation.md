@@ -331,7 +331,7 @@ Batcher transactions are encoded as `version_byte ++ rollup_payload` (where `++`
 | `version_byte` | `rollup_payload`                               |
 | -------------- | ---------------------------------------------- |
 | 0              | `frame ...` (one or more frames, concatenated) |
-| 1    | `plasma_commitment` (experimental, see [op-plasma](../experimental/plasma.md#input-commitment-submission) |
+| 1    | `da_commitment` (experimental, see [alt-da](../experimental/alt-da.md#input-commitment-submission)) |
 
 Unknown versions make the batcher transaction invalid (it must be ignored by the rollup node).
 All frames in a batcher transaction must be parseable. If any one frame fails to parse, the all frames in the

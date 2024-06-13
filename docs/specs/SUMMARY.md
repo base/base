@@ -45,7 +45,7 @@
   - [Configurability](./protocol/configurability.md)
 - [Experimental]()
   - [Custom Gas Token](./protocol/granite/custom-gas-token.md)
-  - [Plasma](./experimental/plasma.md)
+  - [Alt-DA](./experimental/alt-da.md)
   - [Interoperability](./interop/overview.md)
     - [Dependency Set](./interop/dependency_set.md)
     - [Messaging](./interop/messaging.md)
