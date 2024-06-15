@@ -1,5 +1,5 @@
 [package]
-name = "alloy-op-rpc-types"
+name = "op-alloy-rpc-types"
 description = "Optimism RPC types"
 
 version.workspace = true
