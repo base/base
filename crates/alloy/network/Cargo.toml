@@ -1,0 +1,26 @@
+[package]
+name = "op-alloy-network"
+description = "Optimism blockchain RPC behavior abstraction"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+op-alloy-rpc-types.workspace = true
+
+alloy-consensus.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+
+
