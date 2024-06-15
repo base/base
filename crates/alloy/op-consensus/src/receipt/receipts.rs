@@ -5,6 +5,7 @@ use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
+use core::borrow::Borrow;
 
 /// Receipt containing result of transaction execution.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -46,7 +47,10 @@ impl<T> AsRef<Receipt<T>> for OpDepositReceipt<T> {
     }
 }
 
-impl TxReceipt for OpDepositReceipt {
+impl<T> TxReceipt<T> for OpDepositReceipt<T>
+where
+    T: Borrow<Log>,
+{
     fn status_or_post_state(&self) -> &Eip658Value {
         self.inner.status_or_post_state()
     }
@@ -56,15 +60,15 @@ impl TxReceipt for OpDepositReceipt {
     }
 
     fn bloom(&self) -> Bloom {
-        self.bloom_slow()
+        self.inner.bloom_slow()
     }
 
     fn cumulative_gas_used(&self) -> u128 {
-        self.inner.cumulative_gas_used
+        self.inner.cumulative_gas_used()
     }
 
-    fn logs(&self) -> &[Log] {
-        &self.inner.logs
+    fn logs(&self) -> &[T] {
+        self.inner.logs()
     }
 }
 

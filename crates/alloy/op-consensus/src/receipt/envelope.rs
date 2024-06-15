@@ -1,5 +1,5 @@
 use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
-use alloy_consensus::{Receipt, ReceiptWithBloom};
+use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
@@ -144,6 +144,35 @@ impl OpReceiptEnvelope {
             Self::Legacy(_) => length,
             _ => length + 1,
         }
+    }
+}
+
+impl<T> TxReceipt<T> for OpReceiptEnvelope<T> {
+    fn status_or_post_state(&self) -> &Eip658Value {
+        &self.as_receipt().unwrap().status
+    }
+
+    fn status(&self) -> bool {
+        self.as_receipt().unwrap().status.coerce_status()
+    }
+
+    /// Return the receipt's bloom.
+    fn bloom(&self) -> Bloom {
+        *self.logs_bloom()
+    }
+
+    fn bloom_cheap(&self) -> Option<Bloom> {
+        Some(self.bloom())
+    }
+
+    /// Returns the cumulative gas used at this receipt.
+    fn cumulative_gas_used(&self) -> u128 {
+        self.as_receipt().unwrap().cumulative_gas_used
+    }
+
+    /// Return the receipt logs.
+    fn logs(&self) -> &[T] {
+        &self.as_receipt().unwrap().logs
     }
 }
 

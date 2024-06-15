@@ -12,8 +12,11 @@ repository.workspace = true
 exclude.workspace = true
 
 [dependencies]
+op-alloy-consensus = { workspace = true, features = ["serde"] }
+
 alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
 alloy-rpc-types-eth.workspace = true
+alloy-network.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 
