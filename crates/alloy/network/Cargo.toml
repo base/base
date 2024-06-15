@@ -15,10 +15,10 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-op-alloy-consensus= { workspace = true, features = ["serde"] }
+op-alloy-consensus = { workspace = true, features = ["serde"] }
 op-alloy-rpc-types.workspace = true
 
-alloy-consensus = { workspace = true, features = ["std"] }
+alloy-consensus.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
