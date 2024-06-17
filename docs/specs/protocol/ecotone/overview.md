@@ -6,7 +6,6 @@
 
 - [Execution Layer](#execution-layer)
 - [Consensus Layer](#consensus-layer)
-- [Consensus Layer](#consensus-layer-1)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -41,4 +40,3 @@ The Ecotone upgrade contains the Dencun upgrade from L1, and adopts EIP-4844 blo
 - Auto-upgrading and extension of the [L1 Attributes Predeployed Contract][predeploy]
   (also known as `L1Block` predeploy)
 
-## Consensus Layer
