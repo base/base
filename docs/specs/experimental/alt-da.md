@@ -91,7 +91,7 @@ or it could a specific DA focused blockchain.
 Content addressed systems like S3 should use the first `put/<hex_encoded_commitment>`
 because they can pre-commpute the commitment.
 Blockchain based DA layers should use `put` and then submit the returned commitment to L1.
-Because commitments can includ the block height or hash, the commitment cannot be computed prior to submitting
+Because commitments can include the block height or hash, the commitment cannot be computed prior to submitting
 it to the DA Layer.
 
 Any DA provider can implement the following endpoints to receive and serve input data:
@@ -282,7 +282,7 @@ Similarly to rollup mode, the engine queue labels any new blocks derived from in
 on the L1 chain as “safe”. Although labeled as “safe”, the chain might still reorg in case of a faulty DA provider
 and users must use the “finalized” label for a guarantee that their state cannot revert.
 
-With Alt-DA mode on, the engine queue does receives finality signals from the L1 RPC AND
+With Alt-DA mode on, the engine queue does receive finality signals from the L1 RPC AND
 from the DA manager that keeps track of challenges.
 The DA manager maintains an internal state of all the input commitments in the current `challengeWindow`
 as they are validated by the derivation pipeline.
