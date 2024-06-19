@@ -39,4 +39,3 @@ The Ecotone upgrade contains the Dencun upgrade from L1, and adopts EIP-4844 blo
   [L1 Data Fee computation](../exec-engine.md#ecotone-l1-cost-fee-changes-eip-4844-da)
 - Auto-upgrading and extension of the [L1 Attributes Predeployed Contract][predeploy]
   (also known as `L1Block` predeploy)
-
