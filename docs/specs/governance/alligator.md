@@ -16,30 +16,18 @@
 
 ## Overview
 
-The `Alligator` contract implements advanced delegation features for the `GovernanceToken` contract. It is based on
-the Alligator V2 contract, with the following modifications from AlligatorOP:
-
-- uses hashed proxy rules to reduce calldata size
-
-- assumes one proxy per owner
-
-- uses proxies without deploying them
-
-- casts votes in batch directly to governor
-
-- adds alternative methods to limit the sender's voting power when casting votes
-
-- implements upgradeable version of the contract
-
-- adds method for casting multiple by signature
-
-## Integration with `GovernanceToken`
-
-The `Alligator` contract integrates with the `GovernanceToken` contract through a hook-based approach. The
-`GovernanceToken` contract calls the `Alligator` contract's `afterTokenTransfer` function after a token transfer. This
+The `Alligator` contract implements advanced delegation features for the `GovernanceToken` contract. Our goal 
+is to shift the logic from the `GovernanceToken` contract to the `Alligator` contract. The `Alligator` contract
+integrates with the `GovernanceToken` contract through a hook-based approach. Concretely, the `GovernanceToken`
+contract calls the `Alligator` contract's `afterTokenTransfer` function after a token transfer. This
 allows the `Alligator` contract to consume the hooks and update its delegation and checkpoint mappings accordingly.
-If either of the addresses passed as arguments to `afterTokenTransfer`, `from` and `to`, have not been migrated,
-`Alligator` copies the address's delegation and checkpoint data from the `GovernanceToken` contract to its own state.
+If either of the addresses passed as arguments to `afterTokenTransfer`, `from` and `to`, have not been migrated to the
+`Alligator` contract, `Alligator` copies the address's delegation and checkpoint data from the `GovernanceToken`
+contract to its own state (migrating the address). The `Alligator` contract also provides a method for validating
+subdelegation rules and partial delegation allowances.
+
+This implementation is based on the [Alligator V5 contract](https://github.com/voteagora/governor/blob/main/src/alligator/AlligatorOP_V5.sol),
+the most recent version of the Alligator contract. 
 
 ## Governor
 
@@ -64,7 +52,7 @@ It should also provide methods for variants such as for
 
 ## Subdelegations
 
-The `Alligator` contract supports subdelegations, allowing for advanced delegation use cases, such as partial,
+The `Alligator` contract MUST support subdelegations, allowing for advanced delegation use cases, such as partial,
 time-constrained & block-based delegations, relative & fixed allowances, and custom rules. The
 `_afterTokenTransfer` function in the `GovernanceToken` is modified to call the `afterTokenTransfer` function in
 the `Alligator` contract, allowing the `Alligator` contract to consume the hooks and update its delegation and
