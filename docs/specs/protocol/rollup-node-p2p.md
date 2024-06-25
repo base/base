@@ -8,7 +8,7 @@
 - [P2P configuration](#p2p-configuration)
   - [Identification](#identification)
   - [Discv5](#discv5)
-    - [Structure](#structure)
+    - [Consesus Layer Structure](#consesus-layer-structure)
   - [LibP2P](#libp2p)
     - [Transport](#transport)
     - [Dialing](#dialing)
@@ -84,7 +84,7 @@ Common representations of network identity:
 
 ### Discv5
 
-#### Structure
+#### Consesus Layer Structure
 
 The Ethereum Node Record (ENR) for an Optimism rollup node must contain the following values, identified by unique keys:
 
