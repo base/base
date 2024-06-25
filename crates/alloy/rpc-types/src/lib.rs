@@ -15,6 +15,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+pub mod genesis;
 pub mod receipt;
 pub mod transaction;
 
