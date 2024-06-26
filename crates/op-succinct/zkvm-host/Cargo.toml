@@ -1,0 +1,25 @@
+[package]
+name = "zkvm-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+
+# workspace
+hex.workspace = true
+rkyv.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
+
+# local
+zkvm-client = { path = "../zkvm-client" }
+zkvm-common = { path = "../common" }
+
+# sp1
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git" }
+
+[build-dependencies]
+sp1-helper = { git = "https://github.com/succinctlabs/sp1.git" }

@@ -1,0 +1,43 @@
+[package]
+name = "zkvm-client"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+
+# workspace (general)
+cfg-if.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+serde = { workspace = true, features = ["derive"] }
+rkyv.workspace = true
+sha2.workspace = true
+
+# workspace (ethereum)
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-rlp.workspace = true
+alloy-eips.workspace = true
+op-alloy-consensus.workspace = true
+
+# workspace (kona)
+kona-common.workspace = true
+kona-common-proc.workspace = true
+kona-preimage.workspace = true
+kona-primitives.workspace = true
+kona-mpt.workspace = true
+kona-derive.workspace = true
+kona-executor.workspace = true
+kona-client.workspace = true
+
+# workspace (local)
+zkvm-common.workspace = true
+
+# sp1
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", rev = "v1.0.8-testnet"  }
+
+[dev-dependencies]
