@@ -1,3 +1,6 @@
+# MacOS dust
+.DS_Store
+
 # build output
 /target
 
