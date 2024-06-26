@@ -36,6 +36,9 @@ Standard configuration is the set of requirements for an OP Stack chain to be co
 Standard Chain within the superchain.
 These requirements are currently a draft, pending governance approval.
 
+The recommended way to deploy L1 contracts for an OP chain that meet the standard configuration will be with the
+[OP Stack Manager](../experimental/op-stack-manager.md).
+
 ## Consensus Parameters
 
 | Config Property                       | Description                                                                                                                  | Administrator                       | Standard Config Requirement | Notes |

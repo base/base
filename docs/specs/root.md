@@ -50,6 +50,7 @@ Specifications of new features in active development.
 - [Alt-DA](./experimental/alt-da.md)
 - [Interoperability](./interop/overview.md)
 - [Security Council Safe](./experimental/security-council-safe.md)
+- [OP Stack Manager](./experimental/op-stack-manager.md)
 
 ## Design Goals
 
