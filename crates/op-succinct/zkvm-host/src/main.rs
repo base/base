@@ -44,7 +44,7 @@ fn main() {
     stdin.write(&boot_info);
 
     // Read KV store into raw bytes and pass to stdin.
-    let kv_store = load_kv_store(&format!("../../data/{}", l2_claim_block));
+    let kv_store = load_kv_store(&format!("../data/{}", l2_claim_block));
 
     let mut serializer = CompositeSerializer::new(
         AlignedSerializer::new(AlignedVec::new()),
