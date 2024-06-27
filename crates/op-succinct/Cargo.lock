@@ -6439,8 +6439,6 @@ dependencies = [
  "async-trait",
  "cfg-if",
  "kona-client",
- "kona-common",
- "kona-common-proc",
  "kona-derive",
  "kona-executor",
  "kona-mpt",
