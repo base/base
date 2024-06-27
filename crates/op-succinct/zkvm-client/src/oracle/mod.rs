@@ -1,16 +1,21 @@
 //! Contains the host <-> client communication utilities.
 
+mod precompile;
+use precompile::Precompile;
+
 use alloc::{boxed::Box, vec::Vec};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use kona_preimage::{HintWriterClient, PreimageKey, PreimageOracleClient};
+use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
 use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 use rkyv::{Archive, Serialize, Deserialize, Infallible};
 use zkvm_common::BytesHasherBuilder;
+use alloy_primitives::{FixedBytes, keccak256};
 
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub struct InMemoryOracle {
+    // TODO: Change this to PreimageKey and everything below.
     cache: HashMap<[u8;32], Vec<u8>, BytesHasherBuilder>,
 }
 
@@ -28,12 +33,12 @@ impl InMemoryOracle {
 #[async_trait]
 impl PreimageOracleClient for InMemoryOracle {
     async fn get(&self, key: PreimageKey) -> Result<Vec<u8>> {
-        let lookup_key: [u8; 32] = key.into();
+        let lookup_key: [u8;32] = key.into();
         self.cache.get(&lookup_key).cloned().ok_or_else(|| anyhow!("Key not found in cache"))
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<()> {
-        let lookup_key: [u8; 32] = key.into();
+        let lookup_key: [u8;32] = key.into();
         let value = self.cache.get(&lookup_key).ok_or_else(|| anyhow!("Key not found in cache"))?;
         buf.copy_from_slice(value.as_slice());
         Ok(())
@@ -63,6 +68,7 @@ impl InMemoryOracle {
         let mut blobs: HashMap<FixedBytes<48>, Blob> = HashMap::new();
 
         for (key, value) in self.cache.iter() {
+            let key: PreimageKey = <[u8; 32] as TryInto<PreimageKey>>::try_into(*key).unwrap();
             match key.key_type() {
 
                 // These are public values so verification happens in Solidity.
@@ -72,7 +78,7 @@ impl InMemoryOracle {
                 // Validate that the hash of the value (with keccak key added) equals the key.
                 PreimageKeyType::Keccak256 => {
                     let derived_key = PreimageKey::new(keccak256(value).into(), PreimageKeyType::Keccak256);
-                    assert_eq!(*key, derived_key, "zkvm keccak constraint failed!");
+                    assert_eq!(key, derived_key, "zkvm keccak constraint failed!");
                 },
                 // Unimplemented.
                 PreimageKeyType::GlobalGeneric => {
@@ -83,14 +89,14 @@ impl InMemoryOracle {
                     let derived_key: [u8; 32] = Sha256::digest(value).into();
                     // TODO: Confirm we don't need `derived_key[0] = 0x01; // VERSIONED_HASH_VERSION_KZG` because it's overwritten by PreimageKey
                     let derived_key = PreimageKey::new(derived_key, PreimageKeyType::Sha256);
-                    assert_eq!(*key, derived_key, "zkvm sha256 constraint failed!");
+                    assert_eq!(key, derived_key, "zkvm sha256 constraint failed!");
                 },
                 // Aggregate blobs and proofs in memory and verify after loop.
                 PreimageKeyType::Blob => {
-                    let blob_data_key = PreimageKey::new(
-                        <PreimageKey as Into<[u8;32]>>::into(*key),
+                    let blob_data_key: [u8;32] = PreimageKey::new(
+                        key.try_into().unwrap(),
                         PreimageKeyType::Keccak256
-                    );
+                    ).into();
 
                     if let Some(blob_data) = self.cache.get(&blob_data_key) {
                         let commitment: FixedBytes<48> = blob_data[..48].try_into().unwrap();
@@ -136,15 +142,17 @@ impl InMemoryOracle {
                 },
                 PreimageKeyType::Precompile => {
                     // Convert the Precompile type to a Keccak type. This is the key to get the hint data.
-                    let hint_data_key = PreimageKey::new(
-                        <PreimageKey as Into<[u8;32]>>::into(*key),
+                    let hint_data_key: [u8;32] = PreimageKey::new(
+                        key.try_into().unwrap(),
                         PreimageKeyType::Keccak256
-                    );
+                    ).into();
 
                     // Look up the hint data in the cache. It should always exist, because we only
                     // set Precompile KV pairs along with Keccak KV pairs for the hint data.
                     if let Some(hint_data) = self.cache.get(&hint_data_key) {
-                        // Insert validation logic for accelerated precompiles.
+                        let precompile = Precompile::from_bytes(hint_data).unwrap();
+                        let output = precompile.execute();
+                        assert_eq!(value, &output, "zkvm precompile constraint failed!")
                     } else {
                         return Err(anyhow!("precompile hint data not found"));
                     }
