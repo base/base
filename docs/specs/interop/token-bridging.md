@@ -3,70 +3,34 @@
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
-- [Interface](#interface)
-- [Interface](#interface-1)
+- [Overview](#overview)
 - [Implementation](#implementation)
-  - [Cross Chain transfers](#cross-chain-transfers)
-  - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
 - [Deployment and migrations](#deployment-and-migrations)
   - [Factory](#factory)
   - [Migration to the Standard](#migration-to-the-standard)
+- [Future Considerations: Cross Chain `transferFrom`](#future-considerations-cross-chain-transferfrom)
+  - [Approvals](#approvals)
+  - [`remoteTransferFrom()`](#remotetransferfrom)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-Unified ERC20 token bridging built on the messaging protocol can make tokens fungible and movable across the superchain. An issue with bridging is that if the security model is not standardized, the bridged assets are not fungible with each other depending on which bridge solution was used to facilitate the transfer between domains.
+## Overview
 
-## Interface
+Without a standardized security model, bridged assets may not be fungible with each other. The `SuperchainERC20` unifies ERC20 token bridging to make it fungible across the Superchain. It builds on top of the messaging protocol, as the most trust minimized bridging solution.
 
-The `ISuperchainERC20` interface creates a standard way to send tokens
-between chains in the Superchain. In contrast to [xERC20](https://www.xerc20.com/) where the user calls
-a bridge with `mint` and `burn` privileges on the cross-chain enabled
-tokens, the user instead calls methods on the token contract directly.
+Unlike other standards, such as [xERC20](https://www.xerc20.com/), where users interact with a bridge possessing mint and burn privileges on cross-chain enabled tokens, this approach allows users to call methods directly on the token contract.
 
-In addition to standard bridging, these specs include functions that
-allow contracts to be cross-chain interoperable. For example, a contract in chain A
-can send pre-approved funds from a user in chain B to a contract in chain C.
+## Implementation
 
-```solidity
-interface ISuperchainERC20 {
-	// functions to bridge using interop
-  function bridgeERC20(uint256 amount, uint256 chainId) external returns (bool success);
-  function bridgeERC20To(address to, uint256 amount, uint256 chainId) external returns (bool success);
-  function finalizeBridgeERC20(address to, uint256 amount) external;
+The standard will build on top of ERC20 and include the following three external functions:
 
-  // functions to handle remote transfers
-  function allowance(address _owner, address _spender, uint256 _chainId) external view returns (uint256);
-  function xApprove(address spender, uint256 chainId, uint256 amount) external returns (bool);
-  function remoteTransferFrom(
-    address owner,
-    address recipient,
-    uint256 spendChainId,
-    uint256 executeChainId,
-    uint256 amount,
-    bytes memory data
-  ) external returns (bool);
-	function relayTransferFrom(
-    address owner,
-    address spender,
-    address recipient,
-    uint256 originChainId,
-    uint256 executionChainId,
-    uint256 amount,
-    bytes memory data
-  ) external;
-  function relayAndExecute(
-    address owner,
-    address recipient,
-    address spender,
-    uint256 originChainId,
-    uint256 spenderChainId,
-    uint256 amount,
-    bytes memory _data
-  ) external;
-}
-```
+- `sendERC20(uint256 amount, uint256 chainId)(bool)`
+- `sendERC20To(address to, uint256 amount, uint256 chainId)(bool)`
+- `finalizeSendERC20(address to, uint256 amount)`
 
-## Interface
+`sendERC20(uint256 amount, uint256 chainId)` and `sendERC20To(address to, uint256 amount, uint256 chainId)` will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the target address at `chainId`.
+
+`finalizeSendERC20(address to, uint256 amount)` will process incoming messages from the `L2ToL2CrossChainMessenger` initiated from the same token on a different `chainId` and mint `amount` to the `to` address.
 
 An example implementation that depends on deterministic deployments across chains
 for security is provided. This construction builds on top of the [L2ToL2CrossDomainMessenger][l2-to-l2]
@@ -75,98 +39,97 @@ for both replay protection and domain binding.
 [l2-to-l2]: ./predeploys.md#l2tol2crossdomainmessenger
 
 ```solidity
-contract OptimismSuperchainERC20 is ERC20, ISuperchainERC20 {
-  constructor(string memory _name, string memory _symbol, uint256 _decimals) ERC20(_name, _symbol, _decimals) {}
-
-  function bridgeERC20(uint256 _amount, uint256 _chainId) external {
-    bridgeERC20To(msg.sender, _amount, _chainId);
-  }
-
-  function bridgeERC20To(address _to, uint256 _amount, uint256 _chainId) public {
-    _burn(msg.sender, amount);
-
-    L2ToL2CrossDomainMessenger.sendMessage({
-      _destination: chainId,
-      _target: address(this),
-      _message: abi.encodeCall(this.finalizeBridgeERC20, (to, amount))
-    });
-  }
-
-  function finalizeBridgeERC20(address _to, uint256 _amount) external {
-    require(msg.sender == address(L2ToL2CrossChainMessenger));
-    require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
-
-    _mint(to, amount);
-  }
+function sendERC20(uint256 _amount, uint256 _chainId) external returns (bool) {
+  return sendERC20To(msg.sender, _amount, _chainId);
 }
-```
 
-[Disclaimer]
-
-- Threat the following code as experimental. It will have errors and will change function names. The goal is to discuss functionalities.
-- Current function names are open to discussion.
-
-## Implementation
-
-### Cross Chain transfers
-
-The standard will include the following three external functions:
-
-- `bridgeERC20(uint256 amount, uint256 chainId)`
-- `bridgeERC20To(address to, uint256 amount, uint256 chainId)`
-- `finalizeBridgeERC20(address to, uint256 amount)`
-
-The first two functions will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the destination (`to` address in `chainId`).
-
-`finalizeBridgeERC20(address to, uint256 amount)` will process incoming messages from the `L2ToL2CrossChainMessenger` initiated from the same token on a different `chainId` and mint `amount` to the `to` address.
-
-A possible implementation would look like this:
-
-```solidity
-function bridgeERC20(uint256 _amount, uint256 _chainId) external returns (bool success) {
-    success = bridgeERC20To(msg.sender, _amount, _chainId);
-  }
-
-function bridgeERC20To(address _to, uint256 _amount, uint256 _chainId) public returns (bool) {
+function sendERC20To(address _to, uint256 _amount, uint256 _chainId) public returns (bool success) {
   _burn(msg.sender, _amount);
-  bytes memory _message = abi.encodeCall(this.finalizeBridgeERC20, (_to, _amount));
+  bytes memory _message = abi.encodeCall(this.finalizeSendERC20, (_to, _amount));
   _sendMessage(_chainId, _message);
-  return true;
+  return true
 }
 
-function finalizeBridgeERC20(address _to, uint256 _amount) external onlyMessenger {
+function finalizeSendERC20(address _to, uint256 _amount) external {
+  require(msg.sender == address(L2ToL2CrossChainMessenger));
+  require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
   _mint(_to, _amount);
 }
 
-/////// Internals and modifiers ///////////
+/////// Internal functions ///////////
 function _sendMessage(uint256 _destination, bytes memory _data) internal virtual {
   L2ToL2CrossDomainMessenger.sendMessage(_destination, address(this), _data);
 }
-
-modifier onlyMessenger() virtual {
-  require(msg.sender == address(L2ToL2CrossChainMessenger));
-  require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
-  _;
-}
 ```
 
-Note: `send()` or `xTransfer()` can also be good fits instead of `bridgeERC20()`.
+Note: Some other naming options that were considered were `bridgeERC20`, `send()`, `xTransfer()`, `Transfer` (with a chainId parameter).
 
-### Cross Chain `transferFrom`
+## Deployment and migrations
 
-The standard will not include a remotely initialized `transfer` implementation as we think this should be handled directly on the chain where the funds live with the `bridgeERC20()` function. `transferFrom`, on the other hand, might get initialized from a call to a contract that is localized in a different chain from the funds. To be composable, the standard will introduce a `remoteTransferFrom()` function.
+### Factory
 
-Notice that this action is no longer atomic, so the contract will need a special implementation to use it and resume execution once the funds arrive in the chain.
+A token factory predeploy can ensure that `SuperchainERC20` tokens can be permissionlessly and deterministically deployed. Without a deterministic deployment scheme, maintaining a mapping of the token addresses between all of the chains will not be scalable.
 
-**Approvals**
+[TODO] We will create a design doc that covers `SuperchainERC20` factories and link it in this specs.
 
-To enable `remoteTransferFrom()`, we must include a separate `xAllowance` mapping that keeps track of the `chainId`. This allowance should be set locally using a new `xApprove()` function (the naming is open for discussion).
+### Migration to the Standard
+
+- New tokens that want to be interoperable should implement the `SuperchainERC20` standard from inception.
+- Tokens that are already deployed and upgradable, can update the implementation to be `SuperchainERC20` compatible.
+- Tokens that are already deployed but are not upgradable should use a different method.
+  - Some options are wrapping, converting (if burn-mint rights can be modified) or Mirroring.
+- Tokens that are `OptimismMintableERC20Token` (corresponding to locked liquidity in L1) fall into the above category of already deployed and non updatable. They do have a special property though, which is burn/mint permissions granted to the `L2StandardBridge`. This makes the convert method particularly appealing. See [Liquidity Migration](https://github.com/ethereum-optimism/design-docs/blob/098435155471ed3bcd60a50f049897495c901733/protocol/superc20/liquidity-migration.md) for more context.
+
+## Future Considerations: Cross Chain `transferFrom`
+
+In addition to standard bridging, it is possible to allow contracts to be cross-chain interoperable. For example, a contract in chain A
+could send pre-approved funds from a user in chain B to a contract in chain C.
+
+The standard should not include a remotely initialized `transfer` implementation as this should be handled directly on the chain where the funds live with the `sendERC20()` function. `transferFrom`, on the other hand, might get initialized from a call to a contract that is localized in a different chain from the funds. To be composable, the standard could introduce a `remoteTransferFrom()` function.
+
+Notice that this action is no longer atomic, so the contract would need a special implementation resume execution once the funds arrive in the target chain.
+
+It would be necessary to add the following function to the interface
+
+```solidity
+function allowance(address _owner, address _spender, uint256 _chainId) external view returns (uint256);
+function xApprove(address spender, uint256 chainId, uint256 amount) external returns (bool);
+function remoteTransferFrom(
+  address owner,
+  address recipient,
+  uint256 spendChainId,
+  uint256 executeChainId,
+  uint256 amount,
+  bytes memory data
+) external returns (bool);
+function relayTransferFrom(
+  address owner,
+  address spender,
+  address recipient,
+  uint256 originChainId,
+  uint256 executionChainId,
+  uint256 amount,
+  bytes memory data
+) external;
+function relayAndExecute(
+  address owner,
+  address recipient,
+  address spender,
+  uint256 originChainId,
+  uint256 spenderChainId,
+  uint256 amount,
+  bytes memory _data
+) external;
+```
+
+### Approvals
+
+To enable `remoteTransferFrom()`, it's necessary to include a separate `xAllowance` mapping that keeps track of the `chainId`. This allowance should be set locally using a new `xApprove()` function (the naming is open for discussion).
 
 Here is what a possible implementation could look like:
 
 ```solidity
 function xApprove(address _spender, uint256 _chainId, uint256 _amount) external returns (bool) {
-  // TODO [research] _chainId wildcard as type(uint256).max (this is very risky)
   _xAllowances[msg.sender][_spender][_chainId] = _amount;
   emit XApproval(msg.sender, _spender, _chainId, _amount);
   return true;
@@ -182,11 +145,11 @@ function allowance(address _owner, address _spender, uint256 _chainId) external 
 }
 ```
 
-It is possible for the standard to also have remote approvals. This feature, however, was discarded as an address might have different owners in different chains (think of smart wallets for instance). Moreover, even if this was not an issue, switching `chainId` is not that relevant UX-wise to include a dedicated function in the token standard.
+It is technically possible for the standard to also have remote approvals (initialize in chain A and approval for funds in chain B). This feature, however, was discarded as an address might have different owners in different chains (think of smart wallets for instance). Moreover, even if this was not an issue, switching `chainId` is not that relevant UX-wise to include a dedicated function in the token standard.
 
-**`remoteTransferFrom()`**
+### `remoteTransferFrom()`
 
-As already mentioned, the `remoteTransferFrom()` \*\*\*\*will allow using funds on a remote chain on behalf of another party. The function should initiate a call to the `L2ToL2CrossChainMessenger` without burning anything on the origin chain.
+As already mentioned, the `remoteTransferFrom()` will allow using funds on a remote chain on behalf of another party. The function should initiate a call to the `L2ToL2CrossChainMessenger` without burning anything on the origin chain.
 
 To process a `remoteTransferFrom()` on the destination, the standard should include a `relayTransferFrom()` function that checks local allowance and calls `burn()`. Then, it will check if the target lives on the same `chainId` to call `relayAndExecute()` to the corresponding contract.
 
@@ -226,7 +189,7 @@ function relayTransferFrom(
 
   _burn(_owner, _amount);
 
-  if (block.chain == _executionChainId){
+  if (block.chainid == _executionChainId) {
     _relayAndExecute(_owner, _recipient, _spender, _originChainId, block.chainid, _amount, _data);
   } else {
     bytes memory _message =
@@ -279,22 +242,3 @@ modifier onlyMessenger() virtual {
 You can check a full example implementation in the following gist.
 
 https://gist.github.com/0xParticle/7ac85c7f32fa3364473f28fb9f6ebace
-
-[TODO] We will add invariants.
-
-## Deployment and migrations
-
-### Factory
-
-A token factory predeploy can ensure that `SuperchainERC20` tokens can be permissionlessly and deterministically deployed. Without a deterministic deployment scheme, maintaining a mapping of the token addresses between all of the chains will not be scalable.
-
-[TODO] We will create a design doc that covers `SuperchainERC20` factories and link it in this specs.
-
-### Migration to the Standard
-
-- New tokens should implement the `SuperchainERC20` standard from inception.
-- Tokens that are already deployed but upgradable, can update the implementation to be `SuperchainERC20` compatible.
-- Tokens that are already deployed but are not upgradable should use methods such as Mirror (see https://github.com/ethereum-optimism/design-docs/pull/36).
-  - An `OptimismMintableERC20Token` does not natively have the functionality
-    to be sent between L2s. There are a few approaches to migrating L1 native tokens to L2 ERC20 tokens that support the `SuperchainERC20` interface that were covered in https://github.com/ethereum-optimism/design-docs/pull/35. The Mirror Standard is the preferred candidate now.
-    To support L1 native tokens with cross chain liquidity, the Mirror Standard (or chosen solution) interface MUST be supported in addition to the `ISuperchainERC20` interface.
