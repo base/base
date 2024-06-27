@@ -49,6 +49,8 @@ fn main() {
                 let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
                 let oracle = Arc::new(InMemoryOracle::from_raw_bytes(kv_store_bytes));
 
+                oracle.verify().expect("key value verification failed");
+
             // If we are compiling for online mode, create a caching oracle that speaks to the
             // fetcher via hints, and gather boot info from this oracle.
             } else {
