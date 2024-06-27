@@ -5,3 +5,7 @@ license.workspace = true
 edition.workspace = true
 
 [dependencies]
+kona-client.workspace = true
+kona-primitives.workspace = true
+alloy-primitives.workspace = true
+serde.workspace = true

@@ -3,8 +3,7 @@
 mod helpers;
 use helpers::load_kv_store;
 
-use zkvm_client::BootInfoWithoutRollupConfig;
-use zkvm_common::BytesHasherBuilder;
+use zkvm_common::{BytesHasherBuilder, BootInfoWithoutRollupConfig};
 
 use std::collections::HashMap;
 
