@@ -6457,6 +6457,12 @@ dependencies = [
 [[package]]
 name = "zkvm-common"
 version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "kona-client",
+ "kona-primitives",
+ "serde",
+]
 
 [[package]]
 name = "zkvm-host"
