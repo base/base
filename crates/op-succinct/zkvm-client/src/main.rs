@@ -38,14 +38,16 @@ fn main() {
 
         cfg_if! {
             // If we are compiling for the zkVM, read inputs from SP1 to generate boot info
-            // and in memory oracle. We can use the no-op hinter, as we shouldn't need hints.
+            // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
                 let boot_info = sp1_zkvm::io::read::<BootInfoWithoutRollupConfig>();
-                sp1_zkvm::io::commit(&boot_info);
+                sp1_zkvm::io::commit_slice(&boot_info.abi_encode());
                 let boot_info: Arc<BootInfo> = Arc::new(boot_info.into());
 
                 let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
                 let oracle = Arc::new(InMemoryOracle::from_raw_bytes(kv_store_bytes));
+
+                oracle.verify().expect("key value verification failed");
 
             // If we are compiling for online mode, create a caching oracle that speaks to the
             // fetcher via hints, and gather boot info from this oracle.

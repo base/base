@@ -27,10 +27,10 @@ fn main() {
     let mut stdin = SP1Stdin::new();
 
     // TODO: Move this to CLI so we can pass same values to both calls from the justfile.
-    let l1_head = b256!("557beb4a3abd062999b748e6b5903c28075dbef0279a10b987e9e8998806a938");
-    let l2_output_root = b256!("f54d7d4e617e442c44e2f029b46d15c98bbd5151021f1fd45faee864273c07e7");
-    let l2_claim = b256!("3a5105e0f56bdc6c12c41060048fa2ec46536207daccee00f7bbacc74b132a84");
-    let l2_claim_block = 121914785;
+    let l1_head = b256!("bb3c26e67fd8acb1a2baa15cd9affc57347f8549775657537d2f2ae359384ba4");
+    let l2_output_root = b256!("91c0ff7cdc5b59ff251b1c137b1f46c4c27e2b9f2ab17bb3b31c63d2f792a0a0");
+    let l2_claim = b256!("bfbec731f443c09bbfdcef53358458644ac2cbe1c5f68e53ad38599a52d65b5b");
+    let l2_claim_block = 121866428;
     let chain_id = 10;
 
     let boot_info = BootInfoWithoutRollupConfig {

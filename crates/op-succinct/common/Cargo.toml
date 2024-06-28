@@ -8,4 +8,5 @@ edition.workspace = true
 kona-client.workspace = true
 kona-primitives.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 serde.workspace = true
