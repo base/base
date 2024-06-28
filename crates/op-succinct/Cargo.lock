@@ -6439,8 +6439,6 @@ dependencies = [
  "async-trait",
  "cfg-if",
  "kona-client",
- "kona-common",
- "kona-common-proc",
  "kona-derive",
  "kona-executor",
  "kona-mpt",
@@ -6457,6 +6455,12 @@ dependencies = [
 [[package]]
 name = "zkvm-common"
 version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "kona-client",
+ "kona-primitives",
+ "serde",
+]
 
 [[package]]
 name = "zkvm-host"

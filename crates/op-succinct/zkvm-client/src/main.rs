@@ -25,15 +25,13 @@ cfg_if! {
         mod oracle;
         use oracle::InMemoryOracle;
 
-        mod boot;
-        use boot::BootInfoWithoutRollupConfig;
-
+        use zkvm_common::BootInfoWithoutRollupConfig;
         use alloc::vec::Vec;
     }
 }
 
 fn main() {
-    kona_common::block_on(async move {
+    zkvm_common::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////

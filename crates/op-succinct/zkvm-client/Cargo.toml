@@ -25,8 +25,6 @@ alloy-eips.workspace = true
 op-alloy-consensus.workspace = true
 
 # workspace (kona)
-kona-common.workspace = true
-kona-common-proc.workspace = true
 kona-preimage.workspace = true
 kona-primitives.workspace = true
 kona-mpt.workspace = true
