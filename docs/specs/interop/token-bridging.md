@@ -5,12 +5,14 @@
 
 - [Overview](#overview)
 - [Implementation](#implementation)
+- [Invariants](#invariants)
 - [Deployment and migrations](#deployment-and-migrations)
   - [Factory](#factory)
   - [Migration to the Standard](#migration-to-the-standard)
-- [Future Considerations: Cross Chain `transferFrom`](#future-considerations-cross-chain-transferfrom)
-  - [Approvals](#approvals)
-  - [`remoteTransferFrom()`](#remotetransferfrom)
+- [Future Considerations](#future-considerations)
+  - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
+    - [Approvals](#approvals)
+    - [`remoteTransferFrom()`](#remotetransferfrom)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -26,9 +28,10 @@ The standard will build on top of ERC20 and include the following three external
 
 - `sendERC20(uint256 amount, uint256 chainId)(bool)`
 - `sendERC20To(address to, uint256 amount, uint256 chainId)(bool)`
+- `sendERC20To(address to, uint256 amount, uint256 chainId, bytes data)(bool)`
 - `finalizeSendERC20(address to, uint256 amount)`
 
-`sendERC20(uint256 amount, uint256 chainId)` and `sendERC20To(address to, uint256 amount, uint256 chainId)` will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the target address at `chainId`.
+`sendERC20(uint256 amount, uint256 chainId)` and `sendERC20To(address to, uint256 amount, uint256 chainId)` will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the target address at `chainId`. `sendERC20To(address to, uint256 amount, uint256 chainId, bytes data)` will do the same, but also include a message.
 
 `finalizeSendERC20(address to, uint256 amount)` will process incoming messages from the `L2ToL2CrossChainMessenger` initiated from the same token on a different `chainId` and mint `amount` to the `to` address.
 
@@ -38,6 +41,8 @@ for both replay protection and domain binding.
 
 [l2-to-l2]: ./predeploys.md#l2tol2crossdomainmessenger
 
+[TODO] should we add a sendERC20To specific event?
+
 ```solidity
 function sendERC20(uint256 _amount, uint256 _chainId) external returns (bool) {
   return sendERC20To(msg.sender, _amount, _chainId);
@@ -45,15 +50,32 @@ function sendERC20(uint256 _amount, uint256 _chainId) external returns (bool) {
 
 function sendERC20To(address _to, uint256 _amount, uint256 _chainId) public returns (bool success) {
   _burn(msg.sender, _amount);
-  bytes memory _message = abi.encodeCall(this.finalizeSendERC20, (_to, _amount));
+  bytes memory _message = abi.encodeWithSignature("finalizeSendERC20(address,uint256)", _to, _amount);
+  _sendMessage(_chainId, _message);
+  return true
+}
+
+function sendERC20To(address _to, uint256 _amount, uint256 _chainId, bytes memory _data) public returns (bool success) {
+  _burn(msg.sender, _amount);
+  bytes memory _message = abi.encodeWithSignature("finalizeSendERC20(address,uint256,bytes)", _to, _amount, _data);
   _sendMessage(_chainId, _message);
   return true
 }
 
 function finalizeSendERC20(address _to, uint256 _amount) external {
+  // this will be a modifier, inline here for clarity
+  require(msg.sender == address(L2ToL2CrossChainMessenger));
+  require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
+  //
+  _mint(_to, _amount);
+}
+
+function finalizeSendERC20(address _to, uint256 _amount, bytes memory _data) external {
   require(msg.sender == address(L2ToL2CrossChainMessenger));
   require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
   _mint(_to, _amount);
+  (bool success, ) = _to.call(_data);
+  require(success, "External call failed");
 }
 
 /////// Internal functions ///////////
@@ -63,6 +85,34 @@ function _sendMessage(uint256 _destination, bytes memory _data) internal virtual
 ```
 
 Note: Some other naming options that were considered were `bridgeERC20`, `send()`, `xTransfer()`, `Transfer` (with a chainId parameter).
+
+## Invariants
+
+Besides the ERC20 invariants, the SuperchainERC20 will require the following interop specific properties:
+
+- Conservation of finalized `totalSupply`: The minted `amount` in `finalizeSendERC20()` should match the `amount` that was burnt in `sendERC20To()`, as long as target chain has the initiating chain in the dependency set. This implies that finalized cross-chain transactions will conserve the sum of `totalSupply` for each chain in the Superchain.
+  - Corollary 1: each in flight messages will decrease the `totalSupply` exactly by the burnt `amount`.
+  - Corollary 2: `SuperchainERC20s` should not charge a token fee or increase the balance when moving cross-chain.
+  - Question: what should we assume for chains not in the dependency set? a rollback method could modify this invariant to also consider that case.
+- Freedom of movement: Users should be able to send tokens into any target chain that has initiating chain in its dependency set.
+  - Question: should we add "deployed" to the invariant or assume its not going to be an issue?
+- [To discuss] Unique Messenger: The `sendERC20()` and `sendERC20To()` functions must exclusively use the `L2toL2CrossDomainMessenger` for messaging. Similarly, the `finalizeSendERC20()` function should only process messages originating from the L2toL2CrossDomainMessenger.
+  - Corollary: xERC20 and other standards from third party bridges should use different functions.
+- [To discuss] Locally initiated: The bridging action should be initialized from the chain where funds are located only.
+  - This is because same address might correspond to different users cross-chain. For example, two SAFEs with the same address in two chains might have different owners. It it possible to distiguish an EOA from a contract by checking the size of the code in the caller's address, but this will probably change with [EIP-7702](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md).
+  - A way to allow for remotely initiated bridging is to include remote approval, i.e. approve a certain address in a certain chainId to spend local funds.
+- [To discuss] Bridge Event: `sendERC20()` and `sendERC20To()` should emit a `Bridged` event.
+  - We already have a lot of events triggering from these actions. Should we include yet another one?
+
+**Desired properties**
+
+- Spatial symmetry: Same implementation and address across chains.
+
+**Open questions**
+
+- Should we define invariants for upgrades?
+- Does native minting introduce any invariant?
+  - If every factory is "equal", how do you choose which one creates the initial supply?
 
 ## Deployment and migrations
 
@@ -80,12 +130,15 @@ A token factory predeploy can ensure that `SuperchainERC20` tokens can be permis
   - Some options are wrapping, converting (if burn-mint rights can be modified) or Mirroring.
 - Tokens that are `OptimismMintableERC20Token` (corresponding to locked liquidity in L1) fall into the above category of already deployed and non updatable. They do have a special property though, which is burn/mint permissions granted to the `L2StandardBridge`. This makes the convert method particularly appealing. See [Liquidity Migration](https://github.com/ethereum-optimism/design-docs/blob/098435155471ed3bcd60a50f049897495c901733/protocol/superc20/liquidity-migration.md) for more context.
 
-## Future Considerations: Cross Chain `transferFrom`
+## Future Considerations
 
-In addition to standard bridging, it is possible to allow contracts to be cross-chain interoperable. For example, a contract in chain A
-could send pre-approved funds from a user in chain B to a contract in chain C.
+### Cross Chain `transferFrom`
 
-The standard should not include a remotely initialized `transfer` implementation as this should be handled directly on the chain where the funds live with the `sendERC20()` function. `transferFrom`, on the other hand, might get initialized from a call to a contract that is localized in a different chain from the funds. To be composable, the standard could introduce a `remoteTransferFrom()` function.
+In addition to standard locally initialized bridging, it is possible to allow contracts to be cross-chain interoperable. For example, a contract in chain A could send pre-approved funds from a user in chain B to a contract in chain C.
+
+The standard should not include a remotely initialized `transfer` implementation as this should be handled directly on the chain where the funds live with the `sendERC20()` function. `transferFrom`, on the other hand, might get initialized from a call to a contract that is localized in a different chain from the funds.
+
+For the moment, the standard will not include any specific functionality to facilitate such an action and relay on the usage of `permit2`. If, at some point in the future, these actions were to be included in the standard, a possible design could introduce a `remoteTransferFrom()` function.
 
 Notice that this action is no longer atomic, so the contract would need a special implementation resume execution once the funds arrive in the target chain.
 
@@ -122,7 +175,7 @@ function relayAndExecute(
 ) external;
 ```
 
-### Approvals
+#### Approvals
 
 To enable `remoteTransferFrom()`, it's necessary to include a separate `xAllowance` mapping that keeps track of the `chainId`. This allowance should be set locally using a new `xApprove()` function (the naming is open for discussion).
 
@@ -147,7 +200,7 @@ function allowance(address _owner, address _spender, uint256 _chainId) external 
 
 It is technically possible for the standard to also have remote approvals (initialize in chain A and approval for funds in chain B). This feature, however, was discarded as an address might have different owners in different chains (think of smart wallets for instance). Moreover, even if this was not an issue, switching `chainId` is not that relevant UX-wise to include a dedicated function in the token standard.
 
-### `remoteTransferFrom()`
+#### `remoteTransferFrom()`
 
 As already mentioned, the `remoteTransferFrom()` will allow using funds on a remote chain on behalf of another party. The function should initiate a call to the `L2ToL2CrossChainMessenger` without burning anything on the origin chain.
 
