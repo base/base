@@ -49,7 +49,7 @@ run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BE
   echo "Building client program..."
   cargo build --bin zkvm-client --profile release-client-lto
   echo "Running host program with native client program..."
-  ./kona-host \
+  cargo run --bin native-host --release -- \
     --l1-head $L1_HEAD \
     --l2-head $L2_HEAD \
     --l2-claim $L2_CLAIM \
