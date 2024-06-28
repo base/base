@@ -38,7 +38,7 @@ fn main() {
 
         cfg_if! {
             // If we are compiling for the zkVM, read inputs from SP1 to generate boot info
-            // and in memory oracle. We can use the no-op hinter, as we shouldn't need hints.
+            // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
                 let boot_info = sp1_zkvm::io::read::<BootInfoWithoutRollupConfig>();
                 sp1_zkvm::io::commit_slice(&boot_info.abi_encode());
