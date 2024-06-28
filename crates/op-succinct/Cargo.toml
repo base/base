@@ -1,5 +1,5 @@
 [workspace]
-members = ["common", "zkvm-client", "zkvm-host"]
+members = ["common", "native-host", "zkvm-client", "zkvm-host"]
 
 [workspace.package]
 license = "MIT"
@@ -19,7 +19,6 @@ kona-mpt = { git = "https://github.com/moongate-forks/kona/", branch = "kona-ups
 kona-derive = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream", default-features = false }
 kona-executor = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
 kona-client = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-host = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
 
 # general
 anyhow = { version = "1.0.86", default-features = false }
