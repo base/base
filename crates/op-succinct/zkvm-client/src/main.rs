@@ -1,18 +1,17 @@
 //! A program to verify a Optimism L2 block STF in the zkVM.
 #![cfg_attr(target_os = "zkvm", no_main)]
 
-use kona_client::CachingOracle;
 use kona_executor::StatelessL2BlockExecutor;
 use kona_primitives::L2AttributesWithParent;
-
-use alloc::sync::Arc;
-use alloy_consensus::Header;
-use cfg_if::cfg_if;
 use kona_client::{
     l1::{DerivationDriver, OracleBlobProvider, OracleL1ChainProvider},
     l2::OracleL2ChainProvider,
     BootInfo,
 };
+
+use alloc::sync::Arc;
+use alloy_consensus::Header;
+use cfg_if::cfg_if;
 
 extern crate alloc;
 
@@ -27,6 +26,8 @@ cfg_if! {
 
         use zkvm_common::BootInfoWithoutRollupConfig;
         use alloc::vec::Vec;
+    } else {
+        use kona_client::CachingOracle;
     }
 }
 

@@ -3,7 +3,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
+use kona_preimage::{HintWriterClient, PreimageOracleClient, PreimageKey, PreimageKeyType};
 use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 use rkyv::{Archive, Serialize, Deserialize, Infallible};
