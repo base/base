@@ -24,16 +24,17 @@ Unlike other standards, such as [xERC20](https://www.xerc20.com/), where users i
 
 ## Implementation
 
-The standard will build on top of ERC20 and include the following three external functions:
+The standard will build on top of ERC20 and include the following five external functions:
 
 - `sendERC20(uint256 amount, uint256 chainId)(bool)`
-- `sendERC20To(address to, uint256 amount, uint256 chainId)(bool)`
-- `sendERC20To(address to, uint256 amount, uint256 chainId, bytes data)(bool)`
+- `sendERC20(address to, uint256 amount, uint256 chainId)(bool)`
+- `sendERC20(address to, uint256 amount, uint256 chainId, bytes data)(bool)`
 - `finalizeSendERC20(address to, uint256 amount)`
+- `finalizeSendERC20(address to, uint256 amount, bytes data)`
 
-`sendERC20(uint256 amount, uint256 chainId)` and `sendERC20To(address to, uint256 amount, uint256 chainId)` will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the target address at `chainId`. `sendERC20To(address to, uint256 amount, uint256 chainId, bytes data)` will do the same, but also include a message.
+`sendERC20(uint256 amount, uint256 chainId)` and `sendERC20To(address to, uint256 amount, uint256 chainId)` will burn `amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `amount` in the target address at `chainId`. `sendERC20(address to, uint256 amount, uint256 chainId, bytes data)` will do the same, but also include a message.
 
-`finalizeSendERC20(address to, uint256 amount)` will process incoming messages from the `L2ToL2CrossChainMessenger` initiated from the same token on a different `chainId` and mint `amount` to the `to` address.
+`finalizeSendERC20(address to, uint256 amount)` will process incoming messages from the `L2ToL2CrossChainMessenger` initiated from the same token on a different `chainId` and mint `amount` to the `to` address. `finalizeSendERC20(address to, uint256 amount, bytes data)` will do the same, but include an external call to address `to` with `data`.
 
 An example implementation that depends on deterministic deployments across chains
 for security is provided. This construction builds on top of the [L2ToL2CrossDomainMessenger][l2-to-l2]
@@ -45,17 +46,17 @@ for both replay protection and domain binding.
 
 ```solidity
 function sendERC20(uint256 _amount, uint256 _chainId) external returns (bool) {
-  return sendERC20To(msg.sender, _amount, _chainId);
+  return sendERC20(msg.sender, _amount, _chainId);
 }
 
-function sendERC20To(address _to, uint256 _amount, uint256 _chainId) public returns (bool success) {
+function sendERC20(address _to, uint256 _amount, uint256 _chainId) public returns (bool success) {
   _burn(msg.sender, _amount);
   bytes memory _message = abi.encodeWithSignature("finalizeSendERC20(address,uint256)", _to, _amount);
   _sendMessage(_chainId, _message);
   return true
 }
 
-function sendERC20To(address _to, uint256 _amount, uint256 _chainId, bytes memory _data) public returns (bool success) {
+function sendERC20(address _to, uint256 _amount, uint256 _chainId, bytes memory _data) public returns (bool success) {
   _burn(msg.sender, _amount);
   bytes memory _message = abi.encodeWithSignature("finalizeSendERC20(address,uint256,bytes)", _to, _amount, _data);
   _sendMessage(_chainId, _message);
@@ -90,18 +91,19 @@ Note: Some other naming options that were considered were `bridgeERC20`, `send()
 
 Besides the ERC20 invariants, the SuperchainERC20 will require the following interop specific properties:
 
-- Conservation of finalized `totalSupply`: The minted `amount` in `finalizeSendERC20()` should match the `amount` that was burnt in `sendERC20To()`, as long as target chain has the initiating chain in the dependency set. This implies that finalized cross-chain transactions will conserve the sum of `totalSupply` for each chain in the Superchain.
-  - Corollary 1: each in flight messages will decrease the `totalSupply` exactly by the burnt `amount`.
+- Conservation of finalized `totalSupply`: The minted `amount` in `finalizeSendERC20()` should match the `amount` that was burnt in `sendERC20()`, as long as target chain has the initiating chain in the dependency set.
+  - Corollary 1: Cross-chain transactions will conserve the sum of `totalSupply` for each chain in the Superchain across safe blocks.
+  - Corollary 2: Each initiated but not finalized message (included in initiating chain but not yet in target chain) will decrease the `totalSupply` exactly by the burnt `amount`.
   - Corollary 2: `SuperchainERC20s` should not charge a token fee or increase the balance when moving cross-chain.
   - Question: what should we assume for chains not in the dependency set? a rollback method could modify this invariant to also consider that case.
 - Freedom of movement: Users should be able to send tokens into any target chain that has initiating chain in its dependency set.
   - Question: should we add "deployed" to the invariant or assume its not going to be an issue?
-- [To discuss] Unique Messenger: The `sendERC20()` and `sendERC20To()` functions must exclusively use the `L2toL2CrossDomainMessenger` for messaging. Similarly, the `finalizeSendERC20()` function should only process messages originating from the L2toL2CrossDomainMessenger.
+- [To discuss] Unique Messenger: The `sendERC20()` functions must exclusively use the `L2toL2CrossDomainMessenger` for messaging. Similarly, the `finalizeSendERC20()` function should only process messages originating from the L2toL2CrossDomainMessenger.
   - Corollary: xERC20 and other standards from third party bridges should use different functions.
 - [To discuss] Locally initiated: The bridging action should be initialized from the chain where funds are located only.
   - This is because same address might correspond to different users cross-chain. For example, two SAFEs with the same address in two chains might have different owners. It it possible to distiguish an EOA from a contract by checking the size of the code in the caller's address, but this will probably change with [EIP-7702](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md).
   - A way to allow for remotely initiated bridging is to include remote approval, i.e. approve a certain address in a certain chainId to spend local funds.
-- [To discuss] Bridge Event: `sendERC20()` and `sendERC20To()` should emit a `Bridged` event.
+- [To discuss] Bridge Event: `sendERC20()` should emit a `Bridged` event.
   - We already have a lot of events triggering from these actions. Should we include yet another one?
 
 **Desired properties**
