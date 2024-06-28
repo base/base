@@ -41,7 +41,7 @@ fn main() {
             // and in memory oracle. We can use the no-op hinter, as we shouldn't need hints.
             if #[cfg(target_os = "zkvm")] {
                 let boot_info = sp1_zkvm::io::read::<BootInfoWithoutRollupConfig>();
-                sp1_zkvm::io::commit(&boot_info);
+                sp1_zkvm::io::commit_slice(&boot_info.abi_encode());
                 let boot_info: Arc<BootInfo> = Arc::new(boot_info.into());
 
                 let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();

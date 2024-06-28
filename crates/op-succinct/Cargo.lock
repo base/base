@@ -6457,6 +6457,7 @@ name = "zkvm-common"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-sol-types",
  "kona-client",
  "kona-primitives",
  "serde",

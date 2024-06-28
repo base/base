@@ -44,6 +44,7 @@ zkvm-host = { path = "zkvm-host" }
 alloy-primitives = { version = "0.7.6", default-features = false }
 alloy-rlp = { version = "0.3.5", default-features = false }
 alloy-consensus = { version = "0.1", default-features = false }
+alloy-sol-types = { version = "0.7.6" }
 op-alloy-consensus = { version = "0.1.0", default-features = false }
 alloy-eips = { version = "0.1", default-features = false }
 revm = { git = "https://github.com/bluealloy/revm", tag = "v37", version = "10.0.0", default-features = false }

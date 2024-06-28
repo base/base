@@ -1,3 +1,8 @@
+// This code is taken from Kona.
+// Reference: https://github.com/ethereum-optimism/kona/blob/main/crates/common/src/executor.rs
+// Copyright © 2023 kona contributors Copyright © 2024 Optimism
+// Licensed under the [MIT License](https://github.com/ethereum-optimism/kona/blob/main/LICENSE.md).
+
 //! This module contains utilities for handling async functions in the no_std environment. This
 //! allows for usage of async/await syntax for futures in a single thread.
 
