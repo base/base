@@ -10,6 +10,10 @@ use rkyv::{Archive, Serialize, Deserialize, Infallible};
 use zkvm_common::BytesHasherBuilder;
 use alloy_primitives::{FixedBytes, keccak256};
 
+/// An in-memory HashMap that will serve as the oracle for the zkVM.
+/// Rather than relying on a trusted host for data, the data in this oracle
+/// is verified with the `verify()` function, and then is trusted for
+/// the remainder of execution.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub struct InMemoryOracle {
     // TODO: Change this to PreimageKey and everything below.
@@ -17,6 +21,8 @@ pub struct InMemoryOracle {
 }
 
 impl InMemoryOracle {
+    /// Creates a new [InMemoryOracle] from the raw bytes passed into the zkVM.
+    /// These values are deserialized using rkyv for zero copy deserialization.
     pub fn from_raw_bytes(input: Vec<u8>) -> Self {
         let archived = unsafe { rkyv::archived_root::<HashMap<[u8;32], Vec<u8>, BytesHasherBuilder>>(&input) };
         let deserialized: HashMap<[u8;32], Vec<u8>, BytesHasherBuilder> = archived.deserialize(&mut Infallible).unwrap();
@@ -50,7 +56,9 @@ impl HintWriterClient for InMemoryOracle {
     }
 }
 
-
+/// A data structure representing a blob. This data is held in memory for future verification.
+/// This is used so that we can aggregate all separate blob elements into a single blob
+/// and verify it once, rather than verifying each of the 4096 elements separately.
 #[derive(Default)]
 struct Blob {
     // TODO: Advantage / disadvantage of using FixedBytes?
@@ -60,6 +68,8 @@ struct Blob {
 }
 
 impl InMemoryOracle {
+    /// Verifies all data in the oracle. Once the function has been called, all data in the
+    /// oracle can be trusted for the remainder of execution.
     pub fn verify(&self) -> Result<()> {
         let mut blobs: HashMap<FixedBytes<48>, Blob> = HashMap::new();
 
