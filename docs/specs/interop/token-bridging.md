@@ -28,7 +28,8 @@ Without a standardized security model, bridged assets may not be fungible with e
 The `SuperchainERC20` unifies ERC20 token bridging to make it fungible across the Superchain.
 It builds on top of the messaging protocol, as the most trust minimized bridging solution.
 
-Unlike other standards, such as [xERC20](https://www.xerc20.com/), where users interact with a bridge possessing mint and burn
+Unlike other standards, such as [xERC20](https://www.xerc20.com/),
+where users interact with a bridge possessing mint and burn
 privileges on cross-chain enabled tokens, this approach allows users to call methods directly on the token contract.
 
 ## Interface
@@ -52,7 +53,8 @@ sendERC20(address _to, uint256 _amount, uint256 _chainId, bytes _data)
 
 #### `relayERC20`
 
-Process incoming messages IF AND ONLY IF if they where initiated by the same contract (token) address on a different chain
+Process incoming messages IF AND ONLY IF if they where initiated
+by the same contract (token) address on a different chain
 and come from the `L2ToL2CrossChainMessenger` in the local chain.
 It will mint `_amount` to address `_to`, as defined in `sendERC20`.
 If the message contained `_data`,
@@ -137,7 +139,8 @@ function relayERC20(address _to, uint256 _amount, bytes memory _data) external {
 }
 ```
 
-Note: Some other naming options that were considered were `bridgeERC20`, `send()`, `xTransfer()`, `Transfer` (with a chainId parameter).
+Note: Some other naming options that were considered were
+`bridgeERC20`, `send()`, `xTransfer()`, `Transfer` (with a chainId parameter).
 
 ## Invariants
 
@@ -175,8 +178,10 @@ Besides the ERC20 invariants, the SuperchainERC20 will require the following int
 
 ### Factory
 
-A token factory predeploy can ensure that `SuperchainERC20` tokens can be permissionlessly and deterministically deployed.
-Without a deterministic deployment scheme, maintaining a mapping of the token addresses between all of the chains will not be scalable.
+A token factory predeploy can ensure that `SuperchainERC20`
+tokens can be permissionlessly and deterministically deployed.
+Without a deterministic deployment scheme, maintaining a mapping of the token
+addresses between all of the chains will not be scalable.
 
 ### Migration to the Standard
 
@@ -187,17 +192,21 @@ Without a deterministic deployment scheme, maintaining a mapping of the token ad
 - Tokens that are `OptimismMintableERC20Token` (corresponding to locked liquidity in L1)
   fall into the above category of already deployed and non updatable.
   They do have a special property though, which is burn/mint permissions granted to the `L2StandardBridge`.
-  This makes the convert method particularly appealing. See [Liquidity Migration](https://github.com/ethereum-optimism/design-docs/blob/098435155471ed3bcd60a50f049897495c901733/protocol/superc20/liquidity-migration.md)
-  for more context.
+  This makes the convert method particularly appealing.
 
 ## Future Considerations
 
 ### Cross Chain `transferFrom`
 
-In addition to standard locally initialized bridging, it is possible to allow contracts to be cross-chain interoperable.
-For example, a contract in chain A could send pre-approved funds from a user in chain B to a contract in chain C.
+In addition to standard locally initialized bridging,
+it is possible to allow contracts to be cross-chain interoperable.
+For example, a contract in chain A could send pre-approved funds
+from a user in chain B to a contract in chain C.
 
-For the moment, the standard will not include any specific functionality to facilitate such an action and relay on the usage of `permit2`.
-If, at some point in the future, these actions were to be included in the standard, a possible design could introduce a `remoteTransferFrom()` function.
+For the moment, the standard will not include any specific functionality
+to facilitate such an action and relay on the usage of `permit2`.
+If, at some point in the future, these actions were to be included in the standard,
+a possible design could introduce a `remoteTransferFrom()` function.
 
-Notice that this action is no longer atomic, so the contract would need a special implementation resume execution once the funds arrive in the target chain.
+Notice that this action is no longer atomic, so the contract would
+need a special implementation resume execution once the funds arrive in the target chain.
