@@ -5,14 +5,20 @@
 
 - [Overview](#overview)
 - [Implementation](#implementation)
+  - [Functions](#functions)
+    - [`sendERC20`](#senderc20)
+    - [`relayERC20`](#relayerc20)
+  - [Events](#events)
+    - [`SendERC20`](#senderc20)
+  - [`RelayERC20`](#relayerc20)
+- [Diagram](#diagram)
+- [Implementation](#implementation-1)
 - [Invariants](#invariants)
 - [Deployment and migrations](#deployment-and-migrations)
   - [Factory](#factory)
   - [Migration to the Standard](#migration-to-the-standard)
 - [Future Considerations](#future-considerations)
   - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
-    - [Approvals](#approvals)
-    - [`remoteTransferFrom()`](#remotetransferfrom)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
