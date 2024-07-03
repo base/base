@@ -38,7 +38,7 @@ rule MUST contain the following fields:
 - `notValidAfter`: The timestamp before which the delegation is valid.
 - `allowanceType` The type of allowance. If `Absolute`, the amount of votes delegated is fixed. If `Relative`, the
   amount of votes delegated is relative to the total amount of votes the delegator has.
-- `allowance`: The amount of votes delegated.
+- `allowance`: The amount of votes delegated, denominated in the token contract's decimals.
 
 The `Alligator` contract MUST provide a method to subdelegate in batches, called `subdelegateBatched`. This function
 should take an array of `to` addresses and an array of subdelegation rules, and call the `subdelegate` function for each
@@ -48,15 +48,14 @@ of the previous parameters.
 
 ## Token Transfer Hook
 
-The `Alligator` contract MUST provide a method, referred to as `afterTokenTransfer`, that can be called by the
-`GovernanceToken` contract's `_afterTokenTransfer` function. This method should update its delegation and checkpoint
-mappings for the address of the `GovernanceToken` contract. Specifically, if the `to` or `from` addresses of the transfer
-have not been migrated, the `Alligator` MUST migrate it by copying the delegation and checkpoint data from the
-`GovernanceToken` contract to its own state.
+The `Alligator` contract MUST provide a method, referred to as `afterTokenTransfer`, that can be called by the token
+contract's `_afterTokenTransfer` function. This method should update its delegation and checkpoint mappings for the
+address of the token contract. Specifically, if the `to` or `from` addresses of the transfer have not been migrated,
+the `Alligator` MUST migrate it by copying the delegation and checkpoint data from the token contract to its own state.
 
 ## View functions
 
-`Alligator` MUST provide methods to get the delegation state for a token contract address. Specifically, the contract
-MUST provide functions to get subdelegations, checkpoints, and current & past voting power. The output for these
-functions is conditional on whether the user address has been migrated or not. Concretely, the contract MUST read its
-own state if the address has been migrated, and the token contract's state otherwise.
+`Alligator` MUST provide methods to get the delegation state for a token contract address. Specifically, the `Alligator`
+contract MUST provide functions to get subdelegations, checkpoints, and current & past voting power of a user. The output
+for these functions is conditional on whether the user address has been migrated or not. Concretely, the contract MUST
+read its own state if the address has been migrated, and the token contract's state otherwise.
