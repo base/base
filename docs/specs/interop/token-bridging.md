@@ -14,9 +14,6 @@
 - [Diagram](#diagram)
 - [Implementation](#implementation)
 - [Invariants](#invariants)
-- [Deployment and migrations](#deployment-and-migrations)
-  - [Factory](#factory)
-  - [Migration to the Standard](#migration-to-the-standard)
 - [Future Considerations](#future-considerations)
   - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
 
@@ -53,11 +50,11 @@ sendERC20(address _to, uint256 _amount, uint256 _chainId, bytes _data)
 
 #### `relayERC20`
 
-Process incoming messages IF AND ONLY IF if they where initiated
+Process incoming messages IF AND ONLY IF initiated
 by the same contract (token) address on a different chain
 and come from the `L2ToL2CrossChainMessenger` in the local chain.
 It will mint `_amount` to address `_to`, as defined in `sendERC20`.
-If the message contained `_data`,
+If the message containes `_data`,
 it will also include an external call to address `_to` with `_data`.
 
 ```solidity
@@ -139,9 +136,6 @@ function relayERC20(address _to, uint256 _amount, bytes memory _data) external {
 }
 ```
 
-Note: Some other naming options that were considered were
-`bridgeERC20`, `send()`, `xTransfer()`, `Transfer` (with a chainId parameter).
-
 ## Invariants
 
 Besides the ERC20 invariants, the SuperchainERC20 will require the following interop specific properties:
@@ -151,48 +145,32 @@ Besides the ERC20 invariants, the SuperchainERC20 will require the following int
   - Corollary 1: Finalized cross-chain transactions will conserve the sum of `totalSupply`
     and each user's balance for each chain in the Superchain.
   - Corollary 2: Each initiated but not finalized message (included in initiating chain but not yet in target chain)
-    will decrease the `totalSupply` and the initiating user balance exactly by the burnt `amount`.
+    will decrease the `totalSupply` and the initiating user balance precisely by the burnt `amount`.
   - Corollary 3: `SuperchainERC20s` should not charge a token fee or increase the balance when moving cross-chain.
   - Note: if the target chain is not in the initiating chain dependency set,
-    funds will be locked similarly to sending funds to a wrong address.
-    If the target chain decides to later include it, these could be unlocked eventually.
-- Freedom of movement: Users should be able to send tokens into any target
-  chain that has initiating chain in its dependency set.
+    funds will be locked, similar to sending funds to the wrong address.
+    If the target chain includes it later, these could be unlocked.
+- Freedom of movement: Users should be able to send and receive tokens in any target
+  chain with the initiating chain in its dependency set
+  using `sendERC20()` and `relayERC20()`, respectively.
 - Unique Messenger: The `sendERC20()` function must exclusively use the `L2toL2CrossDomainMessenger` for messaging.
-  Similarly, the `relayERC20()` function should only process messages originating from the L2toL2CrossDomainMessenger.
-  - Corollary: xERC20 and other standards from third party bridges should use different functions.
+  Similarly, the `relayERC20()` function should only process messages originating from the `L2toL2CrossDomainMessenger`.
+  - Corollary: xERC20 and other standards from third-party bridges should use different functions.
+- Unique Address: The `sendERC20()` function must exclusively send a message
+  to the same address on the target chain.
+  Similarly, the `relayERC20()` function should only process messages originating from the same address.
+  - Note: The Factory will ensure same address deployment.
 - Locally initiated: The bridging action should be initialized
   from the chain where funds are located only.
-  - This is because same address might correspond to different users cross-chain.
+  - This is because the same address might correspond to different users cross-chain.
     For example, two SAFEs with the same address in two chains might have different owners.
-    It it possible to distiguish an EOA from a contract by checking the size of the code in the caller's address,
-    but this will probably change with [EIP-7702](https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7702.md).
+    With the prospects of a smart wallet future, it is impossible to assume
+    there will be a way to distinguish EOAs from smart wallets.
   - A way to allow for remotely initiated bridging is to include remote approval,
     i.e. approve a certain address in a certain chainId to spend local funds.
 - Bridge Events:
   - `sendERC20()` should emit a `SendERC20` event. `
   - `relayERC20()` should emit a `RelayERC20` event.
-- Same address: The SuperchainERC20 token should have the same address across chains in the Superchain.
-
-## Deployment and migrations
-
-### Factory
-
-A token factory predeploy can ensure that `SuperchainERC20`
-tokens can be permissionlessly and deterministically deployed.
-Without a deterministic deployment scheme, maintaining a mapping of the token
-addresses between all of the chains will not be scalable.
-
-### Migration to the Standard
-
-- New tokens that want to be interoperable should implement the `SuperchainERC20` standard from inception.
-- Tokens that are already deployed and upgradable, can update the implementation to be `SuperchainERC20` compatible.
-- Tokens that are already deployed but are not upgradable should use a different method.
-  - Some options are wrapping, converting (if burn-mint rights can be modified) or Mirroring.
-- Tokens that are `OptimismMintableERC20Token` (corresponding to locked liquidity in L1)
-  fall into the above category of already deployed and non updatable.
-  They do have a special property though, which is burn/mint permissions granted to the `L2StandardBridge`.
-  This makes the convert method particularly appealing.
 
 ## Future Considerations
 
@@ -204,9 +182,6 @@ For example, a contract in chain A could send pre-approved funds
 from a user in chain B to a contract in chain C.
 
 For the moment, the standard will not include any specific functionality
-to facilitate such an action and relay on the usage of `permit2`.
+to facilitate such an action and rely on the usage of `permit2`.
 If, at some point in the future, these actions were to be included in the standard,
 a possible design could introduce a `remoteTransferFrom()` function.
-
-Notice that this action is no longer atomic, so the contract would
-need a special implementation resume execution once the funds arrive in the target chain.
