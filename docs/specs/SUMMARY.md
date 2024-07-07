@@ -44,7 +44,7 @@
   - [System Config](./protocol/system_config.md)
   - [Configurability](./protocol/configurability.md)
 - [Experimental]()
-  - [Custom Gas Token](./protocol/granite/custom-gas-token.md)
+  - [Custom Gas Token](./experimental/custom-gas-token.md)
   - [Alt-DA](./experimental/alt-da.md)
   - [Interoperability](./interop/overview.md)
     - [Dependency Set](./interop/dependency_set.md)
