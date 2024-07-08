@@ -1,6 +1,7 @@
 //! Receipt types for RPC
 
 use alloy_network::ReceiptResponse;
+use alloy_primitives::BlockHash;
 use op_alloy_consensus::OpReceiptEnvelope;
 use serde::{Deserialize, Serialize};
 
@@ -21,5 +22,13 @@ impl ReceiptResponse for OpTransactionReceipt {
 
     fn status(&self) -> bool {
         self.inner.inner.status()
+    }
+
+    fn block_hash(&self) -> Option<BlockHash> {
+        self.inner.block_hash
+    }
+
+    fn block_number(&self) -> Option<u64> {
+        self.inner.block_number
     }
 }
