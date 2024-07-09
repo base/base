@@ -37,12 +37,12 @@ impl InMemoryOracle {
 impl PreimageOracleClient for InMemoryOracle {
     async fn get(&self, key: PreimageKey) -> Result<Vec<u8>> {
         let lookup_key: [u8;32] = key.into();
-        self.cache.get(&lookup_key).cloned().ok_or_else(|| anyhow!("Key not found in cache"))
+        self.cache.get(&lookup_key).cloned().ok_or_else(|| anyhow!("Key not found in cache: {}", lookup_key.iter().map(|&b| format!("{:02x}", b)).collect::<String>()))
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<()> {
         let lookup_key: [u8;32] = key.into();
-        let value = self.cache.get(&lookup_key).ok_or_else(|| anyhow!("Key not found in cache"))?;
+        let value = self.cache.get(&lookup_key).ok_or_else(|| anyhow!("Key not found in cache (exact): {}", lookup_key.iter().map(|&b| format!("{:02x}", b)).collect::<String>()))?;
         buf.copy_from_slice(value.as_slice());
         Ok(())
     }
@@ -136,7 +136,9 @@ impl InMemoryOracle {
                         return Err(anyhow!("blob data not found"));
                     }
                 },
-                PreimageKeyType::Precompile => { unimplemented!(); }
+                PreimageKeyType::Precompile => {
+                    // unimplemented
+                }
             }
         }
 

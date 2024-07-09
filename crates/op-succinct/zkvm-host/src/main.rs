@@ -33,6 +33,11 @@ fn main() {
     let l2_claim_block = 121866428;
     let chain_id = 10;
 
+    // let l1_head = b256!("a4cada75dd6e1cc686b52ef7fd54932c3244fab2fe5e6820ed01aac24673ae35");
+    // let l2_output_root = b256!("1609b15d07b05f4404af9b5c7c14e7ef7107f3745b345c8043c5e7a6411e2bf2");
+    // let l2_claim = b256!("9b5af7c8d975319ba36b06c3e23ebf1b10f3738dac21c64e5eb1138aaf2b151f");
+    // let l2_claim_block = 121866438;
+
     let boot_info = BootInfoWithoutRollupConfig {
         l1_head,
         l2_output_root,
