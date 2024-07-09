@@ -68,4 +68,4 @@ run-zkvm-host:
     cd zkvm-client && cargo prove build --ignore-rust-version
 
     echo "Proving zkvm program in SP1..."
-    cd zkvm-host && RUST_LOG=info cargo run --release
+    cd zkvm-host && RUST_LOG=debug cargo run --release
