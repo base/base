@@ -180,9 +180,12 @@ a possible design could introduce a `remoteTransferFrom()` function.
 
 ### Concatenated Action
 
-It is possible to have an additional input `bytes _data` in both `sendERC20()` and `relayERC20()` that would make an additional call to the `_to` address. This feature could be used for cross-chain concatenated actions, i.e. bridge funds and then do X.
+It is possible to have an additional input `bytes _data` in both `sendERC20()` and `relayERC20()` that would make an
+additional call to the `_to` address.
+This feature could be used for cross-chain concatenated actions,
+i.e. bridge funds and then do X.
 
-This vertical has much potential but can also be achieved outside the standard at the cost of a clunkier UX.
+This vertical has much potential but can also be achieved outside the standard in the following way:
 
 ```mermaid
 sequenceDiagram
@@ -205,3 +208,8 @@ sequenceDiagram
   Inbox_B->>Messenger_B: relayMessage(): call
   Messenger_B->>to: call(data)
 ```
+
+Adding the call to the standard would remove the dependence on the sequencer regarding the proper tx ordering
+at the sequencer level, but would also introduce more risk for cross-chain fund transferring,
+as an incorrectly formatted call would burn funds in the initiating chain but would revert
+in destination and could never be successfully replayed.
