@@ -2862,7 +2862,7 @@ dependencies = [
 [[package]]
 name = "kona-client"
 version = "0.1.0"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2914,18 +2914,7 @@ dependencies = [
 [[package]]
 name = "kona-common"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
-dependencies = [
- "anyhow",
- "cfg-if",
- "linked_list_allocator",
- "spin 0.9.8",
-]
-
-[[package]]
-name = "kona-common"
-version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#d0014180b03f48a832f318b241f8db7011ef4557"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2936,7 +2925,7 @@ dependencies = [
 [[package]]
 name = "kona-common-proc"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2962,32 +2951,7 @@ dependencies = [
 [[package]]
 name = "kona-derive"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
-dependencies = [
- "alloc-no-stdlib",
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "async-trait",
- "brotli",
- "hashbrown 0.14.5",
- "kona-primitives 0.0.1 (git+https://github.com/moongate-forks/kona/?branch=cycle-tracking)",
- "lru",
- "miniz_oxide",
- "op-alloy-consensus",
- "serde",
- "spin 0.9.8",
- "tracing",
- "unsigned-varint",
-]
-
-[[package]]
-name = "kona-derive"
-version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#d0014180b03f48a832f318b241f8db7011ef4557"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus",
@@ -3022,7 +2986,7 @@ dependencies = [
 [[package]]
 name = "kona-executor"
 version = "0.0.1"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3056,7 +3020,7 @@ dependencies = [
 [[package]]
 name = "kona-host"
 version = "0.1.0"
-source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#d0014180b03f48a832f318b241f8db7011ef4557"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3088,21 +3052,7 @@ dependencies = [
 [[package]]
 name = "kona-mpt"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-trie",
- "anyhow",
- "revm",
- "tracing",
-]
-
-[[package]]
-name = "kona-mpt"
-version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#d0014180b03f48a832f318b241f8db7011ef4557"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -3116,7 +3066,7 @@ dependencies = [
 [[package]]
 name = "kona-preimage"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3143,23 +3093,7 @@ dependencies = [
 [[package]]
 name = "kona-primitives"
 version = "0.0.1"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "op-alloy-consensus",
- "serde",
- "superchain-primitives",
-]
-
-[[package]]
-name = "kona-primitives"
-version = "0.0.1"
-source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#d0014180b03f48a832f318b241f8db7011ef4557"
+source = "git+https://github.com/moongate-forks/kona/?branch=kona-upstream#a46891b153cbdc7a2230f508eb4b897ef39dae97"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
