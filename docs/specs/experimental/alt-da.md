@@ -149,6 +149,11 @@ Data availability is guaranteed via a permissionless challenge contract on the L
 Users have a set number of L1 blocks (`challengeWindow`) during which they are able to call
 the `challenge` method of the contract with the following inputs:
 
+**Note:** Resolving Input Data through the Data Availability Challenge Contract is implemented
+only for `type=0 (keccak)` commitments. This is because `type=1 (da-service)` commitments are designed to be
+handled by a DA Server which is repsonsible the mapping between commitment and input datas.
+Due to this "generic" handling nature, there is currently no on-chain mechanism to verify commitments.
+
 ```solidity
 function challenge(uint256 challengedBlockNumber, bytes calldata challengedCommitment) external payable
 ```
