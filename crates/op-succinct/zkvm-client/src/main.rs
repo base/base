@@ -98,13 +98,13 @@ fn main() {
             .unwrap();
 
         let Header { number, .. } = *executor.execute_payload(attributes).unwrap();
-        // let output_root = executor.compute_output_root().unwrap();
+        let output_root = executor.compute_output_root().unwrap();
 
         ////////////////////////////////////////////////////////////////
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
         assert_eq!(number, boot.l2_claim_block);
-        // assert_eq!(output_root, boot.l2_claim);
+        assert_eq!(output_root, boot.l2_claim);
     });
 }

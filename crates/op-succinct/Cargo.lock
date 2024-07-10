@@ -739,7 +739,7 @@ dependencies = [
  "http 1.1.0",
  "http-body 1.0.0",
  "http-body-util",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "hyper-util",
  "itoa",
  "matchit",
@@ -1108,9 +1108,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.0.106"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "066fce287b1d4eafef758e89e09d724a24808a9196fe9756b8ca90e86d0719a2"
+checksum = "eaff6f8ce506b9773fa786672d63fc7a191ffea1be33f72bbd4aeacefca9ffc8"
 dependencies = [
  "jobserver",
  "libc",
@@ -2526,9 +2526,9 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.4.0"
+version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4fe55fb7a772d59a5ff1dfbff4fe0258d19b89fec4b233e75d35d5d2316badc"
+checksum = "50dfd22e0e76d0f662d429a5f80fcaf3855009297eab6a0a9f8543834744ba05"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -2553,7 +2553,7 @@ checksum = "5ee4be2c948921a1a5320b629c4193916ed787a7f7f293fd3f7f5a6c9de74155"
 dependencies = [
  "futures-util",
  "http 1.1.0",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "hyper-util",
  "rustls",
  "rustls-pki-types",
@@ -2571,7 +2571,7 @@ checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
 dependencies = [
  "bytes",
  "http-body-util",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "hyper-util",
  "native-tls",
  "tokio",
@@ -2590,7 +2590,7 @@ dependencies = [
  "futures-util",
  "http 1.1.0",
  "http-body 1.0.0",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "pin-project-lite",
  "socket2",
  "tokio",
@@ -2862,7 +2862,7 @@ dependencies = [
 [[package]]
 name = "kona-client"
 version = "0.1.0"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2914,7 +2914,7 @@ dependencies = [
 [[package]]
 name = "kona-common"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2936,7 +2936,7 @@ dependencies = [
 [[package]]
 name = "kona-common-proc"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -2962,7 +2962,7 @@ dependencies = [
 [[package]]
 name = "kona-derive"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus",
@@ -3022,7 +3022,7 @@ dependencies = [
 [[package]]
 name = "kona-executor"
 version = "0.0.1"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3088,7 +3088,7 @@ dependencies = [
 [[package]]
 name = "kona-mpt"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
@@ -3116,7 +3116,7 @@ dependencies = [
 [[package]]
 name = "kona-preimage"
 version = "0.0.2"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloy-primitives",
  "anyhow",
@@ -3143,7 +3143,7 @@ dependencies = [
 [[package]]
 name = "kona-primitives"
 version = "0.0.1"
-source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#535feacfac8f1667d948ebe8962ef2d19432c217"
+source = "git+https://github.com/moongate-forks/kona/?branch=cycle-tracking#94bd8a61015b50dc2e2422a41a8fe2b5528ca0a9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -4564,7 +4564,7 @@ dependencies = [
  "http 1.1.0",
  "http-body 1.0.0",
  "http-body-util",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "hyper-rustls",
  "hyper-tls",
  "hyper-util",
@@ -6276,7 +6276,7 @@ dependencies = [
  "futures",
  "http 1.1.0",
  "http-body-util",
- "hyper 1.4.0",
+ "hyper 1.4.1",
  "prost",
  "reqwest 0.12.5",
  "serde",
