@@ -86,6 +86,7 @@ fn main() {
         );
 
         let Header { number, .. } = *executor.execute_payload(attributes).unwrap();
+        println!("HERE!!!");
         let output_root = executor.compute_output_root().unwrap();
 
         ////////////////////////////////////////////////////////////////
