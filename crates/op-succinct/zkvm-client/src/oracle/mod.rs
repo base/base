@@ -136,7 +136,7 @@ impl InMemoryOracle {
                         return Err(anyhow!("blob data not found"));
                     }
                 },
-                PreimageKeyType::Precompile => {  }
+                PreimageKeyType::Precompile => { unimplemented!(); }
             }
         }
 

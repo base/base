@@ -1,11 +1,11 @@
 //! A program to verify a Optimism L2 block STF in the zkVM.
 #![cfg_attr(target_os = "zkvm", no_main)]
 
-use kona_executor::StatelessL2BlockExecutor;
+use kona_executor::{StatelessL2BlockExecutor, NoPrecompileOverride};
 use kona_primitives::L2AttributesWithParent;
 use kona_client::{
     l1::{DerivationDriver, OracleBlobProvider, OracleL1ChainProvider},
-    l2::{FPVMPrecompileOverride, OracleL2ChainProvider},
+    l2::OracleL2ChainProvider,
     BootInfo,
 };
 
@@ -48,12 +48,6 @@ fn main() {
                 let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
                 let oracle = Arc::new(InMemoryOracle::from_raw_bytes(kv_store_bytes));
 
-                // TODO: Is this necessary or is there a cleaner way to do it?
-                let precompile_overrides = FPVMPrecompileOverride::<
-                    OracleL2ChainProvider<InMemoryOracle>,
-                    OracleL2ChainProvider<InMemoryOracle>,
-                >::default();
-
                 oracle.verify().expect("key value verification failed");
 
             // If we are compiling for online mode, create a caching oracle that speaks to the
@@ -61,13 +55,10 @@ fn main() {
             } else {
                 let oracle = Arc::new(CachingOracle::new(1024));
                 let boot = Arc::new(BootInfo::load(oracle.as_ref()).await.unwrap());
-
-                let precompile_overrides = FPVMPrecompileOverride::<
-                    OracleL2ChainProvider<CachingOracle>,
-                    OracleL2ChainProvider<CachingOracle>,
-                >::default();
             }
         }
+
+        let precompile_overrides = NoPrecompileOverride;
 
         let l1_provider = OracleL1ChainProvider::new(boot.clone(), oracle.clone());
         let l2_provider = OracleL2ChainProvider::new(boot.clone(), oracle.clone());
@@ -98,12 +89,11 @@ fn main() {
             .unwrap();
 
         let Header { number, .. } = *executor.execute_payload(attributes).unwrap();
-        println!("HERE!!!");
         let output_root = executor.compute_output_root().unwrap();
 
-        ////////////////////////////////////////////////////////////////
-        //                          EPILOGUE                          //
-        ////////////////////////////////////////////////////////////////
+        // ////////////////////////////////////////////////////////////////
+        // //                          EPILOGUE                          //
+        // ////////////////////////////////////////////////////////////////
 
         assert_eq!(number, boot.l2_claim_block);
         assert_eq!(output_root, boot.l2_claim);
