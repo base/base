@@ -25,10 +25,10 @@ The L1 cost is computed as:
 ```pseudocode
 l1FeeScaled = baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee
 estimatedSizeScaled = max(minTransactionSize * 1e6, intercept + fastlzCoef*fastlzSize)
-l1Cost = estimatedSizeScaled * l1FeeScaled / 1e12
+l1Fee = estimatedSizeScaled * l1FeeScaled / 1e12
 ```
 
-The final `l1Cost` computation is an unlimited precision unsigned integer computation, with the result in Wei and
+The final `l1Fee` computation is an unlimited precision unsigned integer computation, with the result in Wei and
 having `uint256` range. The values in this computation, are as follows:
 
 | Input arg            | Type      | Description                                                       | Value                    |
@@ -69,11 +69,6 @@ the most representative of performance across multiple chains and time periods. 
 and datasets used can be found in this [repository](https://github.com/roberto-bayardo/compression-analysis/tree/main).
 
 ### L1 Gas Usage Estimation
-
-The `L1GasUsed` property on the transaction receipt is updated to take into account the improvement in
-[compression estimation](./exec-engine.md#fees) accuracy. The value will be calculated by
-multiplying the `estimatedSizeScaled` of the transaction from the above L1 cost formula by 16. The value of 16 assumes most
-of the bytes in the compressed data are non-zero.
 
 The `L1GasUsed` property is deprecated due to it not capturing the L1 blob gas used by a transaction, and will be
 removed in a future network upgrade. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given
