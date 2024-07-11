@@ -4,11 +4,12 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Consensus Parameters](#consensus-parameters)
-  - [Resource Config](#resource-config)
-- [Policy Parameters](#policy-parameters)
-- [Admin Roles](#admin-roles)
-- [Service Roles](#service-roles)
+- [OP Stack Configurability](#op-stack-configurability)
+  - [Consensus Parameters](#consensus-parameters)
+    - [Resource Config](#resource-config)
+  - [Policy Parameters](#policy-parameters)
+  - [Admin Roles](#admin-roles)
+  - [Service Roles](#service-roles)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -57,6 +58,7 @@ The recommended way to deploy L1 contracts for an OP chain that meet the standar
 | [Sequencing window Size](../glossary.md#sequencing-window)                  | Maximum allowed batch submission gap, after which L1 fallback is triggered in derivation.                                    | Static | 3_600 base layer blocks (12 hours for an L2 on Ethereum, assuming 12 second L1 blocktime). e.g. 12 second blocks, $3600 * 12\ seconds \div 60\frac{seconds}{minute} \div 60\frac{minute}{hour} = 12\ hours$. | This is an important value for constraining the sequencer's ability to re-order transactions; higher values would pose a risk to user protections. |
 | [Start block](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SystemConfig.sol#L184)                           | Block at which the system config was initialized the first time.                                                             | [L1 Proxy Admin](#admin-roles)                      | The block where the SystemConfig was initialized. | Simple clear restriction. |
 | [Superchain target](../protocol/superchain-upgrades.md#superchain-target)  | Choice of cross-L2 configuration. May be omitted in isolated OP Stack deployments. Includes SuperchainConfig and ProtocolVersions contract addresses. | Static | Mainnet or Sepolia | A superchain target defines a set of layer 2 chains which share `SuperchainConfig` and `ProtocolVersions` contracts deployed on layer 1. |
+| Governance Token | OP token used for the Optimism Collective's Token House governance. | ? | Disabled | Simple clear restriction. |
 
 [^chain-id]: The chain ID must be globally unique among all EVM chains.
 
