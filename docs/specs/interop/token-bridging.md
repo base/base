@@ -2,6 +2,7 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [Overview](#overview)
@@ -171,7 +172,27 @@ For example, a contract in chain A could send pre-approved funds
 from a user in chain B to a contract in chain C.
 
 For the moment, the standard will not include any specific functionality
-to facilitate such an action and rely on the usage of `permit2`.
+to facilitate such an action and rely on the usage of `Permit2` like this:
+
+```mermaid
+sequenceDiagram
+  participant from
+  participant Intermediate_A as Initiator
+  participant Messenger_A as L2ToL2CrossDomainMessenger (Chain A)
+  participant Inbox as CrossL2Inbox
+  participant Messenger_B as L2ToL2CrossDomainMessenger (Chain B)
+  participant Permit2
+  participant SuperERC20_B as SuperchainERC20 (Chain B)
+  participant Recipient as to
+
+  from->>Intermediate_A: remoteTransferFrom(..., token, to, chainId, msg, signature)
+  Intermediate_A->>Messenger_A: permit: sendMessage(chainId, message)
+  Inbox->>Messenger_B: permit: relayMessage()
+  Messenger_B->>Permit2: permitTransferFrom(msg, sig)
+  Permit2->>SuperERC20_B: transferFrom(from, to, amount)
+
+```
+
 If, at some point in the future, these actions were to be included in the standard,
 a possible design could introduce a `remoteTransferFrom()` function.
 
