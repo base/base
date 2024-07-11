@@ -4,12 +4,11 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [OP Stack Configurability](#op-stack-configurability)
-  - [Consensus Parameters](#consensus-parameters)
-    - [Resource Config](#resource-config)
-  - [Policy Parameters](#policy-parameters)
-  - [Admin Roles](#admin-roles)
-  - [Service Roles](#service-roles)
+- [Consensus Parameters](#consensus-parameters)
+  - [Resource Config](#resource-config)
+- [Policy Parameters](#policy-parameters)
+- [Admin Roles](#admin-roles)
+- [Service Roles](#service-roles)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
