@@ -2,6 +2,7 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+
 **Table of Contents**
 
 - [Overview](#overview)
@@ -94,8 +95,6 @@ sequenceDiagram
   from->>SuperERC20_A: sendERC20To(to, amount, chainID)
   SuperERC20_A->>SuperERC20_A: burn(from, amount)
   SuperERC20_A->>Messenger_A: sendMessage(chainId, message)
-  note right of Messenger_A: relay or user calls
-  Messenger_A->>Inbox: executeMessage()
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>SuperERC20_B: relayERC20(to, amount)
   SuperERC20_B->>SuperERC20_B: mint(to, amount)
