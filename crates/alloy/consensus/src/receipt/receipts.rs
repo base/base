@@ -16,14 +16,28 @@ pub struct OpDepositReceipt<T = Log> {
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub inner: Receipt<T>,
     /// Deposit nonce for Optimism deposit transactions
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
+    )]
     pub deposit_nonce: Option<u64>,
     /// Deposit receipt version for Optimism deposit transactions
     ///
     /// The deposit receipt version was introduced in Canyon to indicate an update to how
     /// receipt hashes should be computed when set. The state transition process
     /// ensures this is only set for post-Canyon deposit transactions.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
+    )]
     pub deposit_receipt_version: Option<u64>,
 }
 
