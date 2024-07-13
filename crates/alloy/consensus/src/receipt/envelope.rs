@@ -40,7 +40,7 @@ pub enum OpReceiptEnvelope<T = Log> {
     /// Receipt envelope with type flag 126, containing a [deposit] receipt.
     ///
     /// [deposit]: https://specs.optimism.io/protocol/deposits.html
-    #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
+    #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(OpDepositReceiptWithBloom<T>),
 }
 
