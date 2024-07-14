@@ -17,6 +17,7 @@
 - [Invariants](#invariants)
 - [Future Considerations](#future-considerations)
   - [Cross Chain `transferFrom`](#cross-chain-transferfrom)
+  - [Concatenated Action](#concatenated-action)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -38,15 +39,13 @@ The standard will build on top of ERC20 and include the following functions:
 
 #### `sendERC20`
 
-Transfer `_amount` amount of tokens to address `_to` in chain `_chainId`,
-alongside with optional data `_data`.
+Transfer `_amount` amount of tokens to address `_to` in chain `_chainId`.
 
 It SHOULD burn `_amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `_amount`
-in the target address `_to` at `_chainId`. The optional `_data` will be included in as part of the
-`L2ToL2CrossChainMessenger` message.
+in the target address `_to` at `_chainId`.
 
 ```solidity
-sendERC20(address _to, uint256 _amount, uint256 _chainId, bytes _data)
+sendERC20(address _to, uint256 _amount, uint256 _chainId)
 ```
 
 #### `relayERC20`
@@ -55,11 +54,9 @@ Process incoming messages IF AND ONLY IF initiated
 by the same contract (token) address on a different chain
 and come from the `L2ToL2CrossChainMessenger` in the local chain.
 It will mint `_amount` to address `_to`, as defined in `sendERC20`.
-If the message containes `_data`,
-it will also include an external call to address `_to` with `_data`.
 
 ```solidity
-relayERC20(address _to, uint256 _amount, bytes _data)
+relayERC20(address _to, uint256 _amount)
 ```
 
 ### Events
@@ -69,7 +66,7 @@ relayERC20(address _to, uint256 _amount, bytes _data)
 MUST trigger when a cross-chain transfer is initiated using `sendERC20`.
 
 ```solidity
-event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _chainId, bytes memory _data)
+event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _chainId)
 ```
 
 #### `RelayERC20`
@@ -77,7 +74,7 @@ event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uin
 MUST trigger when a cross-chain transfer is finalized using `relayERC20`.
 
 ```solidity
-event RelayERC20(address indexed to, uint256 amount, bytes data);
+event RelayERC20(address indexed to, uint256 amount);
 ```
 
 ## Diagram
@@ -94,16 +91,12 @@ sequenceDiagram
   participant SuperERC20_B as SuperchainERC20 (Chain B)
   participant Recipient as to
 
-  from->>SuperERC20_A: sendERC20To(to, amount, chainID, data)
+  from->>SuperERC20_A: sendERC20To(to, amount, chainID)
   SuperERC20_A->>SuperERC20_A: burn(from, amount)
   SuperERC20_A->>Messenger_A: sendMessage(chainId, message)
-  note right of Messenger_A: relay or user calls
-  Messenger_A->>Inbox: executeMessage()
   Inbox->>Messenger_B: relayMessage()
-  Messenger_B->>SuperERC20_B: relayERC20(to, amount, data)
+  Messenger_B->>SuperERC20_B: relayERC20(to, amount)
   SuperERC20_B->>SuperERC20_B: mint(to, amount)
-  note right of SuperERC20_B: Optional
-  SuperERC20_B->>Recipient: call(data)
 ```
 
 ## Implementation
@@ -116,24 +109,19 @@ for both replay protection and domain binding.
 [l2-to-l2]: ./predeploys.md#l2tol2crossdomainmessenger
 
 ```solidity
-function sendERC20(address _to, uint256 _amount, uint256 _chainId, bytes memory _data) public {
+function sendERC20(address _to, uint256 _amount, uint256 _chainId) public {
   _burn(msg.sender, _amount);
-  bytes memory _message = abi.encodeCall(this.relayERC20, (_to, _amount, _data));
+  bytes memory _message = abi.encodeCall(this.relayERC20, (_to, _amount));
   L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
-  emit SendERC20(msg.sender, _to, _amount, _chainId, _data);
+  emit SendERC20(msg.sender, _to, _amount, _chainId);
 }
 
-function relayERC20(address _to, uint256 _amount, bytes memory _data) external {
+function relayERC20(address _to, uint256 _amount) external {
   require(msg.sender == address(L2ToL2CrossChainMessenger));
   require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
   _mint(_to, _amount);
 
-  if (data.length > 0) {
-    (bool success, ) = _to.call(_data);
-    require(success, "External call failed");
-  }
-
-  emit RelayERC20(_to, _amount, _data)
+  emit RelayERC20(_to, _amount)
 }
 ```
 
@@ -183,6 +171,62 @@ For example, a contract in chain A could send pre-approved funds
 from a user in chain B to a contract in chain C.
 
 For the moment, the standard will not include any specific functionality
-to facilitate such an action and rely on the usage of `permit2`.
+to facilitate such an action and rely on the usage of `Permit2` like this:
+
+```mermaid
+sequenceDiagram
+  participant from
+  participant Intermediate_A as Initiator
+  participant Messenger_A as L2ToL2CrossDomainMessenger (Chain A)
+  participant Inbox as CrossL2Inbox
+  participant Messenger_B as L2ToL2CrossDomainMessenger (Chain B)
+  participant Permit2
+  participant SuperERC20_B as SuperchainERC20 (Chain B)
+  participant Recipient as to
+
+  from->>Intermediate_A: remoteTransferFrom(..., token, to, chainId, msg, signature)
+  Intermediate_A->>Messenger_A: permit: sendMessage(chainId, message)
+  Inbox->>Messenger_B: permit: relayMessage()
+  Messenger_B->>Permit2: permitTransferFrom(msg, sig)
+  Permit2->>SuperERC20_B: transferFrom(from, to, amount)
+
+```
+
 If, at some point in the future, these actions were to be included in the standard,
 a possible design could introduce a `remoteTransferFrom()` function.
+
+### Concatenated Action
+
+It is possible to have an additional input `bytes _data` in both `sendERC20()` and `relayERC20()` that would make an
+additional call to the `_to` address.
+This feature could be used for cross-chain concatenated actions,
+i.e. bridge funds and then do X.
+
+This vertical has much potential but can also be achieved outside the standard in the following way:
+
+```mermaid
+sequenceDiagram
+  participant from
+  participant Intermediate_A as intermediate A
+  participant SuperERC20_A as SuperERC20 (Chain A)
+  participant Messenger_A as L2ToL2CrossDomainMessenger (Chain A)
+  participant Inbox_B as CrossL2Inbox (Chain B)
+  participant Messenger_B as L2ToL2CrossDomainMessenger (Chain B)
+  participant SuperERC20_B as SuperERC20 (Chain B)
+
+  from->>Intermediate_A: sendWithData(data)
+  Intermediate_A->>SuperERC20_A: sendERC20(amount, chainId)
+  SuperERC20_A->>SuperERC20_A: burn(from, amount)
+  SuperERC20_A->>Messenger_A: sendMessage(chainId, message)
+  Intermediate_A->>Messenger_A: sendMessage(chainId, to, data)
+  Inbox_B->>Messenger_B: relayMessage(): transfer
+  Messenger_B->>SuperERC20_B: finalizeSendERC20(to, amount)
+  SuperERC20_B->>SuperERC20_B: mint(to, amount)
+  Inbox_B->>Messenger_B: relayMessage(): call
+  Messenger_B->>to: call(data)
+```
+
+Adding the call to the standard would remove the dependence on the sequencer regarding the proper tx ordering
+at the sequencer level, but would also introduce more risk for cross-chain fund transferring,
+as an incorrectly formatted call would burn funds in the initiating chain but would revert
+in destination and could never be successfully replayed.
