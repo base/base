@@ -37,3 +37,4 @@ they need not be the same entity in practice.
 - [Rollup Node P2P](./rollup_node_p2p.md): modifications to the rollup-node P2P layer to support fast interop.
 - [Fault Proof](./fault_proof.md): modifications to prove interop functionality in the fault-proof.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
+- [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
