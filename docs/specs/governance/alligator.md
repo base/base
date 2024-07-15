@@ -16,7 +16,6 @@
     - [`getCheckpoints`](#getcheckpoints)
     - [`getVotingPower`](#getvotingpower)
 - [Implementation](#implementation)
-- [Invariants](#invariants)
 - [Backwards Compatibility](#backwards-compatibility)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -80,7 +79,7 @@ Takes the same arguments as `subdelegate`, plus a signature of the previous para
 
 #### `afterTokenTransfer`
 
-Updates delegation and checkpoint mappings for the address of the token contract after a token transfer. This function 
+Updates delegation and checkpoint mappings for the address of the token contract after a token transfer. This function
 is called by the `_afterTokenTransfer` function in the `GovernanceToken` contract.
 
 ```solidity
@@ -92,8 +91,8 @@ data from the token contract to its own state.
 
 ### View Functions
 
-The output for these functions is conditional on whether the user address has been migrated or not. Concretely, the contract MUST
-use its own state if the address has been migrated, or else it MUST use the state of the governance token.
+The output for these functions is conditional on whether the user address has been migrated or not. Concretely, the
+contract MUST use its own state if the address has been migrated, or else it MUST use the state of the governance token.
 
 #### `getSubdelegations`
 
@@ -126,6 +125,6 @@ mappings from the `GovernanceToken` contract: `_delegates`, `_checkpoints`, and 
 
 ## Backwards Compatibility
 
-The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the 
+The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
 governance contract. Fresh chains that already store delegation state in the `Alligator` contract do not require this
 feature.
