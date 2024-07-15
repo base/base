@@ -6,16 +6,16 @@
 
 - [Overview](#overview)
 - [Interface](#interface)
-  - [Functions](#functions)
+  - [Core Functions](#core-functions)
     - [`subdelegate`](#subdelegate)
     - [`subdelegateBatched`](#subdelegatebatched)
     - [`subdelegateBySig`](#subdelegatebysig)
     - [`afterTokenTransfer`](#aftertokentransfer)
-  - [View Functions](#view-functions)
+  - [Getters](#getters)
     - [`getSubdelegations`](#getsubdelegations)
     - [`getCheckpoints`](#getcheckpoints)
     - [`getVotingPower`](#getvotingpower)
-- [Implementation](#implementation)
+- [Storage](#storage)
 - [Backwards Compatibility](#backwards-compatibility)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -34,7 +34,7 @@ the contract copies the address's delegation and checkpoint data from the token 
 
 ## Interface
 
-### Functions
+### Core Functions
 
 #### `subdelegate`
 
@@ -89,7 +89,7 @@ afterTokenTransfer(address _from, address _to)
 If the `to` or `from` addresses have not been migrated, `Alligator` migrates by copying the delegation and checkpoint
 data from the token contract to its own state.
 
-### View Functions
+### Getters
 
 The output for these functions is conditional on whether the user address has been migrated or not. Concretely, the
 contract MUST use its own state if the address has been migrated, or else it MUST use the state of the governance token.
@@ -118,10 +118,19 @@ Retrieves the current and past voting power of a given user.
 getVotingPower(address _user, uint256 _blockNumber) returns (uint256)
 ```
 
-## Implementation
+## Storage
 
-The `Alligator` contract stores delegations and checkpoints for multiple token contracts. It implements equivalent
-mappings from the `GovernanceToken` contract: `_delegates`, `_checkpoints`, and `_totalSupplyCheckpoints`.
+The `Alligator` contract stores delegations and checkpoints for multiple token contracts. The `GovernanceToken` already
+does this, which `Alligator` inherits from. However, `GovernanceToken` defines those variables as `private`, which means
+that they cannot be accessed by its inheritors. Thus, we have to define them again in the `Alligator` contract.
+
+```solidity
+  mapping(address => address) internal _delegates; // Mapping to keep track of the delegates of each account
+
+  mapping(address => Checkpoint[]) internal _checkpoints; // Checkpointing for votes for each account
+
+  Checkpoint[] internal _totalSupplyCheckpoints; // Array of all checkpoints
+```
 
 ## Backwards Compatibility
 
