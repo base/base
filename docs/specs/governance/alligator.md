@@ -59,3 +59,9 @@ the `Alligator` MUST migrate it by copying the delegation and checkpoint data fr
 contract MUST provide functions to get subdelegations, checkpoints, and current & past voting power of a user. The output
 for these functions is conditional on whether the user address has been migrated or not. Concretely, the contract MUST
 read its own state if the address has been migrated, and the token contract's state otherwise.
+
+## Backwards Compatibility
+
+The `Alligator` contract only requires migrating delegation state from the governance contract for backwards compatibility. 
+Fresh chains, however, will already be storing the delegation state in the `Alligator` contract, so this feature is not
+required for them.
