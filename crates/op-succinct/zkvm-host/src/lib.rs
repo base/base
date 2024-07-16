@@ -86,7 +86,6 @@ impl From<SP1KonaCliArgs> for BootInfoWithoutRollupConfig {
 pub fn execute_kona_program(boot_info: &BootInfoWithoutRollupConfig) -> ExecutionReport {
     let mut stdin = SP1Stdin::new();
 
-    // TODO: Implement this.
     stdin.write(&boot_info);
 
     // Read KV store into raw bytes and pass to stdin.
@@ -141,8 +140,6 @@ impl SP1KonaDataFetcher {
 
     /// Get the L2 output data for a given block number and save the boot info to a file in the data directory
     /// with block_number. Return the boot info to be passed to the native host.
-    /// TODO: Move this to be implemented on a struct that retrieves this data, which has L1_RPC_URL, L2_RPC_URL and
-    /// ETH_BEACON_URL as variables.
     pub async fn get_native_execution_data(&self, l2_block_num: u64) -> Result<HostCli> {
         let l1_provider = Provider::<Http>::try_from(&self.l1_rpc)?;
         let l2_provider = Provider::<Http>::try_from(&self.l2_rpc)?;
@@ -202,7 +199,7 @@ impl SP1KonaDataFetcher {
             .expect("L1 head is missing");
 
         let l2_chain_id = l2_provider.get_chainid().await?;
-        let data_directory = format!("./data/{}", l2_block_num);
+        let data_directory = format!("../../data/{}", l2_block_num);
 
         // Create data directory. Note: Native execution will need to be run to save the merkle proofs.
         fs::create_dir_all(&data_directory)?;
