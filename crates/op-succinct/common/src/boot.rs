@@ -1,11 +1,11 @@
 //! This module contains the prologue phase of the client program, pulling in the boot
 //! information, which is passed to the zkVM a public inputs to be verified on chain.
 
+use alloy_primitives::{B256, U256};
+use alloy_sol_types::{sol, SolValue};
 use kona_client::BootInfo;
 use kona_primitives::RollupConfig;
-use alloy_primitives::{U256, B256};
-use alloy_sol_types::{sol, SolValue};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Boot information that is passed to the zkVM as public inputs.
 /// This struct contains all information needed to generate BootInfo,
@@ -22,10 +22,23 @@ pub struct BootInfoWithoutRollupConfig {
 impl From<BootInfoWithoutRollupConfig> for BootInfo {
     /// Convert the BootInfoWithoutRollupConfig into BootInfo by deriving the RollupConfig.
     fn from(boot_info_without_rollup_config: BootInfoWithoutRollupConfig) -> Self {
-        let BootInfoWithoutRollupConfig { l1_head, l2_output_root, l2_claim, l2_claim_block, chain_id } = boot_info_without_rollup_config;
+        let BootInfoWithoutRollupConfig {
+            l1_head,
+            l2_output_root,
+            l2_claim,
+            l2_claim_block,
+            chain_id,
+        } = boot_info_without_rollup_config;
         let rollup_config = RollupConfig::from_l2_chain_id(chain_id).unwrap();
 
-        Self { l1_head, l2_output_root, l2_claim, l2_claim_block, chain_id, rollup_config }
+        Self {
+            l1_head,
+            l2_output_root,
+            l2_claim,
+            l2_claim_block,
+            chain_id,
+            rollup_config,
+        }
     }
 }
 

@@ -67,10 +67,11 @@ run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BE
 
 run-zkvm-host l1_head l2_output_root l2_claim l2_claim_block chain_id:
     echo "Building zkvm client program..."
+    # TODO: Change this to use build.rs when v1.0.9-testnet is released for building with args.
     cd zkvm-client && cargo prove build --ignore-rust-version
 
     echo "Proving zkvm program in SP1..."
-    cd zkvm-host && RUST_LOG=info cargo run --release -- \
+    cd zkvm-host && RUST_LOG=info cargo run --bin script --release -- \
       --l1-head {{l1_head}} \
       --l2-output-root {{l2_output_root}} \
       --l2-claim {{l2_claim}} \
