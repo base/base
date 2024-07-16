@@ -3434,6 +3434,7 @@ dependencies = [
 name = "native-host"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "kona-host",
  "tokio",
@@ -7326,10 +7327,12 @@ dependencies = [
  "ethers",
  "hex",
  "kona-host",
+ "native-host",
  "rkyv",
  "sp1-core",
  "sp1-helper",
  "sp1-sdk",
+ "tokio",
  "zkvm-common",
 ]
 

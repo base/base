@@ -1,9 +1,9 @@
-use kona_host::{start_server_and_native_client, HostCli, init_tracing_subscriber};
 use clap::Parser;
+use kona_host::HostCli;
+use native_host::run_native_host;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let cfg = HostCli::parse();
-    init_tracing_subscriber(cfg.v).unwrap();
-    start_server_and_native_client(cfg).await.unwrap();
+    run_native_host(&cfg).await.unwrap();
 }

@@ -17,7 +17,6 @@ rkyv.workspace = true
 sha2.workspace = true
 
 # workspace (ethereum)
-# alloy = { workspace = true, features = ["consensus", "eips"] }
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-rlp.workspace = true
