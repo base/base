@@ -3,17 +3,18 @@
 mod helpers;
 use helpers::load_kv_store;
 
+mod cli;
+use cli::SP1KonaCliArgs;
+
 use zkvm_common::{BootInfoWithoutRollupConfig, BytesHasherBuilder};
 
+use std::collections::HashMap;
+use sp1_sdk::{utils, ProverClient, SP1Stdin};
 use clap::Parser;
-use std::{collections::HashMap, str::FromStr};
-
-use alloy_primitives::B256;
 use rkyv::{
     ser::{serializers::*, Serializer},
     AlignedVec, Archive, Deserialize, Serialize,
 };
-use sp1_sdk::{utils, ProverClient, SP1Stdin};
 
 const ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
 
@@ -21,37 +22,6 @@ const ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
 #[archive_attr(derive(Debug))]
 pub struct InMemoryOracle {
     cache: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder>,
-}
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct SP1KonaCliArgs {
-    #[arg(long)]
-    l1_head: String,
-
-    #[arg(long)]
-    l2_output_root: String,
-
-    #[arg(long)]
-    l2_claim: String,
-
-    #[arg(long)]
-    l2_claim_block: u64,
-
-    #[arg(long)]
-    chain_id: u64,
-}
-
-impl From<SP1KonaCliArgs> for BootInfoWithoutRollupConfig {
-    fn from(args: SP1KonaCliArgs) -> Self {
-        BootInfoWithoutRollupConfig {
-            l1_head: B256::from_str(&args.l1_head).unwrap(),
-            l2_output_root: B256::from_str(&args.l2_output_root).unwrap(),
-            l2_claim: B256::from_str(&args.l2_claim).unwrap(),
-            l2_claim_block: args.l2_claim_block,
-            chain_id: args.chain_id,
-        }
-    }
 }
 
 fn main() {
