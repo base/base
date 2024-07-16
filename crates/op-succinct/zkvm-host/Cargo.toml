@@ -20,6 +20,7 @@ zkvm-common = { path = "../common" }
 
 # sp1
 sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git" }
+clap = "4.5.9"
 
 [build-dependencies]
 sp1-helper = { git = "https://github.com/succinctlabs/sp1.git" }

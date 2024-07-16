@@ -6803,6 +6803,7 @@ name = "zkvm-host"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "clap",
  "hex",
  "rkyv",
  "sp1-helper",

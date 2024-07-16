@@ -4,10 +4,8 @@ set fallback := true
 default:
   @just --list
 
-# TODO: Add just run to do both with arg
 run l2_block_num:
-    @just run-client-native {{l2_block_num}}
-    @just run-zkvm-host
+    @just run-client-native {{l2_block_num}} | xargs -n 5 just run-zkvm-host
 
 run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BEACON_URL}' l2_rpc='${CLABBY_RPC_L2}' verbosity="-vvvv":
   #!/usr/bin/env bash
@@ -63,9 +61,17 @@ run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BE
     --data-dir $DATA_DIRECTORY \
     {{verbosity}}
 
-run-zkvm-host:
+  # Return the required values
+  echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID"
+
+run-zkvm-host l1_head l2_output_root l2_claim l2_claim_block chain_id:
     echo "Building zkvm client program..."
     cd zkvm-client && cargo prove build --ignore-rust-version
 
     echo "Proving zkvm program in SP1..."
-    cd zkvm-host && RUST_LOG=info cargo run --release
+    cd zkvm-host && RUST_LOG=info cargo run --release -- \
+      --l1-head {{l1_head}} \
+      --l2-output-root {{l2_output_root}} \
+      --l2-claim {{l2_claim}} \
+      --l2-claim-block {{l2_claim_block}} \
+      --chain-id {{chain_id}}
