@@ -25,7 +25,7 @@ pub struct InMemoryOracle {
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Args {
+struct SP1KonaCliArgs {
     #[arg(long)]
     l1_head: String,
 
@@ -42,27 +42,29 @@ struct Args {
     chain_id: u64,
 }
 
+impl From<SP1KonaCliArgs> for BootInfoWithoutRollupConfig {
+    fn from(args: SP1KonaCliArgs) -> Self {
+        BootInfoWithoutRollupConfig {
+            l1_head: B256::from_str(&args.l1_head).unwrap(),
+            l2_output_root: B256::from_str(&args.l2_output_root).unwrap(),
+            l2_claim: B256::from_str(&args.l2_claim).unwrap(),
+            l2_claim_block: args.l2_claim_block,
+            chain_id: args.chain_id,
+        }
+    }
+}
+
 fn main() {
     utils::setup_logger();
     let mut stdin = SP1Stdin::new();
 
-    let args = Args::parse();
+    let cli_args = SP1KonaCliArgs::parse();
+    let boot_info = BootInfoWithoutRollupConfig::from(cli_args);
 
-    let l1_head = B256::from_str(&args.l1_head).unwrap();
-    let l2_output_root = B256::from_str(&args.l2_output_root).unwrap();
-    let l2_claim = B256::from_str(&args.l2_claim).unwrap();
-
-    let boot_info = BootInfoWithoutRollupConfig {
-        l1_head,
-        l2_output_root,
-        l2_claim,
-        l2_claim_block: args.l2_claim_block,
-        chain_id: args.chain_id,
-    };
     stdin.write(&boot_info);
 
     // Read KV store into raw bytes and pass to stdin.
-    let kv_store = load_kv_store(&format!("../data/{}", args.l2_claim_block));
+    let kv_store = load_kv_store(&format!("../data/{}", boot_info.l2_claim_block));
 
     let mut serializer = CompositeSerializer::new(
         AlignedSerializer::new(AlignedVec::new()),
