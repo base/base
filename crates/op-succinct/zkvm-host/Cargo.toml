@@ -11,6 +11,10 @@ homepage.workspace = true
 name = "script"
 path = "bin/script.rs"
 
+[[bin]]
+name = "cost_estimator"
+path = "bin/cost_estimator.rs"
+
 [dependencies]
 
 # workspace
@@ -19,17 +23,19 @@ rkyv.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types = { workspace = true }
 ethers = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
 
 # kona
 kona-host = { workspace = true }
 
 # local
 zkvm-common = { path = "../common" }
+native-host = { path = "../native-host" }
 
 # sp1
 sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git" }
 sp1-core = { git = "https://github.com/succinctlabs/sp1.git" }
-clap = "4.5.9"
 anyhow.workspace = true
 
 [build-dependencies]
