@@ -9,4 +9,5 @@ kona-client.workspace = true
 kona-primitives.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+# alloy = { workspace = true, features = ["sol-types"] }
 serde.workspace = true
