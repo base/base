@@ -6,3 +6,12 @@
 
 # witness data
 data
+
+# zip
+**.zip
+
+# .env
+.env
+
+# elf
+**elf
