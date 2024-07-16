@@ -23,14 +23,14 @@
 ## Overview
 
 The `Alligator` contract implements subdelegations that can be used by token contracts inheriting from
-[`GovernanceToken`](gov-token.md). Subdelegations enable advanced delegation scenarios, such as absolute and relative allowances,
-in addition to custom subdelegation rules.
+[`GovernanceToken`](gov-token.md). Subdelegations enable advanced delegation use cases, such as partial, time-constrained
+& block-based delegations, and relative & fixed allowances.
 
-The `Alligator` contract migrates the delegation state from the token contract to itself through a hook-based approach.
-Specifically, the governance token contract calls the `Alligator` contract's `afterTokenTransfer` function after a token
-transfer. This enables the `Alligator` contract to consume the hooks and update its delegation and checkpoint mappings
+The `Alligator` contract migrates the delegation state from a token contract to itself through a hook-based approach.
+Specifically, the token contract calls the `Alligator` contract's `afterTokenTransfer` function after a token
+transfer. This enables the `Alligator` contract to consume the hook and update its delegation and checkpoint mappings
 accordingly. If either address involved in the transfer (`from` or `to`) has not been migrated to the `Alligator` contract,
-the contract copies the address's delegation and checkpoint data from the token contract to its own state.
+the contract copies the address' delegation and checkpoint data from the token contract to its own state.
 
 ## Interface
 
@@ -41,7 +41,7 @@ the contract copies the address's delegation and checkpoint data from the token 
 Allows subdelegation of voting power to another address with specified subdelegation rules.
 
 ```solidity
-subdelegate(address _to, SubdelegationRule _rule)
+subdelegate(address to, SubdelegationRule rule)
 ```
 
 A subdelegation rule is an instance of the following struct:
@@ -53,7 +53,7 @@ struct SubdelegationRule {
     uint256 notValidBefore; // Timestamp after which the delegation is valid.
     uint256 notValidAfter; // Timestamp before which the delegation is valid.
     SubdelegationAllowanceType allowanceType; // Type of allowance (e.g., absolute or relative).
-    uint256 allowance // Amount of votes delegated, denominated in the token contract's decimals.
+    uint256 allowance // Amount of votes delegated, denominated in the token's decimals.
 }
 ```
 
@@ -62,28 +62,28 @@ struct SubdelegationRule {
 Allows batch subdelegation of voting power to multiple addresses with specified subdelegation rules.
 
 ```solidity
-subdelegateBatched(address[] _to, SubdelegationRule[] _rules)
+subdelegateBatched(address[] to, SubdelegationRule[] rules)
 ```
 
-Calls the `subdelegate` function for each pair of `_to` address and subdelegation rule.
+Calls the `subdelegate` function for each pair of `to` address and subdelegation rule.
 
 #### `subdelegateBySig`
 
 Allows subdelegation of voting power using a signature.
 
 ```solidity
-subdelegateBySig(address _to, SubdelegationRule _rule, bytes _signature)
+subdelegateBySig(address to, SubdelegationRule rule, bytes signature)
 ```
 
 Takes the same arguments as `subdelegate`, plus a signature of the previous parameters.
 
 #### `afterTokenTransfer`
 
-Updates delegation and checkpoint mappings for the address of the token contract after a token transfer. This function
-is called by the `_afterTokenTransfer` function in the `GovernanceToken` contract.
+Updates delegation and checkpoint mappings for the address of a token contract after a transfer. This function
+MUST be called by the `_afterTokenTransfer` function in the token contract.
 
 ```solidity
-afterTokenTransfer(address _from, address _to)
+afterTokenTransfer(address from, address to, uint256 amount)
 ```
 
 If the `to` or `from` addresses have not been migrated, `Alligator` migrates by copying the delegation and checkpoint
@@ -92,7 +92,7 @@ data from the token contract to its own state.
 ### Getters
 
 The output for these functions is conditional on whether the user address has been migrated or not. Concretely, the
-contract MUST use its own state if the address has been migrated, or else it MUST use the state of the governance token.
+`Alligator` MUST use its own state if the address has been migrated, or else it MUST use the state of the token contract.
 
 #### `getSubdelegations`
 
@@ -135,5 +135,5 @@ that they cannot be accessed by its inheritors. Thus, we have to define them aga
 ## Backwards Compatibility
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
-governance contract. Fresh chains that already store delegation state in the `Alligator` contract do not require this
+token contract. Fresh chains that already store delegation state in the `Alligator` contract do not require this
 feature.
