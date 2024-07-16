@@ -22,9 +22,9 @@
 
 ## Overview
 
-The `Alligator` contract implements subdelegations that can be used by token contracts inheriting
-[`GovernanceToken`](gov-token.md). Subdelegations enable advanced delegation scenarios, such as partial,
-time-constrained & block-based delegations, relative & fixed allowances, and custom rules.
+The `Alligator` contract implements subdelegations that can be used by token contracts inheriting from
+[`GovernanceToken`](gov-token.md). Subdelegations enable advanced delegation scenarios, such as absolute and relative allowances,
+in addition to custom subdelegation rules.
 
 The `Alligator` contract migrates the delegation state from the token contract to itself through a hook-based approach.
 Specifically, the governance token contract calls the `Alligator` contract's `afterTokenTransfer` function after a token
