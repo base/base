@@ -29,7 +29,7 @@ The `Alligator` contract implements subdelegations that can be used by token con
 The `Alligator` contract migrates the delegation state from a token contract to itself through a hook-based approach.
 Specifically, the token contract calls the `Alligator` contract's `afterTokenTransfer` function after a token
 transfer. This enables the `Alligator` contract to consume the hook and update its delegation and checkpoint mappings
-accordingly. If either address involved in the transfer (`from` or `to`) has not been migrated to the `Alligator` contract,
+accordingly. If either address involved in the transfer (`_from_` or `_to`) has not been migrated to the `Alligator` contract,
 the contract copies the address' delegation and checkpoint data from the token contract to its own state.
 
 ## Interface
@@ -41,7 +41,7 @@ the contract copies the address' delegation and checkpoint data from the token c
 Allows subdelegation of voting power to another address with specified subdelegation rules.
 
 ```solidity
-subdelegate(address to, SubdelegationRule rule)
+subdelegate(address _to, SubdelegationRule _rule)
 ```
 
 A subdelegation rule is an instance of the following struct:
@@ -62,17 +62,17 @@ struct SubdelegationRule {
 Allows batch subdelegation of voting power to multiple addresses with specified subdelegation rules.
 
 ```solidity
-subdelegateBatched(address[] to, SubdelegationRule[] rules)
+subdelegateBatched(address[] _to, SubdelegationRule[] _rules)
 ```
 
-Calls the `subdelegate` function for each pair of `to` address and subdelegation rule.
+Calls the `subdelegate` function for each pair of `_to` address and subdelegation rule.
 
 #### `subdelegateBySig`
 
 Allows subdelegation of voting power using a signature.
 
 ```solidity
-subdelegateBySig(address to, SubdelegationRule rule, bytes signature)
+subdelegateBySig(address _to, SubdelegationRule _rule, bytes _signature)
 ```
 
 Takes the same arguments as `subdelegate`, plus a signature of the previous parameters.
@@ -83,10 +83,10 @@ Updates delegation and checkpoint mappings for the address of a token contract a
 MUST be called by the `_afterTokenTransfer` function in the token contract.
 
 ```solidity
-afterTokenTransfer(address from, address to, uint256 amount)
+afterTokenTransfer(address _from, address _to, uint256 _amount)
 ```
 
-If the `to` or `from` addresses have not been migrated, `Alligator` migrates by copying the delegation and checkpoint
+If the `_to` or `_from` addresses have not been migrated, `Alligator` migrates by copying the delegation and checkpoint
 data from the token contract to its own state.
 
 ### Getters
@@ -96,44 +96,45 @@ The output for these functions is conditional on whether the user address has be
 
 #### `getSubdelegations`
 
-Retrieves the subdelegations for a given token contract address.
+Retrieves the subdelegations for a given token contract and user address.
 
 ```solidity
-getSubdelegations(address _user) returns (SubdelegationRule[] memory)
+getSubdelegations(address _token, address _user) returns (SubdelegationRule[] memory)
 ```
 
 #### `getCheckpoints`
 
-Retrieves the checkpoints for a given token contract address.
+Retrieves the checkpoints for a given token contract and user address.
 
 ```solidity
-getCheckpoints(address _user) returns (Checkpoint[] memory)
+getCheckpoints(address _token, address _user) returns (Checkpoint[] memory)
 ```
 
 #### `getVotingPower`
 
-Retrieves the current and past voting power of a given user.
+Retrieves the current and past voting power for a given token contract and user address.
 
 ```solidity
-getVotingPower(address _user, uint256 _blockNumber) returns (uint256)
+getVotingPower(address _token, address _user, uint256 _blockNumber) returns (uint256)
 ```
 
 ## Storage
 
-The `Alligator` contract stores delegations and checkpoints for multiple token contracts. The `GovernanceToken` already
-does this, which `Alligator` inherits from. However, `GovernanceToken` defines those variables as `private`, which means
-that they cannot be accessed by its inheritors. Thus, we have to define them again in the `Alligator` contract.
+The `Alligator` contract MUST be able to store delegations and checkpoints for multiple token contracts.
+These storage variables MUST be defined in the same way as in the token contract:
 
 ```solidity
-  mapping(address => address) internal _delegates; // Mapping to keep track of the delegates of each account
+  // Mapping to keep track of the subdelegations for a token contract address and a user address
+  mapping(address token => mapping(address from => mapping(address to => SubdelegationRules subdelegationRules))) public subdelegations;
 
-  mapping(address => Checkpoint[]) internal _checkpoints; // Checkpointing for votes for each account
+  // Checkpoints of votes for a toke contract address and a user address
+  mapping(address token => mapping(address user => Checkpoint[] checkpoint)) internal _checkpoints;
 
-  Checkpoint[] internal _totalSupplyCheckpoints; // Array of all checkpoints
+  // Total supply checkpoints for a token contract address
+  mapping(address token => Checkpoint[] checkpoint) internal _totalSupplyCheckpoints;
 ```
 
 ## Backwards Compatibility
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
-token contract. Fresh chains that already store delegation state in the `Alligator` contract do not require this
-feature.
+token contract.
