@@ -4,7 +4,6 @@ set fallback := true
 default:
   @just --list
 
-# TODO: Add just run to do both with arg
 run l2_block_num:
     @just run-client-native {{l2_block_num}} | xargs -n 5 just run-zkvm-host
 
