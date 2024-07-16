@@ -2,21 +2,26 @@ use anyhow::Result;
 use clap::Parser;
 use kona_host::HostCli;
 use native_host::run_native_host;
+use num_format::{Locale, ToFormattedString};
 use zkvm_common::BootInfoWithoutRollupConfig;
 use zkvm_host::{execute_kona_program, SP1KonaDataFetcher};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Start block number
+    /// Start block number.
     #[arg(short, long)]
     start_block: u64,
 
-    /// End block number
+    /// End block number.
     #[arg(short, long)]
     end_block: u64,
 
-    /// Skip native data generation
+    /// RPC URL for the OP Stack Chain to do cost estimation for.
+    #[arg(short, long)]
+    rpc_url: String,
+
+    /// Skip native data generation if data directory already exists.
     #[arg(
         short,
         long,
@@ -42,7 +47,10 @@ async fn main() -> Result<()> {
 
     let mut reports = Vec::new();
 
-    let data_fetcher = SP1KonaDataFetcher::new();
+    let data_fetcher = SP1KonaDataFetcher {
+        l2_rpc: args.rpc_url,
+        ..Default::default()
+    };
 
     for block_num in args.start_block..=args.end_block {
         // Get native execution data.
@@ -60,6 +68,17 @@ async fn main() -> Result<()> {
         println!("Block {}: {}", block_num, report);
 
         reports.push(report);
+    }
+
+    // Nicely print out the total instruction count for each block.
+    for (i, report) in reports.iter().enumerate() {
+        println!(
+            "Block {} cycle count: {}",
+            i,
+            report
+                .total_instruction_count()
+                .to_formatted_string(&Locale::en)
+        );
     }
 
     Ok(())

@@ -113,10 +113,18 @@ pub fn execute_kona_program(boot_info: &BootInfoWithoutRollupConfig) -> Executio
     report
 }
 
+/// The SP1KonaDataFetcher struct is used to fetch the L2 output data and L2 claim data for a given block number.
+/// It is used to generate the boot info for the native host program.
 pub struct SP1KonaDataFetcher {
-    l1_rpc: String,
-    l1_beacon_rpc: String,
-    l2_rpc: String,
+    pub l1_rpc: String,
+    pub l1_beacon_rpc: String,
+    pub l2_rpc: String,
+}
+
+impl Default for SP1KonaDataFetcher {
+    fn default() -> Self {
+        SP1KonaDataFetcher::new()
+    }
 }
 
 impl SP1KonaDataFetcher {
@@ -141,7 +149,7 @@ impl SP1KonaDataFetcher {
 
         let l2_block_safe_head = l2_block_num - 1;
 
-        // Get L2 output data
+        // Get L2 output data.
         let l2_output_block = l2_provider.get_block(l2_block_safe_head).await?.unwrap();
         let l2_output_state_root = l2_output_block.state_root;
         let l2_head = l2_output_block.hash.expect("L2 head is missing");
@@ -162,10 +170,7 @@ impl SP1KonaDataFetcher {
         };
         let l2_output_root = keccak256(&l2_output_encoded.abi_encode());
 
-        println!("L2 Safe Head: {}", l2_block_safe_head);
-        println!("Safe Head Output Root: 0x{}", hex::encode(l2_output_root));
-
-        // Get L2 claim data
+        // Get L2 claim data.
         let l2_claim_block = l2_provider.get_block(l2_block_num).await?.unwrap();
         let l2_claim_state_root = l2_claim_block.state_root;
         let l2_claim_hash = l2_claim_block.hash.expect("L2 claim hash is missing");
@@ -186,11 +191,7 @@ impl SP1KonaDataFetcher {
         };
         let l2_claim = keccak256(&l2_claim_encoded.abi_encode());
 
-        println!("L2 Block Number: {}", l2_block_num);
-        println!("L2 Claim Root: 0x{}", hex::encode(l2_claim));
-
-        // Get L1 head
-        // Get L1 head
+        // Get L1 head.
         let l2_block_timestamp = l2_claim_block.timestamp;
         let target_timestamp = l2_block_timestamp + 300;
         let l1_head = l1_provider
@@ -200,42 +201,25 @@ impl SP1KonaDataFetcher {
             .hash
             .expect("L1 head is missing");
 
-        println!("L1 Head: 0x{}", hex::encode(l1_head));
-
-        let l2_chain_id = 10;
+        let l2_chain_id = l2_provider.get_chainid().await?;
         let data_directory = format!("./data/{}", l2_block_num);
-        println!("Saving Data to {}", data_directory);
 
-        // Create data directory
+        // Create data directory. Note: Native execution will need to be run to save the merkle proofs.
         fs::create_dir_all(&data_directory)?;
-
-        // Save data to files (you might want to implement this part)
-        // ...
-
-        // Run the native host program (you'll need to implement this part)
-        // ...
-
-        // Return the required values
-        println!(
-            "0x{} 0x{} 0x{} {} {}",
-            hex::encode(l1_head),
-            hex::encode(l2_output_root),
-            hex::encode(l2_claim),
-            l2_block_num,
-            l2_chain_id
-        );
 
         Ok(HostCli {
             l1_head: l1_head.0.into(),
             l2_output_root: l2_output_root.0.into(),
             l2_claim: l2_claim.0.into(),
             l2_block_number: l2_block_num,
-            l2_chain_id,
+            l2_chain_id: l2_chain_id.as_u64(),
             l2_head: l2_head.0.into(),
             l2_node_address: Some(self.l2_rpc.clone()),
             l1_node_address: Some(self.l1_rpc.clone()),
             l1_beacon_address: Some(self.l1_beacon_rpc.clone()),
             data_dir: Some(data_directory.into()),
+            // TODO: This is probably not correct, but it's a placeholder. How should we programmatically determine the
+            // specified client program from here?
             exec: Some("./target/release-client-lto/zkvm-client".to_string()),
             server: false,
             v: 0,
