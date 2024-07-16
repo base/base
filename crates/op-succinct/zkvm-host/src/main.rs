@@ -48,7 +48,6 @@ fn main() {
 
     let args = Args::parse();
 
-    // TODO: Move this to CLI so we can pass same values to both calls from the justfile.
     let l1_head = B256::from_str(&args.l1_head).unwrap();
     let l2_output_root = B256::from_str(&args.l2_output_root).unwrap();
     let l2_claim = B256::from_str(&args.l2_claim).unwrap();
