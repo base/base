@@ -139,7 +139,7 @@ impl SP1KonaDataFetcher {
     }
 
     /// Get the L2 output data for a given block number and save the boot info to a file in the data directory
-    /// with block_number. Return the boot info to be passed to the native host.
+    /// with block_number. Return the arguments to be passed to the native host for datagen.
     pub async fn get_native_execution_data(&self, l2_block_num: u64) -> Result<HostCli> {
         let l1_provider = Provider::<Http>::try_from(&self.l1_rpc)?;
         let l2_provider = Provider::<Http>::try_from(&self.l2_rpc)?;
