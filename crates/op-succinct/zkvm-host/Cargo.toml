@@ -37,6 +37,7 @@ native-host = { path = "../native-host" }
 sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git" }
 sp1-core = { git = "https://github.com/succinctlabs/sp1.git" }
 anyhow.workspace = true
+num-format = "0.4.4"
 
 [build-dependencies]
 sp1-helper = { git = "https://github.com/succinctlabs/sp1.git" }
