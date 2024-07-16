@@ -22,6 +22,10 @@
 
 ## Overview
 
+| Constant | Value                                        |
+|----------|----------------------------------------------|
+| Address  | `0x4200000000000000000000000000000000000043` |
+
 The `Alligator` contract implements subdelegations that can be used by token contracts inheriting from
 [`GovernanceToken`](gov-token.md). Subdelegations enable advanced delegation use cases, such as partial, time-constrained
 & block-based delegations, and relative & fixed allowances.
