@@ -3,14 +3,15 @@
 mod helpers;
 use helpers::load_kv_store;
 
-use zkvm_common::{BytesHasherBuilder, BootInfoWithoutRollupConfig};
+use zkvm_common::{BootInfoWithoutRollupConfig, BytesHasherBuilder};
 
-use std::collections::HashMap;
+use clap::Parser;
+use std::{collections::HashMap, str::FromStr};
 
-use alloy_primitives::b256;
+use alloy_primitives::B256;
 use rkyv::{
     ser::{serializers::*, Serializer},
-    AlignedVec, Archive, Deserialize, Serialize
+    AlignedVec, Archive, Deserialize, Serialize,
 };
 use sp1_sdk::{utils, ProverClient, SP1Stdin};
 
@@ -19,31 +20,50 @@ const ELF: &[u8] = include_bytes!("../../elf/riscv32im-succinct-zkvm-elf");
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 #[archive_attr(derive(Debug))]
 pub struct InMemoryOracle {
-    cache: HashMap<[u8;32], Vec<u8>, BytesHasherBuilder>,
+    cache: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder>,
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    l1_head: String,
+
+    #[arg(long)]
+    l2_output_root: String,
+
+    #[arg(long)]
+    l2_claim: String,
+
+    #[arg(long)]
+    l2_claim_block: u64,
+
+    #[arg(long)]
+    chain_id: u64,
 }
 
 fn main() {
     utils::setup_logger();
     let mut stdin = SP1Stdin::new();
 
+    let args = Args::parse();
+
     // TODO: Move this to CLI so we can pass same values to both calls from the justfile.
-    let l1_head = b256!("bb3c26e67fd8acb1a2baa15cd9affc57347f8549775657537d2f2ae359384ba4");
-    let l2_output_root = b256!("91c0ff7cdc5b59ff251b1c137b1f46c4c27e2b9f2ab17bb3b31c63d2f792a0a0");
-    let l2_claim = b256!("bfbec731f443c09bbfdcef53358458644ac2cbe1c5f68e53ad38599a52d65b5b");
-    let l2_claim_block = 121866428;
-    let chain_id = 10;
+    let l1_head = B256::from_str(&args.l1_head).unwrap();
+    let l2_output_root = B256::from_str(&args.l2_output_root).unwrap();
+    let l2_claim = B256::from_str(&args.l2_claim).unwrap();
 
     let boot_info = BootInfoWithoutRollupConfig {
         l1_head,
         l2_output_root,
         l2_claim,
-        l2_claim_block,
-        chain_id,
+        l2_claim_block: args.l2_claim_block,
+        chain_id: args.chain_id,
     };
     stdin.write(&boot_info);
 
     // Read KV store into raw bytes and pass to stdin.
-    let kv_store = load_kv_store(&format!("../data/{}", l2_claim_block));
+    let kv_store = load_kv_store(&format!("../data/{}", args.l2_claim_block));
 
     let mut serializer = CompositeSerializer::new(
         AlignedSerializer::new(AlignedVec::new()),
