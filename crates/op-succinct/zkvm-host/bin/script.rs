@@ -1,3 +1,5 @@
+// A host program to generate a proof of an Optimism L2 block STF in the zkVM.
+
 use clap::Parser;
 
 use sp1_sdk::utils;

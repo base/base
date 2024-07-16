@@ -1,5 +1,3 @@
-// A host program to generate a proof of an Optimism L2 block STF in the zkVM.
-
 pub mod helpers;
 
 use alloy_primitives::{keccak256, B256};
