@@ -15,6 +15,14 @@ struct Args {
     /// End block number
     #[arg(short, long)]
     end_block: u64,
+
+    /// Skip native data generation
+    #[arg(
+        short,
+        long,
+        help = "Skip native data generation if the Merkle tree data is already stored in data."
+    )]
+    skip_datagen: bool,
 }
 
 fn from_host_cli_args(args: &HostCli) -> BootInfoWithoutRollupConfig {
@@ -27,7 +35,7 @@ fn from_host_cli_args(args: &HostCli) -> BootInfoWithoutRollupConfig {
     }
 }
 
-/// Collect the execution reports across a number of blocks.
+/// Collect the execution reports across a number of blocks. Inclusive of start and end block.
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -40,10 +48,12 @@ async fn main() -> Result<()> {
         // Get native execution data.
         let native_execution_data = data_fetcher.get_native_execution_data(block_num).await?;
 
-        // Run the native host to generate the merkle proofs.
-        run_native_host(&native_execution_data).await?;
+        if !args.skip_datagen {
+            // Run the native host to generate the merkle proofs.
+            run_native_host(&native_execution_data).await?;
+        }
 
-        // Execute Kona program and collect execution report
+        // Execute Kona program and collect execution reports.
         let boot_info = from_host_cli_args(&native_execution_data);
         let report = execute_kona_program(&boot_info);
 

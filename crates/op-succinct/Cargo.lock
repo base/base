@@ -7357,9 +7357,7 @@ name = "zkvm-client"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
- "alloy-rlp",
  "anyhow",
  "async-trait",
  "cfg-if",
@@ -7367,7 +7365,6 @@ dependencies = [
  "kona-executor",
  "kona-preimage",
  "kona-primitives",
- "op-alloy-consensus",
  "rkyv",
  "sha2",
  "sp1-zkvm",

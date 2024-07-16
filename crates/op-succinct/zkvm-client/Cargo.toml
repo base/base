@@ -19,15 +19,10 @@ sha2.workspace = true
 # workspace (ethereum)
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-op-alloy-consensus.workspace = true
 
 # workspace (kona)
 kona-preimage.workspace = true
 kona-primitives.workspace = true
-# kona-mpt.workspace = true
-# kona-derive.workspace = true
 kona-executor.workspace = true
 kona-client.workspace = true
 
