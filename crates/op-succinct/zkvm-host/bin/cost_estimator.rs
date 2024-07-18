@@ -43,6 +43,7 @@ fn from_host_cli_args(args: &HostCli) -> BootInfoWithoutRollupConfig {
 /// Collect the execution reports across a number of blocks. Inclusive of start and end block.
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenv::dotenv().ok();
     let args = Args::parse();
 
     let mut reports = Vec::new();

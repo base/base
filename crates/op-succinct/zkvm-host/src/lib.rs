@@ -3,7 +3,7 @@ pub mod helpers;
 use alloy_primitives::{keccak256, B256};
 use ethers::{
     providers::{Http, Middleware, Provider},
-    types::H160,
+    types::{BlockNumber, H160, U256},
 };
 use kona_host::HostCli;
 use sp1_core::runtime::ExecutionReport;
@@ -138,10 +138,34 @@ impl SP1KonaDataFetcher {
         }
     }
 
+    async fn find_block_by_timestamp(&self, target_timestamp: U256) -> Result<B256> {
+        let l1_provider = Provider::<Http>::try_from(&self.l1_rpc)?;
+        let latest_block = l1_provider.get_block(BlockNumber::Latest).await?.unwrap();
+        let mut low = 0;
+        let mut high = latest_block.number.unwrap().as_u64();
+
+        while low <= high {
+            let mid = (low + high) / 2;
+            let block = l1_provider.get_block(mid).await?.unwrap();
+            let block_timestamp = block.timestamp;
+
+            if block_timestamp == target_timestamp {
+                return Ok(block.hash.unwrap().0.into());
+            } else if block_timestamp < target_timestamp {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+
+        // Return the block hash of the closest block after the target timestamp
+        let block = l1_provider.get_block(low).await?.unwrap();
+        Ok(block.hash.unwrap().0.into())
+    }
+
     /// Get the L2 output data for a given block number and save the boot info to a file in the data directory
     /// with block_number. Return the arguments to be passed to the native host for datagen.
     pub async fn get_native_execution_data(&self, l2_block_num: u64) -> Result<HostCli> {
-        let l1_provider = Provider::<Http>::try_from(&self.l1_rpc)?;
         let l2_provider = Provider::<Http>::try_from(&self.l2_rpc)?;
 
         let l2_block_safe_head = l2_block_num - 1;
@@ -191,12 +215,9 @@ impl SP1KonaDataFetcher {
         // Get L1 head.
         let l2_block_timestamp = l2_claim_block.timestamp;
         let target_timestamp = l2_block_timestamp + 300;
-        let l1_head = l1_provider
-            .get_block(target_timestamp.as_u64())
-            .await?
-            .unwrap()
-            .hash
-            .expect("L1 head is missing");
+
+        // TODO: Convert target_timestamp to a block number
+        let l1_head = self.find_block_by_timestamp(target_timestamp).await?;
 
         let l2_chain_id = l2_provider.get_chainid().await?;
         let data_directory = format!("../../data/{}", l2_block_num);
