@@ -37,7 +37,7 @@ reducing fees can be achieved by better utilizing bandwidth, computation and sto
 
 ### What is an Optimistic Rollup?
 
-[Optimistic rollup](https://vitalik.ca/general/2021/01/05/rollup.html) is a layer 2 scalability technique which
+[Optimistic rollup](https://vitalik.eth.limo/general/2021/01/05/rollup.html) is a layer 2 scalability technique which
 increases the computation & storage capacity of Ethereum without sacrificing security or decentralization. Transaction
 data is submitted on-chain but executed off-chain. If there is an error in the off-chain execution, a fault proof can
 be submitted on-chain to correct the error and protect user funds. In the same way you don't go to court unless there
