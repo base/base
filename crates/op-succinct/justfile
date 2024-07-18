@@ -1,4 +1,5 @@
 set fallback := true
+set dotenv-load
 
 # Global variables
 l1_head := ""
