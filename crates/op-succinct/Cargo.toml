@@ -60,6 +60,12 @@ op-alloy-consensus = { version = "0.1.0", default-features = false }
 alloy-eips = { version = "0.1", default-features = false }
 revm = { git = "https://github.com/bluealloy/revm", tag = "v37", version = "10.0.0", default-features = false }
 
+# sp1
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
+sp1-core = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
+sp1-helper = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
+
 [profile.release-client-lto]
 inherits = "release"
 panic = "abort"

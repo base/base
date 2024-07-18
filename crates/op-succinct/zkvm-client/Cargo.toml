@@ -30,6 +30,6 @@ kona-client.workspace = true
 zkvm-common.workspace = true
 
 # sp1
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", rev = "v1.0.8-testnet" }
+sp1-zkvm = { workspace = true }
 
 [dev-dependencies]
