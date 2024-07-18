@@ -6,7 +6,7 @@ default:
   @just --list
 
 run l2_block_num:
-  # TODO: There must be a nicer way to do this that doesn't involve just writing to a file.
+  # TODO: There must be a nicer way to do this that doesn't just r/w the input to the next fn with a file.
   just run-client-native {{l2_block_num}}
   just run-zkvm-host $(cat output.txt)
 
