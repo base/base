@@ -14,7 +14,7 @@ default:
 
 run l2_block_num:
   just run-client-native {{l2_block_num}}
-  just run-zkvm-host l1_head l2_output_root l2_claim l2_block_number l2_chain_id
+  just run-zkvm-host $(cat output.txt)
 
 
 run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BEACON_URL}' l2_rpc='${CLABBY_RPC_L2}' verbosity="-vvvv":
@@ -78,11 +78,8 @@ run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BE
   # Return the required values
   echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID"
 
-  l1_head := "$L1_HEAD"
-  l2_output_root := "$L2_OUTPUT_ROOT"
-  l2_claim := "$L2_CLAIM"
-  l2_block_number := "$L2_BLOCK_NUMBER"
-  l2_chain_id := "$L2_CHAIN_ID"
+  # Write the relevant data to output.txt
+  echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID" > output.txt
 
 run-zkvm-host l1_head l2_output_root l2_claim l2_claim_block chain_id:
     echo "Building zkvm client program..."
