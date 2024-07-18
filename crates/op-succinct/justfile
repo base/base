@@ -1,18 +1,12 @@
 set fallback := true
 set dotenv-load
 
-# Global variables for storing data between just command calls.
-l1_head := ""
-l2_output_root := ""
-l2_claim := ""
-l2_block_number := ""
-l2_chain_id := ""
-
 # default recipe to display help information
 default:
   @just --list
 
 run l2_block_num:
+  # TODO: There must be a nicer way to do this that doesn't involve just writing to a file.
   just run-client-native {{l2_block_num}}
   just run-zkvm-host $(cat output.txt)
 
@@ -78,15 +72,14 @@ run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BE
   # Return the required values
   echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID"
 
-  # Write the relevant data to output.txt
+  # Write the relevant data to output.txt so that it can be read by the zkvm-host program.
   echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID" > output.txt
 
 run-zkvm-host l1_head l2_output_root l2_claim l2_claim_block chain_id:
     echo "Building zkvm client program..."
-    # TODO: Change this to use build.rs when v1.0.9-testnet is released for building with args.
-    cd zkvm-client && cargo prove build --ignore-rust-version
 
     echo "Proving zkvm program in SP1..."
+    # Note: The program will automatically build with the build.rs
     cd zkvm-host && RUST_LOG=info cargo run --bin script --release -- \
       --l1-head {{l1_head}} \
       --l2-output-root {{l2_output_root}} \
