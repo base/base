@@ -1,7 +1,7 @@
 set fallback := true
 set dotenv-load
 
-# Global variables
+# Global variables for storing data between just command calls.
 l1_head := ""
 l2_output_root := ""
 l2_claim := ""
