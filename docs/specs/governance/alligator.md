@@ -49,19 +49,6 @@ is inteded to be called by users.
 subdelegate(address _token, address _delegatee, SubdelegationRule _rule)
 ```
 
-A subdelegation rule is an instance of the following struct:
-
-```solidity
-struct SubdelegationRule {
-    uint256 maxRedelegations; // Maximum number of times the delegated votes can be redelegated.
-    uint256 blocksBeforeVoteCloses; // Number of blocks before the vote closes that the delegation is valid.
-    uint256 notValidBefore; // Timestamp after which the delegation is valid.
-    uint256 notValidAfter; // Timestamp before which the delegation is valid.
-    SubdelegationAllowanceType allowanceType; // Type of allowance (e.g., absolute or relative).
-    uint256 allowance // Amount of votes delegated, denominated in the token's decimals.
-}
-```
-
 #### `subdelegate`
 
 Allows subdelegation of token voting power to another address with specified subdelegation rules. This function
@@ -137,6 +124,50 @@ These storage variables MUST be defined in the same way as in the token contract
 
   // Total supply checkpoints for a token contract address
   mapping(address token => Checkpoint[] checkpoint) internal _totalSupplyCheckpoints;
+
+  // Mapping to keep track of migrated addresses from token contracts.
+  mapping(address token => mapping(address user => bool migrated)) public migrated;
+```
+
+## Types
+
+The `Alligator` contract MUST define the following types:
+
+### `SubdelegationRule`
+
+Subdelegation rules define the parameters and constraints for delegated voting power, encapsulated in the following struct:
+
+```solidity
+struct SubdelegationRule {
+    uint256 maxRedelegations; // Maximum number of times the delegated votes can be redelegated.
+    uint256 blocksBeforeVoteCloses; // Number of blocks before the vote closes that the delegation is valid.
+    uint256 notValidBefore; // Timestamp after which the delegation is valid.
+    uint256 notValidAfter; // Timestamp before which the delegation is valid.
+    AllowanceType allowanceType; // Type of allowance (e.g., absolute or relative).
+    uint256 allowance // Amount of votes delegated, denominated in the token's decimals.
+}
+```
+
+### `AllowanceType`
+
+Subdelegations can have different types of allowances, represented with:
+
+```solidity
+enum AllowanceType {
+  Absolute, // The amount of votes delegated is fixed.
+  Relative // The amount of votes delegated is relative to the total amount of votes the delegator has.
+}
+```
+
+### `Checkpoint`
+
+Checkpoints are used to store the voting power of a user at a specific block number. A checkpoint MUST be an instance of the `ERC20Votes` `Checkpoint` struct:
+
+```solidity
+struct Checkpoint {
+  uint32 fromBlock; // Block number the checkpoint was created.
+  uint224 votes; // Amount of votes at the checkpoint.
+}
 ```
 
 ## Backwards Compatibility
