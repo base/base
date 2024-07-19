@@ -81,8 +81,10 @@ MUST be called by the `_afterTokenTransfer` function in the token contract.
 afterTokenTransfer(address _from, address _to, uint256 _amount)
 ```
 
-If the `_to` or `_from` addresses have not been migrated, `Alligator` migrates by copying the delegation and checkpoint
-data from the token contract to its own state.
+The `Alligator` MUST check if the `_from` or `_to` addresses have been migrated by checking the `migrated` mapping
+from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
+and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
+the `migrated` mapping to reflect that the address has been migrated.
 
 ### Getters
 
@@ -142,14 +144,23 @@ Subdelegation rules define the parameters and constraints for delegated voting p
 
 ```solidity
 struct SubdelegationRule {
-    uint256 maxRedelegations; // Maximum number of times the delegated votes can be redelegated.
-    uint256 blocksBeforeVoteCloses; // Number of blocks before the vote closes that the delegation is valid.
-    uint256 notValidBefore; // Timestamp after which the delegation is valid.
-    uint256 notValidAfter; // Timestamp before which the delegation is valid.
-    AllowanceType allowanceType; // Type of allowance (e.g., absolute or relative).
-    uint256 allowance // Amount of votes delegated, denominated in the token's decimals.
+    uint256 maxRedelegations;
+    uint256 blocksBeforeVoteCloses;
+    uint256 notValidBefore;
+    uint256 notValidAfter;
+    AllowanceType allowanceType;
+    uint256 allowance;
 }
 ```
+
+| Name                     | Type            | Description                                                             |
+|--------------------------|-----------------|-------------------------------------------------------------------------|
+| `maxRedelegations`       | `uint256`       | Maximum number of times the delegated votes can be redelegated.         |
+| `blocksBeforeVoteCloses` | `uint256`       | Number of blocks before the vote closes that the delegation is valid.   |
+| `notValidBefore`         | `uint256`       | Timestamp after which the delegation is valid.                          |
+| `notValidAfter`          | `uint256`       | Timestamp before which the delegation is valid.                         |
+| `allowanceType`          | `AllowanceType` | Type of allowance (e.g., absolute or relative).                         |
+| `allowance`              | `uint256`       | Amount of votes delegated, denominated in the token's decimals.         |
 
 ### `AllowanceType`
 
@@ -157,10 +168,15 @@ Subdelegations can have different types of allowances, represented with:
 
 ```solidity
 enum AllowanceType {
-  Absolute, // The amount of votes delegated is fixed.
-  Relative // The amount of votes delegated is relative to the total amount of votes the delegator has.
+  Absolute,
+  Relative
 }
 ```
+
+| Name                     | Number    | Description                                                                                 |
+|--------------------------|-----------|---------------------------------------------------------------------------------------------|
+| `Absolute`               | `0`       | The amount of votes delegated is fixed.                                                     |
+| `Relative`               | `1`       | The amount of votes delegated is relative to the total amount of votes the delegator has.   |
 
 ### `Checkpoint`
 
@@ -168,10 +184,15 @@ Checkpoints are used to store the voting power of a user at a specific block num
 
 ```solidity
 struct Checkpoint {
-  uint32 fromBlock; // Block number the checkpoint was created.
-  uint224 votes; // Amount of votes at the checkpoint.
+  uint32 fromBlock;
+  uint224 votes;
 }
 ```
+
+| Name              | Type         | Description                                     |
+|-------------------|--------------|-------------------------------------------------|
+| `fromBlock`       | `uint32`     | Block number the checkpoint was created.        |
+| `votes`           | `uint224`    | Amount of votes at the checkpoint.              |
 
 ## Backwards Compatibility
 
