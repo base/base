@@ -8,6 +8,7 @@
 - [Interface](#interface)
   - [Core Functions](#core-functions)
     - [`subdelegate`](#subdelegate)
+    - [`subdelegateFromToken`](#subdelegatefromtoken)
     - [`subdelegateBatched`](#subdelegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
   - [Getters](#getters)
@@ -52,13 +53,13 @@ is inteded to be called by users.
 subdelegate(address _token, address _delegatee, SubdelegationRule _rule)
 ```
 
-#### `subdelegate`
+#### `subdelegateFromToken`
 
 Allows subdelegation of token voting power to another address with specified subdelegation rules. This function
 is intended to be called by the token contract.
 
 ```solidity
-subdelegate(address _account, address _delegatee, SubdelegationRule _rule)
+subdelegateFromToken(address _delegator, address _delegatee, SubdelegationRule _rule)
 ```
 
 #### `subdelegateBatched`
