@@ -8,6 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-kona-host = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-tokio = { version = "1.37.0", features = ["full"] }
-clap = { version = "4.5.4" }
+kona-host = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
