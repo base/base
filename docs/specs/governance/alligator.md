@@ -9,13 +9,16 @@
   - [Core Functions](#core-functions)
     - [`subdelegate`](#subdelegate)
     - [`subdelegateBatched`](#subdelegatebatched)
-    - [`subdelegateBySig`](#subdelegatebysig)
     - [`afterTokenTransfer`](#aftertokentransfer)
   - [Getters](#getters)
     - [`getSubdelegations`](#getsubdelegations)
     - [`getCheckpoints`](#getcheckpoints)
     - [`getVotingPower`](#getvotingpower)
 - [Storage](#storage)
+- [Types](#types)
+  - [`SubdelegationRule`](#subdelegationrule)
+  - [`AllowanceType`](#allowancetype)
+  - [`Checkpoint`](#checkpoint)
 - [Backwards Compatibility](#backwards-compatibility)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
