@@ -42,10 +42,11 @@ the contract copies the address' delegation and checkpoint data from the token c
 
 #### `subdelegate`
 
-Allows subdelegation of voting power to another address with specified subdelegation rules.
+Allows subdelegation of token voting power to another address with specified subdelegation rules. This function
+is inteded to be called by users.
 
 ```solidity
-subdelegate(address _to, SubdelegationRule _rule)
+subdelegate(address _token, address _delegatee, SubdelegationRule _rule)
 ```
 
 A subdelegation rule is an instance of the following struct:
@@ -61,25 +62,25 @@ struct SubdelegationRule {
 }
 ```
 
+#### `subdelegate`
+
+Allows subdelegation of token voting power to another address with specified subdelegation rules. This function
+is intended to be called by the token contract.
+
+```solidity
+subdelegate(address _account, address _delegatee, SubdelegationRule _rule)
+```
+
 #### `subdelegateBatched`
 
-Allows batch subdelegation of voting power to multiple addresses with specified subdelegation rules.
+Allows batch subdelegation of token voting power to multiple addresses with specified subdelegation rules. This
+function is intended to be called by users.
 
 ```solidity
-subdelegateBatched(address[] _to, SubdelegationRule[] _rules)
+subdelegateBatched(address _token, address[] _delegatees, SubdelegationRule[] _rules)
 ```
 
-Calls the `subdelegate` function for each pair of `_to` address and subdelegation rule.
-
-#### `subdelegateBySig`
-
-Allows subdelegation of voting power using a signature.
-
-```solidity
-subdelegateBySig(address _to, SubdelegationRule _rule, bytes _signature)
-```
-
-Takes the same arguments as `subdelegate`, plus a signature of the previous parameters.
+Calls the `subdelegate` function for each pair of `_delegatees` address and subdelegation rule.
 
 #### `afterTokenTransfer`
 
