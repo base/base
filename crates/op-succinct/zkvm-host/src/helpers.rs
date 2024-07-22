@@ -1,14 +1,10 @@
-use std::{
-    fs,
-    io::Read,
-    collections::HashMap
-};
-use zkvm_common::BytesHasherBuilder;
 use hex;
+use std::{collections::HashMap, fs, io::Read};
+use zkvm_common::BytesHasherBuilder;
 
-pub fn load_kv_store(data_dir: &str) -> HashMap<[u8;32], Vec<u8>, BytesHasherBuilder> {
+pub fn load_kv_store(data_dir: &str) -> HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> {
     let capacity = get_file_count(data_dir);
-    let mut cache: HashMap<[u8;32], Vec<u8>, BytesHasherBuilder> =
+    let mut cache: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> =
         HashMap::with_capacity_and_hasher(capacity, BytesHasherBuilder);
 
     // Iterate over the files in the 'data' directory
@@ -24,7 +20,8 @@ pub fn load_kv_store(data_dir: &str) -> HashMap<[u8;32], Vec<u8>, BytesHasherBui
                     // Read the file contents
                     let mut file = fs::File::open(path).expect("Failed to open file");
                     let mut contents = Vec::new();
-                    file.read_to_end(&mut contents).expect("Failed to read file");
+                    file.read_to_end(&mut contents)
+                        .expect("Failed to read file");
 
                     // Insert the key-value pair into the cache
                     cache.insert(key.try_into().unwrap(), contents);
