@@ -57,6 +57,7 @@
     - [Fault Proof](./interop/fault_proof.md)
     - [Upgrade](./interop/upgrade.md)
     - [Token Bridging](./interop/token-bridging.md)
+    - [SuperchainWETH](./interop/superchain-weth.md)
   - [Security Council Safe](./experimental/security-council-safe.md)
   - [OP Stack Manager](./experimental/op-stack-manager.md)
 - [Glossary](./glossary.md)

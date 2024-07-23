@@ -38,3 +38,4 @@ they need not be the same entity in practice.
 - [Fault Proof](./fault_proof.md): modifications to prove interop functionality in the fault-proof.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
+- [Superchain WETH](./superchain-weth.md): Making ETH interoperable.
