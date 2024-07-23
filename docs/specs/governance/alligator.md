@@ -46,25 +46,45 @@ been migrated to the `Alligator` contract, the contract copies the address' chec
 
 #### `subdelegate`
 
-Allows subdelegation of token voting power to another address (delegatee) with specified subdelegation rules. This function
+Allows subdelegation of token voting power to another address (delegatee) with a specified subdelegation rule. This function
 is inteded to be called by users that require advanced delegation of the [`GovernanceToken`](gov-token.md).
 
 ```solidity
-subdelegate(address _delegatee, SubdelegationRule _rule)
+function subdelegate(address _delegatee, SubdelegationRule _rule) external
 ```
+
+This function MUST check if the `msg.sender` or `_delegatee` addresses have been migrated by checking the `migrated` mapping
+from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
+and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
+the `migrated` mapping to reflect that the address has been migrated.
+
+Before updating the subdelegation, the `subdelegate` function MUST check the validity of the subdelegation rule.
+
+When updating the subdelegation, the `subdelegate` function MUST override any previous subdelegation of the `msg.sender` to
+the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function parameters.
 
 #### `subdelegateFromToken`
 
 Allows subdelegation of token voting power from an address (delegator) to another address (delegatee) with a specified
 subdelegation rule. This function is intended to be called by the [`GovernanceToken`](gov-token.md) contract as part
 of its `delegateBySig` function. To ensure backwards compatibility in the [`GovernanceToken`](gov-token.md), the
-subdelegation rule must be 100% delegation, mimicking the behavior of the [`GovernanceToken`](gov-token.md)'s `delegate`
+subdelegation rule MUST be 100% delegation, mimicking the behavior of the [`GovernanceToken`](gov-token.md)'s `delegate`
 function.
 
-
 ```solidity
-subdelegateFromToken(address _delegator, address _delegatee, SubdelegationRule _rule)
+function subdelegateFromToken(address _delegator, address _delegatee, SubdelegationRule _rule) external
 ```
+
+This function MUST check if the `_delegator` or `_delegatee` addresses have been migrated by checking the `migrated` mapping
+from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
+and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
+the `migrated` mapping to reflect that the address has been migrated.
+
+Before updating the subdelegation, the `subdelegateFromToken` function MUST check the validity of the subdelegation rule.
+
+When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the 
+`_delegator` to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function
+parameters.
 
 #### `subdelegateBatched`
 
@@ -72,18 +92,29 @@ Allows batch subdelegation of token voting power to multiple addresses with spec
 function is intended to be called by users.
 
 ```solidity
-subdelegateBatched(address[] _delegatees, SubdelegationRule[] _rules)
+function subdelegateBatched(address[] calldata _delegatees, SubdelegationRules[] calldata _rules) external
 ```
 
-Calls the `subdelegate` function for each pair of `_delegatees` address and subdelegation rule.
+This function MUST check if the `msg.sender` has been migrated by checking the `migrated` mapping from its [storage](#storage).
+If it has not been migrated, the `Alligator` MUST copy the delegation and checkpoint data from the token contract to its own state.
+After copying the data, the `Alligator` MUST update the `migrated` mapping to reflect that the address has been migrated.
+
+This function MUST check that the length of `_delegatees` and `_rules` are equal. If the lengths are not equal, it MUST
+revert with an error.
+
+The `subdelegateBatched` function MUST iterate over each pair of `_delegatees` address and `_rules` subdelegation rule. At every
+iteration, the function MUST check the validity of the subdelegation rule, and migrate the  delegatee address if it has not been
+migrated. The function MUST then update the subdelegation.
+
+Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event with the given function parameters.
 
 #### `afterTokenTransfer`
 
-Updates the voting power of two addresses (`_from` and `_to`) after a token transfer. This function MUST
-be called by the `_afterTokenTransfer` function in the [`GovernanceToken`](gov-token.md).
+Updates the voting power of two addresses (`_from` and `_to`) after a token transfer. This function MUST be called by
+the `_afterTokenTransfer` function in the [`GovernanceToken`](gov-token.md).
 
 ```solidity
-afterTokenTransfer(address _from, address _to, uint256 _amount)
+function afterTokenTransfer(address _from, address _to, uint256 _amount) external
 ```
 
 The `Alligator` MUST check if the `_from` or `_to` addresses have been migrated by checking the `migrated` mapping
@@ -91,54 +122,89 @@ from its [storage](#storage). If either address has not been migrated, the `Alli
 and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
 the `migrated` mapping to reflect that the address has been migrated.
 
+The `afterTokenTransfer` function MUST update the voting power of the `_from` and `_to` addresses with the same logic
+of the `GovernanceToken`.
+
+#### `migrateAccount`
+
+Migrates the delegation state of a given account from the `GovernanceToken` to the `Alligator` contract. This function
+MUST only migrate the `_account` if it has not been migrated yet.
+
+```solidity
+function migrateAccount(address _account) external
+```
+
 ### Getters
 
-For backwards compatibility, the `Alligator` MUST implement all public getter functios of the
+For backwards compatibility, the `Alligator` MUST implement all public getter functions of the
 [`GovernanceToken`](gov-token.md) related to delegation and voting power. These functions MUST be used by the
 [`GovernanceToken`](gov-token.md) when an account has been been migrated to the `Alligator` contract. Otherwise,
 the [`GovernanceToken`](gov-token.md) MUST use its own state.
 
-#### `getSubdelegations`
+#### `checkpoints`
 
-Retrieves the subdelegations for a given token contract and user address.
+Retrieves the checkpoints for a given user address.
 
 ```solidity
-getSubdelegations(address _token, address _user) returns (SubdelegationRule[] memory)
+function checkpoints(address _account) external view returns (ERC20Votes.Checkpoint[] memory)
 ```
 
-#### `getCheckpoints`
+#### `numCheckpoints`
 
-Retrieves the checkpoints for a given token contract and user address.
+Retrieves the number checkpoints for a given user address.
 
 ```solidity
-getCheckpoints(address _token, address _user) returns (Checkpoint[] memory)
+function numCheckpoints(address _account) external view returns (uint32)
 ```
 
-#### `getVotingPower`
+#### `getVotes`
 
-Retrieves the current and past voting power for a given token contract and user address.
+Retrieves the voting power of a given user address.
 
 ```solidity
-getVotingPower(address _token, address _user, uint256 _blockNumber) returns (uint256)
+function getVotes(address _account) external view returns (uint256)
+```
+
+#### `getPastVotes`
+
+Retrieves the voting power of a given user address at a block.
+
+```solidity
+function getPastVotes(address _account, uint256 _blockNumber) external view returns (uint256)
+```
+
+#### `getPastTotalSupply`
+
+Retrieves the total supply of the `GovernanceToken` at a given block.
+
+```solidity
+function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
+```
+
+#### `subdelegations`
+
+Retrieves the subdelegations for a given user and delegatee.
+
+```solidity
+function subdelegations(address _account, address _delegatee) external view returns (SubdelegationRules memory)
 ```
 
 ## Storage
 
-The `Alligator` contract MUST be able to store delegations and checkpoints for multiple token contracts.
-These storage variables MUST be defined in the same way as in the token contract:
+The `Alligator` contract MUST be able to store delegations and checkpoints. These storage variables MUST be defined as in the [`GovernanceToken`](gov-token.md) and use the same types:
 
 ```solidity
-  // Mapping to keep track of the subdelegations for a token contract address and a user address
-  mapping(address token => mapping(address from => mapping(address to => SubdelegationRules subdelegationRules))) public subdelegations;
+// Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
+mapping(address => bool) public migrated;
 
-  // Checkpoints of votes for a toke contract address and a user address
-  mapping(address token => mapping(address user => Checkpoint[] checkpoint)) internal _checkpoints;
+// Subdelegation rules for an account and delegatee.
+mapping(address => mapping(address => SubdelegationRules)) internal _subdelegations;
 
-  // Total supply checkpoints for a token contract address
-  mapping(address token => Checkpoint[] checkpoint) internal _totalSupplyCheckpoints;
+// Checkpoints of voting power for an account.
+mapping(address => ERC20Votes.Checkpoint[]) internal _checkpoints;
 
-  // Mapping to keep track of migrated addresses from token contracts.
-  mapping(address token => mapping(address user => bool migrated)) public migrated;
+// Total supply checkpoints of the GovernanceToken.
+ERC20Votes.Checkpoint[] internal _totalSupplyCheckpoints;
 ```
 
 ## Types
@@ -184,22 +250,6 @@ enum AllowanceType {
 |--------------------------|-----------|---------------------------------------------------------------------------------------------|
 | `Absolute`               | `0`       | The amount of votes delegated is fixed.                                                     |
 | `Relative`               | `1`       | The amount of votes delegated is relative to the total amount of votes the delegator has.   |
-
-### `Checkpoint`
-
-Checkpoints are used to store the voting power of a user at a specific block number. A checkpoint MUST be an instance of the `ERC20Votes` `Checkpoint` struct:
-
-```solidity
-struct Checkpoint {
-  uint32 fromBlock;
-  uint224 votes;
-}
-```
-
-| Name              | Type         | Description                                     |
-|-------------------|--------------|-------------------------------------------------|
-| `fromBlock`       | `uint32`     | Block number the checkpoint was created.        |
-| `votes`           | `uint224`    | Amount of votes at the checkpoint.              |
 
 ## Backwards Compatibility
 
