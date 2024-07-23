@@ -22,7 +22,7 @@
   - [Events](#events)
     - [`Subdelegation`](#subdelegation)
     - [`Subdelegations`](#subdelegations)
-  - [`DelegateVotesChanged`](#delegatevoteschanged)
+    - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
 - [Types](#types)
   - [`SubdelegationRule`](#subdelegationrule)
@@ -214,7 +214,7 @@ MUST trigger when an account subdelegates voting power to multiple addresses (de
 event Subdelegations(address indexed account, address[] delegatee, SubdelegationRules[] rules)
 ```
 
-### `DelegateVotesChanged`
+#### `DelegateVotesChanged`
 
 MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation is updated.
 
