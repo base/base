@@ -77,8 +77,8 @@ the `migrated` mapping to reflect that the address has been migrated.
 
 Before updating the subdelegation, the `subdelegate` function MUST check the validity of the subdelegation rule.
 
-When updating the subdelegation, the `subdelegate` function MUST override any previous subdelegation of the `msg.sender` to
-the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function parameters.
+When updating the subdelegation, the `subdelegate` function MUST override any previous subdelegation of the `msg.sender`
+to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function parameters.
 
 #### `subdelegateFromToken`
 
@@ -99,7 +99,7 @@ the `migrated` mapping to reflect that the address has been migrated.
 
 Before updating the subdelegation, the `subdelegateFromToken` function MUST check the validity of the subdelegation rule.
 
-When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the 
+When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the
 `_delegator` to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function
 parameters.
 
@@ -113,15 +113,16 @@ function subdelegateBatched(address[] calldata _delegatees, SubdelegationRules[]
 ```
 
 This function MUST check if the `msg.sender` has been migrated by checking the `migrated` mapping from its [storage](#storage).
-If it has not been migrated, the `Alligator` MUST copy the delegation and checkpoint data from the token contract to its own state.
-After copying the data, the `Alligator` MUST update the `migrated` mapping to reflect that the address has been migrated.
+If it has not been migrated, the `Alligator` MUST copy the delegation and checkpoint data from the token contract
+to its own state. After copying the data, the `Alligator` MUST update the `migrated` mapping to reflect that the address
+has been migrated.
 
 This function MUST check that the length of `_delegatees` and `_rules` are equal. If the lengths are not equal, it MUST
 revert with an error.
 
-The `subdelegateBatched` function MUST iterate over each pair of `_delegatees` address and `_rules` subdelegation rule. At every
-iteration, the function MUST check the validity of the subdelegation rule, and migrate the  delegatee address if it has not been
-migrated. The function MUST then update the subdelegation.
+The `subdelegateBatched` function MUST iterate over each pair of `_delegatees` address and `_rules` subdelegation rule.
+At every iteration, the function MUST check the validity of the subdelegation rule, and migrate the  delegatee address
+if it has not been migrated. The function MUST then update the subdelegation.
 
 Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event with the given function parameters.
 
@@ -226,7 +227,8 @@ event Subdelegations(address indexed account, address[] delegatee, Subdelegation
 
 #### `DelegateVotesChanged`
 
-MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation is updated.
+MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation
+is updated.
 
 ```solidity
 event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, uint256 newBalance)
@@ -234,8 +236,8 @@ event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, ui
 
 ## Storage
 
-The `Alligator` contract MUST be able to store subdelegation rules and checkpoints. These storage variables MUST be defined as
-in the [`GovernanceToken`](gov-token.md) and use the same types:
+The `Alligator` contract MUST be able to store subdelegation rules and checkpoints. These storage variables MUST be
+defined as in the [`GovernanceToken`](gov-token.md) and use the same types:
 
 ```solidity
 // Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
@@ -257,7 +259,8 @@ The `Alligator` contract MUST define the following types:
 
 ### `SubdelegationRule`
 
-Subdelegation rules define the parameters and constraints for delegated voting power, encapsulated in the following struct:
+Subdelegation rules define the parameters and constraints for delegated voting power, encapsulated in the following
+struct:
 
 ```solidity
 struct SubdelegationRule {
@@ -296,33 +299,37 @@ enum AllowanceType {
 ## Backwards Compatibility
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
-token contract. 
+token contract.
 
 ## User Flow
 
-The following sections highlight the use cases that MUST be supported by subdelegations, and the difference for basic delegations
-made from the `GovernanceToken` contract.
+The following sections highlight the use cases that MUST be supported by subdelegations, and the difference for basic
+delegations made from the `GovernanceToken` contract.
 
 ### Partial delegations
 
-Users MUST be able to perform partial delegations of their voting power to another address. Aditionally, the `Alligator`'s subdelegation
-rules MUST allow users to perform subdelegations for relative and absolute amounts of voting power. Absolute amounts MUST be denominated
-in the token's decimals, whereas relataive amounts MUST be denominated in percentages.
+Users MUST be able to perform partial delegations of their voting power to another address. Aditionally, the `Alligator`'s
+subdelegation rules MUST allow users to perform subdelegations for relative and absolute amounts of voting power. Absolute
+amounts MUST be denominated in the token's decimals, whereas relataive amounts MUST be denominated in percentages.
 
 ### Constrained delegations
 
-Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optinoal `notValidBefore` and
-`notValidAfter` fields to allow users to specify the time range in which a delegation is valid, both denominated as timestamps.
+Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optinoal
+`notValidBefore` and `notValidAfter` fields to allow users to specify the time range in which a delegation is valid, both
+denominated as timestamps.
 
 ### Redelegations
 
-Users MUST be able to redelegate their voting power to another address. If a user delegates their voting power to another address, this
-second address can further delegate the voting power to a third address. The first delegator MUST be able to limit the number of redelegations
-that can be performed for their delegated voting power by setting the `maxRedelegations` field in the subdelegation rule.
+Users MUST be able to redelegate their voting power to another address. If a user delegates their voting power to another
+address, this second address can further delegate the voting power to a third address. The first delegator MUST be able to
+limit the number of redelegations that can be performed for their delegated voting power by setting the `maxRedelegations`
+field in the subdelegation rule.
 
 ### Differences
 
-The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapasulated as subdelegations and forwarded to the `Alligator` contract. Basic delegation can be achieved with a subdelegation rule such as:
+The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapasulated as
+subdelegations and forwarded to the `Alligator` contract. Basic delegation can be achieved with a subdelegation rule
+such as:
 
 ```solidity
 SubdelegationRules({
@@ -345,7 +352,8 @@ sequenceDiagram
     Alligator ->> Alligator: update subdelegation
 ```
 
-Once a user has been migrated to the `Alligator`, the `GovernanceToken` MUST always use the `Alligator`'s delegation state. The following diagram shows the control flow for this case.
+Once a user has been migrated to the `Alligator`, the `GovernanceToken` MUST always use the `Alligator`'s delegation
+state. The following diagram shows the control flow for this case.
 
 ```mermaid
 flowchart TD
@@ -361,13 +369,15 @@ flowchart TD
 ### Dependence on Alligator
 
 As the `GovernanceToken` depends on the `Alligator` contract, the `Alligator` contract MUST be implemented so that it
-minimizes the risk of unexpected reverts during the transfer hook call. If the `Alligator` contract reverts, `GovernanceToken` transfers
-will be blocked. Additionally, the `GovernanceToken` MUST always use the `Alligator`'s delegation state if a user has been migrated.
+minimizes the risk of unexpected reverts during the transfer hook call. If the `Alligator` contract reverts,
+`GovernanceToken` transfers will be blocked. Additionally, the `GovernanceToken` MUST always use the `Alligator`'s
+delegation state if a user has been migrated.
 
 ### Connection with GovernanceToken
 
-Similarly, the `Alligator` MUST always be in sync with the `GovernanceToken` contract via token transfers. If the `Alligator` contract
-is not in sync with the `GovernanceToken` contract, the voting power of users MAY be incorrect or outdated.
+Similarly, the `Alligator` MUST always be in sync with the `GovernanceToken` contract via token transfers. If the
+`Alligator` contract is not in sync with the `GovernanceToken` contract, the voting power of users MAY be incorrect or
+outdated.
 
 ## Future Considerations
 
@@ -375,5 +385,5 @@ is not in sync with the `GovernanceToken` contract, the voting power of users MA
 
 To make the `GovernanceToken` interoperable, the `Alligator` contract should be extended to support cross-chain subdelegations
 using the interoperability protocol. Specifically, the `Alligator`'s hook entrypoint (`afterTokenTransfer`) should be modified
-to emit a message to another `Alligator` contract on a different chain. This message should include the token transfer information 
+to emit a message to another `Alligator` contract on a different chain. This message should include the token transfer information
 (`_from`, `_to`, `_amount`).
