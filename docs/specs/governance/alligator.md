@@ -11,15 +11,18 @@
     - [`subdelegateFromToken`](#subdelegatefromtoken)
     - [`subdelegateBatched`](#subdelegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
+    - [`migrateAccount`](#migrateaccount)
   - [Getters](#getters)
-    - [`getSubdelegations`](#getsubdelegations)
-    - [`getCheckpoints`](#getcheckpoints)
-    - [`getVotingPower`](#getvotingpower)
+    - [`checkpoints`](#checkpoints)
+    - [`numCheckpoints`](#numcheckpoints)
+    - [`getVotes`](#getvotes)
+    - [`getPastVotes`](#getpastvotes)
+    - [`getPastTotalSupply`](#getpasttotalsupply)
+    - [`subdelegations`](#subdelegations)
 - [Storage](#storage)
 - [Types](#types)
   - [`SubdelegationRule`](#subdelegationrule)
   - [`AllowanceType`](#allowancetype)
-  - [`Checkpoint`](#checkpoint)
 - [Backwards Compatibility](#backwards-compatibility)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -110,8 +113,8 @@ Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event 
 
 #### `afterTokenTransfer`
 
-Updates the voting power of two addresses (`_from` and `_to`) after a token transfer. This function MUST be called by
-the `_afterTokenTransfer` function in the [`GovernanceToken`](gov-token.md).
+Updates the voting power of two addresses (`_from` and `_to`) after a token transfer. This function MUST only be callable
+by the [`GovernanceToken`](gov-token.md) contract.
 
 ```solidity
 function afterTokenTransfer(address _from, address _to, uint256 _amount) external
@@ -191,7 +194,8 @@ function subdelegations(address _account, address _delegatee) external view retu
 
 ## Storage
 
-The `Alligator` contract MUST be able to store delegations and checkpoints. These storage variables MUST be defined as in the [`GovernanceToken`](gov-token.md) and use the same types:
+The `Alligator` contract MUST be able to store subdelegation rules and checkpoints. These storage variables MUST be defined as
+in the [`GovernanceToken`](gov-token.md) and use the same types:
 
 ```solidity
 // Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
@@ -246,10 +250,10 @@ enum AllowanceType {
 }
 ```
 
-| Name                     | Number    | Description                                                                                 |
-|--------------------------|-----------|---------------------------------------------------------------------------------------------|
-| `Absolute`               | `0`       | The amount of votes delegated is fixed.                                                     |
-| `Relative`               | `1`       | The amount of votes delegated is relative to the total amount of votes the delegator has.   |
+| Name        | Number | Description                                                                                 |
+|-------------|--------|---------------------------------------------------------------------------------------------|
+| `Absolute`  | `0`    | The amount of votes delegated is fixed.                                                     |
+| `Relative`  | `1`    | The amount of votes delegated is relative to the total amount of votes the delegator has.   |
 
 ## Backwards Compatibility
 
