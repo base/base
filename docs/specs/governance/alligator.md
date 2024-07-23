@@ -28,6 +28,16 @@
   - [`SubdelegationRule`](#subdelegationrule)
   - [`AllowanceType`](#allowancetype)
 - [Backwards Compatibility](#backwards-compatibility)
+- [User Flow](#user-flow)
+  - [Partial delegations](#partial-delegations)
+  - [Constrained delegations](#constrained-delegations)
+  - [Redelegations](#redelegations)
+  - [Differences](#differences)
+- [Security Considerations](#security-considerations)
+  - [Dependence on Alligator](#dependence-on-alligator)
+  - [Connection with GovernanceToken](#connection-with-governancetoken)
+- [Future Considerations](#future-considerations)
+  - [Cross Chain Delegations](#cross-chain-delegations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -252,7 +262,6 @@ Subdelegation rules define the parameters and constraints for delegated voting p
 ```solidity
 struct SubdelegationRule {
     uint256 maxRedelegations;
-    uint256 blocksBeforeVoteCloses;
     uint256 notValidBefore;
     uint256 notValidAfter;
     AllowanceType allowanceType;
@@ -263,7 +272,6 @@ struct SubdelegationRule {
 | Name                     | Type            | Description                                                             |
 |--------------------------|-----------------|-------------------------------------------------------------------------|
 | `maxRedelegations`       | `uint256`       | Maximum number of times the delegated votes can be redelegated.         |
-| `blocksBeforeVoteCloses` | `uint256`       | Number of blocks before the vote closes that the delegation is valid.   |
 | `notValidBefore`         | `uint256`       | Timestamp after which the delegation is valid.                          |
 | `notValidAfter`          | `uint256`       | Timestamp before which the delegation is valid.                         |
 | `allowanceType`          | `AllowanceType` | Type of allowance (e.g., absolute or relative).                         |
@@ -288,7 +296,65 @@ enum AllowanceType {
 ## Backwards Compatibility
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
-token contract.
+token contract. 
+
+## User Flow
+
+The following sections highlight the use cases that MUST be supported by subdelegations, and the difference for basic delegations
+made from the `GovernanceToken` contract.
+
+### Partial delegations
+
+Users MUST be able to perform partial delegations of their voting power to another address. Aditionally, the `Alligator`'s subdelegation
+rules MUST allow users to perform subdelegations for relative and absolute amounts of voting power. Absolute amounts MUST be denominated
+in the token's decimals, whereas relataive amounts MUST be denominated in percentages.
+
+### Constrained delegations
+
+Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optinoal `notValidBefore` and
+`notValidAfter` fields to allow users to specify the time range in which a delegation is valid, both denominated as timestamps.
+
+### Redelegations
+
+Users MUST be able to redelegate their voting power to another address. If a user delegates their voting power to another address, this
+second address can further delegate the voting power to a third address. The first delegator MUST be able to limit the number of redelegations
+that can be performed for their delegated voting power by setting the `maxRedelegations` field in the subdelegation rule.
+
+### Differences
+
+The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapasulated as subdelegations and forwarded to the `Alligator` contract. Basic delegation can be achieved with a subdelegation rule such as:
+
+```solidity
+SubdelegationRules({
+  maxRedelegations: 0,
+  blocksBeforeVoteCloses: 0,
+  notValidBefore: 0,
+  notValidAfter: 0,
+  allowanceType: AllowanceType.Relative,
+  allowance: 10e4 // 100%
+})
+```
+
+The following diagram shows the sequence of a basic delegation performed from the `GovernanceToken` contract.
+
+```mermaid
+sequenceDiagram
+    User ->> GovernanceToken: call `delegate` or `delegateBySig`
+    GovernanceToken ->> Alligator: call `subdelegate` with basic delegation rule
+    Alligator -->> GovernanceToken: migrate if user hasn't been migrated
+    Alligator ->> Alligator: update subdelegation
+```
+
+Once a user has been migrated to the `Alligator`, the `GovernanceToken` MUST always use the `Alligator`'s delegation state. The following diagram shows the control flow for this case.
+
+```mermaid
+flowchart TD
+    A1(User) -->|Calls delegation getter function | A2(GovernanceToken)
+    A2 --> A3{Is user migrated?}
+    A3 --> |Yes, fetch from Alligator| A4(Alligator)
+    A3 --> |No, use its state| A2
+    A2 --> |Return data| A1
+```
 
 ## Security Considerations
 
