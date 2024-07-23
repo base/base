@@ -64,13 +64,13 @@ The recommended way to deploy L1 contracts for an OP chain that meet the standar
 ### Resource Config
 
 | Config Property                       | Standard Config Requirement |
-|---------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| maxResourceLimit | $2*10^7$ | |
-| elasticityMultiplier | $10$ | |
-| baseFeeMaxChangeDenominator | $8$ | |
-| minimumBaseFee | $1*10^9$ | |
-| systemTxMaxGas | $1*10^6$ | |
-| maximumBaseFee | $2^{128}$-1 | |
+|---------------------------------------| --------------------------- |
+| maxResourceLimit | $2*10^7$ |
+| elasticityMultiplier | $10$ |
+| baseFeeMaxChangeDenominator | $8$ |
+| minimumBaseFee | $1*10^9$ |
+| systemTxMaxGas | $1*10^6$ |
+| maximumBaseFee | $2^{128}$-1 |
 
 ## Policy Parameters
 

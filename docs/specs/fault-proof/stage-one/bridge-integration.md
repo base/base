@@ -214,7 +214,7 @@ the dispute game that the withdrawal was proven against is present in the `dispu
 should always revert.
 
 **Dispute Game Maturity**
-See ["Air-gap"](#Air-gap)
+See ["Air-gap"](#air-gap)
 
 #### Changed Invariants - `finalizeWithdrawalTransaction`
 
@@ -235,7 +235,7 @@ of the `DisputeGameFactory`, it is safe to trust that this value is honestly set
 #### Blacklisting `DisputeGame`s
 
 A new method is added to assign `DisputeGame`s in the `disputeGameBlacklist` mapping mentioned in
-["State Layout"](#State-Layout), in the event that a dispute game is detected to have resolved incorrectly. The only
+["State Layout"](#state-layout), in the event that a dispute game is detected to have resolved incorrectly. The only
 actor who may call this function is the `Guardian` role.
 
 Blacklisting a dispute game means that no withdrawals proven against it will be allowed to finalize

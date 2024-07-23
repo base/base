@@ -29,7 +29,7 @@ The dependency set is configured on a per chain basis.
 The chain id of the local chain MUST be considered as part of its own dependency set.
 
 While the dependency set explicitly defines the set of chains that are depended on for incoming messages,
-the full set of transitive dependencies must be known to allow for the progression of [safety](#safety).
+the full set of transitive dependencies must be known to allow for the progression of safety.
 This means that the `op-node` needs to be aware of all transitive dependencies.
 
 ## Chain ID

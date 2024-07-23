@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD053 -->
 # Glossary
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->

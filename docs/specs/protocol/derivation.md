@@ -61,17 +61,12 @@
 [g-exec-engine]: ../glossary.md#execution-engine
 [g-reorg]: ../glossary.md#chain-re-organization
 [g-receipts]: ../glossary.md#receipt
-[g-inception]: ../glossary.md#L2-chain-inception
 [g-deposit-contract]: ../glossary.md#deposit-contract
 [g-deposited]: ../glossary.md#deposited-transaction
 [g-l1-attr-deposit]: ../glossary.md#l1-attributes-deposited-transaction
 [g-l1-origin]: ../glossary.md#l1-origin
 [g-user-deposited]: ../glossary.md#user-deposited-transaction
 [g-deposits]: ../glossary.md#deposits
-[g-deposit-contract]: ../glossary.md#deposit-contract
-[g-l1-attr-predeploy]: ../glossary.md#l1-attributes-predeployed-contract
-[g-depositing-call]: ../glossary.md#depositing-call
-[g-depositing-transaction]: ../glossary.md#depositing-transaction
 [g-sequencing]: ../glossary.md#sequencing
 [g-sequencer]: ../glossary.md#sequencer
 [g-sequencing-epoch]: ../glossary.md#sequencing-epoch
@@ -88,7 +83,6 @@
 [g-channel]: ../glossary.md#channel
 [g-channel-frame]: ../glossary.md#channel-frame
 [g-rollup-node]: ../glossary.md#rollup-node
-[g-channel-timeout]: ../glossary.md#channel-timeout
 [g-block-time]: ../glossary.md#block-time
 [g-time-slot]: ../glossary.md#time-slot
 [g-consolidation]: ../glossary.md#unsafe-block-consolidation
@@ -97,7 +91,6 @@
 [g-unsafe-l2-head]: ../glossary.md#unsafe-l2-head
 [g-unsafe-l2-block]: ../glossary.md#unsafe-l2-block
 [g-unsafe-sync]: ../glossary.md#unsafe-sync
-[g-l1-origin]: ../glossary.md#l1-origin
 [g-deposit-tx-type]: ../glossary.md#deposited-transaction-type
 [g-finalized-l2-head]: ../glossary.md#finalized-l2-head
 [g-system-config]: ../glossary.md#system-configuration
@@ -466,8 +459,6 @@ This section describes how the L2 chain is produced from the L1 batches using a 
 A verifier may implement this differently, but must be semantically equivalent to not diverge from the L2 chain.
 
 ## L2 Chain Derivation Pipeline
-
-[pipeline]: #l2-chain-derivation-pipeline
 
 Our architecture decomposes the derivation process into a pipeline made up of the following stages:
 
@@ -999,7 +990,6 @@ This process happens during the payloads-attributes queue ran by a verifier node
 ran by a sequencer node (the sequencer may enable the tx-pool usage if the transactions are batch-submitted).
 
 [expanded-payload]: exec-engine.md#extended-payloadattributesv1
-[eth-payload]: https://github.com/ethereum/execution-apis/blob/main/src/engine/paris.md#payloadattributesv1
 
 ## Deriving the Transaction List
 
@@ -1279,8 +1269,6 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 [EIP-155]: https://eips.ethereum.org/EIPS/eip-155
 
 ## Building Individual Payload Attributes
-
-[payload attributes]: #building-individual-payload-attributes
 
 After deriving the transactions list, the rollup node constructs a [`PayloadAttributesV2`][extended-attributes] as
 follows:

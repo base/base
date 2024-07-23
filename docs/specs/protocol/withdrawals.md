@@ -22,10 +22,7 @@
 <!-- All glossary references in this file. -->
 
 [g-deposits]: ../glossary.md#deposits
-[g-deposited]: ../glossary.md#deposited-transaction
-[deposit-tx-type]: ../glossary.md#deposited-transaction-type
 [g-withdrawal]: ../glossary.md#withdrawal
-[g-mpt]: ../glossary.md#merkle-patricia-trie
 [g-relayer]: ../glossary.md#withdrawals
 [g-execution-engine]: ../glossary.md#execution-engine
 
@@ -87,8 +84,6 @@ This is a very simple contract that stores the hash of the withdrawal data.
 
 ## The L2ToL1MessagePasser Contract
 
-[message-passer-contract]: #the-l2tol1messagepasser-contract
-
 A withdrawal is initiated by calling the L2ToL1MessagePasser contract's `initiateWithdrawal` function.
 The L2ToL1MessagePasser is a simple predeploy contract at `0x4200000000000000000000000000000000000016`
 which stores messages to be withdrawn.
@@ -122,8 +117,6 @@ The `MessagePassed` event includes all of the data that is hashed and
 stored in the `sentMessages` mapping, as well as the hash itself.
 
 ### Addresses are not Aliased on Withdrawals
-
-[address-aliasing]: #no-address-aliasing
 
 When a contract makes a deposit, the sender's address is [aliased](deposits.md#address-aliasing). The same is not true
 of withdrawals, which do not modify the sender's address. The difference is that:

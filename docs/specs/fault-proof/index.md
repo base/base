@@ -62,7 +62,7 @@ the exact same computation by authenticating the inputs with a [Pre-image Oracle
 [oracle]: #pre-image-oracle
 
 The pre-image oracle is the only form of communication between
-the [Program] (in the [Client](#client) role) and the [VM] (in the [Server](#server) role).
+the [Program] (in the Client role) and the [VM] (in the Server role).
 
 The program uses the pre-image oracle to query any input data that is understood to be available to the user:
 
@@ -349,7 +349,7 @@ The derivation executes with two data-sources:
     - L2 state consists of the diff of changes in memory,
       and any unchanged state nodes accessible through the read-only L2 history view.
 
-See [Pre-image routes](#pre-image-routes) for specifications of the pre-image oracle backing of these data sources.
+See [Pre-image routes](#pre-image-hinting-routes) for specifications of the pre-image oracle backing of these data sources.
 
 Using these data-sources, the derivation pipeline is processed till we hit one of two conditions:
 
