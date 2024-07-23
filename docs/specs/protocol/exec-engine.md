@@ -254,7 +254,7 @@ If not specified as rollup, a `STATUS_INVALID` is returned.
 
 ### `engine_forkchoiceUpdatedV3`
 
-See [`engine_forkchoiceUpdatedV2`](#engine_forkchoiceUpdatedV2) for a description of the forkchoice updated method.
+See [`engine_forkchoiceUpdatedV2`](#engine_forkchoiceupdatedv2) for a description of the forkchoice updated method.
 `engine_forkchoiceUpdatedV3` **must only be called with Ecotone payload.**
 
 To support rollup functionality, one backwards-compatible change is introduced
@@ -470,11 +470,8 @@ For the Ecotone upgrade, this entails that:
 [eip-2028]: https://eips.ethereum.org/EIPS/eip-2028
 [eip-2718]: https://eips.ethereum.org/EIPS/eip-2718
 [eip-2718-transactions]: https://eips.ethereum.org/EIPS/eip-2718#transactions
-[exec-api-data]: https://github.com/ethereum/execution-apis/blob/769c53c94c4e487337ad0edea9ee0dce49c79bfa/src/engine/specification.md#structures
-[l1-api-spec]: https://github.com/ethereum/execution-apis/blob/769c53c94c4e487337ad0edea9ee0dce49c79bfa/src/engine/specification.md
 [PayloadAttributesV3]: https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#payloadattributesv3
 [PayloadAttributesV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#PayloadAttributesV2
-[ExecutionPayloadV1]: https://github.com/ethereum/execution-apis/blob/769c53c94c4e487337ad0edea9ee0dce49c79bfa/src/engine/specification.md#ExecutionPayloadV1
 [ExecutionPayloadV2]: https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#executionpayloadv2
 [engine_forkchoiceUpdatedV3]: https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#engine_forkchoiceupdatedv3
 [engine_forkchoiceUpdatedV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_forkchoiceupdatedv2

@@ -143,12 +143,12 @@ tx_sigs ++ tx_tos ++ tx_datas ++ tx_nonces ++ tx_gases ++ protected_bits`
 ### Span Batch Size Limits
 
 The total size of an encoded span batch is limited to `MAX_RLP_BYTES_PER_CHANNEL`, which is defined in the
-[Protocol Parameters table](#protocol-parameters).
+[Protocol Parameters table](../derivation.md#protocol-parameters).
 This is done at the channel level rather than at the span batch level.
 
 In addition to the byte limit, the number of blocks, and total transactions is limited to `MAX_SPAN_BATCH_ELEMENT_COUNT`.
 This does imply that the max number of transactions per block is also `MAX_SPAN_BATCH_ELEMENT_COUNT`.
-`MAX_SPAN_BATCH_ELEMENT_COUNT` is defined in [Protocol Parameters table](#protocol-parameters).
+`MAX_SPAN_BATCH_ELEMENT_COUNT` is defined in [Protocol Parameters table](../derivation.md#protocol-parameters).
 
 ### Future batch-format extension
 

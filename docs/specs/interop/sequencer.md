@@ -127,8 +127,6 @@ for log in receipt.logs:
 return True
 ```
 
-[tx-to]: https://github.com/ethereum/execution-specs/blob/1fed0c0074f9d6aab3861057e1924411948dc50b/src/ethereum/frontier/fork_types.py#L52
-
 #### Transitive-dependency confirmation
 
 When operating pessimistically, the direct-dependency validation may be applied recursively,

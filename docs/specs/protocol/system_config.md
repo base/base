@@ -160,8 +160,6 @@ The contained log events are filtered and processed as follows:
   - type `2`: `gasLimit` overwrite, as `uint64` payload.
   - type `3`: `unsafeBlockSigner` overwrite, as `address` payload.
 
-[encodePacked]: https://docs.soliditylang.org/en/latest/abi-spec.html#non-standard-packed-mode
-
 Note that individual derivation stages may be processing different L1 blocks,
 and should thus maintain individual system configuration copies,
 and apply the event-based changes as the stage traverses to the next L1 block.

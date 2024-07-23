@@ -531,7 +531,11 @@ digraph G {
 
 <!-- markdownlint-disable no-inline-html -->
 <p align="center">
-<img src="https://github.com/ethereum-optimism/optimism/assets/8406232/9b20ba8d-0b64-47b3-9962-5533f7eb4ef7" width=60%>
+  <img
+    src="https://github.com/ethereum-optimism/optimism/assets/8406232/9b20ba8d-0b64-47b3-9962-5533f7eb4ef7"
+    width=60%
+    alt="subgame resolution"
+  >
 </p>
 
 Given these rules, players are motivated to move quickly to challenge all dishonest claims.
