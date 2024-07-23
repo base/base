@@ -64,7 +64,7 @@ been migrated to the `Alligator` contract, the contract copies the address' chec
 #### `subdelegate`
 
 Allows subdelegation of token voting power to another address (delegatee) with a specified subdelegation rule. This function
-is inteded to be called by users that require advanced delegation of the `GovernanceToken`.
+is intended to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
 function subdelegate(address _delegatee, SubdelegationRule _rule) external
@@ -309,13 +309,13 @@ delegations made from the `GovernanceToken` contract.
 
 ### Partial delegations
 
-Users MUST be able to perform partial delegations of their voting power to another address. Aditionally, the `Alligator`'s
+Users MUST be able to perform partial delegations of their voting power to another address. Additionally, the `Alligator`'s
 subdelegation rules MUST allow users to perform subdelegations for relative and absolute amounts of voting power. Absolute
-amounts MUST be denominated in the token's decimals, whereas relataive amounts MUST be denominated in percentages.
+amounts MUST be denominated in the token's decimals, whereas relative amounts MUST be denominated in percentages.
 
 ### Constrained delegations
 
-Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optinoal
+Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optional
 `notValidBefore` and `notValidAfter` fields to allow users to specify the time range in which a delegation is valid, both
 denominated as timestamps.
 
@@ -328,7 +328,7 @@ field in the subdelegation rule.
 
 ### Differences
 
-The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapasulated as
+The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapsulated as
 subdelegations and forwarded to the `Alligator` contract. Basic delegation can be achieved with a subdelegation rule
 such as:
 
