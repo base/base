@@ -19,6 +19,10 @@
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
     - [`subdelegations`](#subdelegations)
+  - [Events](#events)
+    - [`Subdelegation`](#subdelegation)
+    - [`Subdelegations`](#subdelegations)
+  - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
 - [Types](#types)
   - [`SubdelegationRule`](#subdelegationrule)
@@ -190,6 +194,32 @@ Retrieves the subdelegations for a given user and delegatee.
 
 ```solidity
 function subdelegations(address _account, address _delegatee) external view returns (SubdelegationRules memory)
+```
+
+### Events
+
+#### `Subdelegation`
+
+MUST trigger when an account subdelegates voting power to another address (delegatee).
+
+```solidity
+event Subdelegation(address indexed account, address indexed delegatee, SubdelegationRules rule)
+```
+
+#### `Subdelegations`
+
+MUST trigger when an account subdelegates voting power to multiple addresses (delegatees).
+
+```solidity
+event Subdelegations(address indexed account, address[] delegatee, SubdelegationRules[] rules)
+```
+
+### `DelegateVotesChanged`
+
+MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation is updated.
+
+```solidity
+event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, uint256 newBalance);
 ```
 
 ## Storage
