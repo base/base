@@ -151,7 +151,7 @@ the `challenge` method of the contract with the following inputs:
 
 **Note:** Resolving Input Data through the Data Availability Challenge Contract is implemented
 only for `type=0 (keccak)` commitments. This is because `type=1 (da-service)` commitments are designed to be
-handled by a DA Server which is repsonsible the mapping between commitment and input datas.
+handled by a DA Server which is responsible for the mapping between commitment and input data.
 Due to this "generic" handling nature, there is currently no on-chain mechanism to verify commitments.
 
 ```solidity
