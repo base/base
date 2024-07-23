@@ -219,7 +219,7 @@ event Subdelegations(address indexed account, address[] delegatee, Subdelegation
 MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation is updated.
 
 ```solidity
-event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, uint256 newBalance);
+event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, uint256 newBalance)
 ```
 
 ## Storage
@@ -289,3 +289,25 @@ enum AllowanceType {
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
 token contract.
+
+## Security Considerations
+
+### Dependence on Alligator
+
+As the `GovernanceToken` depends on the `Alligator` contract, the `Alligator` contract MUST be implemented so that it
+minimizes the risk of unexpected reverts during the transfer hook call. If the `Alligator` contract reverts, `GovernanceToken` transfers
+will be blocked. Additionally, the `GovernanceToken` MUST always use the `Alligator`'s delegation state if a user has been migrated.
+
+### Connection with GovernanceToken
+
+Similarly, the `Alligator` MUST always be in sync with the `GovernanceToken` contract via token transfers. If the `Alligator` contract
+is not in sync with the `GovernanceToken` contract, the voting power of users MAY be incorrect or outdated.
+
+## Future Considerations
+
+### Cross Chain Delegations
+
+To make the `GovernanceToken` interoperable, the `Alligator` contract should be extended to support cross-chain subdelegations
+using the interoperability protocol. Specifically, the `Alligator`'s hook entrypoint (`afterTokenTransfer`) should be modified
+to emit a message to another `Alligator` contract on a different chain. This message should include the token transfer information 
+(`_from`, `_to`, `_amount`).
