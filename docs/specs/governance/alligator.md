@@ -50,12 +50,12 @@
 The `Alligator` contract implements subdelegations for the [`GovernanceToken`](gov-token.md). Subdelegations enable
 advanced delegation use cases, such as partial, time-constrained & block-based delegations, and relative & fixed allowances.
 
-The `Alligator` contract migrates the delegation state from the [`GovernanceToken`](gov-token.md) to itself
-through a hook-based approach. Specifically, the [`GovernanceToken`](gov-token.md) calls the `Alligator` contract's
+The `Alligator` contract migrates the delegation state from the `GovernanceToken` to itself
+through a hook-based approach. Specifically, the `GovernanceToken` calls the `Alligator` contract's
 `afterTokenTransfer` function after a token transfer. This enables the `Alligator` contract to consume the hook and update
 its delegation and checkpoint mappings accordingly. If either address involved in the transfer (`_from_` or `_to`) has not
 been migrated to the `Alligator` contract, the contract copies the address' checkpoint data from the
-[`GovernanceToken`](gov-token.md) to its own state.
+`GovernanceToken` to its own state.
 
 ## Interface
 
@@ -64,7 +64,7 @@ been migrated to the `Alligator` contract, the contract copies the address' chec
 #### `subdelegate`
 
 Allows subdelegation of token voting power to another address (delegatee) with a specified subdelegation rule. This function
-is inteded to be called by users that require advanced delegation of the [`GovernanceToken`](gov-token.md).
+is inteded to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
 function subdelegate(address _delegatee, SubdelegationRule _rule) external
@@ -83,9 +83,9 @@ to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event
 #### `subdelegateFromToken`
 
 Allows subdelegation of token voting power from an address (delegator) to another address (delegatee) with a specified
-subdelegation rule. This function is intended to be called by the [`GovernanceToken`](gov-token.md) contract as part
-of its `delegateBySig` function. To ensure backwards compatibility in the [`GovernanceToken`](gov-token.md), the
-subdelegation rule MUST be 100% delegation, mimicking the behavior of the [`GovernanceToken`](gov-token.md)'s `delegate`
+subdelegation rule. This function is intended to be called by the `GovernanceToken` contract as part
+of its `delegateBySig` function. To ensure backwards compatibility in the `GovernanceToken`, the
+subdelegation rule MUST be 100% delegation, mimicking the behavior of the `GovernanceToken`'s `delegate`
 function.
 
 ```solidity
@@ -129,7 +129,7 @@ Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event 
 #### `afterTokenTransfer`
 
 Updates the voting power of two addresses (`_from` and `_to`) after a token transfer. This function MUST only be callable
-by the [`GovernanceToken`](gov-token.md) contract.
+by the `GovernanceToken` contract.
 
 ```solidity
 function afterTokenTransfer(address _from, address _to, uint256 _amount) external
@@ -155,9 +155,10 @@ function migrateAccount(address _account) external
 ### Getters
 
 For backwards compatibility, the `Alligator` MUST implement all public getter functions of the
-[`GovernanceToken`](gov-token.md) related to delegation and voting power. These functions MUST be used by the
-[`GovernanceToken`](gov-token.md) when an account has been been migrated to the `Alligator` contract. Otherwise,
-the [`GovernanceToken`](gov-token.md) MUST use its own state.
+`GovernanceToken` related to delegation and voting power. These functions MUST be used by the
+`GovernanceToken` when an account has been been migrated to the `Alligator` contract. Otherwise,
+the `GovernanceToken` MUST use its own state. Similarly, all of the `Alligator` getter functions
+MUST use the `GovernanceToken` state if the account has not been migrated.
 
 #### `checkpoints`
 
@@ -237,7 +238,7 @@ event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, ui
 ## Storage
 
 The `Alligator` contract MUST be able to store subdelegation rules and checkpoints. These storage variables MUST be
-defined as in the [`GovernanceToken`](gov-token.md) and use the same types:
+defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
 // Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
