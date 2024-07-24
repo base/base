@@ -11,7 +11,7 @@
     - [`subdelegateFromToken`](#subdelegatefromtoken)
     - [`subdelegateBatched`](#subdelegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
-    - [`migrateAccount`](#migrateaccount)
+    - [`migrateAccounts`](#migrateaccounts)
   - [Getters](#getters)
     - [`checkpoints`](#checkpoints)
     - [`numCheckpoints`](#numcheckpoints)
@@ -76,8 +76,8 @@ and checkpoint data from the token contract to its own state. After copying the 
 the `migrated` mapping to reflect that the address has been migrated.
 
 Before updating the subdelegation, the `subdelegate` function MUST check the validity of the subdelegation rule. Specifically,
-the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator if the
-`allowanceType` is `Absolute`.
+the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator
+if the `allowanceType` is `Absolute`.
 
 When updating the subdelegation, the `subdelegate` function MUST override any previous subdelegation of the `msg.sender`
 to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function parameters.
@@ -122,8 +122,8 @@ revert with an error.
 The `subdelegateBatched` function MUST iterate over each pair of `_delegatees` address and `_rules` subdelegation rule.
 At every iteration, the function MUST check the validity of the subdelegation rule, and migrate the delegatee address
 if it has not been migrated. The function MUST then update the subdelegation. Specifically for validation,
-the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator if the
-`allowanceType` is `Absolute`.
+the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator'
+if the `allowanceType` is `Absolute`.
 
 Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event with the given function parameters.
 
