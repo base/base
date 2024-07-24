@@ -52,7 +52,7 @@
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000043` |
 
-The `Alligator` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md). Advance delegation allows
+The `Alligator` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md). Advanced delegation allows
 for partial and relative delegations of voting power.
 
 The `Alligator` contract migrates the delegation state from the `GovernanceToken` to itself
@@ -84,7 +84,7 @@ At the end, the `delegate` function MUST emit a `DelegationCreated` event with t
 #### `delegateFromToken`
 
 Delegates 100% of the token voting power of an address (delegator) to another address (delegatee), mimicking the behavior
-of the `ERC20Votes`'s `delegate` function for backwards compatibility. This function MUST only be callable by the
+of the `ERC20Votes`'s `delegate` function for backwards compatibility. This function MUST be callable only by the
 `GovernanceToken` contract as part of its `delegate` and `delegateBySig` functions.
 
 ```solidity
@@ -124,7 +124,10 @@ function afterTokenTransfer(address _from, address _to, uint256 _amount) externa
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_from`
 and `_to` addresses.
 
-<!-- TODO: call `_moveVotingPower` -->
+If the token transfer is due to a mint or burn operation, the function MUST update the total supply checkpoints with
+the new total supply (subtracting `_amount` for a burn operation and adding `_amount` for a mint operation). Afterwards,
+the function MUST calculate and update the voting power of the delegations of `_from` and `_to`. This step MUST apply
+the voting power adjustments to the checkpoints of the `_from`, `_to`, and delegatee addresses.
 
 #### `migrateAccounts`
 
@@ -147,19 +150,19 @@ function _delegate(address _delegator, Delegation[] memory _newDelegations) inte
 
 The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_DELEGATIONS`.
 Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
-power adjustements for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
+power adjustments for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
 the voting power of the current and new set of delegatees.
 
 The function MUST then sort the new delegatee set in descending order, and store the delegations as part of the
 `_delegations` mapping. While sorting, the function MUST check for the validity of the delegations, as specified
-in the [Delegation Validation](#delegation-validation) section. Aditionally, the function MUST emit a
+in the [Delegation Validation](#delegation-validation) section. Additionally, the function MUST emit a
 `DelegateVotesChanged` event for each change in delegatee voting power.
 
 ### Getters
 
 For backwards compatibility, the `Alligator` MUST implement all public getter functions of the
 `GovernanceToken` related to delegation and voting power. These functions MUST be used by the
-`GovernanceToken` when an account has been been migrated to the `Alligator` contract. Otherwise,
+`GovernanceToken` when an account has been migrated to the `Alligator` contract. Otherwise,
 the `GovernanceToken` MUST use its own state. Similarly, all of the `Alligator` getter functions
 MUST use the `GovernanceToken` state if the account has not been migrated.
 
@@ -181,7 +184,7 @@ function numCheckpoints(address _account) external view returns (uint32)
 
 #### `delegates`
 
-Retrieves the delegations of a given user address, sorted in descending order by voting power. 
+Retrieves the delegations of a given user address sorted in descending order by voting power. 
 This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
@@ -291,7 +294,7 @@ struct Delegation {
 | Name                     | Type            | Description                                                             |
 |--------------------------|-----------------|-------------------------------------------------------------------------|
 | `allowanceType`          | `AllowanceType` | Type of allowance (e.g., absolute or relative).                         |
-| `delegatee`              | `address`       | The address of the delegatee receveing the voting power.                |
+| `delegatee`              | `address`       | The address of the delegatee receiving the voting power.                |
 | `amount`                 | `uint256`       | Amount of votes delegated, denomination depending on `allowanceType`.   |
 
 ### `AllowanceType`
@@ -337,10 +340,10 @@ enum Op {
 }
 ```
 
-| Name        | Numbe  | Description                                                    |
+| Name        | Number | Description                                                    |
 |-------------|--------|----------------------------------------------------------------|
 | `ADD`       | `0`    | Add the amount of voting power when adjusting.                 |
-| `SUBSTRACT` | `1`    | Substract the amount of voting power when adjusting.           |
+| `SUBTRACT`  | `1`    | Subtract the amount of voting power when adjusting.           |
 
 ## Backwards Compatibility
 
