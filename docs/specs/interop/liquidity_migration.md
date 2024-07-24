@@ -2,7 +2,6 @@
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
-
 - [Overview](#overview)
 - [Implementation changes](#implementation-changes)
   - [External functions](#external-functions)
@@ -62,10 +61,10 @@ access control function looks like this:
 function convertToSuper(address _legacyAddr, address _superAddr, uint256 _amount) public {
 	require(checkPair(_legacyAddr, _superAddr), "Invalid address pair");
 	require(IERC20(_legacyAddr).decimals() == IERC20(_superAddr).decimals(), "Decimals do not match")
-
+	
 	IERC20(_legacyAddr).burn(msg.sender, _amount);
 	IERC20(_superAddr).mint(msg.sender, _amount);
-
+	
 	emit ConvertedToSuper(_legacyAddr, _superAddr, msg.sender, _amount);
 }
 ```
