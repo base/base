@@ -82,22 +82,19 @@ to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event
 
 #### `subdelegateFromToken`
 
-Allows subdelegation of token voting power from an address (delegator) to another address (delegatee) with a specified
-subdelegation rule. This function is intended to be called by the `GovernanceToken` contract as part
-of its `delegateBySig` function. To ensure backwards compatibility in the `GovernanceToken`, the
-subdelegation rule MUST be 100% delegation, mimicking the behavior of the `GovernanceToken`'s `delegate`
-function.
+Allows delegation of token voting power from an address (delegator) to another address (delegatee) using a subdelegation
+rule that performs 100% delegation, mimicking the behavior of the `ERC20Votes`'s `delegate` function for backwards
+compatibility. This function MUST only be callable by the `GovernanceToken` contract as part of its `delegate` and
+`delegateBySig` functions.
 
 ```solidity
-function subdelegateFromToken(address _delegator, address _delegatee, SubdelegationRule _rule) external
+function subdelegateFromToken(address _delegator, address _delegatee) external
 ```
 
 This function MUST check if the `_delegator` or `_delegatee` addresses have been migrated by checking the `migrated` mapping
 from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
 and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
 the `migrated` mapping to reflect that the address has been migrated.
-
-Before updating the subdelegation, the `subdelegateFromToken` function MUST check the validity of the subdelegation rule.
 
 When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the
 `_delegator` to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function
@@ -143,13 +140,13 @@ the `migrated` mapping to reflect that the address has been migrated.
 The `afterTokenTransfer` function MUST update the voting power of the `_from` and `_to` addresses with the same logic
 of the `GovernanceToken`.
 
-#### `migrateAccount`
+#### `migrateAccounts`
 
-Migrates the delegation state of a given account from the `GovernanceToken` to the `Alligator` contract. This function
-MUST only migrate the `_account` if it has not been migrated yet.
+Migrates the delegation state of given accounts from the `GovernanceToken` to the `Alligator` contract. This function
+MUST iterate over the list of `_accounts` addresses and only migrate the account if it has not been migrated yet.
 
 ```solidity
-function migrateAccount(address _account) external
+function migrateAccounts(address[] calldata _accounts) external
 ```
 
 ### Getters
