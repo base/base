@@ -92,7 +92,7 @@ access control function looks like this:
 ```solidity
 function convertFromSuper(address _legacyAddr, address _superAddr, uint256 _amount) public {
   require(checkPair(_legacyAddr, _superAddr), "Invalid address pair");
-  	require(IERC20(_legacyAddr).decimals() == IERC20(_superAddr).decimals(), "Decimals do not match")
+  require(IERC20(_legacyAddr).decimals() == IERC20(_superAddr).decimals(), "Decimals do not match")
 
   IERC20(_superAddr).burn(msg.sender, _amount);
   IERC20(_legacyAddr).mint(msg.sender, _amount);
