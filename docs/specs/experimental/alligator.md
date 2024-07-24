@@ -7,9 +7,9 @@
 - [Overview](#overview)
 - [Interface](#interface)
   - [Core Functions](#core-functions)
-    - [`subdelegate`](#subdelegate)
-    - [`subdelegateFromToken`](#subdelegatefromtoken)
-    - [`subdelegateBatched`](#subdelegatebatched)
+    - [`delegate`](#delegate)
+    - [`delegateFromToken`](#delegatefromtoken)
+    - [`delegateBatched`](#delegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
     - [`migrateAccounts`](#migrateaccounts)
     - [`_delegate`](#_delegate)
@@ -66,51 +66,51 @@ been migrated to the `Alligator` contract, the contract copies the address' chec
 
 ### Core Functions
 
-#### `subdelegate`
+#### `delegate`
 
 Delegates voting power to another address (delegatee) with the given delegation parameters. This function
 is intended to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
-function subdelegate(Delegation calldata _delegation) external
+function delegate(Delegation calldata _delegation) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
 and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) with
 the `msg.sender` and `_newDelegations` parameters.
 
-At the end, the `subdelegate` function MUST emit a `DelegationCreated` event with the given function parameters.
+At the end, the `delegate` function MUST emit a `DelegationCreated` event with the given function parameters.
 
-#### `subdelegateFromToken`
+#### `delegateFromToken`
 
 Delegates 100% of the token voting power of an address (delegator) to another address (delegatee), mimicking the behavior
 of the `ERC20Votes`'s `delegate` function for backwards compatibility. This function MUST only be callable by the
 `GovernanceToken` contract as part of its `delegate` and `delegateBySig` functions.
 
 ```solidity
-function subdelegateFromToken(address _delegator, address _delegatee) external
+function delegateFromToken(address _delegator, address _delegatee) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
 and `_delegatee` addresses. Afterwards, the function MUST call the [`_delegate`](#_delegate) with the `_delegator` and
 basic delegation parameters.
 
-At the end, the `subdelegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
+At the end, the `delegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
 
-#### `subdelegateBatched`
+#### `delegateBatched`
 
 Delegates voting power to multiple addresses (delegatees) using the delegation array. This function is intended to be
 called by users.
 
 ```solidity
-function subdelegateBatched(Delegation[] calldata _delegations) external
+function delegateBatched(Delegation[] calldata _delegations) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
 and every delegatee address in the `_delegations` array. Afterwards, the function MUST call the [`_delegate`](#_delegate)
 with the `msg.sender` and `_delegations` parameters.
 
-At the end, the `subdelegateBatched` function MUST emit a `DelegationsCreated` event with the given function parameters.
+At the end, the `delegateBatched` function MUST emit a `DelegationsCreated` event with the given function parameters.
 
 #### `afterTokenTransfer`
 
@@ -145,7 +145,7 @@ override any existing delegations of `_delegator`.
 function _delegate(address _delegator, Delegation[] memory _newDelegations) internal virtual
 ```
 
-The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_SUBDELEGATIONS`.
+The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_DELEGATIONS`.
 Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
 power adjustements for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
 the voting power of the current and new set of delegatees.
@@ -254,7 +254,7 @@ defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
 // The maximum number of delegations allowed.
-uint256 public constant MAX_SUBDELEGATIONS = 100;
+uint256 public constant MAX_DELEGATIONS = 100;
 
 // The denominator used for relative delegations.
 uint96 public constant DENOMINATOR = 10_000;
@@ -387,7 +387,7 @@ The following diagram shows the sequence of a basic delegation performed from th
 ```mermaid
 sequenceDiagram
     User ->> GovernanceToken: call `delegate` or `delegateBySig`
-    GovernanceToken ->> Alligator: call `subdelegateFromToken`
+    GovernanceToken ->> Alligator: call `delegateFromToken`
     Alligator -->> GovernanceToken: migrate if user hasn't been migrated
     Alligator ->> Alligator: apply basic delegation
 ```
@@ -408,7 +408,7 @@ flowchart TD
 
 When applying a new delegation set as part of the [`_delegate`](#_delegate) function, the `Alligator` MUST check that:
 
-- The length of the `_newDelegations` array DOES NOT exceed `MAX_SUBDELEGATIONS`.
+- The length of the `_newDelegations` array DOES NOT exceed `MAX_DELEGATIONS`.
 - The sum of `amount` in relative delegations DOES NOT exceed the `DENOMINATOR`, and each `amount` is greater than 0.
 - The sum of `amount` in absolute delegations DOES NOT exceed the total voting power of the `_delegator`.
 - The new delegatee set is sorted in descending order by voting power.
@@ -434,7 +434,7 @@ outdated.
 
 ### Cross Chain Delegations
 
-To make the `GovernanceToken` interoperable, the `Alligator` contract should be extended to support cross-chain subdelegations
+To make the `GovernanceToken` interoperable, the `Alligator` contract should be extended to support cross-chain delegations
 using the interoperability protocol. Specifically, the `Alligator`'s hook entrypoint (`afterTokenTransfer`) should be modified
 to emit a message to another `Alligator` contract on a different chain. This message should include the token transfer information
 (`_from`, `_to`, `_amount`).
