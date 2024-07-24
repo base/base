@@ -43,7 +43,7 @@ type Timestamp is uint64;
 /// @notice A `GameType` represents the type of game being played.
 type GameType is uint32;
 
-/// @notice A `GameId` represents a packed 4 byte game ID, a 8 byte timestamp, and a 20 byte address.
+/// @notice A `GameId` represents a packed 4 byte game type, a 8 byte timestamp, and a 20 byte address.
 /// @dev The packed layout of this type is as follows:
 /// ┌───────────┬───────────┐
 /// │   Bits    │   Value   │
