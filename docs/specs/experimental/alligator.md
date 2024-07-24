@@ -12,6 +12,7 @@
     - [`subdelegateBatched`](#subdelegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
     - [`migrateAccounts`](#migrateaccounts)
+    - [`_delegate`](#_delegate)
   - [Getters](#getters)
     - [`checkpoints`](#checkpoints)
     - [`numCheckpoints`](#numcheckpoints)
@@ -69,13 +70,12 @@ Delegates voting power to another address (delegatee) with the given delegation 
 is intended to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
-function subdelegate(address _delegatee, Delegation calldata _delegation) external
+function subdelegate(Delegation calldata _delegation) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
-and `_delegatee` addresses.
-
-<!-- TODO: specify call to `_delegate` -->
+and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) with
+the `msg.sender` and `_newDelegations` parameters.
 
 At the end, the `subdelegate` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -90,9 +90,8 @@ function subdelegateFromToken(address _delegator, address _delegatee) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
-and `_delegatee` addresses.
-
-<!-- TODO: specify call to `_delegate` -->
+and `_delegatee` addresses. Afterwards, the function MUST call the [`_delegate`](#_delegate) with the `_delegator` and
+basic delegation parameters.
 
 At the end, the `subdelegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -106,7 +105,8 @@ function subdelegateBatched(Delegation[] calldata _delegations) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
-and every delegatee address in the `_delegations` array.
+and every delegatee address in the `_delegations` array. Afterwards, the function MUST call the [`_delegate`](#_delegate)
+with the `msg.sender` and `_delegations` parameters.
 
 At the end, the `subdelegateBatched` function MUST emit a `DelegationsCreated` event with the given function parameters.
 
@@ -133,6 +133,23 @@ function MUST iterate over the list of `_accounts` addresses and apply the logic
 ```solidity
 function migrateAccounts(address[] calldata _accounts) external
 ```
+
+#### `_delegate`
+
+Delegates voting power from the `_delegator` to the specified delegates in `_newDelegations`. This function MUST
+override any existing delegations of `_delegator`.
+
+```solidity
+function _delegate(address _delegator, Delegation[] memory _newDelegations) internal virtual
+```
+
+The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_SUBDELEGATIONS`.
+Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
+power adjustements for the new delegatee set, according to `_newDelegations`. Afterwards, the function MUST update
+the voting power of the current and new set of delegatees.
+
+The function MUST then sort the new delegatee set in descending order, and store the array the `_delegations` mapping.
+While sorting, the function MUST emit a `DelegateVotesChanged` event for each change in delegatee voting power.
 
 ### Getters
 
@@ -224,6 +241,12 @@ The `Alligator` contract MUST be able to store delegations and checkpoints. Thes
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
+// The maximum number of delegations allowed.
+uint256 public constant MAX_SUBDELEGATIONS = 100;
+
+// The denominator used for relative delegations.
+uint96 public constant DENOMINATOR = 10_000;
+
 // Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
 mapping(address => bool) public migrated;
 
