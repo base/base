@@ -184,7 +184,7 @@ function numCheckpoints(address _account) external view returns (uint32)
 
 #### `delegates`
 
-Retrieves the delegations of a given user address sorted in descending order by voting power. 
+Retrieves the delegations of a given user address sorted in descending order by voting power.
 This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
@@ -315,7 +315,8 @@ enum AllowanceType {
 
 ### `DelegationAdjustment`
 
-`DelegationAdjustment` act as temporary storage when adjusting the delegation state of an account. This struct is defined as:
+`DelegationAdjustment` act as temporary storage when adjusting the delegation state of an account. This struct is defined
+as:
 
 ```solidity
 struct DelegationAdjustment {
@@ -429,9 +430,9 @@ delegation state if a user has been migrated.
 
 ### Connection with GovernanceToken
 
-Similarly, the `Alligator` MUST always be in sync with the `GovernanceToken` contract via token transfers. If the
-`Alligator` contract is not in sync with the `GovernanceToken` contract, the voting power of users MAY be incorrect or
-outdated.
+Similarly, the `Alligator` MUST always process token transfers from the `GovernanceToken` contract correctly to stay
+in sync with token balances. If the `Alligator` contract is not in sync with the `GovernanceToken` contract, the
+voting power of users MAY be incorrect or outdated.
 
 ## Future Considerations
 
