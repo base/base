@@ -15,6 +15,7 @@
   - [Getters](#getters)
     - [`checkpoints`](#checkpoints)
     - [`numCheckpoints`](#numcheckpoints)
+    - [`delegates`](#delegates)
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
@@ -175,6 +176,15 @@ Retrieves the number checkpoints for a given user address.
 
 ```solidity
 function numCheckpoints(address _account) external view returns (uint32)
+```
+
+#### `delegates`
+
+Retrieves the delegatee with the highest voting power for a given user address. This function
+is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
+
+```solidity
+function delegates(address _account) external view returns (address)
 ```
 
 #### `getVotes`
