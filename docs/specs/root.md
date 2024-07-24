@@ -47,6 +47,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 
 Specifications of new features in active development.
 
+- [Custom Gas Token](./experimental/custom-gas-token.md)
 - [Alt-DA](./experimental/alt-da.md)
 - [Interoperability](./interop/overview.md)
 - [Security Council Safe](./experimental/security-council-safe.md)
