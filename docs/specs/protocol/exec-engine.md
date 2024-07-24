@@ -86,9 +86,9 @@ The proxies are backed by vault contract deployments, based on `FeeVault`, to ro
 
 | Vault Name          | Predeploy                                              |
 | ------------------- | ------------------------------------------------------ |
-| Sequencer Fee Vault | [`SequencerFeeVault`](predeploys.md#sequencerFeeVault) |
-| Base Fee Vault      | [`BaseFeeVault`](predeploys.md#baseFeeVault)           |
-| L1 Fee Vault        | [`L1FeeVault`](predeploys.md#l1FeeVault)               |
+| Sequencer Fee Vault | [`SequencerFeeVault`](predeploys.md#sequencerfeevault) |
+| Base Fee Vault      | [`BaseFeeVault`](predeploys.md#basefeevault)           |
+| L1 Fee Vault        | [`L1FeeVault`](predeploys.md#l1feevault)               |
 
 ### Priority fees (Sequencer Fee Vault)
 
