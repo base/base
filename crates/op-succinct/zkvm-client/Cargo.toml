@@ -17,17 +17,17 @@ rkyv.workspace = true
 sha2.workspace = true
 
 # workspace (ethereum)
-alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-primitives.workspace = true
 
 # workspace (kona)
-kona-preimage.workspace = true
 kona-primitives.workspace = true
 kona-executor.workspace = true
 kona-client.workspace = true
+kona-preimage.workspace = true
 
 # workspace (local)
-zkvm-common.workspace = true
+client-utils.workspace = true
 
 # sp1
 sp1-zkvm = { workspace = true }

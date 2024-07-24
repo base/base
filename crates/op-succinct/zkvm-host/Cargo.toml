@@ -8,25 +8,12 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "script"
-path = "bin/script.rs"
-
-[[bin]]
-name = "cost_estimator"
-path = "bin/cost_estimator.rs"
-
-[[bin]]
-name = "inputs"
-path = "bin/inputs.rs"
+name = "single"
+path = "bin/single.rs"
 
 [dependencies]
 
 # workspace
-hex.workspace = true
-rkyv.workspace = true
-alloy-primitives = { workspace = true, features = ["serde"] }
-alloy-sol-types = { workspace = true }
-ethers = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 
@@ -34,15 +21,12 @@ clap = { workspace = true }
 kona-host = { workspace = true }
 
 # local
-zkvm-common = { path = "../common" }
-native-host = { path = "../native-host" }
+host-utils.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true }
-sp1-core = { workspace = true }
 anyhow.workspace = true
-num-format = "0.4.4"
-dotenv = "0.15.0"
+dotenv.workspace = true
 
 [build-dependencies]
 sp1-helper = { workspace = true }

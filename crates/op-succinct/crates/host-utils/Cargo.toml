@@ -1,0 +1,16 @@
+[package]
+name = "host-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+client-utils.workspace = true
+rkyv.workspace = true
+ethers.workspace = true
+kona-host.workspace = true
+sp1-sdk.workspace = true
+anyhow.workspace = true
+cargo_metadata.workspace = true

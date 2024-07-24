@@ -1,5 +1,5 @@
 [package]
-name = "zkvm-common"
+name = "client-utils"
 version = "0.1.0"
 license.workspace = true
 edition.workspace = true
@@ -7,6 +7,11 @@ edition.workspace = true
 [dependencies]
 kona-client.workspace = true
 kona-primitives.workspace = true
-alloy-primitives.workspace = true
+kona-preimage.workspace = true
 alloy-sol-types.workspace = true
+alloy-primitives.workspace = true
 serde.workspace = true
+rkyv.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+sha2.workspace = true

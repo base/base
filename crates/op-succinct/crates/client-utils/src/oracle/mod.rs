@@ -1,14 +1,14 @@
 //! Contains the host <-> client communication utilities.
 
-use alloc::{boxed::Box, vec::Vec};
-use alloy_primitives::{keccak256, FixedBytes};
+use std::collections::HashMap;
+
+use crate::BytesHasherBuilder;
+use alloy_primitives::{hex, keccak256, FixedBytes};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
 use rkyv::{Archive, Deserialize, Infallible, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use zkvm_common::BytesHasherBuilder;
 
 /// An in-memory HashMap that will serve as the oracle for the zkVM.
 /// Rather than relying on a trusted host for data, the data in this oracle
@@ -40,15 +40,10 @@ impl InMemoryOracle {
 impl PreimageOracleClient for InMemoryOracle {
     async fn get(&self, key: PreimageKey) -> Result<Vec<u8>> {
         let lookup_key: [u8; 32] = key.into();
-        self.cache.get(&lookup_key).cloned().ok_or_else(|| {
-            anyhow!(
-                "Key not found in cache: {}",
-                lookup_key
-                    .iter()
-                    .map(|&b| format!("{:02x}", b))
-                    .collect::<String>()
-            )
-        })
+        self.cache
+            .get(&lookup_key)
+            .cloned()
+            .ok_or_else(|| anyhow!("Key not found in cache: {}", hex::encode(lookup_key)))
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<()> {
@@ -56,10 +51,7 @@ impl PreimageOracleClient for InMemoryOracle {
         let value = self.cache.get(&lookup_key).ok_or_else(|| {
             anyhow!(
                 "Key not found in cache (exact): {}",
-                lookup_key
-                    .iter()
-                    .map(|&b| format!("{:02x}", b))
-                    .collect::<String>()
+                hex::encode(lookup_key)
             )
         })?;
         buf.copy_from_slice(value.as_slice());
@@ -111,31 +103,27 @@ impl InMemoryOracle {
                 // Aggregate blobs and proofs in memory and verify after loop.
                 PreimageKeyType::Blob => {
                     let blob_data_key: [u8; 32] =
-                        PreimageKey::new(key.try_into().unwrap(), PreimageKeyType::Keccak256)
-                            .into();
+                        PreimageKey::new(key.into(), PreimageKeyType::Keccak256).into();
 
                     if let Some(blob_data) = self.cache.get(&blob_data_key) {
                         let commitment: FixedBytes<48> = blob_data[..48].try_into().unwrap();
                         let element: [u8; 8] = blob_data[72..].try_into().unwrap();
                         let element: u64 = u64::from_be_bytes(element);
 
-                        // TODO: This requires upstream kona changes to save these values in L1Blob hint.
+                        // Blob is stored as one 48 byte element.
                         if element == 4096 {
-                            // kzg_proof[0..32]
-                            blobs.entry(commitment).or_insert(Blob::default()).kzg_proof[..32]
+                            blobs
+                                .entry(commitment)
+                                .or_default()
+                                .kzg_proof
                                 .copy_from_slice(value);
-                            continue;
-                        } else if element == 4097 {
-                            // kzg_proof[32..48]
-                            blobs.entry(commitment).or_insert(Blob::default()).kzg_proof[32..]
-                                .copy_from_slice(&value[..16]);
                             continue;
                         }
 
                         // Add the 32 bytes of blob data into the correct spot in the blob.
                         blobs
                             .entry(commitment)
-                            .or_insert(Blob::default())
+                            .or_default()
                             .data
                             .get_mut((element as usize) << 5..(element as usize + 1) << 5)
                             .map(|slice| {
@@ -143,7 +131,7 @@ impl InMemoryOracle {
                                     slice.copy_from_slice(value);
                                     Ok(())
                                 } else {
-                                    return Err(anyhow!("trying to overwrite existing blob data"));
+                                    Err(anyhow!("trying to overwrite existing blob data"))
                                 }
                             });
                     } else {
