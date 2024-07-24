@@ -29,6 +29,7 @@
   - [`SubdelegationRule`](#subdelegationrule)
   - [`AllowanceType`](#allowancetype)
 - [Backwards Compatibility](#backwards-compatibility)
+- [Migration](#migration)
 - [User Flow](#user-flow)
   - [Partial delegations](#partial-delegations)
   - [Constrained delegations](#constrained-delegations)
@@ -48,8 +49,8 @@
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000043` |
 
-The `Alligator` contract implements subdelegations for the [`GovernanceToken`](gov-token.md). Subdelegations enable
-advanced delegation use cases, such as partial, time-constrained & block-based delegations, and relative & fixed allowances.
+The `Alligator` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md). Advance delegation allows
+for partial and relative delegations of voting power.
 
 The `Alligator` contract migrates the delegation state from the `GovernanceToken` to itself
 through a hook-based approach. Specifically, the `GovernanceToken` calls the `Alligator` contract's
@@ -64,17 +65,16 @@ been migrated to the `Alligator` contract, the contract copies the address' chec
 
 #### `subdelegate`
 
-Allows subdelegation of token voting power to another address (delegatee) with a specified subdelegation rule. This function
+Delegates voting power to another address (delegatee) with the given delegation parameters. This function
 is intended to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
-function subdelegate(address _delegatee, SubdelegationRule _rule) external
+function subdelegate(address _delegatee, Delegation calldata _delegation) external
 ```
 
-This function MUST check if the `msg.sender` or `_delegatee` addresses have been migrated by checking the `migrated` mapping
-from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
-and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
-the `migrated` mapping to reflect that the address has been migrated.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
+and `_delegatee` addresses.
+
 
 Before updating the subdelegation, the `subdelegate` function MUST check the validity of the subdelegation rule. Specifically,
 the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator
@@ -94,10 +94,8 @@ compatibility. This function MUST only be callable by the `GovernanceToken` cont
 function subdelegateFromToken(address _delegator, address _delegatee) external
 ```
 
-This function MUST check if the `_delegator` or `_delegatee` addresses have been migrated by checking the `migrated` mapping
-from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
-and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
-the `migrated` mapping to reflect that the address has been migrated.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
+and `_delegatee` addresses.
 
 When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the
 `_delegator` to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function
@@ -112,10 +110,8 @@ function is intended to be called by users.
 function subdelegateBatched(address[] calldata _delegatees, SubdelegationRules[] calldata _rules) external
 ```
 
-This function MUST check if the `msg.sender` has been migrated by checking the `migrated` mapping from its [storage](#storage).
-If it has not been migrated, the `Alligator` MUST copy the delegation and checkpoint data from the token contract
-to its own state. After copying the data, the `Alligator` MUST update the `migrated` mapping to reflect that the address
-has been migrated.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
+and all `_delegatees`.
 
 This function MUST check that the length of `_delegatees` and `_rules` are equal. If the lengths are not equal, it MUST
 revert with an error.
@@ -312,6 +308,13 @@ enum AllowanceType {
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
 token contract.
+
+## Migration
+
+All write functions in the `Alligator` MUST check if the users interacting with it have been migrated by checking the
+`migrated` mapping from its [storage](#storage). If a user has not been migrated, the `Alligator` MUST copy the delegation
+and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update the
+`migrated` mapping to reflect that the address has been migrated.
 
 ## User Flow
 
