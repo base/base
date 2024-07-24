@@ -20,6 +20,7 @@
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
+    - [`migrated`](#migrated)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
     - [`DelegationsCreated`](#delegationscreated)
@@ -36,6 +37,7 @@
   - [Partial Delegations](#partial-delegations)
   - [Absolute & Relative Delegations](#absolute--relative-delegations)
   - [Differences](#differences)
+- [Delegation Validation](#delegation-validation)
 - [Security Considerations](#security-considerations)
   - [Dependence on Alligator](#dependence-on-alligator)
   - [Connection with GovernanceToken](#connection-with-governancetoken)
@@ -145,11 +147,13 @@ function _delegate(address _delegator, Delegation[] memory _newDelegations) inte
 
 The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_SUBDELEGATIONS`.
 Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
-power adjustements for the new delegatee set, according to `_newDelegations`. Afterwards, the function MUST update
+power adjustements for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
 the voting power of the current and new set of delegatees.
 
-The function MUST then sort the new delegatee set in descending order, and store the array the `_delegations` mapping.
-While sorting, the function MUST emit a `DelegateVotesChanged` event for each change in delegatee voting power.
+The function MUST then sort the new delegatee set in descending order, and store the delegations as part of the
+`_delegations` mapping. While sorting, the function MUST check for the validity of the delegations, as specified
+in the [Delegation Validation](#delegation-validation) section. Aditionally, the function MUST emit a
+`DelegateVotesChanged` event for each change in delegatee voting power.
 
 ### Getters
 
@@ -177,8 +181,8 @@ function numCheckpoints(address _account) external view returns (uint32)
 
 #### `delegates`
 
-Retrieves the delegations of a given user address. This function is intended to be used by the
-`GovernanceToken` contract to maximize for backwards compatibility.
+Retrieves the delegations of a given user address, sorted in descending order by voting power. 
+This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
 function delegates(address _account) external view returns (Delegation[] memory)
@@ -206,6 +210,14 @@ Retrieves the total supply of the `GovernanceToken` at a given block.
 
 ```solidity
 function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
+```
+
+#### `migrated`
+
+Returns the migration status of an account — `True` if the account has been migrated, `False` otherwise.
+
+```solidity
+function migrated(address _account) public view returns (bool)
 ```
 
 ### Events
@@ -391,6 +403,17 @@ flowchart TD
     A3 --> |No, use its state| A2
     A2 --> |Return data| A1
 ```
+
+## Delegation Validation
+
+When applying a new delegation set as part of the [`_delegate`](#_delegate) function, the `Alligator` MUST check that:
+
+- The length of the `_newDelegations` array DOES NOT exceed `MAX_SUBDELEGATIONS`.
+- The sum of `amount` in relative delegations DOES NOT exceed the `DENOMINATOR`, and each `amount` is greater than 0.
+- The sum of `amount` in absolute delegations DOES NOT exceed the total voting power of the `_delegator`.
+- The new delegatee set is sorted in descending order by voting power.
+
+If any of the above conditions are not met, the `_delegate` function MUST revert with a specific error message.
 
 ## Security Considerations
 
