@@ -1,5 +1,6 @@
 [workspace]
-members = ["common", "native-host", "zkvm-client", "zkvm-host"]
+members = ["crates/*", "native-host", "zkvm-client", "zkvm-host"]
+resolver = "2"
 
 [workspace.package]
 license = "MIT"
@@ -11,16 +12,17 @@ repository = ""
 [workspace.dependencies]
 
 # kona
-kona-common = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-common-proc = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-preimage = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream", features = [
+kona-common = { git = "https://github.com/ethereum-optimism/kona" }
+kona-common-proc = { git = "https://github.com/ethereum-optimism/kona" }
+kona-preimage = { git = "https://github.com/ethereum-optimism/kona", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-mpt = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-derive = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream", default-features = false }
-kona-executor = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-kona-client = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
+kona-primitives = { git = "https://github.com/ethereum-optimism/kona" }
+kona-mpt = { git = "https://github.com/ethereum-optimism/kona" }
+kona-derive = { git = "https://github.com/ethereum-optimism/kona", default-features = false }
+kona-executor = { git = "https://github.com/ethereum-optimism/kona" }
+kona-client = { git = "https://github.com/ethereum-optimism/kona" }
+kona-host = { git = "https://github.com/ethereum-optimism/kona" }
 
 # general
 anyhow = { version = "1.0.86", default-features = false }
@@ -33,6 +35,8 @@ sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", branch = "pat
 ] }
 tokio = { version = "1.37.0", features = ["full"] }
 clap = "4.5.9"
+cargo_metadata = "0.18.1"
+dotenv = "0.15.0"
 
 # serialization
 serde = { version = "1.0.198", features = ["derive"] }
@@ -41,7 +45,8 @@ rkyv = "0.7.44"
 hex = "0.4.3"
 
 # local
-zkvm-common = { path = "common" }
+client-utils = { path = "crates/client-utils" }
+host-utils = { path = "crates/host-utils" }
 zkvm-client = { path = "zkvm-client" }
 zkvm-host = { path = "zkvm-host" }
 
@@ -55,17 +60,14 @@ alloy-primitives = { version = "0.7.6", default-features = false }
 alloy-rlp = { version = "0.3.5", default-features = false }
 alloy-consensus = { version = "0.1", default-features = false }
 alloy-sol-types = { version = "0.7.6" }
-kona-host = { git = "https://github.com/moongate-forks/kona/", branch = "kona-upstream" }
-op-alloy-consensus = { version = "0.1.0", default-features = false }
 alloy-eips = { version = "0.1", default-features = false }
 revm = { git = "https://github.com/bluealloy/revm", tag = "v37", version = "10.0.0", default-features = false }
 
-# sp1
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
-sp1-core = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
-sp1-helper = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
+sp1-zkvm = "1.0.1"
+sp1-sdk = "1.0.1"
+sp1-helper = "1.0.1"
 
+# sp1
 [profile.release-client-lto]
 inherits = "release"
 panic = "abort"

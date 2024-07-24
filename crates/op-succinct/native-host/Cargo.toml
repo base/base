@@ -11,4 +11,3 @@ repository.workspace = true
 kona-host = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
-anyhow = { workspace = true }
