@@ -212,7 +212,7 @@ function subdelegations(address _account, address _delegatee) external view retu
 MUST trigger when an account subdelegates voting power to another address (delegatee).
 
 ```solidity
-event Subdelegation(address indexed account, address indexed delegatee, SubdelegationRules rule)
+event Subdelegation(address indexed account, address indexed delegatee, SubdelegationRules rule, uint256 previousVotingPower, uint256 newVotingPower)
 ```
 
 #### `Subdelegations`
@@ -220,7 +220,7 @@ event Subdelegation(address indexed account, address indexed delegatee, Subdeleg
 MUST trigger when an account subdelegates voting power to multiple addresses (delegatees).
 
 ```solidity
-event Subdelegations(address indexed account, address[] delegatee, SubdelegationRules[] rules)
+event Subdelegations(address indexed account, address[] delegatee, SubdelegationRules[] rules, uint256 previousVotingPower, uint256 newVotingPower)
 ```
 
 #### `DelegateVotesChanged`
