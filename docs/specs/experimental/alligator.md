@@ -19,21 +19,21 @@
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
-    - [`subdelegations`](#subdelegations)
   - [Events](#events)
-    - [`Subdelegation`](#subdelegation)
-    - [`Subdelegations`](#subdelegations)
+    - [`DelegationCreated`](#delegationcreated)
+    - [`DelegationsCreated`](#delegationscreated)
     - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
 - [Types](#types)
-  - [`SubdelegationRule`](#subdelegationrule)
+  - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
+  - [`DelegationAdjustment`](#delegationadjustment)
+  - [`Op`](#op)
 - [Backwards Compatibility](#backwards-compatibility)
 - [Migration](#migration)
 - [User Flow](#user-flow)
-  - [Partial delegations](#partial-delegations)
-  - [Constrained delegations](#constrained-delegations)
-  - [Redelegations](#redelegations)
+  - [Partial Delegations](#partial-delegations)
+  - [Absolute & Relative Delegations](#absolute--relative-delegations)
   - [Differences](#differences)
 - [Security Considerations](#security-considerations)
   - [Dependence on Alligator](#dependence-on-alligator)
@@ -75,20 +75,15 @@ function subdelegate(address _delegatee, Delegation calldata _delegation) extern
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
 and `_delegatee` addresses.
 
+<!-- TODO: specify call to `_delegate` -->
 
-Before updating the subdelegation, the `subdelegate` function MUST check the validity of the subdelegation rule. Specifically,
-the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator
-if the `allowanceType` is `Absolute`.
-
-When updating the subdelegation, the `subdelegate` function MUST override any previous subdelegation of the `msg.sender`
-to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function parameters.
+At the end, the `subdelegate` function MUST emit a `DelegationCreated` event with the given function parameters.
 
 #### `subdelegateFromToken`
 
-Allows delegation of token voting power from an address (delegator) to another address (delegatee) using a subdelegation
-rule that performs 100% delegation, mimicking the behavior of the `ERC20Votes`'s `delegate` function for backwards
-compatibility. This function MUST only be callable by the `GovernanceToken` contract as part of its `delegate` and
-`delegateBySig` functions.
+Delegates 100% of the token voting power of an address (delegator) to another address (delegatee), mimicking the behavior
+of the `ERC20Votes`'s `delegate` function for backwards compatibility. This function MUST only be callable by the
+`GovernanceToken` contract as part of its `delegate` and `delegateBySig` functions.
 
 ```solidity
 function subdelegateFromToken(address _delegator, address _delegatee) external
@@ -97,32 +92,23 @@ function subdelegateFromToken(address _delegator, address _delegatee) external
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
 and `_delegatee` addresses.
 
-When updating the subdelegation, the `subdelegateFromToken` function MUST override any previous subdelegation of the
-`_delegator` to the `_delegatee`. Afterwards, this function MUST emit a `Subdelegation` event with the given function
-parameters.
+<!-- TODO: specify call to `_delegate` -->
+
+At the end, the `subdelegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
 
 #### `subdelegateBatched`
 
-Allows batch subdelegation of token voting power to multiple addresses with specified subdelegation rules. This
-function is intended to be called by users.
+Delegates voting power to multiple addresses (delegatees) using the delegation array. This function is intended to be
+called by users.
 
 ```solidity
-function subdelegateBatched(address[] calldata _delegatees, SubdelegationRules[] calldata _rules) external
+function subdelegateBatched(Delegation[] calldata _delegations) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
-and all `_delegatees`.
+and every delegatee address in the `_delegations` array.
 
-This function MUST check that the length of `_delegatees` and `_rules` are equal. If the lengths are not equal, it MUST
-revert with an error.
-
-The `subdelegateBatched` function MUST iterate over each pair of `_delegatees` address and `_rules` subdelegation rule.
-At every iteration, the function MUST check the validity of the subdelegation rule, and migrate the delegatee address
-if it has not been migrated. The function MUST then update the subdelegation. Specifically for validation,
-the function MUST check that the `allowance` field of the rule does not exceed the total voting power of the delegator'
-if the `allowanceType` is `Absolute`.
-
-Afterwards, the `subdelegateBatched` function MUST emit a `Subdelegation` event with the given function parameters.
+At the end, the `subdelegateBatched` function MUST emit a `DelegationsCreated` event with the given function parameters.
 
 #### `afterTokenTransfer`
 
@@ -133,18 +119,16 @@ by the `GovernanceToken` contract.
 function afterTokenTransfer(address _from, address _to, uint256 _amount) external
 ```
 
-The `Alligator` MUST check if the `_from` or `_to` addresses have been migrated by checking the `migrated` mapping
-from its [storage](#storage). If either address has not been migrated, the `Alligator` MUST copy the delegation
-and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update
-the `migrated` mapping to reflect that the address has been migrated.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_from`
+and `_to` addresses.
 
-The `afterTokenTransfer` function MUST update the voting power of the `_from` and `_to` addresses with the same logic
-of the `GovernanceToken`.
+<!-- TODO: call `_moveVotingPower` -->
 
 #### `migrateAccounts`
 
-Migrates the delegation state of given accounts from the `GovernanceToken` to the `Alligator` contract. This function
-MUST iterate over the list of `_accounts` addresses and only migrate the account if it has not been migrated yet.
+Migrates the delegation state of the given accounts from the `GovernanceToken` to the `Alligator` contract. This
+function MUST iterate over the list of `_accounts` addresses and apply the logic specified in the
+[Migration](#migration) section.
 
 ```solidity
 function migrateAccounts(address[] calldata _accounts) external
@@ -176,11 +160,11 @@ function numCheckpoints(address _account) external view returns (uint32)
 
 #### `delegates`
 
-Retrieves the delegatee with the highest voting power for a given user address. This function
-is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
+Retrieves the delegations of a given user address. This function is intended to be used by the
+`GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
-function delegates(address _account) external view returns (address)
+function delegates(address _account) external view returns (Delegation[] memory)
 ```
 
 #### `getVotes`
@@ -207,52 +191,44 @@ Retrieves the total supply of the `GovernanceToken` at a given block.
 function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
 ```
 
-#### `subdelegations`
-
-Retrieves the subdelegations for a given user and delegatee.
-
-```solidity
-function subdelegations(address _account, address _delegatee) external view returns (SubdelegationRules memory)
-```
-
 ### Events
 
-#### `Subdelegation`
+#### `DelegationCreated`
 
-MUST trigger when an account subdelegates voting power to another address (delegatee).
+MUST trigger when an account delegates voting power to another address (delegatee).
 
 ```solidity
-event Subdelegation(address indexed account, address indexed delegatee, SubdelegationRules rule, uint256 previousVotingPower, uint256 newVotingPower)
+event DelegationCreated(address indexed account, Delegation delegation);
 ```
 
-#### `Subdelegations`
+#### `DelegationsCreated`
 
-MUST trigger when an account subdelegates voting power to multiple addresses (delegatees).
+MUST trigger when an account delegates voting power to multiple addresses (delegatees).
 
 ```solidity
-event Subdelegations(address indexed account, address[] delegatee, SubdelegationRules[] rules, uint256 previousVotingPower, uint256 newVotingPower)
+event DelegationsCreated(address indexed account, Delegation[] delegations);
 ```
 
 #### `DelegateVotesChanged`
 
-MUST trigger every time the voting power of a user changes, including when a token transfer occurs or a subdelegation
-is updated.
+MUST trigger every time the voting power of a user changes, including when a token transfer occurs or when a
+delegation is created.
 
 ```solidity
-event DelegateVotesChanged(address indexed delegate, uint256 previousBalance, uint256 newBalance)
+event DelegateVotesChanged(address indexed delegatee, uint256 previousBalance, uint256 newBalance)
 ```
 
 ## Storage
 
-The `Alligator` contract MUST be able to store subdelegation rules and checkpoints. These storage variables MUST be
+The `Alligator` contract MUST be able to store delegations and checkpoints. These storage variables MUST be
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
 // Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
 mapping(address => bool) public migrated;
 
-// Subdelegation rules for an account and delegatee.
-mapping(address => mapping(address => SubdelegationRules)) internal _subdelegations;
+// Voting power delegations of an account.
+mapping(address => Delegation[]) internal _delegations;
 
 // Checkpoints of voting power for an account.
 mapping(address => ERC20Votes.Checkpoint[]) internal _checkpoints;
@@ -265,32 +241,27 @@ ERC20Votes.Checkpoint[] internal _totalSupplyCheckpoints;
 
 The `Alligator` contract MUST define the following types:
 
-### `SubdelegationRule`
+### `Delegation`
 
-Subdelegation rules define the parameters and constraints for delegated voting power, encapsulated in the following
-struct:
+`Delegation` defines the parameters for voting power delegations, encapsulated in the following struct:
 
 ```solidity
-struct SubdelegationRule {
-    uint256 maxRedelegations;
-    uint256 notValidBefore;
-    uint256 notValidAfter;
-    AllowanceType allowanceType;
-    uint256 allowance;
+struct Delegation {
+  AllowanceType allowanceType;
+  address delegatee;
+  uint256 amount;
 }
 ```
 
 | Name                     | Type            | Description                                                             |
 |--------------------------|-----------------|-------------------------------------------------------------------------|
-| `maxRedelegations`       | `uint256`       | Maximum number of times the delegated votes can be redelegated.         |
-| `notValidBefore`         | `uint256`       | Timestamp after which the delegation is valid.                          |
-| `notValidAfter`          | `uint256`       | Timestamp before which the delegation is valid.                         |
 | `allowanceType`          | `AllowanceType` | Type of allowance (e.g., absolute or relative).                         |
-| `allowance`              | `uint256`       | Amount of votes delegated, denominated in the token's decimals.         |
+| `delegatee`              | `address`       | The address of the delegatee receveing the voting power.                |
+| `amount`                 | `uint256`       | Amount of votes delegated, denomination depending on `allowanceType`.   |
 
 ### `AllowanceType`
 
-Subdelegations can have different types of allowances, represented with:
+Delegations can either be absolute or relative, represented by the following:
 
 ```solidity
 enum AllowanceType {
@@ -301,13 +272,45 @@ enum AllowanceType {
 
 | Name        | Number | Description                                                                                 |
 |-------------|--------|---------------------------------------------------------------------------------------------|
-| `Absolute`  | `0`    | The amount of votes delegated is fixed.                                                     |
-| `Relative`  | `1`    | The amount of votes delegated is relative to the total amount of votes the delegator has.   |
+| `Absolute`  | `0`    | The amount of votes delegated is fixed and denominated in the `GovernanceToken`'s decimals  |
+| `Relative`  | `1`    | The amount of votes delegated is relative and denominated in percentages.                   |
+
+### `DelegationAdjustment`
+
+`DelegationAdjustment` act as temporary storage when adjusting the delegation state of an account. This struct is defined as:
+
+```solidity
+struct DelegationAdjustment {
+  address delegatee;
+  uint208 amount;
+}
+```
+
+| Name        | Type      | Description                                                    |
+|-------------|-----------|----------------------------------------------------------------|
+| `delegatee` | `address` | The address for the delegation adjustment.                     |
+| `amount`    | `uint208` | The amount of voting power to add or remove.                   |
+
+### `Op`
+
+`Op` indicate the type of operation to perform when adjusting the delegation state of an account. This enum is defined as:
+
+```solidity
+enum Op {
+  ADD,
+  SUBTRACT
+}
+```
+
+| Name        | Numbe  | Description                                                    |
+|-------------|--------|----------------------------------------------------------------|
+| `ADD`       | `0`    | Add the amount of voting power when adjusting.                 |
+| `SUBSTRACT` | `1`    | Substract the amount of voting power when adjusting.           |
 
 ## Backwards Compatibility
 
 The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
-token contract.
+`GovernanceToken`.
 
 ## Migration
 
@@ -318,40 +321,27 @@ and checkpoint data from the token contract to its own state. After copying the 
 
 ## User Flow
 
-The following sections highlight the use cases that MUST be supported by subdelegations, and the difference for basic
+The following sections highlight the use cases that MUST be supported by the `Alligator`, and the difference for basic
 delegations made from the `GovernanceToken` contract.
 
-### Partial delegations
+### Partial Delegations
 
-Users MUST be able to perform partial delegations of their voting power to another address. Additionally, the `Alligator`'s
-subdelegation rules MUST allow users to perform subdelegations for relative and absolute amounts of voting power. Absolute
-amounts MUST be denominated in the token's decimals, whereas relative amounts MUST be denominated in percentages.
+Users MUST be able to perform partial delegations of their voting power to another address. This must be supported for
+both absolute and relative amounts.
 
-### Constrained delegations
+### Absolute & Relative Delegations
 
-Users MUST be able to perform time & block constrained delegations. The subdelegation rules MUST include optional
-`notValidBefore` and `notValidAfter` fields to allow users to specify the time range in which a delegation is valid, both
-denominated as timestamps.
-
-### Redelegations
-
-Users MUST be able to redelegate their voting power to another address. If a user delegates their voting power to another
-address, this second address can further delegate the voting power to a third address. The first delegator MUST be able to
-limit the number of redelegations that can be performed for their delegated voting power by setting the `maxRedelegations`
-field in the subdelegation rule.
+Users MUST be able to delegate their voting power to another address with an absolute or relative amount.
 
 ### Differences
 
-The main difference for delegations made from the `GovernanceToken` contract is basic delegations are encapsulated as
-subdelegations and forwarded to the `Alligator` contract. Basic delegation can be achieved with a subdelegation rule
-such as:
+The main difference for delegations made from the `GovernanceToken` contract is that basic delegations are encapsulated in
+a [`Delegation`](#delegation) struct and forwarded to the `Alligator` contract. Basic delegation can be achieved with a
+`Delegation` such as:
 
 ```solidity
-SubdelegationRules({
-  maxRedelegations: 0,
-  blocksBeforeVoteCloses: 0,
-  notValidBefore: 0,
-  notValidAfter: 0,
+Delegation({
+  delegatee: ...,
   allowanceType: AllowanceType.Relative,
   allowance: 10e4 // 100%
 })
@@ -362,9 +352,9 @@ The following diagram shows the sequence of a basic delegation performed from th
 ```mermaid
 sequenceDiagram
     User ->> GovernanceToken: call `delegate` or `delegateBySig`
-    GovernanceToken ->> Alligator: call `subdelegate` with basic delegation rule
+    GovernanceToken ->> Alligator: call `subdelegateFromToken`
     Alligator -->> GovernanceToken: migrate if user hasn't been migrated
-    Alligator ->> Alligator: update subdelegation
+    Alligator ->> Alligator: apply basic delegation
 ```
 
 Once a user has been migrated to the `Alligator`, the `GovernanceToken` MUST always use the `Alligator`'s delegation
