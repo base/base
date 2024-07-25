@@ -1,4 +1,4 @@
-# Alligator
+# GovernanceDelegation
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
@@ -39,7 +39,7 @@
   - [Differences](#differences)
 - [Delegation Validation](#delegation-validation)
 - [Security Considerations](#security-considerations)
-  - [Dependence on Alligator](#dependence-on-alligator)
+  - [Dependence on GovernanceDelegation](#dependence-on-governancedelegation)
   - [Connection with GovernanceToken](#connection-with-governancetoken)
 - [Future Considerations](#future-considerations)
   - [Cross Chain Delegations](#cross-chain-delegations)
@@ -52,15 +52,15 @@
 |----------|----------------------------------------------|
 | Address  | `0x4200000000000000000000000000000000000043` |
 
-The `Alligator` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md). Advanced delegation allows
-for partial and relative delegations of voting power.
+The `GovernanceDelegation` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md).
+Advanced delegation allows for partial and relative delegations of voting power.
 
-The `Alligator` contract migrates the delegation state from the `GovernanceToken` to itself
-through a hook-based approach. Specifically, the `GovernanceToken` calls the `Alligator` contract's
-`afterTokenTransfer` function after a token transfer. This enables the `Alligator` contract to consume the hook and update
-its delegation and checkpoint mappings accordingly. If either address involved in the transfer (`_from_` or `_to`) has not
-been migrated to the `Alligator` contract, the contract copies the address' checkpoint data from the
-`GovernanceToken` to its own state.
+The `GovernanceDelegation` contract migrates the delegation state from the `GovernanceToken` to itself
+through a hook-based approach. Specifically, the `GovernanceToken` calls the `GovernanceDelegation` contract's
+`afterTokenTransfer` function after a token transfer. This enables the `GovernanceDelegation` contract to consume
+the hook and update its delegation and checkpoint mappings accordingly. If either address involved in the transfer
+(`_from_` or `_to`) has not been migrated to the `GovernanceDelegation` contract, the contract copies the address'
+checkpoint data from the `GovernanceToken` to its own state.
 
 ## Interface
 
@@ -131,7 +131,7 @@ the voting power adjustments to the checkpoints of the `_from`, `_to`, and deleg
 
 #### `migrateAccounts`
 
-Migrates the delegation state of the given accounts from the `GovernanceToken` to the `Alligator` contract. This
+Migrates the delegation state of the given accounts from the `GovernanceToken` to the `GovernanceDelegation` contract. This
 function MUST iterate over the list of `_accounts` addresses and apply the logic specified in the
 [Migration](#migration) section.
 
@@ -160,10 +160,10 @@ in the [Delegation Validation](#delegation-validation) section. Additionally, th
 
 ### Getters
 
-For backwards compatibility, the `Alligator` MUST implement all public getter functions of the
+For backwards compatibility, the `GovernanceDelegation` contract MUST implement all public getter functions of the
 `GovernanceToken` related to delegation and voting power. These functions MUST be used by the
-`GovernanceToken` when an account has been migrated to the `Alligator` contract. Otherwise,
-the `GovernanceToken` MUST use its own state. Similarly, all of the `Alligator` getter functions
+`GovernanceToken` when an account has been migrated to the `GovernanceDelegation` contract. Otherwise,
+the `GovernanceToken` MUST use its own state. Similarly, all of the `GovernanceDelegation` getter functions
 MUST use the `GovernanceToken` state if the account has not been migrated.
 
 #### `checkpoints`
@@ -252,17 +252,11 @@ event DelegateVotesChanged(address indexed delegatee, uint256 previousBalance, u
 
 ## Storage
 
-The `Alligator` contract MUST be able to store delegations and checkpoints. These storage variables MUST be
+The `GovernanceDelegation` contract MUST be able to store delegations and checkpoints. These storage variables MUST be
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
-// The maximum number of delegations allowed.
-uint256 public constant MAX_DELEGATIONS = 100;
-
-// The denominator used for relative delegations.
-uint96 public constant DENOMINATOR = 10_000;
-
-// Addresses that had their delegation state migrated from the `GovernanceToken` to the `Alligator`.
+// Addresses that had their delegation state migrated from the `GovernanceToken` to the `GovernanceDelegation`.
 mapping(address => bool) public migrated;
 
 // Voting power delegations of an account.
@@ -275,9 +269,18 @@ mapping(address => ERC20Votes.Checkpoint[]) internal _checkpoints;
 ERC20Votes.Checkpoint[] internal _totalSupplyCheckpoints;
 ```
 
+## Constants
+
+The `GovernanceDelegation` contract MUST define the following constants:
+
+| Name                     | Value     | Description                                              |
+|--------------------------|-----------|----------------------------------------------------------|
+| `MAX_DELEGATIONS`        | `100`     | The maximum number of delegations allowed.               |
+| `DENOMINATOR`            | `10_000`  | The denominator used for relative delegations.           |
+
 ## Types
 
-The `Alligator` contract MUST define the following types:
+The `GovernanceDelegation` contract MUST define the following types:
 
 ### `Delegation`
 
@@ -348,20 +351,20 @@ enum Op {
 
 ## Backwards Compatibility
 
-The `Alligator` contract ensures backwards compatibility by allowing the migration of delegation state from the
+The `GovernanceDelegation` contract ensures backwards compatibility by allowing the migration of delegation state from the
 `GovernanceToken`.
 
 ## Migration
 
-All write functions in the `Alligator` MUST check if the users interacting with it have been migrated by checking the
-`migrated` mapping from its [storage](#storage). If a user has not been migrated, the `Alligator` MUST copy the delegation
-and checkpoint data from the token contract to its own state. After copying the data, the `Alligator` MUST update the
-`migrated` mapping to reflect that the address has been migrated.
+All write functions in the `GovernanceDelegation` MUST check if the users interacting with it have been migrated by
+checking the `migrated` mapping from its [storage](#storage). If a user has not been migrated, the `GovernanceDelegation`
+MUST copy the delegation and checkpoint data from the token contract to its own state. After copying the data, the
+`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated.
 
 ## User Flow
 
-The following sections highlight the use cases that MUST be supported by the `Alligator`, and the difference for basic
-delegations made from the `GovernanceToken` contract.
+The following sections highlight the use cases that MUST be supported by the `GovernanceDelegation`, and the difference
+for basic delegations made from the `GovernanceToken` contract.
 
 ### Partial Delegations
 
@@ -375,8 +378,8 @@ Users MUST be able to delegate their voting power to another address with an abs
 ### Differences
 
 The main difference for delegations made from the `GovernanceToken` contract is that basic delegations are encapsulated in
-a [`Delegation`](#delegation) struct and forwarded to the `Alligator` contract. Basic delegation can be achieved with a
-`Delegation` such as:
+a [`Delegation`](#delegation) struct and forwarded to the `GovernanceDelegation` contract. Basic delegation can be achieved
+with a `Delegation` such as:
 
 ```solidity
 Delegation({
@@ -391,26 +394,27 @@ The following diagram shows the sequence of a basic delegation performed from th
 ```mermaid
 sequenceDiagram
     User ->> GovernanceToken: call `delegate` or `delegateBySig`
-    GovernanceToken ->> Alligator: call `delegateFromToken`
-    Alligator -->> GovernanceToken: migrate if user hasn't been migrated
-    Alligator ->> Alligator: apply basic delegation
+    GovernanceToken ->> GovernanceDelegation: call `delegateFromToken`
+    GovernanceDelegation -->> GovernanceToken: migrate if user hasn't been migrated
+    GovernanceDelegation ->> GovernanceDelegation: apply basic delegation
 ```
 
-Once a user has been migrated to the `Alligator`, the `GovernanceToken` MUST always use the `Alligator`'s delegation
-state. The following diagram shows the control flow for this case.
+Once a user has been migrated to the `GovernanceDelegation`, the `GovernanceToken` MUST always use the `GovernanceDelegation`'s
+delegation state. The following diagram shows the control flow for this case.
 
 ```mermaid
 flowchart TD
     A1(User) -->|Calls delegation getter function | A2(GovernanceToken)
     A2 --> A3{Is user migrated?}
-    A3 --> |Yes, fetch from Alligator| A4(Alligator)
+    A3 --> |Yes, fetch from GovernanceDelegation| A4(GovernanceDelegation)
     A3 --> |No, use its state| A2
     A2 --> |Return data| A1
 ```
 
 ## Delegation Validation
 
-When applying a new delegation set as part of the [`_delegate`](#_delegate) function, the `Alligator` MUST check that:
+When applying a new delegation set as part of the [`_delegate`](#_delegate) function, the `GovernanceDelegation` MUST check
+that:
 
 - The length of the `_newDelegations` array DOES NOT exceed `MAX_DELEGATIONS`.
 - The sum of `amount` in relative delegations DOES NOT exceed the `DENOMINATOR`, and each `amount` is greater than 0.
@@ -421,24 +425,24 @@ If any of the above conditions are not met, the `_delegate` function MUST revert
 
 ## Security Considerations
 
-### Dependence on Alligator
+### Dependence on GovernanceDelegation
 
-As the `GovernanceToken` depends on the `Alligator` contract, the `Alligator` contract MUST be implemented so that it
-minimizes the risk of unexpected reverts during the transfer hook call. If the `Alligator` contract reverts,
-`GovernanceToken` transfers will be blocked. Additionally, the `GovernanceToken` MUST always use the `Alligator`'s
-delegation state if a user has been migrated.
+As the `GovernanceToken` depends on the `GovernanceDelegation` contract, the `GovernanceDelegation` contract MUST be implemented
+so that it minimizes the risk of unexpected reverts during the transfer hook call. If the `GovernanceDelegation` contract
+reverts, `GovernanceToken` transfers will be blocked. Additionally, the `GovernanceToken` MUST always use the
+`GovernanceDelegation`'s delegation state if a user has been migrated.
 
 ### Connection with GovernanceToken
 
-Similarly, the `Alligator` MUST always process token transfers from the `GovernanceToken` contract correctly to stay
-in sync with token balances. If the `Alligator` contract is not in sync with the `GovernanceToken` contract, the
-voting power of users MAY be incorrect or outdated.
+Similarly, the `GovernanceDelegation` MUST always process token transfers from the `GovernanceToken` contract correctly to
+stay in sync with token balances. If the `GovernanceDelegation` contract is not in sync with the `GovernanceToken` contract,
+the voting power of users MAY be incorrect or outdated.
 
 ## Future Considerations
 
 ### Cross Chain Delegations
 
-To make the `GovernanceToken` interoperable, the `Alligator` contract should be extended to support cross-chain delegations
-using the interoperability protocol. Specifically, the `Alligator`'s hook entrypoint (`afterTokenTransfer`) should be modified
-to emit a message to another `Alligator` contract on a different chain. This message should include the token transfer information
-(`_from`, `_to`, `_amount`).
+To make the `GovernanceToken` interoperable, the `GovernanceDelegation` contract should be extended to support cross-chain
+delegations using the interoperability protocol. Specifically, the `GovernanceDelegation`'s hook entrypoint (`afterTokenTransfer`)
+should be modified to emit a message to another `GovernanceDelegation` contract on a different chain. This message should
+include the token transfer information (`_from`, `_to`, `_amount`).
