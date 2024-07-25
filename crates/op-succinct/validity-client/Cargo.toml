@@ -1,14 +1,18 @@
 [package]
-name = "client-utils"
+name = "validity-client"
 version = "0.1.0"
 license.workspace = true
 edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [dependencies]
 # workspace (general)
 cfg-if.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+client-utils.workspace = true
 
 # workspace (ethereum)
 op-alloy-consensus.workspace = true
@@ -25,7 +29,5 @@ kona-preimage.workspace = true
 kona-derive.workspace = true
 kona-mpt.workspace = true
 
-alloy-sol-types.workspace = true
-serde.workspace = true
-rkyv.workspace = true
-sha2.workspace = true
+# sp1
+sp1-zkvm.workspace = true

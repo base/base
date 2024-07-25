@@ -1,7 +1,6 @@
 pub mod fetcher;
 pub mod helpers;
 
-use cargo_metadata::MetadataCommand;
 use client_utils::RawBootInfo;
 use kona_host::HostCli;
 use sp1_sdk::SP1Stdin;
@@ -19,6 +18,11 @@ use rkyv::{
 };
 
 use crate::helpers::load_kv_store;
+
+pub enum ProgramType {
+    Single,
+    Multi,
+}
 
 sol! {
     struct L2Output {
@@ -43,12 +47,8 @@ pub fn get_sp1_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
     stdin.write(&boot_info);
 
     // Get the workspace root, which is where the data directory is.
-    let metadata = MetadataCommand::new().exec().unwrap();
-    let workspace_root = metadata.workspace_root;
-    let kv_store = load_kv_store(&format!(
-        "{}/data/{}",
-        workspace_root, boot_info.l2_claim_block
-    ));
+    let data_dir = host_cli.data_dir.as_ref().expect("Data directory not set!");
+    let kv_store = load_kv_store(data_dir);
 
     let mut serializer = CompositeSerializer::new(
         AlignedSerializer::new(AlignedVec::new()),

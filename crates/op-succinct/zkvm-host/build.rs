@@ -2,14 +2,13 @@ use std::process::Command;
 
 use sp1_helper::{build_program_with_args, BuildArgs};
 
-fn main() {
-    // Build the zkvm program with the release-client-lto profile for native execution.
+fn build_native_program(program: &str) {
     let status = Command::new("cargo")
         .args([
             "build",
             "--workspace",
             "--bin",
-            "zkvm-client",
+            program,
             "--profile",
             "release-client-lto",
         ])
@@ -17,16 +16,31 @@ fn main() {
         .expect("Failed to execute cargo build command");
 
     if !status.success() {
-        panic!("Failed to build zkvm-client with release-client-lto profile");
+        panic!("Failed to build {}", program);
     }
 
-    println!("cargo:warning=zkvm-client built with release-client-lto profile");
+    println!(
+        "cargo:warning={} built with release-client-lto profile",
+        program
+    );
+}
 
+fn build_zkvm_program(program: &str) {
     build_program_with_args(
-        "../zkvm-client",
+        &format!("../{}", program),
         BuildArgs {
             ignore_rust_version: true,
+            elf_name: format!("{}-elf", program),
             ..Default::default()
         },
     );
+}
+
+fn main() {
+    let programs = vec!["zkvm-client", "validity-client"];
+
+    for program in programs {
+        build_native_program(program);
+        build_zkvm_program(program);
+    }
 }

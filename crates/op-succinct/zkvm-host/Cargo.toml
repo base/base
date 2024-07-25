@@ -11,6 +11,10 @@ homepage.workspace = true
 name = "single"
 path = "bin/single.rs"
 
+[[bin]]
+name = "multi"
+path = "bin/multi.rs"
+
 [dependencies]
 
 # workspace
@@ -27,6 +31,7 @@ host-utils.workspace = true
 sp1-sdk = { workspace = true }
 anyhow.workspace = true
 dotenv.workspace = true
+num-format.workspace = true
 
 [build-dependencies]
 sp1-helper = { workspace = true }
