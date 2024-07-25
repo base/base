@@ -5,19 +5,21 @@
 
 - [Overview](#overview)
 - [Implementation changes](#implementation-changes)
-  - [External functions](#external-functions)
+  - [L2StandardBridge](#l2standardbridge)
     - [`convertToSuper`](#converttosuper)
     - [`convertFromSuper`](#convertfromsuper)
-  - [Events](#events)
     - [`ConvertedToSuper`](#convertedtosuper)
     - [`ConvertedFromSuper`](#convertedfromsuper)
-  - [Internal Functions](#internal-functions)
     - [`checkPair`](#checkpair)
+  - [OptimismMintableERC20Factory](#optimismmintableerc20factory)
+    - [`deployments`](#deployments)
+    - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
 - [Diagram](#diagram)
 - [Invariants](#invariants)
 - [Considerations](#considerations)
 - [Appendix](#appendix)
   - [Access Control](#access-control)
+  - [Backwards compatibility](#backwards-compatibility)
   - [Decimal management](#decimal-management)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -35,13 +37,15 @@ corresponding `SuperchainERC20`.
 
 ## Implementation changes
 
-The `L2StandardBridge` will be extended to include the following functions and events:
+Bothe the `L2StandardBridge` and the `OptimismMintableERC20TokenFactory` will be extended
+to allow for liquidity migration:
 
-### External functions
+### L2StandardBridge
 
 #### `convertToSuper`
 
-Converts `_amount` of legacy tokens with address `_legacyAddr`
+The `L2StandardBridge` SHOULD add a `convertToSuper` external function that
+converts `_amount` of legacy tokens with address `_legacyAddr`
 to the same `_amount` of `SuperchainERC20` tokens in address `_superAddr`.
 
 ```solidity
@@ -71,7 +75,8 @@ function convertToSuper(address _legacyAddr, address _superAddr, uint256 _amount
 
 #### `convertFromSuper`
 
-Converts `_amount` of `SuperchainERC20` tokens in address `_superAddr`
+The `L2StandardBridge` SHOULD add a `convertFromSuper` external function that
+converts `_amount` of `SuperchainERC20` tokens in address `_superAddr`
 to the same `_amount` of legacy tokens with address `_legacyAddr`.
 
 ```solidity
@@ -98,11 +103,10 @@ function convertFromSuper(address _legacyAddr, address _superAddr, uint256 _amou
 }
 ```
 
-### Events
-
 #### `ConvertedToSuper`
 
-It MUST trigger when anyone converts legacy tokens
+The `L2StandardBridge` SHOULD add a `ConvertedToSuper` event
+that MUST trigger when anyone converts legacy tokens
 to `SuperchainERC20` with `convertToSuper`.
 
 ```solidity
@@ -111,18 +115,18 @@ event ConvertedToSuper(address indexed legacyAddr, address indexed superAddr, ad
 
 #### `ConvertedFromSuper`
 
-It MUST trigger when anyone converts `SuperchainERC20`
+`ConvertedFromSuper` event
+that MUST trigger when anyone converts `SuperchainERC20`
 into legacy tokens with `convertFromSuper`.
 
 ```solidity
 event ConvertedFromSuper(address indexed legacyAddr, address indexed superAddr, address indexed caller, uint256 amount);
 ```
 
-### Internal Functions
-
 #### `checkPair`
 
-Checks the validity of the `_legacyAddr` and `_superAddr` pair.
+The `L2StandardBridge` SHOULD add a `checkPair` internal function that
+checks the validity of the `_legacyAddr` and `_superAddr` pair.
 To do so, it will verify:
 
 1. Valid legacy address:
@@ -170,6 +174,38 @@ function checkPair(address _legacyAddr, address _superAddr) internal view return
 Note: Code can be simplified by using || in
 the requires or conditionals.
 The tradeoff would be losing error precision.
+
+### OptimismMintableERC20Factory
+
+#### `deployments`
+
+The `OptimismMintableERC20Factory` SHOULD include a new mapping that stores the remote
+token address for each deployed `OptimismMintableERC20`.
+
+```solidity
+mapping(address => address) public deployments;
+```
+
+The mapping will be updated on new updates and only once
+manually via storage manipulation to include the list of allowed tokens
+(see the [Appendix](#backwards-compatibility)).
+
+#### `createOptimismMintableERC20`
+
+The function should be modified to update the `deployments` mapping.
+
+```solidity
+function createOptimismMintableERC20(address _remoteToken, string memory _name, string memory _symbol) public returns (address) {
+  require(_remoteToken != address(0), "OptimismMintableERC20Factory: must provide remote token address");
+  bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol));
+  address localToken = address(new OptimismMintableERC20{salt: salt}(BRIDGE, _remoteToken, _name, _symbol));
+  ...
+  // Add the following line
+  deployments[localToken] = _remoteToken;
+  //
+  return localToken;
+}
+```
 
 ## Diagram
 
