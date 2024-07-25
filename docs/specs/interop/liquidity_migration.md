@@ -50,10 +50,9 @@ convertToSuper(address _legacyAddr, address _superAddr, uint256 _amount)
 
 The function will
 
-1. Check that `_legacyAddr` and `_superAddr` are valid and paired.
-2. Check both tokens have the same amount of decimals.
-3. Burn `_amount` of `_legacyAddr` from `msg.sender`.
-4. Mint `_amount` of `_superAddr` to `msg.sender`.
+1. Check that `_legacyAddr` and `_superAddr` are valid, paired and have the same amount of decimals.
+2. Burn `_amount` of `_legacyAddr` from `msg.sender`.
+3. Mint `_amount` of `_superAddr` to `msg.sender`.
 
 An example implementation that depends on the `checkPair()`
 access control function looks like this:
@@ -81,10 +80,9 @@ convertToSuper(address _legacyAddr, address _superAddr, uint256 _amount)
 
 The function will
 
-1. Check that `_legacyAddr` and `_superAddr` are valid and paired.
-2. Check both tokens have the same amount of decimals.
-3. Burn `_amount` of `_superAddr` from `msg.sender`.
-4. Mint `_amount` of `_legacyAddr` to `msg.sender`.
+1. Check that `_legacyAddr` and `_superAddr` are valid, paired and have the same amount of decimals.
+2. Burn `_amount` of `_superAddr` from `msg.sender`.
+3. Mint `_amount` of `_legacyAddr` to `msg.sender`.
 
 An example implementation that depends on the `checkPair()`
 access control function looks like this:
@@ -92,7 +90,6 @@ access control function looks like this:
 ```solidity
 function convertFromSuper(address _legacyAddr, address _superAddr, uint256 _amount) public {
   require(checkPair(_legacyAddr, _superAddr), "Invalid address pair");
-  require(IERC20(_legacyAddr).decimals() == IERC20(_superAddr).decimals(), "Decimals do not match")
 
   IERC20(_superAddr).burn(msg.sender, _amount);
   IERC20(_legacyAddr).mint(msg.sender, _amount);
@@ -109,7 +106,7 @@ It MUST trigger when anyone converts legacy tokens
 to `SuperchainERC20` with `convertToSuper`.
 
 ```solidity
-event ConvertedToSuper(address indexed legacyAddr, address indexed superAddr, address indexed caller, uint256 amount, uint256 adjustedAmount);
+event ConvertedToSuper(address indexed legacyAddr, address indexed superAddr, address indexed caller, uint256 amount);
 ```
 
 #### `ConvertedFromSuper`
@@ -128,26 +125,12 @@ event ConvertedFromSuper(address indexed legacyAddr, address indexed superAddr, 
 Checks the validity of the `_legacyAddr` and `_superAddr` pair.
 To do so, it will verify:
 
-1. Valid `OptimismMintableERC20` address:
-
-   1. For representations minted before
-      the `OptimismMintableERC20Factory` upgrade:
-      Check an allowed token list that connects L2 representations with the
-      corresponding token address in the native chain (_remote token_ address).
-      The allowed list will live in the `OptimismMintableERC20Factory`
-      and will be a mapping from the legacy address to the _remote token_ address
-      (L1 token address for tokens native to L1).
-   2. For representations minted after
-      the `OptimismMintableERC20Factory` upgrade:
-      Verify the `OptimismMintableERC20Factories` deployment lists.
-      This can be the same mapping used for 1a.
-
-   This approach requires updating
+1. Valid legacy address:
+   Verify the `OptimismMintableERC20Factories` deployment lists. This approach requires updating
    the `OptimismMintableERC20Factory` to store
    deployments as a mapping from `OptimismMintableERC20`
-   to its `REMOTE_TOKEN`
-   (both allowed list and new deployments).
-
+   to its `REMOTE_TOKEN`.  
+    The mapping will be backwards compatible, as detailed in the [Appendix](#backwards-compatibility).
 2. Valid `SuperchainERC20` address:
    checks the `SuperchainERC20Factory` mapping
    that stores the corresponding remote token address
@@ -155,6 +138,7 @@ To do so, it will verify:
 3. Both tokens correspond to the same remote token address:
    it will compare the remote token addresses stored in the deployment
    mappings and revert with `InvalidPair` if they do not match.
+4. Both tokens have the same amount of decimals.
 
 You can read more details about access control in the [Appendix](#decimal-management).
 
@@ -164,29 +148,28 @@ A reference implementation would look like follows
 IOptimismMintableERC20Factory public factory = IOptimismMintableERC20Factory(Predeploys.OptimismMintableERC20Factory);
 ISuperchainERC20Factory public superFactory = ISuperchainERC20Factory(Predeploys.SuperchainERC20Factory);
 
-function isValidPair(address _legacyAddr, address _superAddr) internal view returns (bool) {
+function checkPair(address _legacyAddr, address _superAddr) internal view returns (bool) {
+  // Check validity of the legacy token
   address _legacyRemoteToken = factory.deployments(_legacyAddr);
   require(_legacyRemoteToken != address(0), "Invalid Legacy address");
 
+  // Check validity of the superchainERC20 token
   address _superRemoteToken = superFactory.deployments(_superAddr);
   require(_superRemoteToken != address(0), "Invalid SuperchainERC20 address");
 
+  // Check both tokens correspond to the same remote token
   require(_legacyRemoteToken == _superRemoteToken, "Invalid token pair");
+
+  // Check both tokens share decimals
+  require(IERC20Metadata(_legacyAddr).decimals() == IERC20Metadata(_superAddr).decimals(), "Decimals do not match")
 
   return true;
 }
 ```
 
-Notes:
-
-- It is possible to split the `deployments` mapping in the
-  `OptimismMintableERC20Factory` into two
-  and make more explicit the distinction between pre-upgrade and
-  post-upgrade deployments. We suggest sticking to the single
-  mapping as it improves readability.
-- Code can be simplified by using || in
-  the requires or conditionals.
-  The tradeoff would be losing error precision.
+Note: Code can be simplified by using || in
+the requires or conditionals.
+The tradeoff would be losing error precision.
 
 ## Diagram
 
@@ -235,9 +218,10 @@ sequenceDiagram
 The conversion flow will need to conserve the following invariants:
 
 - Conservation of amount:
-  The burnt amount should match the minted amount. - It is possible to relax this invariant and adjust the amount
-  based on decimal difference.
-  An example implementation can be found in the [Appendix](#decimal-management).
+  The burnt amount should match the minted amount.
+  - It is possible to relax this invariant and adjust the amount
+    based on decimal difference.
+    An example implementation can be found in the [Appendix](#decimal-management).
 - Revert for non valid or non paired:
   Both `convertFromSuper` and `convertToSuper`
   SHOULD revert when called with: - Legacy tokens that are not in the allowed list or were not
@@ -311,6 +295,17 @@ live in the `OptimismMintableERC20Factory` contract.
 If the legacy token is not included in the token list
 (for new tokens, for instance),
 the `checkPair` will verify validity against the factory.
+
+### Backwards compatibility
+
+The check on legacy address validity will query the upgraded `OptimismMintableERC20Factory`,
+which stores new deployments in a mapping from
+the legacy address to the _remote token_ address.
+This method should also allow tokens that were
+deployed before the factory upgrade.
+To address this situation, a token list will be written to the same mapping
+via storage manipulation.
+How the allowed list is created is still to be defined.
 
 ### Decimal management
 
