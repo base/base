@@ -26,6 +26,7 @@
     - [`DelegationsCreated`](#delegationscreated)
     - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
+- [Constants](#constants)
 - [Types](#types)
   - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
