@@ -11,20 +11,14 @@ homepage.workspace = true
 
 # workspace (general)
 cfg-if.workspace = true
-anyhow.workspace = true
-async-trait.workspace = true
-rkyv.workspace = true
-sha2.workspace = true
 
 # workspace (ethereum)
 alloy-consensus.workspace = true
-alloy-primitives.workspace = true
 
 # workspace (kona)
 kona-primitives.workspace = true
 kona-executor.workspace = true
 kona-client.workspace = true
-kona-preimage.workspace = true
 
 # workspace (local)
 client-utils.workspace = true

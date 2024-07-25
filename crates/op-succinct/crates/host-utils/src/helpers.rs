@@ -1,8 +1,8 @@
 use alloy_primitives::hex;
 use client_utils::BytesHasherBuilder;
-use std::{collections::HashMap, fs, io::Read};
+use std::{collections::HashMap, fs, io::Read, path::PathBuf};
 
-pub fn load_kv_store(data_dir: &str) -> HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> {
+pub fn load_kv_store(data_dir: &PathBuf) -> HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> {
     let capacity = get_file_count(data_dir);
     let mut cache: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> =
         HashMap::with_capacity_and_hasher(capacity, BytesHasherBuilder);
@@ -34,7 +34,7 @@ pub fn load_kv_store(data_dir: &str) -> HashMap<[u8; 32], Vec<u8>, BytesHasherBu
     cache
 }
 
-fn get_file_count(data_dir: &str) -> usize {
+fn get_file_count(data_dir: &PathBuf) -> usize {
     let mut file_count = 0;
     for entry in fs::read_dir(data_dir).expect("failed to read data dir") {
         let entry = entry.unwrap();
