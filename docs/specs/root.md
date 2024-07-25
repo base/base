@@ -35,7 +35,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 - [Predeploys](protocol/predeploys.md)
 - [Preinstalls](protocol/preinstalls.md)
 - [Fault Proof](fault-proof/index.md)
-  - [Stage One Decentralization]()
+  - [Stage One Decentralization](fault-proof/stage-one/index.md)
     - [Dispute Game Interface](fault-proof/stage-one/dispute-game-interface.md)
     - [Fault Dispute Game](fault-proof/stage-one/fault-dispute-game.md)
       - [Bond Incentives](fault-proof/stage-one/bond-incentives.md)
