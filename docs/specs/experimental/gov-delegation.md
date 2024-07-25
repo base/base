@@ -73,7 +73,7 @@ Delegates voting power to another address (delegatee) with the given delegation 
 is intended to be called by users that require advanced delegation of the `GovernanceToken`.
 
 ```solidity
-function delegate(Delegation calldata _delegation) external
+function delegate(Delegation _delegation) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
