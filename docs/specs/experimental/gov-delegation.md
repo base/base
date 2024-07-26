@@ -75,7 +75,7 @@ function delegate(Delegation _delegation) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
-and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) with
+and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) function with
 the `msg.sender` and `_newDelegations` parameters.
 
 At the end, the `delegate` function MUST emit a `DelegationCreated` event with the given function parameters.
