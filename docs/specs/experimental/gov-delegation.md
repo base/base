@@ -75,8 +75,8 @@ function delegate(Delegation _delegation) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
-and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) function with
-the `msg.sender` and `_newDelegations` parameters.
+and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) function
+with the `msg.sender` and `_newDelegations` parameters.
 
 At the end, the `delegate` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -91,8 +91,8 @@ function delegateFromToken(address _delegator, address _delegatee) external
 ```
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
-and `_delegatee` addresses. Afterwards, the function MUST call the [`_delegate`](#_delegate) with the `_delegator` and
-basic delegation parameters.
+and `_delegatee` addresses. Afterwards, the function MUST call the [`_delegate`](#_delegate) function with the `_delegator`
+and basic delegation parameters.
 
 At the end, the `delegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -107,7 +107,7 @@ function delegateBatched(Delegation[] calldata _delegations) external
 
 This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
 and every delegatee address in the `_delegations` array. Afterwards, the function MUST call the [`_delegate`](#_delegate)
-with the `msg.sender` and `_delegations` parameters.
+function with the `msg.sender` and `_delegations` parameters.
 
 At the end, the `delegateBatched` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -276,7 +276,7 @@ The `GovernanceDelegation` contract MUST define the following constants:
 
 | Name                     | Value     | Description                                              |
 |--------------------------|-----------|----------------------------------------------------------|
-| `MAX_DELEGATIONS`        | `100`     | The maximum number of delegations allowed.               |
+| `MAX_DELEGATIONS`        | `20`      | The maximum number of delegations allowed based on gas estimates of the worst-case scenario of an unoptimized version of the `_delegate` function |
 | `DENOMINATOR`            | `10_000`  | The denominator used for relative delegations.           |
 
 ## Types
