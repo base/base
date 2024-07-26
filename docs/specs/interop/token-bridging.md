@@ -42,7 +42,7 @@ The standard will build on top of ERC20 and include the following functions:
 Transfer `_amount` amount of tokens to address `_to` in chain `_chainId`.
 
 It SHOULD burn `_amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `_amount`
-in the target address `_to` at `_chainId`.
+in the target address `_to` at `_chainId` and emit the `SendERC20` event including the `msg.sender` as parameter.
 
 ```solidity
 sendERC20(address _to, uint256 _amount, uint256 _chainId)
@@ -53,10 +53,12 @@ sendERC20(address _to, uint256 _amount, uint256 _chainId)
 Process incoming messages IF AND ONLY IF initiated
 by the same contract (token) address on a different chain
 and come from the `L2ToL2CrossChainMessenger` in the local chain.
-It will mint `_amount` to address `_to`, as defined in `sendERC20`.
+It SHOULD mint `_amount` to address `_to`, as defined in `sendERC20`
+and emit an event including the `_from` and chain id from the
+`source` chain, where `_from` is the `msg.sender` of `sendERC20`.
 
 ```solidity
-relayERC20(address _to, uint256 _amount)
+relayERC20(address _from, address _to, uint256 _amount)
 ```
 
 ### Events
@@ -66,7 +68,7 @@ relayERC20(address _to, uint256 _amount)
 MUST trigger when a cross-chain transfer is initiated using `sendERC20`.
 
 ```solidity
-event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uint256 _chainId)
+event SendERC20(address indexed from, address indexed to, uint256 amount, uint256 destination)
 ```
 
 #### `RelayERC20`
@@ -74,7 +76,7 @@ event SendERC20(address indexed _from, address indexed _to, uint256 _amount, uin
 MUST trigger when a cross-chain transfer is finalized using `relayERC20`.
 
 ```solidity
-event RelayERC20(address indexed to, uint256 amount);
+event RelayERC20(address indexed from, address indexed to, uint256 amount, uint256 source);
 ```
 
 ## Diagram
@@ -94,9 +96,11 @@ sequenceDiagram
   from->>SuperERC20_A: sendERC20To(to, amount, chainID)
   SuperERC20_A->>SuperERC20_A: burn(from, amount)
   SuperERC20_A->>Messenger_A: sendMessage(chainId, message)
+  SuperERC20_A-->SuperERC20_A: emit SendERC20(from, to, amount, destination)
   Inbox->>Messenger_B: relayMessage()
-  Messenger_B->>SuperERC20_B: relayERC20(to, amount)
+  Messenger_B->>SuperERC20_B: relayERC20(from, to, amount)
   SuperERC20_B->>SuperERC20_B: mint(to, amount)
+  SuperERC20_B-->SuperERC20_B: emit RelayERC20(from, to, amount, source)
 ```
 
 ## Implementation
@@ -111,17 +115,19 @@ for both replay protection and domain binding.
 ```solidity
 function sendERC20(address _to, uint256 _amount, uint256 _chainId) public {
   _burn(msg.sender, _amount);
-  bytes memory _message = abi.encodeCall(this.relayERC20, (_to, _amount));
+  bytes memory _message = abi.encodeCall(this.relayERC20, (msg.sender, _to, _amount));
   L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
   emit SendERC20(msg.sender, _to, _amount, _chainId);
 }
 
-function relayERC20(address _to, uint256 _amount) external {
+function relayERC20(address _from, address _to, uint256 _amount) external {
   require(msg.sender == address(L2ToL2CrossChainMessenger));
   require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
+  uint256 _source = L2ToL2CrossChainMessenger.crossDomainMessageSource();
+
   _mint(_to, _amount);
 
-  emit RelayERC20(_to, _amount)
+  emit RelayERC20(_from, _to, _amount, _source);
 }
 ```
 
