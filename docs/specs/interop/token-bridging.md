@@ -54,7 +54,7 @@ Process incoming messages IF AND ONLY IF initiated
 by the same contract (token) address on a different chain
 and come from the `L2ToL2CrossChainMessenger` in the local chain.
 It SHOULD mint `_amount` to address `_to`, as defined in `sendERC20`
-and emit an event including the `_from` and chain id from the 
+and emit an event including the `_from` and chain id from the
 `source` chain, where `_from` is the `msg.sender` of `sendERC20`.
 
 ```solidity
