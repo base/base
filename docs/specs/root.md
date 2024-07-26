@@ -27,7 +27,7 @@ Chat with us on the [discussion board!](https://github.com/ethereum-optimism/spe
 - [Rollup Node P2p](protocol/rollup-node-p2p.md)
 - [L2 Chain Derivation](protocol/derivation.md)
 - [Superchain Upgrades](protocol/superchain-upgrades.md)
-- [System Config](protocol/system_config.md)
+- [System Config](protocol/system-config.md)
 - [Batch Submitter](protocol/batcher.md)
 - [Guaranteed Gas Market](protocol/guaranteed-gas-market.md)
 - [Messengers](protocol/messengers.md)

@@ -176,7 +176,7 @@ If the gas cost of resolving the challenge was lower than the bond, the differen
 `cost = (fixedResolutionCost + preImageLength * variableResolutionCost / variableResolutionCostPrecision) * gasPrice`
 and the rest of the bond is burnt. If the challenge is not resolved in time and expired,
 the bond is returned and can be withdrawn by the challenger or used to challenge another commitment.
-`bondSize` can be updated by the contract owner similar to [SystemConfig](../protocol/system_config.md) variables.
+`bondSize` can be updated by the contract owner similar to [SystemConfig](../protocol/system-config.md) variables.
 See [Security Considerations](#security-considerations) for more details on bond management.
 
 The state of all challenges can be read from the contract state or by syncing contract events.

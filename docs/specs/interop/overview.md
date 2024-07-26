@@ -28,14 +28,14 @@ they need not be the same entity in practice.
 
 ## Specifications
 
-- [Dependency Set](./dependency_set.md): definition of chains and chain-dependencies in the Superchain.
+- [Dependency Set](./dependency-set.md): definition of chains and chain-dependencies in the Superchain.
 - [Messaging](./messaging.md): messaging functionality, core of protocol-level interoperability.
 - [Predeploys](./predeploys.md): system contracts to interface with other chains.
 - [Execution](./execution.md): enhancements to the execution-layer.
 - [Sequencer](./sequencer.md): Sequencer Policy and block-building information.
 - [Verifier](./verifier.md): Verification of cross-L2 messaging.
-- [Rollup Node P2P](./rollup_node_p2p.md): modifications to the rollup-node P2P layer to support fast interop.
-- [Fault Proof](./fault_proof.md): modifications to prove interop functionality in the fault-proof.
+- [Rollup Node P2P](./rollup-node-p2p.md): modifications to the rollup-node P2P layer to support fast interop.
+- [Fault Proof](./fault-proof.md): modifications to prove interop functionality in the fault-proof.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
 - [Superchain WETH](./superchain-weth.md): Making ETH interoperable.

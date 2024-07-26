@@ -837,7 +837,7 @@ In these specifications, "execution engine" always refer to the L2 execution eng
 <!-- Internal Links -->
 
 [deposits-spec]: ./protocol/deposits.md
-[system-config]: ./protocol/system_config.md
+[system-config]: ./protocol/system-config.md
 [exec-engine]: ./protocol/exec-engine.md
 [derivation-spec]: ./protocol/derivation.md
 [rollup-node-spec]: ./protocol/rollup-node.md
