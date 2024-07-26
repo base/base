@@ -21,6 +21,7 @@
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
     - [`migrated`](#migrated)
+    - [`delegations`](#delegations)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
     - [`DelegateVotesChanged`](#delegatevoteschanged)
@@ -184,11 +185,11 @@ function numCheckpoints(address _account) external view returns (uint32)
 
 #### `delegates`
 
-Retrieves the delegations of a given user address sorted in descending order by voting power.
+Retrieves the delegation of a given user address with the highest voting power.
 This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
-function delegates(address _account) external view returns (Delegation[] memory)
+function delegates(address _account) external view returns (address)
 ```
 
 #### `getVotes`
@@ -223,6 +224,14 @@ Returns the migration status of an account — `True` if the account has been mi
 function migrated(address _account) public view returns (bool)
 ```
 
+#### `delegations`
+
+Retrieves the delegations of a given user address sorted in descending order by voting power.
+
+```solidity
+function delegations(address _account) public view returns (Delegation[] memory)
+```
+
 ### Events
 
 #### `DelegationCreated`
@@ -252,7 +261,7 @@ defined as in the `GovernanceToken` and use the same types:
 mapping(address => bool) public migrated;
 
 // Voting power delegations of an account.
-mapping(address => Delegation[]) internal _delegations;
+mapping(address => Delegation[]) public delegations;
 
 // Checkpoints of voting power for an account.
 mapping(address => ERC20Votes.Checkpoint[]) internal _checkpoints;
