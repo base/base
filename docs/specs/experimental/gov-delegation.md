@@ -23,7 +23,6 @@
     - [`migrated`](#migrated)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
-    - [`DelegationsCreated`](#delegationscreated)
     - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
 - [Constants](#constants)
@@ -42,8 +41,6 @@
 - [Security Considerations](#security-considerations)
   - [Dependence on GovernanceDelegation](#dependence-on-governancedelegation)
   - [Connection with GovernanceToken](#connection-with-governancetoken)
-- [Future Considerations](#future-considerations)
-  - [Cross Chain Delegations](#cross-chain-delegations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -111,7 +108,7 @@ This function MUST enforce the migration logic, as specified in the [Migration](
 and every delegatee address in the `_delegations` array. Afterwards, the function MUST call the [`_delegate`](#_delegate)
 with the `msg.sender` and `_delegations` parameters.
 
-At the end, the `delegateBatched` function MUST emit a `DelegationsCreated` event with the given function parameters.
+At the end, the `delegateBatched` function MUST emit a `DelegationCreated` event with the given function parameters.
 
 #### `afterTokenTransfer`
 
@@ -152,7 +149,9 @@ function _delegate(address _delegator, Delegation[] memory _newDelegations) inte
 The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_DELEGATIONS`.
 Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
 power adjustments for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
-the voting power of the current and new set of delegatees.
+the voting power of the current and new set of delegatees. Throughout this process, the function MUST use the
+`DelegationAdjustment` and `Op` types to store voting power adjustments and the operation to perform (add or
+subtract voting power).
 
 The function MUST then sort the new delegatee set in descending order, and store the delegations as part of the
 `_delegations` mapping. While sorting, the function MUST check for the validity of the delegations, as specified
@@ -228,18 +227,10 @@ function migrated(address _account) public view returns (bool)
 
 #### `DelegationCreated`
 
-MUST trigger when an account delegates voting power to another address (delegatee).
+MUST trigger when an account delegates voting power to one or more addresses (delegatees).
 
 ```solidity
-event DelegationCreated(address indexed account, Delegation delegation);
-```
-
-#### `DelegationsCreated`
-
-MUST trigger when an account delegates voting power to multiple addresses (delegatees).
-
-```solidity
-event DelegationsCreated(address indexed account, Delegation[] delegations);
+event DelegationCreated(address indexed account, Delegation[] delegations);
 ```
 
 #### `DelegateVotesChanged`
@@ -438,12 +429,3 @@ reverts, `GovernanceToken` transfers will be blocked. Additionally, the `Governa
 Similarly, the `GovernanceDelegation` MUST always process token transfers from the `GovernanceToken` contract correctly to
 stay in sync with token balances. If the `GovernanceDelegation` contract is not in sync with the `GovernanceToken` contract,
 the voting power of users MAY be incorrect or outdated.
-
-## Future Considerations
-
-### Cross Chain Delegations
-
-To make the `GovernanceToken` interoperable, the `GovernanceDelegation` contract should be extended to support cross-chain
-delegations using the interoperability protocol. Specifically, the `GovernanceDelegation`'s hook entrypoint (`afterTokenTransfer`)
-should be modified to emit a message to another `GovernanceDelegation` contract on a different chain. This message should
-include the token transfer information (`_from`, `_to`, `_amount`).
