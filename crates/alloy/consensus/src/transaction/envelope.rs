@@ -31,17 +31,23 @@ pub enum OpTxType {
     Deposit = 126,
 }
 
+impl OpTxType {
+    /// List of all variants.
+    pub const ALL: [OpTxType; 5] = [
+        OpTxType::Legacy,
+        OpTxType::Eip2930,
+        OpTxType::Eip1559,
+        OpTxType::Eip4844,
+        OpTxType::Deposit,
+    ];
+}
+
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-        Ok(match u.int_in_range(0..=3)? {
-            0 => OpTxType::Legacy,
-            1 => OpTxType::Eip2930,
-            2 => OpTxType::Eip1559,
-            3 => OpTxType::Eip4844,
-            126 => OpTxType::Deposit,
-            _ => unreachable!(),
-        })
+        let i = u.choose_index(OpTxType::ALL.len())?;
+        let tx_ty = OpTxType::ALL[i];
+        Ok(OpTxType::try_from(tx_ty).unwrap())
     }
 }
 
