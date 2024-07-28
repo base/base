@@ -1,9 +1,11 @@
-use crate::TxDeposit;
 use alloy_consensus::{
     Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
 };
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
+use derive_more::Display;
+
+use crate::TxDeposit;
 
 /// Identifier for an Optimism deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
@@ -17,17 +19,22 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [4844]: https://eips.ethereum.org/EIPS/eip-4844
 /// [deposit-spec]: https://specs.optimism.io/protocol/deposits.html
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Display)]
 pub enum OpTxType {
     /// Legacy transaction type.
+    #[display(fmt = "legacy")]
     Legacy = 0,
     /// EIP-2930 transaction type.
+    #[display(fmt = "eip2930")]
     Eip2930 = 1,
     /// EIP-1559 transaction type.
+    #[display(fmt = "eip1559")]
     Eip1559 = 2,
     /// EIP-4844 transaction type.
+    #[display(fmt = "eip4844")]
     Eip4844 = 3,
     /// Optimism Deposit transaction type.
+    #[display(fmt = "deposit")]
     Deposit = 126,
 }
 
@@ -48,6 +55,12 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
         let i = u.choose_index(OpTxType::ALL.len())?;
         let tx_ty = OpTxType::ALL[i];
         Ok(OpTxType::try_from(tx_ty).unwrap())
+    }
+}
+
+impl From<OpTxType> for u8 {
+    fn from(v: OpTxType) -> u8 {
+        v as u8
     }
 }
 

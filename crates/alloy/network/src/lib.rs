@@ -6,10 +6,12 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-use alloy_consensus::{BlobTransactionSidecar, TxType};
 pub use alloy_network::*;
+
+use alloy_consensus::{BlobTransactionSidecar, TxType};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
+use op_alloy_consensus::OpTxType;
 
 /// Types for an Op-stack network.
 #[derive(Clone, Copy, Debug)]
@@ -18,7 +20,7 @@ pub struct Optimism {
 }
 
 impl Network for Optimism {
-    type TxType = TxType;
+    type TxType = OpTxType;
 
     type TxEnvelope = alloy_consensus::TxEnvelope;
 
@@ -146,8 +148,14 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
         TransactionBuilder::<Ethereum>::set_blob_sidecar(self, sidecar)
     }
 
-    fn complete_type(&self, ty: TxType) -> Result<(), Vec<&'static str>> {
-        TransactionBuilder::<Ethereum>::complete_type(self, ty)
+    fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {
+        match ty {
+            OpTxType::Deposit => Err(vec!["not implemented for deposit tx"]),
+            _ => {
+                let ty = TxType::try_from(ty as u8).unwrap();
+                TransactionBuilder::<Ethereum>::complete_type(self, ty)
+            }
+        }
     }
 
     fn can_submit(&self) -> bool {
@@ -159,13 +167,13 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
     }
 
     #[doc(alias = "output_transaction_type")]
-    fn output_tx_type(&self) -> TxType {
-        self.preferred_type()
+    fn output_tx_type(&self) -> OpTxType {
+        OpTxType::try_from(self.preferred_type() as u8).unwrap()
     }
 
     #[doc(alias = "output_transaction_type_checked")]
-    fn output_tx_type_checked(&self) -> Option<TxType> {
-        self.buildable_type()
+    fn output_tx_type_checked(&self) -> Option<OpTxType> {
+        self.buildable_type().map(|tx_ty| OpTxType::try_from(tx_ty as u8).unwrap())
     }
 
     fn prep_for_submission(&mut self) {
@@ -176,6 +184,7 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
 
     fn build_unsigned(self) -> BuildResult<alloy_consensus::TypedTransaction, Optimism> {
         if let Err((tx_type, missing)) = self.missing_keys() {
+            let tx_type = OpTxType::try_from(tx_type as u8).unwrap();
             return Err(TransactionBuilderError::InvalidTransactionRequest(tx_type, missing)
                 .into_unbuilt(self));
         }

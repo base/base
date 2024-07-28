@@ -24,6 +24,9 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 # serde
 serde = { workspace = true, features = ["derive"], optional = true }
 
+# misc
+derive_more = { workspace = true, features = ["display"] }
+
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
 alloy-signer.workspace = true
