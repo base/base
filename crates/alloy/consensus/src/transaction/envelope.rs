@@ -52,6 +52,12 @@ impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
     }
 }
 
+impl From<OpTxType> for u8 {
+    fn from(v: OpTxType) -> u8 {
+        v as u8
+    }
+}
+
 impl TryFrom<u8> for OpTxType {
     type Error = Eip2718Error;
 
