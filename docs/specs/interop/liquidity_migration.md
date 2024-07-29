@@ -134,15 +134,16 @@ Note: Code can be simplified by using || in
 the requires or conditionals.
 The tradeoff would be losing error precision.
 
-### OptimismMintableERC20Factory 
+### OptimismMintableERC20Factory
+
 #### Version
-The `OptimismMintableERC20Factory` should not use CREATE as the creation method and should make the salt depend on 
-the token metadata. 
 
-The CREATE2 version depends on the compiler and is therefore not suggested for the long term. For these reasons, it is recommended that the Factory version
- uses CREATE3 for deployments. 
+The `OptimismMintableERC20Factory` should not use CREATE as the creation method and should make the salt depend on
+the token metadata.
 
-
+The CREATE2 version depends on the compiler and is therefore not suggested for the long term.
+For these reasons, it is recommended that the Factory version
+uses CREATE3 for deployments.
 
 #### `deployments`
 
