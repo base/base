@@ -30,8 +30,6 @@
 - [Types](#types)
   - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
-  - [`DelegationAdjustment`](#delegationadjustment)
-  - [`Op`](#op)
 - [Backwards Compatibility](#backwards-compatibility)
 - [Migration](#migration)
 - [User Flow](#user-flow)
@@ -68,7 +66,8 @@ checkpoint data from the `GovernanceToken` to its own state.
 #### `delegate`
 
 Delegates voting power to another address (delegatee) with the given delegation parameters. This function
-is intended to be called by users that require advanced delegation of the `GovernanceToken`.
+is intended to be called by users that require advanced delegation of the `GovernanceToken`, and overwrites
+any existing delegations of the delegator.
 
 ```solidity
 function delegate(Delegation _delegation) external
@@ -150,9 +149,7 @@ function _delegate(address _delegator, Delegation[] memory _newDelegations) inte
 The `_delegate` function MUST first check that the length of `_newDelegations` does not exceed `MAX_DELEGATIONS`.
 Then, it MUST calculate the voting power of all active delegations of the `_delegator`, and calculate the voting
 power adjustments for the new delegatee set using `_newDelegations`. Afterwards, the function MUST update
-the voting power of the current and new set of delegatees. Throughout this process, the function MUST use the
-`DelegationAdjustment` and `Op` types to store voting power adjustments and the operation to perform (add or
-subtract voting power).
+the voting power of the current and new set of delegatees.
 
 The function MUST then sort the new delegatee set in descending order, and store the delegations as part of the
 `_delegations` mapping. While sorting, the function MUST check for the validity of the delegations, as specified
@@ -317,39 +314,6 @@ enum AllowanceType {
 | `Absolute`  | `0`    | The amount of votes delegated is fixed and denominated in the `GovernanceToken`'s decimals  |
 | `Relative`  | `1`    | The amount of votes delegated is relative and denominated in percentages.                   |
 
-### `DelegationAdjustment`
-
-`DelegationAdjustment` act as temporary storage when adjusting the delegation state of an account. This struct is defined
-as:
-
-```solidity
-struct DelegationAdjustment {
-  address delegatee;
-  uint208 amount;
-}
-```
-
-| Name        | Type      | Description                                                    |
-|-------------|-----------|----------------------------------------------------------------|
-| `delegatee` | `address` | The address for the delegation adjustment.                     |
-| `amount`    | `uint208` | The amount of voting power to add or remove.                   |
-
-### `Op`
-
-`Op` indicate the type of operation to perform when adjusting the delegation state of an account. This enum is defined as:
-
-```solidity
-enum Op {
-  ADD,
-  SUBTRACT
-}
-```
-
-| Name        | Number | Description                                                    |
-|-------------|--------|----------------------------------------------------------------|
-| `ADD`       | `0`    | Add the amount of voting power when adjusting.                 |
-| `SUBTRACT`  | `1`    | Subtract the amount of voting power when adjusting.           |
-
 ## Backwards Compatibility
 
 The `GovernanceDelegation` contract ensures backwards compatibility by allowing the migration of delegation state from the
@@ -421,6 +385,9 @@ that:
 - The sum of `amount` in relative delegations DOES NOT exceed the `DENOMINATOR`, and each `amount` is greater than 0.
 - The sum of `amount` in absolute delegations DOES NOT exceed the total voting power of the `_delegator`.
 - The new delegatee set is sorted in descending order by voting power.
+- If a delegation set includes both absolute and relative delegations, the relative delegations MUST be applied first and
+  the absolute delegations second with the remaining voting power. Therefore, the remaining voting power MUST be greater
+  than or equal than the sum of the absolute delegations.
 
 If any of the above conditions are not met, the `_delegate` function MUST revert with a specific error message.
 
