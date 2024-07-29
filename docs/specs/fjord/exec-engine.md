@@ -23,12 +23,12 @@ Fjord updates the L1 cost calculation function to use a FastLZ-based compression
 The L1 cost is computed as:
 
 ```pseudocode
-l1FeeScaled = baseFeeScalar*l1BaseFee*16 + blobFeeScalar*l1BlobBaseFee
+l1FeeScaled = l1BaseFeeScalar*l1BaseFee*16 + l1BlobFeeScalar*l1BlobBaseFee
 estimatedSizeScaled = max(minTransactionSize * 1e6, intercept + fastlzCoef*fastlzSize)
-l1Cost = estimatedSizeScaled * l1FeeScaled / 1e12
+l1Fee = estimatedSizeScaled * l1FeeScaled / 1e12
 ```
 
-The final `l1Cost` computation is an unlimited precision unsigned integer computation, with the result in Wei and
+The final `l1Fee` computation is an unlimited precision unsigned integer computation, with the result in Wei and
 having `uint256` range. The values in this computation, are as follows:
 
 | Input arg            | Type      | Description                                                       | Value                    |
@@ -36,13 +36,13 @@ having `uint256` range. The values in this computation, are as follows:
 | `l1BaseFee`          | `uint256` | L1 base fee of the latest L1 origin registered in the L2 chain    | varies, L1 fee           |
 | `l1BlobBaseFee`      | `uint256` | Blob gas price of the latest L1 origin registered in the L2 chain | varies, L1 fee           |
 | `fastlzSize`         | `uint256` | Size of the FastLZ-compressed RLP-encoded signed tx               | varies, per transaction  |
-| `baseFeeScalar`      | `uint32`  | L1 base fee scalar, scaled by `1e6`                               | varies, L2 configuration |
-| `blobFeeScalar`      | `uint32`  | L1 blob fee scalar, scaled by `1e6`                               | varies, L2 configuration |
+| `l1BaseFeeScalar`    | `uint32`  | L1 base fee scalar, scaled by `1e6`                               | varies, L2 configuration |
+| `l1BlobFeeScalar`    | `uint32`  | L1 blob fee scalar, scaled by `1e6`                               | varies, L2 configuration |
 | `intercept`          | `int32`   | Intercept constant, scaled by `1e6` (can be negative)             | -42_585_600              |
 | `fastlzCoef`         | `uint32`  | FastLZ coefficient, scaled by `1e6`                               | 836_500                  |
 | `minTransactionSize` | `uint32`  | A lower bound on transaction size, in bytes                       | 100                      |
 
-Previously, `baseFeeScalar` and `blobFeeScalar` were used to encode the compression ratio, due to the inaccuracy of
+Previously, `l1BaseFeeScalar` and `l1BlobFeeScalar` were used to encode the compression ratio, due to the inaccuracy of
 the L1 cost function. However, the new cost function takes into account the compression ratio, so these scalars should
 be adjusted to account for any previous compression ratio they encoded.
 
@@ -69,11 +69,6 @@ the most representative of performance across multiple chains and time periods. 
 and datasets used can be found in this [repository](https://github.com/roberto-bayardo/compression-analysis/tree/main).
 
 ### L1 Gas Usage Estimation
-
-The `L1GasUsed` property on the transaction receipt is updated to take into account the improvement in
-[compression estimation](./exec-engine.md#fees) accuracy. The value will be calculated by
-multiplying the `estimatedSizeScaled` of the transaction from the above L1 cost formula by 16. The value of 16 assumes most
-of the bytes in the compressed data are non-zero.
 
 The `L1GasUsed` property is deprecated due to it not capturing the L1 blob gas used by a transaction, and will be
 removed in a future network upgrade. Users can continue to use the `L1Fee` field to retrieve the L1 fee for a given
