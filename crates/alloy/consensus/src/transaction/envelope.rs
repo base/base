@@ -53,8 +53,7 @@ impl OpTxType {
 impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let i = u.choose_index(OpTxType::ALL.len())?;
-        let tx_ty = OpTxType::ALL[i];
-        Ok(OpTxType::try_from(tx_ty).unwrap())
+        Ok(OpTxType::ALL[i])
     }
 }
 
