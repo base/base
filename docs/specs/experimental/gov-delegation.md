@@ -50,14 +50,13 @@
 | Address  | `0x4200000000000000000000000000000000000043` |
 
 The `GovernanceDelegation` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md).
-Advanced delegation allows for partial and relative delegations of voting power.
+Advanced delegation allows for partial delegations of voting power using absolute or relative amounts. Absolute
+delegations are fixed and denominated in the `GovernanceToken`'s decimals, while relative delegations are denominated
+in basis points.
 
-The `GovernanceDelegation` contract migrates the delegation state from the `GovernanceToken` to itself
-through a hook-based approach. Specifically, the `GovernanceToken` calls the `GovernanceDelegation` contract's
-`afterTokenTransfer` function after a token transfer. This enables the `GovernanceDelegation` contract to consume
-the hook and update its delegation and checkpoint mappings accordingly. If either address involved in the transfer
-(`_from_` or `_to`) has not been migrated to the `GovernanceDelegation` contract, the contract copies the address'
-checkpoint data from the `GovernanceToken` to its own state.
+By using transfer hooks in the `GovernanceToken`, the `GovernanceDelegation` contract can update the delegation
+state and checkpoints after token transfers. This mechanism ensures that any delegations are correctly applied
+and that the voting power of users is accurately reflected as token balances change.
 
 ## Interface
 
