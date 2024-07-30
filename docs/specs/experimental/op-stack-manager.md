@@ -75,7 +75,7 @@ struct Roles {
 }
 
 function deploy(
-  uint64 l2ChainId,
+  uint256 l2ChainId,
   Roles roles,
   uint32 basefeeScalar,
   uint32 blobBasefeeScalar
