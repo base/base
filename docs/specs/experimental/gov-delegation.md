@@ -5,6 +5,7 @@
 **Table of Contents**
 
 - [Overview](#overview)
+- [Constants](#constants)
 - [Interface](#interface)
   - [Core Functions](#core-functions)
     - [`delegate`](#delegate)
@@ -26,7 +27,6 @@
     - [`DelegationCreated`](#delegationcreated)
     - [`DelegateVotesChanged`](#delegatevoteschanged)
 - [Storage](#storage)
-- [Constants](#constants)
 - [Types](#types)
   - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
@@ -45,10 +45,6 @@
 
 ## Overview
 
-| Constant | Value                                        |
-|----------|----------------------------------------------|
-| Address  | `0x4200000000000000000000000000000000000043` |
-
 The `GovernanceDelegation` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md).
 Advanced delegation allows for partial delegations of voting power using absolute or relative amounts. Absolute
 delegations are fixed and denominated in the `GovernanceToken`'s decimals, while relative delegations are denominated
@@ -57,6 +53,14 @@ in basis points.
 By using transfer hooks in the `GovernanceToken`, the `GovernanceDelegation` contract can update the delegation
 state and checkpoints after token transfers. This mechanism ensures that any delegations are correctly applied
 and that the voting power of users is accurately reflected as token balances change.
+
+## Constants
+
+| Constant          | Value                           | Description |
+| ----------------- | ------------------------------- | ----------- |
+| Address |  `0x4200000000000000000000000000000000000043` | Predeploy address of `GovernanceDelegation` |
+| `MAX_DELEGATIONS` | `20` | The maximum number of delegations allowed based on gas estimates of the worst-case scenario of an unoptimized version of the `_delegate` function |
+| `DENOMINATOR` | `10_000` | The denominator used for relative delegations |
 
 ## Interface
 
@@ -82,7 +86,8 @@ At the end, the `delegate` function MUST emit a `DelegationCreated` event with t
 
 Delegates 100% of the token voting power of an address (delegator) to another address (delegatee), mimicking the behavior
 of the `ERC20Votes`'s `delegate` function for backwards compatibility. This function MUST be callable only by the
-`GovernanceToken` contract as part of its `delegate` and `delegateBySig` functions.
+`GovernanceToken` contract as part of its `delegate` and `delegateBySig` functions, and overwrites
+any existing delegations of the delegator.
 
 ```solidity
 function delegateFromToken(address _delegator, address _delegatee) external
@@ -97,7 +102,7 @@ At the end, the `delegateFromToken` function MUST emit a `DelegationCreated` eve
 #### `delegateBatched`
 
 Delegates voting power to multiple addresses (delegatees) using the delegation array. This function is intended to be
-called by users.
+called by users, and overwrites any existing delegations of the delegator.
 
 ```solidity
 function delegateBatched(Delegation[] calldata _delegations) external
@@ -265,15 +270,6 @@ mapping(address => ERC20Votes.Checkpoint[]) internal _checkpoints;
 // Total supply checkpoints of the GovernanceToken.
 ERC20Votes.Checkpoint[] internal _totalSupplyCheckpoints;
 ```
-
-## Constants
-
-The `GovernanceDelegation` contract MUST define the following constants:
-
-| Name                     | Value     | Description                                              |
-|--------------------------|-----------|----------------------------------------------------------|
-| `MAX_DELEGATIONS`        | `20`      | The maximum number of delegations allowed based on gas estimates of the worst-case scenario of an unoptimized version of the `_delegate` function |
-| `DENOMINATOR`            | `10_000`  | The denominator used for relative delegations.           |
 
 ## Types
 
