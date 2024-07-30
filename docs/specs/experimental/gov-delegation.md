@@ -45,7 +45,7 @@
 
 ## Overview
 
-The `GovernanceDelegation` contract implements advanced delegation for the [`GovernanceToken`](gov-token.md).
+The `GovernanceDelegation` contract implements advanced delegation for the [`GovernanceToken`](../governance/gov-token.md).
 Advanced delegation allows for partial delegations of voting power using absolute or relative amounts. Absolute
 delegations are fixed and denominated in the `GovernanceToken`'s decimals, while relative delegations are denominated
 in basis points.
