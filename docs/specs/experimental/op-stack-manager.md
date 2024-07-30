@@ -76,9 +76,9 @@ struct Roles {
 
 function deploy(
   uint256 l2ChainId,
-  Roles roles,
   uint32 basefeeScalar,
-  uint32 blobBasefeeScalar
+  uint32 blobBasefeeScalar,
+  Roles roles
 ) external returns (SystemConfig)
 ```
 
