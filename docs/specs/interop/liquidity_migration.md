@@ -236,7 +236,7 @@ The conversion flow will need to conserve the following invariants:
 
 ### Access Control
 
-Each `SuperchainERC20` will correspond to a a remote token and can be connected
+Each `SuperchainERC20` will correspond to a remote token and can be connected
 to multiple existing legacy representations.
 Furthermore, each legacy representation can be connected to various
 `SuperchainERC20` (one per metadata).
