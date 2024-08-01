@@ -94,15 +94,15 @@ The `ExecutingMessage` event represents an executing message. It MUST be emitted
 to `executeMessage`.
 
 ```solidity
-event ExecutingMessage(bytes32 msgHash, Identifier identifier);
+event ExecutingMessage(bytes32 indexed msgHash, Identifier identifier);
 ```
 
-The data encoded in the event contains the the keccak hash of the `msg` and the `Identifier`.
+The data encoded in the event contains the keccak hash of the `msg` and the `Identifier`.
 The following pseudocode shows the deserialization:
 
 ```solidity
-(bytes32 msgHash, bytes memory identifier) = abi.decode(log.data, (bytes32, bytes));
-Identifier id = abi.decode(identifier, (Identifier));
+bytes32 msgHash = log.topics[1];
+Identifier identifier = abi.decode(log.data, (Identifier));
 ```
 
 Emitting the hash of the message is more efficient than emitting the
