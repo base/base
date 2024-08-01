@@ -94,19 +94,18 @@ The `ExecutingMessage` event represents an executing message. It MUST be emitted
 to `executeMessage`.
 
 ```solidity
-event ExecutingMessage(bytes32,bytes);
+event ExecutingMessage(bytes32 msgHash, Identifier identifier);
 ```
 
 The data encoded in the event contains the the keccak hash of the `msg` and the `Identifier`.
 The following pseudocode shows the deserialization:
 
 ```solidity
-(bytes32 logHash, bytes memory identifier) = abi.decode(log.data, (bytes32, bytes));
+(bytes32 msgHash, bytes memory identifier) = abi.decode(log.data, (bytes32, bytes));
 Identifier id = abi.decode(identifier, (Identifier));
 ```
 
-It is not possible to use solidity structs directly in events, which is why it is ABI encoded
-into `bytes` first. Emitting the hash of the message is more efficient than emitting the
+Emitting the hash of the message is more efficient than emitting the
 message in its entirety. Equality with the initiating message can be handled off-chain through
 hash comparison.
 
@@ -135,7 +134,7 @@ function executeMessage(Identifier calldata _id, address _target, bytes calldata
 
     require(success);
 
-    emit ExecutingMessage(keccak256(_msg), abi.encode(_id));
+    emit ExecutingMessage(keccak256(_msg), _id);
 }
 ```
 
