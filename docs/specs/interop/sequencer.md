@@ -103,7 +103,8 @@ if not success:
 
 for log in receipt.logs:
   if is_executing_message(log):
-      id, message = abi.decode(log.data)
+      id = abi.decode(log.data)
+      messageHash = log.topics[1]
 
       # assumes there is a client for each chain in the dependency set
       eth = clients[id.chainid]
@@ -116,7 +117,7 @@ for log in receipt.logs:
       if len(log) == 0:
         return False
 
-      if message != encode(log[0]):
+      if messageHash != hash(encode(log[0])):
         return False
 
       block = eth.getBlockByNumber(id.blocknumber)
