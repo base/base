@@ -195,6 +195,7 @@ function messageNonce() public view returns (uint256) {
 
 To enable interoperability between chains that use a custom gas token, there is no native support for
 sending `ether` between chains. `ether` must first be wrapped into WETH before sending between chains.
+See [SuperchainWETH](./superchain-weth.md) for more information.
 
 ### Interfaces
 
