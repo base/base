@@ -187,10 +187,10 @@ protocol upgrades.
 
 | Parameter | Bedrock (default) value | Latest (default) value | Changes | Notes |
 | --------- | ----------------------- | ---------------------- | ------- | ----- |
-| `max_sequencer_drift` | 600 | 1800 | [Fjord](../fjord/derivation.md#constant-maximum-sequencer-drift) | Changed from a chain parameter to a constant with Fjord. |
-| `MAX_RLP_BYTES_PER_CHANNEL` | 10,000,000 | 100,000,000 | [Fjord](../fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
-| `MAX_CHANNEL_BANK_SIZE` | 100,000,000 | 1,000,000,000 | [Fjord](../fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
-| `MAX_SPAN_BATCH_ELEMENT_COUNT` | 10,000,000 | 10,000,000 | Effectively introduced in [Fjord](../fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)| Number of elements |
+| `max_sequencer_drift` | 600 | 1800 | [Fjord](./fjord/derivation.md#constant-maximum-sequencer-drift) | Changed from a chain parameter to a constant with Fjord. |
+| `MAX_RLP_BYTES_PER_CHANNEL` | 10,000,000 | 100,000,000 | [Fjord](./fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
+| `MAX_CHANNEL_BANK_SIZE` | 100,000,000 | 1,000,000,000 | [Fjord](./fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size) | Constant increased with Fjord. |
+| `MAX_SPAN_BATCH_ELEMENT_COUNT` | 10,000,000 | 10,000,000 | Effectively introduced in [Fjord](./fjord/derivation.md#increasing-max_rlp_bytes_per_channel-and-max_channel_bank_size)| Number of elements |
 
 ---
 
@@ -393,7 +393,7 @@ where zlib_compress is the ZLIB algorithm (as specified in [RFC-1950][rfc1950]) 
 [rfc1950]: https://www.rfc-editor.org/rfc/rfc1950.html
 
 The Fjord upgrade introduces an additional [versioned channel encoding
-format](../fjord/derivation.md#brotli-channel-compression) to support alternate compression
+format](./fjord/derivation.md#brotli-channel-compression) to support alternate compression
 algorithms.
 
 When decompressing a channel, we limit the amount of decompressed data to `MAX_RLP_BYTES_PER_CHANNEL` (defined in the

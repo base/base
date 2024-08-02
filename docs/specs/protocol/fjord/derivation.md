@@ -76,8 +76,8 @@ a security issue.
 With Fjord, `MAX_RLP_BYTES_PER_CHANNEL` will be increased from 10,000,000 bytes to 100,000,000 bytes,
 and `MAX_CHANNEL_BANK_SIZE` will be increased from 100,000,000 bytes to 1,000,000,000 bytes.
 
-The usage of `MAX_RLP_BYTES_PER_CHANNEL` is defined in [Channel Format](../protocol/derivation.md#channel-format).
-The usage of `MAX_CHANNEL_BANK_SIZE` is defined in [Channel Bank Pruning](../protocol/derivation.md#pruning).
+The usage of `MAX_RLP_BYTES_PER_CHANNEL` is defined in [Channel Format](../derivation.md#channel-format).
+The usage of `MAX_CHANNEL_BANK_SIZE` is defined in [Channel Bank Pruning](../derivation.md#pruning).
 
 Span Batches previously had a limit `MAX_SPAN_BATCH_SIZE` which was equal to `MAX_RLP_BYTES_PER_CHANNEL`.
 Fjord creates a new constant `MAX_SPAN_BATCH_ELEMENT_COUNT` for the element count limit & removes
@@ -125,7 +125,7 @@ prior to this change which would cause the Fault Proof Program to consume a very
 
 # Brotli Channel Compression
 
-[legacy-channel-format]: ../protocol/derivation.md#channel-format
+[legacy-channel-format]: ../derivation.md#channel-format
 
 Fjord introduces a new versioned channel encoding format to support alternate compression
 algorithms, with the [legacy channel format][legacy-channel-format] remaining supported. The
@@ -171,7 +171,7 @@ To perform this upgrade, a deposit transaction is derived with the following att
 - `mint`: `0`
 - `value`: `0`
 - `gasLimit`: `1,450,000`
-- `data`: `0x60806040523...` ([full bytecode](../static/bytecode/fjord-gas-price-oracle-deployment.txt))
+- `data`: `0x60806040523...` ([full bytecode](../../static/bytecode/fjord-gas-price-oracle-deployment.txt))
 - `sourceHash`: `0x86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3`
   computed with the "Upgrade-deposited" type, with `intent = "Fjord: Gas Price Oracle Deployment"
 
