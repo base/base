@@ -26,17 +26,21 @@
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
+- [OptimismMintableERC20Factory](#optimismmintableerc20factory)
+  - [OptimismMintableERC20](#optimismmintableerc20)
+  - [Creation method](#creation-method)
+  - [Deployments history](#deployments-history)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 Two new system level predeploys are introduced for managing cross chain messaging along with
-an update to the `L1Block` contract with additional functionality.
+an update to the `L1Block` and `OptimismMintableERC20Factory` contracts with additional functionalities.
 
 ## CrossL2Inbox
 
 | Constant | Value                                        |
-|----------|----------------------------------------------|
+| -------- | -------------------------------------------- |
 | Address  | `0x4200000000000000000000000000000000000022` |
 
 The `CrossL2Inbox` is responsible for executing a cross chain message on the destination chain.
@@ -52,7 +56,7 @@ The following fields are required for executing a cross chain message:
 [`Identifier`]: ./messaging.md#message-identifier
 
 | Name      | Type         | Description                                             |
-|-----------|--------------|---------------------------------------------------------|
+| --------- | ------------ | ------------------------------------------------------- |
 | `_msg`    | `bytes`      | The [message payload], matching the initiating message. |
 | `_id`     | `Identifier` | A [`Identifier`] pointing to the initiating message.    |
 | `_target` | `address`    | Account that is called with `_msg`.                     |
@@ -148,7 +152,7 @@ properties about the `_msg`.
 ## L2ToL2CrossDomainMessenger
 
 | Constant          | Value                                        |
-|-------------------|----------------------------------------------|
+| ----------------- | -------------------------------------------- |
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
 | `EXPIRY_WINDOW`   | `uint256(7200)`                              |
@@ -358,7 +362,7 @@ function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
 ## L1Block
 
 | Constant            | Value                                        |
-|---------------------|----------------------------------------------|
+| ------------------- | -------------------------------------------- |
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
@@ -382,7 +386,7 @@ enum ConfigType {
 The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
 | ConfigType             | Value                                       |
-|------------------------|---------------------------------------------|
+| ---------------------- | ------------------------------------------- |
 | `SET_GAS_PAYING_TOKEN` | `abi.encode(token, decimals, name, symbol)` |
 | `ADD_DEPENDENCY`       | `abi.encode(chainId)`                       |
 | `REMOVE_DEPENDENCY`    | `abi.encode(chainId)`                       |
@@ -416,6 +420,46 @@ id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MU
 dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
 `L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
 MUST return the length of the dependency set array.
+
+## OptimismMintableERC20Factory
+
+| Constant | Value                                        |
+| -------- | -------------------------------------------- |
+| Address  | `0x4200000000000000000000000000000000000012` |
+
+### OptimismMintableERC20
+
+The `OptimismMintableERC20Factory` creates ERC20 contracts on L2 that can be used to deposit
+native L1 tokens into (`OptimismMintableERC20`). Anyone can deploy `OptimismMintableERC20`s contracts.
+
+Each `OptimismMintableERC20` contract created by the `OptimismMintableERC20Factory`
+allows for the `L2StandardBridge` to mint
+and burn tokens, depending on whether the user is
+depositing from L1 to L2 or withdrawing from L2 to L1.
+
+### Creation method
+
+The `OptimismMintableERC20Factory` is updated to use `CREATE3` instead of `CREATE2`.
+This will remove the compiler's dependency on address computation.
+
+The salt SHOULD depend on the inputs:
+`remoteToken`, `name`, `symbol`, and `decimals`.
+
+A reference implementation looks like the following:
+
+```solidity
+bytes memory _creationCode = abi.encodePacked(
+  type(OptimismMintableERC20).creationCode,
+  abi.encode(_bridge, _remoteToken, _name, _symbol, _decimals)
+);
+bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));
+_optimismMintableERC20 = CREATE3.deploy(salt, _creationCode);
+```
+
+### Deployments history
+
+The `OptimismMintableERC20Factory` SHOULD include a `deployments` mapping
+to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
 
 ## Security Considerations
 
