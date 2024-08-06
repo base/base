@@ -1,7 +1,6 @@
 //! A program to verify a Optimism L2 block STF in the zkVM.
 #![cfg_attr(target_os = "zkvm", no_main)]
 
-use client_utils::{MultiBlockDerivationDriver, MultiblockOracleL2ChainProvider};
 use kona_client::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
@@ -15,6 +14,10 @@ use op_alloy_consensus::OpTxEnvelope;
 use alloc::sync::Arc;
 use alloy_consensus::Sealed;
 use cfg_if::cfg_if;
+
+use client_utils::{
+    driver::MultiBlockDerivationDriver, l2_chain_provider::MultiblockOracleL2ChainProvider,
+};
 
 extern crate alloc;
 
@@ -44,20 +47,32 @@ fn main() {
             // If we are compiling for the zkVM, read inputs from SP1 to generate boot info
             // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
+                use client_utils::precompiles::ZKVMPrecompileOverride;
+
+                println!("cycle-tracker-start: boot-load");
                 let boot = sp1_zkvm::io::read::<RawBootInfo>();
                 sp1_zkvm::io::commit_slice(&boot.abi_encode());
                 let boot: Arc<BootInfo> = Arc::new(boot.into());
+                println!("cycle-tracker-end: boot-load");
 
+                println!("cycle-tracker-start: oracle-load");
                 let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
                 let oracle = Arc::new(InMemoryOracle::from_raw_bytes(kv_store_bytes));
+                println!("cycle-tracker-end: oracle-load");
 
+                println!("cycle-tracker-start: oracle-verify");
                 oracle.verify().expect("key value verification failed");
+                println!("cycle-tracker-end: oracle-verify");
+
+                let precompile_overrides = ZKVMPrecompileOverride::default();
 
             // If we are compiling for online mode, create a caching oracle that speaks to the
             // fetcher via hints, and gather boot info from this oracle.
             } else {
                 let oracle = Arc::new(CachingOracle::new(1024));
                 let boot = Arc::new(BootInfo::load(oracle.as_ref()).await.unwrap());
+
+                let precompile_overrides = NoPrecompileOverride;
             }
         }
 
@@ -69,6 +84,7 @@ fn main() {
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
 
+        println!("cycle-tracker-start: derivation-instantiation");
         let mut driver = MultiBlockDerivationDriver::new(
             boot.as_ref(),
             oracle.as_ref(),
@@ -78,17 +94,20 @@ fn main() {
         )
         .await
         .unwrap();
+        println!("cycle-tracker-end: derivation-instantiation");
 
         let mut l2_block_info = driver.l2_safe_head;
         let mut new_block_header = &driver.l2_safe_head_header.inner().clone();
 
+        println!("cycle-tracker-start: execution-instantiation");
         let mut executor = StatelessL2BlockExecutor::builder(&boot.rollup_config)
             .with_parent_header(driver.clone_l2_safe_head_header())
             .with_fetcher(l2_provider.clone())
             .with_hinter(l2_provider.clone())
-            .with_precompile_overrides(NoPrecompileOverride)
+            .with_precompile_overrides(precompile_overrides)
             .build()
             .unwrap();
+        println!("cycle-tracker-end: execution-instantiation");
 
         'step: loop {
             let l2_attrs_with_parents = driver.produce_payloads().await.unwrap();
@@ -102,9 +121,11 @@ fn main() {
                     "Executing Payload for L2 Block: {}",
                     payload.parent.block_info.number + 1
                 );
+                println!("cycle-tracker-start: execution");
                 new_block_header = executor
                     .execute_payload(payload.attributes.clone())
                     .unwrap();
+                println!("cycle-tracker-end: execution");
                 let new_block_number = new_block_header.number;
                 assert_eq!(new_block_number, payload.parent.block_info.number + 1);
 
@@ -143,7 +164,10 @@ fn main() {
             );
         }
 
+        println!("cycle-tracker-start: output-root");
         let output_root = executor.compute_output_root().unwrap();
+        println!("cycle-tracker-end: output-root");
+
         println!("Completed Proof. Output Root: {}", output_root);
 
         ////////////////////////////////////////////////////////////////

@@ -3,7 +3,7 @@
 //!
 //! [L2PayloadAttributes]: kona_derive::types::L2PayloadAttributes
 
-use crate::MultiblockOracleL2ChainProvider;
+use crate::l2_chain_provider::MultiblockOracleL2ChainProvider;
 use alloc::sync::Arc;
 use alloy_consensus::{Header, Sealed};
 use anyhow::{anyhow, Result};

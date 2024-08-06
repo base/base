@@ -12,8 +12,6 @@ use core::{
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-extern crate alloc;
-
 /// This function busy waits on a future until it is ready. It uses a no-op waker to poll the future
 /// in a thread-blocking loop.
 pub fn block_on<T>(f: impl Future<Output = T>) -> T {
