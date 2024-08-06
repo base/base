@@ -146,6 +146,8 @@ impl InMemoryOracle {
 
         // Verify reconstructed blobs.
         for (commitment, blob) in blobs.iter() {
+            println!("cycle-tracker-start: blob-verification");
+            println!("cycle-tracker-end: blob-verification");
             // kzg::verify_blob_kzg_proof(&blob.data, commitment, &blob.kzg_proof)
             // .map_err(|e| format!("blob verification failed for {:?}: {}", commitment, e))?;
 

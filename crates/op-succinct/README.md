@@ -29,3 +29,7 @@ just run-multi <start> <end> [verbosity] [use-cache]
 
 - [verbosity]: Optional verbosity level (default: 0).
 - [use-cache]: Optional flag to re-use the native execution cache (default: false).
+
+Observations: 
+* For most blocks, the cycle count per transaction is around 4M cycles per transaction.
+* TODO: Do further analysis on the cycle count.
