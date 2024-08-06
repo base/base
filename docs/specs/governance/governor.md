@@ -8,6 +8,16 @@
 - [Constants](#constants)
 - [Interface](#interface)
   - [Core Functions](#core-functions)
+    - [`cancel`](#cancel)
+    - [`cancelWithModule`](#cancelwithmodule)
+    - [`castVote`](#castvote)
+    - [`castVoteBySig`](#castvotebysig)
+    - [`castVoteWithReason`](#castvotewithreason)
+    - [`castVoteWithReasonAndParams`](#castvotewithreasonandparams)
+    - [`castVoteWithReasonAndParamsBySug`](#castvotewithreasonandparamsbysug)
+    - [`editProposalType`](#editproposaltype)
+    - [`execute`](#execute)
+    - [`TODO`](#todo)
   - [Getters](#getters)
     - [`approvedModules`](#approvedmodules)
     - [`getProposalType`](#getproposaltype)
@@ -65,7 +75,100 @@ This contract uses the `GovernanceToken` contract for voting power snapshots.
 
 ### Core Functions
 
-TOOD
+#### `cancel`
+
+Cancels a proposal. A proposal MUST only be cancellable by the proposer and ONLY while it is pending state,
+i.e. before the vote starts.
+
+```solidity
+function cancel(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return the ID of the proposal that was cancelled.
+
+#### `cancelWithModule`
+
+Similar to `cancel`, but for proposals that were created with a module.
+
+```solidity
+function cancelWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return the ID of the proposal that was cancelled.
+
+#### `castVote`
+
+Cast a vote on a proposal.
+
+```solidity
+function castVote(uint256 _proposalId, uint8 _support) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `castVoteBySig`
+
+Cast a vote on a proposal using a signature.
+
+```solidity
+function castVoteBySig(uint256 _proposalId, uint8 _support, uint8 _v, bytes32 _r, bytes32 _s) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `castVoteWithReason`
+
+Cast a vote on a proposal with a reason.
+
+```solidity
+function castVoteWithReason(uint256 _proposalId, uint8 _support, string memory _reason) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `castVoteWithReasonAndParams`
+
+Cast a vote on a proposal with a reason and additional encoded parameters.
+
+```solidity
+function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `castVoteWithReasonAndParamsBySug`
+
+Cast a vote on a proposal with a reason and additional encoded parameters using a signature.
+
+```solidity
+function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params, uint8 _v, bytes32 _r, bytes32 _s) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `editProposalType`
+
+Edit the type of a proposal that is still active. This function MUST only be callable by the manager.
+
+```solidity
+function editProposalType(uint256 _proposalId, uint8 _proposalType) external view
+```
+
+This function MUST revert if the proposal is not active or if the caller is not the manager. Additionally, this function
+MUST emit TODO event.
+
+#### `execute`
+
+Execute a successful proposal. This MUST only be possible when the quorum is reached, the vote is successful, and the
+deadline is reached.
+
+```solidity
+function execute(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external view returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `TODO`
 
 ### Getters
 
