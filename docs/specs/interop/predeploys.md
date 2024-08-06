@@ -430,7 +430,7 @@ MUST return the length of the dependency set array.
 ### OptimismMintableERC20
 
 The `OptimismMintableERC20Factory` creates ERC20 contracts on L2 that can be used to deposit
-native L1 tokens into (`OptimismMintableERC20`). Anyone can deploy `OptimismMintableERC20`s contracts.
+native L1 tokens into (`OptimismMintableERC20`). Anyone can deploy `OptimismMintableERC20` contracts.
 
 Each `OptimismMintableERC20` contract created by the `OptimismMintableERC20Factory`
 allows for the `L2StandardBridge` to mint
@@ -442,8 +442,9 @@ depositing from L1 to L2 or withdrawing from L2 to L1.
 The `OptimismMintableERC20Factory` is updated to use `CREATE3` instead of `CREATE2`.
 This will remove the compiler's dependency on address computation.
 
-The salt SHOULD depend on the inputs:
+The salt SHOULD depend on the following inputs:
 `remoteToken`, `name`, `symbol`, and `decimals`.
+This will ensure a unique address for each set of ERC20 metadata.
 
 A reference implementation looks like the following:
 
@@ -458,7 +459,7 @@ _optimismMintableERC20 = CREATE3.deploy(salt, _creationCode);
 
 ### Deployments history
 
-The `OptimismMintableERC20Factory` SHOULD include a `deployments` mapping
+The `OptimismMintableERC20Factory` MUST include a `deployments` mapping
 to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
 
 ## Security Considerations
