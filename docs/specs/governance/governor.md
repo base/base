@@ -14,7 +14,7 @@
     - [`castVoteBySig`](#castvotebysig)
     - [`castVoteWithReason`](#castvotewithreason)
     - [`castVoteWithReasonAndParams`](#castvotewithreasonandparams)
-    - [`castVoteWithReasonAndParamsBySug`](#castvotewithreasonandparamsbysug)
+    - [`castVoteWithReasonAndParamsBySig`](#castvotewithreasonandparamsbysig)
     - [`editProposalType`](#editproposaltype)
     - [`execute`](#execute)
     - [`executeWithModule`](#executewithmodule)
@@ -55,8 +55,21 @@
     - [`votingPeriod`](#votingperiod)
     - [`weightCast`](#weightcast)
   - [Events](#events)
+    - [`ProposalCanceled`](#proposalcanceled)
+    - [`VoteCast`](#votecast)
+    - [`VoteCastWithParams`](#votecastwithparams)
+    - [`ProposalTypeUpdated`](#proposaltypeupdated)
+    - [`ProposalExecuted`](#proposalexecuted)
+    - [`ProposalCreated`](#proposalcreated)
+    - [`ProposalDeadlineUpdated`](#proposaldeadlineupdated)
+    - [`ProposalThresholdSet`](#proposalthresholdset)
+    - [`VotingDelaySet`](#votingdelayset)
+    - [`VotingPeriodSet`](#votingperiodset)
+    - [`QuorumNumeratorUpdated`](#quorumnumeratorupdated)
 - [Storage](#storage)
 - [Types](#types)
+  - [`ProposalVote`](#proposalvote)
+  - [`ProposalCore`](#proposalcore)
 - [User Flow](#user-flow)
 - [Security Considerations](#security-considerations)
 
@@ -142,8 +155,8 @@ Cast a vote on a proposal with a reason and additional encoded parameters.
 function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external returns (uint256)
 ```
 
-This function MUST emit the `VoteCastWithParams` event if the length of the parameters is more than zero. Otherwise, the function
-MUST emit the `VoteCast` event. The function MUST also return the voting weight.
+This function MUST emit the `VoteCastWithParams` event if the length of the parameters is more than zero. Otherwise,
+the function MUST emit the `VoteCast` event. The function MUST also return the voting weight.
 
 #### `castVoteWithReasonAndParamsBySig`
 
@@ -176,7 +189,7 @@ deadline is reached.
 function execute(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external payable returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `ProposalExecuted` event and return the proposal ID.
 
 #### `executeWithModule`
 
@@ -187,7 +200,7 @@ the vote is successful, and the deadline is reached.
 function executeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external payable returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `ProposalExecuted` event and return the proposal ID.
 
 #### `propose`
 
@@ -197,7 +210,7 @@ Creates a new proposal with a given proposal type. This function MUST check that
 function propose(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, string memory _description) external returns (uint256)
 ```
 
-This function MUST emit the TODO event and return the ID of the proposal created.
+This function MUST emit the `ProposalCreated` event and return the ID of the proposal created.
 
 #### `proposeWithModule`
 
@@ -208,7 +221,7 @@ and that the module is supported by the `Governor` contract.
 function proposeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash, uint8 _proposalType) external returns (uint256)
 ```
 
-This function MUST emit the TODO event and return the ID of the proposal created.
+This function MUST emit the `ProposalCreated` event and return the ID of the proposal created.
 
 #### `relay`
 
@@ -491,17 +504,166 @@ function weightCast(uint256 _proposalId, uint256 _account) external view returns
 
 ### Events
 
-TODO
+#### `ProposalCanceled`
+
+MUST trigger when a proposal is cancelled.
+
+```solidity
+event ProposalCanceled(uint256 proposalId);
+```
+
+#### `VoteCast`
+
+MUST trigger when proposal vote is casted.
+
+```solidity
+event VoteCast(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason);
+```
+
+#### `VoteCastWithParams`
+
+MUST trigger when proposal vote with parameters is casted.
+
+```solidity
+event VoteCastWithParams(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason, bytes params); 
+```
+
+#### `ProposalTypeUpdated`
+
+MUST trigger when a proposal type is updated.
+
+```solidity
+event ProposalTypeUpdated(uint256 indexed proposalId, uint8 proposalType);
+```
+
+#### `ProposalExecuted`
+
+MUST trigger when a proposal is executed.
+
+```solidity
+event ProposalExecuted(uint256 proposalId);
+```
+
+#### `ProposalCreated`
+
+MUST trigger when a proposal is created.
+
+```solidity
+event ProposalCreated(uint256 indexed proposalId, address indexed proposer, address indexed module, address[] targets, uint256[] values, string[] signatures, bytes[] calldatas, uint256 startBlock, uint256 endBlock, string description, uint8 proposalType);
+```
+
+#### `ProposalDeadlineUpdated`
+
+MUST trigger when a proposal's deadline is updated.
+
+```solidity
+event ProposalDeadlineUpdated(uint256 proposalId, uint64 deadline);
+```
+
+#### `ProposalThresholdSet`
+
+MUST trigger when the proposal threshold is updated.
+
+```solidity
+event ProposalThresholdSet(uint256 oldProposalThreshold, uint256 newProposalThreshold);
+```
+
+#### `VotingDelaySet`
+
+MUST trigger when the voting delay is updated.
+
+```solidity
+event VotingDelaySet(uint256 oldVotingDelay, uint256 newVotingDelay);
+```
+
+#### `VotingPeriodSet`
+
+MUST trigger when the voting period is updated.
+
+```solidity
+event VotingPeriodSet(uint256 oldVotingPeriod, uint256 newVotingPeriod);
+```
+
+#### `QuorumNumeratorUpdated`
+
+MUST trigger when the quorum numerator is updated.
+
+```solidity
+event QuorumNumeratorUpdated(uint256 oldQuorumNumerator, uint256 newQuorumNumerator);
+```
 
 ## Storage
 
-TOOD
+The `Governor` contract MUST be able to store proposals and votes. The following storage variables MUST be
+defined:
+
+```solidity
+// The address of the manager.
+address public manager;
+
+// The token to use for voting.
+IVotesUpgradeable public token;
+
+// Total number of `votes` that `account` has casted for `proposalId`.
+mapping(uint256 proposalId => mapping(address account => uint256 votes)) public weightCast;
+
+// Whether a `module` has been approved or not.
+mapping(address module => bool approved) public approvedModules;
+
+// The vote accounting for a proposal.
+mapping(uint256 proposalId => ProposalVote votes) internal _proposalVotes;
+
+// The proposals that have been created.
+mapping(uint256 proposalId => ProposalCore proposal) internal _proposals;
+```
 
 ## Types
 
 The `Governor` contract MUST define the following types:
 
-TODO
+### `ProposalVote`
+
+`ProposalVote` defines the vote accounting for a proposal, encapsulated in the following struct:
+
+```solidity
+struct ProposalVote {
+  uint256 againstVotes;
+  uint256 forVotes;
+  uint256 abstainVotes;
+  mapping(address => bool) hasVoted;
+}
+```
+
+| Name                     | Type            | Description                                                             |
+|--------------------------|-----------------|-------------------------------------------------------------------------|
+| `againstVotes`          | `uint256` | Amount of votes against the proposal.                         |
+| `forVotes`              | `uint256`       | Amount of votes in favor of the proposal.                |
+| `abstainVotes`                 | `uint256`       | Amount of votes abstaining.   |
+| `hasVoted`                 | `mapping`       | Whether an account has voted for this proposal or not.   |
+
+### `ProposalCore`
+
+`ProposalCore` defines the core information of a proposal, encapsulated in the following struct:
+
+```solidity
+struct ProposalCore {
+  uint64 voteStart;
+  uint64 voteEnd;
+  bool executed;
+  bool canceled;
+  address votingModule;
+  uint8 proposalType;
+}
+```
+
+| Name                     | Type            | Description                                                             |
+|--------------------------|-----------------|-------------------------------------------------------------------------|
+| `voteStart`          | `uint64` | The block timestamp when voting started.                         |
+| `voteEnd`              | `uint64`       | The block timestamp when voting ends.                |
+| `executed`                 | `bool`       | Indicator for proposal execution.   |
+| `canceled`                 | `bool`       | Indicator for proposal cancellation.   |
+| `votingModule`                 | `address`       | The voting module of the proposal. Zero address if none.   |
+| `proposalType`                 | `uint8`       | The type of proposal.   |
 
 ## User Flow
 
