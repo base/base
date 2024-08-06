@@ -17,7 +17,16 @@
     - [`castVoteWithReasonAndParamsBySug`](#castvotewithreasonandparamsbysug)
     - [`editProposalType`](#editproposaltype)
     - [`execute`](#execute)
-    - [`TODO`](#todo)
+    - [`executeWithModule`](#executewithmodule)
+    - [`propose`](#propose)
+    - [`proposeWithModule`](#proposewithmodule)
+    - [`relay`](#relay)
+    - [`setModuleApproval`](#setmoduleapproval)
+    - [`setProposalDeadline`](#setproposaldeadline)
+    - [`setProposalThreshold`](#setproposalthreshold)
+    - [`setVotingDelay`](#setvotingdelay)
+    - [`setVotingPeriod`](#setvotingperiod)
+    - [`updateQuorumNumerator`](#updatequorumnumerator)
   - [Getters](#getters)
     - [`approvedModules`](#approvedmodules)
     - [`getProposalType`](#getproposaltype)
@@ -62,7 +71,6 @@ This contract uses the `GovernanceToken` contract for voting power snapshots.
 
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
-| `ALLIGATOR` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The address of the `Alligator` contract |
 | `BALLOT_TYPEHASH` |  `0x150214d74d59b7d1e90c73fc22ef3d991dd0a76b046543d4d80ab92d2a50328f` | The EIP-712 typehash for the ballot struct  |
 | `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted |
 | `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct  |
@@ -77,85 +85,87 @@ This contract uses the `GovernanceToken` contract for voting power snapshots.
 
 #### `cancel`
 
-Cancels a proposal. A proposal MUST only be cancellable by the proposer and ONLY while it is pending state,
-i.e. before the vote starts.
+Cancels a proposal. A proposal MUST only be cancellable by the manager and ONLY while it's in an active state,
+i.e. not executed or cancelled already.
 
 ```solidity
-function cancel(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external view returns (uint256)
+function cancel(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return the ID of the proposal that was cancelled.
+This function MUST emit the `ProposalCanceled` event and return the ID of the proposal that was cancelled.
 
 #### `cancelWithModule`
 
 Similar to `cancel`, but for proposals that were created with a module.
 
 ```solidity
-function cancelWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external view returns (uint256)
+function cancelWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return the ID of the proposal that was cancelled.
+This function MUST emit the `ProposalCanceled` event and return the ID of the proposal that was cancelled.
 
 #### `castVote`
 
 Cast a vote on a proposal.
 
 ```solidity
-function castVote(uint256 _proposalId, uint8 _support) external view returns (uint256)
+function castVote(uint256 _proposalId, uint8 _support) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteBySig`
 
 Cast a vote on a proposal using a signature.
 
 ```solidity
-function castVoteBySig(uint256 _proposalId, uint8 _support, uint8 _v, bytes32 _r, bytes32 _s) external view returns (uint256)
+function castVoteBySig(uint256 _proposalId, uint8 _support, uint8 _v, bytes32 _r, bytes32 _s) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteWithReason`
 
 Cast a vote on a proposal with a reason.
 
 ```solidity
-function castVoteWithReason(uint256 _proposalId, uint8 _support, string memory _reason) external view returns (uint256)
+function castVoteWithReason(uint256 _proposalId, uint8 _support, string memory _reason) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteWithReasonAndParams`
 
 Cast a vote on a proposal with a reason and additional encoded parameters.
 
 ```solidity
-function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external view returns (uint256)
+function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `VoteCastWithParams` event if the length of the parameters is more than zero. Otherwise, the function
+MUST emit the `VoteCast` event. The function MUST also return the voting weight.
 
-#### `castVoteWithReasonAndParamsBySug`
+#### `castVoteWithReasonAndParamsBySig`
 
 Cast a vote on a proposal with a reason and additional encoded parameters using a signature.
 
 ```solidity
-function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params, uint8 _v, bytes32 _r, bytes32 _s) external view returns (uint256)
+function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params, uint8 _v, bytes32 _r, bytes32 _s) external returns (uint256)
 ```
 
-This function MUST emit TODO event and return TODO.
+This function MUST emit the `VoteCastWithParams` event if the length of the parameters is more than zero. Otherwise,
+the function MUST emit the `VoteCast` event. The function MUST also return the voting weight.
 
 #### `editProposalType`
 
 Edit the type of a proposal that is still active. This function MUST only be callable by the manager.
 
 ```solidity
-function editProposalType(uint256 _proposalId, uint8 _proposalType) external view
+function editProposalType(uint256 _proposalId, uint8 _proposalType) external
 ```
 
-This function MUST revert if the proposal is not active or if the caller is not the manager. Additionally, this function
-MUST emit TODO event.
+This function MUST revert if the proposal type is not already configured. Additionally, this function MUST emit
+the `ProposalTypeUpdated` event.
 
 #### `execute`
 
@@ -163,12 +173,110 @@ Execute a successful proposal. This MUST only be possible when the quorum is rea
 deadline is reached.
 
 ```solidity
-function execute(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external view returns (uint256)
+function execute(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external payable returns (uint256)
 ```
 
 This function MUST emit TODO event and return TODO.
 
-#### `TODO`
+#### `executeWithModule`
+
+Execute a successful proposal that was created with a module. This MUST only be possible when the quorum is reached,
+the vote is successful, and the deadline is reached.
+
+```solidity
+function executeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external payable returns (uint256)
+```
+
+This function MUST emit TODO event and return TODO.
+
+#### `propose`
+
+Creates a new proposal with a given proposal type. This function MUST check that the proposal type exists.
+
+```solidity
+function propose(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, string memory _description) external returns (uint256)
+```
+
+This function MUST emit the TODO event and return the ID of the proposal created.
+
+#### `proposeWithModule`
+
+Creates a new proposal with a given proposal type and module. This function MUST check that the proposal type exists,
+and that the module is supported by the `Governor` contract.
+
+```solidity
+function proposeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash, uint8 _proposalType) external returns (uint256)
+```
+
+This function MUST emit the TODO event and return the ID of the proposal created.
+
+#### `relay`
+
+Relays a transaction or function call to an arbitrary target. This function MUST only be callable as part of a
+governance proposal.
+
+```solidity
+function relay(address _target, uint256 _value, bytes calldata _data) external payable
+```
+
+#### `setModuleApproval`
+
+Approve or reject a module. This function MUST only be callable by the manager.
+
+```solidity
+function setModuleApproval(address _module, bool _approved) external
+```
+
+#### `setProposalDeadline`
+
+Update the deadline timestamp of an active proposal. This function MUST only be callable by the manager.
+
+```solidity
+function setProposalDeadline(uint256 _proposalId, uint64 _deadline) external
+```
+
+This function MUST emit the `ProposalDeadlineUpdated` event.
+
+#### `setProposalThreshold`
+
+Updates the proposal treshold. This function MUST only be callable by the manager.
+
+```solidity
+function setProposalThreshold(uint256 _newProposalThreshold) external
+```
+
+This function MUST emit the `ProposalThresholdSet` event.
+
+#### `setVotingDelay`
+
+Updates the voting delay. This function MUST only be callable by the manager.
+
+```solidity
+function setVotingDelay(uint256 _newVotingDelay) external
+```
+
+This function MUST emit the `VotingDelaySet` event.
+
+#### `setVotingPeriod`
+
+Updates the voting period. This function MUST only be callable by the manager.
+
+```solidity
+function setVotingPeriod(uint256 _newVotingDelay) external
+```
+
+This function MUST check that `_newVotingDelay` is more than zero, and emit the `VotingPeriodSet` event.
+
+#### `updateQuorumNumerator`
+
+Updates the quorum numerator. This function MUST only be callable by the manager.
+
+```solidity
+function updateQuorumNumerator(uint256 _newQuorumNumerator) external
+```
+
+This function MUST check that the quorum numerator does not exceed `_newQuorumNumerator`,
+and emit the `QuorumNumeratorUpdated` event.
 
 ### Getters
 
