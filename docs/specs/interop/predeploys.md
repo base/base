@@ -29,7 +29,6 @@
 - [OptimismMintableERC20Factory](#optimismmintableerc20factory)
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
-  - [Deployments history](#deployments-history)
   - [Functions](#functions)
     - [`createOptimismMintableERC20WithDecimals`](#createoptimismmintableerc20withdecimals)
     - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
@@ -453,11 +452,6 @@ The `OptimismMintableERC20Factory` is updated to
 - include a `deployments` mapping
   to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
   - This is essential for the liquidity migration process defined in the liquidity migration spec.
-
-### Deployments history
-
-The `OptimismMintableERC20Factory` MUST include a `deployments` mapping
-to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
 
 ### Functions
 
