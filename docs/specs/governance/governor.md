@@ -86,12 +86,12 @@ This contract uses the `GovernanceToken` contract for voting power snapshots.
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
 | `BALLOT_TYPEHASH` |  `0x150214d74d59b7d1e90c73fc22ef3d991dd0a76b046543d4d80ab92d2a50328f` | The EIP-712 typehash for the ballot struct  |
+| `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct  
 | `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted |
-| `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct  |
 | `PERCENT_DIVISOR` |  `10000` | The maximum value of `quorum` and `approvalThreshold` for proposal types  |
 | `PROPOSAL_TYPES_CONFIGURATOR` |  `0x67ecA7B65Baf0342CE7fBf0AA15921524414C09f` | The address of the proposal types configurator contract  |
 | `VERSION` |  `2` | The version of the `Governor` contract  |
-| `VOTABLE_SUPPLY_ORACLE` |  `0x1b7CA7437748375302bAA8954A2447fC3FBE44CC` | The address of the `GovernanceToken` contract  |
+| `TOKEN` |  `0x4200000000000000000000000000000000000042` | The address of the `GovernanceToken` contract  |
 
 ## Interface
 
@@ -253,7 +253,7 @@ This function MUST emit the `ProposalDeadlineUpdated` event.
 
 #### `setProposalThreshold`
 
-Updates the proposal treshold. This function MUST only be callable by the manager.
+Updates the proposal threshold. This function MUST only be callable by the manager.
 
 ```solidity
 function setProposalThreshold(uint256 _newProposalThreshold) external
@@ -276,10 +276,10 @@ This function MUST emit the `VotingDelaySet` event.
 Updates the voting period. This function MUST only be callable by the manager.
 
 ```solidity
-function setVotingPeriod(uint256 _newVotingDelay) external
+function setVotingPeriod(uint256 _newVotingPeriod) external
 ```
 
-This function MUST check that `_newVotingDelay` is more than zero, and emit the `VotingPeriodSet` event.
+This function MUST check that `_newVotingPeriod` is more than zero, and emit the `VotingPeriodSet` event.
 
 #### `updateQuorumNumerator`
 
@@ -348,7 +348,7 @@ function hashProposal(address[] _targets, uint256[] _values, bytes[] _calldatas,
 Hashing function used to build a proposal id from proposal details and module address.
 
 ```solidity
-function hashProposal(address _module, bytes _proposalData, bytes32 _descriptionHash) external view returns (uint256);
+function hashProposalWithModule(address _module, bytes _proposalData, bytes32 _descriptionHash) external view returns (uint256);
 ```
 
 #### `manager`
@@ -670,32 +670,32 @@ struct ProposalCore {
 
 The `Governor` contract uses proposal types to define the quorum and approval threshold for a proposal to pass.
 These proposal types are created and stored as part of an external contract called `PROPOSAL_TYPES_CONFIGURATOR`.
-The `Governor` contract can only create or edit proposals types, and the amount of proposal types is limited to 255.
+The `Governor` contract can only create or edit proposal types, and the amount of proposal types is limited to 255.
 
 With the [`proposeWithModule`](#proposewithmodule) function, proposers can create proposals with any supported proposal
 type.
 
 ## Modules
 
-Aditionally from proposal types, the `Governor` contract allows to use modules as part of the proposal logic.
-Modules are external contract that override the default propsing and voting logic of the `Governor` contract,
+Additionally, from proposal types, the `Governor` contract allows to use modules as part of the proposal logic.
+Modules are external contract that override the default proposing and voting logic of the `Governor` contract,
 and can be used to implement custom voting mechanisms. The common modules are:
 
 - `ApprovalVotingModule`: Allow voting for multiple options in a proposal and execute either the options that exceed
-  a treshold or the top voted options.
+  a threshold or the top voted options.
 - `OptimisticModule`: Combined with a optimistic proposal type, allows to pass a proposal without quorum and approval
-  treshold. Utilized for signaling proposals.
+  threshold. Utilized for signaling proposals.
 
 With the [`setModuleApproval`](#setmoduleapproval) function, modules can be approved to be used as part of proposals.
 
 ## Security Considerations
 
-As proposal types and modules allow for great flexbility of proposal logic, governance must be aware of the implications
+As proposal types and modules allow for great flexibility of proposal logic, governance MUST be aware of the implications
 of approving certain modules as they are external contracts that could be upgraded or modified after deployment.
 
 As users are able to choose proposal types and modules when creating a proposal, the combination of proposal types and
 modules MUST be carefully considered to avoid unexpected behaviors.
 
-Due to the dependnecy on the `GovernanceToken`, all proposals are subject to the token's voting power logic.
+Due to the dependency on the `GovernanceToken`, all proposals are subject to the token's voting power logic.
 Therefore, it MUST be ensured that the `GovernanceToken` provides accurate and up-to-date balance and delegation
 checkpoints.
