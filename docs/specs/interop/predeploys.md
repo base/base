@@ -452,7 +452,7 @@ The `OptimismMintableERC20Factory` is updated to
 - use `CREATE3` instead of `CREATE2` to remove the compiler's dependency on address computation.
 - include a `deployments` mapping
   to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
-  - This is essential for the liquidity migration process defined in the [liquidity migration spec](liquidity-migration.md).
+  - This is essential for the liquidity migration process defined in the liquidity migration spec.
 
 ### Deployments history
 
