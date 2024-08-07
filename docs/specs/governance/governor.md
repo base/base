@@ -78,15 +78,16 @@
 
 ## Overview
 
-The `Governor` contract implements the core governance logic for creating, voting, queuing and executing proposals.
-This contract uses the `GovernanceToken` contract for voting power snapshots.
+The `Governor` contract implements the core governance logic for creating, voting, and executing proposals.
+This contract uses the `GovernanceToken` contract for voting power snapshots, and the `ProposalTypesConfigurator`
+for proposal types.
 
 ## Constants
 
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
 | `BALLOT_TYPEHASH` |  `0x150214d74d59b7d1e90c73fc22ef3d991dd0a76b046543d4d80ab92d2a50328f` | The EIP-712 typehash for the ballot struct  |
-| `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct  
+| `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct |
 | `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted |
 | `PERCENT_DIVISOR` |  `10000` | The maximum value of `quorum` and `approvalThreshold` for proposal types  |
 | `PROPOSAL_TYPES_CONFIGURATOR` |  `0x67ecA7B65Baf0342CE7fBf0AA15921524414C09f` | The address of the proposal types configurator contract  |
@@ -669,7 +670,7 @@ struct ProposalCore {
 ## Proposal Types
 
 The `Governor` contract uses proposal types to define the quorum and approval threshold for a proposal to pass.
-These proposal types are created and stored as part of an external contract called `PROPOSAL_TYPES_CONFIGURATOR`.
+These proposal types are created and stored as part of an external contract called `ProposalTypesConfigurator`.
 The `Governor` contract can only create or edit proposal types, and the amount of proposal types is limited to 255.
 
 With the [`proposeWithModule`](#proposewithmodule) function, proposers can create proposals with any supported proposal
