@@ -195,6 +195,7 @@ function messageNonce() public view returns (uint256) {
 
 To enable interoperability between chains that use a custom gas token, there is no native support for
 sending `ether` between chains. `ether` must first be wrapped into WETH before sending between chains.
+See [SuperchainWETH](./superchain-weth.md) for more information.
 
 ### Interfaces
 
@@ -204,14 +205,23 @@ chain is included instead.
 
 #### Sending Messages
 
-The initiating message is represented by the following event:
+The following function is used for sending messages between domains:
 
 ```solidity
-event SentMessage(bytes message) anonymous;
+function sendMessage(uint256 _destination, address _target, bytes calldata _message) external;
 ```
 
-The `bytes` are an ABI encoded call to `relayMessage`. The event is defined as `anonymous` so that no topics
-are prefixed to the abi encoded call.
+It creates an initiating message that is represented by an anonymous event:
+
+```solidity
+assembly {
+    log0(add(_data, 0x20), mload(_data))
+}
+```
+
+The `_data` is an ABI encoded call to `relayMessage`. The event is done with Yul so that an extra layer
+of ABI encoding as `bytes` is not wrapped around `relayMessage` call. The exact calldata meant to be passed
+to the `L2ToL2CrossDomainMessenger` on the remote domain is included in the log.
 
 An explicit `_destination` chain and `nonce` are used to ensure that the message can only be played on a single remote
 chain a single time. The `_destination` is enforced to not be the local chain to avoid edge cases.
@@ -223,15 +233,8 @@ In both cases, the source chain's chain id is required for security. Executing m
 assume the identity of an account because `msg.sender` will never be the identity that initiated the message,
 it will be the `L2ToL2CrossDomainMessenger` and users will need to callback to get the initiator of the message.
 
-```solidity
-function sendMessage(uint256 _destination, address _target, bytes calldata _message) external {
-    require(_destination != block.chainid);
-
-    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, block.chainid, messageNonce(), msg.sender, _target, _message));
-    emit SentMessage(data);
-    nonce++;
-}
-```
+The `_destination` MUST NOT be the chainid of the local chain and a locally defined `nonce` MUST increment on
+every call to `sendMessage`.
 
 Note that `sendMessage` is not `payable`.
 
