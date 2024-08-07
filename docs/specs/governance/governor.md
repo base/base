@@ -70,7 +70,8 @@
 - [Types](#types)
   - [`ProposalVote`](#proposalvote)
   - [`ProposalCore`](#proposalcore)
-- [User Flow](#user-flow)
+- [Proposal Types](#proposal-types)
+- [Modules](#modules)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -665,10 +666,36 @@ struct ProposalCore {
 | `votingModule`                 | `address`       | The voting module of the proposal. Zero address if none.   |
 | `proposalType`                 | `uint8`       | The type of proposal.   |
 
-## User Flow
+## Proposal Types
 
-TODO
+The `Governor` contract uses proposal types to define the quorum and approval threshold for a proposal to pass.
+These proposal types are created and stored as part of an external contract called `PROPOSAL_TYPES_CONFIGURATOR`.
+The `Governor` contract can only create or edit proposals types, and the amount of proposal types is limited to 255.
+
+With the [`proposeWithModule`](#proposewithmodule) function, proposers can create proposals with any supported proposal
+type.
+
+## Modules
+
+Aditionally from proposal types, the `Governor` contract allows to use modules as part of the proposal logic.
+Modules are external contract that override the default propsing and voting logic of the `Governor` contract,
+and can be used to implement custom voting mechanisms. The common modules are:
+
+- `ApprovalVotingModule`: Allow voting for multiple options in a proposal and execute either the options that exceed
+  a treshold or the top voted options.
+- `OptimisticModule`: Combined with a optimistic proposal type, allows to pass a proposal without quorum and approval
+  treshold. Utilized for signaling proposals.
+
+With the [`setModuleApproval`](#setmoduleapproval) function, modules can be approved to be used as part of proposals.
 
 ## Security Considerations
 
-TODO
+As proposal types and modules allow for great flexbility of proposal logic, governance must be aware of the implications
+of approving certain modules as they are external contracts that could be upgraded or modified after deployment.
+
+As users are able to choose proposal types and modules when creating a proposal, the combination of proposal types and
+modules MUST be carefully considered to avoid unexpected behaviors.
+
+Due to the dependnecy on the `GovernanceToken`, all proposals are subject to the token's voting power logic.
+Therefore, it MUST be ensured that the `GovernanceToken` provides accurate and up-to-date balance and delegation
+checkpoints.
