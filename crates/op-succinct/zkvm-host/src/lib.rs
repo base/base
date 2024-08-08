@@ -3,6 +3,9 @@ use revm::{
     primitives::{Address, Bytes, Precompile},
 };
 
+mod utils;
+pub use utils::ExecutionStats;
+
 /// This precompile hook substitutes the precompile with a custom one that can stub out the logic
 /// for specific operations that we don't have precompiles for. Used in `create_hook_precompile`.
 pub fn precompile_hook(_env: sp1_sdk::HookEnv, buf: &[u8]) -> Vec<Vec<u8>> {

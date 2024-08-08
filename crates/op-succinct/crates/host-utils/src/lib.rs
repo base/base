@@ -52,9 +52,9 @@ pub fn get_sp1_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
 
     let mut serializer = CompositeSerializer::new(
         AlignedSerializer::new(AlignedVec::new()),
-        // TODO: This value is hardcoded to minimum for this block.
-        // Figure out how to compute it so it works on all blocks.
-        HeapScratch::<8388608>::new(),
+        // TODO: This value corresponds to the size of the space needed to
+        // serialize the KV store. We should compute this dynamically.
+        HeapScratch::<33554432>::new(),
         SharedSerializeMap::new(),
     );
     serializer.serialize_value(&kv_store)?;

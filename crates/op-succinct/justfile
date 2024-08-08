@@ -29,7 +29,7 @@ run-multi start end use-cache="false" prove="false":
 
 # Runs the client program in native execution mode. Modified version of Kona Native Client execution:
 # https://github.com/ethereum-optimism/kona/blob/ae71b9df103c941c06b0dc5400223c4f13fe5717/bin/client/justfile#L65-L108
-run-client-native l2_block_num l1_rpc='${CLABBY_RPC_L1}' l1_beacon_rpc='${ETH_BEACON_URL}' l2_rpc='${CLABBY_RPC_L2}' verbosity="-vvvv":
+run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC}' l2_rpc='${L2_RPC}' verbosity="-vvvv":
   #!/usr/bin/env bash
   L1_NODE_ADDRESS="{{l1_rpc}}"
   L1_BEACON_ADDRESS="{{l1_beacon_rpc}}"

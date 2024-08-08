@@ -34,4 +34,4 @@ just run-multi <start> <end> [use-cache] [prove]
 
 Observations: 
 * For most blocks, the cycle count per transaction is around 4M cycles per transaction.
-* TODO: Do further analysis on the cycle count.
+* Some example cycle count estimates can be found [here](https://www.notion.so/succinctlabs/SP1-Kona-8b025f81f28f4d149eb4816db4e6d80b?pvs=4).

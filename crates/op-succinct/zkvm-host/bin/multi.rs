@@ -1,13 +1,15 @@
-use std::{env, fs};
+use std::fs;
 
 use anyhow::Result;
 use clap::Parser;
 use client_utils::precompiles::PRECOMPILE_HOOK_FD;
-use host_utils::{fetcher::SP1KonaDataFetcher, get_sp1_stdin, ProgramType};
+use host_utils::{
+    fetcher::{ChainMode, SP1KonaDataFetcher},
+    get_sp1_stdin, ProgramType,
+};
 use kona_host::start_server_and_native_client;
-use num_format::{Locale, ToFormattedString};
-use sp1_sdk::{utils, ProverClient};
-use zkvm_host::precompile_hook;
+use sp1_sdk::{utils, ExecutionReport, ProverClient};
+use zkvm_host::{precompile_hook, ExecutionStats};
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/validity-client-elf");
 
@@ -31,6 +33,35 @@ struct Args {
     prove: bool,
 }
 
+/// Based on the stats flag, print out simple or detailed statistics.
+async fn print_stats(data_fetcher: &SP1KonaDataFetcher, args: &Args, report: &ExecutionReport) {
+    // Get the total instruction count for execution across all blocks.
+    let block_execution_instruction_count: u64 =
+        *report.cycle_tracker.get("block-execution").unwrap();
+
+    let nb_blocks = args.end - args.start + 1;
+
+    // Fetch the number of transactions in the blocks from the L2 RPC.
+    let block_data_range = data_fetcher
+        .get_block_data_range(ChainMode::L2, args.start, args.end)
+        .await
+        .expect("Failed to fetch block data range.");
+
+    let nb_transactions = block_data_range.iter().map(|b| b.transaction_count).sum();
+    let total_gas_used = block_data_range.iter().map(|b| b.gas_used).sum();
+
+    println!(
+        "{}",
+        ExecutionStats {
+            total_instruction_count: report.total_instruction_count(),
+            block_execution_instruction_count,
+            nb_blocks,
+            nb_transactions,
+            total_gas_used,
+        }
+    );
+}
+
 /// Execute the Kona program for a single block.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,7 +70,6 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let data_fetcher = SP1KonaDataFetcher {
-        l2_rpc: env::var("CLABBY_RPC_L2").expect("CLABBY_RPC_L2 is not set."),
         ..Default::default()
     };
 
@@ -78,19 +108,14 @@ async fn main() -> Result<()> {
             .save(format!("data/proofs/{}-{}.bin", args.start, args.end))
             .expect("saving proof failed");
     } else {
-        // Otherwise, execute the program.
+        // TODO: Remove this precompile hook once we merge the BN and BLS precompiles.
         let (_, report) = prover
             .execute(MULTI_BLOCK_ELF, sp1_stdin)
             .with_hook(PRECOMPILE_HOOK_FD, precompile_hook)
             .run()
             .unwrap();
 
-        println!(
-            "Cycle count: {}",
-            report
-                .total_instruction_count()
-                .to_formatted_string(&Locale::en)
-        );
+        print_stats(&data_fetcher, &args, &report).await;
     }
 
     Ok(())
