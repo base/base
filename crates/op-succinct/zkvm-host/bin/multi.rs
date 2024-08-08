@@ -22,13 +22,13 @@ struct Args {
     #[arg(short, long)]
     end: u64,
 
-    /// Verbosity level.
-    #[arg(short, long, default_value = "0")]
-    verbosity: u8,
-
     /// Skip running native execution.
     #[arg(short, long)]
     use_cache: bool,
+
+    /// Generate proof.
+    #[arg(short, long)]
+    prove: bool,
 }
 
 /// Execute the Kona program for a single block.
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     };
 
     let host_cli = data_fetcher
-        .get_host_cli_args(args.start, args.end, args.verbosity, ProgramType::Multi)
+        .get_host_cli_args(args.start, args.end, ProgramType::Multi)
         .await?;
 
     let data_dir = host_cli
@@ -67,18 +67,31 @@ async fn main() -> Result<()> {
     let sp1_stdin = get_sp1_stdin(&host_cli)?;
 
     let prover = ProverClient::new();
-    let (_, report) = prover
-        .execute(MULTI_BLOCK_ELF, sp1_stdin)
-        .with_hook(PRECOMPILE_HOOK_FD, precompile_hook)
-        .run()
-        .unwrap();
 
-    println!(
-        "Cycle count: {}",
-        report
-            .total_instruction_count()
-            .to_formatted_string(&Locale::en)
-    );
+    if args.prove {
+        // If the prove flag is set, generate a proof.
+        let (pk, _) = prover.setup(MULTI_BLOCK_ELF);
+        let proof = prover.prove(&pk, sp1_stdin).run().unwrap();
+
+        // Save the proof to data/proofs.
+        proof
+            .save(format!("data/proofs/{}-{}.bin", args.start, args.end))
+            .expect("saving proof failed");
+    } else {
+        // Otherwise, execute the program.
+        let (_, report) = prover
+            .execute(MULTI_BLOCK_ELF, sp1_stdin)
+            .with_hook(PRECOMPILE_HOOK_FD, precompile_hook)
+            .run()
+            .unwrap();
+
+        println!(
+            "Cycle count: {}",
+            report
+                .total_instruction_count()
+                .to_formatted_string(&Locale::en)
+        );
+    }
 
     Ok(())
 }
