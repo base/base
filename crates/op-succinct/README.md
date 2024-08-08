@@ -18,17 +18,19 @@ Standalone repo to use Kona & SP1 to verify Optimism blocks.
 Execute the SP1 Kona program for a single block.
 
 ```bash
-just run-single <l2_block_num> [verbosity] [use-cache]
+just run-single <l2_block_num> [use-cache]
 ```
+
+- [use-cache]: Optional flag to re-use the native execution cache (default: false).
 
 Execute the SP1 Kona program for a range of blocks.
 
 ```bash
-just run-multi <start> <end> [verbosity] [use-cache]
+just run-multi <start> <end> [use-cache] [prove]
 ```
 
-- [verbosity]: Optional verbosity level (default: 0).
 - [use-cache]: Optional flag to re-use the native execution cache (default: false).
+- [prove]: Optional flag to prove the execution (default: false).
 
 Observations: 
 * For most blocks, the cycle count per transaction is around 4M cycles per transaction.

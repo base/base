@@ -68,7 +68,6 @@ impl SP1KonaDataFetcher {
         &self,
         l2_block_safe_head: u64,
         l2_claim_block_nb: u64,
-        verbosity: u8,
         multi_block: ProgramType,
     ) -> Result<HostCli> {
         let l2_provider = Provider::<Http>::try_from(&self.l2_rpc)?;
@@ -166,7 +165,7 @@ impl SP1KonaDataFetcher {
             data_dir: Some(data_directory.into()),
             exec: Some(exec_directory),
             server: false,
-            v: verbosity,
+            v: 0,
         })
     }
 }

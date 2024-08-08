@@ -19,10 +19,6 @@ struct Args {
     #[arg(short, long)]
     l2_block: u64,
 
-    /// Verbosity level.
-    #[arg(short, long, default_value = "0")]
-    verbosity: u8,
-
     /// Skip running native execution.
     #[arg(short, long)]
     use_cache: bool,
@@ -45,12 +41,7 @@ async fn main() -> Result<()> {
     let l2_safe_head = args.l2_block - 1;
 
     let host_cli = data_fetcher
-        .get_host_cli_args(
-            l2_safe_head,
-            args.l2_block,
-            args.verbosity,
-            ProgramType::Single,
-        )
+        .get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single)
         .await?;
 
     let data_dir = host_cli
