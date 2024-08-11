@@ -3,8 +3,10 @@ use revm::{
     primitives::{Address, Bytes, Precompile},
 };
 
-mod utils;
-pub use utils::ExecutionStats;
+mod stats;
+pub use stats::{BnStats, ExecutionStats};
+
+pub mod utils;
 
 /// This precompile hook substitutes the precompile with a custom one that can stub out the logic
 /// for specific operations that we don't have precompiles for. Used in `create_hook_precompile`.
