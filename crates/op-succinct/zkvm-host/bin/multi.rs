@@ -9,7 +9,7 @@ use host_utils::{
 };
 use kona_host::start_server_and_native_client;
 use sp1_sdk::{utils, ExecutionReport, ProverClient};
-use zkvm_host::{precompile_hook, ExecutionStats};
+use zkvm_host::{precompile_hook, BnStats, ExecutionStats};
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/validity-client-elf");
 
@@ -58,6 +58,11 @@ async fn print_stats(data_fetcher: &SP1KonaDataFetcher, args: &Args, report: &Ex
             nb_blocks,
             nb_transactions,
             total_gas_used,
+            bn_stats: BnStats {
+                bn_add_cycles: *report.cycle_tracker.get("precompile-bn-add").unwrap_or(&0),
+                bn_mul_cycles: *report.cycle_tracker.get("precompile-bn-mul").unwrap_or(&0),
+                bn_pair_cycles: *report.cycle_tracker.get("precompile-bn-pair").unwrap_or(&0),
+            }
         }
     );
 }
@@ -69,9 +74,7 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     let args = Args::parse();
 
-    let data_fetcher = SP1KonaDataFetcher {
-        ..Default::default()
-    };
+    let data_fetcher = SP1KonaDataFetcher::new();
 
     let host_cli = data_fetcher
         .get_host_cli_args(args.start, args.end, ProgramType::Multi)
@@ -101,11 +104,21 @@ async fn main() -> Result<()> {
     if args.prove {
         // If the prove flag is set, generate a proof.
         let (pk, _) = prover.setup(MULTI_BLOCK_ELF);
-        let proof = prover.prove(&pk, sp1_stdin).run().unwrap();
 
-        // Save the proof to data/proofs.
+        // Generate proofs in compressed mode for aggregation verification.
+        let proof = prover.prove(&pk, sp1_stdin).compressed().run().unwrap();
+
+        // Create a proof directory for the chain ID if it doesn't exist.
+        let proof_dir = format!(
+            "data/{}/proofs",
+            data_fetcher.get_chain_id(ChainMode::L2).await.unwrap()
+        );
+        if !std::path::Path::new(&proof_dir).exists() {
+            fs::create_dir_all(&proof_dir).unwrap();
+        }
+        // Save the proof to the proof directory corresponding to the chain ID.
         proof
-            .save(format!("data/proofs/{}-{}.bin", args.start, args.end))
+            .save(format!("{}/{}-{}.bin", proof_dir, args.start, args.end))
             .expect("saving proof failed");
     } else {
         // TODO: Remove this precompile hook once we merge the BN and BLS precompiles.
