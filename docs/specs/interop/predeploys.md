@@ -30,6 +30,7 @@
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
   - [Functions](#functions)
+    - [`createWithCreate3`](#createwithcreate3)
     - [`createOptimismMintableERC20WithDecimals`](#createoptimismmintableerc20withdecimals)
     - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
     - [`createStandardL2Token`](#createstandardl2token)
@@ -514,7 +515,7 @@ function createWithCreate3(
 #### `createOptimismMintableERC20WithDecimals`
 
 Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
-by `_remoteToken`, `_name` and `_symbol` and `_decimals` 
+by `_remoteToken`, `_name` and `_symbol` and `_decimals`
 
 ```solidity
 createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
@@ -544,7 +545,6 @@ by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard va
 ```solidity
 createOptimismMintableERC20(address _remoteToken, string memory _name, string memory _symbol) returns (address)
 ```
-
 
 A reference implementation looks like the following:
 
@@ -611,7 +611,7 @@ event StandardL2TokenCreated(address indexed remoteToken, address indexed localT
 ### Invariants
 
 - Uniqueness of address for Metadata: there must be a single `OptimismMintableERC20`
-for each set of metadata composed of `_remoteToken`, `_name`, `_symbol` and `_decimal`.
+  for each set of metadata composed of `_remoteToken`, `_name`, `_symbol` and `_decimal`.
 
 ## Security Considerations
 
