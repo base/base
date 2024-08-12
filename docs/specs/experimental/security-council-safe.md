@@ -147,8 +147,8 @@ A `LivenessModule` is also created which does the following:
 1. If so, it will call the Safe's `removeSigner()` to remove the non-live signer, and if necessary
    reduce the threshold.
 1. When a member is removed, the signing parameters are modified such that `M/N` is the lowest ratio
-   which remains greater than or equal to 75%. Using integer math, this can be expressed as `M = (N
-   * 75 + 99) / 100`.
+   which remains greater than or equal to 75%. Using integer math, this can be expressed as
+   `M = (N * 75 + 99) / 100`.
 
 ### Owner removal call flow
 
