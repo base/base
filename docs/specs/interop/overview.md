@@ -31,7 +31,6 @@ they need not be the same entity in practice.
 - [Dependency Set](./dependency-set.md): definition of chains and chain-dependencies in the Superchain.
 - [Messaging](./messaging.md): messaging functionality, core of protocol-level interoperability.
 - [Predeploys](./predeploys.md): system contracts to interface with other chains.
-- [Execution](./execution.md): enhancements to the execution-layer.
 - [Sequencer](./sequencer.md): Sequencer Policy and block-building information.
 - [Verifier](./verifier.md): Verification of cross-L2 messaging.
 - [Rollup Node P2P](./rollup-node-p2p.md): modifications to the rollup-node P2P layer to support fast interop.
