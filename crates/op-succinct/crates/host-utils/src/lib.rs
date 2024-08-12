@@ -1,9 +1,11 @@
 pub mod fetcher;
 pub mod helpers;
 
-use client_utils::RawBootInfo;
+use alloy_consensus::Header;
+use alloy_primitives::B256;
+use client_utils::{types::AggregationInputs, RawBootInfo};
 use kona_host::HostCli;
-use sp1_sdk::SP1Stdin;
+use sp1_sdk::{SP1Proof, SP1Stdin};
 
 use anyhow::Result;
 
@@ -34,7 +36,7 @@ sol! {
 }
 
 /// Get the stdin to generate a proof for the given L2 claim.
-pub fn get_sp1_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
+pub fn get_proof_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
     let mut stdin = SP1Stdin::new();
 
     let boot_info = RawBootInfo {
@@ -62,6 +64,34 @@ pub fn get_sp1_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
     let buffer = serializer.into_serializer().into_inner();
     let kv_store_bytes = buffer.into_vec();
     stdin.write_slice(&kv_store_bytes);
+
+    Ok(stdin)
+}
+
+/// Get the stdin for the aggregation proof.
+pub fn get_agg_proof_stdin(
+    proofs: Vec<SP1Proof>,
+    boot_infos: Vec<RawBootInfo>,
+    headers: Vec<Header>,
+    vkey: &sp1_sdk::SP1VerifyingKey,
+    latest_checkpoint_head: B256,
+) -> Result<SP1Stdin> {
+    let mut stdin = SP1Stdin::new();
+    for proof in proofs {
+        let SP1Proof::Compressed(compressed_proof) = proof else {
+            panic!();
+        };
+        stdin.write_proof(compressed_proof, vkey.vk.clone());
+    }
+
+    // Write the aggregation inputs to the stdin.
+    stdin.write(&AggregationInputs {
+        boot_infos,
+        latest_l1_checkpoint_head: latest_checkpoint_head,
+    });
+    // The headers have issues serializing with bincode, so use serde_json instead.
+    let headers_bytes = serde_cbor::to_vec(&headers).unwrap();
+    stdin.write_vec(headers_bytes);
 
     Ok(stdin)
 }

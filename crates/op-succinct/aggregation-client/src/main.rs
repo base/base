@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 /// Note: This is the hardcoded program vkey for the multi-block program. Whenever the multi-block
 /// program changes, update this.
 const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] = [
-    895087545, 1130190967, 1295967846, 1405778237, 118912697, 772722381, 908537909, 1761020158,
+    1182742183, 831715190, 1934100752, 151832364, 1086222319, 415089854, 144530717, 984311993,
 ];
 
 /// Verify that the L1 heads in the boot infos are in the header chain.

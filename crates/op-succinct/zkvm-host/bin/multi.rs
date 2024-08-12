@@ -5,7 +5,7 @@ use clap::Parser;
 use client_utils::precompiles::PRECOMPILE_HOOK_FD;
 use host_utils::{
     fetcher::{ChainMode, SP1KonaDataFetcher},
-    get_sp1_stdin, ProgramType,
+    get_proof_stdin, ProgramType,
 };
 use kona_host::start_server_and_native_client;
 use sp1_sdk::{utils, ExecutionReport, ProverClient};
@@ -23,6 +23,10 @@ struct Args {
     /// End L2 block number.
     #[arg(short, long)]
     end: u64,
+
+    /// Verbosity level.
+    #[arg(short, long, default_value = "0")]
+    verbosity: u8,
 
     /// Skip running native execution.
     #[arg(short, long)]
@@ -97,7 +101,7 @@ async fn main() -> Result<()> {
     }
 
     // Get the stdin for the block.
-    let sp1_stdin = get_sp1_stdin(&host_cli)?;
+    let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = ProverClient::new();
 
@@ -123,7 +127,7 @@ async fn main() -> Result<()> {
     } else {
         // TODO: Remove this precompile hook once we merge the BN and BLS precompiles.
         let (_, report) = prover
-            .execute(MULTI_BLOCK_ELF, sp1_stdin)
+            .execute(MULTI_BLOCK_ELF, sp1_stdin.clone())
             .with_hook(PRECOMPILE_HOOK_FD, precompile_hook)
             .run()
             .unwrap();

@@ -2,7 +2,7 @@ use std::{env, fs};
 
 use anyhow::Result;
 use clap::Parser;
-use host_utils::{fetcher::SP1KonaDataFetcher, get_sp1_stdin, ProgramType};
+use host_utils::{fetcher::SP1KonaDataFetcher, get_proof_stdin, ProgramType};
 use kona_host::start_server_and_native_client;
 use num_format::{Locale, ToFormattedString};
 use sp1_sdk::{utils, ProverClient};
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     }
 
     // Get the stdin for the block.
-    let sp1_stdin = get_sp1_stdin(&host_cli)?;
+    let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = ProverClient::new();
     let (_, report) = prover
