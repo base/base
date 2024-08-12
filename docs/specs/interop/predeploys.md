@@ -453,12 +453,12 @@ The `OptimismMintableERC20Factory` is updated to
 
 - use `CREATE3` instead of `CREATE2` to remove the compiler's dependency on address computation.
 - include a `deployments` mapping
-  to store the `remoteToken` address for each deployed `OptimsimMintableERC20`.
+  to store the `remoteToken` address for each deployed `OptimismMintableERC20`.
   - This is essential for the liquidity migration process defined in the liquidity migration spec.
 
 ### Functions
 
-#### `createOptimismMintableERC20WithDecimals`
+#### `createWithCreate3`
 
 Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined by:
 
@@ -468,7 +468,7 @@ Creates an instance of the `OptimismMintableERC20` contract with a set of metada
 - `_decimals`: `OptimismMintableERC20` decimals
 
 ```solidity
-createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
+createWithCreate3(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
 ```
 
 It MUST use `CREATE3` to deploy new contracts. The salt MUST depend on the following inputs:
@@ -476,6 +476,49 @@ It MUST use `CREATE3` to deploy new contracts. The salt MUST depend on the follo
 This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
 
 It MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
+
+A reference implementation looks like the following:
+
+```solidity
+function createWithCreate3(
+  address _remoteToken,
+  string memory _name,
+  string memory _symbol,
+  uint8 _decimals
+)
+  public
+  override
+  returns (address _localToken)
+{
+  require(_remoteToken != address(0), "OptimismMintableERC20Factory: must provide remote token address");
+
+  bytes memory creationCode = abi.encodePacked(
+      type(OptimismMintableERC20).creationCode, abi.encode(bridge, _remoteToken, _name, _symbol, _decimals)
+  );
+
+  bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));
+
+  _localToken = CREATE3.deploy({ salt: salt, creationCode: creationCode, value: 0 });
+
+  deployments[_localToken] = _remoteToken;
+
+  // Emit the old event for legacy support.
+  emit StandardL2TokenCreated(_remoteToken, _localToken);
+
+  // Emit the updated event. The arguments here differ from the legacy event, but
+  // are consistent with the ordering used in StandardBridge events.
+  emit OptimismMintableERC20Created(_localToken, _remoteToken, msg.sender);
+}
+```
+
+#### `createOptimismMintableERC20WithDecimals`
+
+Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
+by `_remoteToken`, `_name` and `_symbol` and `_decimals` 
+
+```solidity
+createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
+```
 
 A reference implementation looks like the following:
 
@@ -489,27 +532,7 @@ function createOptimismMintableERC20WithDecimals(
   public
   returns (address)
 {
-  require(_remoteToken != address(0), "OptimismMintableERC20Factory: must provide remote token address");
-
-  bytes memory _creationCode = abi.encodePacked(
-  type(OptimismMintableERC20).creationCode,
-  abi.encode(bridge, _remoteToken, _name, _symbol, _decimals)
-  );
-
-  bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));
-
-  localToken = CREATE3.deploy(salt, _creationCode);
-
-  deployments[localToken] = _remoteToken;
-
-  // Emit the old event too for legacy support.
-  emit StandardL2TokenCreated(_remoteToken, localToken);
-
-  // Emit the updated event. The arguments here differ from the legacy event, but
-  // are consistent with the ordering used in StandardBridge events.
-  emit OptimismMintableERC20Created(localToken, _remoteToken, msg.sender);
-
-  return localToken;
+  return createWithCreate3(_remoteToken, _name, _symbol, _decimals);
 }
 ```
 
@@ -517,6 +540,11 @@ function createOptimismMintableERC20WithDecimals(
 
 Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
 by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard value 18.
+
+```solidity
+createOptimismMintableERC20(address _remoteToken, string memory _name, string memory _symbol) returns (address)
+```
+
 
 A reference implementation looks like the following:
 
@@ -537,6 +565,10 @@ function createOptimismMintableERC20(
 
 Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
 by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard value 18.
+
+```solidity
+createStandardL2Token(address _remoteToken, string memory _name, string memory _symbol) returns (address)
+```
 
 This function exists for backwards compatibility with the legacy version.
 
