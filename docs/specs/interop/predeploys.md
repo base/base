@@ -467,14 +467,13 @@ Creates an instance of the `OptimismMintableERC20` contract with a set of metada
 createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
 ```
 
-The function MUST use `CREATE2` to deploy new contracts.
-The salt MUST depend on the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`)
-like follows:
-`bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));`
+**Invariants**
 
+- The function MUST use `CREATE2` to deploy new contracts.
+- The salt MUST be computed by applying `keccak256` to the `abi.encode`
+of the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
 This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
-
-The function MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
+- The function MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
 
 #### `createOptimismMintableERC20`
 
