@@ -9,6 +9,7 @@
     - [`_msg`](#_msg)
     - [`_id`](#_id)
     - [`_target`](#_target)
+  - [Interop Start Timestamp](#interop-start-timestamp)
   - [`ExecutingMessage` Event](#executingmessage-event)
   - [Reference implementation](#reference-implementation)
   - [`Identifier` Getters](#identifier-getters)
@@ -88,6 +89,17 @@ In practice, the `_target` will be a contract that needs to know the schema of t
 It MAY call back to the `CrossL2Inbox` to authenticate
 properties about the `_msg` using the information in the `Identifier`.
 
+### Interop Start Timestamp
+
+The Interop Start Timestamp represents the earliest timestamp which an initiating message (identifier) can have to be
+considered valid. This is important because OP Mainnet migrated from a legacy system that is not provable. We cannot
+allow for interop messages to come from unproven parts of the chain history, since interop is secured by fault proofs.
+
+Interop Start Timestamp is stored in the storage of the CrossL2Inbox predeploy. During the Interop Network Upgrade,
+each chain sets variable via a call to `setInteropStart()` by the `DEPOSITOR_ACCOUNT` which sets Interop Start Timestamp
+to be the block.timestamp of the network upgrade block. Chains deployed after the network upgrade will have to enshrine
+that timestamp into the pre-determined storage slot.
+
 ### `ExecutingMessage` Event
 
 The `ExecutingMessage` event represents an executing message. It MUST be emitted on every call
@@ -117,6 +129,7 @@ A simple implementation of the `executeMessage` function is included below.
 function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
     require(_id.timestamp <= block.timestamp);
     require(L1Block.isInDependencySet(_id.chainid));
+    require(_id.timestamp >= L1Block.interopStart());
 
     assembly {
       tstore(ORIGIN_SLOT, _id.origin)
