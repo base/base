@@ -191,7 +191,7 @@ block, and add it to the chain. The basic sequence of the rollup driver is as fo
    is set to the block hash of the tip of the L2 chain. The Engine API returns a payload ID.
 2. Call [get payload][EngineAPIVersion] with the payload ID returned in step 1. The engine API returns a payload object
    that includes a block hash as one of its fields.
-3. Call [new payload][EngineAPIVersion] with the payload returned in step 2. (Ectone blocks, must use V3, pre-Ecotone
+3. Call [new payload][EngineAPIVersion] with the payload returned in step 2. (Ecotone blocks, must use V3, pre-Ecotone
    blocks MUST use the V2 version)
 4. Call [fork choice updated][EngineAPIVersion] with the fork choice parameter's `headBlockHash` set to the block hash
    returned in step 2. The tip of the L2 chain is now the block created in step 1.
