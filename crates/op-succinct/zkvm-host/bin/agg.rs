@@ -3,9 +3,12 @@ use std::fs;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
-use client_utils::{types::AggregationInputs, RawBootInfo, BOOT_INFO_SIZE};
-use host_utils::fetcher::{ChainMode, SP1KonaDataFetcher};
-use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1Stdin};
+use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
+use host_utils::{
+    fetcher::{ChainMode, SP1KonaDataFetcher},
+    get_agg_proof_stdin,
+};
+use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
 use zkvm_host::utils::fetch_header_preimages;
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-client-elf");
@@ -80,26 +83,13 @@ async fn main() -> Result<()> {
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
-    println!("multi block elf vkey hash_u32: {:?}", vkey.vk.hash_u32());
+    println!("Multi-block ELF Verification Key U32 Hash: {:?}", vkey.vk.hash_u32());
 
-    let mut stdin = SP1Stdin::new();
-    for proof in proofs {
-        let SP1Proof::Compressed(compressed_proof) = proof else {
-            panic!();
-        };
-        stdin.write_proof(compressed_proof, vkey.vk.clone());
-    }
+    let stdin =
+        get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, latest_checkpoint_head).unwrap();
 
-    // Write the aggregation inputs to the stdin.
-    stdin.write(&AggregationInputs {
-        boot_infos,
-        latest_l1_checkpoint_head: latest_checkpoint_head,
-    });
-    // The headers have issues serializing with bincode, so use serde_json instead.
-    let headers_bytes = serde_cbor::to_vec(&headers).unwrap();
-    stdin.write_vec(headers_bytes);
-
-    let (agg_pk, _) = prover.setup(AGG_ELF);
+    let (agg_pk, agg_vk) = prover.setup(AGG_ELF);
+    println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
 
     if args.prove {
         prover

@@ -23,6 +23,10 @@ path = "bin/multi.rs"
 name = "agg"
 path = "bin/agg.rs"
 
+[[bin]]
+name = "server"
+path = "bin/server.rs"
+
 [dependencies]
 
 # workspace
@@ -45,8 +49,14 @@ dotenv.workspace = true
 num-format.workspace = true
 revm.workspace = true
 client-utils.workspace = true
+serde = { workspace = true }
+
+# server
+axum = "0.7.4"
+bincode.workspace = true
 futures.workspace = true
 serde_cbor.workspace = true
+log = "0.4.22"
 
 [build-dependencies]
 sp1-helper = { workspace = true }

@@ -2758,6 +2758,7 @@ dependencies = [
  "client-utils",
  "kona-host",
  "rkyv",
+ "serde_cbor",
  "sp1-sdk",
 ]
 
@@ -7496,6 +7497,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "anyhow",
+ "axum",
+ "bincode",
  "cargo_metadata",
  "clap",
  "client-utils",
@@ -7503,8 +7506,10 @@ dependencies = [
  "futures",
  "host-utils",
  "kona-host",
+ "log",
  "num-format",
  "revm",
+ "serde",
  "serde_cbor",
  "sp1-helper",
  "sp1-sdk",
