@@ -1471,6 +1471,7 @@ dependencies = [
  "kona-mpt",
  "kona-preimage",
  "kona-primitives",
+ "log",
  "op-alloy-consensus",
  "revm",
  "rkyv",
@@ -6950,6 +6951,7 @@ dependencies = [
  "kona-mpt",
  "kona-preimage",
  "kona-primitives",
+ "log",
  "op-alloy-consensus",
  "sp1-zkvm",
 ]

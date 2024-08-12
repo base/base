@@ -56,7 +56,7 @@ axum = "0.7.4"
 bincode.workspace = true
 futures.workspace = true
 serde_cbor.workspace = true
-log = "0.4.22"
+log.workspace = true
 
 [build-dependencies]
 sp1-helper = { workspace = true }

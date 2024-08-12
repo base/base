@@ -25,6 +25,7 @@ use kona_derive::{
 use kona_mpt::TrieDBFetcher;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_primitives::{BlockInfo, L2AttributesWithParent, L2BlockInfo};
+use log::{debug, error};
 
 /// An oracle-backed derivation pipeline.
 pub type OraclePipeline<O> = DerivationPipeline<
@@ -143,13 +144,13 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
     /// Produces the disputed [Vec<L2AttributesWithParent>] payloads, starting with the one after
     /// the L2 output root, for all the payloads derived in a given span batch.
     pub async fn produce_payloads(&mut self) -> Result<Vec<L2AttributesWithParent>> {
-        println!(
+        debug!(
             "Stepping on Pipeline for L2 Block: {}",
             self.l2_safe_head.block_info.number
         );
         match self.pipeline.step(self.l2_safe_head).await {
             StepResult::PreparedAttributes => {
-                println!("Found Attributes");
+                debug!("Found Attributes");
                 let mut payloads = Vec::new();
                 for attr in self.pipeline.by_ref() {
                     let parent_block_nb = attr.parent.block_info.number;
@@ -161,17 +162,17 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
                 return Ok(payloads);
             }
             StepResult::AdvancedOrigin => {
-                println!("Advanced Origin");
+                debug!("Advanced Origin");
             }
             StepResult::OriginAdvanceErr(e) => {
-                println!("Origin Advance Error: {:?}", e);
+                error!("Origin Advance Error: {:?}", e);
             }
             StepResult::StepFailed(e) => match e {
                 StageError::NotEnoughData => {
-                    println!("Failed: Not Enough Data");
+                    debug!("Failed: Not Enough Data");
                 }
                 _ => {
-                    println!("Failed: {:?}", e);
+                    error!("Failed: {:?}", e);
                 }
             },
         }

@@ -31,3 +31,5 @@ kona-mpt.workspace = true
 
 # sp1
 sp1-zkvm.workspace = true
+
+log.workspace = true
