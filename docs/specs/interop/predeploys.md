@@ -30,14 +30,12 @@
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
   - [Functions](#functions)
-    - [`createWithCreate3`](#createwithcreate3)
     - [`createOptimismMintableERC20WithDecimals`](#createoptimismmintableerc20withdecimals)
     - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
     - [`createStandardL2Token`](#createstandardl2token)
   - [Events](#events)
     - [`OptimismMintableERC20Created`](#optimismmintableerc20created)
     - [`StandardL2TokenCreated`](#standardl2tokencreated)
-  - [Invariants](#invariants)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -456,7 +454,6 @@ This is essential for the liquidity migration process defined in the liquidity m
 
 ### Functions
 
-
 #### `createOptimismMintableERC20WithDecimals`
 
 Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined by:
@@ -577,28 +574,6 @@ This event exists for backward compatibility with legacy version.
 ```solidity
 event StandardL2TokenCreated(address indexed remoteToken, address indexed localToken);
 ```
-
-
-## OptimismSuperchainERC20Factory
-
-| Constant | Value                                        |
-| -------- | -------------------------------------------- |
-| Address  | TBD
-
-### OptimismSuperchainERC20
-
-The `OptimismSuperchainERC20Factory` creates ERC20 contracts on L2 that compile to the `SuperchainERC20` standard and grant mint-burn rights to `L2StandardBridge` (`OptimismSuperchainERC20`). 
-These ERC20s are called `OptimismSuperchainERC20` and can be converted back and forth with `OptimismMintableERC20` tokens. 
-The goal of the `OptimismSuperchainERC20` is to extend functionalities of the `OptimismMintableERC20` to be interop compatible.
-The `L2StandardBridge` will include a `convert()` function that allows anyone to convert back and forth between any `OptimismMintableERC20` and its corresponding `OptimismSuperchainERC20`.
-
-Anyone can deploy `OptimismSuperchainERC20` contracts by using the `OptimismSuperchainERC20Factory`.
-
-### Functions
-
-#### 
-
-### Events
 
 ## Security Considerations
 
