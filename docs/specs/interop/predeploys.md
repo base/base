@@ -467,42 +467,14 @@ Creates an instance of the `OptimismMintableERC20` contract with a set of metada
 createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
 ```
 
-It MUST use `CREATE2` to deploy new contracts. The salt MUST depend on the following inputs:
-`_remoteToken`, `_name`, `_symbol`, and `_decimals`.
+The function MUST use `CREATE2` to deploy new contracts.
+The salt MUST depend on the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`)
+like follows:
+`bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));`
+
 This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
 
-It MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
-
-A reference implementation looks like the following:
-
-```solidity
-function createOptimismMintableERC20WithDecimals(
-  address _remoteToken,
-  string memory _name,
-  string memory _symbol,
-  uint8 _decimals
-)
-  public
-  returns (address)
-{
-  require(_remoteToken != address(0), "OptimismMintableERC20Factory: must provide remote token address");
-
-  bytes32 salt = keccak256(abi.encode(_remoteToken, _name, _symbol, _decimals));
-  address localToken =
-    address(new OptimismMintableERC20{ salt: salt }(bridge, _remoteToken, _name, _symbol, _decimals));
-
-  deployments[localToken] = _remoteToken;
-
-  // Emit the old event too for legacy support.
-  emit StandardL2TokenCreated(_remoteToken, localToken);
-
-  // Emit the updated event. The arguments here differ from the legacy event, but
-  // are consistent with the ordering used in StandardBridge events.
-  emit OptimismMintableERC20Created(localToken, _remoteToken, msg.sender);
-
-  return localToken;
-}
-```
+The function MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
 
 #### `createOptimismMintableERC20`
 
@@ -511,21 +483,6 @@ by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard va
 
 ```solidity
 createOptimismMintableERC20(address _remoteToken, string memory _name, string memory _symbol) returns (address)
-```
-
-A reference implementation looks like the following:
-
-```solidity
-function createOptimismMintableERC20(
-  address _remoteToken,
-  string memory _name,
-  string memory _symbol
-)
-  public
-  returns (address)
-{
-  return createOptimismMintableERC20WithDecimals(_remoteToken, _name, _symbol, 18);
-}
 ```
 
 #### `createStandardL2Token`
@@ -538,21 +495,6 @@ createStandardL2Token(address _remoteToken, string memory _name, string memory _
 ```
 
 This function exists for backwards compatibility with the legacy version.
-
-A reference implementation looks like the following:
-
-```solidity
-function createStandardL2Token(
-  address _remoteToken,
-  string memory _name,
-  string memory _symbol
-)
-  external
-  returns (address)
-{
-  return createOptimismMintableERC20(_remoteToken, _name, _symbol);
-}
-```
 
 ### Events
 
