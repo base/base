@@ -19,6 +19,8 @@ use client_utils::{
     driver::MultiBlockDerivationDriver, l2_chain_provider::MultiblockOracleL2ChainProvider,
 };
 
+use log::info;
+
 extern crate alloc;
 
 cfg_if! {
@@ -117,7 +119,7 @@ fn main() {
 
             for payload in l2_attrs_with_parents {
                 // Execute the payload to generate a new block header.
-                println!(
+                info!(
                     "Executing Payload for L2 Block: {}",
                     payload.parent.block_info.number + 1
                 );

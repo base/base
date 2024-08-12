@@ -78,6 +78,7 @@ sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "experimen
 sp1-helper = { git = "https://github.com/succinctlabs/sp1.git", branch = "experimental" }
 futures = "0.3.30"
 serde_cbor = "0.11.2"
+log = "0.4.22"
 
 # sp1
 [profile.release-client-lto]
