@@ -239,7 +239,7 @@ the correctness of the translation between the user's high-level code and the re
 
 As a consequence of the above, it is the responsibility of a program developer to develop tests that demonstrate that Cannon
 is capable of proving their intended program correctly over a large number of possible inputs. Such tests defend against
-bugs in the user's compiler as well as ways in which the compiler may inadvertantly break one of Cannon's
+bugs in the user's compiler as well as ways in which the compiler may inadvertently break one of Cannon's
 [Compiler Assumptions](#compiler-assumptions). Users of Fault Proof systems are strongly encouraged to utilize multiple
 proof systems and/or compilers to mitigate the impact of errant behavior in any one toolchain.
 

@@ -35,7 +35,7 @@ This is implemented as follows:
 function getL1FeeUpperBound(uint256 unsignedTxSize) external view returns (uint256) {
     // Add 68 to account for unsigned tx
     uint256 txSize = unsignedTxSize + 68;
-    // txSize / 255 + 16 is the pratical fastlz upper-bound covers 99.99% txs.
+    // txSize / 255 + 16 is the practical fastlz upper-bound covers 99.99% txs.
     uint256 flzUpperBound = txSize + txSize / 255 + 16;
 
     int256 estimatedSize = costIntercept + costFastlzCoef * flzUpperBound;

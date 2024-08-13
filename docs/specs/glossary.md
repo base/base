@@ -717,7 +717,7 @@ derivation then acts as a sanity check and a way to detect L1 chain [re-orgs][re
 
 In validator mode, the rollup node performs derivation as indicated above, but is also able to "run ahead" of the L1
 chain by getting blocks directly from the sequencer, in which case derivation serves to validate the sequencer's
-behaviour.
+behavior.
 
 A rollup node running in validator mode is sometimes called _a replica_.
 

@@ -82,4 +82,4 @@ a feature of the first release. This section should be clarified when the decisi
 
 If layer one is part of the dependency set, then it means that any event on L1 can be pulled
 into any L2. This is a very powerful abstraction as a minimal amount of execution can happen
-on L1 which triggers additional exeuction across all L2s in the OP Stack.
+on L1 which triggers additional execution across all L2s in the OP Stack.
