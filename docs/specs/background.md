@@ -1,19 +1,18 @@
 # Background
 
-Optimism is an _EVM equivalent_, _optimistic rollup_ protocol designed to _scale Ethereum_ while remaining maximally
-compatible with existing Ethereum infrastructure. This document provides an overview of the protocol to provide context
-for the rest of the specification.
-
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
+- [Overview](#overview)
 - [Foundations](#foundations)
-  - [What is Ethereum scalability?](#what-is-ethereum-scalability)
-  - [What is an Optimistic Rollup?](#what-is-an-optimistic-rollup)
-  - [What is EVM Equivalence?](#what-is-evm-equivalence)
-  - [🎶 All together now 🎶](#-all-together-now-)
+  - [Ethereum Scalability](#ethereum-scalability)
+  - [Optimistic Rollups](#optimistic-rollups)
+  - [EVM Equivalence](#evm-equivalence)
 - [Protocol Guarantees](#protocol-guarantees)
+  - [Liveness](#liveness)
+  - [Validity](#validity)
+  - [Availability](#availability)
 - [Network Participants](#network-participants)
   - [Users](#users)
   - [Sequencers](#sequencers)
@@ -25,9 +24,17 @@ for the rest of the specification.
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
+## Overview
+
+The OP Stack is a decentralized software stack maintained by the OP Stack that forms the backbone of blockchains like
+[OP Mainnet](https://explorer.optimism.io/) and [Base](https://base.org). The OP Stack provides the infrastructure for
+operating EVM equivalent rollup blockchains designed to scale Ethereum while remaining maximally compatible with
+existing Ethereum infrastructure. This document provides an overview of the protocol to provide context for the rest of
+the specification.
+
 ## Foundations
 
-### What is Ethereum scalability?
+### Ethereum Scalability
 
 Scaling Ethereum means increasing the number of useful transactions the Ethereum network can process. Ethereum's
 limited resources, specifically bandwidth, computation, and storage, constrain the number of transactions which can be
@@ -35,132 +42,200 @@ processed on the network. Of the three resources, computation and storage are cu
 bottlenecks. These bottlenecks limit the supply of transactions, leading to extremely high fees. Scaling ethereum and
 reducing fees can be achieved by better utilizing bandwidth, computation and storage.
 
-### What is an Optimistic Rollup?
+### Optimistic Rollups
 
-[Optimistic rollup](https://vitalik.eth.limo/general/2021/01/05/rollup.html) is a layer 2 scalability technique which
-increases the computation & storage capacity of Ethereum without sacrificing security or decentralization. Transaction
-data is submitted on-chain but executed off-chain. If there is an error in the off-chain execution, a fault proof can
-be submitted on-chain to correct the error and protect user funds. In the same way you don't go to court unless there
-is a dispute, you don't execute transactions on on-chain unless there is an error.
+An [Optimistic Rollup](https://vitalik.eth.limo/general/2021/01/05/rollup.html) is a layer 2 scalability construction which
+increases the computation & storage capacity of Ethereum while aiming to minimize sacrifices to scalability or
+decentralization. In a nutshell, an Optimistic Rollup utilizes Ethereum (or some other data availability layer) to host
+transaction data. Layer 2 nodes then execute a state transition function over this data. Users can propose the result of
+this off-chain execution to a smart contract on L1. A "fault proving" process can then demonstrate that a user's proposal
+is (or is not) valid.
 
-### What is EVM Equivalence?
+### EVM Equivalence
 
 [EVM Equivalence](https://medium.com/ethereum-optimism/introducing-evm-equivalence-5c2021deb306) is complete compliance
 with the state transition function described in the Ethereum yellow paper, the formal definition of the protocol. By
 conforming to the Ethereum standard across EVM equivalent rollups, smart contract developers can write once and deploy
 anywhere.
 
-### 🎶 All together now 🎶
-
-**Optimism is an _EVM equivalent_, _optimistic rollup_ protocol designed to _scale Ethereum_.**
-
 ## Protocol Guarantees
 
-In order to scale Ethereum without sacrificing security, we must preserve 3 critical properties of Ethereum layer 1:
-liveness, availability, and validity.
+We strive to preserve three critical properties: liveness, validity, and availability.
+A protocol that can maintain these properties can, effectively, scale Ethereum without sacrificing security.
 
-1. **Liveness**
-   - Anyone must be able to extend the rollup chain by sending transactions at any time.
-   - There are two ways transactions can be sent to the rollup chain: 1) via the sequencer, and 2) directly on layer 1.
-     The sequencer provides low latency & low cost transactions, while sending transactions directly to layer 1 provides
-     censorship resistance.
-1. **Availability**
-   - Anyone must be able to download the rollup chain.
-   - All information required to derive the chain is embedded into layer 1 blocks. That way as long as the layer 1
-     chain is available, so is the rollup.
-1. **Validity**
-   - All transactions must be correctly executed and all withdrawals correctly processed.
-   - The rollup state and withdrawals are managed on an L1 contract called the `L2OutputOracle`. This oracle is
-     guaranteed to _only_ finalize correct (ie. valid) rollup block hashes given a **single honest verifier**
-     assumption. If there is ever an invalid block hash asserted on layer 1, an honest verifier will prove it is
-     invalid and win a bond.
+### Liveness
 
-**Footnote**: There are two main ways to enforce validity of a rollup: fault proofs (optimistic rollup) and validity
-proofs (zkRollup). For the purposes of this spec we only focus on fault proofs but it is worth noting that validity
-proofs can also be plugged in once they have been made feasible.
+Liveness is defined as the ability for any party to be able to extend the rollup chain by including a transaction within
+a bounded amount of time. It should not be possible for an actor to block the inclusion of any given transaction for more
+than this bounded time period. This bounded time period should also be acceptable such that inclusion is not just
+theoretically possible but practically useful.
+
+### Validity
+
+Validity is defined as the ability for any party to execute the rollup state transition function, subject to certain lower
+bound expectations for available computing and bandwidth resources. Validity is also extended to refer to the ability for
+a smart contract on Ethereum to be able to validate this state transition function economically.
+
+### Availability
+
+Availability is defined as the ability for any party to retrieve the inputs that are necessary to execute the rollup state
+transition function correctly. Availability is essentially an element of validity and is required to be able to guarantee
+validity in general. Similar to validity, availability is subject to lower bound resource requirements.
 
 ## Network Participants
 
-There are three actors in Optimism: users, sequencers, and verifiers.
+Generally speaking, there are three primary actors that interact with an OP Stack chain: users, sequencers, and verifiers.
 
-![Network Overview](./static/assets/network-participants-overview.svg)
+```mermaid
+graph TD
+    EthereumL1(Ethereum L1)
+
+    subgraph "L2 Participants"
+        Users(Users)
+        Sequencers(Sequencers)
+        Verifiers(Verifiers)
+    end
+
+    Verifiers -.->|fetch transaction batches| EthereumL1
+    Verifiers -.->|fetch deposit data| EthereumL1
+    Verifiers -->|submit/validate/challenge output proposals| EthereumL1
+    Verifiers -.->|fetch realtime P2P updates| Sequencers
+    
+    Users -->|submit deposits/withdrawals| EthereumL1
+    Users -->|submit transactions| Sequencers
+    Users -->|query data| Verifiers
+
+
+    Sequencers -->|submit transaction batches| EthereumL1
+    Sequencers -.->|fetch deposit data| EthereumL1
+
+    classDef l1Contracts stroke:#bbf,stroke-width:2px;
+    classDef l2Components stroke:#333,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+
+    class EthereumL1 l1Contracts;
+    class Users,Sequencers,Verifiers l2Components;
+```
 
 ### Users
 
-At the heart of the network are users (us!). Users can:
+Users are the general class of network participants who:
 
-1. Deposit or withdraw arbitrary transactions on L2 by sending data to a contract on Ethereum mainnet.
-2. Use EVM smart contracts on layer 2 by sending transactions to the sequencers.
-3. View the status of transactions using block explorers provided by network verifiers.
+- Submit transactions through a Sequencer or by interacting with contracts on Ethereum.
+- Query transaction data from interfaces operated by verifiers.
 
 ### Sequencers
 
-The sequencer is the primary block producer.
-There may be one sequencer **or** many using a consensus protocol.
-For 1.0.0, there is just one sequencer (currently operated under the oversight of the Optimism Foundation).
-In general, specifications may use "the sequencer" to be a stand-in term
-for the consensus protocol operated by multiple sequencers.
+Sequencers fill the role of the block producer on an OP Stack chain. Chains may have a single Sequencer or may choose to
+utilize some consensus protocol that coordinates multiple Sequencers. The OP Stack currently officially only supports a
+single active Sequencer at any given time. In general, specifications may use the term "the Sequencer" as a stand-in for
+either a single Sequencer or a consensus protocol of multiple Sequencers.
 
-The sequencer:
+The Sequencer:
 
-1. Accepts user off-chain transactions
-2. Observes on-chain transactions (primarily, deposit events coming from L1)
-3. Consolidates both kinds of transactions into L2 blocks with a specific ordering.
-4. Propagates consolidated L2 blocks to L1, by submitting two things as calldata to L1:
-   - The pending off-chain transactions accepted in step 1.
-   - Sufficient information about the ordering of the on-chain transactions to successfully reconstruct the blocks
-     from step 3., purely by watching L1.
+- Accepts transactions directly from Users.
+- Observes "deposit" transactions generated on Ethereum.
+- Consolidates both transaction streams into ordered L2 blocks.
+- Submits information to L1 that is sufficient to fully reproduce those L2 blocks.
+- Provides real-time access to pending L2 blocks that have not yet been confirmed on L1.
 
-The sequencer also provides access to block data as early as step 3., so that users may access real-time state in
-advance of L1 confirmation if they so choose.
+The Sequencer serves an important role for the operation of an L2 chain but is not a trusted actor. The Sequencer is generally
+responsible for improving the user experience by ordering transactions much more quickly and cheaply than would currently
+be possible if users were to submit all transactions directly to L1.
 
 ### Verifiers
 
-Verifiers serve two purposes:
+Verifiers download and execute the L2 state transition function independently of the Sequencer. Verifiers help to maintain
+the integrity of the network and serve blockchain data to Users.
 
-1. Serving rollup data to users; and
-2. Verifying rollup integrity and disputing invalid assertions.
+Verifiers generally:
 
-In order for the network to remain secure there must be **at least** one honest verifier who is able to verify the
-integrity of the rollup chain & serve blockchain data to users.
+- Download rollup data from L1 and the Sequencer.
+- Use rollup data to execute the L2 state transition function.
+- Serve rollup data and computed L2 state information to Users.
+
+Verifiers can also act as Proposers and/or Challengers who:
+
+- Submit assertions about the state of the L2 to a smart contract on L1.
+- Validate assertions made by other participants.
+- Dispute invalid assertions made by other participants.
 
 ## Key Interaction Diagrams
-
-The following diagrams demonstrate how protocol components are utilized during key user interactions in order to
-provide context when diving into any particular component specification.
 
 ### Depositing and Sending Transactions
 
 Users will often begin their L2 journey by depositing ETH from L1.
 Once they have ETH to pay fees, they'll start sending transactions on L2.
-The following diagram demonstrates this interaction and all key Optimism components which are or should be utilized:
+The following diagram demonstrates this interaction and all key OP Stack components which are or should be utilized:
 
-![Diagram of Depositing and Sending Transactions](./static/assets/sequencer-handling-deposits-and-transactions.svg)
+```mermaid
+graph TD
+    subgraph "Ethereum L1"
+        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+    end
 
-Links to components mentioned in this diagram:
+    Sequencer(Sequencer)
+    Users(Users)
 
-<!-- - Batch Inbox (WIP) -->
+    %% Interactions
+    Users -->|<b>1.</b> submit deposit| OptimismPortal
+    Sequencer -.->|<b>2.</b> fetch deposit events| OptimismPortal
+    Sequencer -->|<b>3.</b> generate deposit block| Sequencer
+    Users -->|<b>4.</b> send transactions| Sequencer
+    Sequencer -->|<b>5.</b> submit transaction batches| BatchInbox
 
-- [Rollup Node](./protocol/rollup-node.md)
-- [Execution Engine](./protocol/exec-engine.md)
-- [L2 Output Oracle](./protocol/proposals.md#l2-output-oracle-smart-contract)
-- [L2 Output Submitter](./protocol/proposals.md#proposing-l2-output-commitments)
-  <!-- - Sequencer Batch Submitter (WIP) -->
-  <!-- - Fault Proof VM (WIP) -->
+    classDef l1Contracts stroke:#bbf,stroke-width:2px;
+    classDef l2Components stroke:#333,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+
+    class OptimismPortal,BatchInbox l1Contracts;
+    class Sequencer l2Components;
+    class Users systemUser;
+```
 
 ### Withdrawing
 
-Just as important as depositing, it is critical that users can withdraw from the rollup. Withdrawals are initiated by
-normal transactions on L2, but then completed using a transaction on L1 after the dispute period has elapsed.
+Users may also want to withdraw ETH or ERC20 tokens from an OP Stack chain back to Ethereum. Withdrawals are initiated
+as standard transactions on L2 but are then completed using transactions on L2. Withdrawals must reference a valid
+`FaultDisputeGame` contract that proposes the state of the L2 at a given point in time.
 
-![Diagram of Withdrawing](./static/assets/user-withdrawing-to-l1.svg)
+```mermaid
+graph LR
+    subgraph "Ethereum L1"
+        BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
+        DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
+        FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
+        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        ExternalContracts(External Contracts)
+    end
 
-Links to components mentioned in this diagram:
+    Sequencer(Sequencer)
+    Proposers(Proposers)
+    Users(Users)
 
-- [L2 Output Oracle](./protocol/proposals.md#l2-output-oracle-smart-contract)
+    %% Interactions
+    Users -->|<b>1.</b> send withdrawal initialization txn| Sequencer
+    Sequencer -->|<b>2.</b> submit transaction batch| BatchInbox
+    Proposers -->|<b>3.</b> submit output proposal| DisputeGameFactory
+    DisputeGameFactory -->|<b>4.</b> generate game| FaultDisputeGame
+    Users -->|<b>5.</b> submit withdrawal proof| OptimismPortal
+    Users -->|<b>6.</b> wait for finalization| FaultDisputeGame
+    Users -->|<b>7.</b> submit withdrawal finalization| OptimismPortal
+    OptimismPortal -->|<b>8.</b> check game validity| FaultDisputeGame
+    OptimismPortal -->|<b>9.</b> execute withdrawal transaction| ExternalContracts
+
+    %% Styling
+    classDef l1Contracts stroke:#bbf,stroke-width:2px;
+    classDef l2Components stroke:#333,stroke-width:2px;
+    classDef systemUser stroke:#f9a,stroke-width:2px;
+
+    class BatchInbox,DisputeGameFactory,FaultDisputeGame,OptimismPortal l1Contracts;
+    class Sequencer l2Components;
+    class Users,Proposers systemUser;
+```
 
 ## Next Steps
 
-This is a choose your own adventure. Are you interested in how a verifier works under the hood? Maybe you want to dive
-deep into the bit flippin' Fault Proof VM? All key components have been linked at least once in this doc, so you should
-now have the context you need to dive in deeper. [The world is yours](https://www.youtube.com/watch?v=e5PnuIRnJW8)!
+Check out the sidebar to the left to find any specification you might want to read, or click one of the links embedded
+in one of the above diagrams to learn about particular components that have been mentioned.
