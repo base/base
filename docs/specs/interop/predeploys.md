@@ -23,24 +23,35 @@
     - [Relaying Messages](#relaying-messages)
     - [Sending Expired Message Hashes](#sending-expired-message-hashes)
     - [Relaying Expired Message Hashes](#relaying-expired-message-hashes)
+- [OptimismSuperchainERC20Factory](#optimismsuperchainerc20factory)
+  - [OptimismSuperchainERC20](#optimismsuperchainerc20)
+  - [Overview](#overview)
+    - [Proxy](#proxy)
+    - [Beacon Pattern](#beacon-pattern)
+    - [Deployment history](#deployment-history)
+  - [Functions](#functions)
+    - [`createOptimismSuperchainERC20`](#createoptimismsuperchainerc20)
+  - [Events](#events)
+    - [`OptimismSuperchainERC20Created`](#optimismsuperchainerc20created)
+  - [Deployment Flow](#deployment-flow)
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
 - [OptimismMintableERC20Factory](#optimismmintableerc20factory)
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
-  - [Functions](#functions)
+  - [Functions](#functions-1)
     - [`createOptimismMintableERC20WithDecimals`](#createoptimismmintableerc20withdecimals)
     - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
     - [`createStandardL2Token`](#createstandardl2token)
-  - [Events](#events)
+  - [Events](#events-1)
     - [`OptimismMintableERC20Created`](#optimismmintableerc20created)
     - [`StandardL2TokenCreated`](#standardl2tokencreated)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-Two new system level predeploys are introduced for managing cross chain messaging along with
+Three new system level predeploys are introduced for managing cross chain messaging along with
 an update to the `L1Block` and `OptimismMintableERC20Factory` contracts with additional functionalities.
 
 ## CrossL2Inbox
@@ -368,6 +379,113 @@ function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
 }
 ```
 
+## OptimismSuperchainERC20Factory
+
+| Constant | Value |
+| -------- | ----- |
+| Address  | TBD   |
+
+### OptimismSuperchainERC20
+
+The `OptimismSuperchainERC20Factory` creates ERC20 contracts that compile to the `SuperchainERC20` [standard](token-bridging.md)
+and grant mint-burn rights to the `L2StandardBridge` (`OptimismSuperchainERC20`).
+These ERC20s are called `OptimismSuperchainERC20` and can be converted back and forth with `OptimismMintableERC20` tokens.
+The goal of the `OptimismSuperchainERC20` is to extend functionalities
+of the `OptimismMintableERC20` so that they are interop compatible.
+
+### Overview
+
+Anyone can deploy `OptimismSuperchainERC20` contracts by using the `OptimismSuperchainERC20Factory`.
+
+#### Proxy
+
+The `OptimismSuperchainERC20Factory` MUST be a proxied predeploy.
+It will follow the [`Proxy.sol` implementation](proxy)
+and `delegatecall()` to the factory implementation address.
+
+#### Beacon Pattern
+
+It MUST deploy `OptimismSuperchainERC20` as [BeaconProxies](OZ-Beacon),
+as this is the easiest way to upgrade multiple contracts simultaneously.
+Each BeaconProxy will delegatecall to the implementation address provided by the Beacon Contract.
+
+The Beacon Contract will implement the interface defined
+in [EIP-1967](https://eips.ethereum.org/EIPS/eip-1967).
+
+The implementation MUST include an `initialize` function that
+receives `(address _remoteToken, string _name, string _symbol, uint8 _decimals)` and stores these in the BeaconProxy storage.
+
+#### Deployment history
+
+The `L2StandardBridge` will include a `convert()` function that allows anyone to convert
+between any `OptimismMintableERC20` and its corresponding `OptimismSuperchainERC20`.
+For this method to work, the `OptimismSuperchainERC20Factory` MUST include a deployment history.
+
+### Functions
+
+#### `createOptimismSuperchainERC20`
+
+Creates an instance of the `OptimismSuperchainERC20` contract with a set of metadata defined by:
+
+- `_remoteToken`: address of the underlying token in its native chain.
+- `_name`: `OptimismSuperchainERC20` name
+- `_symbol`: `OptimismSuperchainERC20` symbol
+- `_decimals`: `OptimismSuperchainERC20` decimals
+
+```solidity
+createOptimismSuperchainERC20(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
+```
+
+It returns the address of the deployed `OptimismSuperchainERC20`.
+
+The function MUST use `CREATE3` to deploy its children.
+This will ensure the same address deployment across different chains,
+which is necessary for the [standard](token-bridging.md) implementation.
+The safest way to use `CREATE3` is through
+[CreateX](https://github.com/pcaversaccio/createx), which will be a preinstall in the OP stack.
+
+The salt used for deployment MUST be computed by applying `keccak256` to the `abi.encode`
+of the input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
+This implies that the same L1 token can have multiple `OptimismSuperchainERC20` representations as long as the metadata changes.
+
+The function MUST store the `_remoteToken` address for each deployed `OptimismSuperchainERC20` in a `deployments` mapping.
+
+### Events
+
+#### `OptimismSuperchainERC20Created`
+
+It MUST trigger when `createOptimismSuperchainERC20` is called.
+
+```solidity
+event OptimismSuperchainERC20Created(address indexed superchainToken, address indexed remoteToken, address deployer);
+```
+
+where `superchainToken` is the address of the newly deployed `OptimismSuperchainERC20`,
+`remoteToken` is the address of the corresponding token in L1,
+and deployer`is the`msg.sender`.
+
+### Deployment Flow
+
+```mermaid
+sequenceDiagram
+  participant Alice
+  participant FactoryProxy
+  participant FactoryImpl
+  participant CreateX
+  participant BeaconProxy as OptimismSuperchainERC20 BeaconProxy
+  participant Beacon Contract
+  participant Implementation
+  Alice->>FactoryProxy: createOptimismSuperchainERC20(remoteToken, name, symbol, decimals)
+  FactoryProxy->>FactoryImpl: delegatecall()
+  FactoryProxy->>CreateX: deployCreate3()
+  CreateX->>BeaconProxy: create()
+  FactoryProxy-->FactoryProxy: deployments[superchainToken]=remoteToken
+  FactoryProxy-->FactoryProxy: emit OptimismSuperchainERC20Created(superchainToken, remoteToken, Alice)
+  BeaconProxy-->Beacon Contract: reads implementation()
+  BeaconProxy->>Implementation: delegatecall()
+  BeaconProxy->>Implementation: initialize()
+```
+
 ## L1Block
 
 | Constant            | Value                                        |
@@ -471,8 +589,8 @@ createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _nam
 
 - The function MUST use `CREATE2` to deploy new contracts.
 - The salt MUST be computed by applying `keccak256` to the `abi.encode`
-of the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
-This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
+  of the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
+  This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
 - The function MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
 
 #### `createOptimismMintableERC20`
@@ -519,3 +637,6 @@ event StandardL2TokenCreated(address indexed remoteToken, address indexed localT
 ## Security Considerations
 
 TODO
+
+[OZ-Beacon]: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/proxy/beacon/BeaconProxy.sol
+[proxy]: https://github.com/ethereum-optimism/optimism/blob/v1.1.4/packages/contracts-bedrock/src/universal/Proxy.sol
