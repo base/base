@@ -2,7 +2,7 @@
 
 # Summary
 
-- [Root](./root.md)
+- [Introduction](./root.md)
 - [Background](./background.md)
 - [OP Stack Protocol](./protocol/overview.md)
   - [Network Upgrades]()
