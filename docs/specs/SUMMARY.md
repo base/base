@@ -50,7 +50,6 @@
     - [Dependency Set](./interop/dependency-set.md)
     - [Messaging](./interop/messaging.md)
     - [Predeploys](./interop/predeploys.md)
-    - [Execution](./interop/execution.md)
     - [Sequencer](./interop/sequencer.md)
     - [Verifier](./interop/verifier.md)
     - [Rollup Node P2P](./interop/rollup-node-p2p.md)
