@@ -10,8 +10,8 @@
     - [`sendERC20`](#senderc20)
     - [`relayERC20`](#relayerc20)
   - [Events](#events)
-    - [`SendERC20`](#senderc20)
-    - [`RelayERC20`](#relayerc20)
+    - [`SentERC20`](#senterc20)
+    - [`RelayedERC20`](#relayederc20)
 - [Diagram](#diagram)
 - [Implementation](#implementation)
 - [Invariants](#invariants)
@@ -42,7 +42,7 @@ The standard will build on top of ERC20 and include the following functions:
 Transfer `_amount` amount of tokens to address `_to` in chain `_chainId`.
 
 It SHOULD burn `_amount` tokens and initialize a message to the `L2ToL2CrossChainMessenger` to mint the `_amount`
-in the target address `_to` at `_chainId` and emit the `SendERC20` event including the `msg.sender` as parameter.
+in the target address `_to` at `_chainId` and emit the `SentERC20` event including the `msg.sender` as parameter.
 
 ```solidity
 sendERC20(address _to, uint256 _amount, uint256 _chainId)
@@ -63,20 +63,20 @@ relayERC20(address _from, address _to, uint256 _amount)
 
 ### Events
 
-#### `SendERC20`
+#### `SentERC20`
 
 MUST trigger when a cross-chain transfer is initiated using `sendERC20`.
 
 ```solidity
-event SendERC20(address indexed from, address indexed to, uint256 amount, uint256 destination)
+event SentERC20(address indexed from, address indexed to, uint256 amount, uint256 destination)
 ```
 
-#### `RelayERC20`
+#### `RelayedERC20`
 
 MUST trigger when a cross-chain transfer is finalized using `relayERC20`.
 
 ```solidity
-event RelayERC20(address indexed from, address indexed to, uint256 amount, uint256 source);
+event RelayedERC20(address indexed from, address indexed to, uint256 amount, uint256 source);
 ```
 
 ## Diagram
@@ -96,11 +96,11 @@ sequenceDiagram
   from->>SuperERC20_A: sendERC20To(to, amount, chainID)
   SuperERC20_A->>SuperERC20_A: burn(from, amount)
   SuperERC20_A->>Messenger_A: sendMessage(chainId, message)
-  SuperERC20_A-->SuperERC20_A: emit SendERC20(from, to, amount, destination)
+  SuperERC20_A-->SuperERC20_A: emit SentERC20(from, to, amount, destination)
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>SuperERC20_B: relayERC20(from, to, amount)
   SuperERC20_B->>SuperERC20_B: mint(to, amount)
-  SuperERC20_B-->SuperERC20_B: emit RelayERC20(from, to, amount, source)
+  SuperERC20_B-->SuperERC20_B: emit RelayedERC20(from, to, amount, source)
 ```
 
 ## Implementation
@@ -117,7 +117,7 @@ function sendERC20(address _to, uint256 _amount, uint256 _chainId) public {
   _burn(msg.sender, _amount);
   bytes memory _message = abi.encodeCall(this.relayERC20, (msg.sender, _to, _amount));
   L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
-  emit SendERC20(msg.sender, _to, _amount, _chainId);
+  emit SentERC20(msg.sender, _to, _amount, _chainId);
 }
 
 function relayERC20(address _from, address _to, uint256 _amount) external {
@@ -127,7 +127,7 @@ function relayERC20(address _from, address _to, uint256 _amount) external {
 
   _mint(_to, _amount);
 
-  emit RelayERC20(_from, _to, _amount, _source);
+  emit RelayedERC20(_from, _to, _amount, _source);
 }
 ```
 
@@ -164,8 +164,8 @@ Besides the ERC20 invariants, the SuperchainERC20 will require the following int
   - A way to allow for remotely initiated bridging is to include remote approval,
     i.e. approve a certain address in a certain chainId to spend local funds.
 - Bridge Events:
-  - `sendERC20()` should emit a `SendERC20` event. `
-  - `relayERC20()` should emit a `RelayERC20` event.
+  - `sendERC20()` should emit a `SentERC20` event. `
+  - `relayERC20()` should emit a `RelayedERC20` event.
 
 ## Future Considerations
 
