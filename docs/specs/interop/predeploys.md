@@ -400,12 +400,14 @@ Anyone can deploy `OptimismSuperchainERC20` contracts by using the `OptimismSupe
 #### Proxy
 
 The `OptimismSuperchainERC20Factory` MUST be a proxied predeploy.
-It will follow the [`Proxy.sol` implementation](proxy)
+It will follow the
+[`Proxy.sol` implementation](https://github.com/ethereum-optimism/optimism/blob/v1.1.4/packages/contracts-bedrock/src/universal/Proxy.sol)
 and `delegatecall()` to the factory implementation address.
 
 #### Beacon Pattern
 
-It MUST deploy `OptimismSuperchainERC20` as [BeaconProxies](OZ-Beacon),
+It MUST deploy `OptimismSuperchainERC20` as
+[BeaconProxies](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/proxy/beacon/BeaconProxy.sol),
 as this is the easiest way to upgrade multiple contracts simultaneously.
 Each BeaconProxy will delegatecall to the implementation address provided by the Beacon Contract.
 
@@ -637,6 +639,3 @@ event StandardL2TokenCreated(address indexed remoteToken, address indexed localT
 ## Security Considerations
 
 TODO
-
-[OZ-Beacon]: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/proxy/beacon/BeaconProxy.sol
-[proxy]: https://github.com/ethereum-optimism/optimism/blob/v1.1.4/packages/contracts-bedrock/src/universal/Proxy.sol
