@@ -40,7 +40,7 @@ chain derivation must be reset, omitting the input data when rederiving therefor
 
 The [batching][batcher] and compression of input data remain unchanged. When a batch is ready
 to be submitted to the inbox address, the data is uploaded to the DA storage layer instead, and a
-commitment (specified below) is submitted as the bacher inbox transaction call data.
+commitment (specified below) is submitted as the batcher inbox transaction call data.
 
 Commitment txdata introduces version `1` to the [transaction format][batchertx], in order to interpret
 the txdata as a commitment during the l1 retrieval step of the derivation pipeline:
@@ -89,7 +89,7 @@ This service is responsible to interacting with the Data Availability Layer (DA 
 The layer could be a content addressable storage layer like IPFS or any S3 compatible storage
 or it could a specific DA focused blockchain.
 Content addressed systems like S3 should use the first `put/<hex_encoded_commitment>`
-because they can pre-commpute the commitment.
+because they can pre-compute the commitment.
 Blockchain based DA layers should use `put` and then submit the returned commitment to L1.
 Because commitments can include the block height or hash, the commitment cannot be computed prior to submitting
 it to the DA Layer.

@@ -262,7 +262,7 @@ but the matching L1-origin information may not be present at the time of activat
 ### Activation Timestamps
 
 Governance approves all network upgrades & the time at which the upgrade activates. The approved governance
-proposal is the canonoical document for the timestamp; however, the timestamps are replicated here for ease of use.
+proposal is the canonical document for the timestamp; however, the timestamps are replicated here for ease of use.
 
 |Network Upgrade|Mainnet Upgrade Timestamp|Sepolia Upgrade Timestamp|Goerli Upgrade Timestamp|
 |---------------|-------------------------|-------------------------|------------------------|
