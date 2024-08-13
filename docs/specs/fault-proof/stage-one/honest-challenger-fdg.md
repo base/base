@@ -37,7 +37,7 @@ of the game being interacted with to generate the traces needed to make truthful
 
 ## Invariants
 
-To ensure an accurate and incentive compatible fault dispute system, the honest challenger behaviour must preserve
+To ensure an accurate and incentive compatible fault dispute system, the honest challenger behavior must preserve
 three invariants for any game:
 
 1. The game resolves as `DefenderWins` if the root claim is correct and `ChallengerWins` if the root claim is incorrect

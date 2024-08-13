@@ -26,17 +26,27 @@
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
+- [OptimismMintableERC20Factory](#optimismmintableerc20factory)
+  - [OptimismMintableERC20](#optimismmintableerc20)
+  - [Updates](#updates)
+  - [Functions](#functions)
+    - [`createOptimismMintableERC20WithDecimals`](#createoptimismmintableerc20withdecimals)
+    - [`createOptimismMintableERC20`](#createoptimismmintableerc20)
+    - [`createStandardL2Token`](#createstandardl2token)
+  - [Events](#events)
+    - [`OptimismMintableERC20Created`](#optimismmintableerc20created)
+    - [`StandardL2TokenCreated`](#standardl2tokencreated)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 Two new system level predeploys are introduced for managing cross chain messaging along with
-an update to the `L1Block` contract with additional functionality.
+an update to the `L1Block` and `OptimismMintableERC20Factory` contracts with additional functionalities.
 
 ## CrossL2Inbox
 
 | Constant | Value                                        |
-|----------|----------------------------------------------|
+| -------- | -------------------------------------------- |
 | Address  | `0x4200000000000000000000000000000000000022` |
 
 The `CrossL2Inbox` is responsible for executing a cross chain message on the destination chain.
@@ -52,7 +62,7 @@ The following fields are required for executing a cross chain message:
 [`Identifier`]: ./messaging.md#message-identifier
 
 | Name      | Type         | Description                                             |
-|-----------|--------------|---------------------------------------------------------|
+| --------- | ------------ | ------------------------------------------------------- |
 | `_msg`    | `bytes`      | The [message payload], matching the initiating message. |
 | `_id`     | `Identifier` | A [`Identifier`] pointing to the initiating message.    |
 | `_target` | `address`    | Account that is called with `_msg`.                     |
@@ -148,7 +158,7 @@ properties about the `_msg`.
 ## L2ToL2CrossDomainMessenger
 
 | Constant          | Value                                        |
-|-------------------|----------------------------------------------|
+| ----------------- | -------------------------------------------- |
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
 | `EXPIRY_WINDOW`   | `uint256(7200)`                              |
@@ -195,6 +205,7 @@ function messageNonce() public view returns (uint256) {
 
 To enable interoperability between chains that use a custom gas token, there is no native support for
 sending `ether` between chains. `ether` must first be wrapped into WETH before sending between chains.
+See [SuperchainWETH](./superchain-weth.md) for more information.
 
 ### Interfaces
 
@@ -204,14 +215,23 @@ chain is included instead.
 
 #### Sending Messages
 
-The initiating message is represented by the following event:
+The following function is used for sending messages between domains:
 
 ```solidity
-event SentMessage(bytes message) anonymous;
+function sendMessage(uint256 _destination, address _target, bytes calldata _message) external;
 ```
 
-The `bytes` are an ABI encoded call to `relayMessage`. The event is defined as `anonymous` so that no topics
-are prefixed to the abi encoded call.
+It creates an initiating message that is represented by an anonymous event:
+
+```solidity
+assembly {
+    log0(add(_data, 0x20), mload(_data))
+}
+```
+
+The `_data` is an ABI encoded call to `relayMessage`. The event is done with Yul so that an extra layer
+of ABI encoding as `bytes` is not wrapped around `relayMessage` call. The exact calldata meant to be passed
+to the `L2ToL2CrossDomainMessenger` on the remote domain is included in the log.
 
 An explicit `_destination` chain and `nonce` are used to ensure that the message can only be played on a single remote
 chain a single time. The `_destination` is enforced to not be the local chain to avoid edge cases.
@@ -223,15 +243,8 @@ In both cases, the source chain's chain id is required for security. Executing m
 assume the identity of an account because `msg.sender` will never be the identity that initiated the message,
 it will be the `L2ToL2CrossDomainMessenger` and users will need to callback to get the initiator of the message.
 
-```solidity
-function sendMessage(uint256 _destination, address _target, bytes calldata _message) external {
-    require(_destination != block.chainid);
-
-    bytes memory data = abi.encodeCall(L2ToL2CrossDomainMessenger.relayMessage, (_destination, block.chainid, messageNonce(), msg.sender, _target, _message));
-    emit SentMessage(data);
-    nonce++;
-}
-```
+The `_destination` MUST NOT be the chainid of the local chain and a locally defined `nonce` MUST increment on
+every call to `sendMessage`.
 
 Note that `sendMessage` is not `payable`.
 
@@ -358,7 +371,7 @@ function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
 ## L1Block
 
 | Constant            | Value                                        |
-|---------------------|----------------------------------------------|
+| ------------------- | -------------------------------------------- |
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
@@ -382,7 +395,7 @@ enum ConfigType {
 The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
 
 | ConfigType             | Value                                       |
-|------------------------|---------------------------------------------|
+| ---------------------- | ------------------------------------------- |
 | `SET_GAS_PAYING_TOKEN` | `abi.encode(token, decimals, name, symbol)` |
 | `ADD_DEPENDENCY`       | `abi.encode(chainId)`                       |
 | `REMOVE_DEPENDENCY`    | `abi.encode(chainId)`                       |
@@ -416,6 +429,92 @@ id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MU
 dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
 `L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
 MUST return the length of the dependency set array.
+
+## OptimismMintableERC20Factory
+
+| Constant | Value                                        |
+| -------- | -------------------------------------------- |
+| Address  | `0x4200000000000000000000000000000000000012` |
+
+### OptimismMintableERC20
+
+The `OptimismMintableERC20Factory` creates ERC20 contracts on L2 that can be used to deposit
+native L1 tokens into (`OptimismMintableERC20`). Anyone can deploy `OptimismMintableERC20` contracts.
+
+Each `OptimismMintableERC20` contract created by the `OptimismMintableERC20Factory`
+allows for the `L2StandardBridge` to mint
+and burn tokens, depending on whether the user is
+depositing from L1 to L2 or withdrawing from L2 to L1.
+
+### Updates
+
+The `OptimismMintableERC20Factory` is updated to include a `deployments` mapping
+that stores the `remoteToken` address for each deployed `OptimismMintableERC20`.
+This is essential for the liquidity migration process defined in the liquidity migration spec.
+
+### Functions
+
+#### `createOptimismMintableERC20WithDecimals`
+
+Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined by:
+
+- `_remoteToken`: address of the underlying token in its native chain.
+- `_name`: `OptimismMintableERC20` name
+- `_symbol`: `OptimismMintableERC20` symbol
+- `_decimals`: `OptimismMintableERC20` decimals
+
+```solidity
+createOptimismMintableERC20WithDecimals(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
+```
+
+**Invariants**
+
+- The function MUST use `CREATE2` to deploy new contracts.
+- The salt MUST be computed by applying `keccak256` to the `abi.encode`
+of the four input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
+This will ensure a unique `OptimismMintableERC20` for each set of ERC20 metadata.
+- The function MUST store the `_remoteToken` address for each deployed `OptimismMintableERC20` in a `deployments` mapping.
+
+#### `createOptimismMintableERC20`
+
+Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
+by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard value 18.
+
+```solidity
+createOptimismMintableERC20(address _remoteToken, string memory _name, string memory _symbol) returns (address)
+```
+
+#### `createStandardL2Token`
+
+Creates an instance of the `OptimismMintableERC20` contract with a set of metadata defined
+by `_remoteToken`, `_name` and `_symbol` and fixed `decimals` to the standard value 18.
+
+```solidity
+createStandardL2Token(address _remoteToken, string memory _name, string memory _symbol) returns (address)
+```
+
+This function exists for backwards compatibility with the legacy version.
+
+### Events
+
+#### `OptimismMintableERC20Created`
+
+It MUST trigger when `createOptimismMintableERC20WithDecimals`,
+`createOptimismMintableERC20` or `createStandardL2Token` are called.
+
+```solidity
+event OptimismMintableERC20Created(address indexed localToken, address indexed remoteToken, address deployer);
+```
+
+#### `StandardL2TokenCreated`
+
+It MUST trigger when `createOptimismMintableERC20WithDecimals`,
+`createOptimismMintableERC20` or `createStandardL2Token` are called.
+This event exists for backward compatibility with legacy version.
+
+```solidity
+event StandardL2TokenCreated(address indexed remoteToken, address indexed localToken);
+```
 
 ## Security Considerations
 
