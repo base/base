@@ -95,7 +95,7 @@ to more quickly reorganize out invalid blocks.
 be signed by the sequencer. This signature represents the sequencer's claim that it
 built a block that conforms to the protocol. `unsafe` blocks exist to give low latency access to the
 latest information. To keep the latency as low as possible, cross chain messages are assumed valid
-at this stage. This means that the remote unsafe inputs are trusted soley because they were
+at this stage. This means that the remote unsafe inputs are trusted solely because they were
 included in a block by the sequencer.
 
 An alternative approach to `unsafe` inputs would be to include an SGX proof that the sequencer ran

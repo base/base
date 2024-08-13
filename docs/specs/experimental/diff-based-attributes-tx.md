@@ -82,7 +82,7 @@ This means that the values would need to be instead read directly from state.
 To prevent the need of an archive node to read the values from state for historical receipts,
 an event can be emitted that contains the values required to hydrate this data.
 Ideally this event does not need to be emitted for every L1Attributes transaction, but a simple
-implementation may do so. It could be emitted everytime that the `sequenceNumber` is `0` and
+implementation may do so. It could be emitted every time that the `sequenceNumber` is `0` and
 the rehydration method could observe the L1Attributes transactions from the last L1 origin
 update to the block including the receipt being hydrated and apply the diffs against the value
 that was emitted from the event.

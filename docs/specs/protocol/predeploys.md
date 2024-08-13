@@ -294,7 +294,7 @@ upgraded by changing its proxy's implementation key.
 Address: `0x4200000000000000000000000000000000000012`
 
 The `OptimismMintableERC20Factory` is responsible for creating ERC20 contracts on L2 that can be
-used for depositing native L1 tokens into. These ERC20 contracts can be created permisionlessly
+used for depositing native L1 tokens into. These ERC20 contracts can be created permissionlessly
 and implement the interface required by the `StandardBridge` to just work with deposits and withdrawals.
 
 Each ERC20 contract that is created by the `OptimismMintableERC20Factory` allows for the `L2StandardBridge` to mint

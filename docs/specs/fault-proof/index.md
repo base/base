@@ -447,7 +447,7 @@ amount of time.
 
 During program execution, the precompiles are substituted with interactions with pre-image oracle.
 The program hints the host for a precompile input. Which it the subsequently retrieves the result of the precompile
-opereation using the [type 6 global precompile key](#type-6-global-precompile-key).
+operation using the [type 6 global precompile key](#type-6-global-precompile-key).
 All accelerated precompiles must be functionally equivalent to their EVM equivalent.
 
 ## Fault Proof VM
