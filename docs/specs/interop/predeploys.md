@@ -129,7 +129,7 @@ A simple implementation of the `executeMessage` function is included below.
 function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
     require(_id.timestamp <= block.timestamp);
     require(L1Block.isInDependencySet(_id.chainid));
-    require(_id.timestamp > L1Block.interopStart());
+    require(_id.timestamp > interopStart());
 
     assembly {
       tstore(ORIGIN_SLOT, _id.origin)
