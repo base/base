@@ -34,12 +34,12 @@ those provided by the Safe contract.
 
 The Security Council acts as the Guardian, which is authorized to activate the [Superchain
 Pause](../protocol/superchain-configuration.md#pausability) functionality and for
-[blacklisting](../fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute
-game contracts.
+[blacklisting](../fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute game
+contracts.
 
 However the Security Council cannot be expected to react quickly in an emergency situation.
-Therefore the Deputy Guardian module enables the Security Council to share this
-authorization with another account.
+Therefore the Deputy Guardian module enables the Security Council to share this authorization with
+another account.
 
 The module has the following minimal interface:
 
@@ -77,8 +77,9 @@ interface DeputyGuardianModule {
 }
 ```
 
-For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe` and
-`deputyGuardian` addresses. If necessary these can be modified by swapping out with a new module.
+For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe`
+and `deputyGuardian` addresses. If necessary these can be modified by swapping out with a new
+module.
 
 ### Deputy Guardian Module Security Properties
 
@@ -131,26 +132,28 @@ Owners are recorded in this mapping in one of 4 ways:
    are ignored.
 1. An owner may call the contract's `showLiveness()()` method directly in order to prove liveness.
 
-Note that the first two methods do not require the owner to actually sign anything. However these mechanisms
-are necessary to prevent new owners from being removed before they have had a chance to show liveness.
+Note that the first two methods do not require the owner to actually sign anything. However these
+mechanisms are necessary to prevent new owners from being removed before they have had a chance to
+show liveness.
 
 ### The liveness module
 
 A `LivenessModule` is also created which does the following:
 
-1. Has a function `removeOwners()` that anyone may call to specify one or more owners to be removed from the
-   Safe.
-1. The Module would then check the `LivenessGuard.lastLive()` to determine if the signer is
-   eligible for removal.
+1. Has a function `removeOwners()` that anyone may call to specify one or more owners to be removed
+   from the Safe.
+1. The Module would then check the `LivenessGuard.lastLive()` to determine if the signer is eligible
+   for removal.
 1. If so, it will call the Safe's `removeSigner()` to remove the non-live signer, and if necessary
    reduce the threshold.
 1. When a member is removed, the signing parameters are modified such that `M/N` is the lowest ratio
-   which remains greater than or equal to 75%. Using integer math, this can be expressed as `M = (N * 75 + 99) / 100`.
+   which remains greater than or equal to 75%. Using integer math, this can be expressed as
+   `M = (N * 75 + 99) / 100`.
 
 ### Owner removal call flow
 
-The following diagram illustrates the flow for removing a single owner. The `verifyFinalState`
-box indicates calls to the Safe which ensure the final state is valid.
+The following diagram illustrates the flow for removing a single owner. The `verifyFinalState` box
+indicates calls to the Safe which ensure the final state is valid.
 
 ```mermaid
 sequenceDiagram
@@ -173,8 +176,8 @@ sequenceDiagram
 ### Shutdown
 
 In the unlikely event that the signer set (`N`) is reduced below the allowed minimum number of
-owners, then (and only then) is a shutdown mechanism activated which removes the existing
-signers, and hands control of the multisig over to a predetermined entity.
+owners, then (and only then) is a shutdown mechanism activated which removes the existing signers,
+and hands control of the multisig over to a predetermined entity.
 
 ### Liveness Security Properties
 
@@ -201,14 +204,15 @@ The following security properties must be upheld:
    if enough other owners have been removed to activate the shutdown mechanism.
 1. The module correctly sets the Safe's threshold upon removing a signer.
 
-Note: neither the module nor guard attempt to prevent a quorum of owners from removing either the liveness
-module or guard. There are legitimate reasons they might wish to do so. Moreover, if such a quorum
-of owners exists, there is no benefit to removing them, as they are defacto 'sufficiently live'.
+Note: neither the module nor guard attempt to prevent a quorum of owners from removing either the
+liveness module or guard. There are legitimate reasons they might wish to do so. Moreover, if such a
+quorum of owners exists, there is no benefit to removing them, as they are defacto 'sufficiently
+live'.
 
 ### Interdependency between the guard and module
 
-The guard has no dependency on the module, and can be used independently to track liveness of
-Safe owners.
+The guard has no dependency on the module, and can be used independently to track liveness of Safe
+owners.
 
 This means that the module can be removed or replaced without any affect on the guard.
 
@@ -230,7 +234,8 @@ therefore be done prior to adding a new owner.
 The module and guard are intended to be deployed and installed on the safe in the following
 sequence:
 
-1. Deploy the guard contract. The guard's constructor will read the Safe's owners and set a timestamp.
+1. Deploy the guard contract. The guard's constructor will read the Safe's owners and set a
+   timestamp.
 1. Deploy the module.
 1. Set the guard on the safe.
 1. Enable the module on the safe.
