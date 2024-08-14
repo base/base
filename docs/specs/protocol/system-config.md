@@ -12,6 +12,8 @@
     - [Ecotone `scalar`, `overhead` (`uint256,uint256`) change](#ecotone-scalar-overhead-uint256uint256-change)
   - [`gasLimit` (`uint64`)](#gaslimit-uint64)
   - [`unsafeBlockSigner` (`address`)](#unsafeblocksigner-address)
+- [System config contents (version x+interop)](#system-config-contents-version-xinterop)
+  - [`dependencyManager` (`address`)](#dependencymanager-address)
 - [Writing the system config](#writing-the-system-config)
 - [Reading the system config](#reading-the-system-config)
 
@@ -119,6 +121,18 @@ manner, it is stored at a special storage slot corresponding to
 
 Unlike the other values, the `unsafeBlockSigner` only operates on blockchain
 policy. It is not a consensus level parameter.
+
+## System config contents (version x+interop)
+
+Version 1 of the system configuration contract defines the following parameters:
+
+### `dependencyManager` (`address`)
+
+The Interop Upgrade requires that each standard chain defines its dependency set
+which is the set of chains they accept inbound messages from.
+
+The dependency manager is the address of the only entity allowed to add or remove
+chain IDs from a chain's dependency set.
 
 ## Writing the system config
 
