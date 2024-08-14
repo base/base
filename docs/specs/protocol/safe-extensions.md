@@ -1,41 +1,56 @@
-# Security Council Safe
+# Safe Contract Extensions
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Deputy guardian module](#deputy-guardian-module)
+- [Guardian Safe](#guardian-safe)
+  - [Deputy Guardian Module](#deputy-guardian-module)
   - [Deputy Guardian Module Security Properties](#deputy-guardian-module-security-properties)
-- [Liveness checking mechanism](#liveness-checking-mechanism)
-- [Liveness checking methodology](#liveness-checking-methodology)
-  - [The liveness guard](#the-liveness-guard)
-  - [The liveness module](#the-liveness-module)
-  - [Owner removal call flow](#owner-removal-call-flow)
+- [Security Council Liveness Checking Extensions](#security-council-liveness-checking-extensions)
+  - [The Liveness Guard](#the-liveness-guard)
+  - [The Liveness Module](#the-liveness-module)
+  - [Owner Removal Call Flow](#owner-removal-call-flow)
   - [Shutdown](#shutdown)
   - [Liveness Security Properties](#liveness-security-properties)
-    - [In the guard](#in-the-guard)
-    - [In the module](#in-the-module)
-  - [Interdependency between the guard and module](#interdependency-between-the-guard-and-module)
-- [Operational considerations](#operational-considerations)
+    - [Liveness Guard Security Properties](#liveness-guard-security-properties)
+    - [Liveness Module Security Properties](#liveness-module-security-properties)
+  - [Interdependency between the Liveness Guard and Liveness Module](#interdependency-between-the-liveness-guard-and-liveness-module)
+- [Operational Considerations](#operational-considerations)
   - [Manual validation of new owner liveness](#manual-validation-of-new-owner-liveness)
-  - [Deploying the liveness checking system](#deploying-the-liveness-checking-system)
-  - [Modify the liveness checking system](#modify-the-liveness-checking-system)
-    - [Replacing the module](#replacing-the-module)
-    - [Replacing the guard](#replacing-the-guard)
+  - [Deploying the Liveness Checking System](#deploying-the-liveness-checking-system)
+  - [Modifying the Liveness Checking System](#modifying-the-liveness-checking-system)
+    - [Replacing the Liveness Module](#replacing-the-liveness-module)
+    - [Replacing the Liveness Guard](#replacing-the-liveness-guard)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-The Security Council (at
-[eth:0xc2819DC788505Aac350142A7A707BF9D03E3Bd03](https://etherscan.io/address/0xc2819DC788505Aac350142A7A707BF9D03E3Bd03))
-uses a specially extended Safe multisig contract to provide additional security guarantees on top of
-those provided by the Safe contract.
+This document describes extensions to the Security Council and Guardian Safe contracts, which
+provide additional functionality and security guarantees on top of those provided by the Safe
+contract.
 
-## Deputy guardian module
+These extensions are developed using two types of contracts
+([modules](https://docs.safe.global/advanced/smart-account-modules) and
+[guards](https://docs.safe.global/advanced/smart-account-guards)) which the Safe contract has
+built-in support for:
 
-The Security Council acts as the Guardian, which is authorized to activate the [Superchain
-Pause](../protocol/superchain-configuration.md#pausability) functionality and for
-[blacklisting](../fault-proof/stage-one/bond-incentives.md#authenticated-roles) dispute game
-contracts.
+1. **Guard contracts:** can execute pre- and post- transaction checks.
+1. **Module contracts:** a contract which is
+   authorized to execute transactions via the Safe. This means the module must properly implement
+   auth conditions internally.
+
+For more information about the Security Council and Guardian roles, refer to the
+[Stage One Roles and Requirements](./stage-one.md) document.
+
+## Guardian Safe
+
+The Guardian Safe is extended by the Deputy Guardian Module.
+
+### Deputy Guardian Module
+
+As the sole owner of the Guardian Safe, the Security Council acts as the Guardian, which is
+authorized to activate the [Superchain Pause](../protocol/superchain-configuration.md#pausability)
+functionality.
 
 However the Security Council cannot be expected to react quickly in an emergency situation.
 Therefore the Deputy Guardian module enables the Security Council to share this authorization with
@@ -97,26 +112,18 @@ The following security properties must be upheld by the `DeputyGuardianModule`:
 1. The module must format calldata correctly such that the target it calls performs the expected
    action.
 
-## Liveness checking mechanism
+## Security Council Liveness Checking Extensions
 
-The Security Council's liveness checking mechanism is intended to ensure that any loss of access to
-a signer's keys is identified and addressed within a predictable period of time.
+The Security Council Safe is extended by the Liveness Checking Module and Guard. These extensions
+are intended to ensure that any loss of access to a signer's keys is identified and addressed
+within a predictable period of time.
 
 This mechanism is intended only to be used to remove signers who have lost access to their keys, or
 are otherwise inactive. It is not intended to be used to remove signers who are acting in bad faith,
 or any other subjective criteria, such cases should be addressed by governance, and the removal
 handled via the standard Safe ownership management functionality.
 
-## Liveness checking methodology
-
-This is achieved using two types of contracts which the Safe contract has built-in support for:
-
-1. **Guard contracts:** can execute pre- and post- transaction checks.
-1. **Module contracts:** a contract which is added to the Safe by the signers, and thenceforth is
-   authorized to execute transactions via the Safe. This means the module must properly implement
-   auth conditions internally.
-
-### The liveness guard
+### The Liveness Guard
 
 For implementing liveness checks a `LivenessGuard` is created which receives the signatures from
 each executed transaction, and tracks the latest time at which a transaction was signed by each
@@ -136,7 +143,7 @@ Note that the first two methods do not require the owner to actually sign anythi
 mechanisms are necessary to prevent new owners from being removed before they have had a chance to
 show liveness.
 
-### The liveness module
+### The Liveness Module
 
 A `LivenessModule` is also created which does the following:
 
@@ -150,7 +157,7 @@ A `LivenessModule` is also created which does the following:
    which remains greater than or equal to 75%. Using integer math, this can be expressed as
    `M = (N * 75 + 99) / 100`.
 
-### Owner removal call flow
+### Owner Removal Call Flow
 
 The following diagram illustrates the flow for removing a single owner. The `verifyFinalState` box
 indicates calls to the Safe which ensure the final state is valid.
@@ -183,7 +190,7 @@ and hands control of the multisig over to a predetermined entity.
 
 The following security properties must be upheld:
 
-#### In the guard
+#### Liveness Guard Security Properties
 
 1. Signatures are assigned to the correct signer.
 1. Non-signers are unable to create a record of having signed.
@@ -197,7 +204,7 @@ The following security properties must be upheld:
    1. An `ownersBefore` enumerable set variable is used to accomplish this, it must be emptied at
       the end of the `checkAfterExecution` call.
 
-#### In the module
+#### Liveness Module Security Properties
 
 1. During a shutdown the module correctly removes all signers, and converts the safe to a 1 of 1.
 1. The module only removes an owner if they have not demonstrated liveness during the interval, or
@@ -209,7 +216,7 @@ liveness module or guard. There are legitimate reasons they might wish to do so.
 quorum of owners exists, there is no benefit to removing them, as they are defacto 'sufficiently
 live'.
 
-### Interdependency between the guard and module
+### Interdependency between the Liveness Guard and Liveness Module
 
 The guard has no dependency on the module, and can be used independently to track liveness of Safe
 owners.
@@ -219,7 +226,7 @@ This means that the module can be removed or replaced without any affect on the 
 The module however does have a dependency on the guard; if the guard is removed from the Safe, then
 the module will no longer be functional and calls to its `removeOwners` function will revert.
 
-## Operational considerations
+## Operational Considerations
 
 ### Manual validation of new owner liveness
 
@@ -227,7 +234,7 @@ As [noted above](#the-liveness-guard) newly added owners are recorded in the gua
 necessarily having signed a transaction. Off-chain validation of the liveness of an address must
 therefore be done prior to adding a new owner.
 
-### Deploying the liveness checking system
+### Deploying the Liveness Checking System
 
 [deploying]: #deploying-the-liveness-checking-system
 
@@ -247,11 +254,11 @@ Note that changes to the owners set should not be made between the time the modu
 when it is enabled on the Safe, otherwise the checks made in the module's constructor may be
 invalidated. If such changes are made, a new module should be deployed.
 
-### Modify the liveness checking system
+### Modifying the Liveness Checking System
 
 Changes to the liveness checking system should be done in the following manner:
 
-#### Replacing the module
+#### Replacing the Liveness Module
 
 The module can safely be removed without affecting the operation of the guard. A new module can then
 be added.
@@ -259,7 +266,7 @@ be added.
 Note: none of the module's parameters are modifiable. In order to update the security properties
 enforced by the module, it must be replaced.
 
-#### Replacing the guard
+#### Replacing the Liveness Guard
 
 The safe can only have one guard contract at a time, and if the guard is removed the module will
 cease to function. This does not affect the ability of the Safe to operate normally, however the
