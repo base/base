@@ -30,10 +30,4 @@ serde.workspace = true
 rkyv.workspace = true
 sha2.workspace = true
 
-# sp1
-sp1-zkvm.workspace = true
-
 log.workspace = true
-
-# # kzg
-# kzg-rs.workspace = true

@@ -1,12 +1,5 @@
 [workspace]
-members = [
-    "aggregation-client",
-    "crates/*",
-    "native-host",
-    "validity-client",
-    "zkvm-client",
-    "zkvm-host",
-]
+members = ["client-programs/*", "crates/*", "native-host", "zkvm-host", "prover-server"]
 resolver = "2"
 
 [workspace.package]
@@ -52,8 +45,8 @@ hex = "0.4.3"
 # local
 client-utils = { path = "crates/client-utils" }
 host-utils = { path = "crates/host-utils" }
-zkvm-client = { path = "zkvm-client" }
 zkvm-host = { path = "zkvm-host" }
+prover-server = { path = "prover-server" }
 
 alloy-consensus = { version = "0.2", default-features = false }
 alloy-sol-types = { version = "0.7.6" }

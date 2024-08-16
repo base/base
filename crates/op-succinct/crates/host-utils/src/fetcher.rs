@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
+use client_utils::RawBootInfo;
 use kona_host::HostCli;
 use std::{cmp::Ordering, env, fs, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::sleep;
@@ -49,6 +50,7 @@ pub struct BlockInfo {
 
 impl SP1KonaDataFetcher {
     pub fn new() -> Self {
+        dotenv::dotenv().ok();
         let l1_rpc = env::var("L1_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
         let l1_provider =
             Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l1_rpc).unwrap()));
@@ -73,6 +75,26 @@ impl SP1KonaDataFetcher {
         }
     }
 
+    /// Get the earliest L1 header in a batch of boot infos.
+    pub async fn get_earliest_l1_head_in_batch(
+        &self,
+        boot_infos: &[RawBootInfo],
+    ) -> Result<Header> {
+        let mut earliest_block_num: u64 = u64::MAX;
+        let mut earliest_l1_header: Option<Header> = None;
+
+        for boot_info in boot_infos {
+            let l1_block_header = self
+                .get_header_by_hash(ChainMode::L1, boot_info.l1_head)
+                .await?;
+            if l1_block_header.number < earliest_block_num {
+                earliest_block_num = l1_block_header.number;
+                earliest_l1_header = Some(l1_block_header);
+            }
+        }
+        Ok(earliest_l1_header.unwrap())
+    }
+
     /// Fetch headers for a range of blocks inclusive.
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
         let mut headers: Vec<Header> = Vec::with_capacity((end - start + 1) as usize);
@@ -95,6 +117,29 @@ impl SP1KonaDataFetcher {
             block_number += batch_size;
             sleep(Duration::from_millis(1500)).await;
         }
+        Ok(headers)
+    }
+
+    /// Get the preimages for the headers corresponding to the boot infos. Specifically, fetch the
+    /// headers corresponding to the boot infos and the latest L1 head.
+    pub async fn get_header_preimages(
+        &self,
+        boot_infos: &[RawBootInfo],
+        checkpoint_block_hash: B256,
+    ) -> Result<Vec<Header>> {
+        // Get the earliest L1 Head from the boot_infos.
+        let start_header = self.get_earliest_l1_head_in_batch(boot_infos).await?;
+
+        // Fetch the full header for the latest L1 Head (which is validated on chain).
+        let latest_header = self
+            .get_header_by_hash(ChainMode::L1, checkpoint_block_hash)
+            .await?;
+
+        // Create a vector of futures for fetching all headers
+        let headers = self
+            .fetch_headers_in_range(start_header.number, latest_header.number)
+            .await?;
+
         Ok(headers)
     }
 
@@ -298,12 +343,9 @@ impl SP1KonaDataFetcher {
         // The native programs are built with profile release-client-lto in build.rs
         let exec_directory = match multi_block {
             ProgramType::Single => {
-                format!("{}/target/release-client-lto/zkvm-client", workspace_root)
+                format!("{}/target/release-client-lto/fault_proof", workspace_root)
             }
-            ProgramType::Multi => format!(
-                "{}/target/release-client-lto/validity-client",
-                workspace_root
-            ),
+            ProgramType::Multi => format!("{}/target/release-client-lto/range", workspace_root),
         };
 
         // Create data directory. This will be used by the host program running in native execution

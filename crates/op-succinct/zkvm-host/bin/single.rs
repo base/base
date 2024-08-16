@@ -7,9 +7,7 @@ use kona_host::start_server_and_native_client;
 use num_format::{Locale, ToFormattedString};
 use sp1_sdk::{utils, ProverClient};
 
-use client_utils::precompiles::PRECOMPILE_HOOK_FD;
-
-pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../elf/zkvm-client-elf");
+pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../elf/fault-proof-elf");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

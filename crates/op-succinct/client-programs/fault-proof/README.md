@@ -1,0 +1,3 @@
+# `fault_proof`
+
+This binary contains the client program for executing the Optimism rollup state transition across a single block, which can be used in an on chain dispute game. Depending on the compilation pipeline, it will compile to be run either in native mode or in zkVM mode. In native mode, the data for verifying the execute of the Optimism rollup's state transition is fetched from RPC, while in zkVM mode, the data is supplied by the host binary to the verifiable program.

@@ -11,10 +11,13 @@ Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 **`sp1-kona`**
 - `native-host`: The host program which runs the `op-succinct` program natively using `kona`.
 - `zkvm-host`: The host program which runs the `op-succinct` program in the SP1 zkVM.
-- SP1 Programs
-   - `zkvm-client`: Derive and execute a single block. First runs `zkvm-client` on the `native-host` to fetch the witness data, then uses SP1 to generate the program's proof of execution.
-   - `validity-client`: Run the derivation pipeline & execute a batch of blocks. First runs `validity-client` on the `native-host` to fetch the witness data, then uses SP1 to generate the program's proof of execution.
-   - `aggregation-client`: Aggregates validity proofs for a larger range of blocks.
+- `client-programs`: The programs proven in SP1. 
+    - `fault-proof` and `range` are used to verifiably derive and execute single blocks 
+    and batches of blocks respectively. Their binary's are first run in native mode on the `kona-host` to
+    fetch the witness data, then they use SP1 to verifiably execute the program.
+   - For `aggregation`, which is used to generate an aggregate proof for a set of batches,
+   first generate proofs for `range` programs for each batch, then use `aggregation` to
+   generate an aggregate proof.
 
 
 ## Usage
