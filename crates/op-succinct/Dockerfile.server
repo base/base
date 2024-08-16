@@ -1,0 +1,37 @@
+# Final stage
+FROM ubuntu:22.04
+
+WORKDIR /app
+
+# Install Rust and required dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    git \
+    pkg-config \
+    libssl-dev \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+    && . $HOME/.cargo/env \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH=/root/.cargo/bin:$PATH
+
+# Verify Rust installation
+RUN rustc --version && cargo --version
+
+# Install SP1
+RUN curl -L https://sp1.succinct.xyz | bash && \
+    ~/.sp1/bin/sp1up && \
+    ~/.sp1/bin/cargo-prove prove --version
+
+# Clone the repository and build the server
+RUN git clone https://github.com/succinctlabs/op-succinct.git . && \
+    cargo build --bin native_host_runner --release && \
+    cargo build --bin server --release
+
+# Expose port 3000
+EXPOSE 3000
+
+# Run the server
+CMD ["/app/target/release/server"]
