@@ -53,9 +53,16 @@ impl fmt::Display for ExecutionStats {
             "Block Execution Cycles",
             self.block_execution_instruction_count,
         )?;
-        write_stat(f, "Bn Pair Cycles", self.bn_stats.bn_pair_cycles)?;
-        write_stat(f, "Bn Add Cycles", self.bn_stats.bn_add_cycles)?;
-        write_stat(f, "Bn Mul Cycles", self.bn_stats.bn_mul_cycles)?;
+        // Only write the BN stats if they're non-zero.
+        if self.bn_stats.bn_pair_cycles > 0 {
+            write_stat(f, "Bn Pair Cycles", self.bn_stats.bn_pair_cycles)?;
+        }
+        if self.bn_stats.bn_add_cycles > 0 {
+            write_stat(f, "Bn Add Cycles", self.bn_stats.bn_add_cycles)?;
+        }
+        if self.bn_stats.bn_mul_cycles > 0 {
+            write_stat(f, "Bn Mul Cycles", self.bn_stats.bn_mul_cycles)?;
+        }
         write_stat(f, "Total Blocks", self.nb_blocks)?;
         write_stat(f, "Total Transactions", self.nb_transactions)?;
         write_stat(f, "Cycles per Block", cycles_per_block)?;
