@@ -10,7 +10,7 @@ use base64::{engine::general_purpose, Engine as _};
 use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
 use host_utils::{fetcher::SP1KonaDataFetcher, get_agg_proof_stdin, get_proof_stdin, ProgramType};
 use log::info;
-use prover_server::run_native_host;
+use op_succinct_proposer::run_native_host;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
     network::client::NetworkClient,

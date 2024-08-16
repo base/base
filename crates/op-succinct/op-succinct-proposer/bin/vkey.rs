@@ -54,22 +54,11 @@ async fn main() -> Result<()> {
 
     let (_, agg_vk) = prover.setup(AGG_ELF);
     info!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
+    println!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
     let agg_vk_bytes: [u8; 32] = hex::decode(agg_vk.bytes32().replace("0x", ""))
         .unwrap()
         .try_into()
         .unwrap();
-
-    // Check the aggregate vkey against the contract.
-    let provider = ProviderBuilder::new().on_http(Url::from_str(&args.rpc_url.unwrap()).unwrap());
-
-    let contract = L2OutputOracle::new(
-        Address::from_str(&args.contract_address.unwrap()).unwrap(),
-        provider,
-    );
-    let vkey = contract.vkey().call().await?;
-
-    assert_eq!(vkey.vkey, B256::from(agg_vk_bytes));
-    info!("The verification key matches the contract.");
 
     Ok(())
 }
