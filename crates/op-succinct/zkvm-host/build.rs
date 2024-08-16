@@ -31,8 +31,8 @@ fn build_zkvm_program(program: &str) {
     build_program_with_args(
         &format!("../{}", program),
         BuildArgs {
-            ignore_rust_version: true,
             elf_name: format!("{}-elf", program),
+            docker: true,
             ..Default::default()
         },
     );
@@ -45,8 +45,9 @@ fn main() {
 
     for program in programs {
         build_native_program(program);
-        build_zkvm_program(program);
+        // Note: Don't build any of the zkVM programs as the ELF may change, as they're already built.
+        // build_zkvm_program(program);
     }
 
-    build_zkvm_program("aggregation-client");
+    // build_zkvm_program("aggregation-client");
 }

@@ -9,7 +9,8 @@ use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use kona_host::HostCli;
-use std::{cmp::Ordering, env, fs, path::Path, str::FromStr, sync::Arc};
+use std::{cmp::Ordering, env, fs, path::Path, str::FromStr, sync::Arc, time::Duration};
+use tokio::time::sleep;
 
 use alloy_primitives::keccak256;
 
@@ -70,6 +71,31 @@ impl SP1KonaDataFetcher {
             ChainMode::L1 => self.l1_provider.clone(),
             ChainMode::L2 => self.l2_provider.clone(),
         }
+    }
+
+    /// Fetch headers for a range of blocks inclusive.
+    pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
+        let mut headers: Vec<Header> = Vec::with_capacity((end - start + 1) as usize);
+
+        // Note: Node rate limits at 300 requests per second.
+        let batch_size = 200;
+        let mut block_number = start;
+        while block_number <= end {
+            let batch_end = block_number + batch_size - 1;
+            let batch_headers: Vec<Header> = futures::future::join_all(
+                (block_number..=batch_end.min(end))
+                    .map(|num| self.get_header_by_number(ChainMode::L1, num)),
+            )
+            .await
+            .into_iter()
+            .map(|header| header.unwrap())
+            .collect();
+
+            headers.extend(batch_headers);
+            block_number += batch_size;
+            sleep(Duration::from_millis(1500)).await;
+        }
+        Ok(headers)
     }
 
     pub async fn get_header_by_hash(

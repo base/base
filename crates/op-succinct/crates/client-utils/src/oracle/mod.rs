@@ -16,7 +16,6 @@ use sha2::{Digest, Sha256};
 /// the remainder of execution.
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 pub struct InMemoryOracle {
-    // TODO: Change this to PreimageKey and everything below.
     cache: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder>,
 }
 
@@ -71,7 +70,6 @@ impl HintWriterClient for InMemoryOracle {
 /// and verify it once, rather than verifying each of the 4096 elements separately.
 #[derive(Default)]
 struct Blob {
-    // TODO: Advantage / disadvantage of using FixedBytes?
     commitment: FixedBytes<48>,
     data: FixedBytes<4096>,
     kzg_proof: FixedBytes<48>,
@@ -151,7 +149,6 @@ impl InMemoryOracle {
             // kzg::verify_blob_kzg_proof(&blob.data, commitment, &blob.kzg_proof)
             // .map_err(|e| format!("blob verification failed for {:?}: {}", commitment, e))?;
 
-            // TODO: Would this allow us to leave 000...000 segments in blobs that were not empty and prove that?
             // May need to track to ensure each blob element has been included.
         }
 

@@ -1,21 +1,25 @@
-# kona-sp1
+# op-succinct
 
-Standalone repo to use Kona & SP1 to verify Optimism blocks.
+Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 
 ## Overview
 
 **`crates`**
 - `client-utils`: A suite of utilities for the client program.
-- `host-utils`: A suite of utilities for constructing the host which runs the SP1 Kona program.
+- `host-utils`: A suite of utilities for constructing the host which runs the OP Succinct program.
 
 **`sp1-kona`**
-- `native-host`: The host program which runs the Kona program natively using `kona`.
-- `zkvm-host`: The host program which runs the Kona program in SP1.
-- `zkvm-client`: The program proven in SP1. The `zkvm-host` first runs `zkvm-client` on the `kona-host` to fetch the witness data, then uses SP1 to generate the program's proof of execution.
+- `native-host`: The host program which runs the `op-succinct` program natively using `kona`.
+- `zkvm-host`: The host program which runs the `op-succinct` program in the SP1 zkVM.
+- SP1 Programs
+   - `zkvm-client`: Derive and execute a single block. First runs `zkvm-client` on the `native-host` to fetch the witness data, then uses SP1 to generate the program's proof of execution.
+   - `validity-client`: Run the derivation pipeline & execute a batch of blocks. First runs `validity-client` on the `native-host` to fetch the witness data, then uses SP1 to generate the program's proof of execution.
+   - `aggregation-client`: Aggregates validity proofs for a larger range of blocks.
+
 
 ## Usage
 
-Execute the SP1 Kona program for a single block.
+Execute the OP Succinct program for a single block.
 
 ```bash
 just run-single <l2_block_num> [use-cache]
@@ -23,7 +27,7 @@ just run-single <l2_block_num> [use-cache]
 
 - [use-cache]: Optional flag to re-use the native execution cache (default: false).
 
-Execute the SP1 Kona program for a range of blocks.
+Execute the OP Succinct program for a range of blocks.
 
 ```bash
 just run-multi <start> <end> [use-cache] [prove]
@@ -50,3 +54,8 @@ cargo run --bin fetch_and_save_proof --release -- --request-id <proofrequest_id>
 ```
 
 Ex. `cargo run --bin fetch_and_save_proof --release -- --request-id proofrequest_01j4ze00ftfjpbd4zkf250qwey --start 123812410 --end 123812412`
+
+## Run the OP Succinct Proposer
+
+To run the OP Succinct Proposer to generate proofs for an OP Stack chain, see 
+[OP_PROPOSER.md](./OP_PROPOSER.md).

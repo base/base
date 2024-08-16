@@ -1,0 +1,28 @@
+# Use a multi-stage build for efficiency
+FROM golang:1.21 AS go-builder
+
+# Set up Go environment
+FROM go-builder AS optimism-builder
+WORKDIR /optimism
+RUN git clone -b zk-proposer https://github.com/succinctlabs/optimism .
+RUN make op-proposer
+
+# Use a slim Debian image for the final stage
+FROM ubuntu:22.04
+
+# Install necessary dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the built op-proposer binary from the previous stage
+COPY --from=optimism-builder /optimism/op-proposer/bin/op-proposer /usr/local/bin/op-proposer
+
+# Set the entrypoint to run op-proposer with environment variables
+COPY op_proposer.sh /usr/local/bin/op_proposer.sh
+
+# Make the binary and entrypoint executable.
+RUN chmod +x /usr/local/bin/op-proposer
+RUN chmod +x /usr/local/bin/op_proposer.sh
+
+ENTRYPOINT ["/usr/local/bin/op_proposer.sh"]

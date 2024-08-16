@@ -27,6 +27,14 @@ path = "bin/agg.rs"
 name = "server"
 path = "bin/server.rs"
 
+[[bin]]
+name = "vkey"
+path = "bin/vkey.rs"
+
+[[bin]]
+name = "native_host_runner"
+path = "bin/native_host_runner.rs"
+
 [dependencies]
 
 # workspace
@@ -35,6 +43,8 @@ clap = { workspace = true }
 cargo_metadata = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+alloy.workspace = true
 
 # kona
 kona-host = { workspace = true }
@@ -57,6 +67,8 @@ bincode.workspace = true
 futures.workspace = true
 serde_cbor.workspace = true
 log.workspace = true
+base64.workspace = true
+tower-http.workspace = true
 
 [build-dependencies]
 sp1-helper = { workspace = true }

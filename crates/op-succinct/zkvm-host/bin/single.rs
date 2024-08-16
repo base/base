@@ -8,7 +8,6 @@ use num_format::{Locale, ToFormattedString};
 use sp1_sdk::{utils, ProverClient};
 
 use client_utils::precompiles::PRECOMPILE_HOOK_FD;
-use zkvm_host::precompile_hook;
 
 pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../elf/zkvm-client-elf");
 
@@ -36,8 +35,6 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    // TODO: Use `optimism_outputAtBlock` to fetch the L2 block at head
-    // https://github.com/ethereum-optimism/kona/blob/d9dfff37e2c5aef473f84bf2f28277186040b79f/bin/client/justfile#L26-L32
     let l2_safe_head = args.l2_block - 1;
 
     let host_cli = data_fetcher
@@ -64,11 +61,7 @@ async fn main() -> Result<()> {
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = ProverClient::new();
-    let (_, report) = prover
-        .execute(SINGLE_BLOCK_ELF, sp1_stdin)
-        .with_hook(PRECOMPILE_HOOK_FD, precompile_hook)
-        .run()
-        .unwrap();
+    let (_, report) = prover.execute(SINGLE_BLOCK_ELF, sp1_stdin).run().unwrap();
 
     println!(
         "Block {} cycle count: {}",

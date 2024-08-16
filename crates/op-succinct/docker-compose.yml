@@ -1,0 +1,24 @@
+services:
+  # OP Succinct Server
+  op-succinct-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    env_file:
+      - .env.server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+
+  # OP Succinct Proposer
+  op-succinct-proposer:
+    build:
+      context: .
+      dockerfile: Dockerfile.op_proposer
+    env_file:
+      - .env.server
+    restart: unless-stopped
+    depends_on:
+      - op-succinct-server
+    volumes:
+      - ./db:/usr/local/bin/dbdata/

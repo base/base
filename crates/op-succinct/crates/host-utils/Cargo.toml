@@ -16,3 +16,5 @@ sp1-sdk.workspace = true
 anyhow.workspace = true
 cargo_metadata.workspace = true
 serde_cbor.workspace = true
+tokio.workspace = true
+futures.workspace = true
