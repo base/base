@@ -1,0 +1,14 @@
+{
+    "startingBlockNumber": 0,
+    "l2RollupNode": "",
+    "submissionInterval": 150,
+    "l2BlockTime": 2,
+    "proposer": "0x0000000000000000000000000000000000000000",
+    "challenger": "0x0000000000000000000000000000000000000000",
+    "finalizationPeriod": 0,
+    "chainId": 0,
+    "owner": "0x0000000000000000000000000000000000000000",
+    "vkey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "verifierGateway": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
+    "l2OutputOracleProxy": "0xdfe97868233d1aa22e815a266982f2cf17685a27"
+}
