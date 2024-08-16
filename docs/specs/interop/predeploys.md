@@ -448,8 +448,6 @@ It returns the address of the deployed `OptimismSuperchainERC20`.
 The function MUST use `CREATE3` to deploy its children.
 This ensures the same address deployment across different chains,
 which is necessary for the [standard](token-bridging.md) implementation.
-The safest way to use `CREATE3` is through
-[CreateX](https://github.com/pcaversaccio/createx) preinstall.
 
 The salt used for deployment MUST be computed by applying `keccak256` to the `abi.encode`
 of the input parameters (`_remoteToken`, `_name`, `_symbol`, and `_decimals`).
@@ -478,14 +476,12 @@ sequenceDiagram
   participant Alice
   participant FactoryProxy
   participant FactoryImpl
-  participant CreateX
   participant BeaconProxy as OptimismSuperchainERC20 BeaconProxy
   participant Beacon Contract
   participant Implementation
   Alice->>FactoryProxy: deploy(remoteToken, name, symbol, decimals)
   FactoryProxy->>FactoryImpl: delegatecall()
-  FactoryProxy->>CreateX: deployCreate3()
-  CreateX->>BeaconProxy: create()
+  FactoryProxy->>BeaconProxy: deploy with CREATE3
   FactoryProxy-->FactoryProxy: deployments[superchainToken]=remoteToken
   FactoryProxy-->FactoryProxy: emit OptimismSuperchainERC20Created(superchainToken, remoteToken, Alice)
   BeaconProxy-->Beacon Contract: reads implementation()
