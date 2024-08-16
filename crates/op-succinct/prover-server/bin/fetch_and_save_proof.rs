@@ -21,15 +21,15 @@ struct Args {
     #[arg(short, long)]
     chain_id: u64,
 
-    /// Agg proof
+    /// Aggregate proof.
     #[arg(short, long)]
     agg_proof: bool,
 
-    /// Start L2 block number
+    /// Start L2 block number.
     #[arg(short, long, required = false)]
     start: Option<u64>,
 
-    /// End L2 block number
+    /// End L2 block number.
     #[arg(short, long, required = false)]
     end: Option<u64>,
 }
