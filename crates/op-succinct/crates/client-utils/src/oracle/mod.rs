@@ -6,7 +6,11 @@ use crate::BytesHasherBuilder;
 use alloy_primitives::{hex, keccak256, FixedBytes};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use itertools::Itertools;
 use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
+use kzg_rs::get_kzg_settings;
+use kzg_rs::Blob as KzgRsBlob;
+use kzg_rs::Bytes48;
 use rkyv::{Archive, Deserialize, Infallible, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -70,8 +74,10 @@ impl HintWriterClient for InMemoryOracle {
 /// and verify it once, rather than verifying each of the 4096 elements separately.
 #[derive(Default)]
 struct Blob {
+    // TODO: This commitment is currently unused.
     commitment: FixedBytes<48>,
-    data: FixedBytes<4096>,
+    // 4096 Field elements, each 32 bytes.
+    data: FixedBytes<131072>,
     kzg_proof: FixedBytes<48>,
 }
 
@@ -105,11 +111,11 @@ impl InMemoryOracle {
 
                     if let Some(blob_data) = self.cache.get(&blob_data_key) {
                         let commitment: FixedBytes<48> = blob_data[..48].try_into().unwrap();
-                        let element: [u8; 8] = blob_data[72..].try_into().unwrap();
-                        let element: u64 = u64::from_be_bytes(element);
+                        let element_idx_bytes: [u8; 8] = blob_data[72..].try_into().unwrap();
+                        let element_idx: u64 = u64::from_be_bytes(element_idx_bytes);
 
                         // Blob is stored as one 48 byte element.
-                        if element == 4096 {
+                        if element_idx == 4096 {
                             blobs
                                 .entry(commitment)
                                 .or_default()
@@ -123,7 +129,7 @@ impl InMemoryOracle {
                             .entry(commitment)
                             .or_default()
                             .data
-                            .get_mut((element as usize) << 5..(element as usize + 1) << 5)
+                            .get_mut((element_idx as usize) << 5..(element_idx as usize + 1) << 5)
                             .map(|slice| {
                                 if slice.iter().all(|&byte| byte == 0) {
                                     slice.copy_from_slice(value);
@@ -142,15 +148,29 @@ impl InMemoryOracle {
             }
         }
 
+        println!("cycle-tracker-report-start: blob-verification");
+        let commitments: Vec<Bytes48> = blobs
+            .keys()
+            .cloned()
+            .map(|blob| Bytes48::from_slice(&blob.0).unwrap())
+            .collect_vec();
+        let kzg_proofs: Vec<Bytes48> = blobs
+            .values()
+            .map(|blob| Bytes48::from_slice(&blob.kzg_proof.0).unwrap())
+            .collect_vec();
+        let blob_datas: Vec<KzgRsBlob> = blobs
+            .values()
+            .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
+            .collect_vec();
         // Verify reconstructed blobs.
-        for (commitment, blob) in blobs.iter() {
-            println!("cycle-tracker-start: blob-verification");
-            println!("cycle-tracker-end: blob-verification");
-            // kzg::verify_blob_kzg_proof(&blob.data, commitment, &blob.kzg_proof)
-            // .map_err(|e| format!("blob verification failed for {:?}: {}", commitment, e))?;
-
-            // May need to track to ensure each blob element has been included.
-        }
+        kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
+            blob_datas,
+            commitments,
+            kzg_proofs,
+            &get_kzg_settings(),
+        )
+        .map_err(|e| anyhow!("blob verification failed for batch: {:?}", e))?;
+        println!("cycle-tracker-report-end: blob-verification");
 
         Ok(())
     }
