@@ -662,7 +662,7 @@ event StandardL2TokenCreated(address indexed remoteToken, address indexed localT
 
 ### Updates
 
-The `OptimismMintableERC20` tokens and `L2StandardToken`s (_legacy tokens_),
+The `OptimismMintableERC20` and `L2StandardToken` tokens (_legacy tokens_),
 which correspond to locked liquidity in L1, are incompatible with interop.
 Legacy token owners must convert into a `OptimismSuperchainERC20` representation that implements the [standard](token-bridging.md),
 to move across the Superchain.
