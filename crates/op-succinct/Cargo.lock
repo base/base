@@ -3902,6 +3902,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-proposer"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives",
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "bincode",
+ "cargo_metadata",
+ "clap",
+ "client-utils",
+ "dotenv",
+ "host-utils",
+ "kona-host",
+ "log",
+ "revm",
+ "serde",
+ "sp1-helper",
+ "sp1-sdk",
+ "tokio",
+ "tower-http",
+]
+
+[[package]]
 name = "open-fastrlp"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4649,31 +4674,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.74",
-]
-
-[[package]]
-name = "prover-server"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "alloy-primitives",
- "anyhow",
- "axum",
- "base64 0.22.1",
- "bincode",
- "cargo_metadata",
- "clap",
- "client-utils",
- "dotenv",
- "host-utils",
- "kona-host",
- "log",
- "revm",
- "serde",
- "sp1-helper",
- "sp1-sdk",
- "tokio",
- "tower-http",
 ]
 
 [[package]]

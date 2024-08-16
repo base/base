@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=optimism-builder /optimism/op-proposer/bin/op-proposer /usr/local/bin/op-proposer
 
 # Set the entrypoint to run op-proposer with environment variables
-COPY op_proposer.sh /usr/local/bin/op_proposer.sh
+COPY ./op-succinct-proposer/op_proposer.sh /usr/local/bin/op_proposer.sh
 
 # Make the binary and entrypoint executable.
 RUN chmod +x /usr/local/bin/op-proposer
