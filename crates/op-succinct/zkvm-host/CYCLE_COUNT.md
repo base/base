@@ -51,8 +51,7 @@ RUST_LOG=info just run-multi 15840000 15840050
 ```
 
 ## Misc
-- The SP1 executor degrades in performance after 2-3B cycles.
-- For large enough block ranges, the RISC-V SP1 program will surpass the SP1 memory limit.
+- For large enough block ranges, the RISC-V SP1 program will surpass the SP1 memory limit. Recommended limit is 20-30 blocks.
 - Your L2 node must have been synced for the blocks in the range you are proving. 
    - OP Sepolia Node: Synced from block 15800000 onwards.
    - OP Mainnet Node: Synced from block 122940000 onwards.
