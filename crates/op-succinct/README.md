@@ -21,8 +21,8 @@ Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 
 ## Running `op-succinct`
 
-For instructions on generating validity proofs for an OP Stack chain, refer to the [`op-succinct` Guide](./OP_PROPOSER.md).
+For instructions on generating validity proofs for an OP Stack chain, refer to the [`op-succinct` Guide](./op-succinct-proposer/OP_PROPOSER.md).
 
 ## Estimating Cycle Counts
 
-To learn how to estimate cycle counts for a given block range, check out our [Cycle Count Guide](./CYCLE_COUNT.md).
+To learn how to estimate cycle counts for a given block range, check out our [Cycle Count Guide](./zkvm-host/CYCLE_COUNT.md).
