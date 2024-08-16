@@ -19,46 +19,10 @@ Standalone repo to use Kona & SP1 to verify OP Stack blocks.
    first generate proofs for `range` programs for each batch, then use `aggregation` to
    generate an aggregate proof.
 
+## Run `op-succinct`
 
-## Usage
-
-Execute the OP Succinct program for a single block.
-
-```bash
-just run-single <l2_block_num> [use-cache]
-```
-
-- [use-cache]: Optional flag to re-use the native execution cache (default: false).
-
-Execute the OP Succinct program for a range of blocks.
-
-```bash
-just run-multi <start> <end> [use-cache] [prove]
-```
-
-- [use-cache]: Optional flag to re-use the native execution cache (default: false).
-- [prove]: Optional flag to prove the execution (default: false).
-
-Observations: 
-* For most blocks, the cycle count per transaction is around 4M cycles per transaction.
-* Some example cycle count estimates can be found [here](https://www.notion.so/succinctlabs/SP1-Kona-8b025f81f28f4d149eb4816db4e6d80b?pvs=4).
+To generate validity proofs for an OP Stack chain, see [OP_PROPOSER.md](./OP_PROPOSER.md).
 
 ## Cycle Counts
 
 To see how to get the cycle counts for a given block range, see [CYCLE_COUNT.md](./CYCLE_COUNT.md).
-
-
-## Misc
-
-To fetch an existing proof and save it run:
-
-```bash
-cargo run --bin fetch_and_save_proof --release -- --request-id <proofrequest_id> --start <start_block> --end <end_block>
-```
-
-Ex. `cargo run --bin fetch_and_save_proof --release -- --request-id proofrequest_01j4ze00ftfjpbd4zkf250qwey --start 123812410 --end 123812412`
-
-## Run the OP Succinct Proposer
-
-To run the OP Succinct Proposer to generate proofs for an OP Stack chain, see 
-[OP_PROPOSER.md](./OP_PROPOSER.md).
