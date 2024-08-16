@@ -15,6 +15,7 @@ alloy-consensus.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 revm.workspace = true
 
 # workspace (kona)
@@ -25,9 +26,12 @@ kona-preimage.workspace = true
 kona-mpt.workspace = true
 kona-derive.workspace = true
 
-alloy-sol-types.workspace = true
+# general
 serde.workspace = true
 rkyv.workspace = true
 sha2.workspace = true
-
 log.workspace = true
+itertools.workspace = true
+
+# kzg
+kzg-rs.workspace = true
