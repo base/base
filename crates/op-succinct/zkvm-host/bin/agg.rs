@@ -9,10 +9,9 @@ use host_utils::{
     get_agg_proof_stdin,
 };
 use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
-use zkvm_host::utils::fetch_header_preimages;
 
-pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-client-elf");
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/validity-client-elf");
+pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
+pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,12 +50,12 @@ fn load_aggregation_proof_data(
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
         proofs.push(deserialized_proof.proof);
 
-        // The public values are the ABI-encoded BootInfo.
-        let mut boot_info_buf = [0u8; BOOT_INFO_SIZE];
+        // The public values are the ABI-encoded RawBootInfo.
+        let mut raw_boot_info_bytes = [0u8; BOOT_INFO_SIZE];
         deserialized_proof
             .public_values
-            .read_slice(&mut boot_info_buf);
-        let boot_info = RawBootInfo::abi_decode(&boot_info_buf).unwrap();
+            .read_slice(&mut raw_boot_info_bytes);
+        let boot_info = RawBootInfo::abi_decode(&raw_boot_info_bytes).unwrap();
         boot_infos.push(boot_info);
     }
 
@@ -79,7 +78,9 @@ async fn main() -> Result<()> {
         .get_header_by_number(ChainMode::L1, args.latest_checkpoint_head_nb)
         .await?
         .hash_slow();
-    let headers = fetch_header_preimages(&boot_infos, latest_checkpoint_head).await?;
+    let headers = fetcher
+        .get_header_preimages(&boot_infos, latest_checkpoint_head)
+        .await?;
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 

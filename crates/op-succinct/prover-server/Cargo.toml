@@ -1,0 +1,57 @@
+[package]
+name = "prover-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "fetch_and_save_proof"
+path = "bin/fetch_and_save_proof.rs"
+
+[[bin]]
+name = "server"
+path = "bin/server.rs"
+
+[[bin]]
+name = "native_host_runner"
+path = "bin/native_host_runner.rs"
+
+[[bin]]
+name = "vkey"
+path = "bin/vkey.rs"
+
+[dependencies]
+
+# workspace
+tokio = { workspace = true }
+clap = { workspace = true }
+alloy-primitives = { workspace = true }
+
+# kona
+kona-host = { workspace = true }
+
+# local
+host-utils.workspace = true
+
+# sp1
+sp1-sdk = { workspace = true }
+anyhow.workspace = true
+dotenv.workspace = true
+client-utils.workspace = true
+serde = { workspace = true }
+
+# server
+axum = "0.7.4"
+bincode.workspace = true
+log.workspace = true
+alloy.workspace = true
+base64.workspace = true
+tower-http.workspace = true
+cargo_metadata.workspace = true
+revm.workspace = true
+
+[build-dependencies]
+sp1-helper = { workspace = true }

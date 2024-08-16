@@ -1,0 +1,28 @@
+[package]
+name = "range"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+# workspace (general)
+cfg-if.workspace = true
+client-utils.workspace = true
+
+# workspace (ethereum)
+op-alloy-consensus.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+
+# workspace (kona)
+kona-primitives.workspace = true
+kona-executor.workspace = true
+kona-client.workspace = true
+
+# sp1
+sp1-zkvm.workspace = true
+
+log.workspace = true

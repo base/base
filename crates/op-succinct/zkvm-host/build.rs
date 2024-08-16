@@ -29,7 +29,7 @@ fn build_native_program(program: &str) {
 /// Build a program for the zkVM.
 fn build_zkvm_program(program: &str) {
     build_program_with_args(
-        &format!("../{}", program),
+        &format!("../client-programs/{}", program),
         BuildArgs {
             elf_name: format!("{}-elf", program),
             docker: true,
@@ -39,15 +39,13 @@ fn build_zkvm_program(program: &str) {
 }
 
 fn main() {
-    // Don't build the single block program as it's unused.
-    // let programs = vec!["zkvm-client", "validity-client"];
-    let programs = vec!["validity-client"];
+    let programs = vec!["fault-proof", "range"];
 
     for program in programs {
         build_native_program(program);
         // Note: Don't build any of the zkVM programs as the ELF may change, as they're already built.
-        // build_zkvm_program(program);
+        build_zkvm_program(program);
     }
 
-    // build_zkvm_program("aggregation-client");
+    build_zkvm_program("aggregation");
 }
