@@ -6,10 +6,7 @@
 
 - [Chain ID](#chain-id)
 - [Updating the Dependency Set](#updating-the-dependency-set)
-  - [`dependency-set` UpdateType](#dependency-set-updatetype)
 - [Security Considerations](#security-considerations)
-  - [Dynamic Size of L1 Attributes Transaction](#dynamic-size-of-l1-attributes-transaction)
-  - [Maximum Size of the Dependency Set](#maximum-size-of-the-dependency-set)
   - [Layer 1 as Part of the Dependency Set](#layer-1-as-part-of-the-dependency-set)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -47,32 +44,18 @@ It is a known issue that not all software in the Ethereum can handle 32 byte cha
 
 ## Updating the Dependency Set
 
-The `SystemConfig` is updated to manage the dependency set. The chain operator can add or remove
-chains from the dependency set through the `SystemConfig`. A new `ConfigUpdate` event `UpdateType`
-enum is added that corresponds to a change in the dependency set.
+The `SystemConfig` is updated to manage a new role, `dependencyManager`.
+It can only updated by the `ProxyAdmin` during an contract upgrade.
+The sole holder of this role is the only address
+permissioned to update (remove/add to) the dependency set of that chain.
+
+The `SystemConfig` is also updated to manage the dependency set.
+The address with the `dependency manager` role can add or remove
+chains from the dependency set through the `SystemConfig`.
 
 The `SystemConfig` MUST enforce that the maximum size of the dependency set is `type(uint8).max` or 255.
 
-### `dependency-set` UpdateType
-
-When a `ConfigUpdate` event is emitted where the `UpdateType` is `dependency-set`, the L2 network will
-update its dependency set. The chain operator SHOULD be able to add or remove chains from the dependency set.
-
 ## Security Considerations
-
-### Dynamic Size of L1 Attributes Transaction
-
-The L1 Attributes transaction includes the dependency set which is dynamically sized. This means that
-the worst case (largest size) transaction must be accounted for when ensuring that it is not possible
-to create a block that has force inclusion transactions that go over the L2 block gas limit.
-It MUST be impossible to produce an L2 block that consumes more than the L2 block gas limit.
-Limiting the dependency set size is an easy way to ensure this.
-
-### Maximum Size of the Dependency Set
-
-The maximum size of the dependency set is constrained by the L2 block gas limit. The larger the dependency set,
-the more costly it is to fully verify the network. It also makes the block building role more centralized
-as it requires more hardware to verify executing transactions before inclusion.
 
 ### Layer 1 as Part of the Dependency Set
 
