@@ -44,7 +44,7 @@ function getL1FeeUpperBound(uint256 unsignedTxSize) external view returns (uint2
     }
   
     uint256 l1FeeScaled = baseFeeScalar() * l1BaseFee() * 16 + blobBaseFeeScalar() * blobBaseFee();
-    return uint256(estimatedSize) * feeScaled / (10 ** (DECIMALS * 2));
+    return uint256(estimatedSize) * l1FeeScaled / (10 ** (DECIMALS * 2));
 }
 ```
 
