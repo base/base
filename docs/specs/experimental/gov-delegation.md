@@ -12,6 +12,7 @@
     - [`delegateFromToken`](#delegatefromtoken)
     - [`delegateBatched`](#delegatebatched)
     - [`afterTokenTransfer`](#aftertokentransfer)
+    - [`migrateAccounts`](#migrateaccounts)
     - [`_delegate`](#_delegate)
   - [Getters](#getters)
     - [`checkpoints`](#checkpoints)
@@ -20,6 +21,7 @@
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
+    - [`migrated`](#migrated)
     - [`delegations`](#delegations)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
@@ -28,12 +30,15 @@
 - [Types](#types)
   - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
+- [Migration](#migration)
+- [Backwards Compatibility](#backwards-compatibility)
 - [User Flow](#user-flow)
   - [Partial Delegations](#partial-delegations)
   - [Absolute & Relative Delegations](#absolute--relative-delegations)
   - [Differences](#differences)
 - [Delegation Validation](#delegation-validation)
 - [Security Considerations](#security-considerations)
+  - [Dependence on GovernanceDelegation](#dependence-on-governancedelegation)
   - [Connection with GovernanceToken](#connection-with-governancetoken)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -71,7 +76,9 @@ any existing delegations of the delegator.
 function delegate(Delegation _delegation) external
 ```
 
-The function MUST call the [`_delegate`](#_delegate) function with the `msg.sender` and `_newDelegations` parameters.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
+and the `_delegatee` address in the delegation. Afterwards, the function MUST call the [`_delegate`](#_delegate) function
+with the `msg.sender` and `_newDelegations` parameters.
 
 At the end, the `delegate` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -86,7 +93,9 @@ any existing delegations of the delegator.
 function delegateFromToken(address _delegator, address _delegatee) external
 ```
 
-The function MUST call the [`_delegate`](#_delegate) function with the `_delegator`and basic delegation parameters.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_delegator`
+and `_delegatee` addresses. Afterwards, the function MUST call the [`_delegate`](#_delegate) function with the `_delegator`
+and basic delegation parameters.
 
 At the end, the `delegateFromToken` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -99,7 +108,9 @@ called by users, and overwrites any existing delegations of the delegator.
 function delegateBatched(Delegation[] calldata _delegations) external
 ```
 
-The function MUST call the [`_delegate`](#_delegate) function with the `msg.sender` and `_delegations` parameters.
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for `msg.sender`
+and every delegatee address in the `_delegations` array. Afterwards, the function MUST call the [`_delegate`](#_delegate)
+function with the `msg.sender` and `_delegations` parameters.
 
 At the end, the `delegateBatched` function MUST emit a `DelegationCreated` event with the given function parameters.
 
@@ -112,10 +123,23 @@ by the `GovernanceToken` contract.
 function afterTokenTransfer(address _from, address _to, uint256 _amount) external
 ```
 
+This function MUST enforce the migration logic, as specified in the [Migration](#migration) section, for the `_from`
+and `_to` addresses.
+
 If the token transfer is due to a mint or burn operation, the function MUST update the total supply checkpoints with
 the new total supply (subtracting `_amount` for a burn operation and adding `_amount` for a mint operation). Afterwards,
 the function MUST calculate and update the voting power of the delegations of `_from` and `_to`. This step MUST apply
 the voting power adjustments to the checkpoints of the `_from`, `_to`, and delegatee addresses.
+
+#### `migrateAccounts`
+
+Migrates the delegation state of the given accounts from the `GovernanceToken` to the `GovernanceDelegation` contract. This
+function MUST iterate over the list of `_accounts` addresses and apply the logic specified in the
+[Migration](#migration) section.
+
+```solidity
+function migrateAccounts(address[] calldata _accounts) external
+```
 
 #### `_delegate`
 
@@ -138,8 +162,8 @@ in the [Delegation Validation](#delegation-validation) section. Additionally, th
 
 ### Getters
 
-As the delegation state is stored in internal variables, the `GovernanceDelegation` contract MUST provide getter functions
-to retrieve the delegation state.
+For backwards compatibility, the `GovernanceDelegation` contract MUST implement all public getter functions of the
+`GovernanceToken` related to delegation and voting power.
 
 #### `checkpoints`
 
@@ -160,7 +184,6 @@ function numCheckpoints(address _account) external view returns (uint32)
 #### `delegates`
 
 Retrieves the delegation of a given user address with the highest voting power.
-This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
 function delegates(address _account) external view returns (address)
@@ -188,6 +211,14 @@ Retrieves the total supply of the `GovernanceToken` at a given block.
 
 ```solidity
 function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
+```
+
+#### `migrated`
+
+Returns the migration status of an account — `True` if the account has been migrated, `False` otherwise.
+
+```solidity
+function migrated(address _account) public view returns (bool)
 ```
 
 #### `delegations`
@@ -223,6 +254,9 @@ The `GovernanceDelegation` contract MUST be able to store delegations and checkp
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
+// Addresses that had their delegation state migrated from the `GovernanceToken` to the `GovernanceDelegation`.
+mapping(address => bool) public migrated;
+
 // Voting power delegations of an account.
 mapping(address => Delegation[]) public delegations;
 
@@ -271,6 +305,21 @@ enum AllowanceType {
 | `Absolute`  | `0`    | The amount of votes delegated is fixed and denominated in the `GovernanceToken`'s decimals  |
 | `Relative`  | `1`    | The amount of votes delegated is relative and denominated in percentages.                   |
 
+## Migration
+
+All write functions in the `GovernanceDelegation` MUST check if the users interacting with it have been migrated by
+checking the `migrated` mapping from its [storage](#storage). If a user has not been migrated, the `GovernanceDelegation`
+MUST copy the delegation and checkpoint data from the token contract to its own state. After copying the data, the
+`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated, and remove the
+state from the `GovernanceToken` contract via a function that can only be called by the `GovernanceDelegation` contract.
+
+## Backwards Compatibility
+
+The `GovernanceDelegation` contract ensures backwards compatibility by allowing the migration of delegation state from the
+`GovernanceToken`, and implementing the same type of getter functions. External contracts that need to consume voting power
+data, like the `Governor`, will have to query both the legacy state in the `GovernanceToken` if a user has not been migrated,
+and the up-to-date state in the `GovernanceDelegation` if the user has been migrated.
+
 ## User Flow
 
 The following sections highlight the use cases that MUST be supported by the `GovernanceDelegation`, and the difference
@@ -305,6 +354,7 @@ The following diagram shows the sequence of a basic delegation performed from th
 sequenceDiagram
     User ->> GovernanceToken: call `delegate` or `delegateBySig`
     GovernanceToken ->> GovernanceDelegation: call `delegateFromToken`
+    GovernanceDelegation -->> GovernanceToken: migrate if user hasn't been migrated
     GovernanceDelegation ->> GovernanceDelegation: apply basic delegation
 ```
 
@@ -325,8 +375,14 @@ If any of the above conditions are not met, the `_delegate` function MUST revert
 
 ## Security Considerations
 
+### Dependence on GovernanceDelegation
+
+As the `GovernanceToken` depends on the `GovernanceDelegation` contract, the `GovernanceDelegation` contract MUST be implemented
+so that it minimizes the risk of unexpected reverts during the transfer hook call. If the `GovernanceDelegation` contract
+reverts, `GovernanceToken` transfers will be blocked.
+
 ### Connection with GovernanceToken
 
-The `GovernanceDelegation` MUST always process token transfers from the `GovernanceToken` contract correctly to
+Similarly, the `GovernanceDelegation` MUST always process token transfers from the `GovernanceToken` contract correctly to
 stay in sync with token balances. If the `GovernanceDelegation` contract is not in sync with the `GovernanceToken` contract,
 the voting power of users MAY be incorrect or outdated.
