@@ -86,9 +86,7 @@ for proposal types.
 
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
-| `BALLOT_TYPEHASH` |  `0x150214d74d59b7d1e90c73fc22ef3d991dd0a76b046543d4d80ab92d2a50328f` | The EIP-712 typehash for the ballot struct  |
-| `EXTENDED_BALLOT_TYPEHASH` |  `0x7f08F3095530B67CdF8466B7a923607944136Df0` | The EIP-712 typehash for the extended ballot struct |
-| `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted |
+| `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted, which is also consumed by UIs to show correct vote option and interpret reuslts. |
 | `PERCENT_DIVISOR` |  `10000` | The maximum value of `quorum` and `approvalThreshold` for proposal types  |
 | `PROPOSAL_TYPES_CONFIGURATOR` |  `0x67ecA7B65Baf0342CE7fBf0AA15921524414C09f` | The address of the proposal types configurator contract  |
 | `VERSION` |  `2` | The version of the `Governor` contract  |
@@ -121,7 +119,14 @@ This function MUST emit the `ProposalCanceled` event and return the ID of the pr
 
 #### `castVote`
 
-Cast a vote on a proposal.
+Cast a vote on a proposal. This function MUST adhere to the configuration specified in `COUNTING_MODE`:
+
+- `support`: MUST support  `against` (0), `for` (1), and `abstain` (2) voting options.
+- `quorum`: MUST be the sum of votes `against`, `for`, and `abstain`.
+- `params`: MUST use a module if the proposal was created with one.
+
+The voting weight of the voter MUST be determined by the number of votes the account had delegated to it at the time
+the proposal state became active.
 
 ```solidity
 function castVote(uint256 _proposalId, uint8 _support) external returns (uint256)
@@ -131,7 +136,8 @@ This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteBySig`
 
-Cast a vote on a proposal using a signature.
+Cast a vote on a proposal using a signature. This function MUST calculate the voter address using the `v`, `r`, and `s`
+parameters, and apply the same logic specified in [`castVote`](#castvote).
 
 ```solidity
 function castVoteBySig(uint256 _proposalId, uint8 _support, uint8 _v, bytes32 _r, bytes32 _s) external returns (uint256)
@@ -141,7 +147,7 @@ This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteWithReason`
 
-Cast a vote on a proposal with a reason.
+Cast a vote on a proposal with a reason. This function MUST apply the same logic specified in [`castVote`](#castvote).
 
 ```solidity
 function castVoteWithReason(uint256 _proposalId, uint8 _support, string memory _reason) external returns (uint256)
@@ -151,7 +157,8 @@ This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteWithReasonAndParams`
 
-Cast a vote on a proposal with a reason and additional encoded parameters.
+Cast a vote on a proposal with a reason and additional encoded parameters, which can be consumed by modules. This
+function MUST apply the same logic specified in [`castVote`](#castvote).
 
 ```solidity
 function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external returns (uint256)
@@ -162,7 +169,8 @@ the function MUST emit the `VoteCast` event. The function MUST also return the v
 
 #### `castVoteWithReasonAndParamsBySig`
 
-Cast a vote on a proposal with a reason and additional encoded parameters using a signature.
+Cast a vote on a proposal with a reason and additional encoded parameters using the voter address calculated from the
+`v`, `r`, and `s` parameters. This function MUST apply the same logic specified in [`castVote`](#castvote).
 
 ```solidity
 function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params, uint8 _v, bytes32 _r, bytes32 _s) external returns (uint256)
@@ -206,18 +214,21 @@ This function MUST emit the `ProposalExecuted` event and return the proposal ID.
 
 #### `propose`
 
-Creates a new proposal with a given proposal type. This function MUST check that the proposal type exists.
+Creates a new proposal. This function MUST check that the lengths of `targets` and `values` match, and that the length
+of `targets` is greater than zero. Aditionally, the sender's voting power MUST be greater or equal to the proposal threshold.
+If the proposal uses a proposal type that is not configured, the function MUST revert. The function MUST also check
+that the proposal does not already exist using the hash of the parameters.
 
 ```solidity
-function propose(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, string memory _description) external returns (uint256)
+function propose(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, string memory _description, uint8 _proposalType) external returns (uint256)
 ```
 
 This function MUST emit the `ProposalCreated` event and return the ID of the proposal created.
 
 #### `proposeWithModule`
 
-Creates a new proposal with a given proposal type and module. This function MUST check that the proposal type exists,
-and that the module is supported by the `Governor` contract.
+Creates a new proposal with a module. This function MUST check that the module is approved, and apply the same checks specified
+in [`propose`](#propose). This function MUST call the `propose` function of the module.
 
 ```solidity
 function proposeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash, uint8 _proposalType) external returns (uint256)
