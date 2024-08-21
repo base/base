@@ -157,8 +157,9 @@ This function MUST emit the `VoteCast` event and return the voting weight.
 
 #### `castVoteWithReasonAndParams`
 
-Cast a vote on a proposal with a reason and additional encoded parameters, which can be consumed by modules. This
-function MUST apply the same logic specified in [`castVote`](#castvote).
+Cast a vote on a proposal with a reason and additional encoded parameters. This function MUST apply the same logic
+specified in [`castVote`](#castvote). Aditionally, the function MUST call `countVote` function of the module with the
+additional encoded parameters.
 
 ```solidity
 function castVoteWithReasonAndParams(uint256 _proposalId, uint8 _support, string memory _reason, bytes memory _params) external returns (uint256)
@@ -219,6 +220,9 @@ of `targets` is greater than zero. Aditionally, the sender's voting power MUST b
 If the proposal uses a proposal type that is not configured, the function MUST revert. The function MUST also check
 that the proposal does not already exist using the hash of the parameters.
 
+The snapshot of the proposal MUST be the current block number plus the voting delay, and the deadline MUST be the snapshot
+plus the voting period.
+
 ```solidity
 function propose(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, string memory _description, uint8 _proposalType) external returns (uint256)
 ```
@@ -275,7 +279,8 @@ This function MUST emit the `ProposalThresholdSet` event.
 
 #### `setVotingDelay`
 
-Updates the voting delay. This function MUST only be callable by the manager.
+Updates the voting delay, which is the number of blocks before the voting for a proposal starts.
+This function MUST only be callable by the manager.
 
 ```solidity
 function setVotingDelay(uint256 _newVotingDelay) external
@@ -285,7 +290,8 @@ This function MUST emit the `VotingDelaySet` event.
 
 #### `setVotingPeriod`
 
-Updates the voting period. This function MUST only be callable by the manager.
+Updates the voting period, which is the number of blocks the voting for a proposal lasts.
+This function MUST only be callable by the manager.
 
 ```solidity
 function setVotingPeriod(uint256 _newVotingPeriod) external
@@ -445,15 +451,28 @@ function quorumNumerator() external view returns (uint256);
 
 #### `state`
 
-Returns the state of a proposal.
+Returns the state of a proposal. The state MUST adhere to the following control flow:
+
+- `Pending` (0): The proposal's start block is equal or greater than the current block number.
+- `Active` (1): The proposal's end block is equal or greater the curent block number.
+- `Canceled` (2): The proposal has been cancelled.
+- `Defeated` (3): The proposal has not reached quorum or is not considered succesful.
+- `Succeeded` (4): The proposal has reached quorum and is considered succesful.
+- `Queued` (5): The proposal has been queued. This state SHOULD NOT be used in the current version.
+- `Expired` (6): The grace period for the execution of the proposal has passed. This state SHOULD
+NOT be used in the current version.
+- `Executed` (7): The proposal has been executed.
+
+This function MUST revert if the proposal does not exist.
 
 ```solidity
-function state(uint256 _proposalId) external view returns (uint8);
+function state(uint256 _proposalId) external view returns (ProposalState);
 ```
 
 #### `supportsInterface`
 
-Returns whether if the contract implements the interface defined by `_interfaceId`.
+Returns whether if the contract implements the interface defined by `_interfaceId`. This function MUST return `true`
+for ID of the following interfaces: `ERC165`, `ERC721`, and `ERC1155`.
 
 ```solidity
 function supportsInterface(bytes4 _interfaceId) external view returns (bool);
@@ -461,7 +480,7 @@ function supportsInterface(bytes4 _interfaceId) external view returns (bool);
 
 #### `token`
 
-Returns the address of the `GovernanceToken` contract.
+Returns the `TOKEN` constant, which MUST be the address of the `GovernanceToken` contract.
 
 ```solidity
 function token() external view returns (address);
