@@ -86,7 +86,7 @@ for proposal types.
 
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
-| `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted, which is also consumed by UIs to show correct vote option and interpret reuslts. |
+| `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted, which is also consumed by UIs to show correct vote option and interpret results. |
 | `PERCENT_DIVISOR` |  `10000` | The maximum value of `quorum` and `approvalThreshold` for proposal types  |
 | `PROPOSAL_TYPES_CONFIGURATOR` |  `0x67ecA7B65Baf0342CE7fBf0AA15921524414C09f` | The address of the proposal types configurator contract  |
 | `VERSION` |  `2` | The version of the `Governor` contract  |
@@ -158,7 +158,7 @@ This function MUST emit the `VoteCast` event and return the voting weight.
 #### `castVoteWithReasonAndParams`
 
 Cast a vote on a proposal with a reason and additional encoded parameters. This function MUST apply the same logic
-specified in [`castVote`](#castvote). Aditionally, the function MUST call `countVote` function of the module with the
+specified in [`castVote`](#castvote). Additionally, the function MUST call `countVote` function of the module with the
 additional encoded parameters.
 
 ```solidity
@@ -216,7 +216,7 @@ This function MUST emit the `ProposalExecuted` event and return the proposal ID.
 #### `propose`
 
 Creates a new proposal. This function MUST check that the lengths of `targets` and `values` match, and that the length
-of `targets` is greater than zero. Aditionally, the sender's voting power MUST be greater or equal to the proposal threshold.
+of `targets` is greater than zero. Additionally, the sender's voting power MUST be greater or equal to the proposal threshold.
 If the proposal uses a proposal type that is not configured, the function MUST revert. The function MUST also check
 that the proposal does not already exist using the hash of the parameters.
 
@@ -244,6 +244,10 @@ This function MUST emit the `ProposalCreated` event and return the ID of the pro
 
 Relays a transaction or function call to an arbitrary target. This function MUST only be callable as part of a
 governance proposal.
+
+In cases where the governance executor is some contract other than the `Governor` itself, like when using a timelock,
+this function CAN be invoked in a governance proposal to recover tokens or Ether that was sent to the `Governor` contract
+by mistake.
 
 ```solidity
 function relay(address _target, uint256 _value, bytes calldata _data) external payable
@@ -454,10 +458,10 @@ function quorumNumerator() external view returns (uint256);
 Returns the state of a proposal. The state MUST adhere to the following control flow:
 
 - `Pending` (0): The proposal's start block is equal or greater than the current block number.
-- `Active` (1): The proposal's end block is equal or greater the curent block number.
+- `Active` (1): The proposal's end block is equal or greater the current block number.
 - `Canceled` (2): The proposal has been cancelled.
-- `Defeated` (3): The proposal has not reached quorum or is not considered succesful.
-- `Succeeded` (4): The proposal has reached quorum and is considered succesful.
+- `Defeated` (3): The proposal has not reached quorum or has not been considered successful.
+- `Succeeded` (4): The proposal has reached quorum and is considered successful.
 - `Queued` (5): The proposal has been queued. This state SHOULD NOT be used in the current version.
 - `Expired` (6): The grace period for the execution of the proposal has passed. This state SHOULD
 NOT be used in the current version.
@@ -546,7 +550,7 @@ event ProposalCanceled(uint256 proposalId);
 
 #### `VoteCast`
 
-MUST trigger when proposal vote is casted.
+MUST trigger when proposal vote is cast.
 
 ```solidity
 event VoteCast(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason);
@@ -554,7 +558,7 @@ event VoteCast(address indexed voter, uint256 proposalId, uint8 support, uint256
 
 #### `VoteCastWithParams`
 
-MUST trigger when proposal vote with parameters is casted.
+MUST trigger when proposal vote with parameters is cast.
 
 ```solidity
 event VoteCastWithParams(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason, bytes params); 
@@ -636,7 +640,7 @@ address public manager;
 // The token to use for voting.
 IVotesUpgradeable public token;
 
-// Total number of `votes` that `account` has casted for `proposalId`.
+// Total number of `votes` that `account` has cast for `proposalId`.
 mapping(uint256 proposalId => mapping(address account => uint256 votes)) public weightCast;
 
 // Whether a `module` has been approved or not.
@@ -708,7 +712,7 @@ type.
 
 ## Modules
 
-Additionally, from proposal types, the `Governor` contract allows to use modules as part of the proposal logic.
+Additionally, from proposal types, the `Governor` contract allows to use modules as part of the proposal lifecycle.
 Modules are external contract that override the default proposing and voting logic of the `Governor` contract,
 and can be used to implement custom voting mechanisms. The common modules are:
 
@@ -718,6 +722,40 @@ and can be used to implement custom voting mechanisms. The common modules are:
   threshold. Utilized for signaling proposals.
 
 With the [`setModuleApproval`](#setmoduleapproval) function, modules can be approved to be used as part of proposals.
+
+### Interface
+
+In order to be supported by the `Governor` contract, modules MUST implement the following interface:
+
+```solidity
+interface IGovernorModule {
+    /// @notice Executes custom proposal creation logic.
+    /// @param _proposalId The ID of the proposal.
+    /// @param _proposalData The encoded data of the proposal.
+    /// @param _descriptionHash The hash of the proposal description.
+    function propose(uint256 _proposalId, bytes memory _proposalData, bytes32 _descriptionHash) external;
+
+    /// @notice Executes custom proposal voting logic.
+    /// @param _proposalId The ID of the proposal.
+    /// @param _account The account that is voting.
+    /// @param _support The vote option.
+    /// @param _weight The voting weight.
+    /// @param _params The encoded parameters.
+    function countVote(uint256 _proposalId, address _account, uint8 _support, uint256 _weight, bytes memory _params) external;
+
+    /// @notice Getter that returns the formatted targets, values, and calldatas for a proposal.
+    /// @param _proposalId The ID of the proposal.
+    /// @param _proposalData The encoded data of the proposal to extract the parameters from.
+    function formatExecuteParams(uint256 _proposalId, bytes memory _proposalData)
+        external
+        view
+        returns (address[] memory targets, uint256[] memory values, bytes[] memory calldatas);
+      
+    /// @notice Getter that returns if a proposal was successful in terms of votes.
+    /// @param _proposalId The ID of the proposal.
+    function voteSucceeded(uint256 proposalId) external view returns (bool);
+}
+```
 
 ## Security Considerations
 
