@@ -44,7 +44,7 @@ The following table includes each of the preinstalls.
 | SafeSingletonFactory                      | 0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7 |
 | Multicall3                                | 0xcA11bde05977b3631167028862bE2a173976CA11 |
 | Create2Deployer                           | 0x13b0D85CcB8bf860b6b79AF3029fCA081AE9beF2 |
-| CreateXDeployer                           | 0x6E46F32dCa0443a8249b46782b4FAFd5ce17c31A |
+| CreateXDeployer                           | 0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed |
 | Arachnid's Deterministic Deployment Proxy | 0x4e59b44847b379578588920cA78FbF26c0B4956C |
 | Permit2                                   | 0x000000000022D473030F116dDEE9F6B43aC78BA3 |
 | ERC-4337 v0.6.0 EntryPoint                | 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789 |
@@ -163,7 +163,7 @@ When Canyon activates, the contract code at `0x13b0D85CcB8bf860b6b79AF3029fCA081
 
 [Implementation](https://github.com/pcaversaccio/createx/blob/main/src/CreateX.sol)
 
-Address: `0x6E46F32dCa0443a8249b46782b4FAFd5ce17c31A`
+Address: `0xba5Ed099633D3B313e4D5F7bdc1305d3c28ba5Ed`
 
 CreateX introduces additional logic for deploying contracts using `CREATE`, `CREATE2` and `CREATE3`.
 It adds [salt protection](https://github.com/pcaversaccio/createx#special-features) for sender and chainID
