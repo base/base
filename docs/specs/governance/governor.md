@@ -121,12 +121,12 @@ This function MUST emit the `ProposalCanceled` event and return the ID of the pr
 
 Cast a vote on a proposal. This function MUST adhere to the configuration specified in `COUNTING_MODE`:
 
-- `support`: MUST support  `against` (0), `for` (1), and `abstain` (2) voting options.
+- `support`: MUST support `against` (0), `for` (1), and `abstain` (2) voting options.
 - `quorum`: MUST be the sum of votes `against`, `for`, and `abstain`.
 - `params`: MUST use a module if the proposal was created with one.
 
 The voting weight of the voter MUST be determined by the number of votes the account had delegated to it at the time
-the proposal state became active.
+the proposal state became active. The `_support` parameter MUST be one of the voting options, noted above.
 
 ```solidity
 function castVote(uint256 _proposalId, uint8 _support) external returns (uint256)
