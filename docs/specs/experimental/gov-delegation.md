@@ -317,8 +317,8 @@ state from the `GovernanceToken` contract via a function that can only be called
 
 The `GovernanceDelegation` contract ensures backwards compatibility by allowing the migration of delegation state from the
 `GovernanceToken`, and implementing the same type of getter functions. External contracts that need to consume voting power
-data, like the `Governor`, will have to query both the legacy state in the `GovernanceToken` if a user has not been migrated,
-and the up-to-date state in the `GovernanceDelegation` if the user has been migrated.
+data, like the `Governor`, will have to query the legacy state in the `GovernanceToken` if a user has not been migrated,
+or the up-to-date state in the `GovernanceDelegation` if the user has been migrated.
 
 ## User Flow
 
