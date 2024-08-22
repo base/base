@@ -44,13 +44,13 @@
     - [`quorum`](#quorum)
     - [`quorumDenominator`](#quorumdenominator)
     - [`quorumNumerator`](#quorumnumerator)
-    - [`quorumNumerator` (block)](#quorumnumerator-block)
+    - [`quorumNumerator` (current)](#quorumnumerator-current)
     - [`state`](#state)
     - [`supportsInterface`](#supportsinterface)
     - [`token`](#token)
     - [`version`](#version)
     - [`votableSupply`](#votablesupply)
-    - [`votableSupply` (block)](#votablesupply-block)
+    - [`votableSupply` (specific block)](#votablesupply-specific-block)
     - [`votingDelay`](#votingdelay)
     - [`votingPeriod`](#votingperiod)
     - [`weightCast`](#weightcast)
@@ -66,12 +66,10 @@
     - [`VotingDelaySet`](#votingdelayset)
     - [`VotingPeriodSet`](#votingperiodset)
     - [`QuorumNumeratorUpdated`](#quorumnumeratorupdated)
-- [Storage](#storage)
-- [Types](#types)
-  - [`ProposalVote`](#proposalvote)
-  - [`ProposalCore`](#proposalcore)
 - [Proposal Types](#proposal-types)
+  - [Interface](#interface-1)
 - [Modules](#modules)
+  - [Interface](#interface-2)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -87,7 +85,6 @@ for proposal types.
 | Constant          | Value                           | Description |
 | ----------------- | ------------------------------- | ----------- |
 | `COUNTING_MODE` | `support=bravo&quorum=against,for,abstain&params=modules` | The configuration for supported values for `castVote` and how votes are counted, which is also consumed by UIs to show correct vote option and interpret results. |
-| `PERCENT_DIVISOR` |  `10000` | The maximum value of `quorum` and `approvalThreshold` for proposal types  |
 | `PROPOSAL_TYPES_CONFIGURATOR` |  `0x67ecA7B65Baf0342CE7fBf0AA15921524414C09f` | The address of the proposal types configurator contract  |
 | `VERSION` |  `2` | The version of the `Governor` contract  |
 | `TOKEN` |  `0x4200000000000000000000000000000000000042` | The address of the `GovernanceToken` contract  |
@@ -98,8 +95,8 @@ for proposal types.
 
 #### `cancel`
 
-Cancels a proposal. A proposal MUST only be cancellable by the manager and ONLY while it's in an active state,
-i.e. not executed or cancelled already.
+Cancels a proposal. A proposal MUST only be cancellable by the manager and ONLY when it's not in a cancelled or executed
+state.
 
 ```solidity
 function cancel(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external returns (uint256)
@@ -182,19 +179,19 @@ the function MUST emit the `VoteCast` event. The function MUST also return the v
 
 #### `editProposalType`
 
-Edit the type of a proposal that is still active. This function MUST only be callable by the manager.
+Edit the type of a proposal that is still active. This function MUST only be callable by the manager. Additionally,
+this function MUST revert if either the proposal or proposal type doesn't exist.
 
 ```solidity
 function editProposalType(uint256 _proposalId, uint8 _proposalType) external
 ```
 
-This function MUST revert if the proposal type is not already configured. Additionally, this function MUST emit
-the `ProposalTypeUpdated` event.
+This function MUST emit the `ProposalTypeUpdated` event.
 
 #### `execute`
 
-Execute a successful proposal. This MUST only be possible when the quorum is reached, the vote is successful, and the
-deadline is reached.
+Execute a successful proposal. This MUST only be possible when the proposal has reached quorum and is considered
+successful in terms of votes.
 
 ```solidity
 function execute(address[] memory _targets, uint256[] memory _values, bytes[] memory _calldatas, bytes32 _descriptionHash) external payable returns (uint256)
@@ -204,8 +201,11 @@ This function MUST emit the `ProposalExecuted` event and return the proposal ID.
 
 #### `executeWithModule`
 
-Execute a successful proposal that was created with a module. This MUST only be possible when the quorum is reached,
-the vote is successful, and the deadline is reached.
+Similar to [`execute`](#execute), but for proposals that were created with a module. This MUST only be possible when the
+proposal has reached quorum and is considered successful in terms of votes.
+
+This function must call the `formatExecuteParams` function of the module passing the proposal ID and data to receive
+the formatted `targets`, `values`, and `calldatas` for execution. This MUST adhere to the [module's interface](#interface-1).
 
 ```solidity
 function executeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash) external payable returns (uint256)
@@ -231,8 +231,9 @@ This function MUST emit the `ProposalCreated` event and return the ID of the pro
 
 #### `proposeWithModule`
 
-Creates a new proposal with a module. This function MUST check that the module is approved, and apply the same checks specified
-in [`propose`](#propose). This function MUST call the `propose` function of the module.
+Similar to [`propose`](#propose), but for proposals that were created with a module. This function MUST check that the
+module is approved, and apply the same checks specified in [`propose`](#propose). This function MUST call the `propose`
+function of the module, according to the [interface](#interface-1).
 
 ```solidity
 function proposeWithModule(address _module, bytes memory _proposalData, bytes32 _descriptionHash, uint8 _proposalType) external returns (uint256)
@@ -263,7 +264,7 @@ function setModuleApproval(address _module, bool _approved) external
 
 #### `setProposalDeadline`
 
-Update the deadline timestamp of an active proposal. This function MUST only be callable by the manager.
+Updates the voting deadline of a proposal with a new block number. This function MUST only be callable by the manager.
 
 ```solidity
 function setProposalDeadline(uint256 _proposalId, uint64 _deadline) external
@@ -273,7 +274,7 @@ This function MUST emit the `ProposalDeadlineUpdated` event.
 
 #### `setProposalThreshold`
 
-Updates the proposal threshold. This function MUST only be callable by the manager.
+Updates the threshold of voting power needed to create proposals. This function MUST only be callable by the manager.
 
 ```solidity
 function setProposalThreshold(uint256 _newProposalThreshold) external
@@ -283,8 +284,8 @@ This function MUST emit the `ProposalThresholdSet` event.
 
 #### `setVotingDelay`
 
-Updates the voting delay, which is the number of blocks before the voting for a proposal starts.
-This function MUST only be callable by the manager.
+Updates the voting delay, which is the number of blocks before the voting for a proposal starts. This function MUST
+only be callable by the manager.
 
 ```solidity
 function setVotingDelay(uint256 _newVotingDelay) external
@@ -294,8 +295,8 @@ This function MUST emit the `VotingDelaySet` event.
 
 #### `setVotingPeriod`
 
-Updates the voting period, which is the number of blocks the voting for a proposal lasts.
-This function MUST only be callable by the manager.
+Updates the voting period, which is the number of blocks the voting for a proposal lasts. This function MUST only be
+callable by the manager.
 
 ```solidity
 function setVotingPeriod(uint256 _newVotingPeriod) external
@@ -311,14 +312,14 @@ Updates the quorum numerator. This function MUST only be callable by the manager
 function updateQuorumNumerator(uint256 _newQuorumNumerator) external
 ```
 
-This function MUST check that the quorum numerator does not exceed `_newQuorumNumerator`,
-and emit the `QuorumNumeratorUpdated` event.
+This function MUST check that the `_newQuorumNumerator` does not exceed the quorum denominator, and emit the
+`QuorumNumeratorUpdated` event.
 
 ### Getters
 
 #### `approvedModules`
 
-Retrieves the status if a module was approved to be used in proposals.
+Retrieves whether a module was approved or not to be used in proposals.
 
 ```solidity
 function approvedModules(address _module) external view returns (bool)
@@ -334,8 +335,8 @@ function getProposalType(uint256 _proposalId) external view returns (uint8);
 
 #### `getVotes`
 
-Returns the current amount of votes that `_account` has, which should be based on the
-`GovernanceToken` contract.
+Returns the current voting power of an `_account`, which is the amount of `GovernanceToken` tokens delegated
+to it.
 
 ```solidity
 function getVotes(uint256 _account) external view returns (uint256);
@@ -343,15 +344,15 @@ function getVotes(uint256 _account) external view returns (uint256);
 
 #### `getVotesWithParams`
 
-Returns the voting power of an account at a specific timepoint given additional encoded parameters.
+Returns the voting power of an account at a specific block nubmer given additional encoded parameters.
 
 ```solidity
-function getVotesWithParams(address _account, uint256 _timepoint, bytes _params) external view returns (uint256);
+function getVotesWithParams(address _account, uint256 _blockNumber) external view returns (uint256);
 ```
 
 #### `hasVoted`
 
-Returns whether `_account` has cast a vote on `_proposalId`.
+Returns whether an `_account` has cast a vote for a proposal with ID `_proposalId`.
 
 ```solidity
 function hasVoted(uint256 _proposalId, address _account) external view returns (bool);
@@ -359,7 +360,7 @@ function hasVoted(uint256 _proposalId, address _account) external view returns (
 
 #### `hashProposal`
 
-Hashing function used to build a proposal id from proposal details.
+Hashing function used to build a proposal ID from proposal parameters.
 
 ```solidity
 function hashProposal(address[] _targets, uint256[] _values, bytes[] _calldatas, bytes32 _descriptionHash) external view returns (uint256);
@@ -367,7 +368,7 @@ function hashProposal(address[] _targets, uint256[] _values, bytes[] _calldatas,
 
 #### `hashProposalWithModule`
 
-Hashing function used to build a proposal id from proposal details and module address.
+Hashing function used to build a proposal ID from proposal parameters and a module address.
 
 ```solidity
 function hashProposalWithModule(address _module, bytes _proposalData, bytes32 _descriptionHash) external view returns (uint256);
@@ -391,7 +392,7 @@ function name() external view returns (string memory);
 
 #### `proposalDeadline`
 
-Returns the timestamp for when voting on a proposal ends.
+Returns the block number for when voting on a proposal ends.
 
 ```solidity
 function proposalDeadline(uint256 _proposalId) external view returns (uint256);
@@ -399,7 +400,7 @@ function proposalDeadline(uint256 _proposalId) external view returns (uint256);
 
 #### `proposalSnapshot`
 
-Returns the timestamp when the proposal snapshot was taken.
+Returns the block number for the snapshot of a proposal.
 
 ```solidity
 function proposalSnapshot(uint256 _proposalId) external view returns (uint256);
@@ -407,7 +408,7 @@ function proposalSnapshot(uint256 _proposalId) external view returns (uint256);
 
 #### `proposalThreshold`
 
-Returns the number of votes required in order for a voter to become a proposer.
+Returns the minimum voting power required in order to create a proposal.
 
 ```solidity
 function proposalThreshold() external view returns (uint256);
@@ -423,7 +424,8 @@ function proposalVotes(uint256 _proposalId) external view returns (uint256, uint
 
 #### `quorum`
 
-Returns the quorum for a proposal, in terms of number of votes: `supply * numerator / denominator`.
+Returns the quorum of a proposal, which MUST be the sum of votes `against`, `for`, and `abstain`,
+per the `quorum` configuration in `COUNTING_MODE`.
 
 ```solidity
 function quorum(uint256 _proposalId) external view returns (uint256);
@@ -445,7 +447,7 @@ Returns the quorum numerator at a specific block number.
 function quorumNumerator(uint256 _blockNumber) external view returns (uint256);
 ```
 
-#### `quorumNumerator` (block)
+#### `quorumNumerator` (current)
 
 Returns the quorum numerator at the current block number.
 
@@ -475,7 +477,7 @@ function state(uint256 _proposalId) external view returns (ProposalState);
 
 #### `supportsInterface`
 
-Returns whether if the contract implements the interface defined by `_interfaceId`. This function MUST return `true`
+Returns whether the contract implements the interface defined by `_interfaceId`. This function MUST return `true`
 for ID of the following interfaces: `ERC165`, `ERC721`, and `ERC1155`.
 
 ```solidity
@@ -500,15 +502,17 @@ function version() external view returns (string memory);
 
 #### `votableSupply`
 
-Returns the votable supply for the current block number.
+Returns the votable supply for the current block number. Votable supply is defined by the total amount
+of `GovernanceToken` tokens that are currently delegated.
 
 ```solidity
 function votableSupply() external view returns (uint256);
 ```
 
-#### `votableSupply` (block)
+#### `votableSupply` (specific block)
 
-Returns the votable supply for `_blockNumber`.
+Returns the votable supply for the given block number. Votable supply is defined by the total amount
+of `GovernanceToken` tokens that are currently delegated.
 
 ```solidity
 function votableSupply(uint256 _blockNumber) external view returns (uint256);
@@ -516,7 +520,7 @@ function votableSupply(uint256 _blockNumber) external view returns (uint256);
 
 #### `votingDelay`
 
-Returns the delay since a proposal is submitted until voting power is fixed and voting starts.
+Returns the delay, in terms of block amounts, between proposal creation and voting start.
 
 ```solidity
 function votingDelay() external view returns (uint256);
@@ -524,7 +528,7 @@ function votingDelay() external view returns (uint256);
 
 #### `votingPeriod`
 
-Returns the delay since a proposal starts until voting ends.
+Returns the period, in terms of block amounts, that voting for a proposal is enabled.
 
 ```solidity
 function votingPeriod() external view returns (uint256);
@@ -542,7 +546,7 @@ function weightCast(uint256 _proposalId, uint256 _account) external view returns
 
 #### `ProposalCanceled`
 
-MUST trigger when a proposal is cancelled.
+MUST trigger when a proposal is cancelled, per the [`cancel`](#cancel) and [`cancelWithModule`](#cancelwithmodule) functions.
 
 ```solidity
 event ProposalCanceled(uint256 proposalId);
@@ -550,7 +554,8 @@ event ProposalCanceled(uint256 proposalId);
 
 #### `VoteCast`
 
-MUST trigger when proposal vote is cast.
+MUST trigger when proposal vote is cast, per the [`castVote`](#castvote), [`castVoteBySig`](#castvotebysig)
+and [`castVoteWithReason`](#castvotewithreason) functions.
 
 ```solidity
 event VoteCast(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason);
@@ -558,7 +563,9 @@ event VoteCast(address indexed voter, uint256 proposalId, uint8 support, uint256
 
 #### `VoteCastWithParams`
 
-MUST trigger when proposal vote with parameters is cast.
+MUST trigger when proposal vote with parameters is cast, per the
+[`castVoteWithReasonAndParams`](#castvotewithreasonandparams), and
+[`castVoteWithReasonAndParamsBySig`](#castvotewithreasonandparamsbysig) functions.
 
 ```solidity
 event VoteCastWithParams(address indexed voter, uint256 proposalId, uint8 support, uint256 weight, string reason, bytes params); 
@@ -566,7 +573,7 @@ event VoteCastWithParams(address indexed voter, uint256 proposalId, uint8 suppor
 
 #### `ProposalTypeUpdated`
 
-MUST trigger when a proposal type is updated.
+MUST trigger when a proposal type is updated, per the [`editProposalType`](#editproposaltype) function.
 
 ```solidity
 event ProposalTypeUpdated(uint256 indexed proposalId, uint8 proposalType);
@@ -574,7 +581,7 @@ event ProposalTypeUpdated(uint256 indexed proposalId, uint8 proposalType);
 
 #### `ProposalExecuted`
 
-MUST trigger when a proposal is executed.
+MUST trigger when a proposal is executed, per the [`execute`](#execute) and [`executeWithModule](#executewithmodule) functions.
 
 ```solidity
 event ProposalExecuted(uint256 proposalId);
@@ -582,7 +589,7 @@ event ProposalExecuted(uint256 proposalId);
 
 #### `ProposalCreated`
 
-MUST trigger when a proposal is created.
+MUST trigger when a proposal is created, per the [`propose`](#propose) and [`proposeWithModule`](#proposewithmodule) functions.
 
 ```solidity
 event ProposalCreated(uint256 indexed proposalId, address indexed proposer, address indexed module, address[] targets, uint256[] values, string[] signatures, bytes[] calldatas, uint256 startBlock, uint256 endBlock, string description, uint8 proposalType);
@@ -590,7 +597,7 @@ event ProposalCreated(uint256 indexed proposalId, address indexed proposer, addr
 
 #### `ProposalDeadlineUpdated`
 
-MUST trigger when a proposal's deadline is updated.
+MUST trigger when the proposal voting deadline is updated, per the [`setProposalDeadline`](#setproposaldeadline) function.
 
 ```solidity
 event ProposalDeadlineUpdated(uint256 proposalId, uint64 deadline);
@@ -598,7 +605,7 @@ event ProposalDeadlineUpdated(uint256 proposalId, uint64 deadline);
 
 #### `ProposalThresholdSet`
 
-MUST trigger when the proposal threshold is updated.
+MUST trigger when the proposal threshold is updated, per the [`setProposalThreshold`](#setproposalthreshold).
 
 ```solidity
 event ProposalThresholdSet(uint256 oldProposalThreshold, uint256 newProposalThreshold);
@@ -606,7 +613,7 @@ event ProposalThresholdSet(uint256 oldProposalThreshold, uint256 newProposalThre
 
 #### `VotingDelaySet`
 
-MUST trigger when the voting delay is updated.
+MUST trigger when the proposal voting delay is updated, per the [`setVotingDelay`](#setvotingdelay).
 
 ```solidity
 event VotingDelaySet(uint256 oldVotingDelay, uint256 newVotingDelay);
@@ -614,7 +621,7 @@ event VotingDelaySet(uint256 oldVotingDelay, uint256 newVotingDelay);
 
 #### `VotingPeriodSet`
 
-MUST trigger when the voting period is updated.
+MUST trigger when the proposal voting period is updated, per the [`setVotingPeriod`](#setvotingperiod).
 
 ```solidity
 event VotingPeriodSet(uint256 oldVotingPeriod, uint256 newVotingPeriod);
@@ -622,84 +629,11 @@ event VotingPeriodSet(uint256 oldVotingPeriod, uint256 newVotingPeriod);
 
 #### `QuorumNumeratorUpdated`
 
-MUST trigger when the quorum numerator is updated.
+MUST trigger when the quorum numerator is updated, per the [`updateQuorumNumerator`](#updatequorumnumerator) function.
 
 ```solidity
 event QuorumNumeratorUpdated(uint256 oldQuorumNumerator, uint256 newQuorumNumerator);
 ```
-
-## Storage
-
-The `Governor` contract MUST be able to store proposals and votes. The following storage variables MUST be
-defined:
-
-```solidity
-// The address of the manager.
-address public manager;
-
-// The token to use for voting.
-IVotesUpgradeable public token;
-
-// Total number of `votes` that `account` has cast for `proposalId`.
-mapping(uint256 proposalId => mapping(address account => uint256 votes)) public weightCast;
-
-// Whether a `module` has been approved or not.
-mapping(address module => bool approved) public approvedModules;
-
-// The vote accounting for a proposal.
-mapping(uint256 proposalId => ProposalVote votes) internal _proposalVotes;
-
-// The proposals that have been created.
-mapping(uint256 proposalId => ProposalCore proposal) internal _proposals;
-```
-
-## Types
-
-The `Governor` contract MUST define the following types:
-
-### `ProposalVote`
-
-`ProposalVote` defines the vote accounting for a proposal, encapsulated in the following struct:
-
-```solidity
-struct ProposalVote {
-  uint256 againstVotes;
-  uint256 forVotes;
-  uint256 abstainVotes;
-  mapping(address => bool) hasVoted;
-}
-```
-
-| Name                     | Type            | Description                                                             |
-|--------------------------|-----------------|-------------------------------------------------------------------------|
-| `againstVotes`          | `uint256` | Amount of votes against the proposal.                         |
-| `forVotes`              | `uint256`       | Amount of votes in favor of the proposal.                |
-| `abstainVotes`                 | `uint256`       | Amount of votes abstaining.   |
-| `hasVoted`                 | `mapping`       | Whether an account has voted for this proposal or not.   |
-
-### `ProposalCore`
-
-`ProposalCore` defines the core information of a proposal, encapsulated in the following struct:
-
-```solidity
-struct ProposalCore {
-  uint64 voteStart;
-  uint64 voteEnd;
-  bool executed;
-  bool canceled;
-  address votingModule;
-  uint8 proposalType;
-}
-```
-
-| Name                     | Type            | Description                                                             |
-|--------------------------|-----------------|-------------------------------------------------------------------------|
-| `voteStart`          | `uint64` | The block timestamp when voting started.                         |
-| `voteEnd`              | `uint64`       | The block timestamp when voting ends.                |
-| `executed`                 | `bool`       | Indicator for proposal execution.   |
-| `canceled`                 | `bool`       | Indicator for proposal cancellation.   |
-| `votingModule`                 | `address`       | The voting module of the proposal. Zero address if none.   |
-| `proposalType`                 | `uint8`       | The type of proposal.   |
 
 ## Proposal Types
 
@@ -709,6 +643,32 @@ The `Governor` contract can only create or edit proposal types, and the amount o
 
 With the [`proposeWithModule`](#proposewithmodule) function, proposers can create proposals with any supported proposal
 type.
+
+### Interface
+
+The `ProposalTypesConfigurator` contract MUST adhere to the following interface so that it can be used by the `Governor`
+contract:
+
+```solidity
+interface IProposalTypesConfigurator {
+  /// @notice The proposal type data structure.
+  struct ProposalType {
+    uint16 quorum; // The quorum percentage, denominated in basis points.
+    uint16 approvalThreshold; // The approval threshold percentage, denominated in basis points.
+    string name; // The name of the proposal type.
+  }
+
+  /// @notice Getter function to get the proposal type data for a given ID.
+  function proposalTypes(uint256 _proposalTypeId) external view returns (ProposalType memory);
+
+  /// @notice Creates or updates a proposal type.
+  /// @param _proposalTypeId The ID of the proposal type.
+  /// @param _quorum The quorum percentage.
+  /// @param _approvalThreshold The approval threshold percentage.
+  /// @param _name The proposal type name.
+  function setProposalType(uint256 _proposalTypeId, uint16 _quorum, uint16 _approvalThreshold, string memory _name) external;
+}
+```
 
 ## Modules
 
