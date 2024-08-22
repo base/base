@@ -143,10 +143,11 @@ graph LR
 #### Notes for Core L1 Smart Contracts
 
 - The `Batch Inbox Address` described above (**highlighted in GREY**) is *not* a smart contract and is instead an arbitrarily
-  selected account that is assumed to have no known private key. This account is typically chosen as the account
+  selected account that is assumed to have no known private key. The convention for deriving this account's address is
+  provided on the [Configurability](./configurability.md#consensus-parameters) page.
+  - Historically, it was often derived as
   `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
-  For instance, for OP Mainnet, this account is chosen as `0xFF00000000000000000000000000000000000010`. However, this is
-  not a strict requirement and some OP Stack chains may not follow this convention.
+  This is why many chains, such as OP Mainnet, have a batch inbox address of this form.
 - Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
   [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
   - The `L1CrossDomainMessenger` contract sits behind the [`ResolvedDelegateProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/ResolvedDelegateProxy.sol)
@@ -310,7 +311,7 @@ graph LR
     classDef l2Components stroke:#333,stroke-width:2px;
     classDef systemUser stroke:#f9a,stroke-width:2px;
     classDef l1Contracts stroke:#bbf,stroke-width:2px;
-    
+
     class RollupNode,ExecutionEngine l2Components;
     class BatchSubmitter,OutputSubmitter,Challenger systemUser;
     class BatchDataEOA,OptimismPortal,DisputeGameFactory,FaultDisputeGame l1Contracts;
