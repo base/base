@@ -310,8 +310,8 @@ enum AllowanceType {
 All write functions in the `GovernanceDelegation` MUST check if the users interacting with it have been migrated by
 checking the `migrated` mapping from its [storage](#storage). If a user has not been migrated, the `GovernanceDelegation`
 MUST copy the delegation and checkpoint data from the token contract to its own state. After copying the data, the
-`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated, and remove the
-state from the `GovernanceToken` contract via a function that can only be called by the `GovernanceDelegation` contract.
+`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated, and clear the
+delegation in the `GovernanceToken` contract.
 
 ## Backwards Compatibility
 
