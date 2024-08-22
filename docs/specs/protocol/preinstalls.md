@@ -169,6 +169,8 @@ CreateX introduces additional logic for deploying contracts using `CREATE`, `CRE
 It adds [salt protection](https://github.com/pcaversaccio/createx#special-features) for sender and chainID
 and includes a set of helper functions.
 
+The `keccak256` of the CreateX bytecode is `0xbd8a7ea8cfca7b4e5f5041d7d4b17bc317c5ce42cfbc42066a00cf26b43eb53f`.
+
 ## Arachnid's Deterministic Deployment Proxy
 
 [Implementation](https://github.com/Arachnid/deterministic-deployment-proxy/blob/v1.0.0/source/deterministic-deployment-proxy.yul)
