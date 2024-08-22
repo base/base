@@ -118,7 +118,7 @@ This function MUST emit the `ProposalCanceled` event and return the ID of the pr
 
 Cast a vote on a proposal. This function MUST adhere to the configuration specified in `COUNTING_MODE`:
 
-- `support`: MUST support `against` (0), `for` (1), and `abstain` (2) voting options.
+- `support`: MUST support governor-bravo-style voting options: `against` (0), `for` (1), and `abstain` (2).
 - `quorum`: MUST be the sum of votes `against`, `for`, and `abstain`.
 - `params`: MUST use a module if the proposal was created with one.
 
