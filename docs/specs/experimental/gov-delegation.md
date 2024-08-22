@@ -307,11 +307,19 @@ enum AllowanceType {
 
 ## Migration
 
-All write functions in the `GovernanceDelegation` MUST check if the users interacting with it have been migrated by
-checking the `migrated` mapping from its [storage](#storage). If a user has not been migrated, the `GovernanceDelegation`
-MUST copy the delegation and checkpoint data from the token contract to its own state. After copying the data, the
-`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated, and clear the
-delegation in the `GovernanceToken` contract.
+All write functions in the `GovernanceDelegation` MUST check if the users interacting with it (such as creating or updating
+a delegation) have been migrated by checking the `migrated` mapping from its [storage](#storage). If a user has not been
+migrated, the `GovernanceDelegation` MUST copy the delegation and checkpoint data from the token contract to its own state.
+After copying the data, the `GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been
+migrated, and clear the delegation in the `GovernanceToken` contract.
+
+The `GovernanceDelegation` MUST enforce the following invariants for the migration logic:
+
+1. A user MUST NOT have an active delegation in both `GovernanceToken` and `GovernanceDelegation` at the same time.
+A delegation to address(0) is not considered an active delegation.
+2. The sum of the voting power of all advance delegations of a user MUST NOT exceed the total voting power of the user.
+3. The sum of the voting power a user receives from delegations in the `GovernanceDelegation` and the `GovernanceToken`
+MUST NOT be double counted.
 
 ## Backwards Compatibility
 
