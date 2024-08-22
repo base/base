@@ -142,7 +142,7 @@ graph LR
 
 #### Notes for Core L1 Smart Contracts
 
-- The `Batch Data Address` described above (**highlighted in GREY**) is *not* a smart contract and is instead an arbitrarily
+- The `Batch Inbox Address` described above (**highlighted in GREY**) is *not* a smart contract and is instead an arbitrarily
   selected account that is assumed to have no known private key. This account is typically chosen as the account
   `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
   For instance, for OP Mainnet, this account is chosen as `0xFF00000000000000000000000000000000000010`. However, this is
