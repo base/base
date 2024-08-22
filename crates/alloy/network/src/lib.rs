@@ -32,7 +32,7 @@ impl Network for Optimism {
 
     type TransactionRequest = alloy_rpc_types_eth::transaction::TransactionRequest;
 
-    type TransactionResponse = alloy_rpc_types_eth::Transaction;
+    type TransactionResponse = op_alloy_rpc_types::Transaction;
 
     type ReceiptResponse = op_alloy_rpc_types::OpTransactionReceipt;
 
