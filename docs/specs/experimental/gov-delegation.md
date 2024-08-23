@@ -21,7 +21,6 @@
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
-    - [`migrated`](#migrated)
     - [`delegations`](#delegations)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
@@ -30,8 +29,8 @@
 - [Types](#types)
   - [`Delegation`](#delegation)
   - [`AllowanceType`](#allowancetype)
-- [Backwards Compatibility](#backwards-compatibility)
 - [Migration](#migration)
+- [Backwards Compatibility](#backwards-compatibility)
 - [User Flow](#user-flow)
   - [Partial Delegations](#partial-delegations)
   - [Absolute & Relative Delegations](#absolute--relative-delegations)
@@ -163,10 +162,7 @@ in the [Delegation Validation](#delegation-validation) section. Additionally, th
 ### Getters
 
 For backwards compatibility, the `GovernanceDelegation` contract MUST implement all public getter functions of the
-`GovernanceToken` related to delegation and voting power. These functions MUST be used by the
-`GovernanceToken` when an account has been migrated to the `GovernanceDelegation` contract. Otherwise,
-the `GovernanceToken` MUST use its own state. Similarly, all of the `GovernanceDelegation` getter functions
-MUST use the `GovernanceToken` state if the account has not been migrated.
+`GovernanceToken` related to delegation and voting power.
 
 #### `checkpoints`
 
@@ -187,7 +183,6 @@ function numCheckpoints(address _account) external view returns (uint32)
 #### `delegates`
 
 Retrieves the delegation of a given user address with the highest voting power.
-This function is intended to be used by the `GovernanceToken` contract to maximize for backwards compatibility.
 
 ```solidity
 function delegates(address _account) external view returns (address)
@@ -215,14 +210,6 @@ Retrieves the total supply of the `GovernanceToken` at a given block.
 
 ```solidity
 function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
-```
-
-#### `migrated`
-
-Returns the migration status of an account — `True` if the account has been migrated, `False` otherwise.
-
-```solidity
-function migrated(address _account) public view returns (bool)
 ```
 
 #### `delegations`
@@ -258,9 +245,6 @@ The `GovernanceDelegation` contract MUST be able to store delegations and checkp
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
-// Addresses that had their delegation state migrated from the `GovernanceToken` to the `GovernanceDelegation`.
-mapping(address => bool) public migrated;
-
 // Voting power delegations of an account.
 mapping(address => Delegation[]) public delegations;
 
@@ -309,17 +293,27 @@ enum AllowanceType {
 | `Absolute`  | `0`    | The amount of votes delegated is fixed and denominated in the `GovernanceToken`'s decimals  |
 | `Relative`  | `1`    | The amount of votes delegated is relative and denominated in percentages.                   |
 
+## Migration
+
+Functions that create or update delegations MUST check that the delegator and new delegatees have been migrated from
+the `GovernanceToken`. If a user has not been migrated, the `GovernanceDelegation` MUST copy the delegation and
+checkpoint data from the token contract to its own state. After copying the data, the `GovernanceDelegation` MUST clear
+its state in the `GovernanceToken` contract.
+
+The `GovernanceDelegation` MUST enforce the following invariants for the migration logic:
+
+1. A user MUST NOT have an active delegation in both `GovernanceToken` and `GovernanceDelegation` at the same time.
+A delegation to address(0) is not considered an active delegation.
+2. The sum of the voting power of all advance delegations of a user MUST NOT exceed the total voting power of the user.
+3. The sum of the voting power a user receives from delegations in the `GovernanceDelegation` and the `GovernanceToken`
+MUST NOT be double counted.
+
 ## Backwards Compatibility
 
 The `GovernanceDelegation` contract ensures backwards compatibility by allowing the migration of delegation state from the
-`GovernanceToken`.
-
-## Migration
-
-All write functions in the `GovernanceDelegation` MUST check if the users interacting with it have been migrated by
-checking the `migrated` mapping from its [storage](#storage). If a user has not been migrated, the `GovernanceDelegation`
-MUST copy the delegation and checkpoint data from the token contract to its own state. After copying the data, the
-`GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been migrated.
+`GovernanceToken`, and implementing the same type of getter functions. External contracts that need to consume voting power
+data, like the `Governor`, will have to query the legacy state in the `GovernanceToken` if a user has not been migrated,
+or the up-to-date state in the `GovernanceDelegation` if the user has been migrated.
 
 ## User Flow
 
@@ -359,18 +353,6 @@ sequenceDiagram
     GovernanceDelegation ->> GovernanceDelegation: apply basic delegation
 ```
 
-Once a user has been migrated to the `GovernanceDelegation`, the `GovernanceToken` MUST always use the `GovernanceDelegation`'s
-delegation state. The following diagram shows the control flow for this case.
-
-```mermaid
-flowchart TD
-    A1(User) -->|Calls delegation getter function | A2(GovernanceToken)
-    A2 --> A3{Is user migrated?}
-    A3 --> |Yes, fetch from GovernanceDelegation| A4(GovernanceDelegation)
-    A3 --> |No, use its state| A2
-    A2 --> |Return data| A1
-```
-
 ## Delegation Validation
 
 When applying a new delegation set as part of the [`_delegate`](#_delegate) function, the `GovernanceDelegation` MUST check
@@ -392,8 +374,7 @@ If any of the above conditions are not met, the `_delegate` function MUST revert
 
 As the `GovernanceToken` depends on the `GovernanceDelegation` contract, the `GovernanceDelegation` contract MUST be implemented
 so that it minimizes the risk of unexpected reverts during the transfer hook call. If the `GovernanceDelegation` contract
-reverts, `GovernanceToken` transfers will be blocked. Additionally, the `GovernanceToken` MUST always use the
-`GovernanceDelegation`'s delegation state if a user has been migrated.
+reverts, `GovernanceToken` transfers will be blocked.
 
 ### Connection with GovernanceToken
 
