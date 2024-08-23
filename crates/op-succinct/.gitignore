@@ -16,6 +16,7 @@ data
 
 # txt
 **.txt
+!LICENSE.txt
 
 # DB data
 db/
