@@ -21,7 +21,6 @@
     - [`getVotes`](#getvotes)
     - [`getPastVotes`](#getpastvotes)
     - [`getPastTotalSupply`](#getpasttotalsupply)
-    - [`migrated`](#migrated)
     - [`delegations`](#delegations)
   - [Events](#events)
     - [`DelegationCreated`](#delegationcreated)
@@ -213,14 +212,6 @@ Retrieves the total supply of the `GovernanceToken` at a given block.
 function getPastTotalSupply(uint256 _blockNumber) external view returns (uint256)
 ```
 
-#### `migrated`
-
-Returns the migration status of an account — `True` if the account has been migrated, `False` otherwise.
-
-```solidity
-function migrated(address _account) public view returns (bool)
-```
-
 #### `delegations`
 
 Retrieves the delegations of a given user address sorted in descending order by voting power.
@@ -254,9 +245,6 @@ The `GovernanceDelegation` contract MUST be able to store delegations and checkp
 defined as in the `GovernanceToken` and use the same types:
 
 ```solidity
-// Addresses that had their delegation state migrated from the `GovernanceToken` to the `GovernanceDelegation`.
-mapping(address => bool) public migrated;
-
 // Voting power delegations of an account.
 mapping(address => Delegation[]) public delegations;
 
@@ -307,11 +295,10 @@ enum AllowanceType {
 
 ## Migration
 
-All write functions in the `GovernanceDelegation` MUST check if the users interacting with it (such as creating or updating
-a delegation) have been migrated by checking the `migrated` mapping from its [storage](#storage). If a user has not been
-migrated, the `GovernanceDelegation` MUST copy the delegation and checkpoint data from the token contract to its own state.
-After copying the data, the `GovernanceDelegation` MUST update the `migrated` mapping to reflect that the address has been
-migrated, and clear the delegation in the `GovernanceToken` contract.
+Functions that create or update delegations MUST check that the delegator and new delegatees have been migrated from
+the `GovernanceToken`. If a user has not been migrated, the `GovernanceDelegation` MUST copy the delegation and
+checkpoint data from the token contract to its own state. After copying the data, the `GovernanceDelegation` MUST clear
+its state in the `GovernanceToken` contract.
 
 The `GovernanceDelegation` MUST enforce the following invariants for the migration logic:
 
