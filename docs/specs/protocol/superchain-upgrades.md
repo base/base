@@ -272,6 +272,6 @@ proposal is the canonical document for the timestamp; however, the timestamps ar
 |Delta          |               1708560000|               1703203200|              1703116800|
 |Ecotone        |               1710374401|               1708534800|              1707238800|
 |Fjord          |               1720627201|               1716998400|                     n/a|
-|Granite        |           1725984001[^1]|               1723478400|                     n/a|
+|Granite        |           1726070401[^1]|               1723478400|                     n/a|
 
 [^1]: Governance vote and veto still have to pass.
