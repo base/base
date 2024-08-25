@@ -18,6 +18,7 @@
 pub mod genesis;
 pub mod net;
 pub mod receipt;
+pub mod sync;
 pub mod transaction;
 
 pub use receipt::OpTransactionReceipt;
