@@ -16,6 +16,7 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 pub mod genesis;
+pub mod net;
 pub mod receipt;
 pub mod transaction;
 
