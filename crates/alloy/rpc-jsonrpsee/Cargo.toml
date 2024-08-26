@@ -1,0 +1,26 @@
+[package]
+name = "op-alloy-rpc-jsonrpsee"
+description = "Optimism RPC Client"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+authors.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# Alloy
+op-alloy-rpc-types.workspace = true
+alloy-eips.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+[features]
+client = [
+    "jsonrpsee/client",
+    "jsonrpsee/async-client",
+]

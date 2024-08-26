@@ -15,13 +15,4 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-pub mod config;
-pub mod genesis;
-pub mod net;
-pub mod output;
-pub mod receipt;
-pub mod sync;
-pub mod transaction;
-
-pub use receipt::OpTransactionReceipt;
-pub use transaction::Transaction;
+pub mod traits;
