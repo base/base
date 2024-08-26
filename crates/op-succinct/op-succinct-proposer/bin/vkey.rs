@@ -1,7 +1,5 @@
-use std::str::FromStr;
-
-use alloy::{providers::ProviderBuilder, sol, transports::http::reqwest::Url};
-use alloy_primitives::{hex, keccak256, Address, B256};
+use alloy::sol;
+use alloy_primitives::{hex, keccak256};
 use anyhow::Result;
 use log::info;
 use sp1_sdk::{utils, HashableKey, ProverClient};
@@ -37,8 +35,6 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     utils::setup_logger();
 
-    let args = Args::parse();
-
     let prover = ProverClient::new();
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
@@ -55,10 +51,6 @@ async fn main() -> Result<()> {
     let (_, agg_vk) = prover.setup(AGG_ELF);
     info!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
     println!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
-    let agg_vk_bytes: [u8; 32] = hex::decode(agg_vk.bytes32().replace("0x", ""))
-        .unwrap()
-        .try_into()
-        .unwrap();
 
     Ok(())
 }
