@@ -15,6 +15,7 @@ exclude.workspace = true
 # Alloy
 op-alloy-rpc-types.workspace = true
 alloy-eips.workspace = true
+alloy-primitives.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
