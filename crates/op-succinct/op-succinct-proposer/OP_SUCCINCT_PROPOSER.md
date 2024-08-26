@@ -1,4 +1,4 @@
-# Run OP Proposer
+# Run the `op-succinct` Proposer
 
 ## Instructions 
 

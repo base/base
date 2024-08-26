@@ -80,3 +80,23 @@ run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC
 
   # Output the data required for the ZKVM execution.
   echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID"
+
+upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
+  #!/usr/bin/env bash
+
+  CHAIN_ID=$(jq -r '.chainId' contracts/zkconfig.json)
+  if [ "$CHAIN_ID" = "0" ] || [ -z "$CHAIN_ID" ]; then
+    echo "Are you sure you've filled out your zkconfig.json? Your chain ID is currently set to 0."
+    exit 1
+  fi
+
+  VERIFY=""
+  ETHERSCAN_API_KEY="{{etherscan_api_key}}"
+  if [ $ETHERSCAN_API_KEY != "" ]; then
+    VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+  fi
+
+  L1_RPC="{{l1_rpc}}"
+  ADMIN_PK="{{admin_pk}}"
+
+  cd contracts && forge script script/ZKUpgrader.s.sol:ZKUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
