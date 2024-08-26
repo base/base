@@ -20,6 +20,7 @@ pub mod genesis;
 pub mod net;
 pub mod output;
 pub mod receipt;
+pub mod safe_head;
 pub mod sync;
 pub mod transaction;
 
