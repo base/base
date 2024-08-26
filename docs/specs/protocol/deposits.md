@@ -150,7 +150,7 @@ This is unconditional, and does not revert on deposit failure.
 Then, the execution environment for a deposited transaction is initialized based on the
 transaction's attributes, in exactly the same manner as it would be for an EIP-155 transaction.
 
-The deposit transaction is processed exactly like a type-3 (EIP-1559) transaction, with the exception of:
+The deposit transaction is processed exactly like a type-2 (EIP-1559) transaction, with the exception of:
 
 - No fee fields are verified: the deposit does not have any, as it pays for gas on L1.
 - No `nonce` field is verified: the deposit does not have any, it's uniquely identified by its `sourceHash`.
