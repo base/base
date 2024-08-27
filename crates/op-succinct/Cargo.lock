@@ -58,7 +58,7 @@ dependencies = [
  "client-utils",
  "serde_cbor",
  "sha2",
- "sp1-lib 1.1.1 (git+https://github.com/succinctlabs/sp1.git?branch=experimental)",
+ "sp1-lib 1.1.1",
  "sp1-zkvm",
 ]
 
@@ -1201,7 +1201,8 @@ dependencies = [
 [[package]]
 name = "bls12_381"
 version = "0.8.0"
-source = "git+https://github.com/leruaa/bls12_381?branch=msm_variable_base#7608bbfb40f3fd2e40110c1c92cacea5acbf1a8b"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7bc6d6292be3a19e6379786dac800f551e5865a5bb51ebbe3064ab80433f403"
 dependencies = [
  "ff 0.13.0",
  "group 0.13.0",
@@ -1470,7 +1471,7 @@ dependencies = [
  "kona-mpt",
  "kona-preimage",
  "kona-primitives",
- "kzg-rs 0.1.0 (git+https://github.com/leruaa/kzg-rs?branch=verify_blobs)",
+ "kzg-rs 0.2.1",
  "log",
  "op-alloy-consensus",
  "revm",
@@ -1883,18 +1884,15 @@ checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
 
 [[package]]
 name = "ecdsa"
-version = "0.16.9"
-source = "git+https://github.com/sp1-patches/signatures?branch=patch-ecdsa-v0.16.9#1caae137b2b2c458b8a542b1c4e9fb40293c67a3"
+version = "0.16.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4b1e0c257a9e9f25f90ff76d7a68360ed497ee519c8e428d1825ef0000799d4"
 dependencies = [
- "anyhow",
- "cfg-if",
  "der",
  "digest 0.10.7",
  "elliptic-curve",
- "hex-literal",
  "rfc6979",
  "signature",
- "sp1-lib 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "spki",
 ]
 
@@ -3430,18 +3428,15 @@ dependencies = [
 
 [[package]]
 name = "kzg-rs"
-version = "0.1.0"
-source = "git+https://github.com/leruaa/kzg-rs?branch=verify_blobs#1f29a9520602bbde32bb219a331d4cec3cc94853"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea38b4917cfb194709222324913a33a999b25f9da59e2c8da304fc0ef55f996a"
 dependencies = [
- "bls12_381 0.8.0",
  "ff 0.13.0",
- "glob",
  "hex",
  "once_cell",
- "serde",
- "serde_derive",
- "serde_yaml",
  "sha2",
+ "sp1_bls12_381",
 ]
 
 [[package]]
@@ -5097,7 +5092,7 @@ dependencies = [
  "enumn",
  "hashbrown 0.14.5",
  "hex",
- "kzg-rs 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "kzg-rs 0.1.0",
  "once_cell",
  "serde",
 ]
@@ -5105,7 +5100,8 @@ dependencies = [
 [[package]]
 name = "rfc6979"
 version = "0.4.0"
-source = "git+https://github.com/sp1-patches/signatures?branch=patch-ecdsa-v0.16.9#1caae137b2b2c458b8a542b1c4e9fb40293c67a3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac",
  "subtle",
@@ -5767,9 +5763,9 @@ dependencies = [
 
 [[package]]
 name = "signature"
-version = "2.2.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+checksum = "5e1788eed21689f9cf370582dfc467ef36ed9c707f073528ddafa8d83e3b8500"
 dependencies = [
  "digest 0.10.7",
  "rand_core",
@@ -5930,19 +5926,21 @@ dependencies = [
 [[package]]
 name = "sp1-lib"
 version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "839009d6aab5876710e2bc35170d1f328bc70f38992f0037b938623dadfcc61f"
+source = "git+https://github.com/succinctlabs/sp1.git?branch=experimental#cb6465650ebed0e1d7e9a7d425810ad772217096"
 dependencies = [
  "anyhow",
  "bincode",
  "cfg-if",
+ "hex",
  "serde",
+ "snowbridge-amcl",
 ]
 
 [[package]]
 name = "sp1-lib"
-version = "1.1.1"
-source = "git+https://github.com/succinctlabs/sp1.git?branch=experimental#cb6465650ebed0e1d7e9a7d425810ad772217096"
+version = "1.2.0-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f600a97b145e66f0f5e56595527c359f5cc8cb1f9dc8a6da1ba34bb845c9d1e"
 dependencies = [
  "anyhow",
  "bincode",
@@ -6246,8 +6244,23 @@ dependencies = [
  "rand",
  "serde",
  "sha2",
- "sp1-lib 1.1.1 (git+https://github.com/succinctlabs/sp1.git?branch=experimental)",
+ "sp1-lib 1.1.1",
  "sp1-primitives",
+]
+
+[[package]]
+name = "sp1_bls12_381"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a27c4b8901334dc09099dd82f80a72ddfc76b0046f4b342584c808f1931bed5a"
+dependencies = [
+ "cfg-if",
+ "ff 0.13.0",
+ "group 0.13.0",
+ "pairing 0.23.0",
+ "rand_core",
+ "sp1-lib 1.2.0-rc1",
+ "subtle",
 ]
 
 [[package]]
@@ -6343,7 +6356,7 @@ dependencies = [
  "lazy_static",
  "rand",
  "rustc-hex",
- "sp1-lib 1.1.1 (git+https://github.com/succinctlabs/sp1.git?branch=experimental)",
+ "sp1-lib 1.1.1",
 ]
 
 [[package]]
@@ -7567,3 +7580,8 @@ dependencies = [
  "sp1-sdk",
  "tokio",
 ]
+
+[[patch.unused]]
+name = "ecdsa"
+version = "0.16.9"
+source = "git+https://github.com/sp1-patches/signatures?branch=patch-ecdsa-v0.16.9#1caae137b2b2c458b8a542b1c4e9fb40293c67a3"
