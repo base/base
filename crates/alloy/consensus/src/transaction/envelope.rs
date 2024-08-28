@@ -166,6 +166,62 @@ impl From<TxDeposit> for OpTxEnvelope {
 }
 
 impl OpTxEnvelope {
+    /// Returns true if the transaction is a legacy transaction.
+    #[inline]
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
+    }
+
+    /// Returns true if the transaction is an EIP-2930 transaction.
+    #[inline]
+    pub const fn is_eip2930(&self) -> bool {
+        matches!(self, Self::Eip2930(_))
+    }
+
+    /// Returns true if the transaction is an EIP-1559 transaction.
+    #[inline]
+    pub const fn is_eip1559(&self) -> bool {
+        matches!(self, Self::Eip1559(_))
+    }
+
+    /// Returns true if the transaction is a deposit transaction.
+    #[inline]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
+    pub const fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
+        match self {
+            Self::Legacy(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns the [`TxEip2930`] variant if the transaction is an EIP-2930 transaction.
+    pub const fn as_eip2930(&self) -> Option<&Signed<TxEip2930>> {
+        match self {
+            Self::Eip2930(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns the [`TxEip1559`] variant if the transaction is an EIP-1559 transaction.
+    pub const fn as_eip1559(&self) -> Option<&Signed<TxEip1559>> {
+        match self {
+            Self::Eip1559(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
+    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
+    pub const fn as_deposit(&self) -> Option<&TxDeposit> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
     /// Return the [`OpTxType`] of the inner txn.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
@@ -311,7 +367,7 @@ impl Encodable2718 for OpTxEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+    use alloy_primitives::{hex, Address, Bytes, TxKind, B256, U256};
 
     #[cfg(not(feature = "std"))]
     use alloc::vec;
@@ -354,5 +410,15 @@ mod tests {
         let deserialized: OpTxEnvelope = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(tx_envelope, deserialized);
+    }
+
+    #[test]
+    fn eip2718_deposit_decode() {
+        // <https://basescan.org/tx/0xc468b38a20375922828c8126912740105125143b9856936085474b2590bbca91>
+        let b = hex!("7ef8f8a0417d134467f4737fcdf2475f0ecdd2a0ed6d87ecffc888ba9f60ee7e3b8ac26a94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c1200000000000000040000000066c352bb000000000139c4f500000000000000000000000000000000000000000000000000000000c0cff1460000000000000000000000000000000000000000000000000000000000000001d4c88f4065ac9671e8b1329b90773e89b5ddff9cf8675b2b5e9c1b28320609930000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9");
+
+        let tx = OpTxEnvelope::decode_2718(&mut b[..].as_ref()).unwrap();
+        let deposit = tx.as_deposit().unwrap();
+        assert!(deposit.mint.is_none());
     }
 }
