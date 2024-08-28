@@ -2,6 +2,7 @@
 
 use alloy_network::TransactionResponse;
 use alloy_primitives::B256;
+use alloy_serde::OtherFields;
 use serde::{Deserialize, Serialize};
 
 /// OP Transaction type
@@ -23,7 +24,7 @@ pub struct Transaction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_system_tx: Option<bool>,
     /// Deposit receipt version for deposit transactions post-canyon
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
 
@@ -50,5 +51,31 @@ impl TransactionResponse for Transaction {
 
     fn input(&self) -> &alloy_primitives::Bytes {
         self.inner.input()
+    }
+}
+
+/// Optimism specific transaction fields
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[doc(alias = "OptimismTxFields")]
+#[serde(rename_all = "camelCase")]
+pub struct OptimismTransactionFields {
+    /// The ETH value to mint on L2
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub mint: Option<u128>,
+    /// Hash that uniquely identifies the source of the deposit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_hash: Option<B256>,
+    /// Field indicating whether the transaction is a system transaction, and therefore
+    /// exempt from the L2 gas limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_system_tx: Option<bool>,
+    /// Deposit receipt version for deposit transactions post-canyon
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub deposit_receipt_version: Option<u64>,
+}
+
+impl From<OptimismTransactionFields> for OtherFields {
+    fn from(value: OptimismTransactionFields) -> Self {
+        serde_json::to_value(value).unwrap().try_into().unwrap()
     }
 }

@@ -1,4 +1,6 @@
+use super::OpTxType;
 use alloy_consensus::Transaction;
+use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, B256, U256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
@@ -136,6 +138,38 @@ impl Transaction for TxDeposit {
 
     fn input(&self) -> &[u8] {
         &self.input
+    }
+
+    fn access_list(&self) -> Option<&AccessList> {
+        None
+    }
+
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
+        None
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        0
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        0
+    }
+
+    fn ty(&self) -> u8 {
+        OpTxType::Deposit as u8
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn authorization_list(&self) -> Option<&[alloy_eips::eip7702::SignedAuthorization]> {
+        None
     }
 }
 

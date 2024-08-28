@@ -9,6 +9,7 @@
 pub use alloy_network::*;
 
 use alloy_consensus::{BlobTransactionSidecar, TxType};
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
 use op_alloy_consensus::OpTxType;
@@ -37,6 +38,9 @@ impl Network for Optimism {
     type ReceiptResponse = op_alloy_rpc_types::OpTransactionReceipt;
 
     type HeaderResponse = alloy_rpc_types_eth::Header;
+
+    type BlockResponse =
+        alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;
 }
 
 impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::TransactionRequest {
@@ -196,5 +200,13 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
         wallet: &W,
     ) -> Result<<Optimism as Network>::TxEnvelope, TransactionBuilderError<Optimism>> {
         Ok(wallet.sign_request(self).await?)
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.authorization_list = Some(authorization_list);
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.authorization_list.as_ref()
     }
 }

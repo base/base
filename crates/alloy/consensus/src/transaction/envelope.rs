@@ -22,19 +22,19 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 #[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Display)]
 pub enum OpTxType {
     /// Legacy transaction type.
-    #[display(fmt = "legacy")]
+    #[display("legacy")]
     Legacy = 0,
     /// EIP-2930 transaction type.
-    #[display(fmt = "eip2930")]
+    #[display("eip2930")]
     Eip2930 = 1,
     /// EIP-1559 transaction type.
-    #[display(fmt = "eip1559")]
+    #[display("eip1559")]
     Eip1559 = 2,
     /// EIP-4844 transaction type.
-    #[display(fmt = "eip4844")]
+    #[display("eip4844")]
     Eip4844 = 3,
     /// Optimism Deposit transaction type.
-    #[display(fmt = "deposit")]
+    #[display("deposit")]
     Deposit = 126,
 }
 
