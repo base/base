@@ -2,6 +2,12 @@
 
 Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 
+
+## ⚠️ Work in Progress
+
+**Warning**: This repository is currently a work in progress. The code and documentation are actively being developed and may be subject to significant changes. Use with caution and expect frequent updates.
+
+
 ## Overview
 
 **`crates`**

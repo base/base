@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use sp1_helper::{build_program_with_args, BuildArgs};
+use sp1_build::{build_program_with_args, BuildArgs};
 
 /// Build a native program.
 fn build_native_program(program: &str) {
@@ -40,10 +40,8 @@ fn build_zkvm_program(program: &str) {
 
 fn main() {
     let programs = vec!["fault-proof", "range"];
-
     for program in programs {
         build_native_program(program);
-        // Note: Don't build any of the zkVM programs as the ELF may change, as they're already built.
         build_zkvm_program(program);
     }
 

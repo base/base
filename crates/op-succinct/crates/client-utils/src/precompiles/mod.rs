@@ -3,11 +3,14 @@
 use alloc::sync::Arc;
 use kona_executor::PrecompileOverride;
 use kona_mpt::{TrieDB, TrieDBFetcher, TrieDBHinter};
+use revm::db::states::state::State;
 use revm::{
     handler::register::EvmHandler,
-    precompile::{bn128, Precompile, PrecompileResult, PrecompileSpecId, PrecompileWithAddress},
+    precompile::{
+        bn128, secp256k1, Precompile, PrecompileResult, PrecompileSpecId, PrecompileWithAddress,
+    },
     primitives::Bytes,
-    ContextPrecompiles, State,
+    ContextPrecompiles,
 };
 
 pub const PRECOMPILE_HOOK_FD: u32 = 115;
@@ -39,6 +42,12 @@ pub(crate) const ANNOTATED_BN_MUL: PrecompileWithAddress =
     create_annotated_precompile!(bn128::mul::ISTANBUL, "bn-mul");
 pub(crate) const ANNOTATED_BN_PAIR: PrecompileWithAddress =
     create_annotated_precompile!(bn128::pair::ISTANBUL, "bn-pair");
+pub(crate) const ANNOTATED_KZG_EVAL: PrecompileWithAddress = create_annotated_precompile!(
+    revm::precompile::kzg_point_evaluation::POINT_EVALUATION,
+    "kzg-eval"
+);
+pub(crate) const ANNOTATED_EC_RECOVER: PrecompileWithAddress =
+    create_annotated_precompile!(secp256k1::ECRECOVER, "ec-recover");
 
 /// The [PrecompileOverride] implementation for the FPVM-accelerated precompiles.
 #[derive(Debug)]
@@ -79,6 +88,8 @@ where
                 ANNOTATED_BN_ADD,
                 ANNOTATED_BN_MUL,
                 ANNOTATED_BN_PAIR,
+                ANNOTATED_KZG_EVAL,
+                ANNOTATED_EC_RECOVER,
             ];
             ctx_precompiles.extend(override_precompiles);
 

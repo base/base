@@ -20,7 +20,6 @@ use kona_derive::{
         L1Traversal, StatefulAttributesBuilder,
     },
     traits::{ChainProvider, L2ChainProvider},
-    types::StageError,
 };
 use kona_mpt::TrieDBFetcher;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
@@ -143,41 +142,31 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
 
     /// Produces the disputed [Vec<L2AttributesWithParent>] payloads, starting with the one after
     /// the L2 output root, for all the payloads derived in a given span batch.
-    pub async fn produce_payloads(&mut self) -> Result<Vec<L2AttributesWithParent>> {
-        debug!(
-            "Stepping on Pipeline for L2 Block: {}",
-            self.l2_safe_head.block_info.number
-        );
-        match self.pipeline.step(self.l2_safe_head).await {
-            StepResult::PreparedAttributes => {
-                debug!("Found Attributes");
-                let mut payloads = Vec::new();
-                for attr in self.pipeline.by_ref() {
-                    let parent_block_nb = attr.parent.block_info.number;
-                    payloads.push(attr);
-                    if parent_block_nb + 1 == self.l2_claim_block {
-                        break;
-                    }
+    pub async fn produce_payloads(&mut self) -> Result<L2AttributesWithParent> {
+        // As we start the safe head at the disputed block's parent, we step the pipeline until the
+        // first attributes are produced. All batches at and before the safe head will be
+        // dropped, so the first payload will always be the disputed one.
+        let mut attributes = None;
+        while attributes.is_none() {
+            match self.pipeline.step(self.l2_safe_head).await {
+                StepResult::PreparedAttributes => {
+                    debug!(target: "client_derivation_driver", "Stepped derivation pipeline")
                 }
-                return Ok(payloads);
-            }
-            StepResult::AdvancedOrigin => {
-                debug!("Advanced Origin");
-            }
-            StepResult::OriginAdvanceErr(e) => {
-                error!("Origin Advance Error: {:?}", e);
-            }
-            StepResult::StepFailed(e) => match e {
-                StageError::NotEnoughData => {
-                    debug!("Failed: Not Enough Data");
+                StepResult::AdvancedOrigin => {
+                    debug!(target: "client_derivation_driver", "Advanced origin")
                 }
-                _ => {
-                    error!("Failed: {:?}", e);
+                StepResult::OriginAdvanceErr(e) => {
+                    error!(target: "client_derivation_driver", "Failed to advance origin: {:?}", e)
                 }
-            },
+                StepResult::StepFailed(e) => {
+                    error!(target: "client_derivation_driver", "Failed to step derivation pipeline: {:?}", e)
+                }
+            }
+
+            attributes = self.pipeline.next();
         }
 
-        Ok(Vec::new())
+        Ok(attributes.expect("Must be some"))
     }
 
     /// Finds the startup information for the derivation pipeline.

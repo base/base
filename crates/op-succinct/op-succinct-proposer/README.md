@@ -9,6 +9,10 @@ exposes a route to get the status of a proof request.
 cargo run --bin server --release
 ```
 
+## Cost Estimator
+
+To run the cost estimator as if it was a full workload, follow the doc [here](./COST_ESTIMATOR.md).
+
 ## Misc
 
 To fetch an existing proof from the prover network and save it locally run:

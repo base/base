@@ -1,0 +1,39 @@
+# Use Ubuntu 24.04 as the base image
+FROM --platform=linux/amd64 ubuntu:24.04
+
+# Install Go and necessary dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    build-essential \
+    # g++-x86-64-linux-gnu \
+    # libc6-dev-amd64-cross \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go 1.22
+RUN wget https://golang.org/dl/go1.22.0.linux-amd64.tar.gz \
+    && tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz \
+    && rm go1.22.0.linux-amd64.tar.gz
+
+# Set Go environment variables
+ENV PATH="/usr/local/go/bin:${PATH}"
+ENV GOPATH="/go"
+ENV PATH="${GOPATH}/bin:${PATH}"
+
+# Set up Go environment
+WORKDIR /app
+
+# Copy the local op-proposer-go directory
+COPY ./op-proposer-go /app/op-proposer-go
+
+# Change to the server directory and build the application
+WORKDIR /app/op-proposer-go/server
+
+# Build the application
+RUN go build -o span_batch_server main.go
+
+# Expose port 8080
+EXPOSE 8080
+
+# Set the entrypoint to run the server
+ENTRYPOINT ["./span_batch_server"]
