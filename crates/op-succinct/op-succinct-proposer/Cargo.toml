@@ -16,12 +16,12 @@ name = "server"
 path = "bin/server.rs"
 
 [[bin]]
-name = "native_host_runner"
-path = "bin/native_host_runner.rs"
-
-[[bin]]
 name = "vkey"
 path = "bin/vkey.rs"
+
+[[bin]]
+name = "cost_estimator"
+path = "bin/cost_estimator.rs"
 
 [dependencies]
 
@@ -32,12 +32,14 @@ alloy-primitives = { workspace = true }
 
 # kona
 kona-host = { workspace = true }
+kona-primitives.workspace = true
 
 # local
 host-utils.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true }
+
 anyhow.workspace = true
 dotenv.workspace = true
 client-utils.workspace = true
@@ -52,6 +54,14 @@ base64.workspace = true
 tower-http.workspace = true
 cargo_metadata.workspace = true
 revm.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+itertools.workspace = true
+csv.workspace = true
+rayon = "1.10.0"
+lazy_static = "1.5.0"
+uuid = "1.10.0"
 
 [build-dependencies]
-sp1-helper = { workspace = true }
+sp1-build = { workspace = true }
+cargo_metadata.workspace = true

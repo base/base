@@ -25,6 +25,7 @@ pub struct SP1KonaDataFetcher {
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
     pub l1_beacon_rpc: String,
     pub l2_rpc: String,
+    pub l2_node_rpc: String,
     pub l2_provider: Arc<RootProvider<Http<Client>>>,
 }
 
@@ -57,6 +58,8 @@ impl SP1KonaDataFetcher {
         let l1_beacon_rpc =
             env::var("L1_BEACON_RPC").unwrap_or_else(|_| "http://localhost:5052".to_string());
         let l2_rpc = env::var("L2_RPC").unwrap_or_else(|_| "http://localhost:9545".to_string());
+        let l2_node_rpc =
+            env::var("L2_NODE_RPC").unwrap_or_else(|_| "http://localhost:5058".to_string());
         let l2_provider =
             Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l2_rpc).unwrap()));
         SP1KonaDataFetcher {
@@ -64,6 +67,7 @@ impl SP1KonaDataFetcher {
             l1_provider,
             l1_beacon_rpc,
             l2_rpc,
+            l2_node_rpc,
             l2_provider,
         }
     }
@@ -343,7 +347,7 @@ impl SP1KonaDataFetcher {
         // The native programs are built with profile release-client-lto in build.rs
         let exec_directory = match multi_block {
             ProgramType::Single => {
-                format!("{}/target/release-client-lto/fault_proof", workspace_root)
+                format!("{}/target/release-client-lto/fault-proof", workspace_root)
             }
             ProgramType::Multi => format!("{}/target/release-client-lto/range", workspace_root),
         };
@@ -367,6 +371,7 @@ impl SP1KonaDataFetcher {
             data_dir: Some(data_directory.into()),
             exec: Some(exec_directory),
             server: false,
+            rollup_config_path: None,
             v: 0,
         })
     }

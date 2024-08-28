@@ -4,6 +4,7 @@ FROM golang:1.21 AS go-builder
 # Set up Go environment
 FROM go-builder AS optimism-builder
 WORKDIR /optimism
+# TODO: Modify this to instead pull a Docker image, rather than cloning the repo.
 RUN git clone -b zk-proposer https://github.com/succinctlabs/optimism .
 RUN make op-proposer
 

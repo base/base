@@ -25,6 +25,7 @@ kona-client.workspace = true
 kona-preimage.workspace = true
 kona-mpt.workspace = true
 kona-derive.workspace = true
+kona-common.workspace = true
 
 # general
 serde.workspace = true

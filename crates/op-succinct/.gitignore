@@ -20,3 +20,9 @@ data
 
 # DB data
 db/
+
+# Reports
+execution-reports/
+
+# Rollup Config
+**/rollup-config.json

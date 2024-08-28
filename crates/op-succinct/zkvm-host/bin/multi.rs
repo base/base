@@ -1,14 +1,15 @@
 use std::fs;
+use std::time::Instant;
 
 use anyhow::Result;
 use clap::Parser;
+use host_utils::stats::get_execution_stats;
 use host_utils::{
     fetcher::{ChainMode, SP1KonaDataFetcher},
     get_proof_stdin, ProgramType,
 };
 use kona_host::start_server_and_native_client;
-use sp1_sdk::{utils, ExecutionReport, ProverClient};
-use zkvm_host::{BnStats, ExecutionStats};
+use sp1_sdk::{utils, ProverClient};
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
 
@@ -36,40 +37,6 @@ struct Args {
     prove: bool,
 }
 
-/// Based on the stats flag, print out simple or detailed statistics.
-async fn print_stats(data_fetcher: &SP1KonaDataFetcher, args: &Args, report: &ExecutionReport) {
-    // Get the total instruction count for execution across all blocks.
-    let block_execution_instruction_count: u64 =
-        *report.cycle_tracker.get("block-execution").unwrap();
-
-    let nb_blocks = args.end - args.start + 1;
-
-    // Fetch the number of transactions in the blocks from the L2 RPC.
-    let block_data_range = data_fetcher
-        .get_block_data_range(ChainMode::L2, args.start, args.end)
-        .await
-        .expect("Failed to fetch block data range.");
-
-    let nb_transactions = block_data_range.iter().map(|b| b.transaction_count).sum();
-    let total_gas_used = block_data_range.iter().map(|b| b.gas_used).sum();
-
-    println!(
-        "{}",
-        ExecutionStats {
-            total_instruction_count: report.total_instruction_count(),
-            block_execution_instruction_count,
-            nb_blocks,
-            nb_transactions,
-            total_gas_used,
-            bn_stats: BnStats {
-                bn_add_cycles: *report.cycle_tracker.get("precompile-bn-add").unwrap_or(&0),
-                bn_mul_cycles: *report.cycle_tracker.get("precompile-bn-mul").unwrap_or(&0),
-                bn_pair_cycles: *report.cycle_tracker.get("precompile-bn-pair").unwrap_or(&0),
-            }
-        }
-    );
-}
-
 /// Execute the Kona program for a single block.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -89,6 +56,7 @@ async fn main() -> Result<()> {
         .expect("Data directory is not set.");
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
+    let start_time = Instant::now();
     if !args.use_cache {
         // Overwrite existing data directory.
         fs::create_dir_all(&data_dir).unwrap();
@@ -96,6 +64,8 @@ async fn main() -> Result<()> {
         // Start the server and native client.
         start_server_and_native_client(host_cli.clone()).await?;
     }
+    let execution_duration = start_time.elapsed();
+    println!("Execution Duration: {:?}", execution_duration);
 
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
@@ -122,12 +92,39 @@ async fn main() -> Result<()> {
             .save(format!("{}/{}-{}.bin", proof_dir, args.start, args.end))
             .expect("saving proof failed");
     } else {
+        let start_time = Instant::now();
         let (_, report) = prover
             .execute(MULTI_BLOCK_ELF, sp1_stdin.clone())
             .run()
             .unwrap();
+        let execution_duration = start_time.elapsed();
 
-        print_stats(&data_fetcher, &args, &report).await;
+        let l2_chain_id = data_fetcher.get_chain_id(ChainMode::L2).await.unwrap();
+        let report_path = format!(
+            "execution-reports/multi/{}/{}-{}.csv",
+            l2_chain_id, args.start, args.end
+        );
+
+        // Create the report directory if it doesn't exist.
+        let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
+        if !std::path::Path::new(&report_dir).exists() {
+            fs::create_dir_all(&report_dir).unwrap();
+        }
+
+        let stats = get_execution_stats(
+            &data_fetcher,
+            args.start,
+            args.end,
+            &report,
+            execution_duration,
+        )
+        .await;
+        println!("Execution Stats: \n{:?}", stats);
+
+        // Write to CSV.
+        let mut csv_writer = csv::Writer::from_path(report_path)?;
+        csv_writer.serialize(&stats)?;
+        csv_writer.flush()?;
     }
 
     Ok(())

@@ -1,7 +1,5 @@
 //! Contains the host <-> client communication utilities.
 
-use std::collections::HashMap;
-
 use crate::BytesHasherBuilder;
 use alloy_primitives::{hex, keccak256, FixedBytes};
 use anyhow::{anyhow, Result};
@@ -13,6 +11,7 @@ use kzg_rs::Blob as KzgRsBlob;
 use kzg_rs::Bytes48;
 use rkyv::{Archive, Deserialize, Infallible, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// An in-memory HashMap that will serve as the oracle for the zkVM.
 /// Rather than relying on a trusted host for data, the data in this oracle
@@ -74,8 +73,7 @@ impl HintWriterClient for InMemoryOracle {
 /// and verify it once, rather than verifying each of the 4096 elements separately.
 #[derive(Default)]
 struct Blob {
-    // TODO: This commitment is currently unused.
-    commitment: FixedBytes<48>,
+    _commitment: FixedBytes<48>,
     // 4096 Field elements, each 32 bytes.
     data: FixedBytes<131072>,
     kzg_proof: FixedBytes<48>,

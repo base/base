@@ -14,6 +14,8 @@ pub mod precompiles;
 
 pub mod types;
 
+pub mod pipes;
+
 extern crate alloc;
 
 pub mod driver;
