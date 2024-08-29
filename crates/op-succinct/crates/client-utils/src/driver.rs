@@ -1,5 +1,5 @@
-//! Contains the [MultiBlockDerivationDriver] struct, which handles the [L2PayloadAttributes] derivation
-//! process.
+//! Contains the [MultiBlockDerivationDriver] struct, which handles the [L2PayloadAttributes]
+//! derivation process.
 //!
 //! [L2PayloadAttributes]: kona_derive::types::L2PayloadAttributes
 
@@ -52,8 +52,8 @@ pub type OracleAttributesQueue<DAP, O> = AttributesQueue<
     OracleAttributesBuilder<O>,
 >;
 
-/// The [MultiBlockDerivationDriver] struct is responsible for handling the [L2PayloadAttributes] derivation
-/// process.
+/// The [MultiBlockDerivationDriver] struct is responsible for handling the [L2PayloadAttributes]
+/// derivation process.
 ///
 /// It contains an inner [OraclePipeline] that is used to derive the attributes, backed by
 /// oracle-based data sources.
@@ -77,8 +77,8 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
         self.l2_safe_head_header.clone()
     }
 
-    /// Creates a new [MultiBlockDerivationDriver] with the given configuration, blob provider, and chain
-    /// providers.
+    /// Creates a new [MultiBlockDerivationDriver] with the given configuration, blob provider, and
+    /// chain providers.
     ///
     /// ## Takes
     /// - `cfg`: The rollup configuration.
@@ -123,12 +123,7 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             .build();
 
         let l2_claim_block = boot_info.l2_claim_block;
-        Ok(Self {
-            l2_safe_head,
-            l2_safe_head_header,
-            pipeline,
-            l2_claim_block,
-        })
+        Ok(Self { l2_safe_head, l2_safe_head_header, pipeline, l2_claim_block })
     }
 
     pub fn update_safe_head(
@@ -197,22 +192,14 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             )
             .await?;
 
-        let safe_hash: alloy_primitives::FixedBytes<32> = output_preimage[96..128]
-            .try_into()
-            .map_err(|_| anyhow!("Invalid L2 output root"))?;
+        let safe_hash: alloy_primitives::FixedBytes<32> =
+            output_preimage[96..128].try_into().map_err(|_| anyhow!("Invalid L2 output root"))?;
         let safe_header = l2_chain_provider.header_by_hash(safe_hash)?;
-        let safe_head_info = l2_chain_provider
-            .l2_block_info_by_number(safe_header.number)
-            .await?;
+        let safe_head_info = l2_chain_provider.l2_block_info_by_number(safe_header.number).await?;
 
-        let l1_origin = chain_provider
-            .block_info_by_number(safe_head_info.l1_origin.number)
-            .await?;
+        let l1_origin =
+            chain_provider.block_info_by_number(safe_head_info.l1_origin.number).await?;
 
-        Ok((
-            l1_origin,
-            safe_head_info,
-            Sealed::new_unchecked(safe_header, safe_hash),
-        ))
+        Ok((l1_origin, safe_head_info, Sealed::new_unchecked(safe_header, safe_hash)))
     }
 }

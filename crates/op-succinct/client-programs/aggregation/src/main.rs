@@ -15,18 +15,14 @@ use std::collections::HashMap;
 /// TODO: The aggregation program should take in an arbitrary vkey digest, and the smart contract
 /// should verify the proof matches the arbitrary vkey digest stored in the contract. This means
 /// that the aggregate program would no longer need to update this value.
-const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] = [
-    227309663, 1637133225, 136526498, 1878261023, 2013043842, 450616441, 575447582, 1643259779,
-];
+const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] =
+    [227309663, 1637133225, 136526498, 1878261023, 2013043842, 450616441, 575447582, 1643259779];
 
 /// Verify that the L1 heads in the boot infos are in the header chain.
 fn verify_l1_heads(agg_inputs: &AggregationInputs, headers: &[Header]) {
     // Create a map of each l1_head in the BootInfo's to booleans
-    let mut l1_heads_map: HashMap<B256, bool> = agg_inputs
-        .boot_infos
-        .iter()
-        .map(|boot_info| (boot_info.l1_head, false))
-        .collect();
+    let mut l1_heads_map: HashMap<B256, bool> =
+        agg_inputs.boot_infos.iter().map(|boot_info| (boot_info.l1_head, false)).collect();
 
     // Iterate through all headers in the chain.
     let mut current_hash = agg_inputs.latest_l1_checkpoint_head;
@@ -45,19 +41,15 @@ fn verify_l1_heads(agg_inputs: &AggregationInputs, headers: &[Header]) {
 
     // Check if all l1_heads were found in the chain.
     for (l1_head, found) in l1_heads_map.iter() {
-        assert!(
-            *found,
-            "L1 head {:?} not found in the provided header chain",
-            l1_head
-        );
+        assert!(*found, "L1 head {:?} not found in the provided header chain", l1_head);
     }
 }
 
 pub fn main() {
     // Read in the public values corresponding to each multi-block proof.
     let agg_inputs = sp1_zkvm::io::read::<AggregationInputs>();
-    // Note: The headers are in order from start to end. We use serde_cbor as bincode serialization causes
-    // issues with the zkVM.
+    // Note: The headers are in order from start to end. We use serde_cbor as bincode serialization
+    // causes issues with the zkVM.
     let headers_bytes = sp1_zkvm::io::read_vec();
     let headers: Vec<Header> = serde_cbor::from_slice(&headers_bytes).unwrap();
     assert!(!agg_inputs.boot_infos.is_empty());
@@ -66,7 +58,8 @@ pub fn main() {
     agg_inputs.boot_infos.windows(2).for_each(|pair| {
         let (prev_boot_info, boot_info) = (&pair[0], &pair[1]);
 
-        // The claimed block of the previous boot info must be the L2 output root of the current boot.
+        // The claimed block of the previous boot info must be the L2 output root of the current
+        // boot.
         assert_eq!(prev_boot_info.l2_claim, boot_info.l2_output_root);
 
         // The chain ID must be the same for all the boot infos, to ensure they're

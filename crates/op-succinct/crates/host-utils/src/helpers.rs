@@ -8,10 +8,7 @@ pub fn load_kv_store(data_dir: &PathBuf) -> HashMap<[u8; 32], Vec<u8>, BytesHash
         HashMap::with_capacity_and_hasher(capacity, BytesHasherBuilder);
 
     // Iterate over the files in the 'data' directory
-    for entry in fs::read_dir(data_dir)
-        .expect("Failed to read data directory")
-        .flatten()
-    {
+    for entry in fs::read_dir(data_dir).expect("Failed to read data directory").flatten() {
         let path = entry.path();
         if path.is_file() {
             // Extract the file name
@@ -22,8 +19,7 @@ pub fn load_kv_store(data_dir: &PathBuf) -> HashMap<[u8; 32], Vec<u8>, BytesHash
                 // Read the file contents
                 let mut file = fs::File::open(path).expect("Failed to open file");
                 let mut contents = Vec::new();
-                file.read_to_end(&mut contents)
-                    .expect("Failed to read file");
+                file.read_to_end(&mut contents).expect("Failed to read file");
 
                 // Insert the key-value pair into the cache
                 cache.insert(key.try_into().unwrap(), contents);

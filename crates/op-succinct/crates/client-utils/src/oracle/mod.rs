@@ -6,9 +6,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use itertools::Itertools;
 use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
-use kzg_rs::get_kzg_settings;
-use kzg_rs::Blob as KzgRsBlob;
-use kzg_rs::Bytes48;
+use kzg_rs::{get_kzg_settings, Blob as KzgRsBlob, Bytes48};
 use rkyv::{Archive, Deserialize, Infallible, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -32,9 +30,7 @@ impl InMemoryOracle {
         let deserialized: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> =
             archived.deserialize(&mut Infallible).unwrap();
 
-        Self {
-            cache: deserialized,
-        }
+        Self { cache: deserialized }
     }
 }
 
@@ -51,10 +47,7 @@ impl PreimageOracleClient for InMemoryOracle {
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<()> {
         let lookup_key: [u8; 32] = key.into();
         let value = self.cache.get(&lookup_key).ok_or_else(|| {
-            anyhow!(
-                "Key not found in cache (exact): {}",
-                hex::encode(lookup_key)
-            )
+            anyhow!("Key not found in cache (exact): {}", hex::encode(lookup_key))
         })?;
         buf.copy_from_slice(value.as_slice());
         Ok(())
@@ -114,11 +107,7 @@ impl InMemoryOracle {
 
                         // Blob is stored as one 48 byte element.
                         if element_idx == 4096 {
-                            blobs
-                                .entry(commitment)
-                                .or_default()
-                                .kzg_proof
-                                .copy_from_slice(value);
+                            blobs.entry(commitment).or_default().kzg_proof.copy_from_slice(value);
                             continue;
                         }
 
@@ -147,19 +136,14 @@ impl InMemoryOracle {
         }
 
         println!("cycle-tracker-report-start: blob-verification");
-        let commitments: Vec<Bytes48> = blobs
-            .keys()
-            .cloned()
-            .map(|blob| Bytes48::from_slice(&blob.0).unwrap())
-            .collect_vec();
+        let commitments: Vec<Bytes48> =
+            blobs.keys().cloned().map(|blob| Bytes48::from_slice(&blob.0).unwrap()).collect_vec();
         let kzg_proofs: Vec<Bytes48> = blobs
             .values()
             .map(|blob| Bytes48::from_slice(&blob.kzg_proof.0).unwrap())
             .collect_vec();
-        let blob_datas: Vec<KzgRsBlob> = blobs
-            .values()
-            .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
-            .collect_vec();
+        let blob_datas: Vec<KzgRsBlob> =
+            blobs.values().map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap()).collect_vec();
         // Verify reconstructed blobs.
         kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
             blob_datas,

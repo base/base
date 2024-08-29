@@ -3,8 +3,8 @@
 use alloc::sync::Arc;
 use kona_executor::PrecompileOverride;
 use kona_mpt::{TrieDB, TrieDBFetcher, TrieDBHinter};
-use revm::db::states::state::State;
 use revm::{
+    db::states::state::State,
     handler::register::EvmHandler,
     precompile::{
         bn128, secp256k1, Precompile, PrecompileResult, PrecompileSpecId, PrecompileWithAddress,
@@ -65,9 +65,7 @@ where
     H: TrieDBHinter,
 {
     fn default() -> Self {
-        Self {
-            _phantom: core::marker::PhantomData::<(F, H)>,
-        }
+        Self { _phantom: core::marker::PhantomData::<(F, H)> }
     }
 }
 
@@ -83,7 +81,8 @@ where
             let mut ctx_precompiles =
                 ContextPrecompiles::new(PrecompileSpecId::from_spec_id(spec_id)).clone();
 
-            // Extend with ZKVM-accelerated precompiles and annotated precompiles that track the cycle count.
+            // Extend with ZKVM-accelerated precompiles and annotated precompiles that track the
+            // cycle count.
             let override_precompiles = [
                 ANNOTATED_BN_ADD,
                 ANNOTATED_BN_MUL,

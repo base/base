@@ -1,6 +1,5 @@
 use clap::Parser;
-use kona_host::HostCli;
-use kona_host::{init_tracing_subscriber, start_server_and_native_client};
+use kona_host::{init_tracing_subscriber, start_server_and_native_client, HostCli};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {

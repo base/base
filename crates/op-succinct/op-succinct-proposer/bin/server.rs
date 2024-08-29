@@ -74,9 +74,8 @@ async fn request_span_proof(
     // and access via Store.
     let data_fetcher = SP1KonaDataFetcher::new();
 
-    let host_cli = data_fetcher
-        .get_host_cli_args(payload.start, payload.end, ProgramType::Multi)
-        .await?;
+    let host_cli =
+        data_fetcher.get_host_cli_args(payload.start, payload.end, ProgramType::Multi).await?;
 
     let data_dir = host_cli.data_dir.clone().unwrap();
 
@@ -84,16 +83,14 @@ async fn request_span_proof(
     fs::create_dir_all(&data_dir)?;
 
     // Start the server and native client with a timeout.
-    // Note: Ideally, the server should call out to a separate process that executes the native host,
-    // and return an ID that the client can poll on to check if the proof was submitted.
+    // Note: Ideally, the server should call out to a separate process that executes the native
+    // host, and return an ID that the client can poll on to check if the proof was submitted.
     run_native_host(&host_cli, Duration::from_secs(40)).await?;
 
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = NetworkProver::new();
-    let proof_id = prover
-        .request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed)
-        .await?;
+    let proof_id = prover.request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed).await?;
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
 }
@@ -103,11 +100,8 @@ async fn request_agg_proof(
     Json(payload): Json<AggProofRequest>,
 ) -> Result<(StatusCode, Json<ProofResponse>), AppError> {
     info!("Received agg proof request");
-    let mut proofs_with_pv: Vec<SP1ProofWithPublicValues> = payload
-        .subproofs
-        .iter()
-        .map(|sp| bincode::deserialize(sp).unwrap())
-        .collect();
+    let mut proofs_with_pv: Vec<SP1ProofWithPublicValues> =
+        payload.subproofs.iter().map(|sp| bincode::deserialize(sp).unwrap()).collect();
 
     let boot_infos: Vec<RawBootInfo> = proofs_with_pv
         .iter_mut()
@@ -118,31 +112,21 @@ async fn request_agg_proof(
         })
         .collect();
 
-    let proofs: Vec<SP1Proof> = proofs_with_pv
-        .iter_mut()
-        .map(|proof| proof.proof.clone())
-        .collect();
+    let proofs: Vec<SP1Proof> =
+        proofs_with_pv.iter_mut().map(|proof| proof.proof.clone()).collect();
 
-    let l1_head_bytes = hex::decode(
-        payload
-            .head
-            .strip_prefix("0x")
-            .expect("Invalid L1 head, no 0x prefix."),
-    )?;
+    let l1_head_bytes =
+        hex::decode(payload.head.strip_prefix("0x").expect("Invalid L1 head, no 0x prefix."))?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
     let fetcher = SP1KonaDataFetcher::new();
-    let headers = fetcher
-        .get_header_preimages(&boot_infos, l1_head.into())
-        .await?;
+    let headers = fetcher.get_header_preimages(&boot_infos, l1_head.into()).await?;
 
     let prover = NetworkProver::new();
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
     let stdin = get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, l1_head.into()).unwrap();
-    let proof_id = prover
-        .request_proof(AGG_ELF, stdin, ProofMode::Plonk)
-        .await?;
+    let proof_id = prover.request_proof(AGG_ELF, stdin, ProofMode::Plonk).await?;
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
 }
@@ -198,10 +182,7 @@ async fn get_proof_status(
     }
     Ok((
         StatusCode::OK,
-        Json(ProofStatus {
-            status: status.as_str_name().to_string(),
-            proof: vec![],
-        }),
+        Json(ProofStatus { status: status.as_str_name().to_string(), proof: vec![] }),
     ))
 }
 
@@ -231,9 +212,7 @@ where
     let s: Vec<String> = Deserialize::deserialize(deserializer)?;
     s.into_iter()
         .map(|base64_str| {
-            general_purpose::STANDARD
-                .decode(base64_str)
-                .map_err(serde::de::Error::custom)
+            general_purpose::STANDARD.decode(base64_str).map_err(serde::de::Error::custom)
         })
         .collect()
 }

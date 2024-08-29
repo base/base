@@ -43,10 +43,7 @@ async fn main() -> Result<()> {
     info!("Program Hash [view on Explorer]:");
     info!("0x{}", hex::encode(program_hash));
 
-    info!(
-        "Multi-block ELF Verification Key U32 Hash: {:?}",
-        vkey.vk.hash_u32()
-    );
+    info!("Multi-block ELF Verification Key U32 Hash: {:?}", vkey.vk.hash_u32());
 
     let (_, agg_vk) = prover.setup(AGG_ELF);
     info!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
