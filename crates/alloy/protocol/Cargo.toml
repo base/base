@@ -1,0 +1,36 @@
+[package]
+name = "op-alloy-protocol"
+description = "Optimism protocol-specific types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# Alloy
+alloy-primitives.workspace = true
+
+# Superchain
+superchain-primitives.workspace = true
+
+# Misc
+hashbrown.workspace = true
+
+# `serde` feature dependencies
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["serde", "std"]
+std = []
+serde = [
+  "dep:serde",
+  "superchain-primitives/serde",
+]
