@@ -25,6 +25,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 # misc
+spin.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]

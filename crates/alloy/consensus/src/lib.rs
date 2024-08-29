@@ -23,4 +23,11 @@ mod receipt;
 pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope, OpTxReceipt};
 
 mod transaction;
-pub use transaction::{OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit, DEPOSIT_TX_TYPE_ID};
+pub use transaction::{
+    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, OpTxEnvelope,
+    OpTxType, OpTypedTransaction, TxDeposit, UpgradeDepositSource, UserDepositSource,
+    DEPOSIT_TX_TYPE_ID,
+};
+
+pub mod hardforks;
+pub use hardforks::Hardforks;
