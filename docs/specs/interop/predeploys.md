@@ -12,6 +12,7 @@
   - [Interop Start Timestamp](#interop-start-timestamp)
   - [`ExecutingMessage` Event](#executingmessage-event)
   - [Reference implementation](#reference-implementation)
+  - [Deposit Handling](#deposit-handling)
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
@@ -40,6 +41,9 @@
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
+  - [Deposit Context](#deposit-context)
+  - [`isDeposit()`](#isdeposit)
+    - [`depositsComplete()`](#depositscomplete)
 - [OptimismMintableERC20Factory](#optimismmintableerc20factory)
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
@@ -181,6 +185,15 @@ function executeMessage(Identifier calldata _id, address _target, bytes calldata
 ```
 
 Note that the `executeMessage` function is `payable` to enable relayers to earn in the gas paying asset.
+
+### Deposit Handling
+
+Any call to the `CrossL2Inbox` that would emit an `ExecutingMessage` event will reverts
+if the call is made in a [deposit context](./derivation.md#deposit-context).
+The deposit context status can be determined by callling `isDeposit` on the `L1Block` contract.
+
+In the future, deposit handling will be modified to be more permissive.
+It will revert only in specific cases where interop dependency resolution is not feasible.
 
 ### `Identifier` Getters
 
@@ -580,6 +593,28 @@ id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MU
 dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
 `L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
 MUST return the length of the dependency set array.
+
+### Deposit Context
+
+New methods will be added on the `L1Block` contract to interact with [deposit contexts](./derivation.md#deposit-context).
+
+```solidity
+function isDeposit() public view returns (bool);
+function depositsComplete() public;
+```
+
+### `isDeposit()`
+
+Returns true if the current execution occurs in a [deposit context](./derivation.md#deposit-context).
+
+Only the `CrossL2Inbox` is authorized to call `isDeposit`.
+This is done to prevent apps from easily detecting and censoring deposits.
+
+#### `depositsComplete()`
+
+Called after processing the first L1 Attributes transaction and user deposits to destroy the deposit context.
+
+Only the `DEPOSITOR_ACCOUNT` is authorized to call `depositsComplete()`.
 
 ## OptimismMintableERC20Factory
 
