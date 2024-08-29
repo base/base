@@ -18,8 +18,8 @@ use alloy_primitives::keccak256;
 use crate::{L2Output, ProgramType};
 
 #[derive(Clone)]
-/// The SP1KonaDataFetcher struct is used to fetch the L2 output data and L2 claim data for a given block number.
-/// It is used to generate the boot info for the native host program.
+/// The SP1KonaDataFetcher struct is used to fetch the L2 output data and L2 claim data for a given
+/// block number. It is used to generate the boot info for the native host program.
 pub struct SP1KonaDataFetcher {
     pub l1_rpc: String,
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
@@ -62,14 +62,7 @@ impl SP1KonaDataFetcher {
             env::var("L2_NODE_RPC").unwrap_or_else(|_| "http://localhost:5058".to_string());
         let l2_provider =
             Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l2_rpc).unwrap()));
-        SP1KonaDataFetcher {
-            l1_rpc,
-            l1_provider,
-            l1_beacon_rpc,
-            l2_rpc,
-            l2_node_rpc,
-            l2_provider,
-        }
+        SP1KonaDataFetcher { l1_rpc, l1_provider, l1_beacon_rpc, l2_rpc, l2_node_rpc, l2_provider }
     }
 
     pub fn get_provider(&self, chain_mode: ChainMode) -> Arc<RootProvider<Http<Client>>> {
@@ -88,9 +81,7 @@ impl SP1KonaDataFetcher {
         let mut earliest_l1_header: Option<Header> = None;
 
         for boot_info in boot_infos {
-            let l1_block_header = self
-                .get_header_by_hash(ChainMode::L1, boot_info.l1_head)
-                .await?;
+            let l1_block_header = self.get_header_by_hash(ChainMode::L1, boot_info.l1_head).await?;
             if l1_block_header.number < earliest_block_num {
                 earliest_block_num = l1_block_header.number;
                 earliest_l1_header = Some(l1_block_header);
@@ -135,14 +126,11 @@ impl SP1KonaDataFetcher {
         let start_header = self.get_earliest_l1_head_in_batch(boot_infos).await?;
 
         // Fetch the full header for the latest L1 Head (which is validated on chain).
-        let latest_header = self
-            .get_header_by_hash(ChainMode::L1, checkpoint_block_hash)
-            .await?;
+        let latest_header = self.get_header_by_hash(ChainMode::L1, checkpoint_block_hash).await?;
 
         // Create a vector of futures for fetching all headers
-        let headers = self
-            .fetch_headers_in_range(start_header.number, latest_header.number)
-            .await?;
+        let headers =
+            self.fetch_headers_in_range(start_header.number, latest_header.number).await?;
 
         Ok(headers)
     }
@@ -169,11 +157,8 @@ impl SP1KonaDataFetcher {
 
     pub async fn get_head(&self, chain_mode: ChainMode) -> Result<Header> {
         let provider = self.get_provider(chain_mode);
-        let header = provider
-            .get_block_by_number(BlockNumberOrTag::Latest, false)
-            .await?
-            .unwrap()
-            .header;
+        let header =
+            provider.get_block_by_number(BlockNumberOrTag::Latest, false).await?.unwrap().header;
         Ok(header.try_into().unwrap())
     }
 
@@ -183,11 +168,8 @@ impl SP1KonaDataFetcher {
         block_number: u64,
     ) -> Result<Header> {
         let provider = self.get_provider(chain_mode);
-        let header = provider
-            .get_block_by_number(block_number.into(), false)
-            .await?
-            .unwrap()
-            .header;
+        let header =
+            provider.get_block_by_number(block_number.into(), false).await?.unwrap().header;
         Ok(header.try_into().unwrap())
     }
 
@@ -201,10 +183,7 @@ impl SP1KonaDataFetcher {
         let mut block_data = Vec::new();
         for block_number in start..=end {
             let provider = self.get_provider(chain_mode);
-            let block = provider
-                .get_block_by_number(block_number.into(), false)
-                .await?
-                .unwrap();
+            let block = provider.get_block_by_number(block_number.into(), false).await?.unwrap();
             block_data.push(BlockInfo {
                 block_number,
                 transaction_count: block.transactions.len() as u64,
@@ -221,19 +200,14 @@ impl SP1KonaDataFetcher {
         target_timestamp: u64,
     ) -> Result<B256> {
         let provider = self.get_provider(chain_mode);
-        let latest_block = provider
-            .get_block_by_number(BlockNumberOrTag::Latest, false)
-            .await?
-            .unwrap();
+        let latest_block =
+            provider.get_block_by_number(BlockNumberOrTag::Latest, false).await?.unwrap();
         let mut low = 0;
         let mut high = latest_block.header.number.unwrap();
 
         while low <= high {
             let mid = (low + high) / 2;
-            let block = provider
-                .get_block_by_number(mid.into(), false)
-                .await?
-                .unwrap();
+            let block = provider.get_block_by_number(mid.into(), false).await?.unwrap();
             let block_timestamp = block.header.timestamp;
 
             match block_timestamp.cmp(&target_timestamp) {
@@ -244,15 +218,13 @@ impl SP1KonaDataFetcher {
         }
 
         // Return the block hash of the closest block after the target timestamp
-        let block = provider
-            .get_block_by_number(low.into(), false)
-            .await?
-            .unwrap();
+        let block = provider.get_block_by_number(low.into(), false).await?.unwrap();
         Ok(block.header.hash.unwrap().0.into())
     }
 
-    /// Get the L2 output data for a given block number and save the boot info to a file in the data directory
-    /// with block_number. Return the arguments to be passed to the native host for datagen.
+    /// Get the L2 output data for a given block number and save the boot info to a file in the data
+    /// directory with block_number. Return the arguments to be passed to the native host for
+    /// datagen.
     pub async fn get_host_cli_args(
         &self,
         l2_block_safe_head: u64,
@@ -262,17 +234,12 @@ impl SP1KonaDataFetcher {
         let l2_provider = self.l2_provider.clone();
 
         // Get L2 output data.
-        let l2_output_block = l2_provider
-            .get_block_by_number(l2_block_safe_head.into(), false)
-            .await?
-            .unwrap();
+        let l2_output_block =
+            l2_provider.get_block_by_number(l2_block_safe_head.into(), false).await?.unwrap();
         let l2_output_state_root = l2_output_block.header.state_root;
         let l2_head = l2_output_block.header.hash.expect("L2 head is missing");
         let l2_output_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
+            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_block_safe_head.into())
             .await?
             .storage_hash;
@@ -286,20 +253,12 @@ impl SP1KonaDataFetcher {
         let l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider
-            .get_block_by_number(l2_claim_block_nb.into(), false)
-            .await?
-            .unwrap();
+        let l2_claim_block =
+            l2_provider.get_block_by_number(l2_claim_block_nb.into(), false).await?.unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
-        let l2_claim_hash = l2_claim_block
-            .header
-            .hash
-            .expect("L2 claim hash is missing");
+        let l2_claim_hash = l2_claim_block.header.hash.expect("L2 claim hash is missing");
         let l2_claim_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
+            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_claim_block_nb.into())
             .await?
             .storage_hash;
@@ -317,9 +276,7 @@ impl SP1KonaDataFetcher {
         // Note: This limit is set so that the l1 head is always ahead of the l2 claim block.
         // E.g. Origin Advance Error: BlockInfoFetch(Block number past L1 head.)
         let target_timestamp = l2_block_timestamp + 600;
-        let l1_head = self
-            .find_block_by_timestamp(ChainMode::L1, target_timestamp)
-            .await?;
+        let l1_head = self.find_block_by_timestamp(ChainMode::L1, target_timestamp).await?;
 
         // Get the chain id.
         let l2_chain_id = l2_provider.get_chain_id().await?;
@@ -329,10 +286,8 @@ impl SP1KonaDataFetcher {
         let workspace_root = metadata.workspace_root;
         let data_directory = match multi_block {
             ProgramType::Single => {
-                let proof_dir = format!(
-                    "{}/data/{}/single/{}",
-                    workspace_root, l2_chain_id, l2_claim_block_nb
-                );
+                let proof_dir =
+                    format!("{}/data/{}/single/{}", workspace_root, l2_chain_id, l2_claim_block_nb);
                 proof_dir
             }
             ProgramType::Multi => {

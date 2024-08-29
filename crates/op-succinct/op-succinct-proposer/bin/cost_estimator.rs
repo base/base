@@ -93,13 +93,8 @@ async fn get_span_batch_ranges_from_server(
         env::var("SPAN_BATCH_SERVER_URL").unwrap_or("http://localhost:8080".to_string());
     let query_url = format!("{}/span-batch-ranges", span_batch_server_url);
 
-    let response: SpanBatchResponse = client
-        .post(&query_url)
-        .json(&request)
-        .send()
-        .await?
-        .json()
-        .await?;
+    let response: SpanBatchResponse =
+        client.post(&query_url).json(&request).send().await?.json().await?;
 
     // Return the ranges.
     Ok(response.ranges)
@@ -132,14 +127,7 @@ async fn fetch_span_batch_ranges(
         args.start,
         args.end,
         l2_chain_id,
-        rollup_config
-            .genesis
-            .system_config
-            .clone()
-            .unwrap()
-            .batcher_address
-            .to_string()
-            .as_str(),
+        rollup_config.genesis.system_config.clone().unwrap().batcher_address.to_string().as_str(),
     )
     .await
 }
@@ -174,41 +162,28 @@ async fn run_native_data_generation(
     const NATIVE_HOST_TIMEOUT: Duration = Duration::from_secs(300);
 
     // TODO: Shut down all processes when the program exits OR a Ctrl+C is pressed.
-    let futures = split_ranges
-        .chunks(CONCURRENT_NATIVE_HOST_RUNNERS)
-        .map(|chunk| {
-            futures::future::join_all(chunk.iter().map(|range| async {
-                let host_cli = data_fetcher
-                    .get_host_cli_args(range.start, range.end, ProgramType::Multi)
-                    .await
-                    .unwrap();
+    let futures = split_ranges.chunks(CONCURRENT_NATIVE_HOST_RUNNERS).map(|chunk| {
+        futures::future::join_all(chunk.iter().map(|range| async {
+            let host_cli = data_fetcher
+                .get_host_cli_args(range.start, range.end, ProgramType::Multi)
+                .await
+                .unwrap();
 
-                let data_dir = host_cli
-                    .data_dir
-                    .clone()
-                    .expect("Data directory is not set.");
+            let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
 
-                fs::create_dir_all(&data_dir).unwrap();
+            fs::create_dir_all(&data_dir).unwrap();
 
-                let res = run_native_host(&host_cli, NATIVE_HOST_TIMEOUT).await;
-                if res.is_err() {
-                    error!("Failed to run native host: {:?}", res.err().unwrap());
-                    std::process::exit(1);
-                }
+            let res = run_native_host(&host_cli, NATIVE_HOST_TIMEOUT).await;
+            if res.is_err() {
+                error!("Failed to run native host: {:?}", res.err().unwrap());
+                std::process::exit(1);
+            }
 
-                BatchHostCli {
-                    host_cli,
-                    start: range.start,
-                    end: range.end,
-                }
-            }))
-        });
+            BatchHostCli { host_cli, start: range.start, end: range.end }
+        }))
+    });
 
-    futures::future::join_all(futures)
-        .await
-        .into_iter()
-        .flatten()
-        .collect()
+    futures::future::join_all(futures).await.into_iter().flatten().collect()
 }
 
 /// Utility method for blocking on an async function.
@@ -240,13 +215,7 @@ async fn execute_blocks_parallel(
             let start_time = Instant::now();
             let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin).run().unwrap();
             let execution_duration = start_time.elapsed();
-            block_on(get_execution_stats(
-                data_fetcher,
-                r.start,
-                r.end,
-                &report,
-                execution_duration,
-            ))
+            block_on(get_execution_stats(data_fetcher, r.start, r.end, &report, execution_duration))
         })
         .collect()
 }
@@ -268,9 +237,7 @@ fn write_execution_stats_to_csv(
     let mut csv_writer = csv::Writer::from_path(report_path)?;
 
     for stats in execution_stats {
-        csv_writer
-            .serialize(stats)
-            .expect("Failed to write execution stats to CSV.");
+        csv_writer.serialize(stats).expect("Failed to write execution stats to CSV.");
     }
     csv_writer.flush().expect("Failed to flush CSV writer.");
 
@@ -292,10 +259,7 @@ async fn main() -> Result<()> {
         fetch_span_batch_ranges(&data_fetcher, &args, l2_chain_id, &rollup_config).await?;
     let split_ranges = split_ranges(span_batch_ranges, l2_chain_id);
 
-    info!(
-        "The span batch ranges which will be executed: {:?}",
-        split_ranges
-    );
+    info!("The span batch ranges which will be executed: {:?}", split_ranges);
 
     let prover = ProverClient::new();
     let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;

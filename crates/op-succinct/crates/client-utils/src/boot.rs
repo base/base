@@ -31,23 +31,11 @@ pub struct RawBootInfo {
 impl From<RawBootInfo> for BootInfo {
     /// Convert the BootInfoWithoutRollupConfig into BootInfo by deriving the RollupConfig.
     fn from(boot_info_without_rollup_config: RawBootInfo) -> Self {
-        let RawBootInfo {
-            l1_head,
-            l2_output_root,
-            l2_claim,
-            l2_claim_block,
-            chain_id,
-        } = boot_info_without_rollup_config;
+        let RawBootInfo { l1_head, l2_output_root, l2_claim, l2_claim_block, chain_id } =
+            boot_info_without_rollup_config;
         let rollup_config = RollupConfig::from_l2_chain_id(chain_id).unwrap();
 
-        Self {
-            l1_head,
-            l2_output_root,
-            l2_claim,
-            l2_claim_block,
-            chain_id,
-            rollup_config,
-        }
+        Self { l1_head, l2_output_root, l2_claim, l2_claim_block, chain_id, rollup_config }
     }
 }
 

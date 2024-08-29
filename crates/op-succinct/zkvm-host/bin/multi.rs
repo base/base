@@ -1,12 +1,12 @@
-use std::fs;
-use std::time::Instant;
+use std::{fs, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
-use host_utils::stats::get_execution_stats;
 use host_utils::{
     fetcher::{ChainMode, SP1KonaDataFetcher},
-    get_proof_stdin, ProgramType,
+    get_proof_stdin,
+    stats::get_execution_stats,
+    ProgramType,
 };
 use kona_host::start_server_and_native_client;
 use sp1_sdk::{utils, ProverClient};
@@ -46,14 +46,9 @@ async fn main() -> Result<()> {
 
     let data_fetcher = SP1KonaDataFetcher::new();
 
-    let host_cli = data_fetcher
-        .get_host_cli_args(args.start, args.end, ProgramType::Multi)
-        .await?;
+    let host_cli = data_fetcher.get_host_cli_args(args.start, args.end, ProgramType::Multi).await?;
 
-    let data_dir = host_cli
-        .data_dir
-        .clone()
-        .expect("Data directory is not set.");
+    let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
     let start_time = Instant::now();
@@ -80,10 +75,8 @@ async fn main() -> Result<()> {
         let proof = prover.prove(&pk, sp1_stdin).compressed().run().unwrap();
 
         // Create a proof directory for the chain ID if it doesn't exist.
-        let proof_dir = format!(
-            "data/{}/proofs",
-            data_fetcher.get_chain_id(ChainMode::L2).await.unwrap()
-        );
+        let proof_dir =
+            format!("data/{}/proofs", data_fetcher.get_chain_id(ChainMode::L2).await.unwrap());
         if !std::path::Path::new(&proof_dir).exists() {
             fs::create_dir_all(&proof_dir).unwrap();
         }
@@ -93,17 +86,12 @@ async fn main() -> Result<()> {
             .expect("saving proof failed");
     } else {
         let start_time = Instant::now();
-        let (_, report) = prover
-            .execute(MULTI_BLOCK_ELF, sp1_stdin.clone())
-            .run()
-            .unwrap();
+        let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin.clone()).run().unwrap();
         let execution_duration = start_time.elapsed();
 
         let l2_chain_id = data_fetcher.get_chain_id(ChainMode::L2).await.unwrap();
-        let report_path = format!(
-            "execution-reports/multi/{}/{}-{}.csv",
-            l2_chain_id, args.start, args.end
-        );
+        let report_path =
+            format!("execution-reports/multi/{}/{}-{}.csv", l2_chain_id, args.start, args.end);
 
         // Create the report directory if it doesn't exist.
         let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
@@ -111,14 +99,9 @@ async fn main() -> Result<()> {
             fs::create_dir_all(&report_dir).unwrap();
         }
 
-        let stats = get_execution_stats(
-            &data_fetcher,
-            args.start,
-            args.end,
-            &report,
-            execution_duration,
-        )
-        .await;
+        let stats =
+            get_execution_stats(&data_fetcher, args.start, args.end, &report, execution_duration)
+                .await;
         println!("Execution Stats: \n{:?}", stats);
 
         // Write to CSV.

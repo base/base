@@ -115,14 +115,9 @@ fn main() {
         let mut new_block_header;
         'step: loop {
             // Execute the payload to generate a new block header.
-            info!(
-                "Executing Payload for L2 Block: {}",
-                payload.parent.block_info.number + 1
-            );
+            info!("Executing Payload for L2 Block: {}", payload.parent.block_info.number + 1);
             println!("cycle-tracker-report-start: block-execution");
-            new_block_header = executor
-                .execute_payload(payload.attributes.clone())
-                .unwrap();
+            new_block_header = executor.execute_payload(payload.attributes.clone()).unwrap();
             println!("cycle-tracker-report-end: block-execution");
             let new_block_number = new_block_header.number;
             assert_eq!(new_block_number, payload.parent.block_info.number + 1);
@@ -173,7 +168,8 @@ fn main() {
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
-        // Note: We don't need the last_block_num == claim_block check, because it's the only way to exit the above loop
+        // Note: We don't need the last_block_num == claim_block check, because it's the only way to
+        // exit the above loop
         assert_eq!(output_root, boot.l2_claim);
     });
 }

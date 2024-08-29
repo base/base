@@ -35,14 +35,10 @@ async fn main() -> Result<()> {
 
     let l2_safe_head = args.l2_block - 1;
 
-    let host_cli = data_fetcher
-        .get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single)
-        .await?;
+    let host_cli =
+        data_fetcher.get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single).await?;
 
-    let data_dir = host_cli
-        .data_dir
-        .clone()
-        .expect("Data directory is not set.");
+    let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
     if !args.use_cache {
@@ -50,9 +46,7 @@ async fn main() -> Result<()> {
         fs::create_dir_all(&data_dir).unwrap();
 
         // Start the server and native client.
-        start_server_and_native_client(host_cli.clone())
-            .await
-            .unwrap();
+        start_server_and_native_client(host_cli.clone()).await.unwrap();
     }
 
     // Get the stdin for the block.
@@ -64,9 +58,7 @@ async fn main() -> Result<()> {
     println!(
         "Block {} cycle count: {}",
         args.l2_block,
-        report
-            .total_instruction_count()
-            .to_formatted_string(&Locale::en)
+        report.total_instruction_count().to_formatted_string(&Locale::en)
     );
 
     Ok(())

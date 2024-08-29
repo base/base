@@ -4,8 +4,7 @@ use clap::Parser;
 use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
 use dotenv::dotenv;
 use sp1_sdk::{NetworkProver, SP1ProofWithPublicValues};
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
