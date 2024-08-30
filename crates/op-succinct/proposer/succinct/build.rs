@@ -44,7 +44,7 @@ fn build_native_host_runner() {
 // /// Build a program for the zkVM.
 // fn build_zkvm_program(program: &str) {
 //     build_program_with_args(
-//         &format!("../programs/{}", program),
+//         &format!("../../programs/{}", program),
 //         BuildArgs {
 //             elf_name: format!("{}-elf", program),
 //             // docker: true,
