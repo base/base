@@ -33,18 +33,3 @@ jobs:
         L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
         L1_RPC: ${{ secrets.L1_RPC }}
         L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
-  docker-compose-test:
-    name: Docker Compose Test
-    runs-on:
-      - runs-on
-      - runner=64cpu-linux-x64
-      - run-id=${{ github.run_id }}    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Compose
-        uses: docker/setup-buildx-action@v1
-
-      - name: Build Docker Compose setup
-        run: |
-          docker compose build

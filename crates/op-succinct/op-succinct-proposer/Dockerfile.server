@@ -32,7 +32,7 @@ COPY op-succinct-proposer ./op-succinct-proposer
 COPY native-host ./native-host
 COPY elf ./elf
 COPY crates ./crates
-COPY client-programs ./client-programs
+COPY programs ./programs
 
 # Build the server
 RUN cargo build --bin server --release

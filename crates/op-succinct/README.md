@@ -17,7 +17,7 @@ Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 **`op-succinct`**
 - `native-host`: The host program which runs the `op-succinct` program natively using `kona`.
 - `zkvm-host`: The host program which runs the `op-succinct` program in the SP1 zkVM.
-- `client-programs`: The programs proven in SP1.
+- `programs`: The programs proven in SP1.
     - `fault-proof` and `range` are used to verifiably derive and execute single blocks
     and batches of blocks respectively. Their binary's are first run in native mode on the `kona-host` to
     fetch the witness data, then they use SP1 to verifiably execute the program.

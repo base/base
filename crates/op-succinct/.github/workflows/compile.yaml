@@ -17,7 +17,7 @@ jobs:
       uses: actions/checkout@v3
     - name: Compile the fault proof program
       run: cargo build --profile release-client-lto
-      working-directory: client-programs/fault-proof
+      working-directory: programs/fault-proof
     - name: Compile the range program
       run: cargo build --profile release-client-lto
-      working-directory: client-programs/range
+      working-directory: programs/range

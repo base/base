@@ -8,7 +8,7 @@ on:
       - "**"
     paths:
       - "crates/**"
-      - "client-programs/**"
+      - "programs/**"
       - "native-host/**"
       - "zkvm-host/**"
       - "op-succinct-proposer/**"
