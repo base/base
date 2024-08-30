@@ -4,7 +4,7 @@ FROM golang:1.22 AS go-builder
 # Set up Go environment
 FROM go-builder AS optimism-builder
 WORKDIR /optimism
-COPY ./op-proposer-go/ /optimism/op-proposer
+COPY ./proposer/op /optimism/op-proposer
 WORKDIR /optimism/op-proposer/proposer
 RUN make op-proposer
 RUN ls -l /optimism/op-proposer/proposer
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=optimism-builder /optimism/op-proposer/proposer/bin/op-proposer /usr/local/bin/op-proposer
 
 # Set the entrypoint to run op-proposer with environment variables
-COPY ./op-succinct-proposer/op_proposer.sh /usr/local/bin/op_proposer.sh
+COPY ./proposer/op/op_proposer.sh /usr/local/bin/op_proposer.sh
 
 # Make the binary and entrypoint executable.
 RUN ls -l /usr/local/bin/

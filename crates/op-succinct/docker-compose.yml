@@ -3,7 +3,7 @@ services:
   op-succinct-server:
     build:
       context: .
-      dockerfile: ./op-succinct-proposer/Dockerfile.server
+      dockerfile: ./proposer/succinct/Dockerfile.server
     env_file:
       - .env.server
     restart: unless-stopped
@@ -14,7 +14,7 @@ services:
   op-succinct-proposer:
     build:
       context: .
-      dockerfile: ./op-succinct-proposer/Dockerfile.op_proposer
+      dockerfile: ./proposer/op/Dockerfile.op_proposer
     env_file:
       - .env.server
     restart: unless-stopped

@@ -5,12 +5,12 @@ on:
     branches:
       - main
     paths:
-      - 'op-proposer-go/**'
+      - 'proposer/**', 'elf/**'
   push:
     branches:
       - main
     paths:
-      - 'op-proposer-go/**'
+      - 'proposer/**', 'elf/**'
 
 jobs:
   test_op_proposer_go:
@@ -27,7 +27,7 @@ jobs:
         go-version: '1.22'
     - name: Run main_test.go
       run: go test -v ./server/main_test.go
-      working-directory: op-proposer-go
+      working-directory: proposer/op
       env:
         L2_RPC: ${{ secrets.L2_RPC }}
         L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}

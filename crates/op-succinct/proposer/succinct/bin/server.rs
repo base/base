@@ -22,8 +22,8 @@ use sp1_sdk::{
 use std::{env, fs, time::Duration};
 use tower_http::limit::RequestBodyLimitLayer;
 
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
-pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
+pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
+pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 
 #[derive(Deserialize, Serialize, Debug)]
 struct SpanProofRequest {

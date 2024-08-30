@@ -8,7 +8,7 @@ just
 
 Then start the host in the background.
 ```bash
-docker build -t span_batch_server -f op-succinct-proposer/Dockerfile.span_batch_server .
+docker build -t span_batch_server -f proposer/op/Dockerfile.span_batch_server .
 docker run -p 8080:8080 -d span_batch_server
 ```
 

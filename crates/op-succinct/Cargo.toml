@@ -4,7 +4,7 @@ members = [
     "crates/*",
     "native-host",
     "zkvm-host",
-    "op-succinct-proposer",
+    "proposer/succinct",
 ]
 resolver = "2"
 
@@ -61,7 +61,7 @@ hex = "0.4.3"
 client-utils = { path = "crates/client-utils" }
 host-utils = { path = "crates/host-utils" }
 zkvm-host = { path = "zkvm-host" }
-op-succinct-proposer = { path = "op-succinct-proposer" }
+op-succinct-proposer = { path = "proposer/succinct" }
 
 # ethereum
 alloy = { version = "0.2", default-features = false, features = ["full"] }
