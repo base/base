@@ -61,6 +61,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "itertools 0.13.0",
  "op-succinct-client-utils",
  "serde_cbor",
  "sha2",
