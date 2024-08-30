@@ -1,5 +1,5 @@
 use alloy_primitives::hex;
-use client_utils::BytesHasherBuilder;
+use op_succinct_client_utils::BytesHasherBuilder;
 use std::{collections::HashMap, fs, io::Read, path::PathBuf};
 
 pub fn load_kv_store(data_dir: &PathBuf) -> HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> {

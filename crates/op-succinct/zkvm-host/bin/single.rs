@@ -2,9 +2,9 @@ use std::{env, fs};
 
 use anyhow::Result;
 use clap::Parser;
-use host_utils::{fetcher::OPSuccinctDataFetcher, get_proof_stdin, ProgramType};
 use kona_host::start_server_and_native_client;
 use num_format::{Locale, ToFormattedString};
+use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_proof_stdin, ProgramType};
 use sp1_sdk::{utils, ProverClient};
 
 pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../elf/fault-proof-elf");

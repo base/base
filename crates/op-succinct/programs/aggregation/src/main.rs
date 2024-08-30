@@ -6,7 +6,7 @@ sp1_zkvm::entrypoint!(main);
 
 use alloy_consensus::Header;
 use alloy_primitives::B256;
-use client_utils::{types::AggregationInputs, RawBootInfo};
+use op_succinct_client_utils::{types::AggregationInputs, RawBootInfo};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 

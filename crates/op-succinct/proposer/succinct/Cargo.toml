@@ -43,14 +43,14 @@ kona-host = { workspace = true }
 kona-primitives.workspace = true
 
 # local
-host-utils.workspace = true
+op-succinct-host-utils.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true }
 
 anyhow.workspace = true
 dotenv.workspace = true
-client-utils.workspace = true
+op-succinct-client-utils.workspace = true
 serde = { workspace = true }
 
 # server
