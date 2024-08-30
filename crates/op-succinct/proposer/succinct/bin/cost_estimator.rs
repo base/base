@@ -23,7 +23,7 @@ use std::{
 };
 use tokio::task::block_in_place;
 
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
+pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]

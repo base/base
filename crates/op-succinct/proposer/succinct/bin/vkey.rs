@@ -4,8 +4,8 @@ use anyhow::Result;
 use log::info;
 use sp1_sdk::{utils, HashableKey, ProverClient};
 
-pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
+pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
+pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 use clap::Parser;
 
