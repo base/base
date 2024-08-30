@@ -2,9 +2,23 @@
 src = "src"
 out = "out"
 libs = ["lib"]
-ffi = true
-fs_permissions = [
-    { access = "read", path = "zkconfig.json" }
+remappings = [
+    # Use openzeppelin-contracts v4.7.3 as the some contracts are not compatible with 0.8.15
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "@optimism/=lib/optimism/packages/contracts-bedrock/",
+    "@forge-std/=lib/forge-std/src/",
+    # Note: Use zobront/sp1-contracts as the current version for SP1 contracts is not compatible with the hard
+    # version for 0.8.15 on some Optimism contracts.
+    "@sp1-contracts/=lib/sp1-contracts/contracts/",
+    "@rari-capital/=lib/optimism/packages/contracts-bedrock/lib/",
+    # Optimism repo uses absolute imports, so we need to have remappings for the paths we use.
+    "src/libraries/=lib/optimism/packages/contracts-bedrock/src/libraries/",
+    "src/L1/=lib/optimism/packages/contracts-bedrock/src/L1/",
+    "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
 ]
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+# Enable read-write access to zkconfig.json
+fs_permissions = [{ access = "read-write", path = "./zkconfig.json" }]
+
+dotenv = ".env"
+# See more config options https://github.com/foundry-rs/foundry/tree/master/config

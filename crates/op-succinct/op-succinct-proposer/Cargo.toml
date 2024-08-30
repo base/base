@@ -23,6 +23,14 @@ path = "bin/vkey.rs"
 name = "cost_estimator"
 path = "bin/cost_estimator.rs"
 
+[[bin]]
+name = "load_stdin"
+path = "bin/load_stdin.rs"
+
+[[bin]]
+name = "span_batch_ranges"
+path = "bin/span_batch_ranges.rs"
+
 [dependencies]
 
 # workspace

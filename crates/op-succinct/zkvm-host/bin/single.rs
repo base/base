@@ -2,7 +2,7 @@ use std::{env, fs};
 
 use anyhow::Result;
 use clap::Parser;
-use host_utils::{fetcher::SP1KonaDataFetcher, get_proof_stdin, ProgramType};
+use host_utils::{fetcher::OPSuccinctDataFetcher, get_proof_stdin, ProgramType};
 use kona_host::start_server_and_native_client;
 use num_format::{Locale, ToFormattedString};
 use sp1_sdk::{utils, ProverClient};
@@ -21,14 +21,14 @@ struct Args {
     use_cache: bool,
 }
 
-/// Execute the Kona program for a single block.
+/// Execute the OP Succinct program for a single block.
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     let args = Args::parse();
     utils::setup_logger();
 
-    let data_fetcher = SP1KonaDataFetcher {
+    let data_fetcher = OPSuccinctDataFetcher {
         l2_rpc: env::var("L2_RPC").expect("L2_RPC is not set."),
         ..Default::default()
     };

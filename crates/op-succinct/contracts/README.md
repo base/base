@@ -6,9 +6,19 @@ The `contracts/` directory consists of two things:
 
 2) The `ZKUpgrader.s.sol` script, which deploys the `ZKL2OutputOracle.sol` implementation contract, upgrades an existing `L2OutputOracleProxy` to point to it, and initializes the new contract with values from `zkconfig.json`.
 
-## Deploy
+3) The `ZKDeployer.s.sol` script, which deploys the `ZKL2OutputOracle.sol` implementation contract, upgrades an existing `L2OutputOracleProxy` to point to it, and initializes the new contract with values from `zkconfig.json`.
 
-To deploy and upgrade the contract, run the following command (where `ADMIN_PK` is the private key of the admin address for the L1 proxy contracts):
+## Deploy Fresh Proxy
+
+For OP Sepolia, you can deploy a fresh proxy with the following command:
+
+```shell
+forge script script/ZKDeployer.s.sol:ZKDeployer --rpc-url <L1_RPC> --private-key <ADMIN_PK> --verify --verifier etherscan --etherscan-api-key <ETHERSCAN_API_KEY> --broadcast --slow -vvvv --ffi
+```
+
+## Upgrade Existing Proxy
+
+To deploy and upgrade the contract for existing chains, run the following command (where `ADMIN_PK` is the private key of the admin address for the L1 proxy contracts):
 
 ```shell
 forge script script/ZKUpgrader.s.sol:ZKUpgrader  --rpc-url <L1_RPC> --private-key <ADMIN_PK> --verify --verifier etherscan --etherscan-api-key <ETHERSCAN_API_KEY> --broadcast --slow --vvvv

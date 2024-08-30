@@ -18,9 +18,9 @@ use alloy_primitives::keccak256;
 use crate::{L2Output, ProgramType};
 
 #[derive(Clone)]
-/// The SP1KonaDataFetcher struct is used to fetch the L2 output data and L2 claim data for a given
-/// block number. It is used to generate the boot info for the native host program.
-pub struct SP1KonaDataFetcher {
+/// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
+/// given block number. It is used to generate the boot info for the native host program.
+pub struct OPSuccinctDataFetcher {
     pub l1_rpc: String,
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
     pub l1_beacon_rpc: String,
@@ -29,9 +29,9 @@ pub struct SP1KonaDataFetcher {
     pub l2_provider: Arc<RootProvider<Http<Client>>>,
 }
 
-impl Default for SP1KonaDataFetcher {
+impl Default for OPSuccinctDataFetcher {
     fn default() -> Self {
-        SP1KonaDataFetcher::new()
+        OPSuccinctDataFetcher::new()
     }
 }
 
@@ -49,7 +49,7 @@ pub struct BlockInfo {
     pub gas_used: u64,
 }
 
-impl SP1KonaDataFetcher {
+impl OPSuccinctDataFetcher {
     pub fn new() -> Self {
         dotenv::dotenv().ok();
         let l1_rpc = env::var("L1_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
@@ -62,7 +62,14 @@ impl SP1KonaDataFetcher {
             env::var("L2_NODE_RPC").unwrap_or_else(|_| "http://localhost:5058".to_string());
         let l2_provider =
             Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l2_rpc).unwrap()));
-        SP1KonaDataFetcher { l1_rpc, l1_provider, l1_beacon_rpc, l2_rpc, l2_node_rpc, l2_provider }
+        OPSuccinctDataFetcher {
+            l1_rpc,
+            l1_provider,
+            l1_beacon_rpc,
+            l2_rpc,
+            l2_node_rpc,
+            l2_provider,
+        }
     }
 
     pub fn get_provider(&self, chain_mode: ChainMode) -> Arc<RootProvider<Http<Client>>> {
@@ -227,20 +234,24 @@ impl SP1KonaDataFetcher {
     /// datagen.
     pub async fn get_host_cli_args(
         &self,
-        l2_block_safe_head: u64,
-        l2_claim_block_nb: u64,
+        l2_start_block: u64,
+        l2_end_block: u64,
         multi_block: ProgramType,
     ) -> Result<HostCli> {
+        if l2_start_block >= l2_end_block {
+            return Err(anyhow::anyhow!("L2 start block is greater than or equal to L2 end block"));
+        }
+
         let l2_provider = self.l2_provider.clone();
 
         // Get L2 output data.
         let l2_output_block =
-            l2_provider.get_block_by_number(l2_block_safe_head.into(), false).await?.unwrap();
+            l2_provider.get_block_by_number(l2_start_block.into(), false).await?.unwrap();
         let l2_output_state_root = l2_output_block.header.state_root;
         let l2_head = l2_output_block.header.hash.expect("L2 head is missing");
         let l2_output_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_block_safe_head.into())
+            .block_id(l2_start_block.into())
             .await?
             .storage_hash;
 
@@ -254,12 +265,12 @@ impl SP1KonaDataFetcher {
 
         // Get L2 claim data.
         let l2_claim_block =
-            l2_provider.get_block_by_number(l2_claim_block_nb.into(), false).await?.unwrap();
+            l2_provider.get_block_by_number(l2_end_block.into(), false).await?.unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash.expect("L2 claim hash is missing");
         let l2_claim_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
-            .block_id(l2_claim_block_nb.into())
+            .block_id(l2_end_block.into())
             .await?
             .storage_hash;
 
@@ -287,13 +298,13 @@ impl SP1KonaDataFetcher {
         let data_directory = match multi_block {
             ProgramType::Single => {
                 let proof_dir =
-                    format!("{}/data/{}/single/{}", workspace_root, l2_chain_id, l2_claim_block_nb);
+                    format!("{}/data/{}/single/{}", workspace_root, l2_chain_id, l2_end_block);
                 proof_dir
             }
             ProgramType::Multi => {
                 let proof_dir = format!(
                     "{}/data/{}/multi/{}-{}",
-                    workspace_root, l2_chain_id, l2_block_safe_head, l2_claim_block_nb
+                    workspace_root, l2_chain_id, l2_start_block, l2_end_block
                 );
                 proof_dir
             }
@@ -317,7 +328,7 @@ impl SP1KonaDataFetcher {
             l1_head: l1_head.0.into(),
             l2_output_root: l2_output_root.0.into(),
             l2_claim: l2_claim.0.into(),
-            l2_block_number: l2_claim_block_nb,
+            l2_block_number: l2_end_block,
             l2_chain_id,
             l2_head: l2_head.0.into(),
             l2_node_address: Some(self.l2_rpc.clone()),

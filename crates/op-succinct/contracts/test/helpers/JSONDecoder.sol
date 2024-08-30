@@ -3,21 +3,21 @@ pragma solidity ^0.8.0;
 
 contract JSONDecoder {
     struct Config {
-        uint chainId;
+        uint256 chainId;
         address challenger;
-        uint finalizationPeriod;
-        uint l2BlockTime;
+        uint256 finalizationPeriod;
+        uint256 l2BlockTime;
         address l2OutputOracleProxy;
         string l2RollupNode;
         address owner;
         address proposer;
-        uint startingBlockNumber;
-        uint submissionInterval;
+        uint256 startingBlockNumber;
+        uint256 submissionInterval;
         address verifierGateway;
         bytes32 vkey;
     }
 
-    struct OutputAtBlock{
+    struct OutputAtBlock {
         L2BlockRef blockRef;
         bytes32 outputRoot;
         bytes32 stateRoot;

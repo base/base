@@ -1,14 +1,14 @@
 {
-    "startingBlockNumber": 0,
+    "startingBlockNumber": 16592800,
     "l2RollupNode": "",
     "submissionInterval": 150,
     "l2BlockTime": 2,
     "proposer": "0x0000000000000000000000000000000000000000",
     "challenger": "0x0000000000000000000000000000000000000000",
     "finalizationPeriod": 0,
-    "chainId": 0,
-    "owner": "0x0000000000000000000000000000000000000000",
-    "vkey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "chainId": 11155420,
+    "owner": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
+    "vkey": "0x001f78c9aacd8d2d9ba9132f9e2640f4db8d8db05b4862df2f5140f4a3db508f",
     "verifierGateway": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
-    "l2OutputOracleProxy": "0xdfe97868233d1aa22e815a266982f2cf17685a27"
+    "l2OutputOracleProxy": "0x863508f057c09f7b94e582d74404859ecd36a306"
 }

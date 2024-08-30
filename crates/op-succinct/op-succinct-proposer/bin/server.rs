@@ -8,7 +8,9 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
-use host_utils::{fetcher::SP1KonaDataFetcher, get_agg_proof_stdin, get_proof_stdin, ProgramType};
+use host_utils::{
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, ProgramType,
+};
 use log::info;
 use op_succinct_proposer::run_native_host;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -72,7 +74,7 @@ async fn request_span_proof(
     dotenv::dotenv().ok();
     // TODO: Save data fetcher, NetworkProver, and NetworkClient globally
     // and access via Store.
-    let data_fetcher = SP1KonaDataFetcher::new();
+    let data_fetcher = OPSuccinctDataFetcher::new();
 
     let host_cli =
         data_fetcher.get_host_cli_args(payload.start, payload.end, ProgramType::Multi).await?;
@@ -85,7 +87,9 @@ async fn request_span_proof(
     // Start the server and native client with a timeout.
     // Note: Ideally, the server should call out to a separate process that executes the native
     // host, and return an ID that the client can poll on to check if the proof was submitted.
-    run_native_host(&host_cli, Duration::from_secs(40)).await?;
+    // TODO: If this fails, we should definitely NOT request a proof! Otherwise, we get execution
+    // failures on the cluster.
+    run_native_host(&host_cli, Duration::from_secs(60)).await?;
 
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
@@ -119,7 +123,7 @@ async fn request_agg_proof(
         hex::decode(payload.head.strip_prefix("0x").expect("Invalid L1 head, no 0x prefix."))?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
-    let fetcher = SP1KonaDataFetcher::new();
+    let fetcher = OPSuccinctDataFetcher::new();
     let headers = fetcher.get_header_preimages(&boot_infos, l1_head.into()).await?;
 
     let prover = NetworkProver::new();

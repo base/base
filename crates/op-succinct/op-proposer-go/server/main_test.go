@@ -6,9 +6,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
-	"github.com/succinctlabs/op-succinct-go/server/utils"
+	"github.com/succinctlabs/op-succinct-go/proposer/utils"
 )
 
 // This test fetches span batches for a recent block range and confirms that the number of span batches is non-zero.
@@ -47,18 +48,33 @@ func TestHandleSpanBatchRanges(t *testing.T) {
 	startBlock := block - 10000
 	endBlock := block - 9000
 
+	l1BeaconClient, err := utils.SetupBeacon(l1Beacon)
+	if err != nil {
+		t.Fatalf("Failed to setup beacon: %v", err)
+	}
+
+	l1Client, err := ethclient.Dial(l1RPC)
+	if err != nil {
+		t.Fatalf("Failed to connect to L1 RPC: %v", err)
+	}
+
+	rollupClient, err := dial.DialRollupClientWithTimeout(context.Background(), dial.DefaultDialTimeout, nil, l2Node)
+	if err != nil {
+		t.Fatalf("Failed to connect to L2 RPC: %v", err)
+	}
+
 	config := utils.BatchDecoderConfig{
 		L2ChainID:    rollupCfg.L2ChainID,
-		L2Node:       l2Node,
-		L1RPC:        l1RPC,
-		L1Beacon:     l1Beacon,
+		L2Node:       rollupClient,
+		L1RPC:        *l1Client,
+		L1Beacon:     l1BeaconClient,
 		BatchSender:  rollupCfg.Genesis.SystemConfig.BatcherAddr,
 		L2StartBlock: startBlock,
 		L2EndBlock:   endBlock,
-		DataDir: fmt.Sprintf("/tmp/batch_decoder/%d/transactions_cache", rollupCfg.L2ChainID),
+		DataDir:      fmt.Sprintf("/tmp/batch_decoder/%d/transactions_cache", rollupCfg.L2ChainID),
 	}
 
-	ranges, err := utils.GetAllSpanBatchesInBlockRange(config)
+	ranges, err := utils.GetAllSpanBatchesInL2BlockRange(config)
 	if err != nil {
 		t.Fatalf("Failed to get span batch ranges: %v", err)
 	}

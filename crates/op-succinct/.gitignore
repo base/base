@@ -10,6 +10,9 @@ data
 # zip
 **.zip
 
+# vscode
+.vscode
+
 # .env
 .env
 .env.server
@@ -18,11 +21,15 @@ data
 **.txt
 !LICENSE.txt
 
-# DB data
-db/
-
 # Reports
 execution-reports/
 
 # Rollup Config
 **/rollup-config.json
+
+# DB
+db/proofs.db
+
+**/bin/op-proposer
+
+artifact_*

@@ -1,0 +1,12 @@
+[submodule "contracts/lib/forge-std"]
+	path = contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "contracts/lib/optimism"]
+	path = contracts/lib/optimism
+	url = https://github.com/ethereum-optimism/optimism
+[submodule "contracts/lib/sp1-contracts"]
+	path = contracts/lib/sp1-contracts
+	url = https://github.com/zobront/sp1-contracts
+[submodule "contracts/lib/openzeppelin-contracts"]
+	path = contracts/lib/openzeppelin-contracts
+	url = https://github.com/openzeppelin/openzeppelin-contracts

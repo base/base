@@ -24,11 +24,18 @@ RUN rustc --version && cargo --version
 RUN curl -L https://sp1.succinct.xyz | bash && \
     ~/.sp1/bin/sp1up && \
     ~/.sp1/bin/cargo-prove prove --version
+    
+# Copy the relevant OP Succinct server files.
+COPY Cargo.toml Cargo.lock ./
+COPY zkvm-host ./zkvm-host
+COPY op-succinct-proposer ./op-succinct-proposer
+COPY native-host ./native-host
+COPY elf ./elf
+COPY crates ./crates
+COPY client-programs ./client-programs
 
-# Clone the repository and build the server
-RUN git clone https://github.com/succinctlabs/op-succinct.git . && \
-    cargo build --bin native_host_runner --release && \
-    cargo build --bin server --release
+# Build the server
+RUN cargo build --bin server --release
 
 # Expose port 3000
 EXPOSE 3000

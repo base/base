@@ -14,7 +14,7 @@ Standalone repo to use Kona & SP1 to verify OP Stack blocks.
 - `client-utils`: A suite of utilities for the client program.
 - `host-utils`: A suite of utilities for constructing the host which runs the OP Succinct program.
 
-**`sp1-kona`**
+**`op-succinct`**
 - `native-host`: The host program which runs the `op-succinct` program natively using `kona`.
 - `zkvm-host`: The host program which runs the `op-succinct` program in the SP1 zkVM.
 - `client-programs`: The programs proven in SP1.

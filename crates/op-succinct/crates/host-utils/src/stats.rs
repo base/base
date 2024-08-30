@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use crate::fetcher::{ChainMode, SP1KonaDataFetcher};
+use crate::fetcher::{ChainMode, OPSuccinctDataFetcher};
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{CostEstimator, ExecutionReport};
@@ -70,7 +70,7 @@ impl fmt::Display for ExecutionStats {
 
 /// Get the execution stats for a given report.
 pub async fn get_execution_stats(
-    data_fetcher: &SP1KonaDataFetcher,
+    data_fetcher: &OPSuccinctDataFetcher,
     start: u64,
     end: u64,
     report: &ExecutionReport,

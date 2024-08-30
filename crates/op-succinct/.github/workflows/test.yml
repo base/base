@@ -1,8 +1,9 @@
 name: CI
 
 on:
-  push:
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -26,20 +27,26 @@ jobs:
           version: nightly
 
       - name: Show Forge version
+        working-directory: contracts/
         run: |
           forge --version
 
       - name: Run Forge fmt
+        working-directory: contracts/
         run: |
-          forge fmt --check
+          forge fmt --check src/ test/ script/
         id: fmt
 
       - name: Run Forge build
+        working-directory: contracts/
         run: |
           forge build --sizes
         id: build
 
       - name: Run Forge tests
+        working-directory: contracts/
         run: |
           forge test -vvv
         id: test
+        env:
+          L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
