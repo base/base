@@ -21,16 +21,16 @@ cfg_if! {
     // from SP1 and compile to a program that can be run in zkVM.
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
-        use client_utils::{RawBootInfo, InMemoryOracle};
+        use op_succinct_client_utils::{RawBootInfo, InMemoryOracle};
         use alloc::vec::Vec;
     } else {
         use kona_client::CachingOracle;
-        use client_utils::pipes::{ORACLE_READER, HINT_WRITER};
+        use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
     }
 }
 
 fn main() {
-    client_utils::block_on(async move {
+    op_succinct_client_utils::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////

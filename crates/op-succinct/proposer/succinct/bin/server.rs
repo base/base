@@ -7,11 +7,11 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose, Engine as _};
-use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
-use host_utils::{
+use log::info;
+use op_succinct_client_utils::{RawBootInfo, BOOT_INFO_SIZE};
+use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, ProgramType,
 };
-use log::info;
 use op_succinct_proposer::run_native_host;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{

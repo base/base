@@ -8,8 +8,8 @@ use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
-use client_utils::RawBootInfo;
 use kona_host::HostCli;
+use op_succinct_client_utils::RawBootInfo;
 use std::{cmp::Ordering, env, fs, path::Path, str::FromStr, sync::Arc, time::Duration};
 use tokio::time::sleep;
 

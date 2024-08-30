@@ -3,8 +3,8 @@ use std::fs;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
-use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
-use host_utils::{
+use op_succinct_client_utils::{RawBootInfo, BOOT_INFO_SIZE};
+use op_succinct_host_utils::{
     fetcher::{ChainMode, OPSuccinctDataFetcher},
     get_agg_proof_stdin,
 };

@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 # workspace (general)
 cfg-if.workspace = true
-client-utils.workspace = true
+op-succinct-client-utils.workspace = true
 
 # workspace (ethereum)
 op-alloy-consensus.workspace = true

@@ -11,7 +11,7 @@ repository.workspace = true
 sha2 = { workspace = true }
 sp1-zkvm = { workspace = true }
 sp1-lib = { workspace = true }
-client-utils = { workspace = true }
+op-succinct-client-utils = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
 serde_cbor.workspace = true

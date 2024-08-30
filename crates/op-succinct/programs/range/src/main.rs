@@ -1,12 +1,12 @@
 //! A program to verify a Optimism L2 block STF in the zkVM.
 #![cfg_attr(target_os = "zkvm", no_main)]
 
-use client_utils::precompiles::ZKVMPrecompileOverride;
 use kona_client::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
 };
 use kona_executor::StatelessL2BlockExecutor;
+use op_succinct_client_utils::precompiles::ZKVMPrecompileOverride;
 
 use alloy_eips::eip2718::Decodable2718;
 use kona_primitives::{L2ExecutionPayloadEnvelope, OpBlock};
@@ -16,7 +16,7 @@ use alloc::sync::Arc;
 use alloy_consensus::Sealed;
 use cfg_if::cfg_if;
 
-use client_utils::{
+use op_succinct_client_utils::{
     driver::MultiBlockDerivationDriver, l2_chain_provider::MultiblockOracleL2ChainProvider,
 };
 
@@ -30,19 +30,19 @@ cfg_if! {
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
 
-        use client_utils::{
+        use op_succinct_client_utils::{
             RawBootInfo,
             InMemoryOracle
         };
         use alloc::vec::Vec;
     } else {
         use kona_client::CachingOracle;
-        use client_utils::pipes::{ORACLE_READER, HINT_WRITER};
+        use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
     }
 }
 
 fn main() {
-    client_utils::block_on(async move {
+    op_succinct_client_utils::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////

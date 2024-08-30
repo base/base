@@ -61,7 +61,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
- "client-utils",
+ "op-succinct-client-utils",
  "serde_cbor",
  "sha2",
  "sp1-lib 1.2.0-rc1",
@@ -1463,34 +1463,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1462739cb27611015575c0c11df5df7601141071f07518d56fcc1be504cbec97"
 
 [[package]]
-name = "client-utils"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-sol-types",
- "anyhow",
- "async-trait",
- "itertools 0.13.0",
- "kona-client",
- "kona-common",
- "kona-derive",
- "kona-executor",
- "kona-mpt",
- "kona-preimage",
- "kona-primitives",
- "kzg-rs 0.2.1",
- "log",
- "op-alloy-consensus",
- "revm",
- "rkyv",
- "serde",
- "sha2",
-]
-
-[[package]]
 name = "cobs"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2418,10 +2390,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "cfg-if",
- "client-utils",
  "kona-client",
  "kona-executor",
  "kona-primitives",
+ "op-succinct-client-utils",
  "sp1-zkvm",
 ]
 
@@ -2882,30 +2854,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3d1354bf6b7235cb4a0576c2619fd4ed18183f689b12b006a0ee7329eeff9a5"
 dependencies = [
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "host-utils"
-version = "0.1.0"
-dependencies = [
- "alloy",
- "alloy-consensus",
- "alloy-primitives",
- "alloy-sol-types",
- "anyhow",
- "cargo_metadata",
- "client-utils",
- "dotenv",
- "futures",
- "kona-host",
- "num-format",
- "revm",
- "rkyv",
- "serde",
- "serde_cbor",
- "sp1-build",
- "sp1-sdk",
- "tokio",
 ]
 
 [[package]]
@@ -4061,6 +4009,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-client-utils"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-sol-types",
+ "anyhow",
+ "async-trait",
+ "itertools 0.13.0",
+ "kona-client",
+ "kona-common",
+ "kona-derive",
+ "kona-executor",
+ "kona-mpt",
+ "kona-preimage",
+ "kona-primitives",
+ "kzg-rs 0.2.1",
+ "log",
+ "op-alloy-consensus",
+ "revm",
+ "rkyv",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "op-succinct-host-utils"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "anyhow",
+ "cargo_metadata",
+ "dotenv",
+ "futures",
+ "kona-host",
+ "num-format",
+ "op-succinct-client-utils",
+ "revm",
+ "rkyv",
+ "serde",
+ "serde_cbor",
+ "sp1-build",
+ "sp1-sdk",
+ "tokio",
+]
+
+[[package]]
 name = "op-succinct-proposer"
 version = "0.1.0"
 dependencies = [
@@ -4072,16 +4072,16 @@ dependencies = [
  "bincode",
  "cargo_metadata",
  "clap",
- "client-utils",
  "csv",
  "dotenv",
  "futures",
- "host-utils",
  "itertools 0.13.0",
  "kona-host",
  "kona-primitives",
  "lazy_static",
  "log",
+ "op-succinct-client-utils",
+ "op-succinct-host-utils",
  "rayon",
  "reqwest 0.12.7",
  "revm",
@@ -4997,12 +4997,12 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "cfg-if",
- "client-utils",
  "kona-client",
  "kona-executor",
  "kona-primitives",
  "log",
  "op-alloy-consensus",
+ "op-succinct-client-utils",
  "sp1-zkvm",
 ]
 
@@ -7907,13 +7907,13 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "clap",
- "client-utils",
  "csv",
  "dotenv",
- "host-utils",
  "kona-host",
  "log",
  "num-format",
+ "op-succinct-client-utils",
+ "op-succinct-host-utils",
  "revm",
  "sp1-build",
  "sp1-sdk",
