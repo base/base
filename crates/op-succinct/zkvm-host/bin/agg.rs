@@ -5,7 +5,7 @@ use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use client_utils::{RawBootInfo, BOOT_INFO_SIZE};
 use host_utils::{
-    fetcher::{ChainMode, SP1KonaDataFetcher},
+    fetcher::{ChainMode, OPSuccinctDataFetcher},
     get_agg_proof_stdin,
 };
 use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
@@ -60,7 +60,7 @@ fn load_aggregation_proof_data(
     (proofs, boot_infos)
 }
 
-// Execute the Kona program for a single block.
+// Execute the OP Succinct program for a single block.
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let prover = ProverClient::new();
-    let fetcher = SP1KonaDataFetcher::new();
+    let fetcher = OPSuccinctDataFetcher::new();
 
     let l2_chain_id = fetcher.get_chain_id(ChainMode::L2).await?;
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, l2_chain_id);

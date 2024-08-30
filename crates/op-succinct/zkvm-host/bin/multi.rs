@@ -3,7 +3,7 @@ use std::{fs, time::Instant};
 use anyhow::Result;
 use clap::Parser;
 use host_utils::{
-    fetcher::{ChainMode, SP1KonaDataFetcher},
+    fetcher::{ChainMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::get_execution_stats,
     ProgramType,
@@ -37,14 +37,14 @@ struct Args {
     prove: bool,
 }
 
-/// Execute the Kona program for a single block.
+/// Execute the OP Succinct program for multiple blocks.
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     utils::setup_logger();
     let args = Args::parse();
 
-    let data_fetcher = SP1KonaDataFetcher::new();
+    let data_fetcher = OPSuccinctDataFetcher::new();
 
     let host_cli = data_fetcher.get_host_cli_args(args.start, args.end, ProgramType::Multi).await?;
 

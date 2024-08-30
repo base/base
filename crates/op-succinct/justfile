@@ -4,7 +4,7 @@ set dotenv-load
 default:
   @just --list
 
-# Runs the kona-host program for a single block.
+# Runs the op-succinct program for a single block.
 run-single l2_block_num use-cache="false":
   #!/usr/bin/env bash
   CACHE_FLAG=""
@@ -13,7 +13,7 @@ run-single l2_block_num use-cache="false":
   fi
   cargo run --bin single --release -- --l2-block {{l2_block_num}} $CACHE_FLAG
 
-# Runs the kona-host program for multiple blocks.
+# Runs the op-succinct program for multiple blocks.
 run-multi start end use-cache="false" prove="false":
   #!/usr/bin/env bash
   CACHE_FLAG=""

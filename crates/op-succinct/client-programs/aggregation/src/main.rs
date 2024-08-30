@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// should verify the proof matches the arbitrary vkey digest stored in the contract. This means
 /// that the aggregate program would no longer need to update this value.
 const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] =
-    [227309663, 1637133225, 136526498, 1878261023, 2013043842, 450616441, 575447582, 1643259779];
+    [1172625895, 1280247262, 651076015, 321432881, 243715685, 1565992912, 1444792760, 1908047081];
 
 /// Verify that the L1 heads in the boot infos are in the header chain.
 fn verify_l1_heads(agg_inputs: &AggregationInputs, headers: &[Header]) {

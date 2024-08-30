@@ -95,7 +95,7 @@ This launches a Docker container with `op-proposer` from a fork of the `optimism
 
 The modified `op-proposer` performs the following tasks:
 - Monitors L1 state to determine when to request a proof.
-- Requests proofs from the Kona SP1 server.
+- Requests proofs from the OP Succinct server.
 - Once proofs have been generated for a sufficiently large range (specified by `SUBMISSION_INTERVAL` in `zkconfig.json`), aggregates batch proofs and submits them on-chain.
 
 ## Verification
@@ -103,7 +103,8 @@ The modified `op-proposer` performs the following tasks:
 After completing these steps, your chain will be running as a ZK-OP chain:
 
 - The L1 contract (ZKL2OutputOracle) verifies ZK proofs.
-- The Kona SP1 server generates ZK proofs.
+- The OP Succinct SP1 server requests proofs from the Succinct Prover Network.
+- The Succinct Prover Network generates ZK proofs.
 - The modified `op-proposer` submits ZK-proven output roots to L1.
 
 🎉 Congratulations! 🎉 You've successfully upgraded to a ZK-OP chain with `op-succinct`.

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.15;
+pragma solidity ^0.8.15;
 
-import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import { ISemver } from "@optimism/src/universal/ISemver.sol";
-import { Types } from "@optimism/src/libraries/Types.sol";
-import { Constants } from "@optimism/src/libraries/Constants.sol";
-import { SP1VerifierGateway } from "@sp1-contracts/src/SP1VerifierGateway.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {ISemver} from "@optimism/src/universal/ISemver.sol";
+import {Types} from "@optimism/src/libraries/Types.sol";
+import {Constants} from "@optimism/src/libraries/Constants.sol";
+import {SP1VerifierGateway} from "@sp1-contracts/src/SP1VerifierGateway.sol";
 
 /// @custom:proxied
 /// @title ZKL2OutputOracle
@@ -45,7 +45,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     uint256 public finalizationPeriodSeconds;
 
     /// @notice The chain ID of the L2 chain.
-    uint public chainId;
+    uint256 public chainId;
 
     /// @notice The verification key of the SP1 program.
     bytes32 public vkey;
@@ -57,11 +57,11 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     address public owner;
 
     /// @notice A trusted mapping of block numbers to block hashes.
-    mapping (uint => bytes32) public historicBlockHashes;
+    mapping(uint256 => bytes32) public historicBlockHashes;
 
     /// @notice Parameters to initialize the ZK version of the contract.
     struct ZKInitParams {
-        uint chainId;
+        uint256 chainId;
         bytes32 vkey;
         address verifierGateway;
         bytes32 startingOutputRoot;
@@ -152,10 +152,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         address _challenger,
         uint256 _finalizationPeriodSeconds,
         ZKInitParams memory _zkInitParams
-    )
-        public
-        reinitializer(2)
-    {
+    ) public reinitializer(2) {
         require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
         require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(
@@ -171,11 +168,11 @@ contract ZKL2OutputOracle is Initializable, ISemver {
 
         if (l2Outputs.length == 0) {
             l2Outputs.push(
-                    Types.OutputProposal({
-                        outputRoot: _zkInitParams.startingOutputRoot,
-                        timestamp: uint128(_startingTimestamp),
-                        l2BlockNumber: uint128(_startingBlockNumber)
-                    })
+                Types.OutputProposal({
+                    outputRoot: _zkInitParams.startingOutputRoot,
+                    timestamp: uint128(_startingTimestamp),
+                    l2BlockNumber: uint128(_startingBlockNumber)
+                })
             );
 
             startingBlockNumber = _startingBlockNumber;
@@ -269,10 +266,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         bytes32 _l1BlockHash,
         uint256 _l1BlockNumber,
         bytes memory _proof
-    )
-        external
-        payable
-    {
+    ) external payable {
         require(
             msg.sender == proposer || proposer == address(0),
             "L2OutputOracle: only the proposer address can propose new outputs"
@@ -324,10 +318,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @dev Block number must be in the past 256 blocks or this will revert.
     /// @dev Passing both inputs as zero will automatically checkpoint the most recent blockhash.
     function checkpointBlockHash(uint256 _blockNumber, bytes32 _blockHash) external {
-        require(
-            blockhash(_blockNumber) == _blockHash,
-            "L2OutputOracle: block hash and number cannot be checkpointed"
-        );
+        require(blockhash(_blockNumber) == _blockHash, "L2OutputOracle: block hash and number cannot be checkpointed");
         historicBlockHashes[_blockNumber] = _blockHash;
     }
 
@@ -380,7 +371,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @notice Returns the number of outputs that have been proposed.
     ///         Will revert if no outputs have been proposed yet.
     /// @return The number of outputs that have been proposed.
-    function latestOutputIndex() external view returns (uint256) {
+    function latestOutputIndex() public view returns (uint256) {
         return l2Outputs.length - 1;
     }
 
