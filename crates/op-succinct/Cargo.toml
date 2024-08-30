@@ -2,8 +2,7 @@
 members = [
     "utils/*",
     "programs/*",
-    "native-host",
-    "zkvm-host",
+    "scripts/*",
     "proposer/succinct",
 ]
 resolver = "2"
@@ -19,6 +18,8 @@ repository = ""
 
 # kona
 # TODO: Change to stable tag when released.
+# Note: Explicitly needed to downgrade superchain-primitives to 0.3.1.
+# cargo update -p superchain-primitives@0.3.2 --precise 0.3.1
 kona-common = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
 kona-common-proc = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
 kona-preimage = { git = "https://github.com/ethereum-optimism/kona", branch = "main", features = [
@@ -58,9 +59,10 @@ rkyv = "0.7.44"
 hex = "0.4.3"
 
 # local
+op-succinct-prove = { path = "scripts/prove" }
+op-succinct-witnessgen = { path = "scripts/witnessgen" }
 op-succinct-client-utils = { path = "utils/client" }
 op-succinct-host-utils = { path = "utils/host" }
-zkvm-host = { path = "zkvm-host" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
 # ethereum

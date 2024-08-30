@@ -7,7 +7,7 @@ use num_format::{Locale, ToFormattedString};
 use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_proof_stdin, ProgramType};
 use sp1_sdk::{utils, ProverClient};
 
-pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../elf/fault-proof-elf");
+pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/fault-proof-elf");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
