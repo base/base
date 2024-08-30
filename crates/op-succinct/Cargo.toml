@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "client-programs/*",
+    "programs/*",
     "crates/*",
     "native-host",
     "zkvm-host",
