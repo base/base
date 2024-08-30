@@ -9,8 +9,7 @@ on:
     paths:
       - "crates/**"
       - "programs/**"
-      - "native-host/**"
-      - "zkvm-host/**"
+      - "scripts/**"
       - "proposer/succinct/**"
       - "Cargo.toml"
   merge_group:

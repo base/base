@@ -10,8 +10,8 @@ use op_succinct_host_utils::{
 };
 use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
 
-pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../elf/range-elf");
+pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
+pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

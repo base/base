@@ -27,9 +27,9 @@ RUN curl -L https://sp1.succinct.xyz | bash && \
     
 # Copy the relevant OP Succinct server files.
 COPY Cargo.toml Cargo.lock ./
-COPY zkvm-host ./zkvm-host
+COPY scripts/prove ./scripts/prove
 COPY proposer/succinct ./proposer/succinct
-COPY native-host ./native-host
+COPY scripts/witnessgen ./scripts/witnessgen
 COPY elf ./elf
 COPY utils ./utils
 COPY programs ./programs
