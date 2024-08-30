@@ -14,6 +14,9 @@ pub struct OpTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
     pub inner: alloy_rpc_types_eth::TransactionReceipt<OpReceiptEnvelope<alloy_rpc_types_eth::Log>>,
+    /// L1 block info of the transaction.
+    #[serde(flatten)]
+    pub l1_block_info: L1BlockInfo,
 }
 
 impl ReceiptResponse for OpTransactionReceipt {
@@ -39,26 +42,9 @@ impl ReceiptResponse for OpTransactionReceipt {
 #[serde(rename_all = "camelCase")]
 #[doc(alias = "OptimismTxReceiptFields")]
 pub struct OptimismTransactionReceiptFields {
-    /// L1 base fee is the minimum price per unit of gas.
-    ///
-    /// Present from pre-bedrock as de facto L1 price per unit of gas. L1 base fee after Bedrock.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_gas_price: Option<u128>,
-    /// L1 gas used.
-    ///
-    /// Present from pre-bedrock to Ecotone. Null after Ecotone.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_gas_used: Option<u128>,
-    /// L1 fee for the transaction.
-    ///
-    /// Present from pre-bedrock.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_fee: Option<u128>,
-    /// L1 fee scalar for the transaction
-    ///
-    /// Present from pre-bedrock to Ecotone. Null after Ecotone.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "l1_fee_scalar_serde")]
-    pub l1_fee_scalar: Option<f64>,
+    /// L1 block info.
+    #[serde(flatten)]
+    pub l1_block_info: L1BlockInfo,
     /* --------------------------------------- Regolith --------------------------------------- */
     /// Deposit nonce for deposit transactions.
     ///
@@ -71,22 +57,6 @@ pub struct OptimismTransactionReceiptFields {
     /// Always null prior to the Canyon hardfork.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
-    /* ---------------------------------------- Ecotone ---------------------------------------- */
-    /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
-    ///
-    /// Always null prior to the Ecotone hardfork.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_base_fee_scalar: Option<u128>,
-    /// L1 blob base fee.
-    ///
-    /// Always null prior to the Ecotone hardfork.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_blob_base_fee: Option<u128>,
-    /// L1 blob base fee scalar. Applied to blob base fee to compute weighted gas price multiplier.
-    ///
-    /// Always null prior to the Ecotone hardfork.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub l1_blob_base_fee_scalar: Option<u128>,
 }
 
 /// Serialize/Deserialize l1FeeScalar to/from string
@@ -122,6 +92,54 @@ impl From<OptimismTransactionReceiptFields> for OtherFields {
     }
 }
 
+/// L1 block info extracted from inout of first transaction in every block.
+///
+/// The subset of [`OptimismTransactionReceiptFields`], that encompasses L1 block
+/// info:
+/// <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct L1BlockInfo {
+    /// L1 base fee is the minimum price per unit of gas.
+    ///
+    /// Present from pre-bedrock as de facto L1 price per unit of gas. L1 base fee after Bedrock.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_gas_price: Option<u128>,
+    /// L1 gas used.
+    ///
+    /// Present from pre-bedrock to Ecotone. Null after Ecotone.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_gas_used: Option<u128>,
+    /// L1 fee for the transaction.
+    ///
+    /// Present from pre-bedrock.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_fee: Option<u128>,
+    /// L1 fee scalar for the transaction
+    ///
+    /// Present from pre-bedrock to Ecotone. Null after Ecotone.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "l1_fee_scalar_serde")]
+    pub l1_fee_scalar: Option<f64>,
+    /* ---------------------------------------- Ecotone ---------------------------------------- */
+    /// L1 base fee scalar. Applied to base fee to compute weighted gas price multiplier.
+    ///
+    /// Always null prior to the Ecotone hardfork.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_base_fee_scalar: Option<u128>,
+    /// L1 blob base fee.
+    ///
+    /// Always null prior to the Ecotone hardfork.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_blob_base_fee: Option<u128>,
+    /// L1 blob base fee scalar. Applied to blob base fee to compute weighted gas price multiplier.
+    ///
+    /// Always null prior to the Ecotone hardfork.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub l1_blob_base_fee_scalar: Option<u128>,
+}
+
+impl Eq for L1BlockInfo {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,7 +163,13 @@ mod tests {
         "to": "0x4200000000000000000000000000000000000015",
         "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
         "transactionIndex": "0x0",
-        "type": "0x7e"
+        "type": "0x7e",
+        "l1GasPrice": "0x3ef12787",
+        "l1GasUsed": "0x1177",
+        "l1Fee": "0x5bf1ab43d",
+        "l1BaseFeeScalar": "0x1",
+        "l1BlobBaseFee": "0x600ab8f05e64",
+        "l1BlobBaseFeeScalar": "0x1"
     }"#;
 
         let receipt: OpTransactionReceipt = serde_json::from_str(s).unwrap();
@@ -165,8 +189,8 @@ mod tests {
     #[test]
     fn serialize_l1_fee_scalar() {
         let op_fields = OptimismTransactionReceiptFields {
-            l1_fee_scalar: Some(0.678),
-            ..OptimismTransactionReceiptFields::default()
+            l1_block_info: L1BlockInfo { l1_fee_scalar: Some(0.678), ..Default::default() },
+            ..Default::default()
         };
 
         let json = serde_json::to_value(op_fields).unwrap();
@@ -181,18 +205,18 @@ mod tests {
         });
 
         let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_fee_scalar, Some(0.678f64));
+        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
 
         let json = json!({
             "l1FeeScalar": Value::Null
         });
 
         let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_fee_scalar, None);
+        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
 
         let json = json!({});
 
         let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
-        assert_eq!(op_fields.l1_fee_scalar, None);
+        assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
     }
 }
