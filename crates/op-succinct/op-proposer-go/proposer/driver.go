@@ -18,7 +18,11 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
 
-	"github.com/ethereum-optimism/optimism/op-proposer/bindings"
+	// Original Optimism Bindings
+	opbindings "github.com/ethereum-optimism/optimism/op-proposer/bindings"
+	// OP Succinct Contract Bindings
+	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
+
 	"github.com/ethereum-optimism/optimism/op-proposer/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -84,7 +88,7 @@ type L2OutputSubmitter struct {
 	l2ooContract L2OOContract
 	l2ooABI      *abi.ABI
 
-	dgfContract *bindings.DisputeGameFactoryCaller
+	dgfContract *opbindings.DisputeGameFactoryCaller
 	dgfABI      *abi.ABI
 
 	db db.ProofDB
@@ -112,7 +116,7 @@ func NewL2OutputSubmitter(setup DriverSetup) (_ *L2OutputSubmitter, err error) {
 }
 
 func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup DriverSetup) (*L2OutputSubmitter, error) {
-	l2ooContract, err := bindings.NewL2OutputOracleCaller(*setup.Cfg.L2OutputOracleAddr, setup.L1Client)
+	l2ooContract, err := opsuccinctbindings.NewZKL2OutputOracleCaller(*setup.Cfg.L2OutputOracleAddr, setup.L1Client)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create L2OO at address %s: %w", setup.Cfg.L2OutputOracleAddr, err)
@@ -127,7 +131,7 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 	}
 	log.Info("Connected to L2OutputOracle", "address", setup.Cfg.L2OutputOracleAddr, "version", version)
 
-	parsed, err := bindings.L2OutputOracleMetaData.GetAbi()
+	parsed, err := opsuccinctbindings.ZKL2OutputOracleMetaData.GetAbi()
 	if err != nil {
 		cancel()
 		return nil, err
@@ -153,7 +157,7 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 
 // Create a new submitter for the DisputeGameFactory. Note: This is unused in OP-Succinct.
 func newDGFSubmitter(ctx context.Context, cancel context.CancelFunc, setup DriverSetup) (*L2OutputSubmitter, error) {
-	dgfCaller, err := bindings.NewDisputeGameFactoryCaller(*setup.Cfg.DisputeGameFactoryAddr, setup.L1Client)
+	dgfCaller, err := opbindings.NewDisputeGameFactoryCaller(*setup.Cfg.DisputeGameFactoryAddr, setup.L1Client)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create DGF at address %s: %w", setup.Cfg.DisputeGameFactoryAddr, err)
@@ -168,7 +172,7 @@ func newDGFSubmitter(ctx context.Context, cancel context.CancelFunc, setup Drive
 	}
 	log.Info("Connected to DisputeGameFactory", "address", setup.Cfg.DisputeGameFactoryAddr, "version", version)
 
-	parsed, err := bindings.DisputeGameFactoryMetaData.GetAbi()
+	parsed, err := opbindings.DisputeGameFactoryMetaData.GetAbi()
 	if err != nil {
 		cancel()
 		return nil, err

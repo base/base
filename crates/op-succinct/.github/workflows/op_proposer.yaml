@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - 'op-proposer-go/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'op-proposer-go/**'
 
 jobs:
   test_op_proposer_go:
