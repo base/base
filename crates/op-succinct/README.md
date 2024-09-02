@@ -23,9 +23,9 @@ The repository is organized into the following directories:
 - `proposer`: The implementation of the `op-succinct-proposer` service.
 - `scripts`: The scripts for proving and generating witnesses.
 
-## Acknowlements
+## Acknowledgments
 
 This repo could not exist without:
 * [OP Stack](https://docs.optimism.io/stack/getting-started): Modular software components for building L2 blockchains.
-* [Kona](https://github.com/anton-rs/kona/tree/main): A portable implementations of the OP Stack rollup state transition, namely the derivation pipeline and the block execution logic.
+* [Kona](https://github.com/anton-rs/kona/tree/main): A portable implementation of the OP Stack rollup state transition, namely the derivation pipeline and the block execution logic.
 * [SP1](https://github.com/succinctlabs/sp1): A fast, feature-complete zkVM for developers that can prove the execution of arbitrary Rust (or any LLVM-compiled) program.
