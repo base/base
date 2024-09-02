@@ -1,38 +1,31 @@
 # op-succinct
 
-Standalone repo to use Kona & SP1 to verify OP Stack blocks.
+OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour using SP1.
 
+**[Docs](https://succinctlabs.github.io/op-succinct)**
+| [Learn More](https://succinctlabs.github.io/op-succinct)
 
-## ⚠️ Work in Progress
+> [!CAUTION]
+>
+> This repository is still an active work-in-progress and is not audited or meant for production usage.
 
-**Warning**: This repository is currently a work in progress. The code and documentation are actively being developed and may be subject to significant changes. Use with caution and expect frequent updates.
+## Getting Started
 
+Today, you can already use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book]() to deploy the `ZKL2OutputOracle` contract and start the `op-succinct-proposer` service.
 
-## Overview
+## Repository Overview
 
-**`crates`**
-- `client-utils`: A suite of utilities for the client program.
-- `host-utils`: A suite of utilities for constructing the host which runs the OP Succinct program.
+The repository is organized into the following directories:
 
-**`op-succinct`**
-- `native-host`: The host program which runs the `op-succinct` program natively using `kona`.
-- `zkvm-host`: The host program which runs the `op-succinct` program in the SP1 zkVM.
-- `programs`: The programs proven in SP1.
-    - `fault-proof` and `range` are used to verifiably derive and execute single blocks
-    and batches of blocks respectively. Their binary's are first run in native mode on the `kona-host` to
-    fetch the witness data, then they use SP1 to verifiably execute the program.
-   - For `aggregation`, which is used to generate an aggregate proof for a set of batches,
-   first generate proofs for `range` programs for each batch, then use `aggregation` to
-   generate an aggregate proof.
+- `book`: The documentation for OP Succinct users and developers.
+- `contracts`: The solidity contracts for posting state roots to L1.
+- `programs`: The programs for proving the execution and derivation of the L2 state transitions and proof aggregation.
+- `proposer`: The implementation of the `op-succinct-proposer` service.
+- `scripts`: The scripts for proving and generating witnesses.
 
-## Running `op-succinct`
+## Acknowlements
 
-For instructions on how to upgrade an OP Stack chain to use ZK validity proofs, refer to the [`op-succinct` Guide](./op-succinct-proposer/TUTORIAL.md).
-
-## Estimating Cycle Counts
-
-To learn how to estimate cycle counts for a given block range, check out our [Cycle Count Guide](./zkvm-host/CYCLE_COUNT.md).
-
-## Open Source
-
-This code is open sourced under the [Apache 2.0 License](./LICENSE.txt).
+This repo could not exist without:
+* [OP Stack](https://docs.optimism.io/stack/getting-started): Modular software components for building L2 blockchains.
+* [Kona](https://github.com/anton-rs/kona/tree/main): A portable implementations of the OP Stack rollup state transition, namely the derivation pipeline and the block execution logic.
+* [SP1](https://github.com/succinctlabs/sp1): A fast, feature-complete zkVM for developers that can prove the execution of arbitrary Rust (or any LLVM-compiled) program.

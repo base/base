@@ -1,11 +1,24 @@
-## ZK Contracts
+# Deploy Smart Contracts
 
-The `contracts/` directory consists of two things:
+The first step in deploying OP Succinct is to deploy a Solidity smart contract that will verify ZKPs of OP derivation (OP's name for their state transition function) and contain the latest state root of your rollup.
 
-1) The `ZKL2OutputOracle.sol` contract, a diff of Optimism's `L2OutputOracle.sol` contract with the necessary changes to support ZK validity proofs.
+## Overview
+
+The `contracts/` directory has the relevant smart contracts and deployment scripts for this step. In particular, it contains:
+
+1) The `ZKL2OutputOracle.sol` contract which verifies a ZKP of OP derivation, and is a small of Optimism's `L2OutputOracle.sol` contract with the necessary changes to support ZK validity proofs.
 
 2) The `ZKUpgrader.s.sol` script, which deploys the `ZKL2OutputOracle.sol` implementation contract, upgrades an existing `L2OutputOracleProxy` to point to it, and initializes the new contract with values from `zkconfig.json`.
 
+[TODO: insert a diagram of how all the OP stack contracts interact with the ZKL2OutputOracle.sol]
+
+## Deployment
+
+### Upgrading an existing `L2OutputOracle.sol`
+
+### Deploying `ZKL2OutputOracle.sol`
+
+### ... 
 3) The `ZKDeployer.s.sol` script, which deploys the `ZKL2OutputOracle.sol` implementation contract, upgrades an existing `L2OutputOracleProxy` to point to it, and initializes the new contract with values from `zkconfig.json`.
 
 ## Deploy Fresh Proxy
