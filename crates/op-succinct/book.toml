@@ -1,0 +1,17 @@
+[book]
+authors = ["Uma Roy"]
+language = "en"
+multilingual = false
+src = "book"
+title = "OP Succinct"
+description = "A book on all things SP1"
+
+[build]
+build-dir = "target/book"
+
+[preprocessor.template]
+before = ["links"]
+
+[preprocessor.index]
+
+[preprocessor.links]
