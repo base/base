@@ -2,25 +2,19 @@ use anyhow::Result;
 use clap::Parser;
 use kona_host::HostCli;
 use kona_primitives::RollupConfig;
-use log::{error, info};
+use log::info;
 use op_succinct_host_utils::{
     fetcher::{ChainMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::{get_execution_stats, ExecutionStats},
+    witnessgen::WitnessGenExecutor,
     ProgramType,
 };
-use op_succinct_proposer::run_native_host;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
-use std::{
-    cmp::min,
-    env, fs,
-    future::Future,
-    path::PathBuf,
-    time::{Duration, Instant},
-};
+use std::{cmp::min, env, fs, future::Future, path::PathBuf, time::Instant};
 use tokio::task::block_in_place;
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -143,28 +137,30 @@ async fn run_native_data_generation(
     split_ranges: &[SpanBatchRange],
 ) -> Vec<BatchHostCli> {
     const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
-    const NATIVE_HOST_TIMEOUT: Duration = Duration::from_secs(300);
 
-    // TODO: Shut down all processes when the program exits OR a Ctrl+C is pressed.
-    let futures = split_ranges.chunks(CONCURRENT_NATIVE_HOST_RUNNERS).map(|chunk| {
-        futures::future::join_all(chunk.iter().map(|range| async {
+    let futures = split_ranges.chunks(CONCURRENT_NATIVE_HOST_RUNNERS).map(|chunk| async {
+        let mut witnessgen_executor = WitnessGenExecutor::default();
+
+        let mut batch_host_clis = Vec::new();
+        for range in chunk.iter() {
             let host_cli = data_fetcher
                 .get_host_cli_args(range.start, range.end, ProgramType::Multi)
                 .await
                 .unwrap();
+            batch_host_clis.push(BatchHostCli {
+                host_cli: host_cli.clone(),
+                start: range.start,
+                end: range.end,
+            });
+            witnessgen_executor
+                .spawn_witnessgen(&host_cli)
+                .await
+                .expect("Failed to spawn witness generation process.");
+        }
 
-            let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
+        witnessgen_executor.flush().await.expect("Failed to flush witness generation.");
 
-            fs::create_dir_all(&data_dir).unwrap();
-
-            let res = run_native_host(&host_cli, NATIVE_HOST_TIMEOUT).await;
-            if res.is_err() {
-                error!("Failed to run native host: {:?}", res.err().unwrap());
-                std::process::exit(1);
-            }
-
-            BatchHostCli { host_cli, start: range.start, end: range.end }
-        }))
+        batch_host_clis
     });
 
     futures::future::join_all(futures).await.into_iter().flatten().collect()

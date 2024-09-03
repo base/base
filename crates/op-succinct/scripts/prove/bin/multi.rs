@@ -2,11 +2,11 @@ use std::{fs, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
-use kona_host::start_server_and_native_client;
 use op_succinct_host_utils::{
     fetcher::{ChainMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::get_execution_stats,
+    witnessgen::WitnessGenExecutor,
     ProgramType,
 };
 use sp1_sdk::{utils, ProverClient};
@@ -57,7 +57,9 @@ async fn main() -> Result<()> {
         fs::create_dir_all(&data_dir).unwrap();
 
         // Start the server and native client.
-        start_server_and_native_client(host_cli.clone()).await?;
+        let mut witnessgen_executor = WitnessGenExecutor::default();
+        witnessgen_executor.spawn_witnessgen(&host_cli).await?;
+        witnessgen_executor.flush().await?;
     }
     let execution_duration = start_time.elapsed();
     println!("Execution Duration: {:?}", execution_duration);
