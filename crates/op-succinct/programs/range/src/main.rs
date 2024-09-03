@@ -1,32 +1,34 @@
 //! A program to verify a Optimism L2 block STF in the zkVM.
+//!
+//! This binary contains the client program for executing the Optimism rollup state transition
+//! across a range of blocks, which can be used to generate an on chain validity proof. Depending on
+//! the compilation pipeline, it will compile to be run either in native mode or in zkVM mode. In
+//! native mode, the data for verifying the batch validity is fetched from RPC, while in zkVM mode,
+//! the data is supplied by the host binary to the verifiable program.
+
 #![cfg_attr(target_os = "zkvm", no_main)]
 
+extern crate alloc;
+
+use alloc::sync::Arc;
+
+use alloy_consensus::Sealed;
+use alloy_eips::eip2718::Decodable2718;
+use cfg_if::cfg_if;
 use kona_client::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
 };
 use kona_executor::StatelessL2BlockExecutor;
-use op_succinct_client_utils::precompiles::ZKVMPrecompileOverride;
-
-use alloy_eips::eip2718::Decodable2718;
 use kona_primitives::{L2ExecutionPayloadEnvelope, OpBlock};
+use log::info;
 use op_alloy_consensus::OpTxEnvelope;
-
-use alloc::sync::Arc;
-use alloy_consensus::Sealed;
-use cfg_if::cfg_if;
-
 use op_succinct_client_utils::{
     driver::MultiBlockDerivationDriver, l2_chain_provider::MultiblockOracleL2ChainProvider,
+    precompiles::ZKVMPrecompileOverride,
 };
 
-use log::info;
-
-extern crate alloc;
-
 cfg_if! {
-    // If the target OS is zkVM, set everything up to read input data
-    // from SP1 and compile to a program that can be run in zkVM.
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
 
@@ -48,9 +50,9 @@ fn main() {
         ////////////////////////////////////////////////////////////////
 
         cfg_if! {
+            // If we are compiling for the zkVM, read inputs from SP1 to generate boot info
+            // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
-                // If we are compiling for the zkVM, read inputs from SP1 to generate boot info
-                // and in memory oracle.
                 println!("cycle-tracker-start: boot-load");
                 let boot = sp1_zkvm::io::read::<RawBootInfo>();
                 sp1_zkvm::io::commit_slice(&boot.abi_encode());
@@ -65,9 +67,10 @@ fn main() {
                 println!("cycle-tracker-report-start: oracle-verify");
                 oracle.verify().expect("key value verification failed");
                 println!("cycle-tracker-report-end: oracle-verify");
-            } else {
-                // If we are compiling for online mode, create a caching oracle that speaks to the
-                // fetcher via hints, and gather boot info from this oracle.
+            }
+            // If we are compiling for online mode, create a caching oracle that speaks to the
+            // fetcher via hints, and gather boot info from this oracle.
+            else {
                 let oracle = Arc::new(CachingOracle::new(1024, ORACLE_READER, HINT_WRITER));
                 let boot = Arc::new(BootInfo::load(oracle.as_ref()).await.unwrap());
             }

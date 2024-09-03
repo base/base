@@ -8,22 +8,16 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-
-# workspace (general)
 cfg-if.workspace = true
-
-# workspace (ethereum)
 alloy-consensus.workspace = true
-
-# workspace (kona)
-kona-primitives.workspace = true
-kona-executor.workspace = true
-kona-client.workspace = true
-
-# workspace (local)
-op-succinct-client-utils.workspace = true
 
 # sp1
 sp1-zkvm = { workspace = true }
 
-[dev-dependencies]
+# kona
+kona-primitives.workspace = true
+kona-executor.workspace = true
+kona-client.workspace = true
+
+# op-succinct
+op-succinct-client-utils.workspace = true
