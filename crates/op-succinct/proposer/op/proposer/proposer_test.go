@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
 	"github.com/ethereum-optimism/optimism/op-proposer/metrics"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
@@ -16,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/joho/godotenv"
+	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
 	"github.com/succinctlabs/op-succinct-go/proposer/flags"
 	"github.com/urfave/cli/v2"
 )
