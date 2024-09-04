@@ -51,7 +51,7 @@ impl TxDeposit {
     /// - `gas_limit`
     /// - `is_system_transaction`
     /// - `input`
-    pub(crate) fn decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+    pub fn decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
