@@ -7,7 +7,6 @@
 - [Overview](#overview)
   - [Deposit Context](#deposit-context)
   - [Gas Considerations](#gas-considerations)
-- [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -35,7 +34,7 @@ if any exists, or after the first L1 attributes transaction if there are no user
 
 The order of deposit transactions occurs as follows:
 
-1. L1 attributes transaction calling [`setL1BlockValuesInterop()`](../protocol/ecotone/l1-attributes.md).
+1. L1 attributes transaction calling [`setL1BlockValuesIsthmus()`](../protocol/ecotone/l1-attributes.md).
 1. User deposits
 1. L1 attributes transaction calling [`depositsComplete()`](../protocol/ecotone/l1-attributes.md)
 
@@ -46,7 +45,3 @@ There's no guarantee on the minimum gas available for the second L1 attributes t
 may be filled by the other deposit transactions. As a consequence, a deposit context may spill into multiple blocks.
 
 This will be fixed in the future.
-
-## Security Considerations
-
-TODO
