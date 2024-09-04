@@ -28,6 +28,9 @@ pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
 mod block;
 pub use block::{BlockInfo, L2BlockInfo};
 
+mod batch_tx;
+pub use batch_tx::BatchTransaction;
+
 mod frame;
 pub use frame::{Frame, FrameDecodingError, FrameParseError};
 
