@@ -107,7 +107,7 @@ pub struct L1BlockInfo {
     pub l1_gas_price: Option<u128>,
     /// L1 gas used.
     ///
-    /// Present from pre-bedrock to Ecotone. Null after Ecotone.
+    /// Present from pre-bedrock, deprecated as of Fjord.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_gas_used: Option<u128>,
     /// L1 fee for the transaction.
