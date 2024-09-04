@@ -357,8 +357,7 @@ impl Encodable2718 for OpTxEnvelope {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
             OpTxEnvelope::Deposit(tx) => {
-                out.put_u8(OpTxType::Deposit as u8);
-                tx.encode(out);
+                tx.encode_inner(out, false);
             }
         }
     }

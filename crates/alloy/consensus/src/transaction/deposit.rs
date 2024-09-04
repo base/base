@@ -111,6 +111,47 @@ impl TxDeposit {
         mem::size_of::<bool>() + // is_system_transaction
         self.input.len() // input
     }
+
+    /// Get the transaction type
+    pub(crate) const fn tx_type(&self) -> OpTxType {
+        OpTxType::Deposit
+    }
+
+    /// Inner encoding function that is used for both rlp [`Encodable`] trait and for calculating
+    /// hash that for eip2718 does not require rlp header
+    pub fn encode_inner(&self, out: &mut dyn BufMut, with_header: bool) {
+        let payload_length = self.fields_len();
+        if with_header {
+            Header {
+                list: false,
+                payload_length: 1 + Header { list: true, payload_length }.length() + payload_length,
+            }
+            .encode(out);
+        }
+        out.put_u8(self.tx_type() as u8);
+        let header = Header { list: true, payload_length };
+        header.encode(out);
+        self.encode_fields(out);
+    }
+
+    /// Output the length of the RLP signed transaction encoding.
+    ///
+    /// If `with_header` is true, the length includes the RLP header.
+    pub fn encoded_len(&self, with_header: bool) -> usize {
+        // Count the length of the payload
+        let payload_length = self.fields_len();
+
+        // 'transaction type byte length' + 'header length' + 'payload length'
+        let inner_payload_length =
+            1 + Header { list: true, payload_length }.length() + payload_length;
+
+        if with_header {
+            Header { list: true, payload_length: inner_payload_length }.length()
+                + inner_payload_length
+        } else {
+            inner_payload_length
+        }
+    }
 }
 
 impl Transaction for TxDeposit {
@@ -272,5 +313,49 @@ mod tests {
         };
 
         assert!(tx_deposit.size() > tx_deposit.fields_len());
+    }
+
+    #[test]
+    fn test_encode_inner_with_and_without_header() {
+        let tx_deposit = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::default(),
+            to: TxKind::default(),
+            mint: Some(100),
+            value: U256::default(),
+            gas_limit: 50000,
+            is_system_transaction: true,
+            input: Bytes::default(),
+        };
+
+        let mut buffer_with_header = BytesMut::new();
+        tx_deposit.encode_inner(&mut buffer_with_header, true);
+
+        let mut buffer_without_header = BytesMut::new();
+        tx_deposit.encode_inner(&mut buffer_without_header, false);
+
+        println!("buffer_with_header: {:?}", buffer_with_header);
+        println!("buffer_without_header: {:?}", buffer_without_header);
+
+        assert!(buffer_with_header.len() > buffer_without_header.len());
+    }
+
+    #[test]
+    fn test_payload_length_header() {
+        let tx_deposit = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::default(),
+            to: TxKind::default(),
+            mint: Some(100),
+            value: U256::default(),
+            gas_limit: 50000,
+            is_system_transaction: true,
+            input: Bytes::default(),
+        };
+
+        let total_len = tx_deposit.encoded_len(true);
+        let len_without_header = tx_deposit.encoded_len(false);
+
+        assert!(total_len > len_without_header);
     }
 }
