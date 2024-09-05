@@ -1,6 +1,6 @@
 use std::process::Command;
 
-// use sp1_build::{build_program_with_args, BuildArgs};
+use sp1_build::{build_program_with_args, BuildArgs};
 
 /// Build a native program.
 fn build_native_program(program: &str) {
@@ -41,17 +41,18 @@ fn build_native_host_runner() {
     println!("cargo:warning=native_host_runner built with release profile",);
 }
 
-// /// Build a program for the zkVM.
-// fn build_zkvm_program(program: &str) {
-//     build_program_with_args(
-//         &format!("../../programs/{}", program),
-//         BuildArgs {
-//             elf_name: format!("{}-elf", program),
-//             // docker: true,
-//             ..Default::default()
-//         },
-//     );
-// }
+/// Build a program for the zkVM.
+#[allow(dead_code)]
+fn build_zkvm_program(program: &str) {
+    build_program_with_args(
+        &format!("../../programs/{}", program),
+        BuildArgs {
+            elf_name: format!("{}-elf", program),
+            // docker: true,
+            ..Default::default()
+        },
+    );
+}
 
 fn main() {
     let programs = vec!["range"];

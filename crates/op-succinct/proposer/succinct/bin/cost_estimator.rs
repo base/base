@@ -166,6 +166,10 @@ async fn run_native_data_generation(
                 ProgramType::Multi,
             ))
             .expect("Failed to get host CLI args.");
+
+            // Overwrite existing data directory.
+            fs::create_dir_all(&host_cli.data_dir.clone().unwrap()).unwrap();
+
             batch_host_clis.push(BatchHostCli {
                 host_cli: host_cli.clone(),
                 start: range.start,
