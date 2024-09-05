@@ -31,6 +31,19 @@ pub enum ChannelError {
     FrameBeyondEndFrame(usize),
 }
 
+impl core::fmt::Display for ChannelError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ChannelError::FrameIdMismatch => write!(f, "Frame id does not match channel id"),
+            ChannelError::ChannelClosed => write!(f, "Channel is closed"),
+            ChannelError::FrameNumberExists(n) => write!(f, "Frame number {} already exists", n),
+            ChannelError::FrameBeyondEndFrame(n) => {
+                write!(f, "Frame number {} is beyond end frame", n)
+            }
+        }
+    }
+}
+
 /// A Channel is a set of batches that are split into at least one, but possibly multiple frames.
 ///
 /// Frames are allowed to be ingested out of order.

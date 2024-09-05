@@ -32,7 +32,9 @@ mod batch_tx;
 pub use batch_tx::BatchTransaction;
 
 mod frame;
-pub use frame::{Frame, FrameDecodingError, FrameParseError};
+pub use frame::{
+    Frame, FrameDecodingError, FrameParseError, DERIVATION_VERSION_0, FRAME_OVERHEAD, MAX_FRAME_LEN,
+};
 
 mod channel;
 pub use channel::{Channel, FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL};
