@@ -8,3 +8,4 @@
   - [Proposer](./getting-started/proposer.md)
   - [Configuration](./getting-started/configuration.md)
 - [Cost Estimator CLI Tool](./cost-estimator.md)
+- [L2 Node Setup](./node-setup.md)

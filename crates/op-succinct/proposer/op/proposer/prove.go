@@ -16,9 +16,10 @@ import (
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
 )
 
-// 1) Retry all failed proofs
+// Process all of the pending proofs.
 func (l *L2OutputSubmitter) ProcessPendingProofs() error {
-	failedReqs, err := l.db.GetAllProofsWithStatus(proofrequest.StatusFAILED)
+	// Retrieve all proofs that failed without reaching the prover network (specifically, proofs that failed with no proof ID).
+	failedReqs, err := l.db.GetProofsFailedOnServer()
 	if err != nil {
 		return fmt.Errorf("failed to get proofs failed on server: %w", err)
 	}
@@ -30,7 +31,8 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 	}
 
 	// Get all pending proofs with a status of requested and a prover ID that is not empty.
-	// TODO: There should be a proofrequest status where the prover ID is not empty.
+	// TODO: There should be a separate proofrequest status for proofs that failed before reaching the prover network,
+	// and those that failed after reaching the prover network.
 	reqs, err := l.db.GetAllPendingProofs()
 	if err != nil {
 		return err
@@ -83,22 +85,22 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest) error {
 			l.Log.Error("failed to add new proof request", "err")
 			return err
 		}
-	}
+	} else {
+		// If a SPAN proof failed, assume it was too big and the SP1 runtime OOM'd.
+		// Therefore, create two new entries for the original proof split in half.
+		l.Log.Info("span proof failed, splitting in half to retry", "req", req)
+		tmpStart := req.StartBlock
+		tmpEnd := tmpStart + ((req.EndBlock - tmpStart) / 2)
+		for i := 0; i < 2; i++ {
+			err := l.db.NewEntryWithReqAddedTimestamp("SPAN", tmpStart, tmpEnd, 0)
+			if err != nil {
+				l.Log.Error("failed to add new proof request", "err", err)
+				return err
+			}
 
-	// If a SPAN proof failed, assume it was too big and the SP1 runtime OOM'd.
-	// Therefore, create two new entries for the original proof split in half.
-	l.Log.Info("span proof failed, splitting in half to retry", "req", req)
-	tmpStart := req.StartBlock
-	tmpEnd := tmpStart + ((req.EndBlock - tmpStart) / 2)
-	for i := 0; i < 2; i++ {
-		err := l.db.NewEntryWithReqAddedTimestamp("SPAN", tmpStart, tmpEnd, 0)
-		if err != nil {
-			l.Log.Error("failed to add new proof request", "err", err)
-			return err
+			tmpStart = tmpEnd + 1
+			tmpEnd = req.EndBlock
 		}
-
-		tmpStart = tmpEnd + 1
-		tmpEnd = req.EndBlock
 	}
 
 	return nil

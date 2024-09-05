@@ -27,6 +27,11 @@ run-multi start end use-cache="false" prove="false":
 
   cargo run --bin multi --release -- --start {{start}} --end {{end}} $CACHE_FLAG $PROVE_FLAG
 
+# Runs the cost estimator for a given block range.
+cost-estimator start end:
+  #!/usr/bin/env bash
+  cargo run --bin cost_estimator --release -- --start {{start}} --end {{end}}
+
 # Runs the client program in native execution mode. Modified version of Kona Native Client execution:
 # https://github.com/ethereum-optimism/kona/blob/ae71b9df103c941c06b0dc5400223c4f13fe5717/bin/client/justfile#L65-L108
 run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC}' l2_rpc='${L2_RPC}' verbosity="-vvvv":

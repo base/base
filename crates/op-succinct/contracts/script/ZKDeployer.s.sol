@@ -7,7 +7,7 @@ import {Utils} from "../test/helpers/Utils.sol";
 import {Proxy} from "@optimism/src/universal/Proxy.sol";
 
 contract ZKDeployer is Script, Utils {
-    function run() public {
+    function run() public returns (address) {
         vm.startBroadcast();
 
         Config memory config = readJsonWithRPCFromEnv("zkconfig.json");
@@ -19,5 +19,7 @@ contract ZKDeployer is Script, Utils {
         upgradeAndInitialize(zkL2OutputOracleImpl, config, address(0), bytes32(0), 0);
 
         vm.stopBroadcast();
+
+        return config.l2OutputOracleProxy;
     }
 }
