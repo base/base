@@ -211,6 +211,26 @@ func (db *ProofDB) GetLatestEndBlock() (uint64, error) {
 	return uint64(maxEnd.EndBlock), nil
 }
 
+// If a proof failed to be sent to the prover network, it's status will be set to FAILED, but the prover request ID will be empty.
+// This function returns all such proofs.
+func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
+	proofs, err := db.client.ProofRequest.Query().
+		Where(
+			proofrequest.StatusEQ(proofrequest.StatusFAILED),
+			proofrequest.ProverRequestIDEQ(""),
+		).
+		All(context.Background())
+
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to query failed proof: %w", err)
+	}
+
+	return proofs, nil
+}
+
 // Get all pending proofs with a status of requested and a prover ID that is not empty.
 func (db *ProofDB) GetAllPendingProofs() ([]*ent.ProofRequest, error) {
 	proofs, err := db.client.ProofRequest.Query().

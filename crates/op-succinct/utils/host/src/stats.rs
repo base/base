@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sp1_sdk::{CostEstimator, ExecutionReport};
 
 /// Statistics for the multi-block execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionStats {
     pub batch_start: u64,
     pub batch_end: u64,
@@ -103,8 +103,12 @@ pub async fn get_execution_stats(
     let kzg_eval_cycles: u64 = *report.cycle_tracker.get("precompile-kzg-eval").unwrap_or(&0);
     let ec_recover_cycles: u64 = *report.cycle_tracker.get("precompile-ec-recover").unwrap_or(&0);
 
-    let cycles_per_block = block_execution_instruction_count / nb_blocks;
-    let cycles_per_transaction = block_execution_instruction_count / nb_transactions;
+    let total_instruction_count = report.total_instruction_count();
+
+    // Cycles per block, transaction are computed with respect to the total instruction count.
+    let cycles_per_block = total_instruction_count / nb_blocks;
+    let cycles_per_transaction = total_instruction_count / nb_transactions;
+
     let transactions_per_block = nb_transactions / nb_blocks;
     let gas_used_per_block = total_gas_used / nb_blocks;
     let gas_used_per_transaction = total_gas_used / nb_transactions;
@@ -113,7 +117,7 @@ pub async fn get_execution_stats(
         batch_start: start,
         batch_end: end,
         execution_duration_sec: execution_duration.as_secs(),
-        total_instruction_count: report.total_instruction_count(),
+        total_instruction_count,
         derivation_instruction_count,
         oracle_verify_instruction_count,
         block_execution_instruction_count,
