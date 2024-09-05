@@ -1,6 +1,6 @@
 //! Block Types for Optimism.
 
-use alloy_primitives::{B256, U64};
+use alloy_primitives::B256;
 use superchain_primitives::BlockID;
 
 #[cfg(feature = "serde")]
@@ -14,22 +14,24 @@ pub struct BlockInfo {
     /// The block hash
     pub hash: B256,
     /// The block number
-    pub number: U64,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    pub number: u64,
     /// The parent block hash
     pub parent_hash: B256,
     /// The block timestamp
-    pub timestamp: U64,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    pub timestamp: u64,
 }
 
 impl BlockInfo {
     /// Instantiates a new [BlockInfo].
-    pub const fn new(hash: B256, number: U64, parent_hash: B256, timestamp: U64) -> Self {
+    pub const fn new(hash: B256, number: u64, parent_hash: B256, timestamp: u64) -> Self {
         Self { hash, number, parent_hash, timestamp }
     }
 
     /// Returns the block ID.
-    pub fn id(&self) -> BlockID {
-        BlockID { hash: self.hash, number: self.number.try_into().expect("U64 conversion to u64") }
+    pub const fn id(&self) -> BlockID {
+        BlockID { hash: self.hash, number: self.number }
     }
 }
 
@@ -53,12 +55,13 @@ pub struct L2BlockInfo {
     /// The L1 origin [BlockID]
     pub l1_origin: BlockID,
     /// The sequence number of the L2 block
-    pub seq_num: U64,
+    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
+    pub seq_num: u64,
 }
 
 impl L2BlockInfo {
     /// Instantiates a new [L2BlockInfo].
-    pub const fn new(block_info: BlockInfo, l1_origin: BlockID, seq_num: U64) -> Self {
+    pub const fn new(block_info: BlockInfo, l1_origin: BlockID, seq_num: u64) -> Self {
         Self { block_info, l1_origin, seq_num }
     }
 }
@@ -72,18 +75,18 @@ mod tests {
     fn test_block_id_bounds() {
         let block_info = BlockInfo {
             hash: B256::from([1; 32]),
-            number: U64::from(0),
+            number: 0,
             parent_hash: B256::from([2; 32]),
-            timestamp: U64::from(1),
+            timestamp: 1,
         };
         let expected = BlockID { hash: B256::from([1; 32]), number: 0 };
         assert_eq!(block_info.id(), expected);
 
         let block_info = BlockInfo {
             hash: B256::from([1; 32]),
-            number: U64::MAX,
+            number: u64::MAX,
             parent_hash: B256::from([2; 32]),
-            timestamp: U64::from(1),
+            timestamp: 1,
         };
         let expected = BlockID { hash: B256::from([1; 32]), number: u64::MAX };
         assert_eq!(block_info.id(), expected);
@@ -93,9 +96,9 @@ mod tests {
     fn test_deserialize_block_info() {
         let block_info = BlockInfo {
             hash: B256::from([1; 32]),
-            number: U64::from(1),
+            number: 1,
             parent_hash: B256::from([2; 32]),
-            timestamp: U64::from(1),
+            timestamp: 1,
         };
 
         let json = r#"{
@@ -113,9 +116,9 @@ mod tests {
     fn test_deserialize_block_info_with_hex() {
         let block_info = BlockInfo {
             hash: B256::from([1; 32]),
-            number: U64::from(1),
+            number: 1,
             parent_hash: B256::from([2; 32]),
-            timestamp: U64::from(1),
+            timestamp: 1,
         };
 
         let json = r#"{
@@ -134,12 +137,12 @@ mod tests {
         let l2_block_info = L2BlockInfo {
             block_info: BlockInfo {
                 hash: B256::from([1; 32]),
-                number: U64::from(1),
+                number: 1,
                 parent_hash: B256::from([2; 32]),
-                timestamp: U64::from(1),
+                timestamp: 1,
             },
             l1_origin: BlockID { hash: B256::from([3; 32]), number: 2 },
-            seq_num: U64::from(3),
+            seq_num: 3,
         };
 
         let json = r#"{
@@ -165,12 +168,12 @@ mod tests {
         let l2_block_info = L2BlockInfo {
             block_info: BlockInfo {
                 hash: B256::from([1; 32]),
-                number: U64::from(1),
+                number: 1,
                 parent_hash: B256::from([2; 32]),
-                timestamp: U64::from(1),
+                timestamp: 1,
             },
             l1_origin: BlockID { hash: B256::from([3; 32]), number: 2 },
-            seq_num: U64::from(3),
+            seq_num: 3,
         };
 
         let json = r#"{

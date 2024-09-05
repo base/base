@@ -23,14 +23,16 @@ hashbrown.workspace = true
 
 # `serde` feature dependencies
 serde = { workspace = true, optional = true }
+alloy-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_json = "1.0"
+serde_json.workspace = true
 
 [features]
 default = ["serde", "std"]
 std = []
 serde = [
   "dep:serde",
+  "dep:alloy-serde",
   "superchain-primitives/serde",
 ]

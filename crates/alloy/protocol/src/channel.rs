@@ -3,7 +3,7 @@
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 
-use alloy_primitives::{Bytes, U64};
+use alloy_primitives::Bytes;
 use hashbrown::HashMap;
 
 use crate::block::BlockInfo;
@@ -150,7 +150,7 @@ impl Channel {
     }
 
     /// Returns the block number of the L1 block that contained the first [Frame] in this channel.
-    pub const fn open_block_number(&self) -> U64 {
+    pub const fn open_block_number(&self) -> u64 {
         self.open_block.number
     }
 
