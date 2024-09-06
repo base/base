@@ -21,7 +21,7 @@ use sp1_sdk::{
     proto::network::{ProofMode, ProofStatus as SP1ProofStatus},
     utils, NetworkProver, Prover, SP1Proof, SP1ProofWithPublicValues,
 };
-use std::{env, fs, time::Duration};
+use std::{env, time::Duration};
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");

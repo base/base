@@ -19,15 +19,30 @@ path = "bin/multi.rs"
 name = "agg"
 path = "bin/agg.rs"
 
+[[bin]]
+name = "fetch_and_save_proof"
+path = "bin/fetch_and_save_proof.rs"
+
+[[bin]]
+name = "vkey"
+path = "bin/vkey.rs"
+
+[[bin]]
+name = "cost_estimator"
+path = "bin/cost_estimator.rs"
+
 [dependencies]
 
 # workspace
+alloy-primitives = { workspace = true }
+alloy = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 cargo_metadata = { workspace = true }
 
 # kona
 kona-host = { workspace = true }
+kona-primitives.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
@@ -38,10 +53,11 @@ sp1-sdk = { workspace = true }
 anyhow.workspace = true
 dotenv.workspace = true
 num-format.workspace = true
-revm.workspace = true
 log.workspace = true
 csv.workspace = true
-
+serde = { workspace = true }
+reqwest = { workspace = true }
+rayon = "1.10.0"
 
 [build-dependencies]
 sp1-build = { workspace = true }

@@ -1,10 +1,10 @@
 use alloy::{
     eips::BlockNumberOrTag,
+    primitives::{Address, B256},
     providers::{Provider, ProviderBuilder, RootProvider},
     transports::http::{reqwest::Url, Client, Http},
 };
 use alloy_consensus::Header;
-use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
