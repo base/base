@@ -8,39 +8,14 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "fetch_and_save_proof"
-path = "bin/fetch_and_save_proof.rs"
-
-[[bin]]
 name = "server"
 path = "bin/server.rs"
-
-[[bin]]
-name = "vkey"
-path = "bin/vkey.rs"
-
-[[bin]]
-name = "cost_estimator"
-path = "bin/cost_estimator.rs"
-
-[[bin]]
-name = "load_stdin"
-path = "bin/load_stdin.rs"
-
-[[bin]]
-name = "span_batch_ranges"
-path = "bin/span_batch_ranges.rs"
 
 [dependencies]
 
 # workspace
 tokio = { workspace = true }
-clap = { workspace = true }
 alloy-primitives = { workspace = true }
-
-# kona
-kona-host = { workspace = true }
-kona-primitives.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
@@ -57,18 +32,8 @@ serde = { workspace = true }
 axum = "0.7.4"
 bincode.workspace = true
 log.workspace = true
-alloy.workspace = true
 base64.workspace = true
 tower-http.workspace = true
-cargo_metadata.workspace = true
-revm.workspace = true
-reqwest.workspace = true
-futures.workspace = true
-itertools.workspace = true
-csv.workspace = true
-rayon = "1.10.0"
-lazy_static = "1.5.0"
-uuid = "1.10.0"
 
 [build-dependencies]
 sp1-build = { workspace = true }

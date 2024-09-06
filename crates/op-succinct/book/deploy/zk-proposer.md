@@ -4,10 +4,10 @@ After deploying the `ZKL2OutputOracle.sol`, the final step is to launch a "ZKP" 
 
 ## Deployment
 
-First, create a `.env.server` file that matches the `.env.server.example` file in the root of the `op-succinct` repo. 
+First, create a `.env` file that matches the `.env.example` file in the root of the `op-succinct` repo. 
 
 ```bash
-cp .env.server.example .env.server
+cp .env.example .env
 ```
 
 <!-- TODO: include more details about how to fill in the .env -->

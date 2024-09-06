@@ -5,7 +5,7 @@ services:
       context: .
       dockerfile: ./proposer/succinct/Dockerfile
     env_file:
-      - .env.server
+      - .env
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -16,7 +16,7 @@ services:
       context: .
       dockerfile: ./proposer/op/Dockerfile.op_proposer
     env_file:
-      - .env.server
+      - .env
     restart: unless-stopped
     depends_on:
       - op-succinct-server

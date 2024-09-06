@@ -30,7 +30,7 @@ func TestCheckpointBlockHash(t *testing.T) {
 	}
 	cliCtx := cli.NewContext(app, flagSet, nil)
 
-	err := godotenv.Load("../../.env.server")
+	err := godotenv.Load("../../.env")
 	if err != nil {
 		t.Fatalf("Error loading .env file: %v", err)
 	}
