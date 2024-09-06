@@ -3,11 +3,8 @@
 use alloy_primitives::B256;
 use superchain_primitives::BlockID;
 
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
-
 /// Block Header Info
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Default)]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct BlockInfo {
@@ -46,7 +43,7 @@ impl core::fmt::Display for BlockInfo {
 }
 
 /// L2 Block Header Info
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct L2BlockInfo {

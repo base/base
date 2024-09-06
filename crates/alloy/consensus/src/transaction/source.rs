@@ -1,7 +1,7 @@
 //! Types for identifying the deposit source.
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
 use alloy_primitives::{keccak256, B256};
 
 /// Source domain identifiers for deposit transactions.

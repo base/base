@@ -3,8 +3,6 @@ use alloy_consensus::{Eip658Value, Receipt, TxReceipt};
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
 use core::borrow::Borrow;
 
 /// Receipt containing result of transaction execution.
@@ -269,6 +267,8 @@ where
     T: arbitrary::Arbitrary<'a>,
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        #[cfg(not(feature = "std"))]
+        use alloc::vec::Vec;
         let deposit_nonce = Option::<u64>::arbitrary(u)?;
         let deposit_receipt_version =
             deposit_nonce.is_some().then(|| u64::arbitrary(u)).transpose()?;

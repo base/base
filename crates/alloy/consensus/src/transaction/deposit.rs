@@ -334,9 +334,6 @@ mod tests {
         let mut buffer_without_header = BytesMut::new();
         tx_deposit.encode_inner(&mut buffer_without_header, false);
 
-        println!("buffer_with_header: {:?}", buffer_with_header);
-        println!("buffer_without_header: {:?}", buffer_without_header);
-
         assert!(buffer_with_header.len() > buffer_without_header.len());
     }
 

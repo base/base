@@ -16,12 +16,12 @@ alloy-primitives = { workspace = true, features = ["rlp"] }
 alloy-consensus.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-serde = { workspace = true, optional = true }
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # serde
+alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 # misc
