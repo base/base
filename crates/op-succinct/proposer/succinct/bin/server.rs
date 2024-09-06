@@ -10,8 +10,10 @@ use base64::{engine::general_purpose, Engine as _};
 use log::info;
 use op_succinct_client_utils::{RawBootInfo, BOOT_INFO_SIZE};
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin,
-    witnessgen::WitnessGenExecutor, ProgramType,
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    get_agg_proof_stdin, get_proof_stdin,
+    witnessgen::WitnessGenExecutor,
+    ProgramType,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
@@ -76,13 +78,9 @@ async fn request_span_proof(
     // and access via Store.
     let data_fetcher = OPSuccinctDataFetcher::new();
 
-    let host_cli =
-        data_fetcher.get_host_cli_args(payload.start, payload.end, ProgramType::Multi).await?;
-
-    let data_dir = host_cli.data_dir.clone().unwrap();
-
-    // Overwrite existing data directory.
-    fs::create_dir_all(&data_dir)?;
+    let host_cli = data_fetcher
+        .get_host_cli_args(payload.start, payload.end, ProgramType::Multi, CacheMode::DeleteCache)
+        .await?;
 
     // Start the server and native client with a timeout.
     // Note: Ideally, the server should call out to a separate process that executes the native

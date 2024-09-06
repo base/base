@@ -3,7 +3,7 @@ use std::{fs, time::Instant};
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
-    fetcher::{ChainMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, ChainMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::get_execution_stats,
     witnessgen::WitnessGenExecutor,
@@ -46,16 +46,15 @@ async fn main() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new();
 
-    let host_cli = data_fetcher.get_host_cli_args(args.start, args.end, ProgramType::Multi).await?;
+    let cache_mode = if args.use_cache { CacheMode::KeepCache } else { CacheMode::DeleteCache };
 
-    let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
+    let host_cli = data_fetcher
+        .get_host_cli_args(args.start, args.end, ProgramType::Multi, cache_mode)
+        .await?;
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
     let start_time = Instant::now();
     if !args.use_cache {
-        // Overwrite existing data directory.
-        fs::create_dir_all(&data_dir).unwrap();
-
         // Start the server and native client.
         let mut witnessgen_executor = WitnessGenExecutor::default();
         witnessgen_executor.spawn_witnessgen(&host_cli).await?;
