@@ -4,7 +4,7 @@ use kona_host::HostCli;
 use kona_primitives::RollupConfig;
 use log::info;
 use op_succinct_host_utils::{
-    fetcher::{ChainMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, ChainMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::{get_execution_stats, ExecutionStats},
     witnessgen::WitnessGenExecutor,
@@ -164,11 +164,9 @@ async fn run_native_data_generation(
                 range.start,
                 range.end,
                 ProgramType::Multi,
+                CacheMode::DeleteCache,
             ))
             .expect("Failed to get host CLI args.");
-
-            // Overwrite existing data directory.
-            fs::create_dir_all(&host_cli.data_dir.clone().unwrap()).unwrap();
 
             batch_host_clis.push(BatchHostCli {
                 host_cli: host_cli.clone(),

@@ -1,10 +1,13 @@
-use std::{env, fs};
+use std::env;
 
 use anyhow::Result;
 use clap::Parser;
 use num_format::{Locale, ToFormattedString};
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_proof_stdin, witnessgen::WitnessGenExecutor, ProgramType,
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    get_proof_stdin,
+    witnessgen::WitnessGenExecutor,
+    ProgramType,
 };
 use sp1_sdk::{utils, ProverClient};
 
@@ -36,16 +39,14 @@ async fn main() -> Result<()> {
 
     let l2_safe_head = args.l2_block - 1;
 
-    let host_cli =
-        data_fetcher.get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single).await?;
+    let cache_mode = if args.use_cache { CacheMode::KeepCache } else { CacheMode::DeleteCache };
 
-    let data_dir = host_cli.data_dir.clone().expect("Data directory is not set.");
+    let host_cli = data_fetcher
+        .get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single, cache_mode)
+        .await?;
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
     if !args.use_cache {
-        // Overwrite existing data directory.
-        fs::create_dir_all(&data_dir).unwrap();
-
         // Start the server and native client.
         let mut witnessgen_executor = WitnessGenExecutor::default();
         witnessgen_executor.spawn_witnessgen(&host_cli).await?;
