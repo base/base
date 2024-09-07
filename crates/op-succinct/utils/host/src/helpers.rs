@@ -13,7 +13,6 @@ pub fn load_kv_store(data_dir: &PathBuf) -> HashMap<[u8; 32], Vec<u8>, BytesHash
         if path.is_file() {
             // Extract the file name
             let file_name = path.file_stem().unwrap().to_str().unwrap();
-
             // Convert the file name to PreimageKey
             if let Ok(key) = hex::decode(file_name) {
                 // Read the file contents

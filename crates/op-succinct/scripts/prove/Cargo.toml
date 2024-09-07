@@ -62,3 +62,4 @@ rayon = "1.10.0"
 [build-dependencies]
 sp1-build = { workspace = true }
 op-succinct-host-utils = { workspace = true }
+cargo_metadata.workspace = true

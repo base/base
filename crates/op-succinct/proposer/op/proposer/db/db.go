@@ -362,7 +362,8 @@ func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, ui
 	}
 
 	// If there's no AGG proof in process, query to see if there is a complete SPAN proof chain that
-	// covers at least [from, minTo]. If so, create an AGG proof for that range.
+	// covers at least [from, minTo]. If so, create an AGG proof for that range. Attempts to create
+	// the largest span proof possible.
 	start := from
 	var end uint64
 	for {

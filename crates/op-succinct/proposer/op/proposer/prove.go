@@ -150,6 +150,7 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 			return
 		}
 
+		// TODO: There's a better way to structure the flow of the server.
 		err = l.RequestOPSuccinctProof(p)
 		if err != nil {
 			l.Log.Error("failed to request proof from the OP Succinct server", "err", err, "proof", p)
@@ -157,6 +158,13 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 			if err != nil {
 				l.Log.Error("failed to revert proof status", "err", err, "proverRequestID", nextProofToRequest.ID)
 			}
+
+			// If the proof fails to request from the server, we should retry it with a smaller span proof.
+			err = l.RetryRequest(nextProofToRequest)
+			if err != nil {
+				l.Log.Error("failed to retry request", "err", err)
+			}
+
 		}
 	}(*nextProofToRequest)
 

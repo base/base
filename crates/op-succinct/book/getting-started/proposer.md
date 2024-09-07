@@ -2,7 +2,7 @@
 
 Now that you have deployed the `ZKL2OutputOracle` contract, you can start the `op-succinct-proposer` service which replaces the normal `op-proposer` service in the OP Stack.
 
-The `op-succinct-proposer` service will call to [Succinct's Prover Network](https://google.com) to generate proofs of the execution and derivation of the L2 state transitions.
+The `op-succinct-proposer` service will call to [Succinct's Prover Network](https://docs.succinct.xyz/generating-proofs/prover-network) to generate proofs of the execution and derivation of the L2 state transitions.
 
 The modified proposer  performs the following tasks:
 1. Monitors L1 state to determine when to request a proof.
