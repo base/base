@@ -20,7 +20,7 @@ use sha2::{Digest, Sha256};
 /// should verify the proof matches the arbitrary vkey digest stored in the contract. This means
 /// that the aggregate program would no longer need to update this value.
 const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] =
-    [1807316243, 1400630407, 873277975, 658999266, 422343326, 774525422, 1268417967, 711858264];
+    [1315952375, 1011400572, 528050588, 1342631216, 1825387301, 877061216, 1614555349, 836430978];
 
 fn main() {
     // Read in the aggregation inputs corresponding to each multi-block proof.

@@ -6,6 +6,7 @@ WORKDIR /app
 # Install Rust and required dependencies
 RUN apt-get update && apt-get install -y \
     curl \
+    clang \
     build-essential \
     git \
     pkg-config \

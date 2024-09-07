@@ -1,11 +1,12 @@
 # Use Ubuntu 24.04 as the base image
 FROM --platform=linux/amd64 ubuntu:24.04
 
-# Install Go and necessary dependencies
+# Install Go, clang, and necessary dependencies
 RUN apt-get update && apt-get install -y \
     wget \
     git \
     build-essential \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Go 1.22

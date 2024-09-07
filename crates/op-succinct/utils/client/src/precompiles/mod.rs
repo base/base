@@ -1,7 +1,5 @@
 //! Contains the [PrecompileOverride] trait implementation for the FPVM-accelerated precompiles.
-
 use alloc::sync::Arc;
-use kona_executor::PrecompileOverride;
 use kona_mpt::{TrieDB, TrieDBFetcher, TrieDBHinter};
 use revm::{
     db::states::state::State,
@@ -48,54 +46,33 @@ pub(crate) const ANNOTATED_KZG_EVAL: PrecompileWithAddress = create_annotated_pr
 pub(crate) const ANNOTATED_EC_RECOVER: PrecompileWithAddress =
     create_annotated_precompile!(secp256k1::ECRECOVER, "ec-recover");
 
-/// The [PrecompileOverride] implementation for the FPVM-accelerated precompiles.
-#[derive(Debug)]
-pub struct ZKVMPrecompileOverride<F, H>
+// Source: https://github.com/anton-rs/kona/blob/main/bin/client/src/fault/handler/mod.rs#L20-L42
+pub fn zkvm_handle_register<F, H>(handler: &mut EvmHandler<'_, (), &mut State<&mut TrieDB<F, H>>>)
 where
     F: TrieDBFetcher,
     H: TrieDBHinter,
 {
-    _phantom: core::marker::PhantomData<(F, H)>,
-}
+    let spec_id = handler.cfg.spec_id;
 
-impl<F, H> Default for ZKVMPrecompileOverride<F, H>
-where
-    F: TrieDBFetcher,
-    H: TrieDBHinter,
-{
-    fn default() -> Self {
-        Self { _phantom: core::marker::PhantomData::<(F, H)> }
-    }
-}
+    handler.pre_execution.load_precompiles = Arc::new(move || {
+        let mut ctx_precompiles =
+            ContextPrecompiles::new(PrecompileSpecId::from_spec_id(spec_id)).clone();
 
-impl<F, H> PrecompileOverride<F, H> for ZKVMPrecompileOverride<F, H>
-where
-    F: TrieDBFetcher,
-    H: TrieDBHinter,
-{
-    fn set_precompiles(handler: &mut EvmHandler<'_, (), &mut State<&mut TrieDB<F, H>>>) {
-        let spec_id = handler.cfg.spec_id;
+        // With Fjord, EIP-7212 is activated, so we need to load the precompiles for secp256r1.
+        // Alphanet does the same here: https://github.com/paradigmxyz/alphanet/blob/f28e4220a1a637c19ef6b4928e9a427560d46fcb/crates/node/src/evm.rs#L53-L56
+        ctx_precompiles.extend(secp256r1::precompiles());
 
-        handler.pre_execution.load_precompiles = Arc::new(move || {
-            let mut ctx_precompiles =
-                ContextPrecompiles::new(PrecompileSpecId::from_spec_id(spec_id)).clone();
+        // Extend with ZKVM-accelerated precompiles and annotated precompiles that track the
+        // cycle count.
+        let override_precompiles = [
+            ANNOTATED_BN_ADD,
+            ANNOTATED_BN_MUL,
+            ANNOTATED_BN_PAIR,
+            ANNOTATED_KZG_EVAL,
+            ANNOTATED_EC_RECOVER,
+        ];
+        ctx_precompiles.extend(override_precompiles);
 
-            // With Fjord, EIP-7212 is activated, so we need to load the precompiles for secp256r1.
-            // Alphanet does the same here: https://github.com/paradigmxyz/alphanet/blob/f28e4220a1a637c19ef6b4928e9a427560d46fcb/crates/node/src/evm.rs#L53-L56
-            ctx_precompiles.extend(secp256r1::precompiles());
-
-            // Extend with ZKVM-accelerated precompiles and annotated precompiles that track the
-            // cycle count.
-            let override_precompiles = [
-                ANNOTATED_BN_ADD,
-                ANNOTATED_BN_MUL,
-                ANNOTATED_BN_PAIR,
-                ANNOTATED_KZG_EVAL,
-                ANNOTATED_EC_RECOVER,
-            ];
-            ctx_precompiles.extend(override_precompiles);
-
-            ctx_precompiles
-        });
-    }
+        ctx_precompiles
+    });
 }

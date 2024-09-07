@@ -394,9 +394,13 @@ async fn main() -> Result<()> {
     let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;
 
     let execution_stats = execute_blocks_parallel(&host_clis, &prover, &data_fetcher).await;
-    write_execution_stats_to_csv(&execution_stats, l2_chain_id, &args)?;
 
-    let aggregate_execution_stats = aggregate_execution_stats(&execution_stats);
+    // Sort the execution stats by batch start block.
+    let mut sorted_execution_stats = execution_stats.clone();
+    sorted_execution_stats.sort_by_key(|stats| stats.batch_start);
+    write_execution_stats_to_csv(&sorted_execution_stats, l2_chain_id, &args)?;
+
+    let aggregate_execution_stats = aggregate_execution_stats(&sorted_execution_stats);
     println!("Aggregate Execution Stats: \n {}", aggregate_execution_stats);
 
     // Shutdown the Docker container for fetching span batches.

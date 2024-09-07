@@ -1,7 +1,7 @@
 //! Contains the host <-> client communication utilities.
 
 use crate::BytesHasherBuilder;
-use alloy_primitives::{hex, keccak256, FixedBytes};
+use alloy_primitives::{hex, keccak256, FixedBytes, B256};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -24,13 +24,17 @@ impl InMemoryOracle {
     /// Creates a new [InMemoryOracle] from the raw bytes passed into the zkVM.
     /// These values are deserialized using rkyv for zero copy deserialization.
     pub fn from_raw_bytes(input: Vec<u8>) -> Self {
-        let archived = unsafe {
-            rkyv::archived_root::<HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder>>(&input)
-        };
-        let deserialized: HashMap<[u8; 32], Vec<u8>, BytesHasherBuilder> =
-            archived.deserialize(&mut Infallible).unwrap();
+        let archived = unsafe { rkyv::archived_root::<Self>(&input) };
+        let deserialized: Self = archived.deserialize(&mut Infallible).unwrap();
 
-        Self { cache: deserialized }
+        deserialized
+    }
+
+    /// Creates a new [InMemoryOracle] from a HashMap of B256 keys and Vec<u8> values.
+    pub fn from_b256_hashmap(data: HashMap<B256, Vec<u8>>) -> Self {
+        let cache =
+            data.into_iter().map(|(k, v)| (k.0, v)).collect::<HashMap<_, _, BytesHasherBuilder>>();
+        Self { cache }
     }
 }
 

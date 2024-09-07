@@ -1,10 +1,5 @@
 [workspace]
-members = [
-    "utils/*",
-    "programs/*",
-    "scripts/*",
-    "proposer/succinct",
-]
+members = ["utils/*", "programs/*", "scripts/*", "proposer/succinct"]
 resolver = "2"
 
 [workspace.package]
@@ -39,23 +34,24 @@ hex = "0.4.3"
 bincode = "1.3.3"
 base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
-kzg-rs = { version = "0.2.1" }
+kzg-rs = { version = "0.2.2" }
 
 # kona
 # TODO: Change to stable tag when released.
 # Note: Explicitly needed to downgrade superchain-primitives to 0.3.1.
 # cargo update -p superchain-primitives@0.3.2 --precise 0.3.1
-kona-common = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-common-proc = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-preimage = { git = "https://github.com/ethereum-optimism/kona", branch = "main", features = [
+kona-common = { git = "https://github.com/anton-rs/kona" }
+kona-common-proc = { git = "https://github.com/anton-rs/kona" }
+kona-preimage = { git = "https://github.com/anton-rs/kona", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-mpt = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-derive = { git = "https://github.com/ethereum-optimism/kona", branch = "main", default-features = false }
-kona-executor = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-client = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
-kona-host = { git = "https://github.com/ethereum-optimism/kona", branch = "main" }
+kona-primitives = { git = "https://github.com/anton-rs/kona" }
+kona-mpt = { git = "https://github.com/anton-rs/kona" }
+kona-derive = { git = "https://github.com/anton-rs/kona", default-features = false }
+kona-executor = { git = "https://github.com/anton-rs/kona" }
+kona-client = { git = "https://github.com/anton-rs/kona" }
+kona-host = { git = "https://github.com/anton-rs/kona" }
+
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -65,20 +61,28 @@ op-succinct-host-utils = { path = "utils/host" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
 # ethereum / op
-alloy = { version = "0.2", default-features = false, features = ["full"] }
-alloy-primitives = { version = "0.7.6", default-features = false }
-alloy-rlp = { version = "0.3.5", default-features = false }
-alloy-eips = { version = "0.2", default-features = false }
-revm = { version = "13.0", default-features = false, features = ["kzg-rs"] }
-alloy-consensus = { version = "0.2", default-features = false }
-alloy-sol-types = { version = "0.7.6" }
-op-alloy-consensus = { version = "0.1.4", default-features = false }
+alloy = { version = "0.3", default-features = false, features = ["full"] }
+alloy-primitives = { version = "0.8", default-features = false }
+alloy-rlp = { version = "0.3", default-features = false }
+alloy-eips = { version = "0.3", default-features = false }
+revm = { version = "14.0", default-features = false, features = ["kzg-rs"] }
+alloy-consensus = { version = "0.3", default-features = false }
+alloy-sol-types = { version = "0.8" }
+op-alloy-consensus = { version = "0.2", default-features = false }
 
 # sp1
-sp1-lib = { version = "1.2.0-rc1", features = ["verify"] }
-sp1-zkvm = { version = "1.2.0-rc1", features = ["verify"] }
-sp1-sdk = { version = "1.2.0-rc1" }
-sp1-build = { version = "1.2.0-rc1" }
+sp1-lib = { version = "1.2.0", features = ["verify"] }
+sp1-zkvm = { version = "1.2.0", features = ["verify"] }
+sp1-sdk = { version = "1.2.0" }
+sp1-build = { version = "1.2.0" }
+# sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2", features = [
+#     "verify",
+# ] }
+# sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2", features = [
+#     "verify",
+# ] }
+# sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2" }
+# sp1-build = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2" }
 
 [profile.release-client-lto]
 inherits = "release"
@@ -94,3 +98,7 @@ bn = { git = "https://github.com/0xWOLAND/bn.git", package = "substrate-bn" }
 # Note: Patch alloy-primitives to use sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", branch = "patch-sha3-v0.10.8" }
 alloy-primitives = { git = "https://github.com/sp1-patches/alloy-core", branch = "patch-v0.7.7" }
+
+# Patch op-alloy-protocol for recent exports for compatibility with kona.
+# TODO: Can remove later, currently patched in Kona.
+op-alloy-protocol = { git = "https://github.com/alloy-rs/op-alloy" }

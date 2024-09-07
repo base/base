@@ -217,7 +217,7 @@ impl OPSuccinctDataFetcher {
         let latest_block =
             provider.get_block_by_number(BlockNumberOrTag::Latest, false).await?.unwrap();
         let mut low = 0;
-        let mut high = latest_block.header.number.unwrap();
+        let mut high = latest_block.header.number;
 
         while low <= high {
             let mid = (low + high) / 2;
@@ -225,7 +225,7 @@ impl OPSuccinctDataFetcher {
             let block_timestamp = block.header.timestamp;
 
             match block_timestamp.cmp(&target_timestamp) {
-                Ordering::Equal => return Ok(block.header.hash.unwrap().0.into()),
+                Ordering::Equal => return Ok(block.header.hash.0.into()),
                 Ordering::Less => low = mid + 1,
                 Ordering::Greater => high = mid - 1,
             }
@@ -233,7 +233,7 @@ impl OPSuccinctDataFetcher {
 
         // Return the block hash of the closest block after the target timestamp
         let block = provider.get_block_by_number(low.into(), false).await?.unwrap();
-        Ok(block.header.hash.unwrap().0.into())
+        Ok(block.header.hash.0.into())
     }
 
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
@@ -256,7 +256,7 @@ impl OPSuccinctDataFetcher {
         let l2_output_block =
             l2_provider.get_block_by_number(l2_start_block.into(), false).await?.unwrap();
         let l2_output_state_root = l2_output_block.header.state_root;
-        let l2_head = l2_output_block.header.hash.expect("L2 head is missing");
+        let l2_head = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_start_block.into())
@@ -275,7 +275,7 @@ impl OPSuccinctDataFetcher {
         let l2_claim_block =
             l2_provider.get_block_by_number(l2_end_block.into(), false).await?.unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
-        let l2_claim_hash = l2_claim_block.header.hash.expect("L2 claim hash is missing");
+        let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
             .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_end_block.into())

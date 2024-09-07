@@ -19,8 +19,9 @@ use kona_client::{
     l2::OracleL2ChainProvider,
     BootInfo,
 };
-use kona_executor::{NoPrecompileOverride, StatelessL2BlockExecutor};
+use kona_executor::StatelessL2BlockExecutor;
 use kona_primitives::L2AttributesWithParent;
+use op_succinct_client_utils::precompiles::zkvm_handle_register;
 
 cfg_if! {
     if #[cfg(target_os = "zkvm")] {
@@ -50,22 +51,19 @@ fn main() {
                 println!("cycle-tracker-end: boot-load");
 
                 println!("cycle-tracker-start: oracle-load");
-                let kv_store_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
-                let oracle = Arc::new(InMemoryOracle::from_raw_bytes(kv_store_bytes));
+                let in_memory_oracle_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
+                let oracle = Arc::new(InMemoryOracle::from_raw_bytes(in_memory_oracle_bytes));
                 println!("cycle-tracker-end: oracle-load");
 
                 println!("cycle-tracker-start: oracle-verify");
                 oracle.verify().expect("key value verification failed");
                 println!("cycle-tracker-end: oracle-verify");
-
-                let precompile_overrides = NoPrecompileOverride;
             }
             // If we are compiling for online mode, create a caching oracle that speaks to the
             // fetcher via hints, and gather boot info from this oracle.
             else {
                 let oracle = Arc::new(CachingOracle::new(1024, ORACLE_READER, HINT_WRITER));
                 let boot = Arc::new(BootInfo::load(oracle.as_ref()).await.unwrap());
-                let precompile_overrides = NoPrecompileOverride;
             }
         }
 
@@ -99,7 +97,7 @@ fn main() {
             .with_parent_header(driver.take_l2_safe_head_header())
             .with_fetcher(l2_provider.clone())
             .with_hinter(l2_provider)
-            .with_precompile_overrides(precompile_overrides)
+            .with_handle_register(zkvm_handle_register)
             .build()
             .unwrap();
         println!("cycle-tracker-end: execution-instantiation");
