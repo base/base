@@ -1,7 +1,7 @@
 //! Utility methods used by protocol types.
 
 /// Returns if the given `value` is a deposit transaction.
-pub fn starts_with_2781_deposit<B>(value: &B) -> bool
+pub fn starts_with_2718_deposit<B>(value: &B) -> bool
 where
     B: AsRef<[u8]>,
 {
@@ -15,15 +15,15 @@ mod tests {
 
     #[test]
     fn test_is_deposit() {
-        assert!(starts_with_2781_deposit(&[0x7E]));
-        assert!(!starts_with_2781_deposit(&[]));
-        assert!(!starts_with_2781_deposit(&[0x7F]));
+        assert!(starts_with_2718_deposit(&[0x7E]));
+        assert!(!starts_with_2718_deposit(&[]));
+        assert!(!starts_with_2718_deposit(&[0x7F]));
     }
 
     #[test]
     fn test_bytes_deposit() {
-        assert!(starts_with_2781_deposit(&Bytes::from_static(&[0x7E])));
-        assert!(!starts_with_2781_deposit(&Bytes::from_static(&[])));
-        assert!(!starts_with_2781_deposit(&Bytes::from_static(&[0x7F])));
+        assert!(starts_with_2718_deposit(&Bytes::from_static(&[0x7E])));
+        assert!(!starts_with_2718_deposit(&Bytes::from_static(&[])));
+        assert!(!starts_with_2718_deposit(&Bytes::from_static(&[0x7F])));
     }
 }

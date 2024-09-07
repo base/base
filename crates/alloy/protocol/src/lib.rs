@@ -37,7 +37,7 @@ pub use frame::{
 };
 
 mod utils;
-pub use utils::starts_with_2781_deposit;
+pub use utils::starts_with_2718_deposit;
 
 mod channel;
 pub use channel::{Channel, FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL};
