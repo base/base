@@ -5,23 +5,27 @@
 The ability for a blockchain to easily read the state of another blockchain is called interoperability.
 Low latency interoperability allows for horizontally scalable blockchains, a key feature of the superchain.
 
-Note: this document references an "interop network upgrade" as a temporary name. The actual name of the
-network upgrade will be included in this document in the future.
+Note: this document references an "interop network upgrade" as a temporary name. The pending name of the
+network upgrade is isthmus.
 
 | Term                | Definition                                                                                          |
 |---------------------|-----------------------------------------------------------------------------------------------------|
 | Source Chain        | A blockchain that includes an initiating message                                                    |
 | Destination Chain   | A blockchain that includes an executing message                                                     |
 | Initiating Message  | An event emitted from a source chain                                                                |
-| Executing Message   | An event emitted from a destination chain's `CrossL2Inbox` that includes an initiating message                       |
+| Identifier          | A unique pointer to an initiating message                                                           |
+| Executing Message   | An event emitted from a destination chain's `CrossL2Inbox` that includes an initiating message and identifier |
 | Cross Chain Message | The cumulative execution and side effects of the initiating message and executing message           |
 | Dependency Set      | The set of chains that originate initiating transactions where the executing transactions are valid |
 
 A total of two transactions are required to complete a cross chain message.
-The first transaction is submitted to the source chain and emits an event that can be consumed on a destination chain.
-The second transaction is submitted to a destination chain, where the block builder SHOULD only include it if they are
-certain that the first transaction was included in the source chain.
-There is no strict requirement that the executing message is ever submitted.
+The first transaction is submitted to the source chain and emits an event (initiating message) that can be
+consumed on a destination chain. The second transaction is submitted to the destination chain and includes the
+initiating message as well as the identifier that uniquely points to the initiating message.
+
+The chain's fork choice rule will reorg out any blocks that contain an executing message that is not valid,
+meaning that the identifier actually points to the initiating message that was passed into the remote chain.
+This means that the block builder SHOULD only include an executing message if they have already checked its validity.
 
 The term "block builder" is used interchangeably with the term "sequencer" for the purposes of this document but
 they need not be the same entity in practice.

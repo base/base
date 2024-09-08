@@ -21,9 +21,12 @@ social consensus MUST be used to determine the chain that represents the canonic
 particularly impacts the block builder as they SHOULD use the chain id to assist in validation
 of executing messages.
 
-The dependency set is configured on a per chain basis.
+The dependency set is configured on a per chain basis and is a unidirectional relationship. This means
+that it is possible to depend on a chain without it depending back. This means that it is possible
+to send assets to a chain where they cannot be sent back.
 
-The chain id of the local chain MUST be considered as part of its own dependency set.
+The chain id of the local chain MUST be considered as part of its own dependency set. This allows a chain
+to consume logs that it has produced much more cheaply than providing a block hash proof.
 
 While the dependency set explicitly defines the set of chains that are depended on for incoming messages,
 the full set of transitive dependencies must be known to allow for the progression of safety.

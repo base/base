@@ -6,14 +6,12 @@
 
 - [Overview](#overview)
   - [Deposit Context](#deposit-context)
+- [Security Considerations](#security-considerations)
   - [Gas Considerations](#gas-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
-
-This is an experimental section and may be changed in the future. It is not required
-for the initial release.
 
 ### Deposit Context
 
@@ -37,6 +35,8 @@ The order of deposit transactions occurs as follows:
 1. L1 attributes transaction calling [`setL1BlockValuesIsthmus()`](../protocol/ecotone/l1-attributes.md).
 1. User deposits
 1. L1 attributes transaction calling [`depositsComplete()`](../protocol/ecotone/l1-attributes.md)
+
+## Security Considerations
 
 ### Gas Considerations
 
