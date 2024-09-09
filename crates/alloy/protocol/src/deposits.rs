@@ -4,7 +4,7 @@ use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, TxKind, B256, U256, U64};
 use alloy_rlp::Encodable;
-use core::{error::Error, fmt::Display};
+use core::fmt::Display;
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 
 /// Deposit log event abi signature.
@@ -21,8 +21,8 @@ pub const DEPOSIT_EVENT_ABI_HASH: B256 =
 pub const DEPOSIT_EVENT_VERSION_0: B256 = B256::ZERO;
 
 /// An [op_alloy_consensus::TxDeposit] validation error.
-#[derive(Debug)]
-pub enum DepositError<T: Error> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum DepositError {
     /// Unexpected number of deposit event log topics.
     UnexpectedTopicsLen(usize),
     /// Invalid deposit event selector.
@@ -53,55 +53,12 @@ pub enum DepositError<T: Error> {
     MintDecode(Bytes),
     /// Failed to decode the deposit gas value.
     GasDecode(Bytes),
-    /// A custom error
-    Custom(T),
 }
 
-impl<T: Error + PartialEq> PartialEq for DepositError<T> {
-    fn eq(&self, other: &DepositError<T>) -> bool {
-        match (self, other) {
-            (DepositError::UnexpectedTopicsLen(l1), DepositError::UnexpectedTopicsLen(l2)) => {
-                l1 == l2
-            }
-            (DepositError::InvalidSelector(e1, t1), DepositError::InvalidSelector(e2, t2)) => {
-                e1 == e2 && t1 == t2
-            }
-            (DepositError::IncompleteOpaqueData(l1), DepositError::IncompleteOpaqueData(l2)) => {
-                l1 == l2
-            }
-            (DepositError::UnalignedData(d1), DepositError::UnalignedData(d2)) => d1 == d2,
-            (DepositError::FromDecode(e1), DepositError::FromDecode(e2)) => e1 == e2,
-            (DepositError::ToDecode(e1), DepositError::ToDecode(e2)) => e1 == e2,
-            (
-                DepositError::InvalidOpaqueDataOffset(o1),
-                DepositError::InvalidOpaqueDataOffset(o2),
-            ) => o1 == o2,
-            (
-                DepositError::InvalidOpaqueDataLength(o1),
-                DepositError::InvalidOpaqueDataLength(o2),
-            ) => o1 == o2,
-            (
-                DepositError::OpaqueDataOverflow(l1, l2),
-                DepositError::OpaqueDataOverflow(l3, l4),
-            ) => l1 == l3 && l2 == l4,
-            (
-                DepositError::PaddedOpaqueDataOverflow(l1, l2),
-                DepositError::PaddedOpaqueDataOverflow(l3, l4),
-            ) => l1 == l3 && l2 == l4,
-            (DepositError::InvalidVersion(v1), DepositError::InvalidVersion(v2)) => v1 == v2,
-            (
-                DepositError::UnexpectedOpaqueDataLen(a),
-                DepositError::UnexpectedOpaqueDataLen(b),
-            ) => a == b,
-            (DepositError::MintDecode(a), DepositError::MintDecode(b)) => a == b,
-            (DepositError::GasDecode(a), DepositError::GasDecode(b)) => a == b,
-            (DepositError::Custom(e1), DepositError::Custom(e2)) => e1 == e2,
-            _ => false,
-        }
-    }
-}
+#[cfg(feature = "std")]
+impl std::error::Error for DepositError {}
 
-impl<T: Error + PartialEq> Display for DepositError<T> {
+impl Display for DepositError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             DepositError::UnexpectedTopicsLen(len) => {
@@ -154,7 +111,6 @@ impl<T: Error + PartialEq> Display for DepositError<T> {
             DepositError::GasDecode(data) => {
                 write!(f, "Failed to decode the u64 deposit gas value: {:?}", data)
             }
-            DepositError::Custom(e) => write!(f, "Custom error: {}", e),
         }
     }
 }
@@ -282,7 +238,7 @@ impl UpgradeDepositSource {
         keccak256(domain_input)
     }
 }
-impl<T: Error + PartialEq> Error for DepositError<T> {}
+
 /// Derives a deposit transaction from an EVM log event emitted by the deposit contract.
 ///
 /// The emitted log must be in format:
@@ -294,11 +250,7 @@ impl<T: Error + PartialEq> Error for DepositError<T> {}
 ///    bytes opaqueData
 /// );
 /// ```
-pub fn decode_deposit<T: Error>(
-    block_hash: B256,
-    index: usize,
-    log: &Log,
-) -> Result<Bytes, DepositError<T>> {
+pub fn decode_deposit(block_hash: B256, index: usize, log: &Log) -> Result<Bytes, DepositError> {
     let topics = log.data.topics();
     if topics.len() != 4 {
         return Err(DepositError::UnexpectedTopicsLen(topics.len()));
@@ -393,11 +345,11 @@ pub fn decode_deposit<T: Error>(
 }
 
 /// Unmarshals a deposit transaction from the opaque data.
-pub(crate) fn unmarshal_deposit_version0<T: Error>(
+pub(crate) fn unmarshal_deposit_version0(
     tx: &mut TxDeposit,
     to: Address,
     data: &[u8],
-) -> Result<(), DepositError<T>> {
+) -> Result<(), DepositError> {
     if data.len() < 32 + 32 + 8 + 1 {
         return Err(DepositError::UnexpectedOpaqueDataLen(data.len()));
     }
@@ -455,28 +407,6 @@ mod tests {
     use alloc::vec;
     use alloy_primitives::{address, b256, hex, LogData};
 
-    #[derive(Debug, Clone, PartialEq)]
-    enum SimpleTestError {}
-
-    impl core::fmt::Display for SimpleTestError {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            write!(f, "A simple test error occurred")
-        }
-    }
-
-    impl core::error::Error for SimpleTestError {}
-
-    #[test]
-    fn test_decode_deposit_invalid_topic_len() {
-        let log = Log {
-            address: Address::default(),
-            data: LogData::new_unchecked(vec![B256::default()], Bytes::default()),
-        };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
-        assert_eq!(err, DepositError::UnexpectedTopicsLen(1));
-    }
-
     #[test]
     fn test_decode_deposit_invalid_first_topic() {
         let log = Log {
@@ -486,8 +416,7 @@ mod tests {
                 Bytes::default(),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err: DepositError = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::InvalidSelector(DEPOSIT_EVENT_ABI_HASH, B256::default()));
     }
 
@@ -500,8 +429,7 @@ mod tests {
                 Bytes::from(vec![0u8; 63]),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::IncompleteOpaqueData(63));
     }
 
@@ -514,8 +442,7 @@ mod tests {
                 Bytes::from(vec![0u8; 65]),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::UnalignedData(65));
     }
 
@@ -536,8 +463,7 @@ mod tests {
                 Bytes::from(vec![0u8; 64]),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::InvalidOpaqueDataOffset(Bytes::from(vec![0u8; 8])));
     }
 
@@ -557,8 +483,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::OpaqueDataOverflow(128, 64));
     }
 
@@ -576,8 +501,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::PaddedOpaqueDataOverflow(192, 64));
     }
 
@@ -596,8 +520,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let err: DepositError<SimpleTestError> =
-            decode_deposit(B256::default(), 0, &log).unwrap_err();
+        let err = decode_deposit(B256::default(), 0, &log).unwrap_err();
         assert_eq!(err, DepositError::InvalidVersion(version));
     }
 
@@ -615,7 +538,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let tx = decode_deposit::<SimpleTestError>(B256::default(), 0, &log).unwrap();
+        let tx = decode_deposit(B256::default(), 0, &log).unwrap();
         let raw_hex = hex!("7ef887a0ed428e1c45e1d9561b62834e1a2d3015a0caae3bfdc16b4da059ac885b01a14594000000000000000000000000000000000000000094000000000000000000000000000000000000000080808080b700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
         let expected = Bytes::from(raw_hex);
         assert_eq!(tx, expected);
@@ -657,7 +580,7 @@ mod tests {
                 Bytes::from(data),
             ),
         };
-        let tx = decode_deposit::<SimpleTestError>(B256::default(), 0, &log).unwrap();
+        let tx = decode_deposit(B256::default(), 0, &log).unwrap();
         let raw_hex = hex!("7ef875a0ed428e1c45e1d9561b62834e1a2d3015a0caae3bfdc16b4da059ac885b01a145941111111111111111111111111111111111111111800a648203e880b700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
         let expected = Bytes::from(raw_hex);
         assert_eq!(tx, expected);
@@ -668,15 +591,14 @@ mod tests {
         let data = vec![0u8; 72];
         let mut tx = TxDeposit::default();
         let to = address!("5555555555555555555555555555555555555555");
-        let err: DepositError<SimpleTestError> =
-            unmarshal_deposit_version0(&mut tx, to, &data).unwrap_err();
+        let err = unmarshal_deposit_version0(&mut tx, to, &data).unwrap_err();
         assert_eq!(err, DepositError::UnexpectedOpaqueDataLen(72));
 
         // Data must have at least length 73
         let data = vec![0u8; 73];
         let mut tx = TxDeposit::default();
         let to = address!("5555555555555555555555555555555555555555");
-        unmarshal_deposit_version0::<SimpleTestError>(&mut tx, to, &data).unwrap();
+        unmarshal_deposit_version0(&mut tx, to, &data).unwrap();
     }
 
     #[test]
@@ -706,7 +628,7 @@ mod tests {
             ..Default::default()
         };
         let to = address!("5555555555555555555555555555555555555555");
-        unmarshal_deposit_version0::<SimpleTestError>(&mut tx, to, &data).unwrap();
+        unmarshal_deposit_version0(&mut tx, to, &data).unwrap();
         assert_eq!(tx.to, TxKind::Call(address!("5555555555555555555555555555555555555555")));
     }
 }
