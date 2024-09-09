@@ -401,7 +401,7 @@ pub(crate) fn unmarshal_deposit_version0(
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
     #[cfg(not(feature = "std"))]
     use alloc::vec;
