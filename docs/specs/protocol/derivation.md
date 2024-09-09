@@ -244,15 +244,9 @@ into chunks known as [channel frames][g-channel-frame]. A single batcher transac
 
 This design gives use the maximum flexibility in how we aggregate batches into channels, and split channels over batcher
 transactions. It notably allows us to maximize data utilization in a batcher transaction: for instance it allows us to
-pack the final (small) frame of a window with large frames from the next window.
+pack the final (small) frame of one channel with one or more frames from the next channel.
 
-In the future this channel identification feature also allows the [batcher][g-batcher] to employ multiple signers
-(private keys) to submit one or multiple channels in parallel (1).
-
-(1) This helps alleviate issues where, because of transaction nonce values affecting the L2 tx-pool and thus inclusion:
-multiple transactions made by the same signer are stuck waiting on the inclusion of a previous transaction.
-
-Also note that we use a streaming compression scheme, and we do not need to know how many blocks a channel will end up
+Also note that we use a streaming compression scheme, and we do not need to know how many batches a channel will end up
 containing when we start a channel, or even as we send the first frames in the channel.
 
 And by splitting channels across multiple data transactions, the L2 can have larger block data than the
