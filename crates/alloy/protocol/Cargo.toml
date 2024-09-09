@@ -16,7 +16,6 @@ exclude.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
-alloy-consensus.workspace = true
 # Superchain
 superchain-primitives.workspace = true
 

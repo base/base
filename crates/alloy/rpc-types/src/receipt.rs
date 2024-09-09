@@ -1,7 +1,8 @@
 //! Receipt types for RPC
 
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::BlockHash;
+use alloy_primitives::{Address, BlockHash, TxHash};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::OpReceiptEnvelope;
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,7 @@ pub struct OpTransactionReceipt {
 }
 
 impl ReceiptResponse for OpTransactionReceipt {
-    fn contract_address(&self) -> Option<alloy_primitives::Address> {
+    fn contract_address(&self) -> Option<Address> {
         self.inner.contract_address
     }
 
@@ -34,6 +35,42 @@ impl ReceiptResponse for OpTransactionReceipt {
 
     fn block_number(&self) -> Option<u64> {
         self.inner.block_number
+    }
+
+    fn transaction_hash(&self) -> TxHash {
+        self.inner.transaction_hash
+    }
+
+    fn transaction_index(&self) -> Option<u64> {
+        self.inner.transaction_index()
+    }
+
+    fn gas_used(&self) -> u128 {
+        self.inner.gas_used()
+    }
+
+    fn effective_gas_price(&self) -> u128 {
+        self.inner.effective_gas_price()
+    }
+
+    fn blob_gas_used(&self) -> Option<u128> {
+        self.inner.blob_gas_used()
+    }
+
+    fn blob_gas_price(&self) -> Option<u128> {
+        self.inner.blob_gas_price()
+    }
+
+    fn from(&self) -> Address {
+        self.inner.from()
+    }
+
+    fn to(&self) -> Option<Address> {
+        self.inner.to()
+    }
+
+    fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
+        self.inner.authorization_list()
     }
 }
 

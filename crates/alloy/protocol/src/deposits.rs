@@ -53,7 +53,7 @@ pub enum DepositError<T: Error> {
     MintDecode(Bytes),
     /// Failed to decode the deposit gas value.
     GasDecode(Bytes),
-    /// A custom error wrapping [anyhow::Error].
+    /// A custom error
     Custom(T),
 }
 
@@ -204,7 +204,7 @@ pub struct UserDepositSource {
 
 impl UserDepositSource {
     /// Creates a new [UserDepositSource].
-    pub fn new(l1_block_hash: B256, log_index: u64) -> Self {
+    pub const fn new(l1_block_hash: B256, log_index: u64) -> Self {
         Self { l1_block_hash, log_index }
     }
 
@@ -233,7 +233,7 @@ pub struct L1InfoDepositSource {
 
 impl L1InfoDepositSource {
     /// Creates a new [L1InfoDepositSource].
-    pub fn new(l1_block_hash: B256, seq_number: u64) -> Self {
+    pub const fn new(l1_block_hash: B256, seq_number: u64) -> Self {
         Self { l1_block_hash, seq_number }
     }
 
@@ -267,7 +267,7 @@ pub struct UpgradeDepositSource {
 
 impl UpgradeDepositSource {
     /// Creates a new [UpgradeDepositSource].
-    pub fn new(intent: String) -> Self {
+    pub const fn new(intent: String) -> Self {
         Self { intent }
     }
 
@@ -521,11 +521,11 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_decode_deposit_invalid_from() {}
+    const fn test_decode_deposit_invalid_from() {}
 
     #[test]
     #[ignore]
-    fn test_decode_deposit_invalid_to() {}
+    const fn test_decode_deposit_invalid_to() {}
 
     #[test]
     fn test_decode_deposit_invalid_opaque_data_offset() {

@@ -18,6 +18,7 @@ alloy-primitives = { workspace = true, features = ["rlp", "serde", "std"] }
 alloy-rpc-types-eth.workspace = true
 alloy-network.workspace = true
 alloy-serde.workspace = true
+alloy-eips.workspace = true
 
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
