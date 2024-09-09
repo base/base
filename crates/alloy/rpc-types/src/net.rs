@@ -73,7 +73,7 @@ pub struct PeerInfo {
     #[serde(rename = "scores")]
     pub peer_scores: PeerScores,
 }
-
+// https://github.com/ethereum-optimism/optimism/blob/40750a58e7a4a6f06370d18dfe6c6eab309012d9/op-node/p2p/rpc_api.go#L36
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeerDump {
