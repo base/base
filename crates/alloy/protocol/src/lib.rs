@@ -41,3 +41,9 @@ pub use utils::starts_with_2718_deposit;
 
 mod channel;
 pub use channel::{Channel, FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL};
+
+pub mod deposits;
+pub use deposits::{
+    decode_deposit, DepositError, DepositSourceDomain, DepositSourceDomainIdentifier,
+    L1InfoDepositSource, UpgradeDepositSource, UserDepositSource, DEPOSIT_EVENT_ABI_HASH,
+};
