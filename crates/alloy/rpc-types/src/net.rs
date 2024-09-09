@@ -60,7 +60,7 @@ pub struct PeerInfo {
     /// 0: "`NotConnected`", 1: "Connected",
     /// 2: "`CanConnect`" (gracefully disconnected)
     /// 3: "`CannotConnect`" (tried but failed)
-    pub connectedness: u8,
+    pub connectedness: Connectedness,
     /// 0: "Unknown", 1: "Inbound" (if the peer contacted us)
     /// 2: "Outbound" (if we connected to them)
     pub direction: u8,
@@ -99,4 +99,120 @@ pub struct PeerStats {
     pub blocks_topic_v3: u32,
     pub banned: u32,
     pub known: u32,
+}
+
+/// Represents the connectivity state of a peer in a network, indicating the reachability and
+/// interaction status of a node with its peers.
+#[derive(Clone, Debug, PartialEq, Copy, Default, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Connectedness {
+    /// No current connection to the peer, and no recent history of a successful connection.
+    #[default]
+    NotConnected = 0,
+
+    /// An active, open connection to the peer exists.
+    Connected = 1,
+
+    /// Connection to the peer is possible but not currently established; usually implies a past
+    /// successful connection.
+    CanConnect = 2,
+
+    /// Recent attempts to connect to the peer failed, indicating potential issues in reachability
+    /// or peer status.
+    CannotConnect = 3,
+
+    /// Connection to the peer is limited; may not have full capabilities.
+    Limited = 4,
+}
+
+impl core::fmt::Display for Connectedness {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Connectedness::NotConnected => write!(f, "Not Connected"),
+            Connectedness::Connected => write!(f, "Connected"),
+            Connectedness::CanConnect => write!(f, "Can Connect"),
+            Connectedness::CannotConnect => write!(f, "Cannot Connect"),
+            Connectedness::Limited => write!(f, "Limited"),
+        }
+    }
+}
+
+impl From<u8> for Connectedness {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Connectedness::NotConnected,
+            1 => Connectedness::Connected,
+            2 => Connectedness::CanConnect,
+            3 => Connectedness::CannotConnect,
+            4 => Connectedness::Limited,
+            _ => Connectedness::NotConnected,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{self};
+
+    #[test]
+    fn test_peer_info_connectedness_serialization() {
+        let peer_info = PeerInfo {
+            peer_id: String::from("peer123"),
+            node_id: String::from("node123"),
+            user_agent: String::from("MyUserAgent"),
+            protocol_version: String::from("v1"),
+            enr: String::from("enr123"),
+            addresses: vec![String::from("127.0.0.1")],
+            protocols: Some(vec![String::from("eth"), String::from("p2p")]),
+            connectedness: Connectedness::Connected,
+            direction: 1,
+            protected: true,
+            chain_id: 1,
+            latency: 100,
+            gossip_blocks: true,
+            peer_scores: PeerScores {
+                gossip: GossipScores {
+                    total: 1.0,
+                    blocks: TopicScores {
+                        time_in_mesh: 10.0,
+                        first_message_deliveries: 5.0,
+                        mesh_message_deliveries: 2.0,
+                        invalid_message_deliveries: 0.0,
+                    },
+                    ip_colocation_factor: 0.5,
+                    behavioral_penalty: 0.1,
+                },
+                req_resp: ReqRespScores {
+                    valid_responses: 10.0,
+                    error_responses: 1.0,
+                    rejected_payloads: 0.0,
+                },
+            },
+        };
+
+        let serialized = serde_json::to_string(&peer_info).expect("Serialization failed");
+
+        let deserialized: PeerInfo =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
+
+        assert_eq!(peer_info.peer_id, deserialized.peer_id);
+        assert_eq!(peer_info.node_id, deserialized.node_id);
+        assert_eq!(peer_info.user_agent, deserialized.user_agent);
+        assert_eq!(peer_info.protocol_version, deserialized.protocol_version);
+        assert_eq!(peer_info.enr, deserialized.enr);
+        assert_eq!(peer_info.addresses, deserialized.addresses);
+        assert_eq!(peer_info.protocols, deserialized.protocols);
+        assert_eq!(peer_info.connectedness, deserialized.connectedness);
+        assert_eq!(peer_info.direction, deserialized.direction);
+        assert_eq!(peer_info.protected, deserialized.protected);
+        assert_eq!(peer_info.chain_id, deserialized.chain_id);
+        assert_eq!(peer_info.latency, deserialized.latency);
+        assert_eq!(peer_info.gossip_blocks, deserialized.gossip_blocks);
+        assert_eq!(peer_info.peer_scores.gossip.total, deserialized.peer_scores.gossip.total);
+        assert_eq!(
+            peer_info.peer_scores.req_resp.valid_responses,
+            deserialized.peer_scores.req_resp.valid_responses
+        );
+    }
 }
