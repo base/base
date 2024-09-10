@@ -32,7 +32,7 @@ The Ecotone upgrade contains the Dencun upgrade from L1, and adopts EIP-4844 blo
 ## Consensus Layer
 
 [retrieval]: ../derivation.md#ecotone-blob-retrieval
-[predeploy]: ../deposits.md#ecotone-l1block-upgrade
+[predeploy]: ./l1-attributes.md#ecotone-l1block-upgrade
 
 - Blobs Data Availability: support blobs DA the [L1 Data-retrieval stage][retrieval].
 - Rollup fee update: support blobs DA in
