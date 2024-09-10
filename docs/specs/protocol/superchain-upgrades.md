@@ -256,7 +256,7 @@ but the matching L1-origin information may not be present at the time of activat
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-5-ecotone-network-upgrade/7669).
 - `v7.0.0`: 2024 Jul 10th - Fjord network upgrade (RIP-7212 precompile + FastLZ cost fn + Brotli compression).
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-9-fjord-network-upgrade/8236).
-- `v8.0.0`: 2024 Aug 19th (optimistic[^1]) - Granite network upgrade (Limit ecpairing input size + Reduce Channel Timeout).
+- `v8.0.0`: 2024 Sep 11th - Granite network upgrade (Limit ecpairing input size + Reduce Channel Timeout).
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-10-granite-network-upgrade/8733).
 
 ## Post-Bedrock Network upgrades
@@ -272,6 +272,4 @@ proposal is the canonical document for the timestamp; however, the timestamps ar
 |Delta          |               1708560000|               1703203200|              1703116800|
 |Ecotone        |               1710374401|               1708534800|              1707238800|
 |Fjord          |               1720627201|               1716998400|                     n/a|
-|Granite        |           1726070401[^1]|               1723478400|                     n/a|
-
-[^1]: Governance vote and veto still have to pass.
+|Granite        |               1726070401|               1723478400|                     n/a|
