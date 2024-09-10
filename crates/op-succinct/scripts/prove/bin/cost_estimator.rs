@@ -134,7 +134,8 @@ fn split_ranges(span_batch_ranges: Vec<SpanBatchRange>, l2_chain_id: u64) -> Vec
             while start < range.end {
                 let end = min(start + batch_size, range.end);
                 split_ranges.push(SpanBatchRange { start, end });
-                start = end;
+                // The start of the next range should be the end of the current range + 1.
+                start = end + 1;
             }
         } else {
             split_ranges.push(range);
