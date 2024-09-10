@@ -9,8 +9,6 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-This document is not finalized and should be considered experimental.
-
 ## Execution Layer
 
 - [RIP-7212: Precompile for secp256r1 Curve Support](../precompiles.md#P256VERIFY)

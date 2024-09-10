@@ -9,8 +9,6 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-This document is not finalized and should be considered experimental.
-
 ## Execution Layer
 
 - [Limit `bn256Pairing` precompile input size](./exec-engine.md#bn256pairing-precompile-input-restriction)
