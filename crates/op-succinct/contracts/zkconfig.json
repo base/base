@@ -1,5 +1,5 @@
 {
-    "startingBlockNumber": 16837928,
+    "startingBlockNumber": 17098000,
     "l2RollupNode": "",
     "submissionInterval": 150,
     "l2BlockTime": 2,
@@ -8,7 +8,7 @@
     "finalizationPeriod": 0,
     "chainId": 11155420,
     "owner": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
-    "vkey": "0x0050443c17829b5a1db8fdcf2cd7458d9a2e9ea6b93bd968183101d0801b796b",
+    "vkey": "0x00038439e0370f0fa0f91269a0509f5a7509961fb4d6c829b7142102ae123d10",
     "verifierGateway": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
     "l2OutputOracleProxy": "0x863508f057c09f7b94e582d74404859ecd36a306"
 }

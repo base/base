@@ -92,7 +92,7 @@ async fn get_span_batch_ranges_from_server(
 
     // Get the span batch server URL from the environment.
     let span_batch_server_url =
-        env::var("SPAN_BATCH_SERVER_URL").unwrap_or("http://localhost:8080".to_string());
+        env::var("SPAN_BATCH_SERVER_URL").unwrap_or("http://localhost:8089".to_string());
     let query_url = format!("{}/span-batch-ranges", span_batch_server_url);
 
     let response: SpanBatchResponse =
@@ -298,9 +298,9 @@ fn aggregate_execution_stats(execution_stats: &[ExecutionStats]) -> ExecutionSta
 /// Build and manage the Docker container for the span batch server. Note: All logs are piped to
 /// /dev/null, so the user doesn't see them.
 fn manage_span_batch_server_container() -> Result<()> {
-    // Check if port 8080 is already in use
-    if TcpListener::bind("0.0.0.0:8080").is_err() {
-        info!("Port 8080 is already in use. Assuming span_batch_server is running.");
+    // Check if port 8089 is already in use
+    if TcpListener::bind("0.0.0.0:8089").is_err() {
+        info!("Port 8089 is already in use. Assuming span_batch_server is running.");
         return Ok(());
     }
 
@@ -323,7 +323,7 @@ fn manage_span_batch_server_container() -> Result<()> {
 
     // Start the Docker container.
     let run_status = Command::new("docker")
-        .args(["run", "-p", "8080:8080", "-d", "span_batch_server"])
+        .args(["run", "-p", "8089:8089", "-d", "span_batch_server"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()?;

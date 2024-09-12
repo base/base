@@ -32,6 +32,7 @@ In the root directory, create a file called `.env` (mirroring `.env.example`) an
 | `SP1_PRIVATE_KEY` | The private key for the SP1 account. |
 | `SP1_PROVER` | The type of prover to use (set to "network"). |
 | `SKIP_SIMULATION` | Whether to skip simulation of the proof before sending to the SP1 server (default is true). |
+| `USE_CACHED_DB` | Whether to use a cached database for the proposer (default is false). If set to true, the DB is persisted between runs, and can be re-used after the proposer shuts down. |
 
 
 ## 2) Build the Proposer

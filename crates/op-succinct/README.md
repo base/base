@@ -7,7 +7,7 @@ OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour 
 
 > [!CAUTION]
 >
-> This repository is still an active work-in-progress and is not audited or meant for production usage.
+> This repository is not meant for production usage.
 
 ## Getting Started
 

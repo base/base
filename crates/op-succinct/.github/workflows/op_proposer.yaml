@@ -16,7 +16,7 @@ jobs:
   test_op_proposer_go:
     runs-on:
       - runs-on
-      - runner=16cpu-linux-x64
+      - runner=16cpu-linux-arm64
       - run-id=${{ github.run_id }}  
     steps:
     - name: Checkout code

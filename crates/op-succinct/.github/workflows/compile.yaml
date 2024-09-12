@@ -12,7 +12,7 @@ jobs:
   build_native_programs:
     runs-on:
       - runs-on
-      - runner=16cpu-linux-x64
+      - runner=16cpu-linux-arm64
       - run-id=${{ github.run_id }} 
     steps:
     - name: Checkout code
@@ -26,7 +26,7 @@ jobs:
   build_zkvm_programs:
     runs-on:
       - runs-on
-      - runner=64cpu-linux-x64
+      - runner=64cpu-linux-arm64
       - run-id=${{ github.run_id }} 
     steps:
     - name: Checkout code

@@ -21,28 +21,26 @@ concurrency:
 jobs:
   lint:
     name: Formatting & Clippy
-    runs-on: [runs-on, runner=8cpu-linux-x64, "run-id=${{ github.run_id }}"]
+    runs-on: [runs-on, runner=32cpu-linux-arm64	, "run-id=${{ github.run_id }}"]
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Setup CI
-        uses: ./.github/actions/setup
-
-      - name: Run cargo fmt
-        uses: actions-rs/cargo@v1
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
         with:
-          command: fmt
-          args: --all -- --check
+          profile: minimal
+          toolchain: stable
+          components: rustfmt
+
+      - name: Run rustfmt
+        run: cargo fmt --all -- --check
         env:
           CARGO_INCREMENTAL: 1
 
       - name: Run cargo clippy
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-features --all-targets -- -D warnings -A incomplete-features
+        run: cargo clippy --all-features --all-targets -- -D warnings -A incomplete-features
         env:
           CARGO_INCREMENTAL: 1

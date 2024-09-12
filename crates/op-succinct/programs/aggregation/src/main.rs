@@ -15,12 +15,8 @@ use sha2::{Digest, Sha256};
 /// The verification key for the multi-block program.
 ///
 /// Whenever the multi-block program changes, you will need to update this.
-///
-/// TODO: The aggregation program should take in an arbitrary vkey digest and the smart contract
-/// should verify the proof matches the arbitrary vkey digest stored in the contract. This means
-/// that the aggregate program would no longer need to update this value.
 const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] =
-    [1315952375, 1011400572, 528050588, 1342631216, 1825387301, 877061216, 1614555349, 836430978];
+    [941772999, 1277538870, 1655999821, 1372179823, 58726408, 594788167, 675948275, 736718718];
 
 fn main() {
     // Read in the aggregation inputs corresponding to each multi-block proof.
