@@ -36,8 +36,8 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/span-batch-ranges", handleSpanBatchRanges).Methods("POST")
 
-	fmt.Println("Server is running on :8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	fmt.Println("Server is running on :8089")
+	log.Fatal(http.ListenAndServe(":8089", r))
 }
 
 // Return all of the span batches in a given L2 block range.

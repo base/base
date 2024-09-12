@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent"
@@ -15,8 +16,13 @@ type ProofDB struct {
 	client *ent.Client
 }
 
-// Initialize the database and return a handle to it.
-func InitDB(dbPath string) (*ProofDB, error) {
+// Initialize the database and return a handle to it. If useCachedDb is false, the existing DB at the path will be deleted (if it exists).
+func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
+	if !useCachedDb {
+		os.Remove(dbPath)
+	} else {
+		fmt.Printf("Using cached DB at %s\n", dbPath)
+	}
 	connectionString := fmt.Sprintf("file:%s?_fk=1", dbPath)
 	client, err := ent.Open("sqlite3", connectionString)
 	if err != nil {

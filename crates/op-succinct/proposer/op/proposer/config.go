@@ -69,6 +69,10 @@ type CLIConfig struct {
 
 	// Path to the database that tracks ZK proof generation.
 	DbPath string
+
+	// UseCachedDb is a flag to use a cached database instead of creating a new one.
+	UseCachedDb bool
+
 	// L1 Beacon RPC URL used to determine span batch boundaries.
 	BeaconRpc string
 	// Directory to store the transaction cache when determining span batch boundaries.
@@ -148,6 +152,7 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		ActiveSequencerCheckDuration: ctx.Duration(flags.ActiveSequencerCheckDurationFlag.Name),
 		WaitNodeSync:                 ctx.Bool(flags.WaitNodeSyncFlag.Name),
 		DbPath:                       ctx.String(flags.DbPathFlag.Name),
+		UseCachedDb:                  ctx.Bool(flags.UseCachedDbFlag.Name),
 		MaxSpanBatchDeviation:        ctx.Uint64(flags.MaxSpanBatchDeviationFlag.Name),
 		MaxBlockRangePerSpanProof:    ctx.Uint64(flags.MaxBlockRangePerSpanProofFlag.Name),
 		ProofTimeout:                 ctx.Uint64(flags.ProofTimeoutFlag.Name),

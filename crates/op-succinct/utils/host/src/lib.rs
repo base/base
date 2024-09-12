@@ -89,7 +89,7 @@ pub fn get_agg_proof_stdin(
         let SP1Proof::Compressed(compressed_proof) = proof else {
             panic!();
         };
-        stdin.write_proof(compressed_proof, vkey.vk.clone());
+        stdin.write_proof(*compressed_proof, vkey.vk.clone());
     }
 
     // Write the aggregation inputs to the stdin.

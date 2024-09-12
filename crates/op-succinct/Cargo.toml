@@ -37,20 +37,17 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 kzg-rs = { version = "0.2.2" }
 
 # kona
-# TODO: Change to stable tag when released.
-# Note: Explicitly needed to downgrade superchain-primitives to 0.3.1.
-# cargo update -p superchain-primitives@0.3.2 --precise 0.3.1
-kona-common = { git = "https://github.com/anton-rs/kona" }
-kona-common-proc = { git = "https://github.com/anton-rs/kona" }
-kona-preimage = { git = "https://github.com/anton-rs/kona", features = [
+kona-common = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-common-proc = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-preimage = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/anton-rs/kona" }
-kona-mpt = { git = "https://github.com/anton-rs/kona" }
-kona-derive = { git = "https://github.com/anton-rs/kona", default-features = false }
-kona-executor = { git = "https://github.com/anton-rs/kona" }
-kona-client = { git = "https://github.com/anton-rs/kona" }
-kona-host = { git = "https://github.com/anton-rs/kona" }
+kona-primitives = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-mpt = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-derive = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3", default-features = false }
+kona-executor = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-client = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-host = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
 
 
 # op-succinct
@@ -71,18 +68,14 @@ alloy-sol-types = { version = "0.8" }
 op-alloy-consensus = { version = "0.2", default-features = false }
 
 # sp1
-sp1-lib = { version = "1.2.0", features = ["verify"] }
-sp1-zkvm = { version = "1.2.0", features = ["verify"] }
-sp1-sdk = { version = "1.2.0" }
-sp1-build = { version = "1.2.0" }
-# sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2", features = [
-#     "verify",
-# ] }
-# sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2", features = [
-#     "verify",
-# ] }
-# sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2" }
-# sp1-build = { git = "https://github.com/succinctlabs/sp1.git", branch = "tamir/v1.3.0-rc2" }
+sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4", features = [
+    "verify",
+] }
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4", features = [
+    "verify",
+] }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4" }
 
 [profile.release-client-lto]
 inherits = "release"

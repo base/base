@@ -101,6 +101,12 @@ var (
 		Value:   "./op-proposer/proofs.db",
 		EnvVars: prefixEnvVars("DB_PATH"),
 	}
+	UseCachedDbFlag = &cli.BoolFlag{
+		Name:    "use-cached-db",
+		Usage:   "Use a cached database instead of creating a new one",
+		Value:   false,
+		EnvVars: prefixEnvVars("USE_CACHED_DB"),
+	}
 	MaxSpanBatchDeviationFlag = &cli.Uint64Flag{
 		Name:    "max-span-batch-deviation",
 		Usage:   "If we find a span batch this far ahead of our target, we assume an error and fill in the gap",
@@ -177,6 +183,7 @@ var optionalFlags = []cli.Flag{
 	ActiveSequencerCheckDurationFlag,
 	WaitNodeSyncFlag,
 	DbPathFlag,
+	UseCachedDbFlag,
 	MaxSpanBatchDeviationFlag,
 	MaxBlockRangePerSpanProofFlag,
 	ProofTimeoutFlag,

@@ -45,7 +45,7 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 			return err
 		}
 		if status == "PROOF_FULFILLED" {
-			// update the proof to the DB and update status to "COMPLETE"
+			// Update the proof in the DB and update status to COMPLETE.
 			l.Log.Info("proof fulfilled", "id", req.ProverRequestID)
 			err = l.db.AddProof(req.ID, proof)
 			if err != nil {
@@ -86,20 +86,13 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest) error {
 			return err
 		}
 	} else {
-		// If a SPAN proof failed, assume it was too big and the SP1 runtime OOM'd.
-		// Therefore, create two new entries for the original proof split in half.
-		l.Log.Info("span proof failed, splitting in half to retry", "req", req)
-		tmpStart := req.StartBlock
-		tmpEnd := tmpStart + ((req.EndBlock - tmpStart) / 2)
-		for i := 0; i < 2; i++ {
-			err := l.db.NewEntryWithReqAddedTimestamp("SPAN", tmpStart, tmpEnd, 0)
-			if err != nil {
-				l.Log.Error("failed to add new proof request", "err", err)
-				return err
-			}
-
-			tmpStart = tmpEnd + 1
-			tmpEnd = req.EndBlock
+		// Always just retry SPAN proofs to avoid spamming the cluster with requests.
+		// TODO: We may need to split the SPAN proof in half to avoid OOMing the SP1 runtime.
+		l.Log.Info("Span proof failed. Adding to DB to retry.", "req", req)
+		err := l.db.NewEntryWithReqAddedTimestamp("SPAN", req.StartBlock, req.EndBlock, 0)
+		if err != nil {
+			l.Log.Error("failed to add new proof request", "err", err)
+			return err
 		}
 	}
 
@@ -240,6 +233,10 @@ type ProofResponse struct {
 
 // Request a span proof for the range [l2Start, l2End].
 func (l *L2OutputSubmitter) RequestSpanProof(l2Start, l2End uint64) (string, error) {
+	if l2Start >= l2End {
+		return "", fmt.Errorf("l2Start must be less than l2End")
+	}
+
 	l.Log.Info("requesting span proof", "start", l2Start, "end", l2End)
 	requestBody := SpanProofRequest{
 		Start: l2Start,
