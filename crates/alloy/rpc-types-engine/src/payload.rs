@@ -2,25 +2,67 @@ use alloy_primitives::{Bytes, B256, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadV3, ExecutionPayloadV4, PayloadAttributes,
 };
-use serde::{Deserialize, Serialize};
+use op_alloy_protocol::L2BlockInfo;
 
 /// Optimism Payload Attributes
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct OptimismPayloadAttributes {
     /// The payload attributes
-    #[serde(flatten)]
+    #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_attributes: PayloadAttributes,
     /// Transactions is a field for rollups: the transactions list is forced into the block
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
     /// If true, the no transactions are taken out of the tx-pool, only transactions from the above
     /// Transactions list will be included.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub no_tx_pool: Option<bool>,
     /// If set, this sets the exact gas limit the block produced with.
-    #[serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    #[cfg_attr(
+        feature = "serde",
+        serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")
+    )]
     pub gas_limit: Option<u64>,
+}
+
+/// Optimism Payload Attributes with parent block reference.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OptimismAttributesWithParent {
+    /// The payload attributes.
+    pub attributes: OptimismPayloadAttributes,
+    /// The parent block reference.
+    pub parent: L2BlockInfo,
+    /// Whether the current batch is the last in its span.
+    pub is_last_in_span: bool,
+}
+
+impl OptimismAttributesWithParent {
+    /// Create a new [OptimismAttributesWithParent] instance.
+    pub const fn new(
+        attributes: OptimismPayloadAttributes,
+        parent: L2BlockInfo,
+        is_last_in_span: bool,
+    ) -> Self {
+        Self { attributes, parent, is_last_in_span }
+    }
+
+    /// Returns the payload attributes.
+    pub const fn attributes(&self) -> &OptimismPayloadAttributes {
+        &self.attributes
+    }
+
+    /// Returns the parent block reference.
+    pub const fn parent(&self) -> &L2BlockInfo {
+        &self.parent
+    }
+
+    /// Returns whether the current batch is the last in its span.
+    pub const fn is_last_in_span(&self) -> bool {
+        self.is_last_in_span
+    }
 }
 
 /// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
@@ -28,8 +70,9 @@ pub struct OptimismPayloadAttributes {
 ///
 /// See also:
 /// [Optimism execution payload envelope v3] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv3>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct OptimismExecutionPayloadEnvelopeV3 {
     /// Execution payload V3
     pub execution_payload: ExecutionPayloadV3,
@@ -49,8 +92,9 @@ pub struct OptimismExecutionPayloadEnvelopeV3 {
 ///
 /// See also:
 /// [Optimism execution payload envelope v4] <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md#engine_getpayloadv4>
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct OptimismExecutionPayloadEnvelopeV4 {
     /// Execution payload V4
     pub execution_payload: ExecutionPayloadV4,
@@ -70,6 +114,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "serde")]
     fn serde_roundtrip_execution_payload_envelope_v3() {
         // pulled from a geth response getPayloadV3 in hive tests, modified to add a mock parent
         // beacon block root.

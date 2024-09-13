@@ -14,9 +14,15 @@ exclude.workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
-alloy-serde.workspace = true
+op-alloy-protocol.workspace = true
 
-serde.workspace = true
+# serde
+serde = { workspace = true, optional = true }
+alloy-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "dep:alloy-serde", "alloy-rpc-types-engine/serde", "op-alloy-protocol/serde"]
