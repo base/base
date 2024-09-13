@@ -2,7 +2,7 @@
 
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{Address, BlockHash, TxHash};
+use alloy_primitives::{Address, BlockHash, TxHash, B256};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::OpReceiptEnvelope;
 use serde::{Deserialize, Serialize};
@@ -71,6 +71,14 @@ impl ReceiptResponse for OpTransactionReceipt {
 
     fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
         self.inner.authorization_list()
+    }
+
+    fn cumulative_gas_used(&self) -> u128 {
+        self.inner.cumulative_gas_used()
+    }
+
+    fn state_root(&self) -> Option<B256> {
+        self.inner.state_root()
     }
 }
 
