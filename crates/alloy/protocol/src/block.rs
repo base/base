@@ -1,7 +1,7 @@
 //! Block Types for Optimism.
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::B256;
-use superchain_primitives::BlockID;
 
 /// Block Header Info
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -27,8 +27,8 @@ impl BlockInfo {
     }
 
     /// Returns the block ID.
-    pub const fn id(&self) -> BlockID {
-        BlockID { hash: self.hash, number: self.number }
+    pub const fn id(&self) -> BlockNumHash {
+        BlockNumHash { hash: self.hash, number: self.number }
     }
 }
 
@@ -49,8 +49,8 @@ impl core::fmt::Display for BlockInfo {
 pub struct L2BlockInfo {
     /// The base [BlockInfo]
     pub block_info: BlockInfo,
-    /// The L1 origin [BlockID]
-    pub l1_origin: BlockID,
+    /// The L1 origin [BlockNumHash]
+    pub l1_origin: BlockNumHash,
     /// The sequence number of the L2 block
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub seq_num: u64,
@@ -58,7 +58,7 @@ pub struct L2BlockInfo {
 
 impl L2BlockInfo {
     /// Instantiates a new [L2BlockInfo].
-    pub const fn new(block_info: BlockInfo, l1_origin: BlockID, seq_num: u64) -> Self {
+    pub const fn new(block_info: BlockInfo, l1_origin: BlockNumHash, seq_num: u64) -> Self {
         Self { block_info, l1_origin, seq_num }
     }
 }
@@ -76,7 +76,7 @@ mod tests {
             parent_hash: B256::from([2; 32]),
             timestamp: 1,
         };
-        let expected = BlockID { hash: B256::from([1; 32]), number: 0 };
+        let expected = BlockNumHash { hash: B256::from([1; 32]), number: 0 };
         assert_eq!(block_info.id(), expected);
 
         let block_info = BlockInfo {
@@ -85,7 +85,7 @@ mod tests {
             parent_hash: B256::from([2; 32]),
             timestamp: 1,
         };
-        let expected = BlockID { hash: B256::from([1; 32]), number: u64::MAX };
+        let expected = BlockNumHash { hash: B256::from([1; 32]), number: u64::MAX };
         assert_eq!(block_info.id(), expected);
     }
 
@@ -138,7 +138,7 @@ mod tests {
                 parent_hash: B256::from([2; 32]),
                 timestamp: 1,
             },
-            l1_origin: BlockID { hash: B256::from([3; 32]), number: 2 },
+            l1_origin: BlockNumHash { hash: B256::from([3; 32]), number: 2 },
             seq_num: 3,
         };
 
@@ -169,7 +169,7 @@ mod tests {
                 parent_hash: B256::from([2; 32]),
                 timestamp: 1,
             },
-            l1_origin: BlockID { hash: B256::from([3; 32]), number: 2 },
+            l1_origin: BlockNumHash { hash: B256::from([3; 32]), number: 2 },
             seq_num: 3,
         };
 
