@@ -1,0 +1,31 @@
+[package]
+name = "op-alloy-genesis"
+description = "Optimism genesis types"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# Alloy
+alloy-sol-types.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+
+# `serde` feature dependencies
+serde = { workspace = true, optional = true }
+serde_repr = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[features]
+default = ["serde", "std"]
+std = []
+serde = ["dep:serde", "dep:serde_repr", "alloy-primitives/serde", "alloy-eips/serde", "alloy-consensus/serde"]
