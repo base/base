@@ -1,7 +1,7 @@
 //! Op types related to sync.
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{BlockNumber, B256};
-use alloy_rpc_types_eth::BlockId;
 use serde::{Deserialize, Serialize};
 
 /// The block reference for an L2 block.
@@ -20,7 +20,7 @@ pub struct L2BlockRef {
     pub timestamp: u64,
     /// The L1 origin.
     #[serde(rename = "l1Origin")]
-    pub l1_origin: BlockId,
+    pub l1_origin: BlockNumHash,
     /// The sequence number.
     pub sequence_number: u64,
 }
