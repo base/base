@@ -32,13 +32,20 @@ pub mod addresses;
 pub use addresses::AddressList;
 
 pub mod system;
-pub use system::SystemConfig;
+pub use system::{
+    BatcherUpdateError, GasConfigUpdateError, GasLimitUpdateError, LogProcessingError,
+    SystemAccounts, SystemConfig, SystemConfigUpdateError, SystemConfigUpdateType,
+};
 
 pub mod chain;
-pub use chain::ChainConfig;
+pub use chain::{ChainConfig, HardForkConfiguration, SuperchainLevel};
 
 pub mod genesis;
 pub use genesis::ChainGenesis;
 
 pub mod rollup;
-pub use rollup::{RollupConfig, GRANITE_CHANNEL_TIMEOUT};
+pub use rollup::{
+    rollup_config_from_chain_id, RollupConfig, BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG,
+    FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK,
+    MAX_RLP_BYTES_PER_CHANNEL_FJORD, OP_MAINNET_CONFIG, OP_SEPOLIA_CONFIG,
+};
