@@ -3,7 +3,6 @@
 //! [Transaction]: alloy_consensus::Transaction
 
 use crate::{OpTxEnvelope, TxDeposit};
-#[cfg(not(feature = "std"))]
 use alloc::{string::String, vec, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, Address, Bytes, TxKind, U256};
