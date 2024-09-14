@@ -11,7 +11,7 @@ use alloy_consensus::Header;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{address, Address, Bytes, TxKind, B256, U256};
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
-use superchain_primitives::{RollupConfig, SystemConfig};
+use op_alloy_genesis::{RollupConfig, SystemConfig};
 
 /// The system transaction gas limit post-Regolith
 const REGOLITH_SYSTEM_TX_GAS: u128 = 1_000_000;
