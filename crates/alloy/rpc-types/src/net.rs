@@ -1,9 +1,11 @@
 #![allow(missing_docs)]
 //! Network RPC types
 
+use crate::collections::HashMap;
+use alloc::{string::String, vec::Vec};
 use alloy_primitives::ChainId;
+use core::net::IpAddr;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::IpAddr};
 
 // https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L13
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]

@@ -1,6 +1,5 @@
 //! Optimism specific types related to transactions.
 
-use alloy_network::TransactionResponse;
 use alloy_primitives::B256;
 use alloy_serde::OtherFields;
 use serde::{Deserialize, Serialize};
@@ -28,17 +27,17 @@ pub struct Transaction {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl TransactionResponse for Transaction {
+impl alloy_network_primitives::TransactionResponse for Transaction {
+    fn tx_hash(&self) -> alloy_primitives::TxHash {
+        self.inner.tx_hash()
+    }
+
     fn from(&self) -> alloy_primitives::Address {
         self.inner.from()
     }
 
     fn to(&self) -> Option<alloy_primitives::Address> {
         self.inner.to()
-    }
-
-    fn tx_hash(&self) -> alloy_primitives::TxHash {
-        self.inner.tx_hash()
     }
 
     fn value(&self) -> alloy_primitives::U256 {
