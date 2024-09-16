@@ -160,8 +160,7 @@ impl core::fmt::Display for DecodeError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for DecodeError {}
+impl core::error::Error for DecodeError {}
 
 impl L1BlockInfoTx {
     /// Creates a new [L1BlockInfoTx] from the given information.

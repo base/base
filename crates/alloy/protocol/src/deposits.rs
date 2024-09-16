@@ -55,8 +55,7 @@ pub enum DepositError {
     GasDecode(Bytes),
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for DepositError {}
+impl core::error::Error for DepositError {}
 
 impl Display for DepositError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

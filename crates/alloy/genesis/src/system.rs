@@ -455,8 +455,7 @@ impl core::fmt::Display for GasLimitUpdateError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for GasLimitUpdateError {}
+impl core::error::Error for GasLimitUpdateError {}
 
 /// System accounts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
