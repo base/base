@@ -124,7 +124,7 @@ impl Frame {
             encoded[18..22].try_into().map_err(|_| FrameDecodingError::InvalidDataLength)?,
         ) as usize;
 
-        if data_len > MAX_FRAME_LEN {
+        if data_len > MAX_FRAME_LEN || data_len >= encoded.len() - (BASE_FRAME_LEN - 1) {
             return Err(FrameDecodingError::DataTooLarge(data_len));
         }
 
@@ -188,6 +188,41 @@ mod test {
         let frame = Frame { id: [0xFF; 16], number: 0xEE, data: vec![0xDD; 50], is_last: true };
 
         let (_, frame_decoded) = Frame::decode(&frame.encode()).unwrap();
+        assert_eq!(frame, frame_decoded);
+    }
+
+    #[test]
+    fn test_data_too_short() {
+        let frame = Frame { id: [0xFF; 16], number: 0xEE, data: vec![0xDD; 22], is_last: true };
+        let err = Frame::decode(&frame.encode()[..22]).unwrap_err();
+        assert_eq!(err, FrameDecodingError::DataTooShort(22));
+    }
+
+    #[test]
+    fn test_decode_exceeds_max_data_len() {
+        let frame = Frame {
+            id: [0xFF; 16],
+            number: 0xEE,
+            data: vec![0xDD; MAX_FRAME_LEN + 1],
+            is_last: true,
+        };
+        let err = Frame::decode(&frame.encode()).unwrap_err();
+        assert_eq!(err, FrameDecodingError::DataTooLarge(MAX_FRAME_LEN + 1));
+    }
+
+    #[test]
+    fn test_decode_malicious_data_len() {
+        let frame = Frame { id: [0xFF; 16], number: 0xEE, data: vec![0xDD; 50], is_last: true };
+        let mut encoded = frame.encode();
+        let data_len = (encoded.len() - 22) as u32;
+        encoded[18..22].copy_from_slice(&data_len.to_be_bytes());
+
+        let err = Frame::decode(&encoded).unwrap_err();
+        assert_eq!(err, FrameDecodingError::DataTooLarge(encoded.len() - 22_usize));
+
+        let valid_data_len = (encoded.len() - 23) as u32;
+        encoded[18..22].copy_from_slice(&valid_data_len.to_be_bytes());
+        let (_, frame_decoded) = Frame::decode(&encoded).unwrap();
         assert_eq!(frame, frame_decoded);
     }
 
