@@ -182,10 +182,10 @@ call will deploy a contract (like `CREATE` opcode) but instead of the address be
 `keccak256(rlp([deployer_address, nonce]))` it instead uses the hash of the contract's bytecode and a salt.
 This means that a given deployer address will deploy the
 same code to the same address no matter when or where they issue the deployment. The deployer is deployed
-ith a one-time-use-account, so no matter what chain the deployer is on, its address will always be the same. This
+with a one-time-use account, so no matter what chain the deployer is on, its address will always be the same. This
 means the only variables in determining the address of your contract are its bytecode hash and the provided salt.
 
-Between the use of `CREATE2` opcode and the one-time-use-account for the deployer, this contracts ensures
+Between the use of `CREATE2` opcode and the one-time-use account for the deployer, this contracts ensures
 that a given contract will exist at the exact same address on every chain, but without having to use the
 same gas pricing or limits every time.
 
