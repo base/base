@@ -5,6 +5,7 @@
 **Table of Contents**
 
 - [Message validation](#message-validation)
+- [System deposits transaction margin](#system-deposits-transaction-margin)
 - [Security Considerations](#security-considerations)
   - [Mempool Denial of Service](#mempool-denial-of-service)
 
@@ -50,6 +51,21 @@ The sequencer MAY choose to demote messages which are invalid but can still tech
 
 Transactions with invalid message-dependencies MUST NOT be included in block-building,
 and should thus be dropped from the transaction-pool.
+
+## System deposits transaction margin
+
+The [Deposit context closing transaction](./derivation.md#closing-the-deposit-context) requires
+a small margin of additional EVM gas to be available for system operations.
+
+The transaction-pool should filter out L2 transactions that spend more than the
+gas limit, minus the gas spent on system transactions.
+This ensures that the transaction can be included in a valid L2 block,
+and does not get stuck in the transaction pool.
+
+A notion of an "effective gas limit", that subtracts 100,000 gas from the regular gas limit,
+should be maintained in the transaction pool.
+This leaves sufficient gas for the L1 attributes transaction (under 45,000 gas),
+the new deposit-context closing transaction (under 36,000 gas), and margin for error / change.
 
 ## Security Considerations
 

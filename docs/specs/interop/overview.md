@@ -42,3 +42,5 @@ they need not be the same entity in practice.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
 - [Superchain WETH](./superchain-weth.md): Making ETH interoperable.
+- [Derivation](./derivation.md): Changes to derivation of block-attributes.
+- [Transaction Pool](./tx-pool.md): Transaction-pool validation of transactions.
