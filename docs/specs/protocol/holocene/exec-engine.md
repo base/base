@@ -71,5 +71,5 @@ an outbound withdrawal for a long period of time, the node may not have access t
 clients are able to at the very least reconstruct the account storage root at a given block on the fly if it does not
 directly store this information.
 
-[l2-to-l1-mp]: ../protocol/predeploys.md#L2ToL1MessagePasser
-[output-root]: ../glossary.md#l2-output-root
+[l2-to-l1-mp]: ../../protocol/predeploys.md#L2ToL1MessagePasser
+[output-root]: ../../glossary.md#l2-output-root
