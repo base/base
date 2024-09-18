@@ -29,7 +29,30 @@ pub enum ToL2BlockRefError {
     BlockInfoDecodeError(DecodeError),
 }
 
-impl core::error::Error for ToL2BlockRefError {}
+// Since `Eip2718Error` uses an msrv prior to rust `1.81`, the `core::error::Error` type
+// is not stabalized and `Eip2718Error` only implements `std::error::Error` and not
+// `core::error::Error`. So we need to implement `std::error::Error` to provide the `Eip2718Error`
+// as a source when the `std` feature is enabled.
+#[cfg(feature = "std")]
+impl std::error::Error for ToL2BlockRefError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TxEnvelopeDecodeError(err) => Some(err),
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl core::error::Error for ToL2BlockRefError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
 
 /// An error that can occur when converting an [crate::OptimismExecutionPayloadEnvelopeV4] to a
 /// [op_alloy_genesis::SystemConfig].
@@ -58,4 +81,27 @@ pub enum ToSystemConfigError {
     MissingSystemConfig,
 }
 
-impl core::error::Error for ToSystemConfigError {}
+// Since `Eip2718Error` uses an msrv prior to rust `1.81`, the `core::error::Error` type
+// is not stabalized and `Eip2718Error` only implements `std::error::Error` and not
+// `core::error::Error`. So we need to implement `std::error::Error` to provide the `Eip2718Error`
+// as a source when the `std` feature is enabled.
+#[cfg(feature = "std")]
+impl std::error::Error for ToSystemConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TxEnvelopeDecodeError(err) => Some(err),
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl core::error::Error for ToSystemConfigError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
