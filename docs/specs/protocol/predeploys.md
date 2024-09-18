@@ -145,7 +145,7 @@ This contract is deprecated and its usage should be avoided.
 
 ## WETH9
 
-[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/vendor/WETH9.sol)
+[Implementation](https://github.com/ethereum-optimism/optimism/blob/2b1c99b39744579cc226077d356ae9e5f162db4a/packages/contracts-bedrock/src/vendor/WETH9.sol)
 
 Address: `0x4200000000000000000000000000000000000006`
 
