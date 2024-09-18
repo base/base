@@ -18,7 +18,6 @@ op-alloy-rpc-types.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
-alloy-eips.workspace = true
 alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true

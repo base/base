@@ -8,8 +8,7 @@
 
 pub use alloy_network::*;
 
-use alloy_consensus::{BlobTransactionSidecar, TxType};
-use alloy_eips::eip7702::SignedAuthorization;
+use alloy_consensus::TxType;
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
 use op_alloy_consensus::OpTxType;
@@ -120,14 +119,6 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
         self.max_priority_fee_per_gas = Some(max_priority_fee_per_gas);
     }
 
-    fn max_fee_per_blob_gas(&self) -> Option<u128> {
-        self.max_fee_per_blob_gas
-    }
-
-    fn set_max_fee_per_blob_gas(&mut self, max_fee_per_blob_gas: u128) {
-        self.max_fee_per_blob_gas = Some(max_fee_per_blob_gas)
-    }
-
     fn gas_limit(&self) -> Option<u128> {
         self.gas
     }
@@ -142,14 +133,6 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
 
     fn set_access_list(&mut self, access_list: AccessList) {
         self.access_list = Some(access_list);
-    }
-
-    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecar> {
-        self.sidecar.as_ref()
-    }
-
-    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecar) {
-        TransactionBuilder::<Ethereum>::set_blob_sidecar(self, sidecar)
     }
 
     fn complete_type(&self, ty: OpTxType) -> Result<(), Vec<&'static str>> {
@@ -200,13 +183,5 @@ impl TransactionBuilder<Optimism> for alloy_rpc_types_eth::transaction::Transact
         wallet: &W,
     ) -> Result<<Optimism as Network>::TxEnvelope, TransactionBuilderError<Optimism>> {
         Ok(wallet.sign_request(self).await?)
-    }
-
-    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
-        self.authorization_list = Some(authorization_list);
-    }
-
-    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
-        self.authorization_list.as_ref()
     }
 }
