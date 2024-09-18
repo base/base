@@ -19,7 +19,7 @@
 extern crate alloc;
 
 pub use alloy_rpc_types_engine::ExecutionPayloadV1;
-pub use op_alloy_genesis::{RollupConfig, SystemConfig};
+pub use op_alloy_genesis::{ChainGenesis, RollupConfig, SystemConfig};
 pub use op_alloy_protocol::L2BlockInfo;
 
 use alloy_eips::eip2718::Decodable2718;
@@ -48,54 +48,57 @@ pub trait AsInnerPayload {
 /// Defines conversion utility methods for Optimism-specific payloads.
 pub trait OptimismPayloadUtils {
     /// Converts the payload into an [L2BlockInfo].
-    fn to_l2_block_ref(
-        &self,
-        rollup_config: &RollupConfig,
-    ) -> Result<L2BlockInfo, ToL2BlockRefError>;
+    ///
+    /// This method creates the [L2BlockInfo] using the inner payload
+    /// fetched with the [AsInnerPayload::as_v1_payload] method.
+    ///
+    /// If the payload is the genesis block, it will return the genesis block info.
+    /// Otherwise, it will return the L2 block info from the first deposit transaction.
+    fn to_l2_block_info(&self, genesis: &ChainGenesis) -> Result<L2BlockInfo, ToL2BlockRefError>;
 
     /// Converts the payload into a [SystemConfig].
-    fn to_system_config(
-        &self,
-        rollup_config: &RollupConfig,
-    ) -> Result<SystemConfig, ToSystemConfigError>;
+    ///
+    /// This method creates the [SystemConfig] using the inner payload
+    /// fetched with the [AsInnerPayload::as_v1_payload] method.
+    ///
+    /// If the payload is the genesis block, it will return the system config from the genesis
+    /// block. Otherwise, it will return the system config from the first deposit transaction.
+    fn to_system_config(&self, genesis: &ChainGenesis)
+        -> Result<SystemConfig, ToSystemConfigError>;
 }
 
 impl<T> OptimismPayloadUtils for T
 where
     T: AsInnerPayload,
 {
-    fn to_l2_block_ref(
-        &self,
-        rollup_config: &RollupConfig,
-    ) -> Result<L2BlockInfo, ToL2BlockRefError> {
+    fn to_l2_block_info(&self, genesis: &ChainGenesis) -> Result<L2BlockInfo, ToL2BlockRefError> {
         let inner_payload = self.as_v1_payload();
 
-        let (l1_origin, sequence_number) =
-            if inner_payload.block_number == rollup_config.genesis.l2.number {
-                if inner_payload.block_hash != rollup_config.genesis.l2.hash {
-                    return Err(ToL2BlockRefError::InvalidGenesisHash);
-                }
-                (rollup_config.genesis.l1, 0)
-            } else {
-                if inner_payload.transactions.is_empty() {
-                    return Err(ToL2BlockRefError::MissingL1InfoDeposit(inner_payload.block_hash));
-                }
+        let (l1_origin, sequence_number) = if inner_payload.block_number == genesis.l2.number {
+            if inner_payload.block_hash != genesis.l2.hash {
+                return Err(ToL2BlockRefError::InvalidGenesisHash);
+            }
+            (genesis.l1, 0)
+        } else {
+            if inner_payload.transactions.is_empty() {
+                return Err(ToL2BlockRefError::MissingL1InfoDeposit(inner_payload.block_hash));
+            }
 
-                let ty = inner_payload.transactions[0][0];
-                if ty != OpTxType::Deposit as u8 {
-                    return Err(ToL2BlockRefError::UnexpectedTxType(ty));
-                }
-                let tx = OpTxEnvelope::decode_2718(&mut inner_payload.transactions[0].as_ref())
-                    .map_err(ToL2BlockRefError::TxEnvelopeDecodeError)?;
+            let ty = inner_payload.transactions[0][0];
+            if ty != OpTxType::Deposit as u8 {
+                return Err(ToL2BlockRefError::UnexpectedTxType(ty));
+            }
+            let tx = OpTxEnvelope::decode_2718(&mut inner_payload.transactions[0].as_ref())
+                .map_err(ToL2BlockRefError::TxEnvelopeDecodeError)?;
 
-                let OpTxEnvelope::Deposit(tx) = tx else {
-                    return Err(ToL2BlockRefError::FirstTxNonDeposit(tx.tx_type().into()));
-                };
-
-                let l1_info = L1BlockInfoTx::decode_calldata(tx.input.as_ref())
-                    .map_err(ToL2BlockRefError::BlockInfoDecodeError)?;
-                (l1_info.id(), l1_info.sequence_number())
+            let OpTxEnvelope::Deposit(tx) = tx else {
+                return Err(ToL2BlockRefError::FirstTxNonDeposit(tx.tx_type().into()));
             };
+
+            let l1_info = L1BlockInfoTx::decode_calldata(tx.input.as_ref())
+                .map_err(ToL2BlockRefError::BlockInfoDecodeError)?;
+            (l1_info.id(), l1_info.sequence_number())
+        };
 
         Ok(L2BlockInfo {
             block_info: BlockInfo {
@@ -111,18 +114,15 @@ where
 
     fn to_system_config(
         &self,
-        rollup_config: &RollupConfig,
+        genesis: &ChainGenesis,
     ) -> Result<SystemConfig, ToSystemConfigError> {
         let inner_payload = self.as_v1_payload();
 
-        if inner_payload.block_number == rollup_config.genesis.l2.number {
-            if inner_payload.block_hash != rollup_config.genesis.l2.hash {
+        if inner_payload.block_number == genesis.l2.number {
+            if inner_payload.block_hash != genesis.l2.hash {
                 return Err(ToSystemConfigError::InvalidGenesisHash);
             }
-            return rollup_config
-                .genesis
-                .system_config
-                .ok_or(ToSystemConfigError::MissingSystemConfig);
+            return genesis.system_config.ok_or(ToSystemConfigError::MissingSystemConfig);
         }
 
         if inner_payload.transactions.is_empty() {
