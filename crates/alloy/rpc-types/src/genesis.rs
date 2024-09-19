@@ -48,6 +48,8 @@ pub struct OptimismGenesisInfo {
     pub fjord_time: Option<u64>,
     /// granite hardfork timestamp
     pub granite_time: Option<u64>,
+    /// holocene hardfork timestamp
+    pub holocene_time: Option<u64>,
 }
 
 impl OptimismGenesisInfo {
@@ -126,6 +128,7 @@ mod tests {
                 ecotone_time: Some(0),
                 fjord_time: None,
                 granite_time: None,
+                holocene_time: None,
             }
         );
     }
@@ -183,6 +186,7 @@ mod tests {
                     ecotone_time: Some(0),
                     fjord_time: None,
                     granite_time: None,
+                    holocene_time: None,
                 }),
                 base_fee_info: Some(OptimismBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -204,6 +208,7 @@ mod tests {
                     ecotone_time: Some(0),
                     fjord_time: None,
                     granite_time: None,
+                    holocene_time: None,
                 }),
                 base_fee_info: Some(OptimismBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -223,7 +228,8 @@ mod tests {
           "canyonTime": 0,
           "ecotoneTime": 0,
           "fjordTime": 0,
-          "graniteTime": 0
+          "graniteTime": 0,
+          "holoceneTime": 0
         }
         "#;
 
@@ -240,6 +246,7 @@ mod tests {
                     ecotone_time: Some(0),
                     fjord_time: Some(0),
                     granite_time: Some(0),
+                    holocene_time: Some(0),
                 }),
                 base_fee_info: None,
             }
