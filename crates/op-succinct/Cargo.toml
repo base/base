@@ -88,10 +88,6 @@ tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", branch = "pa
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", branch = "patch-sha2-v0.10.8" }
 ecdsa = { git = "https://github.com/sp1-patches/signatures", branch = "patch-ecdsa-v0.16.8" }
 bn = { git = "https://github.com/0xWOLAND/bn.git", package = "substrate-bn" }
-# Note: Patch alloy-primitives to use sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", branch = "patch-sha3-v0.10.8" }
-alloy-primitives = { git = "https://github.com/sp1-patches/alloy-core", branch = "patch-v0.7.7" }
-
-# Patch op-alloy-protocol for recent exports for compatibility with kona.
-# TODO: Can remove later, currently patched in Kona.
-op-alloy-protocol = { git = "https://github.com/alloy-rs/op-alloy" }
+# This patch uses sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
+alloy-primitives = { git = "https://github.com/sp1-patches/alloy-core", branch = "patch-v0.8.0" }

@@ -5,8 +5,7 @@ use revm::{
     db::states::state::State,
     handler::register::EvmHandler,
     precompile::{
-        bn128, secp256k1, secp256r1, Precompile, PrecompileResult, PrecompileSpecId,
-        PrecompileWithAddress,
+        bn128, secp256r1, Precompile, PrecompileResult, PrecompileSpecId, PrecompileWithAddress,
     },
     primitives::Bytes,
     ContextPrecompiles,
@@ -43,8 +42,8 @@ pub(crate) const ANNOTATED_KZG_EVAL: PrecompileWithAddress = create_annotated_pr
     revm::precompile::kzg_point_evaluation::POINT_EVALUATION,
     "kzg-eval"
 );
-pub(crate) const ANNOTATED_EC_RECOVER: PrecompileWithAddress =
-    create_annotated_precompile!(secp256k1::ECRECOVER, "ec-recover");
+// pub(crate) const ANNOTATED_EC_RECOVER: PrecompileWithAddress =
+//     create_annotated_precompile!(secp256k1::ECRECOVER, "ec-recover");
 
 // Source: https://github.com/anton-rs/kona/blob/main/bin/client/src/fault/handler/mod.rs#L20-L42
 pub fn zkvm_handle_register<F, H>(handler: &mut EvmHandler<'_, (), &mut State<&mut TrieDB<F, H>>>)
@@ -69,7 +68,8 @@ where
             ANNOTATED_BN_MUL,
             ANNOTATED_BN_PAIR,
             ANNOTATED_KZG_EVAL,
-            ANNOTATED_EC_RECOVER,
+            // Note: Removed annotations for the ec-recover precompile as it's not a large contributor to cycle count.
+            // ANNOTATED_EC_RECOVER,
         ];
         ctx_precompiles.extend(override_precompiles);
 

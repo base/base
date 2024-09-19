@@ -20,7 +20,7 @@ data
 **.txt
 !LICENSE.txt
 
-# Reports
+# Execution Report
 execution-reports/
 
 # Rollup Config

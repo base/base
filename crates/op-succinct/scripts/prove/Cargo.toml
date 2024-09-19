@@ -31,6 +31,10 @@ path = "bin/vkey.rs"
 name = "cost_estimator"
 path = "bin/cost_estimator.rs"
 
+[[bin]]
+name = "fetch-rollup-config"
+path = "bin/fetch_rollup_config.rs"
+
 [dependencies]
 
 # workspace
@@ -39,6 +43,17 @@ alloy = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 cargo_metadata = { workspace = true }
+alloy-sol-types = { workspace = true }
+anyhow.workspace = true
+dotenv.workspace = true
+num-format.workspace = true
+log.workspace = true
+csv.workspace = true
+serde = { workspace = true }
+reqwest = { workspace = true }
+rayon = "1.10.0"
+serde_json.workspace = true
+
 
 # kona
 kona-host = { workspace = true }
@@ -50,14 +65,6 @@ op-succinct-client-utils.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true }
-anyhow.workspace = true
-dotenv.workspace = true
-num-format.workspace = true
-log.workspace = true
-csv.workspace = true
-serde = { workspace = true }
-reqwest = { workspace = true }
-rayon = "1.10.0"
 
 [build-dependencies]
 sp1-build = { workspace = true }

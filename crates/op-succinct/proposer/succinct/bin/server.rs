@@ -8,7 +8,7 @@ use axum::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use log::info;
-use op_succinct_client_utils::{RawBootInfo, BOOT_INFO_SIZE};
+use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_agg_proof_stdin, get_proof_stdin,
@@ -76,7 +76,7 @@ async fn request_span_proof(
     dotenv::dotenv().ok();
     // TODO: Save data fetcher, NetworkProver, and NetworkClient globally
     // and access via Store.
-    let data_fetcher = OPSuccinctDataFetcher::new();
+    let data_fetcher = OPSuccinctDataFetcher::new().await;
 
     let host_cli = data_fetcher
         .get_host_cli_args(payload.start, payload.end, ProgramType::Multi, CacheMode::DeleteCache)
@@ -105,14 +105,8 @@ async fn request_agg_proof(
     let mut proofs_with_pv: Vec<SP1ProofWithPublicValues> =
         payload.subproofs.iter().map(|sp| bincode::deserialize(sp).unwrap()).collect();
 
-    let boot_infos: Vec<RawBootInfo> = proofs_with_pv
-        .iter_mut()
-        .map(|proof| {
-            let mut boot_info_buf = [0u8; BOOT_INFO_SIZE];
-            proof.public_values.read_slice(&mut boot_info_buf);
-            RawBootInfo::abi_decode(&boot_info_buf).unwrap()
-        })
-        .collect();
+    let boot_infos: Vec<BootInfoStruct> =
+        proofs_with_pv.iter_mut().map(|proof| proof.public_values.read()).collect();
 
     let proofs: Vec<SP1Proof> =
         proofs_with_pv.iter_mut().map(|proof| proof.proof.clone()).collect();
@@ -121,7 +115,7 @@ async fn request_agg_proof(
         hex::decode(payload.head.strip_prefix("0x").expect("Invalid L1 head, no 0x prefix."))?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
-    let fetcher = OPSuccinctDataFetcher::new();
+    let fetcher = OPSuccinctDataFetcher::new().await;
     let headers = fetcher.get_header_preimages(&boot_infos, l1_head.into()).await?;
 
     let prover = NetworkProver::new();

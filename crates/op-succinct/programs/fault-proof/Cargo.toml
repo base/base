@@ -9,6 +9,9 @@ homepage.workspace = true
 
 [dependencies]
 cfg-if.workspace = true
+serde_json.workspace = true
+
+# workspace (ethereum)
 alloy-consensus.workspace = true
 
 # sp1

@@ -9,7 +9,7 @@ import {Utils} from "./helpers/Utils.sol";
 
 contract UpgradeTest is Test, Utils {
     function testReadJsonSucceeds() public {
-        Config memory config = readJson("zkconfig.json");
+        Config memory config = readJson("zkl2ooconfig.json");
         assertEq(config.l2BlockTime, 2);
         assertEq(config.proposer, address(0));
     }
@@ -19,20 +19,14 @@ contract UpgradeTest is Test, Utils {
         vm.warp(12345678);
         uint256 exampleTimestamp = block.timestamp - 1;
 
-        Config memory config = readJson("zkconfig.json");
+        Config memory config = readJson("zkl2ooconfig.json");
         // This is never called, so we just need to add some code to the address so the check passes.
         config.verifierGateway = address(new Proxy(address(this)));
-        ZKL2OutputOracle l2oo = ZKL2OutputOracle(deployWithConfig(config, exampleOutputRoot, exampleTimestamp));
+        config.startingOutputRoot = exampleOutputRoot;
+        config.startingTimestamp = exampleTimestamp;
+        ZKL2OutputOracle l2oo = ZKL2OutputOracle(deployWithConfig(config));
 
         assertEq(l2oo.getL2Output(l2oo.latestOutputIndex()).outputRoot, exampleOutputRoot);
         assertEq(l2oo.getL2Output(l2oo.latestOutputIndex()).timestamp, exampleTimestamp);
-    }
-
-    function testHexString() public {
-        assertEq(createHexString(0), "0x0");
-        assertEq(createHexString(1), "0x1");
-        assertEq(createHexString(15), "0xf");
-        assertEq(createHexString(16), "0x10");
-        assertEq(createHexString(256), "0x100");
     }
 }

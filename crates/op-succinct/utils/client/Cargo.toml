@@ -8,6 +8,7 @@ edition.workspace = true
 # workspace (general)
 anyhow.workspace = true
 async-trait.workspace = true
+serde_json.workspace = true
 
 # workspace (ethereum)
 op-alloy-consensus.workspace = true
@@ -19,13 +20,13 @@ alloy-sol-types.workspace = true
 revm.workspace = true
 
 # workspace (kona)
+kona-common.workspace = true
 kona-primitives.workspace = true
 kona-executor.workspace = true
 kona-client.workspace = true
 kona-preimage.workspace = true
 kona-mpt.workspace = true
 kona-derive.workspace = true
-kona-common.workspace = true
 
 # general
 serde.workspace = true

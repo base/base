@@ -56,6 +56,9 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @notice The owner of the contract, who has admin permissions.
     address public owner;
 
+    /// @notice The hash of the chain's rollup config, used to verify ZK proofs.
+    bytes32 public rollupConfigHash;
+
     /// @notice A trusted mapping of block numbers to block hashes.
     mapping(uint256 => bytes32) public historicBlockHashes;
 
@@ -66,6 +69,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         address verifierGateway;
         bytes32 startingOutputRoot;
         address owner;
+        bytes32 rollupConfigHash;
     }
 
     /// @notice Struct containing the public values committed to for the SP1 proof.
@@ -75,6 +79,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         bytes32 claimRoot;
         uint256 claimBlockNum;
         uint256 chainId;
+        bytes32 rollupConfigHash;
     }
 
     ////////////////////////////////////////////////////////////
@@ -109,6 +114,11 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @param previousOwner The previous owner.
     /// @param newOwner      The new owner.
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @notice Emitted when the rollup config hash is updated.
+    /// @param oldRollupConfigHash The old rollup config hash.
+    /// @param newRollupConfigHash The new rollup config hash.
+    event UpdatedRollupConfigHash(bytes32 indexed oldRollupConfigHash, bytes32 indexed newRollupConfigHash);
 
     /// @notice Semantic version.
     /// @custom:semver 2.0.0
@@ -183,6 +193,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         _transferOwnership(_zkInitParams.owner);
         _updateVKey(_zkInitParams.vkey);
         _updateVerifierGateway(_zkInitParams.verifierGateway);
+        _updateRollupConfigHash(_zkInitParams.rollupConfigHash);
     }
 
     /// @notice Getter for the submissionInterval.
@@ -296,7 +307,8 @@ contract ZKL2OutputOracle is Initializable, ISemver {
             l2PreRoot: l2Outputs[latestOutputIndex()].outputRoot,
             claimRoot: _outputRoot,
             claimBlockNum: _l2BlockNumber,
-            chainId: chainId
+            chainId: chainId,
+            rollupConfigHash: rollupConfigHash
         });
 
         verifierGateway.verifyProof(vkey, abi.encode(publicValues), _proof);
@@ -431,5 +443,14 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     function _updateVerifierGateway(address _verifierGateway) internal {
         emit UpdatedVerifierGateway(address(verifierGateway), _verifierGateway);
         verifierGateway = SP1VerifierGateway(_verifierGateway);
+    }
+
+    function updateRollupConfigHash(bytes32 _rollupConfigHash) external onlyOwner {
+        _updateRollupConfigHash(_rollupConfigHash);
+    }
+
+    function _updateRollupConfigHash(bytes32 _rollupConfigHash) internal {
+        emit UpdatedRollupConfigHash(rollupConfigHash, _rollupConfigHash);
+        rollupConfigHash = _rollupConfigHash;
     }
 }

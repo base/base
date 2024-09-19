@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use kona_host::{init_tracing_subscriber, start_server, start_server_and_native_client, HostCli};
-use log::info;
 
 // Source: https://github.com/ethereum-optimism/kona/blob/main/bin/host/src/main.rs
 #[tokio::main(flavor = "multi_thread")]
@@ -15,6 +14,6 @@ async fn main() -> Result<()> {
         start_server_and_native_client(cfg).await?;
     }
 
-    info!("Exiting host program.");
-    Ok(())
+    println!("Exiting host program.");
+    std::process::exit(0);
 }

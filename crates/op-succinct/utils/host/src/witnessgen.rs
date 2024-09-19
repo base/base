@@ -14,6 +14,11 @@ pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
         format!("--l2-block-number={}", host_cli.l2_block_number),
         format!("--l2-chain-id={}", host_cli.l2_chain_id),
     ];
+    // The verbosity should be passed as -v, -vv, -vvv, etc.
+    if host_cli.v > 0 {
+        args.push(format!("-{}", "v".repeat(host_cli.v as usize)));
+    }
+
     if let Some(addr) = &host_cli.l2_node_address {
         args.push("--l2-node-address".to_string());
         args.push(addr.to_string());
@@ -37,11 +42,15 @@ pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
     if host_cli.server {
         args.push("--server".to_string());
     }
+    if let Some(rollup_config_path) = &host_cli.rollup_config_path {
+        args.push("--rollup-config-path".to_string());
+        args.push(rollup_config_path.to_string_lossy().into_owned());
+    }
     args
 }
 
 /// Default timeout for witness generation.
-pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(120);
+pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(1000);
 
 struct WitnessGenProcess {
     child: tokio::process::Child,

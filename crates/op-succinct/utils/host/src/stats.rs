@@ -1,6 +1,6 @@
 use std::{fmt, time::Duration};
 
-use crate::fetcher::{ChainMode, OPSuccinctDataFetcher};
+use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{CostEstimator, ExecutionReport};
@@ -90,7 +90,7 @@ pub async fn get_execution_stats(
 
     // Fetch the number of transactions in the blocks from the L2 RPC.
     let block_data_range = data_fetcher
-        .get_block_data_range(ChainMode::L2, start, end)
+        .get_block_data_range(RPCMode::L2, start, end)
         .await
         .expect("Failed to fetch block data range.");
 

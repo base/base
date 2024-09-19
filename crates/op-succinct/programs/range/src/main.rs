@@ -32,11 +32,13 @@ cfg_if! {
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
 
+        use kona_primitives::RollupConfig;
         use op_succinct_client_utils::{
-            RawBootInfo,
+            BootInfoWithBytesConfig, boot::BootInfoStruct,
             InMemoryOracle
         };
         use alloc::vec::Vec;
+        use serde_json;
     } else {
         use kona_client::CachingOracle;
         use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
@@ -54,9 +56,23 @@ fn main() {
             // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
                 println!("cycle-tracker-start: boot-load");
-                let boot = sp1_zkvm::io::read::<RawBootInfo>();
-                sp1_zkvm::io::commit_slice(&boot.abi_encode());
-                let boot: Arc<BootInfo> = Arc::new(boot.into());
+                let boot_info_with_bytes_config = sp1_zkvm::io::read::<BootInfoWithBytesConfig>();
+
+                // BootInfoStruct is identical to BootInfoWithBytesConfig, except it replaces
+                // the rollup_config_bytes with a hash of those bytes (rollupConfigHash). Securely
+                // hashes the rollup config bytes.
+                let boot_info_struct = BootInfoStruct::from(boot_info_with_bytes_config.clone());
+                sp1_zkvm::io::commit::<BootInfoStruct>(&boot_info_struct);
+
+                let rollup_config: RollupConfig = serde_json::from_slice(&boot_info_with_bytes_config.rollup_config_bytes).expect("failed to parse rollup config");
+                let boot: Arc<BootInfo> = Arc::new(BootInfo {
+                    l1_head: boot_info_with_bytes_config.l1_head,
+                    l2_output_root: boot_info_with_bytes_config.l2_output_root,
+                    l2_claim: boot_info_with_bytes_config.l2_claim,
+                    l2_claim_block: boot_info_with_bytes_config.l2_claim_block,
+                    chain_id: boot_info_with_bytes_config.chain_id,
+                    rollup_config,
+                });
                 println!("cycle-tracker-end: boot-load");
 
                 println!("cycle-tracker-start: oracle-load");
@@ -155,8 +171,10 @@ fn main() {
                 Sealed::new_unchecked(new_block_header.clone(), new_block_header.hash_slow()),
             );
 
-            // Produce the next payload.
+            println!("cycle-tracker-report-start: payload-derivation");
+            // Produce the next payload. If a span batch boundary is passed, the driver will step until the next batch.
             payload = driver.produce_payloads().await.unwrap();
+            println!("cycle-tracker-report-end: payload-derivation");
         }
 
         println!("cycle-tracker-start: output-root");

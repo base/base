@@ -89,9 +89,9 @@ run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC
 upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   #!/usr/bin/env bash
 
-  CHAIN_ID=$(jq -r '.chainId' contracts/zkconfig.json)
+  CHAIN_ID=$(jq -r '.chainId' contracts/zkl2ooconfig.json)
   if [ "$CHAIN_ID" = "0" ] || [ -z "$CHAIN_ID" ]; then
-    echo "Are you sure you've filled out your zkconfig.json? Your chain ID is currently set to 0."
+    echo "Are you sure you've filled out your zkl2ooconfig.json? Your chain ID is currently set to 0."
     exit 1
   fi
 

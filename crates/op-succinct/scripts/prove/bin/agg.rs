@@ -1,11 +1,12 @@
 use std::fs;
 
+use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
-use op_succinct_client_utils::{RawBootInfo, BOOT_INFO_SIZE};
+use op_succinct_client_utils::{boot::BootInfoStruct, BOOT_INFO_SIZE};
 use op_succinct_host_utils::{
-    fetcher::{ChainMode, OPSuccinctDataFetcher},
+    fetcher::{OPSuccinctDataFetcher, RPCMode},
     get_agg_proof_stdin,
 };
 use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
@@ -33,7 +34,7 @@ struct Args {
 fn load_aggregation_proof_data(
     proof_names: Vec<String>,
     l2_chain_id: u64,
-) -> (Vec<SP1Proof>, Vec<RawBootInfo>) {
+) -> (Vec<SP1Proof>, Vec<BootInfoStruct>) {
     let metadata = MetadataCommand::new().exec().unwrap();
     let workspace_root = metadata.workspace_root;
     let proof_directory = format!("{}/data/{}/proofs", workspace_root, l2_chain_id);
@@ -50,10 +51,10 @@ fn load_aggregation_proof_data(
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
         proofs.push(deserialized_proof.proof);
 
-        // The public values are the ABI-encoded RawBootInfo.
+        // The public values are the ABI-encoded BootInfoStruct.
         let mut raw_boot_info_bytes = [0u8; BOOT_INFO_SIZE];
         deserialized_proof.public_values.read_slice(&mut raw_boot_info_bytes);
-        let boot_info = RawBootInfo::abi_decode(&raw_boot_info_bytes).unwrap();
+        let boot_info = BootInfoStruct::abi_decode(&raw_boot_info_bytes, false).unwrap();
         boot_infos.push(boot_info);
     }
 
@@ -68,12 +69,12 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let prover = ProverClient::new();
-    let fetcher = OPSuccinctDataFetcher::new();
+    let fetcher = OPSuccinctDataFetcher::new().await;
 
-    let l2_chain_id = fetcher.get_chain_id(ChainMode::L2).await?;
+    let l2_chain_id = fetcher.get_chain_id(RPCMode::L2).await?;
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, l2_chain_id);
     let latest_checkpoint_head = fetcher
-        .get_header_by_number(ChainMode::L1, args.latest_checkpoint_head_nb)
+        .get_header_by_number(RPCMode::L1, args.latest_checkpoint_head_nb)
         .await?
         .hash_slow();
     let headers = fetcher.get_header_preimages(&boot_infos, latest_checkpoint_head).await?;
