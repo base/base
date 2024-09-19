@@ -25,6 +25,9 @@ COPY --from=optimism-builder /optimism/op-proposer/proposer/bin/op-proposer /usr
 # Set the entrypoint to run op-proposer with environment variables
 COPY ./proposer/op/op_proposer.sh /usr/local/bin/op_proposer.sh
 
+# Copy the rollup configs
+COPY ../rollup-configs /rollup-configs
+
 # Make the binary and entrypoint executable.
 RUN ls -l /usr/local/bin/
 RUN chmod +x /usr/local/bin/op-proposer

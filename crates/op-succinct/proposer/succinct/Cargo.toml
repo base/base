@@ -27,6 +27,7 @@ anyhow.workspace = true
 dotenv.workspace = true
 op-succinct-client-utils.workspace = true
 serde = { workspace = true }
+serde_json.workspace = true
 
 # server
 axum = "0.7.4"
@@ -34,6 +35,11 @@ bincode.workspace = true
 log.workspace = true
 base64.workspace = true
 tower-http.workspace = true
+cargo_metadata.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+csv.workspace = true
+rayon = "1.10.0"
 
 [build-dependencies]
 sp1-build = { workspace = true }

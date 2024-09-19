@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum-optimism/optimism/op-node/rollup"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent"
 	"github.com/succinctlabs/op-succinct-go/proposer/utils"
@@ -51,7 +50,7 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 	}
 
 	// Get the rollup config for the chain to fetch the batcher address.
-	rollupCfg, err := rollup.LoadOPStackRollupConfig(l.Cfg.L2ChainID)
+	rollupCfg, err := utils.LoadOPStackRollupConfigFromChainID(l.Cfg.L2ChainID)
 	if err != nil {
 		return fmt.Errorf("failed to load rollup config: %w", err)
 	}

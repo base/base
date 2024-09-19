@@ -4,8 +4,9 @@ use kona_host::HostCli;
 use kona_primitives::RollupConfig;
 use log::info;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, ChainMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
+    rollup_config::read_rollup_config,
     stats::{get_execution_stats, ExecutionStats},
     witnessgen::WitnessGenExecutor,
     ProgramType,
@@ -16,7 +17,8 @@ use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
-    env, fs,
+    env,
+    fs::{self},
     future::Future,
     net::TcpListener,
     path::PathBuf,
@@ -95,6 +97,7 @@ async fn get_span_batch_ranges_from_server(
         env::var("SPAN_BATCH_SERVER_URL").unwrap_or("http://localhost:8089".to_string());
     let query_url = format!("{}/span-batch-ranges", span_batch_server_url);
 
+    // Send the request to the span batch server. If the request fails, return the corresponding error.
     let response: SpanBatchResponse =
         client.post(&query_url).json(&request).send().await?.json().await?;
 
@@ -114,7 +117,8 @@ struct BatchHostCli {
 }
 
 fn get_max_span_batch_range_size(chain_id: u64) -> u64 {
-    const DEFAULT_SIZE: u64 = 20;
+    // TODO: The default size/batch size should be dynamic based on the L2 chain. Specifically, look at the gas used across the block range (should be fast to compute) and then set the batch size accordingly.
+    const DEFAULT_SIZE: u64 = 1000;
     match chain_id {
         8453 => 5,      // Base
         11155111 => 20, // OP Sepolia
@@ -124,21 +128,38 @@ fn get_max_span_batch_range_size(chain_id: u64) -> u64 {
 }
 
 /// Split ranges according to the max span batch range size per L2 chain.
+///
+/// If the width of the span batch range returned by the server is 0, expand it to 1, and propogate those changes.
 fn split_ranges(span_batch_ranges: Vec<SpanBatchRange>, l2_chain_id: u64) -> Vec<SpanBatchRange> {
+    // Sort the ranges by start block.
+    let mut span_batch_ranges = span_batch_ranges.clone();
+    span_batch_ranges.sort_by_key(|range| range.start);
+
     let batch_size = get_max_span_batch_range_size(l2_chain_id);
     let mut split_ranges = Vec::new();
 
-    for range in span_batch_ranges {
+    for range in span_batch_ranges.iter() {
         if range.end - range.start > batch_size {
             let mut start = range.start;
             while start < range.end {
                 let end = min(start + batch_size, range.end);
                 split_ranges.push(SpanBatchRange { start, end });
-                // The start of the next range should be the end of the current range + 1.
                 start = end + 1;
             }
         } else {
-            split_ranges.push(range);
+            split_ranges.push(range.clone());
+        }
+    }
+
+    // Iterate through the split ranges and fix any ranges that have the same start and end block.
+    // Ensure that the start of the next range gets incremented by one as well.
+    for i in 0..split_ranges.len() {
+        if split_ranges[i].start == split_ranges[i].end {
+            split_ranges[i].end += 1;
+            // Only increment the start of the next range if it's not the last range.
+            if i < split_ranges.len() - 1 {
+                split_ranges[i + 1].start += 1;
+            }
         }
     }
 
@@ -150,7 +171,7 @@ async fn run_native_data_generation(
     data_fetcher: &OPSuccinctDataFetcher,
     split_ranges: &[SpanBatchRange],
 ) -> Vec<BatchHostCli> {
-    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
+    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 1;
 
     // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
     // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
@@ -324,8 +345,6 @@ fn manage_span_batch_server_container() -> Result<()> {
     // Start the Docker container.
     let run_status = Command::new("docker")
         .args(["run", "-p", "8089:8089", "-d", "span_batch_server"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .status()?;
     if !run_status.success() {
         return Err(anyhow::anyhow!("Failed to start Docker container"));
@@ -371,10 +390,12 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     let args = HostArgs::parse();
-    let data_fetcher = OPSuccinctDataFetcher::new();
+    let data_fetcher = OPSuccinctDataFetcher::new().await;
 
-    let l2_chain_id = data_fetcher.get_chain_id(ChainMode::L2).await?;
-    let rollup_config = RollupConfig::from_l2_chain_id(l2_chain_id).unwrap();
+    let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
+
+    // Read the rollup config.
+    let rollup_config: RollupConfig = read_rollup_config(l2_chain_id).unwrap();
 
     // Start the Docker container if it doesn't exist.
     manage_span_batch_server_container()?;

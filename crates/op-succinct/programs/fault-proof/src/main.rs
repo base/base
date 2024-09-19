@@ -26,8 +26,10 @@ use op_succinct_client_utils::precompiles::zkvm_handle_register;
 cfg_if! {
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
-        use op_succinct_client_utils::{RawBootInfo, InMemoryOracle};
+        use op_succinct_client_utils::{InMemoryOracle, boot::BootInfoStruct, BootInfoWithBytesConfig};
+        use kona_primitives::RollupConfig;
         use alloc::vec::Vec;
+        use serde_json;
     } else {
         use kona_client::CachingOracle;
         use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
@@ -45,9 +47,23 @@ fn main() {
             // and in memory oracle.
             if #[cfg(target_os = "zkvm")] {
                 println!("cycle-tracker-start: boot-load");
-                let raw_boot_info = sp1_zkvm::io::read::<RawBootInfo>();
-                sp1_zkvm::io::commit_slice(&raw_boot_info.abi_encode());
-                let boot: Arc<BootInfo> = Arc::new(raw_boot_info.into());
+                let boot_info_with_bytes_config = sp1_zkvm::io::read::<BootInfoWithBytesConfig>();
+
+                // BootInfoStruct is identical to BootInfoWithBytesConfig, except it replaces
+                // the rollup_config_bytes with a hash of those bytes (rollupConfigHash). Securely
+                // hashes the rollup config bytes.
+                let boot_info_struct = BootInfoStruct::from(boot_info_with_bytes_config.clone());
+                sp1_zkvm::io::commit::<BootInfoStruct>(&boot_info_struct);
+
+                let rollup_config: RollupConfig = serde_json::from_slice(&boot_info_with_bytes_config.rollup_config_bytes).expect("failed to parse rollup config");
+                let boot: Arc<BootInfo> = Arc::new(BootInfo {
+                    l1_head: boot_info_with_bytes_config.l1_head,
+                    l2_output_root: boot_info_with_bytes_config.l2_output_root,
+                    l2_claim: boot_info_with_bytes_config.l2_claim,
+                    l2_claim_block: boot_info_with_bytes_config.l2_claim_block,
+                    chain_id: boot_info_with_bytes_config.chain_id,
+                    rollup_config,
+                });
                 println!("cycle-tracker-end: boot-load");
 
                 println!("cycle-tracker-start: oracle-load");

@@ -143,7 +143,6 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 			return
 		}
 
-		// TODO: There's a better way to structure the flow of the server.
 		err = l.RequestOPSuccinctProof(p)
 		if err != nil {
 			l.Log.Error("failed to request proof from the OP Succinct server", "err", err, "proof", p)

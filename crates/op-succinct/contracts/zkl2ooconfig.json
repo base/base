@@ -1,0 +1,16 @@
+{
+  "chainId": 13269,
+  "challenger": "0x0000000000000000000000000000000000000000",
+  "finalizationPeriod": 0,
+  "l2BlockTime": 2,
+  "l2OutputOracleProxy": "0x863508f057c09f7b94e582d74404859ecd36a306",
+  "owner": "0x0000000000000000000000000000000000000000",
+  "proposer": "0x0000000000000000000000000000000000000000",
+  "rollupConfigHash": "0x25c30030889fc3619b7da5ac7937c0d3c34f27d69a9afb053e2e73f344593af8",
+  "startingBlockNumber": 1339701,
+  "startingOutputRoot": "0xb966e2f5672253db3a49e17cf88173715b018ec7d6424719643b858966b23176",
+  "startingTimestamp": 1726166754,
+  "submissionInterval": 150,
+  "verifierGateway": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
+  "vkey": "0x003ed12d1c9d67fd4f92dfe4e00badc5c38a886f0d233971132515e0c4ee13ec"
+}

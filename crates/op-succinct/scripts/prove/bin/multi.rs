@@ -3,7 +3,7 @@ use std::{fs, time::Instant};
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, ChainMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
     stats::get_execution_stats,
     witnessgen::WitnessGenExecutor,
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     let args = Args::parse();
 
-    let data_fetcher = OPSuccinctDataFetcher::new();
+    let data_fetcher = OPSuccinctDataFetcher::new().await;
 
     let cache_mode = if args.use_cache { CacheMode::KeepCache } else { CacheMode::DeleteCache };
 
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
 
         // Create a proof directory for the chain ID if it doesn't exist.
         let proof_dir =
-            format!("data/{}/proofs", data_fetcher.get_chain_id(ChainMode::L2).await.unwrap());
+            format!("data/{}/proofs", data_fetcher.get_chain_id(RPCMode::L2).await.unwrap());
         if !std::path::Path::new(&proof_dir).exists() {
             fs::create_dir_all(&proof_dir).unwrap();
         }
@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
         let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin.clone()).run().unwrap();
         let execution_duration = start_time.elapsed();
 
-        let l2_chain_id = data_fetcher.get_chain_id(ChainMode::L2).await.unwrap();
+        let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await.unwrap();
         let report_path =
             format!("execution-reports/multi/{}/{}-{}.csv", l2_chain_id, args.start, args.end);
 

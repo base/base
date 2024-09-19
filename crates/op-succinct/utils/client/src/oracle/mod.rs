@@ -24,8 +24,12 @@ impl InMemoryOracle {
     /// Creates a new [InMemoryOracle] from the raw bytes passed into the zkVM.
     /// These values are deserialized using rkyv for zero copy deserialization.
     pub fn from_raw_bytes(input: Vec<u8>) -> Self {
+        println!("cycle-tracker-start: in-memory-oracle-from-raw-bytes-archive");
         let archived = unsafe { rkyv::archived_root::<Self>(&input) };
+        println!("cycle-tracker-end: in-memory-oracle-from-raw-bytes-archive");
+        println!("cycle-tracker-start: in-memory-oracle-from-raw-bytes-deserialize");
         let deserialized: Self = archived.deserialize(&mut Infallible).unwrap();
+        println!("cycle-tracker-end: in-memory-oracle-from-raw-bytes-deserialize");
 
         deserialized
     }

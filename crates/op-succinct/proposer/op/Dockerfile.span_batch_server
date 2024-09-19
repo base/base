@@ -25,6 +25,9 @@ WORKDIR /app
 # Copy the local proposer/op directory
 COPY ./proposer/op /app/op-proposer-go
 
+# Copy the rollup configs
+COPY ../rollup-configs /rollup-configs
+
 # Change to the server directory and build the application
 WORKDIR /app/op-proposer-go/server
 

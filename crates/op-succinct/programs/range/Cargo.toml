@@ -9,7 +9,10 @@ repository.workspace = true
 
 [dependencies]
 cfg-if.workspace = true
+serde_json.workspace = true
 log.workspace = true
+
+# workspace (ethereum)
 op-alloy-consensus.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true

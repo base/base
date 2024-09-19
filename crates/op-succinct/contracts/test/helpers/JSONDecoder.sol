@@ -8,10 +8,12 @@ contract JSONDecoder {
         uint256 finalizationPeriod;
         uint256 l2BlockTime;
         address l2OutputOracleProxy;
-        string l2RollupNode;
         address owner;
         address proposer;
+        bytes32 rollupConfigHash;
         uint256 startingBlockNumber;
+        bytes32 startingOutputRoot;
+        uint256 startingTimestamp;
         uint256 submissionInterval;
         address verifierGateway;
         bytes32 vkey;

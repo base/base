@@ -10,13 +10,16 @@ contract ZKDeployer is Script, Utils {
     function run() public returns (address) {
         vm.startBroadcast();
 
-        Config memory config = readJsonWithRPCFromEnv("zkconfig.json");
-        // Note: The owner of the proxy shouldn't be the msg.sender.
+        // Update the rollup config to match the current chain. If the starting block number is 0, the latest block number and starting output root will be fetched.
+        updateRollupConfig();
+
+        Config memory config = readJson("zkl2ooconfig.json");
+
         config.l2OutputOracleProxy = address(new Proxy(config.owner));
 
         address zkL2OutputOracleImpl = address(new ZKL2OutputOracle());
 
-        upgradeAndInitialize(zkL2OutputOracleImpl, config, address(0), bytes32(0), 0);
+        upgradeAndInitialize(zkL2OutputOracleImpl, config, address(0));
 
         vm.stopBroadcast();
 

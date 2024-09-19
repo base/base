@@ -12,21 +12,38 @@ git clone https://github.com/succinctlabs/op-succinct.git
 cd op-succinct
 ```
 
-### 2) Navigate to the contracts directory:
+### 2) Set environment variables:
+
+```bash
+cp .env.example .env
+```
+
+Set the following environment variables:
+
+```bash
+L1_RPC=...
+L2_RPC=...
+L2_NODE_RPC=...
+PRIVATE_KEY=...
+ETHERSCAN_API_KEY=...
+```
+
+### 3) Navigate to the contracts directory:
 
 ```bash
 cd contracts
 ```
 
-### 3) Set Deployment Parameters
+### 4) Set Deployment Parameters
 
-Inside the `contracts` folder there is a file called `zkconfig.json` that contains the parameters for the deployment. You will need to fill it with your chain's specific details.
+Inside the `contracts` folder there is a file called `zkl2ooconfig.json` that contains the parameters for the deployment. You will need to fill it with your chain's specific details.
+
+The following parameters are required: `proposer`, `challenger`, `finalizationPeriod`, `owner`, `verifierGateway`. The rest of the fields (`startingBlockNumber`, `l2BlockTime`, `chainId` and `vkey`) are automatically fetched by the `fetch-rollup-config` script which is invoked by the `ZKDeployer` forge script. To use a manually set `startingBlockNumber`, set `USE_CACHED_STARTING_BLOCK` to `true`.
 
 
 | Parameter | Description |
 |-----------|-------------|
 | `startingBlockNumber` | The L2 block number at which to start generating validity proofs. This should be set to the current L2 block number. You can fetch this with `cast bn --rpc-url <L2_RPC>`. |
-| `l2RollupNode` | The URL of the L2 rollup node. (After the tutorial, this is `http://localhost:8545`) |
 | `submissionInterval` | The number of L2 blocks between each L1 output submission. |
 | `l2BlockTime` | The time in seconds between each L2 block. |
 | `proposer` | The Ethereum address of the proposer account. If `address(0)`, anyone can submit proofs. |
@@ -35,23 +52,13 @@ Inside the `contracts` folder there is a file called `zkconfig.json` that contai
 | `chainId` | The chain ID of the L2 network. |
 | `owner` | The Ethereum address of the `ZKL2OutputOracle` owner, who can update the verification key and verifier address. |
 | `vkey` | The verification key for the aggregate program. Run `cargo run --bin vkey --release` to generate this. |
-| `verifierGateway` | The address of the verifier gateway contract. |
-| `l2OutputOracleProxy` | The address of your OP Stack chain's L2 Output Oracle proxy contract which will be upgraded. |
+| `rollupConfigHash` | The hash of the rollup config. This is used for non-superchain OP stack configurations. |
+| `verifierGateway` | The address of the verifier gateway contract. The canonical Succinct verifiers can be found [here](https://docs.succinct.xyz/onchain-verification/contract-addresses.html). |
+| `l2OutputOracleProxy` | The address of your OP Stack chain's L2 Output Oracle proxy contract which will be upgraded. Only used in `ZKUpgrader`. |
 
-### 4) Deploy the `ZKL2OutputOracle` contract:
+### 5) Deploy the `ZKL2OutputOracle` contract:
 
-This foundry script will deploy the `ZKL2OutputOracle` contract to the specified L1 RPC and use the provided private key to sign the transaction.
-
-Make sure to set your env with the following variables:
-
-```
-L1_RPC=...
-L2_NODE_RPC=...
-PRIVATE_KEY=...
-ETHERSCAN_API_KEY=...
-```
-
-and then run the following command to deploy the contract:
+This foundry script will deploy the `ZKL2OutputOracle` contract to the specified L1 RPC and use the provided private key to sign the transaction:
 
 ```bash
 forge script script/ZKDeployer.s.sol:ZKDeployer \

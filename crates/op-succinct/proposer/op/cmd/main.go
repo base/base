@@ -1,12 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum-optimism/optimism/op-service/dial"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
 	"github.com/succinctlabs/op-succinct-go/proposer/utils"
 	"github.com/urfave/cli/v2"
@@ -60,7 +61,18 @@ func main() {
 			},
 		},
 		Action: func(cliCtx *cli.Context) error {
-			rollupCfg, err := utils.GetRollupConfigFromL2Rpc(cliCtx.String("l2"))
+			// Get the chain ID from the L2 RPC.
+			l2Client, err := ethclient.Dial(cliCtx.String("l2"))
+			if err != nil {
+				log.Fatal(err)
+			}
+			chainID, err := l2Client.ChainID(context.Background())
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			// Load the rollup config for the given L2 chain ID.
+			rollupCfg, err := utils.LoadOPStackRollupConfigFromChainID(chainID.Uint64())
 			if err != nil {
 				log.Fatal(err)
 			}

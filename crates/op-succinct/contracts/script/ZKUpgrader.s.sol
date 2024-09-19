@@ -7,12 +7,15 @@ import {Utils} from "../test/helpers/Utils.sol";
 
 contract ZKUpgrader is Script, Utils {
     function run() public {
-        Config memory config = readJson("zkconfig.json");
+        // Update the rollup config to match the current chain. If the starting block number is 0, the latest block number and starting output root will be fetched.
+        updateRollupConfig();
+
+        Config memory config = readJson("zkl2ooconfig.json");
 
         vm.startBroadcast(vm.envUint("ADMIN_PK"));
 
         address zkL2OutputOracleImpl = address(new ZKL2OutputOracle());
-        upgradeAndInitialize(zkL2OutputOracleImpl, config, address(0), bytes32(0), 0);
+        upgradeAndInitialize(zkL2OutputOracleImpl, config, address(0));
 
         vm.stopBroadcast();
     }
