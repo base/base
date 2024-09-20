@@ -19,7 +19,7 @@ pub struct L2BlockRef {
     /// The timestamp.
     pub timestamp: u64,
     /// The L1 origin.
-    #[serde(rename = "l1Origin")]
+    #[serde(rename = "l1origin")]
     pub l1_origin: BlockNumHash,
     /// The sequence number.
     pub sequence_number: u64,
