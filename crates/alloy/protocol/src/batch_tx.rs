@@ -25,14 +25,33 @@ impl BatchTransaction {
     pub fn is_full(&self, max_frames: u16) -> bool {
         self.frames.len() as u16 >= max_frames
     }
+
+    /// Returns the [BatchTransaction] as a [Bytes].
+    pub fn to_bytes(&self) -> Bytes {
+        self.frames
+            .iter()
+            .fold(Vec::new(), |mut acc, frame| {
+                acc.append(&mut frame.encode());
+                acc
+            })
+            .into()
+    }
 }
 
-impl From<&BatchTransaction> for Bytes {
-    fn from(tx: &BatchTransaction) -> Self {
-        let mut buf: Vec<u8> = Vec::new();
-        for frame in tx.frames.iter() {
-            buf.append(&mut frame.encode());
-        }
-        buf.into()
+#[cfg(test)]
+mod test {
+    use super::*;
+    #[cfg(not(feature = "std"))]
+    use alloc::vec;
+
+    #[test]
+    fn test_batch_transaction() {
+        let frame = Frame { id: [0xFF; 16], number: 0xEE, data: vec![0xDD; 50], is_last: true };
+        let batch = BatchTransaction { frames: vec![frame.clone(); 5], size: 5 * frame.size() };
+        let bytes: Bytes = batch.to_bytes();
+        let bytes =
+            [crate::DERIVATION_VERSION_0].iter().chain(bytes.iter()).copied().collect::<Vec<_>>();
+        let frames = Frame::parse_frames(&bytes).unwrap();
+        assert_eq!(frames, vec![frame; 5]);
     }
 }
