@@ -36,6 +36,9 @@ pub use payload_v3::OptimismExecutionPayloadEnvelopeV3;
 mod payload_v4;
 pub use payload_v4::OptimismExecutionPayloadEnvelopeV4;
 
+mod superchain;
+pub use superchain::{ProtocolVersion, SuperchainSignal};
+
 mod errors;
 pub use errors::{ToL2BlockRefError, ToSystemConfigError};
 

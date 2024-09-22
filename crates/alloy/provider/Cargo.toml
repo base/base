@@ -1,0 +1,26 @@
+[package]
+name = "op-alloy-provider"
+description = "Interface with an OP Stack blockchain"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+authors.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[dependencies]
+# Workspace
+op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+
+# Alloy
+alloy-primitives = { workspace = true, features = ["rlp", "serde"] }
+alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+alloy-provider.workspace = true
+alloy-network.workspace = true
+alloy-transport.workspace = true
+
+# misc
+async-trait = "0.1.82"
