@@ -5,7 +5,10 @@ use crate::collections::HashMap;
 use alloc::{string::String, vec::Vec};
 use alloy_primitives::ChainId;
 use core::net::IpAddr;
-use serde::{Deserialize, Serialize};
+use serde::{
+    de::{self, Unexpected},
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 
 // https://github.com/ethereum-optimism/optimism/blob/8dd17a7b114a7c25505cd2e15ce4e3d0f7e3f7c1/op-node/p2p/store/iface.go#L13
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
@@ -65,7 +68,7 @@ pub struct PeerInfo {
     pub connectedness: Connectedness,
     /// 0: "Unknown", 1: "Inbound" (if the peer contacted us)
     /// 2: "Outbound" (if we connected to them)
-    pub direction: u8,
+    pub direction: Direction,
     pub protected: bool,
     #[serde(rename = "chainID")]
     pub chain_id: ChainId,
@@ -151,12 +154,95 @@ impl From<u8> for Connectedness {
         }
     }
 }
+/// Direction represents the direction of a connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Direction {
+    /// Unknown is the default direction when the direction is not specified.
+    #[default]
+    Unknown = 0,
+    /// Inbound is for when the remote peer initiated the connection.
+    Inbound = 1,
+    /// Outbound is for when the local peer initiated the connection.
+    Outbound = 2,
+}
 
+impl Serialize for Direction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for Direction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u8::deserialize(deserializer)?;
+        match value {
+            0 => Ok(Direction::Unknown),
+            1 => Ok(Direction::Inbound),
+            2 => Ok(Direction::Outbound),
+            _ => Err(de::Error::invalid_value(
+                Unexpected::Unsigned(value as u64),
+                &"a value between 0 and 2",
+            )),
+        }
+    }
+}
+impl core::fmt::Display for Direction {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Direction::Unknown => "Unknown",
+                Direction::Inbound => "Inbound",
+                Direction::Outbound => "Outbound",
+            }
+        )
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{self};
 
+    #[test]
+    fn test_direction_serialization() {
+        assert_eq!(
+            serde_json::to_string(&Direction::Unknown).unwrap(),
+            "0",
+            "Serialization failed for Direction::Unknown"
+        );
+        assert_eq!(
+            serde_json::to_string(&Direction::Inbound).unwrap(),
+            "1",
+            "Serialization failed for Direction::Inbound"
+        );
+        assert_eq!(
+            serde_json::to_string(&Direction::Outbound).unwrap(),
+            "2",
+            "Serialization failed for Direction::Outbound"
+        );
+    }
+
+    #[test]
+    fn test_direction_deserialization() {
+        let unknown: Direction = serde_json::from_str("0").unwrap();
+        let inbound: Direction = serde_json::from_str("1").unwrap();
+        let outbound: Direction = serde_json::from_str("2").unwrap();
+
+        assert_eq!(unknown, Direction::Unknown, "Deserialization mismatch for Direction::Unknown");
+        assert_eq!(inbound, Direction::Inbound, "Deserialization mismatch for Direction::Inbound");
+        assert_eq!(
+            outbound,
+            Direction::Outbound,
+            "Deserialization mismatch for Direction::Outbound"
+        );
+    }
     #[test]
     fn test_peer_info_connectedness_serialization() {
         let peer_info = PeerInfo {
@@ -168,7 +254,7 @@ mod tests {
             addresses: vec![String::from("127.0.0.1")],
             protocols: Some(vec![String::from("eth"), String::from("p2p")]),
             connectedness: Connectedness::Connected,
-            direction: 1,
+            direction: Direction::Outbound,
             protected: true,
             chain_id: 1,
             latency: 100,
