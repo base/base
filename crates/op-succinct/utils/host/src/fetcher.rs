@@ -325,7 +325,9 @@ impl OPSuccinctDataFetcher {
 
         // Get L2 output data.
         let l2_output_block =
-            l2_provider.get_block_by_number(l2_start_block.into(), false).await?.unwrap();
+            l2_provider.get_block_by_number(l2_start_block.into(), false).await?.ok_or_else(
+                || anyhow::anyhow!("Block not found for block number {}", l2_start_block),
+            )?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let l2_head = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider

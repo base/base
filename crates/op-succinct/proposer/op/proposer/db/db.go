@@ -47,10 +47,10 @@ func (db *ProofDB) CloseDB() error {
 }
 
 func (db *ProofDB) NewEntry(proofType string, start, end uint64) error {
-	return db.NewEntryWithReqAddedTimestamp(proofType, start, end, uint64(time.Now().Unix()))
+	return db.newEntryWithReqAddedTimestamp(proofType, start, end, uint64(time.Now().Unix()))
 }
 
-func (db *ProofDB) NewEntryWithReqAddedTimestamp(proofType string, start, end, now uint64) error {
+func (db *ProofDB) newEntryWithReqAddedTimestamp(proofType string, start, end, now uint64) error {
 	// Convert string to proofrequest.Type
 	var pType proofrequest.Type
 	switch proofType {
@@ -217,6 +217,27 @@ func (db *ProofDB) GetLatestEndBlock() (uint64, error) {
 	return uint64(maxEnd.EndBlock), nil
 }
 
+// When restarting the L2OutputSubmitter, some proofs may have been left in a "requested" state without a prover request ID on the server. Until we
+// implement a mechanism for querying the status of the witness generation, we need to time out these proofs after a period of time so they can be requested.
+func (db *ProofDB) GetWitnessGenerationTimeoutProofsOnServer() ([]*ent.ProofRequest, error) {
+	currentTime := time.Now().Unix()
+	twentyMinutesAgo := currentTime - 20*60
+
+	proofs, err := db.client.ProofRequest.Query().
+		Where(
+			proofrequest.StatusEQ(proofrequest.StatusREQ),
+			proofrequest.ProverRequestIDIsNil(),
+			proofrequest.RequestAddedTimeLT(uint64(twentyMinutesAgo)),
+		).
+		All(context.Background())
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to query witness generation timeout proofs: %w", err)
+	}
+
+	return proofs, nil
+}
+
 // If a proof failed to be sent to the prover network, it's status will be set to FAILED, but the prover request ID will be empty.
 // This function returns all such proofs.
 func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
@@ -343,16 +364,11 @@ func (db *ProofDB) GetAllCompletedAggProofs(startBlock uint64) ([]*ent.ProofRequ
 	return proofs, nil
 }
 
+// Try to create an AGG proof from the span proofs that cover the range [from, minTo).
+// Returns true if a new AGG proof was created, false otherwise.
 func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, uint64, error) {
-	// Start a DB transaction.
-	tx, err := db.client.Tx(context.Background())
-	if err != nil {
-		return false, 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
 	// If there's already an AGG proof in progress/completed with the same start block, return.
-	count, err := tx.ProofRequest.Query().
+	count, err := db.client.ProofRequest.Query().
 		Where(
 			proofrequest.TypeEQ(proofrequest.TypeAGG),
 			proofrequest.StartBlockEQ(from),
@@ -367,51 +383,55 @@ func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, ui
 		return false, 0, nil
 	}
 
-	// If there's no AGG proof in process, query to see if there is a complete SPAN proof chain that
-	// covers at least [from, minTo]. If so, create an AGG proof for that range. Attempts to create
-	// the largest span proof possible.
-	start := from
-	var end uint64
-	for {
-		spanProof, err := tx.ProofRequest.Query().
-			Where(
-				proofrequest.TypeEQ(proofrequest.TypeSPAN),
-				proofrequest.StatusEQ(proofrequest.StatusCOMPLETE),
-				proofrequest.StartBlockEQ(start),
-			).
-			First(context.Background())
-		if err != nil {
-			if ent.IsNotFound(err) {
-				break // No more consecutive SPAN proofs
-			}
-			return false, 0, fmt.Errorf("failed to query SPAN proof: %w", err)
-		}
-		end = spanProof.EndBlock
-		start = end + 1
+	// Get the longest contiguous span proof chain so far.
+	maxContigousEnd, err := db.GetMaxContiguousSpanProofRange(from)
+	if err != nil {
+		return false, 0, fmt.Errorf("failed to get max contiguous span proof range: %w", err)
 	}
 
-	if end < minTo {
-		return false, 0, nil // Not enough SPAN proofs to create an AGG proof
+	if maxContigousEnd < minTo {
+		// There's no contiguous span proof chain that ends before minTo, so we can't create an AGG proof.
+		return false, 0, nil
 	}
 
 	// Create a new AGG proof request
-	_, err = tx.ProofRequest.Create().
-		SetType(proofrequest.TypeAGG).
-		SetStartBlock(from).
-		SetEndBlock(end).
-		SetRequestAddedTime(0).
-		SetStatus(proofrequest.StatusUNREQ).
-		Save(context.Background())
+	err = db.NewEntry("AGG", from, maxContigousEnd)
 	if err != nil {
 		return false, 0, fmt.Errorf("failed to insert AGG proof request: %w", err)
 	}
 
-	err = tx.Commit()
+	return true, maxContigousEnd, nil
+}
+
+// Returns the start and end of the contiguous span proof chain. Use this to determine when to create an AGG proof.
+func (db *ProofDB) GetMaxContiguousSpanProofRange(start uint64) (uint64, error) {
+	ctx := context.Background()
+	client := db.client
+
+	query := client.ProofRequest.Query().
+		Where(
+			proofrequest.TypeEQ(proofrequest.TypeSPAN),
+			proofrequest.StatusEQ(proofrequest.StatusCOMPLETE),
+			proofrequest.StartBlockGTE(start),
+		).
+		Order(ent.Asc(proofrequest.FieldStartBlock))
+
+	// Execute the query.
+	spans, err := query.All(ctx)
 	if err != nil {
-		return false, 0, fmt.Errorf("failed to commit transaction: %w", err)
+		return 0, fmt.Errorf("failed to query span proofs: %w", err)
 	}
 
-	return true, end, nil
+	// Keep iterating until we can't find another contiguous span proof.
+	currentBlock := start
+	for _, span := range spans {
+		if span.StartBlock != currentBlock {
+			break
+		}
+		currentBlock = span.EndBlock + 1
+	}
+
+	return max(start, currentBlock-1), nil
 }
 
 // Get the span proofs that cover the range [start, end]. If there's a gap in the proofs, or the proofs

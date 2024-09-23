@@ -1,3 +1,4 @@
+use alloy::signers::local::PrivateKeySigner;
 use alloy_primitives::B256;
 use anyhow::{bail, Result};
 use op_succinct_client_utils::boot::hash_rollup_config;
@@ -43,6 +44,7 @@ struct L2OOConfig {
 /// - starting_timestamp: Set to the timestamp of the starting block number.
 /// - chain_id: Get the chain id from the rollup config.
 /// - vkey: Get the vkey from the aggregation program ELF.
+/// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::default();
 
@@ -57,7 +59,7 @@ async fn update_l2oo_config() -> Result<()> {
     if env::var("USE_CACHED_STARTING_BLOCK").unwrap_or("false".to_string()) != "true" {
         // Set the starting block number to 10 blocks before the latest block on L2.
         let latest_block = data_fetcher.get_head(RPCMode::L2).await?;
-        l2oo_config.starting_block_number = latest_block.number - 10;
+        l2oo_config.starting_block_number = latest_block.number - 20;
     }
 
     // Convert the starting block number to a hex string for the optimism_outputAtBlock RPC call.
@@ -85,8 +87,20 @@ async fn update_l2oo_config() -> Result<()> {
     l2oo_config.starting_timestamp =
         optimism_output_data["blockRef"]["timestamp"].as_u64().unwrap();
 
+    // Set the submission interval.
+    l2oo_config.submission_interval =
+        env::var("SUBMISSION_INTERVAL").unwrap_or("150".to_string()).parse()?;
+
     // Set the chain id.
     l2oo_config.chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
+
+    // Get the account associated with the private key.
+    let private_key = env::var("PRIVATE_KEY").unwrap();
+    let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
+    let address = signer.address();
+
+    // Set the owner.
+    l2oo_config.owner = address.to_string();
 
     // Set the vkey.
     let prover = ProverClient::new();
@@ -120,8 +134,24 @@ fn write_l2oo_config(config: L2OOConfig, workspace_root: &Path) -> Result<()> {
     Ok(())
 }
 
+fn find_project_root() -> Option<PathBuf> {
+    let mut path = std::env::current_dir().ok()?;
+    while !path.join(".git").exists() {
+        if !path.pop() {
+            return None;
+        }
+    }
+    Some(path)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
+    // This fetches the .env file from the project root. If the command is invoked in the contracts/ directory,
+    // the .env file in the root of the repo is used.
+    if let Some(root) = find_project_root() {
+        dotenv::from_path(root.join(".env")).ok();
+    } else {
+        eprintln!("Warning: Could not find project root. .env file not loaded.");
+    }
     update_l2oo_config().await
 }

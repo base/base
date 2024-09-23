@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 ///
 /// Whenever the multi-block program changes, you will need to update this.
 const MULTI_BLOCK_PROGRAM_VKEY_DIGEST: [u32; 8] =
-    [1433563224, 915959902, 1739327614, 1467493203, 514223451, 768124479, 1632058379, 944956804];
+    [1118246686, 876333357, 1751535833, 1253784834, 30755083, 1698492772, 1080266404, 1468343823];
 
 pub fn main() {
     // Read in the public values corresponding to each multi-block proof.
@@ -48,8 +48,8 @@ pub fn main() {
     agg_inputs.boot_infos.iter().for_each(|boot_info| {
         // In the multi-block program, the public values digest is just the hash of the ABI encoded
         // boot info.
-        let abi_encoded_boot_info = boot_info.abi_encode();
-        let pv_digest = Sha256::digest(abi_encoded_boot_info);
+        let serialized_boot_info = bincode::serialize(&boot_info).unwrap();
+        let pv_digest = Sha256::digest(serialized_boot_info);
 
         if cfg!(target_os = "zkvm") {
             sp1_lib::verify::verify_sp1_proof(&MULTI_BLOCK_PROGRAM_VKEY_DIGEST, &pv_digest.into());

@@ -3,15 +3,29 @@ package proposer
 import (
 	"context"
 	"fmt"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent"
-	"github.com/succinctlabs/op-succinct-go/proposer/utils"
 )
 
+type Span struct {
+	Start uint64
+	End   uint64
+}
+
+func (l *L2OutputSubmitter) CreateSpans(start, end uint64) []Span {
+	spans := []Span{}
+	// Create spans of size MaxBlockRangePerSpanProof from start to end.
+	// Each span starts where the previous one ended + 1.
+	// Continue until we can't fit another full span before reaching end.
+	for i := start; i+l.Cfg.MaxBlockRangePerSpanProof <= end; i += l.Cfg.MaxBlockRangePerSpanProof + 1 {
+		spans = append(spans, Span{Start: i, End: i + l.Cfg.MaxBlockRangePerSpanProof})
+	}
+	return spans
+}
+
 func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
-	// nextBlock is equal to the highest value in the `EndBlock` column of the db, plus 1.
+	// nextBlock is equal to the highest value in the `EndBlock` column of the DB, plus 1.
 	latestL2EndBlock, err := l.db.GetLatestEndBlock()
 	if err != nil {
 		if ent.IsNotFound(err) {
@@ -34,7 +48,7 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 		return fmt.Errorf("failed to get rollup client: %w", err)
 	}
 
-	// Get the latest finalized L1 block.
+	// Get the latest finalized L2 block.
 	status, err := rollupClient.SyncStatus(ctx)
 	if err != nil {
 		l.Log.Error("proposer unable to get sync status", "err", err)
@@ -43,54 +57,15 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 	// Note: Originally, this used the L1 finalized block. However, to satisfy the new API, we now use the L2 finalized block.
 	newL2EndBlock := status.FinalizedL2.Number
 
-	l1BeaconClient, err := utils.SetupBeacon(l.Cfg.BeaconRpc)
-	if err != nil {
-		l.Log.Error("failed to setup beacon", "err", err)
-		return err
-	}
-
-	// Get the rollup config for the chain to fetch the batcher address.
-	rollupCfg, err := utils.LoadOPStackRollupConfigFromChainID(l.Cfg.L2ChainID)
-	if err != nil {
-		return fmt.Errorf("failed to load rollup config: %w", err)
-	}
-
-	config := utils.BatchDecoderConfig{
-		L2ChainID:    new(big.Int).SetUint64(l.Cfg.L2ChainID),
-		L2Node:       rollupClient,
-		L1RPC:        *l.L1Client,
-		L1Beacon:     l1BeaconClient,
-		BatchSender:  rollupCfg.Genesis.SystemConfig.BatcherAddr,
-		L2StartBlock: newL2StartBlock,
-		L2EndBlock:   newL2EndBlock,
-		DataDir:      fmt.Sprintf("/tmp/batch_decoder/%d/transactions_cache", l.Cfg.L2ChainID),
-	}
-	// Pull all of the batches from the l1Start to l1End from chain to disk.
-	ranges, err := utils.GetAllSpanBatchesInL2BlockRange(config)
-	fmt.Println("Found", len(ranges), "valid span batches.")
-	if err != nil {
-		l.Log.Error("failed to get span batch ranges", "err", err)
-		return err
-	}
-
-	// Loop over the ranges and insert them into the DB. If the width of the span batch is greater than
-	// maxBlockRangePerSpanProof, we need to split the ranges into smaller ones and insert them into the DB.
-	for _, r := range ranges {
-		start := r.Start
-		for start <= r.End {
-			end := start + l.DriverSetup.Cfg.MaxBlockRangePerSpanProof - 1
-			if end > r.End {
-				end = r.End
-			}
-
-			err := l.db.NewEntry("SPAN", start, end)
-			if err != nil {
-				l.Log.Error("failed to insert proof request", "err", err, "start", start, "end", end)
-				return err
-			}
-
-			l.Log.Info("inserted span proof request", "start", start, "end", end)
-			start = end + 1
+	// Create spans of size MaxBlockRangePerSpanProof from newL2StartBlock to newL2EndBlock.
+	spans := l.CreateSpans(newL2StartBlock, newL2EndBlock)
+	// Add each span to the DB. If there are no spans, we will not create any proofs.
+	for _, span := range spans {
+		err := l.db.NewEntry("SPAN", span.Start, span.End)
+		l.Log.Info("New SPAN proof request", "start", span.Start, "end", span.End)
+		if err != nil {
+			l.Log.Error("failed to add span to db", "err", err)
+			return err
 		}
 	}
 

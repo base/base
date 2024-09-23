@@ -13,13 +13,6 @@ struct Args {
     #[arg(short, long)]
     request_id: String,
 
-    /// Chain ID
-    ///
-    /// 10 for OP
-    /// 11155420 for OP Sepolia
-    #[arg(short, long)]
-    chain_id: u64,
-
     /// Aggregate proof.
     #[arg(short, long)]
     agg_proof: bool,
@@ -52,23 +45,22 @@ async fn main() -> Result<()> {
         println!("Proof bytes: {:?}", hex::encode(proof_bytes));
         println!("Boot info: {:?}", boot_info);
     } else {
+        // Read the BootInfoStruct from the proof
+        let boot_info: BootInfoStruct = proof.public_values.read();
+
         // Create the proofs directory if it doesn't exist
-        let proof_path = format!("data/{}/proofs", args.chain_id);
+        let proof_path = format!("data/{}/proofs", boot_info.chainId);
         let proof_dir = Path::new(&proof_path);
         fs::create_dir_all(proof_dir)?;
 
         // Generate the filename
-        let filename = format!("{}-{}.bin", args.start.unwrap(), args.end.unwrap());
+        let filename = format!("{}.bin", boot_info.l2BlockNumber);
         let file_path = proof_dir.join(filename);
 
         // Save the proof
-        proof.save(file_path).expect("Failed to save proof");
+        proof.save(&file_path).expect("Failed to save proof");
 
-        println!(
-            "Proof saved successfully for blocks {} to {}",
-            args.start.unwrap(),
-            args.end.unwrap()
-        );
+        println!("Proof saved successfully to path: {}", file_path.to_str().unwrap());
     }
 
     Ok(())

@@ -1,0 +1,10 @@
+[project]
+name = "db-utils"
+version = "0.1.0"
+description = "Utilities for inspecting the OP Succinct proposer DB."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["python-dotenv"]
+
+[project.scripts]
+query-proofs = "query_proofs.py"

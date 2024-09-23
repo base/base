@@ -50,7 +50,7 @@ pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
 }
 
 /// Default timeout for witness generation.
-pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(1000);
+pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(1200);
 
 struct WitnessGenProcess {
     child: tokio::process::Child,
