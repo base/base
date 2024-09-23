@@ -17,7 +17,9 @@
 ## `L2ToL1MessagePasser` Storage Root in Header
 
 After the Holocene hardfork's activation, the L2 block header's `withdrawalsRoot` field will consist of the 32-byte
-[`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root _after_ the block has been executed.
+[`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root _after_ the block has been executed, and _after_ the
+insertions and deletions have been applied to the trie. In other words, the storage root should be the same root
+that is returned by `eth_getProof` at the given block number.
 
 ### Timestamp Activation
 
