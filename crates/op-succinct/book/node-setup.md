@@ -1,6 +1,23 @@
-# L2 Node Setup
+# Node Setup
 
-## Setup Instructions
+To run OP Succinct, you will need an L1 execution node, an L1 consensus node, an L2 execution node (`op-geth`), and an L2 Optimism Node (`op-node`).
+
+If you are using L2 nodes from an external provider, you will need to ensure the following:
+- The `op-geth` node should be an archive node with the hash state scheme. The following endpoints should be open on the node: 
+  - `debug_dbGet`
+  - `debug_getRawTransaction`
+  - `debug_getRawReceipts`
+  - `debug_getRawHeader`
+  - `debug_getExecutionWitness`
+  - `debug_getRawBlock`
+- The `op-node` should have the following endpoints accessible: 
+  - `optimism_rollupConfig`
+  - `optimism_outputAtBlock`
+  - `optimism_syncStatus`
+
+If you don't already have L2 nodes, you can set them up by following the instructions below.
+
+## L2 Node Configuration
 
 1. Clone [ops-anton](https://github.com/anton-rs/ops-anton) and follow the instructions in the README to set up your rollup.
 2. Go to [op-node.sh](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-node/op-node.sh#L4-L6) and set the `L2_RPC` to your rollup RPC. Modify the `l1` and `l1.beacon` to your L1 and L1 Beacon RPCs. Note: Your L1 node should be an archive node.
@@ -14,7 +31,7 @@ Your `op-geth` endpoint will be available at the RPC port chosen [here](https://
 
 Your `op-node` endpoint (rollup node) will be available at the RPC port chosen [here](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-node/op-node.sh#L13), which in this case is `5058` (e.g. `http://localhost:5058`).
 
-## Checking Sync Status
+### Check Sync Status
 
 After a few hours, your node should be fully synced and you can use it to begin generating ZKPs.
 

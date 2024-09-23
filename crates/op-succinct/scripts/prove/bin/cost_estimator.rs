@@ -1,29 +1,23 @@
 use anyhow::Result;
 use clap::Parser;
 use kona_host::HostCli;
-use kona_primitives::RollupConfig;
 use log::info;
 use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
-    rollup_config::read_rollup_config,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
     ProgramType,
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
     collections::HashMap,
-    env,
     fs::{self},
     future::Future,
-    net::TcpListener,
     path::PathBuf,
-    process::{Command, Stdio},
     sync::Arc,
     time::Instant,
 };
@@ -51,65 +45,10 @@ struct HostArgs {
     report_path: PathBuf,
 }
 
-#[derive(Serialize)]
-#[allow(non_snake_case)]
-struct SpanBatchRequest {
-    startBlock: u64,
-    endBlock: u64,
-    l2ChainId: u64,
-    l2Node: String,
-    l1Rpc: String,
-    l1Beacon: String,
-    batchSender: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-struct SpanBatchResponse {
-    ranges: Option<Vec<SpanBatchRange>>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SpanBatchRange {
     start: u64,
     end: u64,
-}
-
-/// Get the span batches posted between the start and end blocks. Sends a request to a Go server
-/// that runs a Span Batch Decoder.
-async fn get_span_batch_ranges_from_server(
-    data_fetcher: &OPSuccinctDataFetcher,
-    start: u64,
-    end: u64,
-    l2_chain_id: u64,
-    batch_sender: &str,
-) -> Result<Vec<SpanBatchRange>> {
-    let client = Client::new();
-    let request = SpanBatchRequest {
-        startBlock: start,
-        endBlock: end,
-        l2ChainId: l2_chain_id,
-        l2Node: data_fetcher.l2_node_rpc.clone(),
-        l1Rpc: data_fetcher.l1_rpc.clone(),
-        l1Beacon: data_fetcher.l1_beacon_rpc.clone(),
-        batchSender: batch_sender.to_string(),
-    };
-
-    // Get the span batch server URL from the environment.
-    let span_batch_server_url =
-        env::var("SPAN_BATCH_SERVER_URL").unwrap_or("http://localhost:8089".to_string());
-    let query_url = format!("{}/span-batch-ranges", span_batch_server_url);
-
-    // Send the request to the span batch server. If the request fails, return the corresponding error.
-    let response: SpanBatchResponse =
-        client.post(&query_url).json(&request).send().await?.json().await?;
-
-    // If the response is empty, return one range with the start and end blocks.
-    if response.ranges.is_none() {
-        return Ok(vec![SpanBatchRange { start, end }]);
-    }
-
-    // Return the ranges.
-    Ok(response.ranges.unwrap())
 }
 
 struct BatchHostCli {
@@ -118,54 +57,30 @@ struct BatchHostCli {
     end: u64,
 }
 
-fn get_max_span_batch_range_size(chain_id: u64) -> u64 {
+fn get_max_span_batch_range_size(l2_chain_id: u64) -> u64 {
     // TODO: The default size/batch size should be dynamic based on the L2 chain. Specifically, look at the gas used across the block range (should be fast to compute) and then set the batch size accordingly.
     const DEFAULT_SIZE: u64 = 1000;
-    match chain_id {
+    match l2_chain_id {
         8453 => 5,      // Base
-        11155111 => 40, // OP Sepolia
+        11155420 => 40, // OP Sepolia
         10 => 10,       // OP Mainnet
         _ => DEFAULT_SIZE,
     }
 }
 
-/// Split ranges according to the max span batch range size per L2 chain.
-///
-/// If the width of the span batch range returned by the server is 0, expand it to 1, and propogate those changes.
-fn split_ranges(span_batch_ranges: Vec<SpanBatchRange>, l2_chain_id: u64) -> Vec<SpanBatchRange> {
-    // Sort the ranges by start block.
-    let mut span_batch_ranges = span_batch_ranges.clone();
-    span_batch_ranges.sort_by_key(|range| range.start);
+/// Split a range of blocks into a list of span batch ranges.
+fn split_range(start: u64, end: u64, l2_chain_id: u64) -> Vec<SpanBatchRange> {
+    let mut ranges = Vec::new();
+    let mut current_start = start;
+    let max_size = get_max_span_batch_range_size(l2_chain_id);
 
-    let batch_size = get_max_span_batch_range_size(l2_chain_id);
-    let mut split_ranges = Vec::new();
-
-    for range in span_batch_ranges.iter() {
-        if range.end - range.start > batch_size {
-            let mut start = range.start;
-            while start < range.end {
-                let end = min(start + batch_size, range.end);
-                split_ranges.push(SpanBatchRange { start, end });
-                start = end + 1;
-            }
-        } else {
-            split_ranges.push(range.clone());
-        }
+    while current_start < end {
+        let current_end = min(current_start + max_size, end);
+        ranges.push(SpanBatchRange { start: current_start, end: current_end });
+        current_start = current_end + 1;
     }
 
-    // Iterate through the split ranges and fix any ranges that have the same start and end block.
-    // Ensure that the start of the next range gets incremented by one as well.
-    for i in 0..split_ranges.len() {
-        if split_ranges[i].start == split_ranges[i].end {
-            split_ranges[i].end += 1;
-            // Only increment the start of the next range if it's not the last range.
-            if i < split_ranges.len() - 1 {
-                split_ranges[i + 1].start += 1;
-            }
-        }
-    }
-
-    split_ranges
+    ranges
 }
 
 /// Concurrently run the native data generation process for each split range.
@@ -173,7 +88,7 @@ async fn run_native_data_generation(
     data_fetcher: &OPSuccinctDataFetcher,
     split_ranges: &[SpanBatchRange],
 ) -> Vec<BatchHostCli> {
-    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 1;
+    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
 
     // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
     // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
@@ -345,74 +260,6 @@ fn aggregate_execution_stats(execution_stats: &[ExecutionStats]) -> ExecutionSta
     aggregate_stats
 }
 
-/// Build and manage the Docker container for the span batch server. Note: All logs are piped to
-/// /dev/null, so the user doesn't see them.
-fn manage_span_batch_server_container() -> Result<()> {
-    // Check if port 8089 is already in use
-    if TcpListener::bind("0.0.0.0:8089").is_err() {
-        info!("Port 8089 is already in use. Assuming span_batch_server is running.");
-        return Ok(());
-    }
-
-    // Build the Docker container if it doesn't exist.
-    let build_status = Command::new("docker")
-        .args([
-            "build",
-            "-t",
-            "span_batch_server",
-            "-f",
-            "proposer/op/Dockerfile.span_batch_server",
-            ".",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !build_status.success() {
-        return Err(anyhow::anyhow!("Failed to build Docker container"));
-    }
-
-    // Start the Docker container.
-    let run_status = Command::new("docker")
-        .args(["run", "-p", "8089:8089", "-d", "span_batch_server"])
-        .status()?;
-    if !run_status.success() {
-        return Err(anyhow::anyhow!("Failed to start Docker container"));
-    }
-
-    // Sleep for 5 seconds to allow the server to start.
-    block_on(tokio::time::sleep(std::time::Duration::from_secs(5)));
-    Ok(())
-}
-
-/// Shut down Docker container. Note: All logs are piped to /dev/null, so the user doesn't see them.
-fn shutdown_span_batch_server_container() -> Result<()> {
-    // Get the container ID associated with the span_batch_server image.
-    let container_id = String::from_utf8(
-        Command::new("docker")
-            .args(["ps", "-q", "-f", "ancestor=span_batch_server"])
-            .stdout(Stdio::piped())
-            .output()?
-            .stdout,
-    )?
-    .trim()
-    .to_string();
-
-    if container_id.is_empty() {
-        return Ok(()); // Container not running, nothing to stop
-    }
-
-    // Stop the container.
-    let stop_status = Command::new("docker")
-        .args(["stop", &container_id])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !stop_status.success() {
-        return Err(anyhow::anyhow!("Failed to stop Docker container"));
-    }
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
@@ -423,21 +270,7 @@ async fn main() -> Result<()> {
 
     let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
 
-    // Read the rollup config.
-    let rollup_config: RollupConfig = read_rollup_config(l2_chain_id).unwrap();
-
-    // Start the Docker container if it doesn't exist.
-    manage_span_batch_server_container()?;
-
-    let span_batch_ranges = get_span_batch_ranges_from_server(
-        &data_fetcher,
-        args.start,
-        args.end,
-        l2_chain_id,
-        rollup_config.genesis.system_config.clone().unwrap().batcher_address.to_string().as_str(),
-    )
-    .await?;
-    let split_ranges = split_ranges(span_batch_ranges, l2_chain_id);
+    let split_ranges = split_range(args.start, args.end, l2_chain_id);
 
     info!("The span batch ranges which will be executed: {:?}", split_ranges);
 
@@ -453,9 +286,6 @@ async fn main() -> Result<()> {
 
     let aggregate_execution_stats = aggregate_execution_stats(&sorted_execution_stats);
     println!("Aggregate Execution Stats: \n {}", aggregate_execution_stats);
-
-    // Shutdown the Docker container for fetching span batches.
-    shutdown_span_batch_server_container()?;
 
     Ok(())
 }
