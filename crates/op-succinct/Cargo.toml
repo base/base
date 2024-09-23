@@ -49,7 +49,6 @@ kona-executor = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v
 kona-client = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
 kona-host = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
 
-
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
 op-succinct-witnessgen = { path = "scripts/witnessgen" }

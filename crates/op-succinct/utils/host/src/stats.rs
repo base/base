@@ -68,74 +68,52 @@ impl fmt::Display for ExecutionStats {
     }
 }
 
-/// Get the execution stats for a given report.
-pub async fn get_execution_stats(
-    data_fetcher: &OPSuccinctDataFetcher,
-    start: u64,
-    end: u64,
-    report: &ExecutionReport,
-    execution_duration: Duration,
-) -> ExecutionStats {
-    // Get the total instruction count for execution across all blocks.
-    let block_execution_instruction_count: u64 =
-        *report.cycle_tracker.get("block-execution").unwrap_or(&0);
-    let oracle_verify_instruction_count: u64 =
-        *report.cycle_tracker.get("oracle-verify").unwrap_or(&0);
-    let derivation_instruction_count: u64 =
-        *report.cycle_tracker.get("payload-derivation").unwrap_or(&0);
-    let blob_verification_instruction_count: u64 =
-        *report.cycle_tracker.get("blob-verification").unwrap_or(&0);
+impl ExecutionStats {
+    /// Add the on-chain data for the given block range to the stats.
+    pub async fn add_block_data(
+        &mut self,
+        data_fetcher: &OPSuccinctDataFetcher,
+        start: u64,
+        end: u64,
+    ) {
+        let block_data = data_fetcher
+            .get_block_data_range(RPCMode::L2, start, end)
+            .await
+            .expect("Failed to fetch block data range.");
 
-    let nb_blocks = end - start + 1;
+        self.batch_start = start;
+        self.batch_end = end;
+        self.nb_transactions = block_data.iter().map(|b| b.transaction_count).sum();
+        self.eth_gas_used = block_data.iter().map(|b| b.gas_used).sum();
+        self.nb_blocks = end - start + 1;
+    }
 
-    // Fetch the number of transactions in the blocks from the L2 RPC.
-    let block_data_range = data_fetcher
-        .get_block_data_range(RPCMode::L2, start, end)
-        .await
-        .expect("Failed to fetch block data range.");
+    /// Add the execution report data to the stats.
+    pub fn add_report_data(&mut self, report: &ExecutionReport, execution_duration: Duration) {
+        let cycle_tracker = &report.cycle_tracker;
+        let get_cycles = |key: &str| *cycle_tracker.get(key).unwrap_or(&0);
 
-    let nb_transactions = block_data_range.iter().map(|b| b.transaction_count).sum();
-    let total_gas_used = block_data_range.iter().map(|b| b.gas_used).sum();
+        self.total_instruction_count = report.total_instruction_count();
+        self.block_execution_instruction_count = get_cycles("block-execution");
+        self.oracle_verify_instruction_count = get_cycles("oracle-verify");
+        self.derivation_instruction_count = get_cycles("payload-derivation");
+        self.blob_verification_instruction_count = get_cycles("blob-verification");
+        self.bn_add_cycles = get_cycles("precompile-bn-add");
+        self.bn_mul_cycles = get_cycles("precompile-bn-mul");
+        self.bn_pair_cycles = get_cycles("precompile-bn-pair");
+        self.kzg_eval_cycles = get_cycles("precompile-kzg-eval");
+        self.ec_recover_cycles = get_cycles("precompile-ec-recover");
+        self.total_sp1_gas = report.estimate_gas();
+        self.execution_duration_sec = execution_duration.as_secs();
+    }
 
-    let bn_add_cycles: u64 = *report.cycle_tracker.get("precompile-bn-add").unwrap_or(&0);
-    let bn_mul_cycles: u64 = *report.cycle_tracker.get("precompile-bn-mul").unwrap_or(&0);
-    let bn_pair_cycles: u64 = *report.cycle_tracker.get("precompile-bn-pair").unwrap_or(&0);
-    let kzg_eval_cycles: u64 = *report.cycle_tracker.get("precompile-kzg-eval").unwrap_or(&0);
-    let ec_recover_cycles: u64 = *report.cycle_tracker.get("precompile-ec-recover").unwrap_or(&0);
-
-    let total_instruction_count = report.total_instruction_count();
-
-    // Cycles per block, transaction are computed with respect to the total instruction count.
-    let cycles_per_block = total_instruction_count / nb_blocks;
-    let cycles_per_transaction = total_instruction_count / nb_transactions;
-
-    let transactions_per_block = nb_transactions / nb_blocks;
-    let gas_used_per_block = total_gas_used / nb_blocks;
-    let gas_used_per_transaction = total_gas_used / nb_transactions;
-
-    ExecutionStats {
-        batch_start: start,
-        batch_end: end,
-        execution_duration_sec: execution_duration.as_secs(),
-        total_instruction_count,
-        derivation_instruction_count,
-        oracle_verify_instruction_count,
-        block_execution_instruction_count,
-        blob_verification_instruction_count,
-        total_sp1_gas: report.estimate_gas(),
-        nb_blocks,
-        nb_transactions,
-        eth_gas_used: total_gas_used,
-        cycles_per_block,
-        cycles_per_transaction,
-        transactions_per_block,
-        gas_used_per_block,
-        gas_used_per_transaction,
-        bn_add_cycles,
-        bn_mul_cycles,
-        bn_pair_cycles,
-        kzg_eval_cycles,
-        ec_recover_cycles,
+    /// Add the aggregate statistics data (assumes that the block data and report data have already been added)
+    pub fn add_aggregate_data(&mut self) {
+        self.cycles_per_block = self.total_instruction_count / self.nb_blocks;
+        self.cycles_per_transaction = self.total_instruction_count / self.nb_transactions;
+        self.transactions_per_block = self.nb_transactions / self.nb_blocks;
+        self.gas_used_per_block = self.eth_gas_used / self.nb_blocks;
+        self.gas_used_per_transaction = self.eth_gas_used / self.nb_transactions;
     }
 }
 

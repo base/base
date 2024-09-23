@@ -181,8 +181,6 @@ fn main() {
         let output_root = executor.compute_output_root().unwrap();
         println!("cycle-tracker-end: output-root");
 
-        println!("Completed Proof. Output Root: {}", output_root);
-
         ////////////////////////////////////////////////////////////////
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
@@ -190,5 +188,7 @@ fn main() {
         // Note: We don't need the last_block_num == claim_block check, because it's the only way to
         // exit the above loop
         assert_eq!(output_root, boot.l2_claim);
+
+        println!("Validated derivation and STF. Output Root: {}", output_root);
     });
 }
