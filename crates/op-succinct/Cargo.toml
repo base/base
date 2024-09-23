@@ -68,14 +68,10 @@ alloy-sol-types = { version = "0.8" }
 op-alloy-consensus = { version = "0.2", default-features = false }
 
 # sp1
-sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4", features = [
-    "verify",
-] }
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4", features = [
-    "verify",
-] }
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4" }
-sp1-build = { git = "https://github.com/succinctlabs/sp1.git", branch = "v1.3.0-rc4" }
+sp1-lib = { version = "3.0.0-rc1", features = ["verify"] }
+sp1-zkvm = { version = "3.0.0-rc1", features = ["verify"] }
+sp1-sdk = { version = "3.0.0-rc1" }
+sp1-build = { version = "3.0.0-rc1" }
 
 [profile.release-client-lto]
 inherits = "release"

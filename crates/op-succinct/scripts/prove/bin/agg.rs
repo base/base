@@ -1,10 +1,9 @@
 use std::fs;
 
-use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
-use op_succinct_client_utils::{boot::BootInfoStruct, BOOT_INFO_SIZE};
+use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     get_agg_proof_stdin,
@@ -51,10 +50,8 @@ fn load_aggregation_proof_data(
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
         proofs.push(deserialized_proof.proof);
 
-        // The public values are the ABI-encoded BootInfoStruct.
-        let mut raw_boot_info_bytes = [0u8; BOOT_INFO_SIZE];
-        deserialized_proof.public_values.read_slice(&mut raw_boot_info_bytes);
-        let boot_info = BootInfoStruct::abi_decode(&raw_boot_info_bytes, false).unwrap();
+        // The public values are the BootInfoStruct.
+        let boot_info = deserialized_proof.public_values.read();
         boot_infos.push(boot_info);
     }
 
@@ -90,7 +87,7 @@ async fn main() -> Result<()> {
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
 
     if args.prove {
-        prover.prove(&agg_pk, stdin).plonk().run().expect("proving failed");
+        prover.prove(&agg_pk, stdin).groth16().run().expect("proving failed");
     } else {
         let (_, report) = prover.execute(AGG_ELF, stdin).run().unwrap();
         println!("report: {:?}", report);

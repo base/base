@@ -15,7 +15,8 @@ contract ZKDeployer is Script, Utils {
 
         Config memory config = readJson("zkl2ooconfig.json");
 
-        config.l2OutputOracleProxy = address(new Proxy(config.owner));
+        // This initializes the proxy.
+        config.l2OutputOracleProxy = address(new Proxy(msg.sender));
 
         address zkL2OutputOracleImpl = address(new ZKL2OutputOracle());
 

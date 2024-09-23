@@ -92,7 +92,16 @@ async fn request_span_proof(
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = NetworkProver::new();
-    let proof_id = prover.request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed).await?;
+    let res = prover.request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed).await;
+
+    // Check if error, otherwise get proof ID.
+    let proof_id = match res {
+        Ok(proof_id) => proof_id,
+        Err(e) => {
+            println!("Failed to request proof: {}", e);
+            return Err(AppError(anyhow::anyhow!("Failed to request proof: {}", e)));
+        }
+    };
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
 }
@@ -122,7 +131,11 @@ async fn request_agg_proof(
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
     let stdin = get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, l1_head.into()).unwrap();
-    let proof_id = prover.request_proof(AGG_ELF, stdin, ProofMode::Plonk).await?;
+
+    // Set simulation to true on aggregation proofs as they're relatively small.
+    env::set_var("SKIP_SIMULATION", "false");
+    let proof_id = prover.request_proof(AGG_ELF, stdin, ProofMode::Groth16).await?;
+    env::set_var("SKIP_SIMULATION", "true");
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
 }
@@ -148,7 +161,7 @@ async fn get_proof_status(
     if status == SP1ProofStatus::ProofFulfilled {
         let proof: SP1ProofWithPublicValues = maybe_proof.unwrap();
 
-        match proof.proof.clone() {
+        match proof.proof {
             SP1Proof::Compressed(_) => {
                 // If it's a compressed proof, we need to serialize the entire struct with bincode.
                 // Note: We're re-serializing the entire struct with bincode here, but this is fine
@@ -162,8 +175,19 @@ async fn get_proof_status(
                     }),
                 ));
             }
+            SP1Proof::Groth16(_) => {
+                // If it's a groth16 proof, we need to get the proof bytes that we put on-chain.
+                let proof_bytes = proof.bytes();
+                return Ok((
+                    StatusCode::OK,
+                    Json(ProofStatus {
+                        status: status.as_str_name().to_string(),
+                        proof: proof_bytes,
+                    }),
+                ));
+            }
             SP1Proof::Plonk(_) => {
-                // If it's a PLONK proof, we need to get the proof bytes that we put on-chain.
+                // If it's a plonk proof, we need to get the proof bytes that we put on-chain.
                 let proof_bytes = proof.bytes();
                 return Ok((
                     StatusCode::OK,
