@@ -5,7 +5,7 @@ use clap::Parser;
 use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
-    stats::get_execution_stats,
+    stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
     ProgramType,
 };
@@ -100,9 +100,11 @@ async fn main() -> Result<()> {
             fs::create_dir_all(&report_dir).unwrap();
         }
 
-        let stats =
-            get_execution_stats(&data_fetcher, args.start, args.end, &report, execution_duration)
-                .await;
+        let mut stats = ExecutionStats::default();
+        stats.add_block_data(&data_fetcher, args.start, args.end).await;
+        stats.add_report_data(&report, execution_duration);
+        stats.add_aggregate_data();
+
         println!("Execution Stats: \n{:?}", stats);
 
         // Write to CSV.

@@ -43,7 +43,7 @@ run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC
   echo "L1 Beacon Address: $L1_BEACON_ADDRESS"
   echo "L2 Node Address: $L2_NODE_ADDRESS"
   HOST_BIN_PATH="./kona-host"
-  CLIENT_BIN_PATH="./target/release-client-lto/zkvm-client"
+  CLIENT_BIN_PATH="$(pwd)/target/release-client-lto/fault-proof"
   L2_BLOCK_NUMBER="{{l2_block_num}}"
   L2_BLOCK_SAFE_HEAD=$((L2_BLOCK_NUMBER - 1))
   L2_OUTPUT_STATE_ROOT=$(cast block --rpc-url $L2_NODE_ADDRESS --field stateRoot $L2_BLOCK_SAFE_HEAD)
@@ -67,9 +67,9 @@ run-client-native l2_block_num l1_rpc='${L1_RPC}' l1_beacon_rpc='${L1_BEACON_RPC
   DATA_DIRECTORY="./data/$L2_BLOCK_NUMBER"
   echo "Saving Data to $DATA_DIRECTORY"
   echo "Building client program..."
-  cargo build --bin zkvm-client --profile release-client-lto
+  cargo build --bin fault-proof --profile release-client-lto
   echo "Running host program with native client program..."
-  cargo run --bin native-host --release -- \
+  cargo run --bin op-succinct-witnessgen --release -- \
     --l1-head $L1_HEAD \
     --l2-head $L2_HEAD \
     --l2-claim $L2_CLAIM \

@@ -7,7 +7,7 @@ use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
     rollup_config::read_rollup_config,
-    stats::{get_execution_stats, ExecutionStats},
+    stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
     ProgramType,
 };
@@ -17,15 +17,17 @@ use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
+    collections::HashMap,
     env,
     fs::{self},
     future::Future,
     net::TcpListener,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::Arc,
     time::Instant,
 };
-use tokio::task::block_in_place;
+use tokio::{sync::Mutex, task::block_in_place};
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
@@ -121,7 +123,7 @@ fn get_max_span_batch_range_size(chain_id: u64) -> u64 {
     const DEFAULT_SIZE: u64 = 1000;
     match chain_id {
         8453 => 5,      // Base
-        11155111 => 20, // OP Sepolia
+        11155111 => 40, // OP Sepolia
         10 => 10,       // OP Mainnet
         _ => DEFAULT_SIZE,
     }
@@ -227,21 +229,48 @@ pub fn block_on<T>(fut: impl Future<Output = T>) -> T {
 
 /// Run the zkVM execution process for each split range in parallel.
 async fn execute_blocks_parallel(
-    host_clis: &[BatchHostCli],
+    host_clis: Vec<BatchHostCli>,
     prover: &ProverClient,
-    data_fetcher: &OPSuccinctDataFetcher,
 ) -> Vec<ExecutionStats> {
-    host_clis
-        .par_iter()
-        .map(|r| {
-            let sp1_stdin = get_proof_stdin(&r.host_cli).unwrap();
+    // Create a new execution stats map between the start and end block and the default ExecutionStats.
+    let execution_stats_map = Arc::new(Mutex::new(HashMap::new()));
 
-            let start_time = Instant::now();
-            let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin).run().unwrap();
-            let execution_duration = start_time.elapsed();
-            block_on(get_execution_stats(data_fetcher, r.start, r.end, &report, execution_duration))
-        })
-        .collect()
+    // Fetch all of the execution stats block ranges in parallel.
+    let mut handles = Vec::new();
+    for (start, end) in host_clis.iter().map(|r| (r.start, r.end)) {
+        let execution_stats_map = Arc::clone(&execution_stats_map);
+        let handle = tokio::spawn(async move {
+            // Create a new data fetcher. This avoids the runtime dropping the provider dispatch task.
+            let data_fetcher = OPSuccinctDataFetcher::new().await;
+            let mut exec_stats = ExecutionStats::default();
+            exec_stats.add_block_data(&data_fetcher, start, end).await;
+            let mut execution_stats_map = execution_stats_map.lock().await;
+            execution_stats_map.insert((start, end), exec_stats);
+        });
+        handles.push(handle);
+    }
+    futures::future::join_all(handles).await;
+
+    // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
+    host_clis.par_iter().for_each(|r| {
+        let sp1_stdin = get_proof_stdin(&r.host_cli).unwrap();
+
+        let start_time = Instant::now();
+        let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin).run().unwrap();
+        let execution_duration = start_time.elapsed();
+
+        // Get the existing execution stats and modify it in place.
+        let mut execution_stats_map = block_on(execution_stats_map.lock());
+        let exec_stats = execution_stats_map.get_mut(&(r.start, r.end)).unwrap();
+        exec_stats.add_report_data(&report, execution_duration);
+        exec_stats.add_aggregate_data();
+    });
+
+    info!("Execution is complete.");
+
+    let execution_stats = execution_stats_map.lock().await.clone().into_values().collect();
+    drop(execution_stats_map);
+    execution_stats
 }
 
 /// Write the execution stats to a CSV file.
@@ -415,7 +444,7 @@ async fn main() -> Result<()> {
     let prover = ProverClient::new();
     let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;
 
-    let execution_stats = execute_blocks_parallel(&host_clis, &prover, &data_fetcher).await;
+    let execution_stats = execute_blocks_parallel(host_clis, &prover).await;
 
     // Sort the execution stats by batch start block.
     let mut sorted_execution_stats = execution_stats.clone();

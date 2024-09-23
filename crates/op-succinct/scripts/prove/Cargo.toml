@@ -51,6 +51,7 @@ log.workspace = true
 csv.workspace = true
 serde = { workspace = true }
 reqwest = { workspace = true }
+futures.workspace = true
 rayon = "1.10.0"
 serde_json.workspace = true
 

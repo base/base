@@ -4197,6 +4197,7 @@ dependencies = [
  "clap",
  "csv",
  "dotenv",
+ "futures",
  "kona-host",
  "kona-primitives",
  "log",
