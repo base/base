@@ -9,7 +9,7 @@ use alloy_sol_types::SolValue;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use kona_host::HostCli;
-use kona_primitives::RollupConfig;
+use op_alloy_genesis::RollupConfig;
 use op_succinct_client_utils::boot::BootInfoStruct;
 use serde_json::{json, Value};
 use sp1_sdk::block_on;
@@ -423,7 +423,7 @@ impl OPSuccinctDataFetcher {
             l2_output_root: l2_output_root.0.into(),
             l2_claim: l2_claim.0.into(),
             l2_block_number: l2_end_block,
-            l2_chain_id,
+            l2_chain_id: Some(l2_chain_id),
             l2_head: l2_head.0.into(),
             l2_node_address: Some(self.l2_rpc.clone()),
             l1_node_address: Some(self.l1_rpc.clone()),

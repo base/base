@@ -100,8 +100,9 @@ async fn update_l2oo_config() -> Result<()> {
     let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
     let address = signer.address();
 
-    // Set the owner.
+    // Set the owner and proposer to the account associated with the private key.
     l2oo_config.owner = address.to_string();
+    l2oo_config.proposer = address.to_string();
 
     // Set the vkey.
     let prover = ProverClient::new();

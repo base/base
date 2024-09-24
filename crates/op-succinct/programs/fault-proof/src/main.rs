@@ -12,22 +12,19 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 
-use alloy_consensus::Header;
 use cfg_if::cfg_if;
 use kona_client::{
     l1::{DerivationDriver, OracleBlobProvider, OracleL1ChainProvider},
     l2::OracleL2ChainProvider,
     BootInfo,
 };
-use kona_executor::StatelessL2BlockExecutor;
-use kona_primitives::L2AttributesWithParent;
 use op_succinct_client_utils::precompiles::zkvm_handle_register;
 
 cfg_if! {
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
         use op_succinct_client_utils::{InMemoryOracle, boot::BootInfoStruct, BootInfoWithBytesConfig};
-        use kona_primitives::RollupConfig;
+        use op_alloy_genesis::RollupConfig;
         use alloc::vec::Vec;
         use serde_json;
     } else {
@@ -103,28 +100,17 @@ fn main() {
         .unwrap();
         println!("cycle-tracker-end: derivation-instantiation");
 
-        println!("cycle-tracker-start: payload-derivation");
-        let L2AttributesWithParent { attributes, .. } =
-            driver.produce_disputed_payload().await.unwrap();
-        println!("cycle-tracker-end: payload-derivation");
-
-        println!("cycle-tracker-start: execution-instantiation");
-        let mut executor = StatelessL2BlockExecutor::builder(&boot.rollup_config)
-            .with_parent_header(driver.take_l2_safe_head_header())
-            .with_fetcher(l2_provider.clone())
-            .with_hinter(l2_provider)
-            .with_handle_register(zkvm_handle_register)
-            .build()
+        println!("cycle-tracker-start: produce-output");
+        let (number, output_root) = driver
+            .produce_output(
+                &boot.rollup_config,
+                &l2_provider.clone(),
+                &l2_provider.clone(),
+                zkvm_handle_register,
+            )
+            .await
             .unwrap();
-        println!("cycle-tracker-end: execution-instantiation");
-
-        println!("cycle-tracker-start: execution");
-        let Header { number, .. } = *executor.execute_payload(attributes).unwrap();
-        println!("cycle-tracker-end: execution");
-
-        println!("cycle-tracker-start: output-root");
-        let output_root = executor.compute_output_root().unwrap();
-        println!("cycle-tracker-end: output-root");
+        println!("cycle-tracker-end: produce-output");
 
         ////////////////////////////////////////////////////////////////
         //                          EPILOGUE                          //

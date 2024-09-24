@@ -42,8 +42,9 @@ Advanced users can set parameters manually in `opsuccinctl2ooconfig.json`, but t
 
 | Parameter | Description |
 |-----------|-------------|
-| `proposer` | Ethereum address authorized to submit proofs. Default: `address(0)`, anyone can submit proofs. |
-| `challenger` | Ethereum address authorized to dispute proofs. Default: `address(0)`, no disputes. |
+| `owner` | Ethereum address of the contract owner. Default: The address of the account associated with `PRIVATE_KEY`. |
+| `proposer` | Ethereum address authorized to submit proofs. Default: The address of the account associated with `PRIVATE_KEY`. |
+| `challenger` | Ethereum address authorized to dispute proofs. Default: `address(0)`, no one can dispute proofs. |
 | `finalizationPeriod` | The time period (in seconds) after which a proposed output becomes finalized and withdrawals can be processed. Default: `0`. |
 
 ### 5) Deploy the `OPSuccinctL2OutputOracle` contract:
