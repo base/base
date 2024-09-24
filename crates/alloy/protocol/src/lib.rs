@@ -48,4 +48,4 @@ pub use deposits::{
 };
 
 pub mod block_info;
-pub use block_info::{L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoTx};
+pub use block_info::{L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoHolocene, L1BlockInfoTx};
