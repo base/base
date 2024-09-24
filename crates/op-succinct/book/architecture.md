@@ -13,7 +13,7 @@ You can read more about the components in the [OP Stack Specification](https://s
 
 ## OP Succinct
 
-OP Succinct is a lighweight upgrade to the OP Stack that allows the chain to progress only with ZK-proven blocks, while keeping the other components (`op-geth`, `op-batcher`, and `op-node`) unchanged. Deploying OP Succinct requires deploying one contract, the `OPSuccinctL2OutputOracle` and spinning up a lightweight modification to the `op-proposer` that requests proofs to be submitted to the L1 contract.
+OP Succinct is a lighweight upgrade to the OP Stack that allows the chain to progress only with ZK-proven blocks, while keeping the other components (`op-geth`, `op-batcher`, and `op-node`) unchanged. Deploying OP Succinct requires deploying one contract, `OPSuccinctL2OutputOracle`, and spinning up a lightweight modification to the `op-proposer` that requests proofs to be submitted to the L1 contract.
 
 Here is a high-level overview of the new components that are introduced in OP Succinct:
 
