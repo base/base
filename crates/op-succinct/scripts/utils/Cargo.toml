@@ -1,5 +1,5 @@
 [package]
-name = "op-succinct-prove"
+name = "op-succinct-scripts"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -8,27 +8,41 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "single"
-path = "bin/single.rs"
+name = "fetch_and_save_proof"
+path = "bin/fetch_and_save_proof.rs"
 
 [[bin]]
-name = "multi"
-path = "bin/multi.rs"
+name = "vkey"
+path = "bin/vkey.rs"
 
 [[bin]]
-name = "agg"
-path = "bin/agg.rs"
+name = "cost_estimator"
+path = "bin/cost_estimator.rs"
+
+[[bin]]
+name = "fetch-rollup-config"
+path = "bin/fetch_rollup_config.rs"
 
 [dependencies]
 
 # workspace
+alloy-primitives = { workspace = true }
+alloy = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 cargo_metadata = { workspace = true }
 anyhow.workspace = true
 dotenv.workspace = true
-num-format.workspace = true
+log.workspace = true
 csv.workspace = true
+serde = { workspace = true }
+futures.workspace = true
+rayon = "1.10.0"
+serde_json.workspace = true
+
+
+# kona
+kona-host = { workspace = true }
 
 # local
 op-succinct-host-utils.workspace = true

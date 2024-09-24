@@ -16,6 +16,3 @@ kona-host = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
-log = { workspace = true }
-sp1-sdk = { workspace = true }
-tracing = "0.1.40"

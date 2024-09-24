@@ -21,7 +21,6 @@ tokio.workspace = true
 futures.workspace = true
 num-format.workspace = true
 serde.workspace = true
-log.workspace = true
 reqwest.workspace = true
 
 # sp1
@@ -32,5 +31,4 @@ op-succinct-client-utils.workspace = true
 
 # kona
 kona-host.workspace = true
-kona-preimage.workspace = true
 kona-primitives.workspace = true
