@@ -55,7 +55,7 @@ pub fn get_proof_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
         l2_output_root: host_cli.l2_output_root,
         l2_claim: host_cli.l2_claim,
         l2_claim_block: host_cli.l2_block_number,
-        chain_id: host_cli.l2_chain_id,
+        chain_id: host_cli.l2_chain_id.unwrap(),
         rollup_config_bytes,
     };
     stdin.write(&boot_info);

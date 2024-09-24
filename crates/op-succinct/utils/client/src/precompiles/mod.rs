@@ -1,6 +1,6 @@
 //! Contains the [PrecompileOverride] trait implementation for the FPVM-accelerated precompiles.
 use alloc::sync::Arc;
-use kona_mpt::{TrieDB, TrieDBFetcher, TrieDBHinter};
+use kona_mpt::{TrieDB, TrieHinter, TrieProvider};
 use revm::{
     db::states::state::State,
     handler::register::EvmHandler,
@@ -48,8 +48,8 @@ pub(crate) const ANNOTATED_KZG_EVAL: PrecompileWithAddress = create_annotated_pr
 // Source: https://github.com/anton-rs/kona/blob/main/bin/client/src/fault/handler/mod.rs#L20-L42
 pub fn zkvm_handle_register<F, H>(handler: &mut EvmHandler<'_, (), &mut State<&mut TrieDB<F, H>>>)
 where
-    F: TrieDBFetcher,
-    H: TrieDBHinter,
+    F: TrieProvider,
+    H: TrieHinter,
 {
     let spec_id = handler.cfg.spec_id;
 

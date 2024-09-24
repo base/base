@@ -19,8 +19,8 @@ use kona_client::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
 };
+use kona_derive::block::OpBlock;
 use kona_executor::StatelessL2BlockExecutor;
-use kona_primitives::{L2ExecutionPayloadEnvelope, OpBlock};
 use log::info;
 use op_alloy_consensus::OpTxEnvelope;
 use op_succinct_client_utils::{
@@ -32,7 +32,7 @@ cfg_if! {
     if #[cfg(target_os = "zkvm")] {
         sp1_zkvm::entrypoint!(main);
 
-        use kona_primitives::RollupConfig;
+        use op_alloy_genesis::RollupConfig;
         use op_succinct_client_utils::{
             BootInfoWithBytesConfig, boot::BootInfoStruct,
             InMemoryOracle
@@ -118,13 +118,14 @@ fn main() {
         println!("cycle-tracker-report-end: payload-derivation");
 
         println!("cycle-tracker-start: execution-instantiation");
-        let mut executor = StatelessL2BlockExecutor::builder(&boot.rollup_config)
-            .with_parent_header(driver.clone_l2_safe_head_header())
-            .with_fetcher(l2_provider.clone())
-            .with_hinter(l2_provider.clone())
-            .with_handle_register(zkvm_handle_register)
-            .build()
-            .unwrap();
+        let mut executor = StatelessL2BlockExecutor::builder(
+            &boot.rollup_config,
+            l2_provider.clone(),
+            l2_provider.clone(),
+        )
+        .with_parent_header(driver.clone_l2_safe_head_header())
+        .with_handle_register(zkvm_handle_register)
+        .build();
         println!("cycle-tracker-end: execution-instantiation");
 
         let mut l2_block_info;
@@ -144,11 +145,12 @@ fn main() {
             }
 
             // Generate the Payload Envelope, which can be used to derive cached data.
-            let l2_payload_envelope: L2ExecutionPayloadEnvelope = OpBlock {
+            let optimism_block = OpBlock {
                 header: new_block_header.clone(),
                 body: payload
                     .attributes
                     .transactions
+                    .unwrap()
                     .iter()
                     .map(|raw_tx| OpTxEnvelope::decode_2718(&mut raw_tx.as_ref()).unwrap())
                     .collect::<Vec<OpTxEnvelope>>(),
@@ -157,12 +159,10 @@ fn main() {
                     .is_canyon_active(new_block_header.timestamp)
                     .then(Vec::new),
                 ..Default::default()
-            }
-            .into();
-
+            };
             // Add all data from this block's execution to the cache.
             l2_block_info = l2_provider
-                .update_cache(new_block_header, l2_payload_envelope, &boot.rollup_config)
+                .update_cache(new_block_header, optimism_block, &boot.rollup_config)
                 .unwrap();
 
             // Update data for the next iteration.

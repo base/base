@@ -37,17 +37,18 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 kzg-rs = { version = "0.2.2" }
 
 # kona
-kona-common = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-common-proc = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-preimage = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3", features = [
+# Note: This version of kona is from 9/24. Pin to this release until the new version of kona is released.
+kona-common = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-common-proc = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-preimage = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-mpt = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-derive = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3", default-features = false }
-kona-executor = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-client = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
-kona-host = { git = "https://github.com/anton-rs/kona", tag = "kona-client-v0.1.0-alpha.3" }
+kona-primitives = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-mpt = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-derive = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a", default-features = false }
+kona-executor = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-client = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-host = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -59,12 +60,15 @@ op-succinct-proposer = { path = "proposer/succinct" }
 # ethereum / op
 alloy = { version = "0.3", default-features = false, features = ["full"] }
 alloy-primitives = { version = "0.8", default-features = false }
-alloy-rlp = { version = "0.3", default-features = false }
+alloy-rlp = { version = "0.3.8", default-features = false }
 alloy-eips = { version = "0.3", default-features = false }
 revm = { version = "14.0", default-features = false, features = ["kzg-rs"] }
-alloy-consensus = { version = "0.3", default-features = false }
+alloy-consensus = { version = "0.3.6", default-features = false }
 alloy-sol-types = { version = "0.8" }
-op-alloy-consensus = { version = "0.2", default-features = false }
+op-alloy-consensus = { version = "0.2.12", default-features = false }
+op-alloy-genesis = { version = "0.2.12", default-features = false }
+op-alloy-protocol = { version = "0.2.12", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.2.12", default-features = false }
 
 # sp1
 sp1-lib = { version = "3.0.0-rc1", features = ["verify"] }
@@ -85,4 +89,4 @@ ecdsa = { git = "https://github.com/sp1-patches/signatures", branch = "patch-ecd
 bn = { git = "https://github.com/0xWOLAND/bn.git", package = "substrate-bn" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", branch = "patch-sha3-v0.10.8" }
 # This patch uses sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
-alloy-primitives = { git = "https://github.com/sp1-patches/alloy-core", branch = "patch-v0.8.0" }
+alloy-primitives = { git = "https://github.com/sp1-patches/alloy-core", branch = "patch-v0.8.3" }

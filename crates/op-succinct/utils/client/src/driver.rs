@@ -21,9 +21,11 @@ use kona_derive::{
     },
     traits::{ChainProvider, L2ChainProvider},
 };
-use kona_mpt::TrieDBFetcher;
+use kona_mpt::TrieProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use kona_primitives::{BlockInfo, L2AttributesWithParent, L2BlockInfo};
+use op_alloy_protocol::{BlockInfo, L2BlockInfo};
+use op_alloy_rpc_types_engine::OptimismAttributesWithParent;
+
 use log::{debug, error};
 
 /// An oracle-backed derivation pipeline.
@@ -135,9 +137,9 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
         self.l2_safe_head_header = new_safe_head_header;
     }
 
-    /// Produces the disputed [Vec<L2AttributesWithParent>] payloads, starting with the one after
+    /// Produces the disputed [Vec<OptimismAttributesWithParent>] payloads, starting with the one after
     /// the L2 output root, for all the payloads derived in a given span batch.
-    pub async fn produce_payloads(&mut self) -> Result<L2AttributesWithParent> {
+    pub async fn produce_payloads(&mut self) -> Result<OptimismAttributesWithParent> {
         // As we start the safe head at the disputed block's parent, we step the pipeline until the
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.

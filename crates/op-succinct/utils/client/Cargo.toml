@@ -19,6 +19,11 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 revm.workspace = true
 
+# workspace (op-alloy)
+op-alloy-genesis.workspace = true
+op-alloy-protocol.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+
 # workspace (kona)
 kona-common.workspace = true
 kona-primitives.workspace = true

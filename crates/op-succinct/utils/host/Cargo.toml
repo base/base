@@ -29,6 +29,9 @@ sp1-sdk.workspace = true
 # local
 op-succinct-client-utils.workspace = true
 
+# op-alloy
+op-alloy-genesis.workspace = true
+
 # kona
 kona-host.workspace = true
 kona-primitives.workspace = true

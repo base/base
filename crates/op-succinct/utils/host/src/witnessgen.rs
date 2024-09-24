@@ -12,7 +12,6 @@ pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
         format!("--l2-output-root={}", host_cli.l2_output_root),
         format!("--l2-claim={}", host_cli.l2_claim),
         format!("--l2-block-number={}", host_cli.l2_block_number),
-        format!("--l2-chain-id={}", host_cli.l2_chain_id),
     ];
     // The verbosity should be passed as -v, -vv, -vvv, etc.
     if host_cli.v > 0 {

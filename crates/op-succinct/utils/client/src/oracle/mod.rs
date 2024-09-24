@@ -1,11 +1,14 @@
 //! Contains the host <-> client communication utilities.
 
 use crate::BytesHasherBuilder;
-use alloy_primitives::{hex, keccak256, FixedBytes, B256};
-use anyhow::{anyhow, Result};
+use alloy_primitives::{keccak256, FixedBytes, B256};
+use anyhow::{anyhow, Result as AnyhowResult};
 use async_trait::async_trait;
 use itertools::Itertools;
-use kona_preimage::{HintWriterClient, PreimageKey, PreimageKeyType, PreimageOracleClient};
+use kona_preimage::{
+    errors::PreimageOracleError, HintWriterClient, PreimageKey, PreimageKeyType,
+    PreimageOracleClient,
+};
 use kzg_rs::{get_kzg_settings, Blob as KzgRsBlob, Bytes48};
 use rkyv::{Archive, Deserialize, Infallible, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,19 +47,14 @@ impl InMemoryOracle {
 
 #[async_trait]
 impl PreimageOracleClient for InMemoryOracle {
-    async fn get(&self, key: PreimageKey) -> Result<Vec<u8>> {
+    async fn get(&self, key: PreimageKey) -> Result<Vec<u8>, PreimageOracleError> {
         let lookup_key: [u8; 32] = key.into();
-        self.cache
-            .get(&lookup_key)
-            .cloned()
-            .ok_or_else(|| anyhow!("Key not found in cache: {}", hex::encode(lookup_key)))
+        self.cache.get(&lookup_key).cloned().ok_or_else(|| PreimageOracleError::KeyNotFound)
     }
 
-    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<()> {
+    async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<(), PreimageOracleError> {
         let lookup_key: [u8; 32] = key.into();
-        let value = self.cache.get(&lookup_key).ok_or_else(|| {
-            anyhow!("Key not found in cache (exact): {}", hex::encode(lookup_key))
-        })?;
+        let value = self.cache.get(&lookup_key).ok_or_else(|| PreimageOracleError::KeyNotFound)?;
         buf.copy_from_slice(value.as_slice());
         Ok(())
     }
@@ -64,7 +62,7 @@ impl PreimageOracleClient for InMemoryOracle {
 
 #[async_trait]
 impl HintWriterClient for InMemoryOracle {
-    async fn write(&self, _hint: &str) -> Result<()> {
+    async fn write(&self, _hint: &str) -> Result<(), PreimageOracleError> {
         Ok(())
     }
 }
@@ -83,7 +81,7 @@ struct Blob {
 impl InMemoryOracle {
     /// Verifies all data in the oracle. Once the function has been called, all data in the
     /// oracle can be trusted for the remainder of execution.
-    pub fn verify(&self) -> Result<()> {
+    pub fn verify(&self) -> AnyhowResult<()> {
         let mut blobs: HashMap<FixedBytes<48>, Blob> = HashMap::new();
 
         for (key, value) in self.cache.iter() {

@@ -3,7 +3,8 @@ use std::fs;
 use alloy::eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 use anyhow::Result;
-use kona_primitives::{ChainGenesis, RollupConfig};
+use op_alloy_genesis::ChainGenesis;
+use op_alloy_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 
 /// Matches the output of the optimism_rollupConfig RPC call.
@@ -75,7 +76,7 @@ pub(crate) fn merge_rollup_config(
     chain: &ChainConfig,
 ) -> Result<RollupConfig> {
     let mut rollup_config = RollupConfig {
-        genesis: op_rollup_config_rpc.genesis.clone(),
+        genesis: op_rollup_config_rpc.genesis,
         block_time: op_rollup_config_rpc.block_time,
         max_sequencer_drift: op_rollup_config_rpc.max_sequencer_drift,
         seq_window_size: op_rollup_config_rpc.seq_window_size,
