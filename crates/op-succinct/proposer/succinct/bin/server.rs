@@ -55,6 +55,8 @@ struct ProofStatus {
 async fn main() {
     utils::setup_logger();
 
+    env::set_var("SKIP_SIMULATION", "true");
+
     let app = Router::new()
         .route("/request_span_proof", post(request_span_proof))
         .route("/request_agg_proof", post(request_agg_proof))

@@ -5,28 +5,33 @@ import {Test, console} from "forge-std/Test.sol";
 import {JSONDecoder} from "./JSONDecoder.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {Proxy} from "@optimism/src/universal/Proxy.sol";
-import {ZKL2OutputOracle} from "src/ZKL2OutputOracle.sol";
+import {OPSuccinctL2OutputOracle} from "src/OPSuccinctL2OutputOracle.sol";
 
 contract Utils is Test, JSONDecoder {
     function deployWithConfig(Config memory cfg) public returns (address) {
-        address zkL2OutputOracleImpl = address(new ZKL2OutputOracle());
-        cfg.l2OutputOracleProxy = address(new Proxy(address(this)));
+        address OPSuccinctL2OutputOracleImpl = address(new OPSuccinctL2OutputOracle());
+        address l2OutputOracleProxy = address(new Proxy(address(this)));
 
         // Upgrade the proxy to point to the implementation and call initialize().
         // Override the starting output root and timestmp with the passed values.
-        upgradeAndInitialize(zkL2OutputOracleImpl, cfg, address(0));
+        upgradeAndInitialize(OPSuccinctL2OutputOracleImpl, cfg, l2OutputOracleProxy, address(0));
 
         // Transfer ownership of proxy to owner specified in the config.
-        Proxy(payable(cfg.l2OutputOracleProxy)).changeAdmin(cfg.owner);
+        Proxy(payable(l2OutputOracleProxy)).changeAdmin(cfg.owner);
 
-        return cfg.l2OutputOracleProxy;
+        return l2OutputOracleProxy;
     }
 
-    function upgradeAndInitialize(address impl, Config memory cfg, address _spoofedAdmin) public {
+    function upgradeAndInitialize(address impl, Config memory cfg, address l2OutputOracleProxy, address _spoofedAdmin)
+        public
+    {
         // require that the verifier gateway is deployed
-        require(address(cfg.verifierGateway).code.length > 0, "ZKUpgrader: verifier gateway not deployed");
+        require(
+            address(cfg.verifierGateway).code.length > 0,
+            "OPSuccinctL2OutputOracleUpgrader: verifier gateway not deployed"
+        );
 
-        ZKL2OutputOracle.ZKInitParams memory zkInitParams = ZKL2OutputOracle.ZKInitParams({
+        OPSuccinctL2OutputOracle.InitParams memory initParams = OPSuccinctL2OutputOracle.InitParams({
             chainId: cfg.chainId,
             verifierGateway: cfg.verifierGateway,
             aggregationVkey: cfg.aggregationVkey,
@@ -39,10 +44,10 @@ contract Utils is Test, JSONDecoder {
         // If we are spoofing the admin (used in testing), start prank.
         if (_spoofedAdmin != address(0)) vm.startPrank(_spoofedAdmin);
 
-        Proxy(payable(cfg.l2OutputOracleProxy)).upgradeToAndCall(
+        Proxy(payable(l2OutputOracleProxy)).upgradeToAndCall(
             impl,
             abi.encodeCall(
-                ZKL2OutputOracle.initialize,
+                OPSuccinctL2OutputOracle.initialize,
                 (
                     cfg.submissionInterval,
                     cfg.l2BlockTime,
@@ -51,7 +56,7 @@ contract Utils is Test, JSONDecoder {
                     cfg.proposer,
                     cfg.challenger,
                     cfg.finalizationPeriod,
-                    zkInitParams
+                    initParams
                 )
             )
         );

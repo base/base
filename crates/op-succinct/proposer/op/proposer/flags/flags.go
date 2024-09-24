@@ -37,11 +37,6 @@ var (
 		Usage:   "HTTP provider URL for the beacon node",
 		EnvVars: prefixEnvVars("L1_BEACON_RPC"),
 	}
-	L2ChainIDFlag = &cli.Uint64Flag{
-		Name:    "l2-chain-id",
-		Usage:   "Chain ID of the L2 chain",
-		EnvVars: prefixEnvVars("L2_CHAIN_ID"),
-	}
 
 	// Optional flags
 	L2OOAddressFlag = &cli.StringFlag{
@@ -97,7 +92,7 @@ var (
 	}
 	DbPathFlag = &cli.StringFlag{
 		Name:    "db-path",
-		Usage:   "Path to the database used to track ZK proof generation",
+		Usage:   "Path to the database used to track OP Succinct proof generation",
 		Value:   "./op-proposer/proofs.db",
 		EnvVars: prefixEnvVars("DB_PATH"),
 	}
@@ -168,7 +163,6 @@ var requiredFlags = []cli.Flag{
 	L1EthRpcFlag,
 	RollupRpcFlag,
 	BeaconRpcFlag,
-	L2ChainIDFlag,
 }
 
 var optionalFlags = []cli.Flag{

@@ -17,7 +17,7 @@ remappings = [
     "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
 ]
 
-# Enable read-write access to zkl2ooconfig.json
-fs_permissions = [{ access = "read-write", path = "./zkl2ooconfig.json" }]
+# Enable read-write access to opsuccinctl2ooconfig.json
+fs_permissions = [{ access = "read-write", path = "./opsuccinctl2ooconfig.json" }]
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

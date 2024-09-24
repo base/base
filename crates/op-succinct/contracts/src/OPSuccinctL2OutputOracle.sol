@@ -8,13 +8,12 @@ import {Constants} from "@optimism/src/libraries/Constants.sol";
 import {SP1VerifierGateway} from "@sp1-contracts/src/SP1VerifierGateway.sol";
 
 /// @custom:proxied
-/// @title ZKL2OutputOracle
-/// @notice The ZKL2OutputOracle contains an array of L2 state outputs, where each output is a
+/// @title OPSuccinctL2OutputOracle
+/// @notice The OPSuccinctL2OutputOracle contains an array of L2 state outputs, where each output is a
 ///         commitment to the state of the L2 chain. Other contracts like the OptimismPortal use
-///         these outputs to verify information about the state of L2.
-///         This is a diff of Optimism's original L2OutputOracle, but where outputs are ZK verified.
-///         https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L1/L2OutputOracle.sol
-contract ZKL2OutputOracle is Initializable, ISemver {
+///         these outputs to verify information about the state of L2. The outputs posted to this contract
+///         are proved to be valid with `op-succinct`.
+contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice The number of the first L2 block recorded in this contract.
     uint256 public startingBlockNumber;
 
@@ -60,14 +59,14 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @notice The owner of the contract, who has admin permissions.
     address public owner;
 
-    /// @notice The hash of the chain's rollup config, used to verify ZK proofs.
+    /// @notice The hash of the chain's rollup config, which ensures the proofs submitted are for the correct chain.
     bytes32 public rollupConfigHash;
 
     /// @notice A trusted mapping of block numbers to block hashes.
     mapping(uint256 => bytes32) public historicBlockHashes;
 
-    /// @notice Parameters to initialize the ZK version of the contract.
-    struct ZKInitParams {
+    /// @notice Parameters to initialize the contract.
+    struct InitParams {
         uint256 chainId;
         bytes32 aggregationVkey;
         bytes32 rangeVkeyCommitment;
@@ -77,7 +76,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         bytes32 rollupConfigHash;
     }
 
-    /// @notice Struct containing the public values committed to for the aggregation SP1 proof.
+    /// @notice The public values committed to for an OP Succinct aggregation program.
     struct AggregationOutputs {
         bytes32 l1Head;
         bytes32 l2PreRoot;
@@ -148,7 +147,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     //                        Functions                       //
     ////////////////////////////////////////////////////////////
 
-    /// @notice Constructs the ZKL2OutputOracle contract. Disables initializers.
+    /// @notice Constructs the OPSuccinctL2OutputOracle contract. Disables initializers.
     constructor() {
         _disableInitializers();
     }
@@ -162,7 +161,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @param _challenger          The address of the challenger.
     /// @param _finalizationPeriodSeconds The minimum time (in seconds) that must elapse before a withdrawal
     ///                                   can be finalized.
-    /// @param _zkInitParams        The chain ID, aggregation vkey, range vkey commitment, verifier gateway, owner, and starting output root for the ZK version of the contract.
+    /// @param _initParams          The chain ID, aggregation vkey, range vkey commitment, verifier gateway, owner, and starting output root for the contract.
     /// @dev Starting block number, timestamp and output root are ignored for upgrades where these values already exist.
     function initialize(
         uint256 _submissionInterval,
@@ -172,7 +171,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         address _proposer,
         address _challenger,
         uint256 _finalizationPeriodSeconds,
-        ZKInitParams memory _zkInitParams
+        InitParams memory _initParams
     ) public reinitializer(2) {
         require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
         require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
@@ -190,7 +189,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         if (l2Outputs.length == 0) {
             l2Outputs.push(
                 Types.OutputProposal({
-                    outputRoot: _zkInitParams.startingOutputRoot,
+                    outputRoot: _initParams.startingOutputRoot,
                     timestamp: uint128(_startingTimestamp),
                     l2BlockNumber: uint128(_startingBlockNumber)
                 })
@@ -200,12 +199,12 @@ contract ZKL2OutputOracle is Initializable, ISemver {
             startingTimestamp = _startingTimestamp;
         }
 
-        chainId = _zkInitParams.chainId;
-        _transferOwnership(_zkInitParams.owner);
-        _updateAggregationVKey(_zkInitParams.aggregationVkey);
-        _updateRangeVkeyCommitment(_zkInitParams.rangeVkeyCommitment);
-        _updateVerifierGateway(_zkInitParams.verifierGateway);
-        _updateRollupConfigHash(_zkInitParams.rollupConfigHash);
+        chainId = _initParams.chainId;
+        _transferOwnership(_initParams.owner);
+        _updateAggregationVKey(_initParams.aggregationVkey);
+        _updateRangeVkeyCommitment(_initParams.rangeVkeyCommitment);
+        _updateVerifierGateway(_initParams.verifierGateway);
+        _updateRollupConfigHash(_initParams.rollupConfigHash);
     }
 
     /// @notice Getter for the submissionInterval.

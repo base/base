@@ -50,7 +50,7 @@ type ProposerConfig struct {
 
 	WaitNodeSync bool
 
-	// Additional fields required for ZK Proposer
+	// Additional fields required for OP Succinct Proposer
 	DbPath                     string
 	UseCachedDb                bool
 	BeaconRpc                  string
@@ -112,7 +112,7 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.AllowNonFinalized = cfg.AllowNonFinalized
 	ps.WaitNodeSync = cfg.WaitNodeSync
 
-	// Additional fields required for ZK Proposer
+	// Additional fields required for OP Succinct Proposer
 	ps.DbPath = cfg.DbPath
 	ps.UseCachedDb = cfg.UseCachedDb
 	ps.BeaconRpc = cfg.BeaconRpc

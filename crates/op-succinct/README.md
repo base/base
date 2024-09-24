@@ -11,7 +11,7 @@ OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour 
 
 ## Getting Started
 
-Today, you can already use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book](https://succinctlabs.github.io/op-succinct/) to deploy the `ZKL2OutputOracle` contract and start the `op-succinct-proposer` service.
+Today, you can already use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book](https://succinctlabs.github.io/op-succinct/) to deploy the `OPSuccinctL2OutputOracle` contract and start the `op-succinct-proposer` service.
 
 ## Repository Overview
 

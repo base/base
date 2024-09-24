@@ -1,70 +1,55 @@
 # Cost Estimator
 
-We provide a convenient CLI tool to estimate the RISC-V cycle counts (and cost) for generating ZKPs for a range of blocks for a given rollup.
+We provide a convenient CLI tool to fetch the RISC-V cycle counts for generating ZKPs for a range of blocks for a given rollup.
 
 ## Overview
 
-First, add the following RPCs to your `.env` file for your rollup:
+In the root directory, add the following RPCs to your `.env` file for your rollup:
 
-```bash
-# L1 RPC
-L1_RPC=
-# L1 Consensus RPC
-L1_BEACON_RPC=
-# L2 Archive Node (OP-Geth)
-L2_RPC=
-```
+| Parameter | Description |
+|-----------|-------------|
+| `L1_RPC` | L1 Archive Node. |
+| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
+| `L2_RPC` | L2 Execution Node (`op-geth`). |
+| `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 
-It is required that the L2 RPC is an archival node for your OP stack rollup, with the "debug_dbGet" endpoint enabled.
+More details on the RPC requirements can be found in the [prerequisites](./getting-started/prerequisites.md) section.
 
 Then run the following command:
 ```shell
-RUST_LOG=info just cost-estimator <start_l2_block> <end_l2_block>
+just cost-estimator <start_l2_block> <end_l2_block>
 ```
 
-This command will execute `op-succinct` as if it's in production. First, it will divide the entire block range
-into smaller ranges optimized along the span batch boundaries. Then it will fetch the required data for generating the ZKP for each of these ranges, and execute the SP1 `span` program. Once each program finishes, it will collect the statistics and output the aggregate statistics
-for the entire block range. From this data, you can extrapolate the cycle count to a cost based on the cost per billion cycles.
+This command will split the block range into smaller ranges as if the `op-succinct-proposer` service was running. It will then fetch the required data for generating the ZKP for each of these ranges, and execute the SP1 `range` program. Once each program finishes, it will collect the statistics and output the aggregate statistics.
 
 ## Example
 
-On Optimism Sepolia, proving the block range 15840000 to 15840050 (50 blocks) generates 4 span proofs, takes ~1.8B cycles and
-~2 minutes to execute.
+On Optimism Sepolia, proving the block range 17664000 to 17664125 (125 blocks) takes 4 range proofs and ~11.1B cycles.
 
 ```bash
-RUST_LOG=info just cost-estimator 15840000 15840050
+RUST_LOG=info just cost-estimator 17664000 17664125
 
 ...Execution Logs...
 
-+--------------------------------+---------------------------+
+ +--------------------------------+---------------------------+
 | Metric                         | Value                     |
 +--------------------------------+---------------------------+
-| Batch Start                    |                16,240,000 |
-| Batch End                      |                16,240,050 |
-| Execution Duration (seconds)   |                       130 |
-| Total Instruction Count        |             1,776,092,063 |
-| Oracle Verify Cycles           |               237,150,812 |
-| Derivation Cycles              |               493,177,851 |
-| Block Execution Cycles         |               987,885,587 |
-| Blob Verification Cycles       |                84,995,660 |
-| Total SP1 Gas                  |             2,203,604,618 |
-| Number of Blocks               |                        51 |
-| Number of Transactions         |                       160 |
-| Ethereum Gas Used              |                43,859,242 |
-| Cycles per Block               |                74,736,691 |
-| Cycles per Transaction         |                23,422,603 |
-| Transactions per Block         |                        11 |
-| Gas Used per Block             |                 3,509,360 |
-| Gas Used per Transaction       |                 1,105,066 |
-| BN Pair Cycles                 |                         0 |
-| BN Add Cycles                  |                         0 |
-| BN Mul Cycles                  |                         0 |
-| KZG Eval Cycles                |                         0 |
-| EC Recover Cycles              |                 9,407,847 |
+| Batch Start                    |                17,664,125 |
+| Batch End                      |                17,664,250 |
+| Execution Duration (seconds)   |                       606 |
+| Total Instruction Count        |            11,055,051,645 |
+| Oracle Verify Cycles           |               832,566,844 |
+| Derivation Cycles              |             1,089,859,924 |
+| Block Execution Cycles         |             8,959,507,779 |
+| Blob Verification Cycles       |               338,156,173 |
+| Total SP1 Gas                  |            13,075,527,707 |
+| Number of Blocks               |                       126 |
+| Number of Transactions         |                       856 |
+| Ethereum Gas Used              |               416,711,464 |
+| Cycles per Block               |                87,738,505 |
+| Cycles per Transaction         |                12,914,779 |
+| Transactions per Block         |                         6 |
+| Gas Used per Block             |                 3,307,233 |
+| Gas Used per Transaction       |                   486,812 |
 +--------------------------------+---------------------------+
 ```
-
-## Misc
-- For large enough block ranges, the RISC-V SP1 program will surpass the SP1 memory limit. Recommended limit is 20-30 blocks.
-- Your L2 node must have been synced for the blocks in the range you are proving. 
-
