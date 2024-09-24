@@ -1,7 +1,6 @@
 //! Transaction Types
 
 use crate::Frame;
-#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use alloy_primitives::Bytes;
 
@@ -41,7 +40,6 @@ impl BatchTransaction {
 #[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(not(feature = "std"))]
     use alloc::vec;
 
     #[test]

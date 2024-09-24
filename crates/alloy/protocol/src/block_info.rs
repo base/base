@@ -1,7 +1,6 @@
 //! This module contains the [L1BlockInfoTx] type, and various encoding / decoding methods for it.
 
-use super::{DepositSourceDomain, L1InfoDepositSource};
-#[cfg(not(feature = "std"))]
+use crate::{DepositSourceDomain, L1InfoDepositSource};
 use alloc::{
     format,
     string::{String, ToString},
@@ -454,7 +453,6 @@ impl L1BlockInfoEcotone {
 #[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(not(feature = "std"))]
     use alloc::string::ToString;
     use alloy_primitives::{address, b256, hex};
 

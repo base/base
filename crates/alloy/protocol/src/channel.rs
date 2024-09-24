@@ -1,14 +1,10 @@
 //! Channel Types
 
-#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
-
 use alloy_primitives::Bytes;
 use hashbrown::HashMap;
 
-use crate::block::BlockInfo;
-
-use crate::{frame::Frame, ChannelId};
+use crate::{block::BlockInfo, frame::Frame, ChannelId};
 
 /// [MAX_RLP_BYTES_PER_CHANNEL] is the maximum amount of bytes that will be read from
 /// a channel. This limit is set when decoding the RLP.
@@ -201,12 +197,10 @@ impl Channel {
 #[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(not(feature = "std"))]
-    use alloc::string::String;
-    #[cfg(not(feature = "std"))]
-    use alloc::string::ToString;
-    #[cfg(not(feature = "std"))]
-    use alloc::vec;
+    use alloc::{
+        string::{String, ToString},
+        vec,
+    };
 
     struct FrameValidityTestCase {
         #[allow(dead_code)]

@@ -1,5 +1,5 @@
 //! Contains deposit transaction types and helper methods.
-#[cfg(not(feature = "std"))]
+
 use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, TxKind, B256, U256, U64};
@@ -402,7 +402,6 @@ pub(crate) fn unmarshal_deposit_version0(
 #[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(not(feature = "std"))]
     use alloc::vec;
     use alloy_primitives::{address, b256, hex, LogData};
 

@@ -1,9 +1,7 @@
 //! Frame Types
 
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-
 use crate::ChannelId;
+use alloc::vec::Vec;
 
 /// The version of the derivation pipeline.
 pub const DERIVATION_VERSION_0: u8 = 0;
@@ -180,7 +178,6 @@ impl Frame {
 #[cfg(test)]
 mod test {
     use super::*;
-    #[cfg(not(feature = "std"))]
     use alloc::vec;
 
     #[test]
