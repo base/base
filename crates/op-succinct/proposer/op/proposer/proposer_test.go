@@ -55,10 +55,6 @@ func TestCheckpointBlockHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to set BeaconRpcFlag: %v", err)
 	}
-	err = cliCtx.Set(flags.L2ChainIDFlag.Name, os.Getenv("L2_CHAIN_ID"))
-	if err != nil {
-		t.Fatalf("failed to set L2ChainIDFlag: %v", err)
-	}
 	err = cliCtx.Set(txmgr.PrivateKeyFlagName, os.Getenv("PRIVATE_KEY"))
 	if err != nil {
 		t.Fatalf("failed to set PrivateKeyFlag: %v", err)
@@ -84,7 +80,7 @@ func TestCheckpointBlockHash(t *testing.T) {
 		t.Fatalf("failed to create tx manager: %v", err)
 	}
 
-	l2ooABI, err := opsuccinctbindings.ZKL2OutputOracleMetaData.GetAbi()
+	l2ooABI, err := opsuccinctbindings.OPSuccinctL2OutputOracleMetaData.GetAbi()
 	if err != nil {
 		t.Fatalf("failed to get L2OutputOracle ABI: %v", err)
 	}

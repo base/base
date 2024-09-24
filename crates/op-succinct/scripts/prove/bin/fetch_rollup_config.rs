@@ -16,14 +16,13 @@ pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-/// The config for deploying the ZK L2OutputOracle.
+/// The config for deploying the OPSuccinctL2OutputOracle.
 /// Note: The fields should be in alphabetical order for Solidity to parse it correctly.
 struct L2OOConfig {
     chain_id: u64,
     challenger: String,
     finalization_period: u64,
     l2_block_time: u64,
-    l2_output_oracle_proxy: String,
     owner: String,
     proposer: String,
     rollup_config_hash: String,
@@ -38,7 +37,7 @@ struct L2OOConfig {
 
 /// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.
 ///
-/// Specifically, updates the following fields in `zkl2ooconfig.json`:
+/// Specifically, updates the following fields in `opsuccinctl2ooconfig.json`:
 /// - rollup_config_hash: Get the hash of the rollup config in rollup-configs/{l2_chain_id}.json.
 /// - l2_block_time: Get the block time from the rollup config.
 /// - starting_block_number: If `USE_CACHED_STARTING_BLOCK` is `false`, set starting_block_number to 10 blocks before the latest block on L2.
@@ -91,7 +90,7 @@ async fn update_l2oo_config() -> Result<()> {
 
     // Set the submission interval.
     l2oo_config.submission_interval =
-        env::var("SUBMISSION_INTERVAL").unwrap_or("150".to_string()).parse()?;
+        env::var("SUBMISSION_INTERVAL").unwrap_or("1000".to_string()).parse()?;
 
     // Set the chain id.
     l2oo_config.chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
@@ -113,7 +112,7 @@ async fn update_l2oo_config() -> Result<()> {
     l2oo_config.range_vkey_commitment =
         format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
-    // Write the L2OO rollup config to the zkl2ooconfig.json file.
+    // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file.
     write_l2oo_config(l2oo_config, &workspace_root)?;
 
     Ok(())
@@ -121,22 +120,24 @@ async fn update_l2oo_config() -> Result<()> {
 
 /// Get the L2OO rollup config from the contracts directory.
 ///
-/// Note: The L2OO config is stored in `contracts/zkl2ooconfig.json`.
+/// Note: The L2OO config is stored in `contracts/opsuccinctl2ooconfig.json`.
 fn get_existing_l2oo_config(workspace_root: &Path) -> Result<L2OOConfig> {
-    let zkconfig_path = workspace_root.join("contracts/zkl2ooconfig.json").canonicalize()?;
-    if fs::metadata(&zkconfig_path).is_ok() {
-        let zkconfig_str = fs::read_to_string(zkconfig_path)?;
-        Ok(serde_json::from_str(&zkconfig_str)?)
+    let opsuccinct_config_path =
+        workspace_root.join("contracts/opsuccinctl2ooconfig.json").canonicalize()?;
+    if fs::metadata(&opsuccinct_config_path).is_ok() {
+        let opsuccinct_config_str = fs::read_to_string(opsuccinct_config_path)?;
+        Ok(serde_json::from_str(&opsuccinct_config_str)?)
     } else {
-        bail!("Missing zkl2ooconfig.json");
+        bail!("Missing opsuccinctl2ooconfig.json");
     }
 }
 
-/// Write the L2OO rollup config to `contracts/zkl2ooconfig.json`.
+/// Write the L2OO rollup config to `contracts/opsuccinctl2ooconfig.json`.
 fn write_l2oo_config(config: L2OOConfig, workspace_root: &Path) -> Result<()> {
-    let zkconfig_path = workspace_root.join("contracts/zkl2ooconfig.json").canonicalize()?;
-    // Write the L2OO rollup config to the zkl2ooconfig.json file.
-    fs::write(zkconfig_path, serde_json::to_string_pretty(&config)?)?;
+    let opsuccinct_config_path =
+        workspace_root.join("contracts/opsuccinctl2ooconfig.json").canonicalize()?;
+    // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file.
+    fs::write(opsuccinct_config_path, serde_json::to_string_pretty(&config)?)?;
     Ok(())
 }
 

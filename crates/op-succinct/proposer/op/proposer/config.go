@@ -2,10 +2,12 @@ package proposer
 
 import (
 	"errors"
+	"log"
 	"time"
 
 	"github.com/urfave/cli/v2"
 
+	"github.com/ethereum-optimism/optimism/op-service/dial"
 	oplog "github.com/ethereum-optimism/optimism/op-service/log"
 	opmetrics "github.com/ethereum-optimism/optimism/op-service/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/oppprof"
@@ -65,9 +67,9 @@ type CLIConfig struct {
 	// Whether to wait for the sequencer to sync to a recent block at startup.
 	WaitNodeSync bool
 
-	// Additional fields required for ZK Proposer.
+	// Additional fields required for OP Succinct Proposer.
 
-	// Path to the database that tracks ZK proof generation.
+	// Path to the database that tracks proof generation.
 	DbPath string
 
 	// UseCachedDb is a flag to use a cached database instead of creating a new one.
@@ -129,6 +131,17 @@ func (c *CLIConfig) Check() error {
 
 // NewConfig parses the Config from the provided flags or environment variables.
 func NewConfig(ctx *cli.Context) *CLIConfig {
+	// Get the L2 chain ID from the rollup config
+	rollupClient, err := dial.DialRollupClientWithTimeout(ctx.Context, dial.DefaultDialTimeout, nil, ctx.String(flags.RollupRpcFlag.Name))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	rollupConfig, err := rollupClient.RollupConfig(ctx.Context)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return &CLIConfig{
 		// Required Flags
 		L1EthRpc:     ctx.String(flags.L1EthRpcFlag.Name),
@@ -137,7 +150,7 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		PollInterval: ctx.Duration(flags.PollIntervalFlag.Name),
 		TxMgrConfig:  txmgr.ReadCLIConfig(ctx),
 		BeaconRpc:    ctx.String(flags.BeaconRpcFlag.Name),
-		L2ChainID:    uint64(ctx.Uint(flags.L2ChainIDFlag.Name)),
+		L2ChainID:    rollupConfig.L2ChainID.Uint64(),
 
 		// Optional Flags
 		AllowNonFinalized:            ctx.Bool(flags.AllowNonFinalizedFlag.Name),

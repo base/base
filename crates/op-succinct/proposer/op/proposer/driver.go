@@ -116,7 +116,7 @@ func NewL2OutputSubmitter(setup DriverSetup) (_ *L2OutputSubmitter, err error) {
 }
 
 func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup DriverSetup) (*L2OutputSubmitter, error) {
-	l2ooContract, err := opsuccinctbindings.NewZKL2OutputOracleCaller(*setup.Cfg.L2OutputOracleAddr, setup.L1Client)
+	l2ooContract, err := opsuccinctbindings.NewOPSuccinctL2OutputOracleCaller(*setup.Cfg.L2OutputOracleAddr, setup.L1Client)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create L2OO at address %s: %w", setup.Cfg.L2OutputOracleAddr, err)
@@ -131,7 +131,7 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 	}
 	log.Info("Connected to L2OutputOracle", "address", setup.Cfg.L2OutputOracleAddr, "version", version)
 
-	parsed, err := opsuccinctbindings.ZKL2OutputOracleMetaData.GetAbi()
+	parsed, err := opsuccinctbindings.OPSuccinctL2OutputOracleMetaData.GetAbi()
 	if err != nil {
 		cancel()
 		return nil, err
