@@ -4113,12 +4113,10 @@ dependencies = [
  "alloy-sol-types 0.8.0",
  "anyhow",
  "async-trait",
- "cfg-if",
  "itertools 0.13.0",
  "kona-client",
  "kona-common",
  "kona-derive",
- "kona-executor",
  "kona-mpt",
  "kona-preimage",
  "kona-primitives",
@@ -4145,9 +4143,7 @@ dependencies = [
  "dotenv",
  "futures",
  "kona-host",
- "kona-preimage",
  "kona-primitives",
- "log",
  "num-format",
  "op-succinct-client-utils",
  "reqwest 0.12.7",
@@ -4169,16 +4165,11 @@ dependencies = [
  "base64 0.22.1",
  "bincode",
  "cargo_metadata",
- "csv",
  "dotenv",
- "futures",
  "log",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
- "rayon",
- "reqwest 0.12.7",
  "serde",
- "serde_json",
  "sp1-build",
  "sp1-sdk",
  "tokio",
@@ -4189,9 +4180,25 @@ dependencies = [
 name = "op-succinct-prove"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "clap",
+ "csv",
+ "dotenv",
+ "num-format",
+ "op-succinct-client-utils",
+ "op-succinct-host-utils",
+ "sp1-build",
+ "sp1-sdk",
+ "tokio",
+]
+
+[[package]]
+name = "op-succinct-scripts"
+version = "0.1.0"
+dependencies = [
  "alloy",
  "alloy-primitives 0.8.0",
- "alloy-sol-types 0.8.0",
  "anyhow",
  "cargo_metadata",
  "clap",
@@ -4199,13 +4206,10 @@ dependencies = [
  "dotenv",
  "futures",
  "kona-host",
- "kona-primitives",
  "log",
- "num-format",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
  "rayon",
- "reqwest 0.12.7",
  "serde",
  "serde_json",
  "sp1-build",
@@ -4220,10 +4224,7 @@ dependencies = [
  "anyhow",
  "clap",
  "kona-host",
- "log",
- "sp1-sdk",
  "tokio",
- "tracing",
 ]
 
 [[package]]

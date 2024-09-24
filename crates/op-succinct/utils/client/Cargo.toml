@@ -22,7 +22,6 @@ revm.workspace = true
 # workspace (kona)
 kona-common.workspace = true
 kona-primitives.workspace = true
-kona-executor.workspace = true
 kona-client.workspace = true
 kona-preimage.workspace = true
 kona-mpt.workspace = true
@@ -34,7 +33,6 @@ rkyv.workspace = true
 sha2.workspace = true
 log.workspace = true
 itertools.workspace = true
-cfg-if.workspace = true
 
 # kzg
 kzg-rs.workspace = true
