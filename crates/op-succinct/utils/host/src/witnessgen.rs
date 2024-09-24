@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::time::Duration;
-use tokio::time::timeout;
 
 use kona_host::HostCli;
 
@@ -102,12 +101,13 @@ impl WitnessGenExecutor {
         // after your custom behavior, otherwise you won't be able to terminate "normally".
 
         // Wait for all processes to complete.
-        let result = self.wait_for_processes().await;
-        let any_failed = result.is_err();
 
-        if any_failed {
+        if let Some(err) = self.wait_for_processes().await.err() {
             self.kill_all(binary_name).await?;
-            Err(anyhow::anyhow!("One or more child processes failed or timed out"))
+            Err(anyhow::anyhow!(
+                "Killed all witness generation processes because one failed. Error: {}",
+                err
+            ))
         } else {
             Ok(())
         }
@@ -117,19 +117,22 @@ impl WitnessGenExecutor {
     /// an error.
     async fn wait_for_processes(&mut self) -> Result<()> {
         for child in &mut self.ongoing_processes {
-            match timeout(self.timeout, child.child.wait()).await {
-                Ok(Ok(status)) if !status.success() => {
-                    return Err(anyhow::anyhow!("Child process exited with non-zero status"));
+            println!("Waiting for process to finish");
+            tokio::select! {
+                result = child.child.wait() => {
+                    match result {
+                        Ok(status) if !status.success() => {
+                            return Err(anyhow::anyhow!("Witness generation process exited because it failed."));
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("Failed to get witness generation process status: {}", e));
+                        }
+                        _ => {}
+                    }
                 }
-                Ok(Err(e)) => {
-                    eprintln!("Child process error: {}", e);
-                    return Err(anyhow::anyhow!("Child process error"));
+                _ = tokio::time::sleep(self.timeout) => {
+                    return Err(anyhow::anyhow!("Witness generation process timed out."));
                 }
-                Err(_) => {
-                    eprintln!("Child process timed out");
-                    return Err(anyhow::anyhow!("Child process timed out"));
-                }
-                _ => {}
             }
         }
         Ok(())
@@ -143,7 +146,9 @@ impl WitnessGenExecutor {
     async fn kill_all(&mut self, binary_name: String) -> Result<()> {
         // Kill the "native client" processes.
         for mut child in self.ongoing_processes.drain(..) {
-            child.child.kill().await?;
+            if let Ok(None) = child.child.try_wait() {
+                child.child.kill().await?;
+            }
         }
 
         // Kill the spawned witness gen program.
