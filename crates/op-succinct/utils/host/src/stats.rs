@@ -5,7 +5,7 @@ use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{CostEstimator, ExecutionReport};
 
-/// Statistics for the multi-block execution.
+/// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionStats {
     pub batch_start: u64,

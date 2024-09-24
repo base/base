@@ -29,7 +29,8 @@ contract Utils is Test, JSONDecoder {
         ZKL2OutputOracle.ZKInitParams memory zkInitParams = ZKL2OutputOracle.ZKInitParams({
             chainId: cfg.chainId,
             verifierGateway: cfg.verifierGateway,
-            vkey: cfg.vkey,
+            aggregationVkey: cfg.aggregationVkey,
+            rangeVkeyCommitment: cfg.rangeVkeyCommitment,
             owner: cfg.owner,
             startingOutputRoot: cfg.startingOutputRoot,
             rollupConfigHash: cfg.rollupConfigHash

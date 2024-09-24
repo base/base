@@ -13,7 +13,7 @@ use kona_host::{
 use op_succinct_client_utils::{
     boot::BootInfoStruct, types::AggregationInputs, BootInfoWithBytesConfig, InMemoryOracle,
 };
-use sp1_sdk::{SP1Proof, SP1Stdin};
+use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
 use std::{fs::File, io::Read};
 
 use anyhow::Result;
@@ -90,7 +90,7 @@ pub fn get_agg_proof_stdin(
     proofs: Vec<SP1Proof>,
     boot_infos: Vec<BootInfoStruct>,
     headers: Vec<Header>,
-    vkey: &sp1_sdk::SP1VerifyingKey,
+    multi_block_vkey: &sp1_sdk::SP1VerifyingKey,
     latest_checkpoint_head: B256,
 ) -> Result<SP1Stdin> {
     let mut stdin = SP1Stdin::new();
@@ -98,13 +98,14 @@ pub fn get_agg_proof_stdin(
         let SP1Proof::Compressed(compressed_proof) = proof else {
             panic!();
         };
-        stdin.write_proof(*compressed_proof, vkey.vk.clone());
+        stdin.write_proof(*compressed_proof, multi_block_vkey.vk.clone());
     }
 
     // Write the aggregation inputs to the stdin.
     stdin.write(&AggregationInputs {
         boot_infos,
         latest_l1_checkpoint_head: latest_checkpoint_head,
+        multi_block_vkey: multi_block_vkey.hash_u32(),
     });
     // The headers have issues serializing with bincode, so use serde_json instead.
     let headers_bytes = serde_cbor::to_vec(&headers).unwrap();

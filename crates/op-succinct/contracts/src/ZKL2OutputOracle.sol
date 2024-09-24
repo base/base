@@ -47,8 +47,12 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @notice The chain ID of the L2 chain.
     uint256 public chainId;
 
-    /// @notice The verification key of the SP1 program.
-    bytes32 public vkey;
+    /// @notice The verification key of the aggregation SP1 program.
+    bytes32 public aggregationVkey;
+
+    /// @notice The 32 byte commitment to the BabyBear representation of the verification key of the range SP1 program. Specifically,
+    /// this verification is the output of converting the [u32; 8] range BabyBear verification key to a [u8; 32] array.
+    bytes32 public rangeVkeyCommitment;
 
     /// @notice The deployed SP1VerifierGateway contract to request proofs from.
     SP1VerifierGateway public verifierGateway;
@@ -65,21 +69,23 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @notice Parameters to initialize the ZK version of the contract.
     struct ZKInitParams {
         uint256 chainId;
-        bytes32 vkey;
+        bytes32 aggregationVkey;
+        bytes32 rangeVkeyCommitment;
         address verifierGateway;
         bytes32 startingOutputRoot;
         address owner;
         bytes32 rollupConfigHash;
     }
 
-    /// @notice Struct containing the public values committed to for the SP1 proof.
-    struct PublicValuesStruct {
+    /// @notice Struct containing the public values committed to for the aggregation SP1 proof.
+    struct AggregationOutputs {
         bytes32 l1Head;
         bytes32 l2PreRoot;
         bytes32 claimRoot;
         uint256 claimBlockNum;
         uint256 chainId;
         bytes32 rollupConfigHash;
+        bytes32 rangeVkeyCommitment;
     }
 
     ////////////////////////////////////////////////////////////
@@ -100,10 +106,15 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @param newNextOutputIndex  Next L2 output index after the deletion.
     event OutputsDeleted(uint256 indexed prevNextOutputIndex, uint256 indexed newNextOutputIndex);
 
-    /// @notice Emitted when the vkey is updated.
-    /// @param oldVkey The old vkey.
-    /// @param newVkey The new vkey.
-    event UpdatedVKey(bytes32 indexed oldVkey, bytes32 indexed newVkey);
+    /// @notice Emitted when the aggregation vkey is updated.
+    /// @param oldVkey The old aggregation vkey.
+    /// @param newVkey The new aggregation vkey.
+    event UpdatedAggregationVKey(bytes32 indexed oldVkey, bytes32 indexed newVkey);
+
+    /// @notice Emitted when the range vkey commitment is updated.
+    /// @param oldRangeVkeyCommitment The old range vkey commitment.
+    /// @param newRangeVkeyCommitment The new range vkey commitment.
+    event UpdatedRangeVkeyCommitment(bytes32 indexed oldRangeVkeyCommitment, bytes32 indexed newRangeVkeyCommitment);
 
     /// @notice Emitted when the verifier gateway is updated.
     /// @param oldVerifierGateway The old verifier gateway.
@@ -151,7 +162,7 @@ contract ZKL2OutputOracle is Initializable, ISemver {
     /// @param _challenger          The address of the challenger.
     /// @param _finalizationPeriodSeconds The minimum time (in seconds) that must elapse before a withdrawal
     ///                                   can be finalized.
-    /// @param _zkInitParams        The chain ID, vkey, verifier gateway, owner, and starting output root for the ZK version of the contract.
+    /// @param _zkInitParams        The chain ID, aggregation vkey, range vkey commitment, verifier gateway, owner, and starting output root for the ZK version of the contract.
     /// @dev Starting block number, timestamp and output root are ignored for upgrades where these values already exist.
     function initialize(
         uint256 _submissionInterval,
@@ -191,7 +202,8 @@ contract ZKL2OutputOracle is Initializable, ISemver {
 
         chainId = _zkInitParams.chainId;
         _transferOwnership(_zkInitParams.owner);
-        _updateVKey(_zkInitParams.vkey);
+        _updateAggregationVKey(_zkInitParams.aggregationVkey);
+        _updateRangeVkeyCommitment(_zkInitParams.rangeVkeyCommitment);
         _updateVerifierGateway(_zkInitParams.verifierGateway);
         _updateRollupConfigHash(_zkInitParams.rollupConfigHash);
     }
@@ -295,23 +307,30 @@ contract ZKL2OutputOracle is Initializable, ISemver {
 
         require(_outputRoot != bytes32(0), "L2OutputOracle: L2 output proposal cannot be the zero hash");
 
-        require(vkey != bytes32(0), "L2OutputOracle: vkey must be set before proposing an output");
+        require(
+            aggregationVkey != bytes32(0), "L2OutputOracle: aggregation vkey must be set before proposing an output"
+        );
+        require(
+            rangeVkeyCommitment != bytes32(0),
+            "L2OutputOracle: range vkey commitment must be set before proposing an output"
+        );
 
         require(
             historicBlockHashes[_l1BlockNumber] == _l1BlockHash,
             "L2OutputOracle: proposed block hash and number are not checkpointed"
         );
 
-        PublicValuesStruct memory publicValues = PublicValuesStruct({
+        AggregationOutputs memory publicValues = AggregationOutputs({
             l1Head: _l1BlockHash,
             l2PreRoot: l2Outputs[latestOutputIndex()].outputRoot,
             claimRoot: _outputRoot,
             claimBlockNum: _l2BlockNumber,
             chainId: chainId,
-            rollupConfigHash: rollupConfigHash
+            rollupConfigHash: rollupConfigHash,
+            rangeVkeyCommitment: rangeVkeyCommitment
         });
 
-        verifierGateway.verifyProof(vkey, abi.encode(publicValues), _proof);
+        verifierGateway.verifyProof(aggregationVkey, abi.encode(publicValues), _proof);
 
         emit OutputProposed(_outputRoot, nextOutputIndex(), _l2BlockNumber, block.timestamp);
 
@@ -427,13 +446,22 @@ contract ZKL2OutputOracle is Initializable, ISemver {
         owner = _newOwner;
     }
 
-    function updateVKey(bytes32 _vkey) external onlyOwner {
-        _updateVKey(_vkey);
+    function updateAggregationVKey(bytes32 _aggregationVKey) external onlyOwner {
+        _updateAggregationVKey(_aggregationVKey);
     }
 
-    function _updateVKey(bytes32 _vkey) internal {
-        emit UpdatedVKey(vkey, _vkey);
-        vkey = _vkey;
+    function _updateAggregationVKey(bytes32 _aggregationVKey) internal {
+        emit UpdatedAggregationVKey(aggregationVkey, _aggregationVKey);
+        aggregationVkey = _aggregationVKey;
+    }
+
+    function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) external onlyOwner {
+        _updateRangeVkeyCommitment(_rangeVkeyCommitment);
+    }
+
+    function _updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) internal {
+        emit UpdatedRangeVkeyCommitment(rangeVkeyCommitment, _rangeVkeyCommitment);
+        rangeVkeyCommitment = _rangeVkeyCommitment;
     }
 
     function updateVerifierGateway(address _verifierGateway) external onlyOwner {

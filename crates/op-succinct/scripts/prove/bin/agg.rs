@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
-    println!("Multi-block ELF Verification Key U32 Hash: {:?}", vkey.vk.hash_u32());
+    println!("Range ELF Verification Key U32 Hash: {:?}", vkey.vk.hash_u32());
 
     let stdin =
         get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, latest_checkpoint_head).unwrap();

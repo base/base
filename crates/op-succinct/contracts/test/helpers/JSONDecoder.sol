@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 contract JSONDecoder {
     struct Config {
+        bytes32 aggregationVkey;
         uint256 chainId;
         address challenger;
         uint256 finalizationPeriod;
@@ -10,13 +11,13 @@ contract JSONDecoder {
         address l2OutputOracleProxy;
         address owner;
         address proposer;
+        bytes32 rangeVkeyCommitment;
         bytes32 rollupConfigHash;
         uint256 startingBlockNumber;
         bytes32 startingOutputRoot;
         uint256 startingTimestamp;
         uint256 submissionInterval;
         address verifierGateway;
-        bytes32 vkey;
     }
 
     struct OutputAtBlock {
