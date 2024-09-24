@@ -9,9 +9,15 @@ async fn main() -> Result<()> {
     init_tracing_subscriber(cfg.v)?;
 
     if cfg.server {
-        start_server(cfg).await?;
+        let res = start_server(cfg).await;
+        if res.is_err() {
+            std::process::exit(1);
+        }
     } else {
-        start_server_and_native_client(cfg).await?;
+        let res = start_server_and_native_client(cfg).await;
+        if res.is_err() {
+            std::process::exit(1);
+        }
     }
 
     println!("Exiting host program.");
