@@ -1,28 +1,8 @@
-# Node Setup
+# L2 Node Setup
 
-To run OP Succinct, you will need an L1 execution node, an L1 consensus node, an L2 execution node (`op-geth`), and an L2 Optimism Node (`op-node`).
+This guide will show you how to set up an L2 execution node (`op-geth`) and a rollup node (`op-node`) for your OP Stack chain.
 
-The nodes must be configured with the following specific endpoints enabled:
-
-- L1 Execution Node: Archive node.
-  - `debug_getRawHeader`
-  - `debug_getRawReceipts`
-  - `debug_getRawBlock`
-- L2 Execution Node (`op-geth`): Archive node with hash state scheme.
-  - `debug_getRawHeader`
-  - `debug_getRawTransaction`
-  - `debug_getRawBlock`
-  - `debug_dbGet`
-  - `debug_getExecutionWitness`
-- L2 Optimism Node (`op-node`)
-  - `optimism_outputAtBlock`
-  - `optimism_rollupConfig`
-  - `optimism_syncStatus`
-
-If you don't already have L2 nodes, you can set them up by following the instructions below.
-
-## L2 Node Configuration
-
+## Instructions
 1. Clone [ops-anton](https://github.com/anton-rs/ops-anton) and follow the instructions in the README to set up your rollup.
 2. Go to [op-node.sh](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-node/op-node.sh#L4-L6) and set the `L2_RPC` to your rollup RPC. Modify the `l1` and `l1.beacon` to your L1 and L1 Beacon RPCs. Note: Your L1 node should be an archive node.
 3. If you are starting a node for a different chain, you will need to modify `op-network` in `op-geth.sh` [here](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-geth/op-geth.sh#L18) and `network` in `op-node.sh` [here](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-node/op-node.sh#L10).
@@ -35,7 +15,7 @@ Your `op-geth` endpoint will be available at the RPC port chosen [here](https://
 
 Your `op-node` endpoint (rollup node) will be available at the RPC port chosen [here](https://github.com/anton-rs/ops-anton/blob/main/L2/op-mainnet/op-node/op-node.sh#L13), which in this case is `5058` (e.g. `http://localhost:5058`).
 
-### Check Sync Status
+## Check Sync Status
 
 After a few hours, your node should be fully synced and you can use it to begin generating ZKPs.
 
