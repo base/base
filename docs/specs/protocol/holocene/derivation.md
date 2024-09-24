@@ -65,9 +65,9 @@ queue:
 
 - If a _non-first frame_ (i.e., a frame with index >0) decoded from a batcher transaction is _out of
 order_, it is **immediately dropped**, where the frame is called _out of order_ if
-  - the frame queue is empty, or
-  - the non-first frame has a different channel ID than the previous frame in the frame queue, or
-  - the previous frame already closed the channel with the same ID.
+  - its frame number is not the previous frame's plus one, if it has the same channel ID, or
+  - the previous frame already closed the channel with the same ID, or
+  - the non-first frame has a different channel ID than the previous frame in the frame queue.
 - If a _first frame_ is decoded while the previous frame isn't a _last frame_ (i.e., `is_last` is
 `false`), all previous frames for the same channel are dropped and this new first frame remains in
 the queue.
