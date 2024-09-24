@@ -13,7 +13,7 @@ The nodes must be configured with the following specific endpoints enabled:
   - `debug_getRawTransaction`
   - `debug_getRawBlock`
   - `debug_dbGet`
-  - [SOON] `debug_getExecutionWitness`
+  - `debug_getExecutionWitness`
 - L2 Optimism Node (`op-node`)
   - `optimism_outputAtBlock`
   - `optimism_rollupConfig`
