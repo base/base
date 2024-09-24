@@ -330,14 +330,9 @@ impl L1BlockInfoTx {
     ) -> Result<(L1BlockInfoTx, OpTxEnvelope), BlockInfoError> {
         let l1_info =
             Self::try_new(rollup_config, system_config, sequence_number, l1_header, l2_block_time)?;
-        let l1_block_hash = match l1_info {
-            Self::Bedrock(ref tx) => tx.block_hash,
-            Self::Ecotone(ref tx) => tx.block_hash,
-            Self::Holocene(ref tx) => tx.block_hash,
-        };
 
         let source = DepositSourceDomain::L1Info(L1InfoDepositSource {
-            l1_block_hash,
+            l1_block_hash: l1_info.block_hash(),
             seq_number: sequence_number,
         });
 
@@ -383,6 +378,15 @@ impl L1BlockInfoTx {
                 .map(Self::Holocene)
                 .map_err(|e| DecodeError::ParseError(format!("Holocene decode error: {}", e))),
             _ => Err(DecodeError::InvalidSelector),
+        }
+    }
+
+    /// Returns the block hash for the [L1BlockInfoTx].
+    pub const fn block_hash(&self) -> B256 {
+        match self {
+            Self::Bedrock(ref tx) => tx.block_hash,
+            Self::Ecotone(ref tx) => tx.block_hash,
+            Self::Holocene(ref tx) => tx.block_hash,
         }
     }
 
@@ -667,6 +671,30 @@ mod test {
         assert_eq!(
             err.err().unwrap().to_string(),
             "Invalid data length: Invalid calldata length for Ecotone L1 info transaction, expected 164, got 2"
+        );
+    }
+
+    #[test]
+    fn test_l1_block_info_tx_block_hash_bedrock() {
+        let bedrock = L1BlockInfoTx::Bedrock(L1BlockInfoBedrock {
+            block_hash: b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc"),
+            ..Default::default()
+        });
+        assert_eq!(
+            bedrock.block_hash(),
+            b256!("392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc")
+        );
+    }
+
+    #[test]
+    fn test_l1_block_info_tx_block_hash_ecotone() {
+        let ecotone = L1BlockInfoTx::Ecotone(L1BlockInfoEcotone {
+            block_hash: b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3"),
+            ..Default::default()
+        });
+        assert_eq!(
+            ecotone.block_hash(),
+            b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3")
         );
     }
 
