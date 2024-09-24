@@ -105,7 +105,7 @@ async fn run_native_data_generation(
                 ProgramType::Multi,
                 CacheMode::DeleteCache,
             ))
-            .expect("Failed to get host CLI args.");
+            .expect("Failed to get host CLI args");
 
             batch_host_clis.push(BatchHostCli {
                 host_cli: host_cli.clone(),

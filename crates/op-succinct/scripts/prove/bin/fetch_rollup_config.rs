@@ -1,7 +1,7 @@
-use alloy::signers::local::PrivateKeySigner;
+use alloy::{hex, signers::local::PrivateKeySigner};
 use alloy_primitives::B256;
 use anyhow::{bail, Result};
-use op_succinct_client_utils::boot::hash_rollup_config;
+use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +12,7 @@ use std::{
 };
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
+pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,7 +32,8 @@ struct L2OOConfig {
     starting_timestamp: u64,
     submission_interval: u64,
     verifier_gateway: String,
-    vkey: String,
+    aggregation_vkey: String,
+    range_vkey_commitment: String,
 }
 
 /// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.
@@ -105,7 +107,11 @@ async fn update_l2oo_config() -> Result<()> {
     // Set the vkey.
     let prover = ProverClient::new();
     let (_, vkey) = prover.setup(AGG_ELF);
-    l2oo_config.vkey = vkey.vk.bytes32();
+    l2oo_config.aggregation_vkey = vkey.vk.bytes32();
+
+    let (_, range_vkey) = prover.setup(RANGE_ELF);
+    l2oo_config.range_vkey_commitment =
+        format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
     // Write the L2OO rollup config to the zkl2ooconfig.json file.
     write_l2oo_config(l2oo_config, &workspace_root)?;

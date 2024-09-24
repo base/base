@@ -2,17 +2,21 @@
 
 To run OP Succinct, you will need an L1 execution node, an L1 consensus node, an L2 execution node (`op-geth`), and an L2 Optimism Node (`op-node`).
 
-If you are using L2 nodes from an external provider, you will need to ensure the following:
-- The `op-geth` node should be an archive node with the hash state scheme. The following endpoints should be open on the node: 
-  - `debug_dbGet`
-  - `debug_getRawTransaction`
-  - `debug_getRawReceipts`
+The nodes must be configured with the following specific endpoints enabled:
+
+- L1 Execution Node: Archive node.
   - `debug_getRawHeader`
-  - `debug_getExecutionWitness`
+  - `debug_getRawReceipts`
   - `debug_getRawBlock`
-- The `op-node` should have the following endpoints accessible: 
-  - `optimism_rollupConfig`
+- L2 Execution Node (`op-geth`): Archive node with hash state scheme.
+  - `debug_getRawHeader`
+  - `debug_getRawTransaction`
+  - `debug_getRawBlock`
+  - `debug_dbGet`
+  - [SOON] `debug_getExecutionWitness`
+- L2 Optimism Node (`op-node`)
   - `optimism_outputAtBlock`
+  - `optimism_rollupConfig`
   - `optimism_syncStatus`
 
 If you don't already have L2 nodes, you can set them up by following the instructions below.

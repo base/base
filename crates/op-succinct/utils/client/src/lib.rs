@@ -2,7 +2,7 @@ mod hasher;
 pub use hasher::BytesHasherBuilder;
 
 pub mod boot;
-pub use boot::{BootInfoWithBytesConfig, BOOT_INFO_SIZE};
+pub use boot::{BootInfoWithBytesConfig, AGGREGATION_OUTPUTS_SIZE};
 
 mod executor;
 pub use executor::block_on;
