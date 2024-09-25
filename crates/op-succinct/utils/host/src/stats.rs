@@ -34,22 +34,49 @@ pub struct ExecutionStats {
 
 /// Write a statistic to the formatter.
 fn write_stat(f: &mut fmt::Formatter<'_>, label: &str, value: u64) -> fmt::Result {
-    writeln!(f, "| {:<30} | {:>25} |", label, value.to_formatted_string(&Locale::en))
+    writeln!(
+        f,
+        "| {:<30} | {:>25} |",
+        label,
+        value.to_formatted_string(&Locale::en)
+    )
 }
 
 impl fmt::Display for ExecutionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "+--------------------------------+---------------------------+")?;
+        writeln!(
+            f,
+            "+--------------------------------+---------------------------+"
+        )?;
         writeln!(f, "| {:<30} | {:<25} |", "Metric", "Value")?;
-        writeln!(f, "+--------------------------------+---------------------------+")?;
+        writeln!(
+            f,
+            "+--------------------------------+---------------------------+"
+        )?;
         write_stat(f, "Batch Start", self.batch_start)?;
         write_stat(f, "Batch End", self.batch_end)?;
-        write_stat(f, "Execution Duration (seconds)", self.execution_duration_sec)?;
+        write_stat(
+            f,
+            "Execution Duration (seconds)",
+            self.execution_duration_sec,
+        )?;
         write_stat(f, "Total Instruction Count", self.total_instruction_count)?;
-        write_stat(f, "Oracle Verify Cycles", self.oracle_verify_instruction_count)?;
+        write_stat(
+            f,
+            "Oracle Verify Cycles",
+            self.oracle_verify_instruction_count,
+        )?;
         write_stat(f, "Derivation Cycles", self.derivation_instruction_count)?;
-        write_stat(f, "Block Execution Cycles", self.block_execution_instruction_count)?;
-        write_stat(f, "Blob Verification Cycles", self.blob_verification_instruction_count)?;
+        write_stat(
+            f,
+            "Block Execution Cycles",
+            self.block_execution_instruction_count,
+        )?;
+        write_stat(
+            f,
+            "Blob Verification Cycles",
+            self.blob_verification_instruction_count,
+        )?;
         write_stat(f, "Total SP1 Gas", self.total_sp1_gas)?;
         write_stat(f, "Number of Blocks", self.nb_blocks)?;
         write_stat(f, "Number of Transactions", self.nb_transactions)?;
@@ -64,7 +91,10 @@ impl fmt::Display for ExecutionStats {
         write_stat(f, "BN Mul Cycles", self.bn_mul_cycles)?;
         write_stat(f, "KZG Eval Cycles", self.kzg_eval_cycles)?;
         write_stat(f, "EC Recover Cycles", self.ec_recover_cycles)?;
-        writeln!(f, "+--------------------------------+---------------------------+")
+        writeln!(
+            f,
+            "+--------------------------------+---------------------------+"
+        )
     }
 }
 
@@ -142,9 +172,15 @@ pub struct SpanBatchStats {
 
 impl fmt::Display for SpanBatchStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "+-------------------------------+---------------------------+")?;
+        writeln!(
+            f,
+            "+-------------------------------+---------------------------+"
+        )?;
         writeln!(f, "| {:<30} | {:<25} |", "Metric", "Value")?;
-        writeln!(f, "+-------------------------------+---------------------------+")?;
+        writeln!(
+            f,
+            "+-------------------------------+---------------------------+"
+        )?;
         write_stat(f, "Span Start", self.span_start)?;
         write_stat(f, "Span End", self.span_end)?;
         write_stat(f, "Total Blocks", self.total_blocks)?;
@@ -158,12 +194,19 @@ impl fmt::Display for SpanBatchStats {
         write_stat(f, "Gas Used per Transaction", self.gas_used_per_transaction)?;
         write_stat(f, "Total Derivation Cycles", self.total_derivation_cycles)?;
         write_stat(f, "Total Execution Cycles", self.total_execution_cycles)?;
-        write_stat(f, "Total Blob Verification Cycles", self.total_blob_verification_cycles)?;
+        write_stat(
+            f,
+            "Total Blob Verification Cycles",
+            self.total_blob_verification_cycles,
+        )?;
         write_stat(f, "BN Add Cycles", self.bn_add_cycles)?;
         write_stat(f, "BN Mul Cycles", self.bn_mul_cycles)?;
         write_stat(f, "BN Pair Cycles", self.bn_pair_cycles)?;
         write_stat(f, "KZG Eval Cycles", self.kzg_eval_cycles)?;
         write_stat(f, "EC Recover Cycles", self.ec_recover_cycles)?;
-        writeln!(f, "+-------------------------------+---------------------------+")
+        writeln!(
+            f,
+            "+-------------------------------+---------------------------+"
+        )
     }
 }

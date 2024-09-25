@@ -76,7 +76,10 @@ fn split_range(start: u64, end: u64, l2_chain_id: u64) -> Vec<SpanBatchRange> {
 
     while current_start < end {
         let current_end = min(current_start + max_size, end);
-        ranges.push(SpanBatchRange { start: current_start, end: current_end });
+        ranges.push(SpanBatchRange {
+            start: current_start,
+            end: current_end,
+        });
         current_start = current_end + 1;
     }
 
@@ -94,35 +97,37 @@ async fn run_native_data_generation(
     // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
     // being overloaded with too many concurrent requests, while also improving witness generation
     // throughput.
-    let batch_host_clis = split_ranges.chunks(CONCURRENT_NATIVE_HOST_RUNNERS).map(|chunk| {
-        let mut witnessgen_executor = WitnessGenExecutor::default();
+    let batch_host_clis = split_ranges
+        .chunks(CONCURRENT_NATIVE_HOST_RUNNERS)
+        .map(|chunk| {
+            let mut witnessgen_executor = WitnessGenExecutor::default();
 
-        let mut batch_host_clis = Vec::new();
-        for range in chunk.iter() {
-            let host_cli = block_on(data_fetcher.get_host_cli_args(
-                range.start,
-                range.end,
-                ProgramType::Multi,
-                CacheMode::DeleteCache,
-            ))
-            .expect("Failed to get host CLI args");
+            let mut batch_host_clis = Vec::new();
+            for range in chunk.iter() {
+                let host_cli = block_on(data_fetcher.get_host_cli_args(
+                    range.start,
+                    range.end,
+                    ProgramType::Multi,
+                    CacheMode::DeleteCache,
+                ))
+                .expect("Failed to get host CLI args");
 
-            batch_host_clis.push(BatchHostCli {
-                host_cli: host_cli.clone(),
-                start: range.start,
-                end: range.end,
-            });
-            block_on(witnessgen_executor.spawn_witnessgen(&host_cli))
-                .expect("Failed to spawn witness generation process.");
-        }
+                batch_host_clis.push(BatchHostCli {
+                    host_cli: host_cli.clone(),
+                    start: range.start,
+                    end: range.end,
+                });
+                block_on(witnessgen_executor.spawn_witnessgen(&host_cli))
+                    .expect("Failed to spawn witness generation process.");
+            }
 
-        let res = block_on(witnessgen_executor.flush());
-        if res.is_err() {
-            panic!("Failed to generate witnesses: {:?}", res.err().unwrap());
-        }
+            let res = block_on(witnessgen_executor.flush());
+            if res.is_err() {
+                panic!("Failed to generate witnesses: {:?}", res.err().unwrap());
+            }
 
-        batch_host_clis
-    });
+            batch_host_clis
+        });
 
     batch_host_clis.into_iter().flatten().collect()
 }
@@ -183,7 +188,12 @@ async fn execute_blocks_parallel(
 
     info!("Execution is complete.");
 
-    let execution_stats = execution_stats_map.lock().await.clone().into_values().collect();
+    let execution_stats = execution_stats_map
+        .lock()
+        .await
+        .clone()
+        .into_values()
+        .collect();
     drop(execution_stats_map);
     execution_stats
 }
@@ -205,7 +215,9 @@ fn write_execution_stats_to_csv(
     let mut csv_writer = csv::Writer::from_path(report_path)?;
 
     for stats in execution_stats {
-        csv_writer.serialize(stats).expect("Failed to write execution stats to CSV.");
+        csv_writer
+            .serialize(stats)
+            .expect("Failed to write execution stats to CSV.");
     }
     csv_writer.flush().expect("Failed to flush CSV writer.");
 
@@ -272,7 +284,10 @@ async fn main() -> Result<()> {
 
     let split_ranges = split_range(args.start, args.end, l2_chain_id);
 
-    info!("The span batch ranges which will be executed: {:?}", split_ranges);
+    info!(
+        "The span batch ranges which will be executed: {:?}",
+        split_ranges
+    );
 
     let prover = ProverClient::new();
     let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;
@@ -285,7 +300,10 @@ async fn main() -> Result<()> {
     write_execution_stats_to_csv(&sorted_execution_stats, l2_chain_id, &args)?;
 
     let aggregate_execution_stats = aggregate_execution_stats(&sorted_execution_stats);
-    println!("Aggregate Execution Stats: \n {}", aggregate_execution_stats);
+    println!(
+        "Aggregate Execution Stats: \n {}",
+        aggregate_execution_stats
+    );
 
     Ok(())
 }

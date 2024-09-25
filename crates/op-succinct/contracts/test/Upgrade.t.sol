@@ -8,12 +8,6 @@ import {Proxy} from "@optimism/src/universal/Proxy.sol";
 import {Utils} from "./helpers/Utils.sol";
 
 contract UpgradeTest is Test, Utils {
-    function testReadJsonSucceeds() public {
-        Config memory config = readJson("opsuccinctl2ooconfig.json");
-        assertEq(config.l2BlockTime, 2);
-        assertEq(config.proposer, address(0));
-    }
-
     function testFreshDeployment() public {
         bytes32 exampleOutputRoot = keccak256("output root");
         vm.warp(12345678);

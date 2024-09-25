@@ -9,7 +9,7 @@ If you are using a self-managed OP Stack chain, you will need to use your `ADMIN
 To update the `L2OutputOracle` implementation, run the following command in `/contracts`:
 
 ```bash
-forge script script/ZKUpgrader.s.sol:ZKUpgrader \
+forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
     --rpc-url $L1_RPC \
     --private-key $PRIVATE_KEY \
     --verify \

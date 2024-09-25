@@ -16,7 +16,7 @@ spin = { version = "0.9.8", features = ["mutex"] }
 lru = "0.12.3"
 async-trait = "0.1.80"
 sha2 = "0.10.8"
-tokio = { version = "1.37.0", features = ["full"] }
+tokio = { version = "1.40.0", features = ["full"] }
 clap = "4.5.9"
 cargo_metadata = "0.18.1"
 dotenv = "0.15.0"
@@ -37,18 +37,18 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 kzg-rs = { version = "0.2.2" }
 
 # kona
-# Note: This version of kona is from 9/24. Pin to this release until the new version of kona is released.
-kona-common = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-common-proc = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-preimage = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a", features = [
+# Note: Switch to latest version of kona once the std::process::Command issue is resolved.
+kona-common = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-common-proc = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-preimage = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-mpt = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-derive = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a", default-features = false }
-kona-executor = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-client = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
-kona-host = { git = "https://github.com/anton-rs/kona", rev = "5d0e211ca1c271377fe184729761bcb217f1f60a" }
+kona-primitives = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-mpt = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-derive = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged", default-features = false }
+kona-executor = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-client = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-host = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }

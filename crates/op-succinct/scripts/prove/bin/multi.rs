@@ -46,7 +46,11 @@ async fn main() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new().await;
 
-    let cache_mode = if args.use_cache { CacheMode::KeepCache } else { CacheMode::DeleteCache };
+    let cache_mode = if args.use_cache {
+        CacheMode::KeepCache
+    } else {
+        CacheMode::DeleteCache
+    };
 
     let host_cli = data_fetcher
         .get_host_cli_args(args.start, args.end, ProgramType::Multi, cache_mode)
@@ -76,8 +80,10 @@ async fn main() -> Result<()> {
         let proof = prover.prove(&pk, sp1_stdin).compressed().run().unwrap();
 
         // Create a proof directory for the chain ID if it doesn't exist.
-        let proof_dir =
-            format!("data/{}/proofs", data_fetcher.get_chain_id(RPCMode::L2).await.unwrap());
+        let proof_dir = format!(
+            "data/{}/proofs",
+            data_fetcher.get_chain_id(RPCMode::L2).await.unwrap()
+        );
         if !std::path::Path::new(&proof_dir).exists() {
             fs::create_dir_all(&proof_dir).unwrap();
         }
@@ -87,12 +93,17 @@ async fn main() -> Result<()> {
             .expect("saving proof failed");
     } else {
         let start_time = Instant::now();
-        let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin.clone()).run().unwrap();
+        let (_, report) = prover
+            .execute(MULTI_BLOCK_ELF, sp1_stdin.clone())
+            .run()
+            .unwrap();
         let execution_duration = start_time.elapsed();
 
         let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await.unwrap();
-        let report_path =
-            format!("execution-reports/multi/{}/{}-{}.csv", l2_chain_id, args.start, args.end);
+        let report_path = format!(
+            "execution-reports/multi/{}/{}-{}.csv",
+            l2_chain_id, args.start, args.end
+        );
 
         // Create the report directory if it doesn't exist.
         let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
@@ -101,7 +112,9 @@ async fn main() -> Result<()> {
         }
 
         let mut stats = ExecutionStats::default();
-        stats.add_block_data(&data_fetcher, args.start, args.end).await;
+        stats
+            .add_block_data(&data_fetcher, args.start, args.end)
+            .await;
         stats.add_report_data(&report, execution_duration);
         stats.add_aggregate_data();
 

@@ -50,8 +50,11 @@ async fn update_l2oo_config() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::default();
 
     // Get the workspace root with cargo metadata to make the paths.
-    let workspace_root =
-        PathBuf::from(cargo_metadata::MetadataCommand::new().exec()?.workspace_root);
+    let workspace_root = PathBuf::from(
+        cargo_metadata::MetadataCommand::new()
+            .exec()?
+            .workspace_root,
+    );
 
     // Read the L2OO config from the contracts directory.
     let mut l2oo_config = get_existing_l2oo_config(&workspace_root)?;
@@ -83,14 +86,18 @@ async fn update_l2oo_config() -> Result<()> {
     l2oo_config.l2_block_time = data_fetcher.rollup_config.block_time;
 
     // Set the starting output root and starting timestamp.
-    l2oo_config.starting_output_root =
-        optimism_output_data["outputRoot"].as_str().unwrap().to_string();
-    l2oo_config.starting_timestamp =
-        optimism_output_data["blockRef"]["timestamp"].as_u64().unwrap();
+    l2oo_config.starting_output_root = optimism_output_data["outputRoot"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    l2oo_config.starting_timestamp = optimism_output_data["blockRef"]["timestamp"]
+        .as_u64()
+        .unwrap();
 
     // Set the submission interval.
-    l2oo_config.submission_interval =
-        env::var("SUBMISSION_INTERVAL").unwrap_or("1000".to_string()).parse()?;
+    l2oo_config.submission_interval = env::var("SUBMISSION_INTERVAL")
+        .unwrap_or("1000".to_string())
+        .parse()?;
 
     // Set the chain id.
     l2oo_config.chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
@@ -123,8 +130,9 @@ async fn update_l2oo_config() -> Result<()> {
 ///
 /// Note: The L2OO config is stored in `contracts/opsuccinctl2ooconfig.json`.
 fn get_existing_l2oo_config(workspace_root: &Path) -> Result<L2OOConfig> {
-    let opsuccinct_config_path =
-        workspace_root.join("contracts/opsuccinctl2ooconfig.json").canonicalize()?;
+    let opsuccinct_config_path = workspace_root
+        .join("contracts/opsuccinctl2ooconfig.json")
+        .canonicalize()?;
     if fs::metadata(&opsuccinct_config_path).is_ok() {
         let opsuccinct_config_str = fs::read_to_string(opsuccinct_config_path)?;
         Ok(serde_json::from_str(&opsuccinct_config_str)?)
@@ -135,10 +143,14 @@ fn get_existing_l2oo_config(workspace_root: &Path) -> Result<L2OOConfig> {
 
 /// Write the L2OO rollup config to `contracts/opsuccinctl2ooconfig.json`.
 fn write_l2oo_config(config: L2OOConfig, workspace_root: &Path) -> Result<()> {
-    let opsuccinct_config_path =
-        workspace_root.join("contracts/opsuccinctl2ooconfig.json").canonicalize()?;
+    let opsuccinct_config_path = workspace_root
+        .join("contracts/opsuccinctl2ooconfig.json")
+        .canonicalize()?;
     // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file.
-    fs::write(opsuccinct_config_path, serde_json::to_string_pretty(&config)?)?;
+    fs::write(
+        opsuccinct_config_path,
+        serde_json::to_string_pretty(&config)?,
+    )?;
     Ok(())
 }
 

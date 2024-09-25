@@ -81,7 +81,12 @@ async fn request_span_proof(
     let data_fetcher = OPSuccinctDataFetcher::new().await;
 
     let host_cli = data_fetcher
-        .get_host_cli_args(payload.start, payload.end, ProgramType::Multi, CacheMode::DeleteCache)
+        .get_host_cli_args(
+            payload.start,
+            payload.end,
+            ProgramType::Multi,
+            CacheMode::DeleteCache,
+        )
         .await?;
 
     // Start the server and native client with a timeout.
@@ -94,7 +99,9 @@ async fn request_span_proof(
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = NetworkProver::new();
-    let res = prover.request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed).await;
+    let res = prover
+        .request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed)
+        .await;
 
     // Check if error, otherwise get proof ID.
     let proof_id = match res {
@@ -113,21 +120,34 @@ async fn request_agg_proof(
     Json(payload): Json<AggProofRequest>,
 ) -> Result<(StatusCode, Json<ProofResponse>), AppError> {
     info!("Received agg proof request");
-    let mut proofs_with_pv: Vec<SP1ProofWithPublicValues> =
-        payload.subproofs.iter().map(|sp| bincode::deserialize(sp).unwrap()).collect();
+    let mut proofs_with_pv: Vec<SP1ProofWithPublicValues> = payload
+        .subproofs
+        .iter()
+        .map(|sp| bincode::deserialize(sp).unwrap())
+        .collect();
 
-    let boot_infos: Vec<BootInfoStruct> =
-        proofs_with_pv.iter_mut().map(|proof| proof.public_values.read()).collect();
+    let boot_infos: Vec<BootInfoStruct> = proofs_with_pv
+        .iter_mut()
+        .map(|proof| proof.public_values.read())
+        .collect();
 
-    let proofs: Vec<SP1Proof> =
-        proofs_with_pv.iter_mut().map(|proof| proof.proof.clone()).collect();
+    let proofs: Vec<SP1Proof> = proofs_with_pv
+        .iter_mut()
+        .map(|proof| proof.proof.clone())
+        .collect();
 
-    let l1_head_bytes =
-        hex::decode(payload.head.strip_prefix("0x").expect("Invalid L1 head, no 0x prefix."))?;
+    let l1_head_bytes = hex::decode(
+        payload
+            .head
+            .strip_prefix("0x")
+            .expect("Invalid L1 head, no 0x prefix."),
+    )?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
     let fetcher = OPSuccinctDataFetcher::new().await;
-    let headers = fetcher.get_header_preimages(&boot_infos, l1_head.into()).await?;
+    let headers = fetcher
+        .get_header_preimages(&boot_infos, l1_head.into())
+        .await?;
 
     let prover = NetworkProver::new();
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
@@ -136,7 +156,9 @@ async fn request_agg_proof(
 
     // Set simulation to true on aggregation proofs as they're relatively small.
     env::set_var("SKIP_SIMULATION", "false");
-    let proof_id = prover.request_proof(AGG_ELF, stdin, ProofMode::Groth16).await?;
+    let proof_id = prover
+        .request_proof(AGG_ELF, stdin, ProofMode::Groth16)
+        .await?;
     env::set_var("SKIP_SIMULATION", "true");
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
@@ -204,7 +226,10 @@ async fn get_proof_status(
     }
     Ok((
         StatusCode::OK,
-        Json(ProofStatus { status: status.as_str_name().to_string(), proof: vec![] }),
+        Json(ProofStatus {
+            status: status.as_str_name().to_string(),
+            proof: vec![],
+        }),
     ))
 }
 
@@ -234,7 +259,9 @@ where
     let s: Vec<String> = Deserialize::deserialize(deserializer)?;
     s.into_iter()
         .map(|base64_str| {
-            general_purpose::STANDARD.decode(base64_str).map_err(serde::de::Error::custom)
+            general_purpose::STANDARD
+                .decode(base64_str)
+                .map_err(serde::de::Error::custom)
         })
         .collect()
 }

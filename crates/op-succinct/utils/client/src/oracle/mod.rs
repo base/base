@@ -39,8 +39,10 @@ impl InMemoryOracle {
 
     /// Creates a new [InMemoryOracle] from a HashMap of B256 keys and Vec<u8> values.
     pub fn from_b256_hashmap(data: HashMap<B256, Vec<u8>>) -> Self {
-        let cache =
-            data.into_iter().map(|(k, v)| (k.0, v)).collect::<HashMap<_, _, BytesHasherBuilder>>();
+        let cache = data
+            .into_iter()
+            .map(|(k, v)| (k.0, v))
+            .collect::<HashMap<_, _, BytesHasherBuilder>>();
         Self { cache }
     }
 }
@@ -49,12 +51,18 @@ impl InMemoryOracle {
 impl PreimageOracleClient for InMemoryOracle {
     async fn get(&self, key: PreimageKey) -> Result<Vec<u8>, PreimageOracleError> {
         let lookup_key: [u8; 32] = key.into();
-        self.cache.get(&lookup_key).cloned().ok_or_else(|| PreimageOracleError::KeyNotFound)
+        self.cache
+            .get(&lookup_key)
+            .cloned()
+            .ok_or_else(|| PreimageOracleError::KeyNotFound)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<(), PreimageOracleError> {
         let lookup_key: [u8; 32] = key.into();
-        let value = self.cache.get(&lookup_key).ok_or_else(|| PreimageOracleError::KeyNotFound)?;
+        let value = self
+            .cache
+            .get(&lookup_key)
+            .ok_or_else(|| PreimageOracleError::KeyNotFound)?;
         buf.copy_from_slice(value.as_slice());
         Ok(())
     }
@@ -113,7 +121,11 @@ impl InMemoryOracle {
 
                         // Blob is stored as one 48 byte element.
                         if element_idx == 4096 {
-                            blobs.entry(commitment).or_default().kzg_proof.copy_from_slice(value);
+                            blobs
+                                .entry(commitment)
+                                .or_default()
+                                .kzg_proof
+                                .copy_from_slice(value);
                             continue;
                         }
 
@@ -142,14 +154,19 @@ impl InMemoryOracle {
         }
 
         println!("cycle-tracker-report-start: blob-verification");
-        let commitments: Vec<Bytes48> =
-            blobs.keys().cloned().map(|blob| Bytes48::from_slice(&blob.0).unwrap()).collect_vec();
+        let commitments: Vec<Bytes48> = blobs
+            .keys()
+            .cloned()
+            .map(|blob| Bytes48::from_slice(&blob.0).unwrap())
+            .collect_vec();
         let kzg_proofs: Vec<Bytes48> = blobs
             .values()
             .map(|blob| Bytes48::from_slice(&blob.kzg_proof.0).unwrap())
             .collect_vec();
-        let blob_datas: Vec<KzgRsBlob> =
-            blobs.values().map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap()).collect_vec();
+        let blob_datas: Vec<KzgRsBlob> = blobs
+            .values()
+            .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
+            .collect_vec();
         // Verify reconstructed blobs.
         kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
             blob_datas,
