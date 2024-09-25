@@ -125,7 +125,12 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             .build();
 
         let l2_claim_block = boot_info.l2_claim_block;
-        Ok(Self { l2_safe_head, l2_safe_head_header, pipeline, l2_claim_block })
+        Ok(Self {
+            l2_safe_head,
+            l2_safe_head_header,
+            pipeline,
+            l2_claim_block,
+        })
     }
 
     pub fn update_safe_head(
@@ -194,14 +199,22 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             )
             .await?;
 
-        let safe_hash: alloy_primitives::FixedBytes<32> =
-            output_preimage[96..128].try_into().map_err(|_| anyhow!("Invalid L2 output root"))?;
+        let safe_hash: alloy_primitives::FixedBytes<32> = output_preimage[96..128]
+            .try_into()
+            .map_err(|_| anyhow!("Invalid L2 output root"))?;
         let safe_header = l2_chain_provider.header_by_hash(safe_hash)?;
-        let safe_head_info = l2_chain_provider.l2_block_info_by_number(safe_header.number).await?;
+        let safe_head_info = l2_chain_provider
+            .l2_block_info_by_number(safe_header.number)
+            .await?;
 
-        let l1_origin =
-            chain_provider.block_info_by_number(safe_head_info.l1_origin.number).await?;
+        let l1_origin = chain_provider
+            .block_info_by_number(safe_head_info.l1_origin.number)
+            .await?;
 
-        Ok((l1_origin, safe_head_info, Sealed::new_unchecked(safe_header, safe_hash)))
+        Ok((
+            l1_origin,
+            safe_head_info,
+            Sealed::new_unchecked(safe_header, safe_hash),
+        ))
     }
 }

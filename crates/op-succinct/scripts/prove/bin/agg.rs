@@ -74,11 +74,16 @@ async fn main() -> Result<()> {
         .get_header_by_number(RPCMode::L1, args.latest_checkpoint_head_nb)
         .await?
         .hash_slow();
-    let headers = fetcher.get_header_preimages(&boot_infos, latest_checkpoint_head).await?;
+    let headers = fetcher
+        .get_header_preimages(&boot_infos, latest_checkpoint_head)
+        .await?;
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
-    println!("Range ELF Verification Key U32 Hash: {:?}", vkey.vk.hash_u32());
+    println!(
+        "Range ELF Verification Key U32 Hash: {:?}",
+        vkey.vk.hash_u32()
+    );
 
     let stdin =
         get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, latest_checkpoint_head).unwrap();
@@ -87,7 +92,11 @@ async fn main() -> Result<()> {
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
 
     if args.prove {
-        prover.prove(&agg_pk, stdin).groth16().run().expect("proving failed");
+        prover
+            .prove(&agg_pk, stdin)
+            .groth16()
+            .run()
+            .expect("proving failed");
     } else {
         let (_, report) = prover.execute(AGG_ELF, stdin).run().unwrap();
         println!("report: {:?}", report);

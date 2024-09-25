@@ -107,4 +107,4 @@ upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   L1_RPC="{{l1_rpc}}"
   ADMIN_PK="{{admin_pk}}"
 
-  cd contracts && forge script script/ZKUpgrader.s.sol:ZKUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
+  cd contracts && forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow

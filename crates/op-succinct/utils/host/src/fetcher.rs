@@ -92,8 +92,10 @@ impl OPSuccinctDataFetcher {
         };
 
         // Load and save the rollup config.
-        let rollup_config =
-            fetcher.fetch_rollup_config().await.expect("Failed to fetch rollup config");
+        let rollup_config = fetcher
+            .fetch_rollup_config()
+            .await
+            .expect("Failed to fetch rollup config");
         save_rollup_config(&rollup_config).expect("Failed to save rollup config");
         fetcher.rollup_config = rollup_config;
 
@@ -126,9 +128,12 @@ impl OPSuccinctDataFetcher {
     /// Fetch the rollup config. Combines the rollup config from `optimism_rollupConfig` and the
     /// chain config from `debug_chainConfig`.
     pub async fn fetch_rollup_config(&self) -> Result<RollupConfig> {
-        let rollup_config =
-            self.fetch_rpc_data(RPCMode::L2Node, "optimism_rollupConfig", vec![]).await?;
-        let chain_config = self.fetch_rpc_data(RPCMode::L2, "debug_chainConfig", vec![]).await?;
+        let rollup_config = self
+            .fetch_rpc_data(RPCMode::L2Node, "optimism_rollupConfig", vec![])
+            .await?;
+        let chain_config = self
+            .fetch_rpc_data(RPCMode::L2, "debug_chainConfig", vec![])
+            .await?;
         merge_rollup_config(&rollup_config, &chain_config)
     }
 
@@ -168,7 +173,9 @@ impl OPSuccinctDataFetcher {
         let mut earliest_l1_header: Option<Header> = None;
 
         for boot_info in boot_infos {
-            let l1_block_header = self.get_header_by_hash(RPCMode::L1, boot_info.l1Head).await?;
+            let l1_block_header = self
+                .get_header_by_hash(RPCMode::L1, boot_info.l1Head)
+                .await?;
             if l1_block_header.number < earliest_block_num {
                 earliest_block_num = l1_block_header.number;
                 earliest_l1_header = Some(l1_block_header);
@@ -213,11 +220,14 @@ impl OPSuccinctDataFetcher {
         let start_header = self.get_earliest_l1_head_in_batch(boot_infos).await?;
 
         // Fetch the full header for the latest L1 Head (which is validated on chain).
-        let latest_header = self.get_header_by_hash(RPCMode::L1, checkpoint_block_hash).await?;
+        let latest_header = self
+            .get_header_by_hash(RPCMode::L1, checkpoint_block_hash)
+            .await?;
 
         // Create a vector of futures for fetching all headers
-        let headers =
-            self.fetch_headers_in_range(start_header.number, latest_header.number).await?;
+        let headers = self
+            .fetch_headers_in_range(start_header.number, latest_header.number)
+            .await?;
 
         Ok(headers)
     }
@@ -240,8 +250,11 @@ impl OPSuccinctDataFetcher {
 
     pub async fn get_head(&self, rpc_mode: RPCMode) -> Result<Header> {
         let provider = self.get_provider(rpc_mode);
-        let header =
-            provider.get_block_by_number(BlockNumberOrTag::Latest, false).await?.unwrap().header;
+        let header = provider
+            .get_block_by_number(BlockNumberOrTag::Latest, false)
+            .await?
+            .unwrap()
+            .header;
         Ok(header.try_into().unwrap())
     }
 
@@ -251,8 +264,11 @@ impl OPSuccinctDataFetcher {
         block_number: u64,
     ) -> Result<Header> {
         let provider = self.get_provider(rpc_mode);
-        let header =
-            provider.get_block_by_number(block_number.into(), false).await?.unwrap().header;
+        let header = provider
+            .get_block_by_number(block_number.into(), false)
+            .await?
+            .unwrap()
+            .header;
         Ok(header.try_into().unwrap())
     }
 
@@ -266,7 +282,10 @@ impl OPSuccinctDataFetcher {
         let mut block_data = Vec::new();
         for block_number in start..=end {
             let provider = self.get_provider(rpc_mode);
-            let block = provider.get_block_by_number(block_number.into(), false).await?.unwrap();
+            let block = provider
+                .get_block_by_number(block_number.into(), false)
+                .await?
+                .unwrap();
             block_data.push(BlockInfo {
                 block_number,
                 transaction_count: block.transactions.len() as u64,
@@ -283,14 +302,19 @@ impl OPSuccinctDataFetcher {
         target_timestamp: u64,
     ) -> Result<B256> {
         let provider = self.get_provider(rpc_mode);
-        let latest_block =
-            provider.get_block_by_number(BlockNumberOrTag::Latest, false).await?.unwrap();
+        let latest_block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest, false)
+            .await?
+            .unwrap();
         let mut low = 0;
         let mut high = latest_block.header.number;
 
         while low <= high {
             let mid = (low + high) / 2;
-            let block = provider.get_block_by_number(mid.into(), false).await?.unwrap();
+            let block = provider
+                .get_block_by_number(mid.into(), false)
+                .await?
+                .unwrap();
             let block_timestamp = block.header.timestamp;
 
             match block_timestamp.cmp(&target_timestamp) {
@@ -301,7 +325,10 @@ impl OPSuccinctDataFetcher {
         }
 
         // Return the block hash of the closest block after the target timestamp
-        let block = provider.get_block_by_number(low.into(), false).await?.unwrap();
+        let block = provider
+            .get_block_by_number(low.into(), false)
+            .await?
+            .unwrap();
         Ok(block.header.hash.0.into())
     }
 
@@ -326,14 +353,19 @@ impl OPSuccinctDataFetcher {
         let l2_provider = self.l2_provider.clone();
 
         // Get L2 output data.
-        let l2_output_block =
-            l2_provider.get_block_by_number(l2_start_block.into(), false).await?.ok_or_else(
-                || anyhow::anyhow!("Block not found for block number {}", l2_start_block),
-            )?;
+        let l2_output_block = l2_provider
+            .get_block_by_number(l2_start_block.into(), false)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Block not found for block number {}", l2_start_block)
+            })?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let l2_head = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
+            .get_proof(
+                Address::from_str("0x4200000000000000000000000000000000000016")?,
+                Vec::new(),
+            )
             .block_id(l2_start_block.into())
             .await?
             .storage_hash;
@@ -347,12 +379,17 @@ impl OPSuccinctDataFetcher {
         let l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block =
-            l2_provider.get_block_by_number(l2_end_block.into(), false).await?.unwrap();
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into(), false)
+            .await?
+            .unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
-            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
+            .get_proof(
+                Address::from_str("0x4200000000000000000000000000000000000016")?,
+                Vec::new(),
+            )
             .block_id(l2_end_block.into())
             .await?
             .storage_hash;
@@ -370,7 +407,9 @@ impl OPSuccinctDataFetcher {
         // Note: This limit is set so that the l1 head is always ahead of the l2 claim block.
         // E.g. Origin Advance Error: BlockInfoFetch(Block number past L1 head.)
         let target_timestamp = l2_block_timestamp + 600;
-        let l1_head = self.find_block_by_timestamp(RPCMode::L1, target_timestamp).await?;
+        let l1_head = self
+            .find_block_by_timestamp(RPCMode::L1, target_timestamp)
+            .await?;
 
         // Get the chain id.
         let l2_chain_id = l2_provider.get_chain_id().await?;
@@ -380,8 +419,10 @@ impl OPSuccinctDataFetcher {
         let workspace_root = metadata.workspace_root;
         let data_directory = match multi_block {
             ProgramType::Single => {
-                let proof_dir =
-                    format!("{}/data/{}/single/{}", workspace_root, l2_chain_id, l2_end_block);
+                let proof_dir = format!(
+                    "{}/data/{}/single/{}",
+                    workspace_root, l2_chain_id, l2_end_block
+                );
                 proof_dir
             }
             ProgramType::Multi => {
@@ -432,7 +473,10 @@ impl OPSuccinctDataFetcher {
             exec: Some(exec_directory),
             server: false,
             rollup_config_path: Some(rollup_config_path.into()),
-            v: std::env::var("VERBOSITY").unwrap_or("0".to_string()).parse().unwrap(),
+            v: std::env::var("VERBOSITY")
+                .unwrap_or("0".to_string())
+                .parse()
+                .unwrap(),
         })
     }
 }

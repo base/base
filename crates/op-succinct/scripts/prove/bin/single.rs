@@ -43,7 +43,11 @@ async fn main() -> Result<()> {
 
     let l2_safe_head = args.l2_block - 1;
 
-    let cache_mode = if args.use_cache { CacheMode::KeepCache } else { CacheMode::DeleteCache };
+    let cache_mode = if args.use_cache {
+        CacheMode::KeepCache
+    } else {
+        CacheMode::DeleteCache
+    };
 
     let host_cli = data_fetcher
         .get_host_cli_args(l2_safe_head, args.l2_block, ProgramType::Single, cache_mode)
@@ -70,19 +74,26 @@ async fn main() -> Result<()> {
         let proof = prover.prove(&pk, sp1_stdin).plonk().run().unwrap();
 
         // Create a proof directory for the chain ID if it doesn't exist.
-        let proof_dir =
-            format!("data/{}/proofs", data_fetcher.get_chain_id(RPCMode::L2).await.unwrap());
+        let proof_dir = format!(
+            "data/{}/proofs",
+            data_fetcher.get_chain_id(RPCMode::L2).await.unwrap()
+        );
         if !std::path::Path::new(&proof_dir).exists() {
             std::fs::create_dir_all(&proof_dir)?;
         }
-        proof.save(format!("{}/{}.bin", proof_dir, args.l2_block)).expect("Failed to save proof");
+        proof
+            .save(format!("{}/{}.bin", proof_dir, args.l2_block))
+            .expect("Failed to save proof");
     } else {
         let start_time = Instant::now();
         let (_, report) = prover.execute(SINGLE_BLOCK_ELF, sp1_stdin).run().unwrap();
         let execution_duration = start_time.elapsed();
 
         let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await.unwrap();
-        let report_path = format!("execution-reports/single/{}/{}.csv", l2_chain_id, args.l2_block);
+        let report_path = format!(
+            "execution-reports/single/{}/{}.csv",
+            l2_chain_id, args.l2_block
+        );
 
         // Create the report directory if it doesn't exist.
         let report_dir = format!("execution-reports/single/{}", l2_chain_id);
@@ -91,7 +102,9 @@ async fn main() -> Result<()> {
         }
 
         let mut stats = ExecutionStats::default();
-        stats.add_block_data(&data_fetcher, args.l2_block, args.l2_block).await;
+        stats
+            .add_block_data(&data_fetcher, args.l2_block, args.l2_block)
+            .await;
         stats.add_report_data(&report, execution_duration);
         stats.add_aggregate_data();
         println!("Execution Stats: \n{:?}", stats);

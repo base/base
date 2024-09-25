@@ -70,30 +70,44 @@ impl Default for WitnessGenExecutor {
 
 impl WitnessGenExecutor {
     pub fn new(timeout: Duration) -> Self {
-        Self { ongoing_processes: Vec::new(), timeout }
+        Self {
+            ongoing_processes: Vec::new(),
+            timeout,
+        }
     }
 
     /// Spawn a witness generation process for the given host CLI, and adds it to the list of
     /// ongoing processes.
     pub async fn spawn_witnessgen(&mut self, host_cli: &HostCli) -> Result<()> {
-        let metadata =
-            cargo_metadata::MetadataCommand::new().exec().expect("Failed to get cargo metadata");
-        let target_dir =
-            metadata.target_directory.join("native_host_runner/release/native_host_runner");
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .exec()
+            .expect("Failed to get cargo metadata");
+        let target_dir = metadata
+            .target_directory
+            .join("native_host_runner/release/native_host_runner");
         let args = convert_host_cli_to_args(host_cli);
 
         // Run the native host runner.
-        let child =
-            tokio::process::Command::new(target_dir).args(&args).env("RUST_LOG", "info").spawn()?;
-        self.ongoing_processes
-            .push(WitnessGenProcess { child, exec: host_cli.exec.clone().unwrap() });
+        let child = tokio::process::Command::new(target_dir)
+            .args(&args)
+            .env("RUST_LOG", "info")
+            .spawn()?;
+        self.ongoing_processes.push(WitnessGenProcess {
+            child,
+            exec: host_cli.exec.clone().unwrap(),
+        });
         Ok(())
     }
 
     /// Wait for all ongoing witness generation processes to complete. If any process fails,
     /// kill all ongoing processes and return an error.
     pub async fn flush(&mut self) -> Result<()> {
-        let binary_name = self.ongoing_processes[0].exec.split('/').last().unwrap().to_string();
+        let binary_name = self.ongoing_processes[0]
+            .exec
+            .split('/')
+            .last()
+            .unwrap()
+            .to_string();
 
         // TODO: If any process fails or a Ctrl+C is received, kill all ongoing processes. This is
         // quite involved, as the behavior differs between Unix and Windows. When using
@@ -117,7 +131,6 @@ impl WitnessGenExecutor {
     /// an error.
     async fn wait_for_processes(&mut self) -> Result<()> {
         for child in &mut self.ongoing_processes {
-            println!("Waiting for process to finish");
             tokio::select! {
                 result = child.child.wait() => {
                     match result {
@@ -152,7 +165,10 @@ impl WitnessGenExecutor {
         }
 
         // Kill the spawned witness gen program.
-        std::process::Command::new("pkill").arg("-f").arg(binary_name).output()?;
+        std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(binary_name)
+            .output()?;
         Ok(())
     }
 }

@@ -58,15 +58,24 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
         block: OpBlock,
         config: &RollupConfig,
     ) -> Result<L2BlockInfo> {
-        self.header_by_number.lock().unwrap().insert(header.number, header.clone());
-        self.block_by_number.lock().unwrap().insert(header.number, block.clone());
+        self.header_by_number
+            .lock()
+            .unwrap()
+            .insert(header.number, header.clone());
+        self.block_by_number
+            .lock()
+            .unwrap()
+            .insert(header.number, block.clone());
         self.system_config_by_number
             .lock()
             .unwrap()
             .insert(header.number, block.to_system_config(config).unwrap());
 
         let l2_block_info = block.to_l2_block_ref(config)?;
-        self.l2_block_info_by_number.lock().unwrap().insert(header.number, l2_block_info);
+        self.l2_block_info_by_number
+            .lock()
+            .unwrap()
+            .insert(header.number, l2_block_info);
         Ok(l2_block_info)
     }
 
@@ -86,7 +95,10 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
             .await?;
         let output_preimage = self
             .oracle
-            .get(PreimageKey::new(*self.boot_info.l2_output_root, PreimageKeyType::Keccak256))
+            .get(PreimageKey::new(
+                *self.boot_info.l2_output_root,
+                PreimageKeyType::Keccak256,
+            ))
             .await?;
 
         // Fetch the starting block header.
@@ -133,12 +145,17 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         }
 
         // Fetch the header for the given block number.
-        let header @ Header { transactions_root, timestamp, .. } =
-            self.header_by_number(number).await?;
+        let header @ Header {
+            transactions_root,
+            timestamp,
+            ..
+        } = self.header_by_number(number).await?;
         let header_hash = header.hash_slow();
 
         // Fetch the transactions in the block.
-        self.oracle.write(&HintType::L2Transactions.encode_with(&[header_hash.as_ref()])).await?;
+        self.oracle
+            .write(&HintType::L2Transactions.encode_with(&[header_hash.as_ref()]))
+            .await?;
         let trie_walker = OrderedListWalker::try_new_hydrated(transactions_root, self)?;
 
         // Decode the transactions within the transactions trie.
@@ -153,7 +170,11 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         let optimism_block = OpBlock {
             header,
             body: transactions,
-            withdrawals: self.boot_info.rollup_config.is_canyon_active(timestamp).then(Vec::new),
+            withdrawals: self
+                .boot_info
+                .rollup_config
+                .is_canyon_active(timestamp)
+                .then(Vec::new),
             ..Default::default()
         };
         Ok(optimism_block)
@@ -184,26 +205,40 @@ impl<T: CommsClient> TrieProvider for MultiblockOracleL2ChainProvider<T> {
         // On L2, trie node preimages are stored as keccak preimage types in the oracle. We assume
         // that a hint for these preimages has already been sent, prior to this call.
         block_on(async move {
-            Ok(self.oracle.get(PreimageKey::new(*key, PreimageKeyType::Keccak256)).await?.into())
+            Ok(self
+                .oracle
+                .get(PreimageKey::new(*key, PreimageKeyType::Keccak256))
+                .await?
+                .into())
         })
     }
 
     fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes> {
         // Fetch the bytecode preimage from the caching oracle.
         block_on(async move {
-            self.oracle.write(&HintType::L2Code.encode_with(&[hash.as_ref()])).await?;
+            self.oracle
+                .write(&HintType::L2Code.encode_with(&[hash.as_ref()]))
+                .await?;
 
-            Ok(self.oracle.get(PreimageKey::new(*hash, PreimageKeyType::Keccak256)).await?.into())
+            Ok(self
+                .oracle
+                .get(PreimageKey::new(*hash, PreimageKeyType::Keccak256))
+                .await?
+                .into())
         })
     }
 
     fn header_by_hash(&self, hash: B256) -> Result<Header> {
         // Fetch the header from the caching oracle.
         block_on(async move {
-            self.oracle.write(&HintType::L2BlockHeader.encode_with(&[hash.as_ref()])).await?;
+            self.oracle
+                .write(&HintType::L2BlockHeader.encode_with(&[hash.as_ref()]))
+                .await?;
 
-            let header_bytes =
-                self.oracle.get(PreimageKey::new(*hash, PreimageKeyType::Keccak256)).await?;
+            let header_bytes = self
+                .oracle
+                .get(PreimageKey::new(*hash, PreimageKeyType::Keccak256))
+                .await?;
             Header::decode(&mut header_bytes.as_slice())
                 .map_err(|e| anyhow!("Failed to RLP decode Header: {e}"))
         })
@@ -215,7 +250,10 @@ impl<T: CommsClient> TrieHinter for MultiblockOracleL2ChainProvider<T> {
 
     fn hint_trie_node(&self, hash: B256) -> Result<()> {
         block_on(async move {
-            Ok(self.oracle.write(&HintType::L2StateNode.encode_with(&[hash.as_slice()])).await?)
+            Ok(self
+                .oracle
+                .write(&HintType::L2StateNode.encode_with(&[hash.as_slice()]))
+                .await?)
         })
     }
 

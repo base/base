@@ -115,7 +115,9 @@ pub(crate) fn merge_rollup_config(
 
 /// Save rollup config to rollup-configs/{l2_chain_id}.json in the workspace root.
 pub fn save_rollup_config(rollup_config: &RollupConfig) -> Result<()> {
-    let workspace_root = cargo_metadata::MetadataCommand::new().exec()?.workspace_root;
+    let workspace_root = cargo_metadata::MetadataCommand::new()
+        .exec()?
+        .workspace_root;
     // Create rollup-configs directory if it doesn't exist.
     let rollup_configs_dir = workspace_root.join("rollup-configs");
     if !rollup_configs_dir.exists() {
@@ -131,7 +133,9 @@ pub fn save_rollup_config(rollup_config: &RollupConfig) -> Result<()> {
 
 /// Read rollup config from rollup-configs/{l2_chain_id}.json in the workspace root.
 pub fn read_rollup_config(l2_chain_id: u64) -> Result<RollupConfig> {
-    let workspace_root = cargo_metadata::MetadataCommand::new().exec()?.workspace_root;
+    let workspace_root = cargo_metadata::MetadataCommand::new()
+        .exec()?
+        .workspace_root;
     let rollup_config_path = workspace_root.join(format!("rollup-configs/{}.json", l2_chain_id));
     let rollup_config_str = fs::read_to_string(rollup_config_path)?;
     let rollup_config: RollupConfig = serde_json::from_str(&rollup_config_str)?;

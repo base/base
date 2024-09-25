@@ -60,7 +60,10 @@ async fn main() -> Result<()> {
         // Save the proof
         proof.save(&file_path).expect("Failed to save proof");
 
-        println!("Proof saved successfully to path: {}", file_path.to_str().unwrap());
+        println!(
+            "Proof saved successfully to path: {}",
+            file_path.to_str().unwrap()
+        );
     }
 
     Ok(())
