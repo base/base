@@ -28,7 +28,7 @@ However, additional validation rules are applied to demote messages that cannot 
 ## Message validation
 
 Through [static-analysis](./sequencer.md#static-analysis) as performed in block building,
-the [`Identifier`] of the message is read, and used for further validation. Static analysis is
+the `Identifier` of the message is read, and used for further validation. Static analysis is
 not always possible, therefore the mempool SHOULD delegate execution to another service that can
 horizontally scale validation of executing messages.
 
