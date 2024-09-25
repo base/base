@@ -1,17 +1,20 @@
-set fallback := true
 set dotenv-load
 
 default:
   @just --list
 
 # Runs the op-succinct program for a single block.
-run-single l2_block_num use-cache="false":
+run-single l2_block_num use-cache="false" prove="false":
   #!/usr/bin/env bash
   CACHE_FLAG=""
   if [ "{{use-cache}}" = "true" ]; then
     CACHE_FLAG="--use-cache"
   fi
-  cargo run --bin single --release -- --l2-block {{l2_block_num}} $CACHE_FLAG
+  PROVE_FLAG=""
+  if [ "{{prove}}" = "true" ]; then
+    PROVE_FLAG="--prove"
+  fi
+  cargo run --bin single --release -- --l2-block {{l2_block_num}} $CACHE_FLAG $PROVE_FLAG
 
 # Runs the op-succinct program for multiple blocks.
 run-multi start end use-cache="false" prove="false":
