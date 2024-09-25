@@ -6,9 +6,8 @@ use alloy_primitives::{address, b256, uint, Address};
 use alloy_eips::eip1898::BlockNumHash;
 
 use crate::{
-    ChainGenesis, SystemConfig, BASE_SEPOLIA_BASE_FEE_PARAMS, BASE_SEPOLIA_CANYON_BASE_FEE_PARAMS,
-    OP_BASE_FEE_PARAMS, OP_CANYON_BASE_FEE_PARAMS, OP_SEPOLIA_BASE_FEE_PARAMS,
-    OP_SEPOLIA_CANYON_BASE_FEE_PARAMS,
+    base_fee_params, ChainGenesis, SystemConfig, BASE_SEPOLIA_BASE_FEE_PARAMS,
+    OP_MAINNET_BASE_FEE_PARAMS, OP_SEPOLIA_BASE_FEE_PARAMS,
 };
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
@@ -144,6 +143,7 @@ pub struct RollupConfig {
 // Need to manually implement Default because [`BaseFeeParams`] has no Default impl.
 impl Default for RollupConfig {
     fn default() -> Self {
+        let config = base_fee_params(10);
         RollupConfig {
             genesis: ChainGenesis::default(),
             block_time: 0,
@@ -153,8 +153,8 @@ impl Default for RollupConfig {
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
             l1_chain_id: 0,
             l2_chain_id: 0,
-            base_fee_params: OP_BASE_FEE_PARAMS,
-            canyon_base_fee_params: OP_CANYON_BASE_FEE_PARAMS,
+            base_fee_params: config.as_base_fee_params(),
+            canyon_base_fee_params: config.as_canyon_base_fee_params(),
             regolith_time: None,
             canyon_time: None,
             delta_time: None,
@@ -305,8 +305,8 @@ pub const OP_MAINNET_CONFIG: RollupConfig = RollupConfig {
     granite_channel_timeout: 50,
     l1_chain_id: 1_u64,
     l2_chain_id: 10_u64,
-    base_fee_params: OP_BASE_FEE_PARAMS,
-    canyon_base_fee_params: OP_CANYON_BASE_FEE_PARAMS,
+    base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_base_fee_params(),
+    canyon_base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
     regolith_time: Some(0_u64),
     canyon_time: Some(1_704_992_401_u64),
     delta_time: Some(1_708_560_000_u64),
@@ -351,8 +351,8 @@ pub const OP_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     granite_channel_timeout: 50,
     l1_chain_id: 11155111,
     l2_chain_id: 11155420,
-    base_fee_params: OP_SEPOLIA_BASE_FEE_PARAMS,
-    canyon_base_fee_params: OP_SEPOLIA_CANYON_BASE_FEE_PARAMS,
+    base_fee_params: OP_SEPOLIA_BASE_FEE_PARAMS.as_base_fee_params(),
+    canyon_base_fee_params: OP_SEPOLIA_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
     regolith_time: Some(0),
     canyon_time: Some(1699981200),
     delta_time: Some(1703203200),
@@ -397,8 +397,8 @@ pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
     granite_channel_timeout: 50,
     l1_chain_id: 1,
     l2_chain_id: 8453,
-    base_fee_params: OP_BASE_FEE_PARAMS,
-    canyon_base_fee_params: OP_CANYON_BASE_FEE_PARAMS,
+    base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_base_fee_params(),
+    canyon_base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
     regolith_time: Some(0_u64),
     canyon_time: Some(1704992401),
     delta_time: Some(1708560000),
@@ -443,8 +443,8 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     granite_channel_timeout: 50,
     l1_chain_id: 11155111,
     l2_chain_id: 84532,
-    base_fee_params: BASE_SEPOLIA_BASE_FEE_PARAMS,
-    canyon_base_fee_params: BASE_SEPOLIA_CANYON_BASE_FEE_PARAMS,
+    base_fee_params: BASE_SEPOLIA_BASE_FEE_PARAMS.as_base_fee_params(),
+    canyon_base_fee_params: BASE_SEPOLIA_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
     regolith_time: Some(0),
     canyon_time: Some(1699981200),
     delta_time: Some(1703203200),
@@ -651,7 +651,10 @@ mod tests {
 
         // Validate non-standard fields.
         assert_eq!(config.granite_channel_timeout, GRANITE_CHANNEL_TIMEOUT);
-        assert_eq!(config.base_fee_params, OP_BASE_FEE_PARAMS);
-        assert_eq!(config.canyon_base_fee_params, OP_CANYON_BASE_FEE_PARAMS);
+        assert_eq!(config.base_fee_params, OP_MAINNET_BASE_FEE_PARAMS.as_base_fee_params());
+        assert_eq!(
+            config.canyon_base_fee_params,
+            OP_MAINNET_BASE_FEE_PARAMS.as_canyon_base_fee_params()
+        );
     }
 }

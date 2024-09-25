@@ -1,7 +1,7 @@
 //! Chain Config Types
 
 use crate::{
-    base_fee_params, canyon_base_fee_params, AddressList, ChainGenesis, RollupConfig,
+    base_fee_params, AddressList, ChainGenesis, OptimismBaseFeeParams, RollupConfig,
     GRANITE_CHANNEL_TIMEOUT,
 };
 use alloc::string::String;
@@ -51,41 +51,57 @@ pub struct HardForkConfiguration {
     pub holocene_time: Option<u64>,
 }
 
-/// A chain configuration.
-#[derive(Debug, Clone, Default, Hash, Eq, PartialEq)]
+/// Defines core blockchain settings per block.
+///
+/// Tailors unique settings for each network based on
+/// its genesis block and superchain configuration.
+///
+/// This struct bridges the interface between the [`ChainConfig`][ccr]
+/// defined in the [`superchain-registry`][scr] and the [`ChainConfig`][ccg]
+/// defined in [`op-geth`][opg].
+///
+/// [opg]: https://github.com/ethereum-optimism/op-geth
+/// [scr]: https://github.com/ethereum-optimism/superchain-registry
+/// [ccg]: https://github.com/ethereum-optimism/op-geth/blob/optimism/params/config.go#L342
+/// [ccr]: https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/superchain.go#L80
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChainConfig {
     /// Chain name (e.g. "Base")
-    #[cfg_attr(feature = "serde", serde(rename = "Name"))]
+    #[cfg_attr(feature = "serde", serde(rename = "Name", alias = "name"))]
     pub name: String,
     /// Chain ID
-    #[cfg_attr(feature = "serde", serde(rename = "l2_chain_id"))]
+    #[cfg_attr(feature = "serde", serde(rename = "l2_chain_id", alias = "chain_id"))]
     pub chain_id: u64,
     /// L1 chain ID
     #[cfg_attr(feature = "serde", serde(skip))]
     pub l1_chain_id: u64,
     /// Chain public RPC endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "PublicRPC"))]
+    #[cfg_attr(feature = "serde", serde(rename = "PublicRPC", alias = "public_rpc"))]
     pub public_rpc: String,
     /// Chain sequencer RPC endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "SequencerRPC"))]
+    #[cfg_attr(feature = "serde", serde(rename = "SequencerRPC", alias = "sequencer_rpc"))]
     pub sequencer_rpc: String,
     /// Chain explorer HTTP endpoint
-    #[cfg_attr(feature = "serde", serde(rename = "Explorer"))]
+    #[cfg_attr(feature = "serde", serde(rename = "Explorer", alias = "explorer"))]
     pub explorer: String,
     /// Level of integration with the superchain.
-    #[cfg_attr(feature = "serde", serde(rename = "SuperchainLevel"))]
+    #[cfg_attr(feature = "serde", serde(rename = "SuperchainLevel", alias = "superchain_level"))]
     pub superchain_level: SuperchainLevel,
-    /// Time of opt-in to the Superchain.
-    /// If superchain_time is set, hardforks times after superchain_time
+    /// Toggles standard chain validation checks on for this chain, even if it is a frontier chain.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "StandardChainCandidate", alias = "standard_chain_candidate")
+    )]
+    pub standard_chain_candidate: bool,
+    /// Time of when a given chain is opted in to the Superchain.
+    /// If set, hardforks times after the superchain time
     /// will be inherited from the superchain-wide config.
-    #[cfg_attr(feature = "serde", serde(rename = "SuperchainTime"))]
+    #[cfg_attr(feature = "serde", serde(rename = "SuperchainTime", alias = "superchain_time"))]
     pub superchain_time: Option<u64>,
     /// Chain-specific batch inbox address
     #[cfg_attr(feature = "serde", serde(rename = "batch_inbox_address"))]
     pub batch_inbox_addr: Address,
-    /// Chain-specific genesis information
-    pub genesis: ChainGenesis,
     /// Superchain is a simple string to identify the superchain.
     /// This is implied by directory structure, and not encoded in the config file itself.
     #[cfg_attr(feature = "serde", serde(rename = "Superchain"))]
@@ -97,11 +113,37 @@ pub struct ChainConfig {
     /// Hardfork Configuration. These values may override the superchain-wide defaults.
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub hardfork_configuration: HardForkConfiguration,
-    /// Optional AltDA feature
+    /// The block time in seconds.
+    #[cfg_attr(feature = "serde", serde(rename = "block_time"))]
+    pub block_time: u64,
+    /// The sequencer window size in seconds.
+    #[cfg_attr(feature = "serde", serde(rename = "seq_window_size"))]
+    pub seq_window_size: u64,
+    /// The maximum sequencer drift in seconds.
+    #[cfg_attr(feature = "serde", serde(rename = "max_sequencer_drift"))]
+    pub max_sequencer_drift: u64,
+    /// Data availability type.
+    #[cfg_attr(
+        feature = "serde",
+        serde(rename = "DataAvailabilityType", alias = "data_availability_type")
+    )]
+    pub data_availability_type: String,
+    /// Optimism configuration
+    #[cfg_attr(feature = "serde", serde(rename = "optimism"))]
+    pub optimism: Option<OptimismBaseFeeParams>,
+
+    // -- Optional Features --
+    /// Alternative DA configuration
+    #[cfg_attr(feature = "serde", serde(rename = "alt_da"))]
     pub alt_da: Option<AltDAConfig>,
+    /// Chain-specific genesis information
+    pub genesis: ChainGenesis,
     /// Addresses
-    #[cfg_attr(feature = "serde", serde(rename = "Addresses"))]
+    #[cfg_attr(feature = "serde", serde(rename = "Addresses", alias = "addresses"))]
     pub addresses: Option<AddressList>,
+    /// Gas paying token metadata. Not consumed by downstream OPStack components.
+    #[cfg_attr(feature = "serde", serde(rename = "GasPayingToken", alias = "gas_paying_token"))]
+    pub gas_paying_token: Option<Address>,
 }
 
 impl ChainConfig {
@@ -136,12 +178,16 @@ impl ChainConfig {
 
     /// Loads the rollup config for the OP-Stack chain given the chain config and address list.
     pub fn load_op_stack_rollup_config(&self) -> RollupConfig {
+        let config = base_fee_params(self.chain_id);
         RollupConfig {
             genesis: self.genesis,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: self.chain_id,
-            base_fee_params: base_fee_params(self.chain_id),
-            canyon_base_fee_params: canyon_base_fee_params(self.chain_id),
+            base_fee_params: config.as_base_fee_params(),
+            block_time: self.block_time,
+            seq_window_size: self.seq_window_size,
+            max_sequencer_drift: self.max_sequencer_drift,
+            canyon_base_fee_params: config.as_canyon_base_fee_params(),
             regolith_time: Some(0),
             canyon_time: self.hardfork_configuration.canyon_time,
             delta_time: self.hardfork_configuration.delta_time,
@@ -177,11 +223,8 @@ impl ChainConfig {
             // superchain-registry yet. This restriction on superchain-chains may change in the
             // future. Test/Alt configurations can still load custom rollup-configs when
             // necessary.
-            block_time: 2,
             channel_timeout: 300,
             granite_channel_timeout: GRANITE_CHANNEL_TIMEOUT,
-            max_sequencer_drift: 600,
-            seq_window_size: 3600,
         }
     }
 }
