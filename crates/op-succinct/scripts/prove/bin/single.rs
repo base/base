@@ -1,11 +1,11 @@
-use std::env;
+use std::{env, time::Instant};
 
 use anyhow::Result;
 use clap::Parser;
-use num_format::{Locale, ToFormattedString};
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
+    stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
     ProgramType,
 };
@@ -23,6 +23,10 @@ struct Args {
     /// Skip running native execution.
     #[arg(short, long)]
     use_cache: bool,
+
+    /// Generate proof.
+    #[arg(short, long)]
+    prove: bool,
 }
 
 /// Execute the OP Succinct program for a single block.
@@ -57,13 +61,46 @@ async fn main() -> Result<()> {
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
     let prover = ProverClient::new();
-    let (_, report) = prover.execute(SINGLE_BLOCK_ELF, sp1_stdin).run().unwrap();
 
-    println!(
-        "Block {} cycle count: {}",
-        args.l2_block,
-        report.total_instruction_count().to_formatted_string(&Locale::en)
-    );
+    if args.prove {
+        // If the prove flag is set, generate a proof.
+        let (pk, _) = prover.setup(SINGLE_BLOCK_ELF);
+
+        // Generate proofs in PLONK mode for on-chain verification.
+        let proof = prover.prove(&pk, sp1_stdin).plonk().run().unwrap();
+
+        // Create a proof directory for the chain ID if it doesn't exist.
+        let proof_dir =
+            format!("data/{}/proofs", data_fetcher.get_chain_id(RPCMode::L2).await.unwrap());
+        if !std::path::Path::new(&proof_dir).exists() {
+            std::fs::create_dir_all(&proof_dir)?;
+        }
+        proof.save(format!("{}/{}.bin", proof_dir, args.l2_block)).expect("Failed to save proof");
+    } else {
+        let start_time = Instant::now();
+        let (_, report) = prover.execute(SINGLE_BLOCK_ELF, sp1_stdin).run().unwrap();
+        let execution_duration = start_time.elapsed();
+
+        let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await.unwrap();
+        let report_path = format!("execution-reports/single/{}/{}.csv", l2_chain_id, args.l2_block);
+
+        // Create the report directory if it doesn't exist.
+        let report_dir = format!("execution-reports/single/{}", l2_chain_id);
+        if !std::path::Path::new(&report_dir).exists() {
+            std::fs::create_dir_all(&report_dir)?;
+        }
+
+        let mut stats = ExecutionStats::default();
+        stats.add_block_data(&data_fetcher, args.l2_block, args.l2_block).await;
+        stats.add_report_data(&report, execution_duration);
+        stats.add_aggregate_data();
+        println!("Execution Stats: \n{:?}", stats);
+
+        // Write to CSV.
+        let mut csv_writer = csv::Writer::from_path(report_path)?;
+        csv_writer.serialize(&stats)?;
+        csv_writer.flush()?;
+    }
 
     Ok(())
 }
