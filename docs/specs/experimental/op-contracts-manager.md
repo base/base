@@ -1,6 +1,6 @@
-# OP Stack Manager
+# OP Contracts Manager
 
-[`op-contracts/v1.4.0`]: https://github.com/ethereum-optimism/optimism/releases/tag/op-contracts%2Fv1.4.0
+[`op-contracts/v1.4.0`]: https://github.com/ethereum-optimism/optimism/releases/tag/op-contracts%2Fv1.6.0
 [Optimism Monorepo releases]: https://github.com/ethereum-optimism/optimism/releases
 [contract releases]: https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/VERSIONING.md
 [standard configuration]: ../protocol/configurability.md
@@ -8,7 +8,7 @@
 [ethereum-lists/chains]: https://github.com/ethereum-lists/chains
 [Batch Inbox]: ../protocol/configurability.md#consensus-parameters
 
-The OP Stack Manager is a contract that deploys the L1 contracts for an OP Stack chain in a single
+The OP Contracts Manager is a contract that deploys the L1 contracts for an OP Stack chain in a single
 transaction. It provides a minimal set of user-configurable parameters to ensure that the resulting
 chain meets the [standard configuration] requirements.
 
@@ -40,22 +40,22 @@ of governance approved [contract releases] can be found on the
 
 ## Deployment
 
-The OP Stack Manager is a proxied contract deployed at `0xTODO`. It can be deployed as follows:
+The OP Contracts Manager is a proxied contract deployed at `0xTODO`. It can be deployed as follows:
 
 TODO.
 
 ## Interface
 
-Version 1.0.0 of the OP Stack Manager deploys the [`op-contracts/v1.4.0`]
+Version 1.0.0 of the OP Contracts Manager deploys the [`op-contracts/v1.6.0`]
 contracts release.
 
 ### `Proxy.sol`
 
-The OP Stack Manager is a proxied contract using the standard `Proxy.sol` contract that lives in
-the Optimism monorepo. Therefore the OP Stack Manager will have the same interface as the
+The OP Contracts Manager is a proxied contract using the standard `Proxy.sol` contract that lives in
+the Optimism monorepo. Therefore the OP Contracts Manager will have the same interface as the
 `Proxy.sol`, in addition to other methods defined in this specification.
 
-The privileged methods of the OP Stack Manager will be held by the L1 ProxyAdmin owner, as
+The privileged methods of the OP Contracts Manager will be held by the L1 ProxyAdmin owner, as
 specified by the [standard configuration].
 
 ### `deploy`
@@ -85,11 +85,11 @@ function deploy(
 The `l2ChainId` has the following restrictions:
 
 - It must not be equal to 0.
-- It must not be equal to the chain ID of the chain the OP Stack Manager is
+- It must not be equal to the chain ID of the chain the OP Contracts Manager is
 deployed on.
 - It must not be equal to a chain ID that is already present in the
 [ethereum-lists/chains] repository. This is not enforced onchain, but may matter
-for future versions of OP Stack Manager that handle upgrades.
+for future versions of OP Contracts Manager that handle upgrades.
 
 On success, the following event is emitted:
 
@@ -139,7 +139,7 @@ the batch inbox addresses.
 
 ### Contract Deployments
 
-All contracts deployed by the OP Stack Manager are deployed with CREATE2, with a
+All contracts deployed by the OP Contracts Manager are deployed with CREATE2, with a
 salt equal to either:
 
 - The L2 chain ID, or
@@ -157,10 +157,10 @@ This provides the following benefits:
 will result in attempting to deploy to the same address, which is prohibited by
 the EVM.
   - This property is contingent on the proxy and `AddressManager` code not
-  changing when OP Stack Manager is upgraded. Both of these are not planned to
+  changing when OP Contracts Manager is upgraded. Both of these are not planned to
   change.
-  - The OP Stack Manager is not responsible for enforcing chain ID uniqueness, so it is acceptable
-  if this property is not preserved in future versions of the OP Stack Manager.
+  - The OP Contracts Manager is not responsible for enforcing chain ID uniqueness, so it is acceptable
+  if this property is not preserved in future versions of the OP Contracts Manager.
 
 ## Security Considerations
 
@@ -168,18 +168,18 @@ the EVM.
 
 One of the implicit restrictions on chain ID is that `deploy` can only be called
 once per chain ID, because contract addresses are a function of chain ID. However,
-future versions of OP Stack Manager may:
+future versions of OP Contracts Manager may:
 
 - Change the Proxy code used, which would allow a duplicate chain ID to be deployed
 if there is only the implicit check.
-- Manage upgrades, which will require "registering" existing pre-OP Stack Manager
-chains in the OP Stack Manager. Registration will be a privileged action, and the [superchain registry] will be
+- Manage upgrades, which will require "registering" existing pre-OP Contracts Manager
+chains in the OP Contracts Manager. Registration will be a privileged action, and the [superchain registry] will be
 used as the source of truth for registrations.
 
 This means, for example, if deploying a chain with a chain ID of 10—which is OP
 Mainnet's chain ID—deployment will execute successfully, but the entry in OP
 Stack Manager may be overwritten in a future upgrade. Therefore, chain ID
-uniqueness is not enforced by the OP Stack Manager, and it is strongly
+uniqueness is not enforced by the OP Contracts Manager, and it is strongly
 recommended to only use chain IDs that are not already present in the
 [ethereum-lists/chains] repository.
 
@@ -193,13 +193,13 @@ transactions can be frontrun.
 
 ### Chain ID Value
 
-While not specific to OP Stack Manager, when choosing a chain ID is important
+While not specific to OP Contracts Manager, when choosing a chain ID is important
 to consider that not all chain IDs are well supported by tools. For example,
 MetaMask [only supports](https://gist.github.com/rekmarks/a47bd5f2525936c4b8eee31a16345553)
 chain IDs up to `4503599627370476`, well below the max allowable 256-bit value.
 
-OP Stack Manager does not consider factors such as these. The EVM supports
-256-bit chain IDs, so OP Stack Manager sticks with the full 256-bit range to
+OP Contracts Manager does not consider factors such as these. The EVM supports
+256-bit chain IDs, so OP Contracts Manager sticks with the full 256-bit range to
 maximize compatibility.
 
 ### Proxy Admin Owner
