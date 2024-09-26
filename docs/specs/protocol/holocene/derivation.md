@@ -187,8 +187,8 @@ Holocene activation timestamp. Note that this is in contrast to how span batches
 [Delta](../delta/overview.md), namely via the span batch L1 origin timestamp.
 
 When the L1 traversal stage of the derivation pipeline moves its origin to the L1 block whose
-timestamp matches the Holocene activation timestamp, the derivation pipeline's state is mostly reset
-by **discarding**
+timestamp is the first to be greater or equal to the Holocene activation timestamp, the derivation
+pipeline's state is mostly reset by **discarding**
 
 - all frames in the frame queue,
 - channels in the channel bank, and
