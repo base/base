@@ -60,6 +60,16 @@
     - [`Converted`](#converted)
   - [Invariants](#invariants)
   - [Conversion Flow](#conversion-flow)
+- [SuperchainERC20Bridge](#superchainerc20bridge)
+  - [Overview](#overview-2)
+  - [Functions](#functions-2)
+    - [`sendERC20`](#senderc20)
+    - [`relayERC20`](#relayerc20)
+  - [Events](#events-2)
+    - [`SentERC20`](#senterc20)
+    - [`RelayedERC20`](#relayederc20)
+  - [Diagram](#diagram)
+  - [Invariants](#invariants-1)
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -421,8 +431,9 @@ function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
 
 ### OptimismSuperchainERC20
 
-The `OptimismSuperchainERC20Factory` creates ERC20 contracts that implement to the `SuperchainERC20` [standard](token-bridging.md)
-and grant mint-burn rights to the `L2StandardBridge` (`OptimismSuperchainERC20`).
+The `OptimismSuperchainERC20Factory` creates ERC20 contracts that implements the `SuperchainERC20` [standard](token-bridging.md),
+grants mint-burn rights to the `L2StandardBridge` (`OptimismSuperchainERC20`)
+and include a `remoteToken` variable.
 These ERC20s are called `OptimismSuperchainERC20` and can be converted back and forth with `OptimismMintableERC20` tokens.
 The goal of the `OptimismSuperchainERC20` is to extend functionalities
 of the `OptimismMintableERC20` so that they are interop compatible.
@@ -763,7 +774,7 @@ The `convert` function conserves the following invariants:
     remote token addresses.
 - Freedom of conversion for valid and paired tokens:
   anyone can convert between allowed legacy representations and
-  valid `OptimismSuperchainERC20s` corresponding to the same remote token.
+  valid `OptimismSuperchainERC20` corresponding to the same remote token.
 
 ### Conversion Flow
 
@@ -784,6 +795,125 @@ sequenceDiagram
   L2StandardBridge->>SuperERC20: IERC20(to).mint(Alice, amount)
   L2StandardBridge-->L2StandardBridge: emit Converted(from, to, Alice, amount)
 ```
+
+## SuperchainERC20Bridge
+
+| Constant | Value                                        |
+| -------- | -------------------------------------------- |
+| Address  | `0x4200000000000000000000000000000000000028` |
+
+### Overview
+
+The `SuperchainERC20Bridge` is an abstraction on top of the `L2toL2CrossDomainMessenger`
+that facilitates token bridging using interop.
+It has mint and burn rights over `SuperchainERC20` tokens
+as described in the [token bridging spec](./token-bridging.md).
+
+### Functions
+
+#### `sendERC20`
+
+Initializes a transfer of `_amount` amount of tokens with address `_tokenAddress` to target address `_to` in chain `_chainId`.
+
+It SHOULD burn `_amount` tokens with address `_tokenAddress` and initialize a message to the
+`L2ToL2CrossChainMessenger` to mint the `_amount` of the same token
+in the target address `_to` at `_chainId` and emit the `SentERC20` event including the `msg.sender` as parameter.
+
+```solidity
+sendERC20(address _tokenAddress, address _to, uint256 _amount, uint256 _chainId)
+```
+
+#### `relayERC20`
+
+Process incoming messages IF AND ONLY IF initiated
+by the same contract (bridge) address on a different chain
+and relayed from the `L2ToL2CrossChainMessenger` in the local chain.
+It SHOULD mint `_amount` of tokens with address `_tokenAddress` to address `_to`, as defined in `sendERC20`
+and emit an event including the `_tokenAddress`, the `_from` and chain id from the
+`source` chain, where `_from` is the `msg.sender` of `sendERC20`.
+
+```solidity
+relayERC20(address _tokenAddress, address _from, address _to, uint256 _amount)
+```
+
+### Events
+
+#### `SentERC20`
+
+MUST trigger when a cross-chain transfer is initiated using `sendERC20`.
+
+```solidity
+event SentERC20(address indexed tokenAddress, address indexed from, address indexed to, uint256 amount, uint256 destination)
+```
+
+#### `RelayedERC20`
+
+MUST trigger when a cross-chain transfer is finalized using `relayERC20`.
+
+```solidity
+event RelayedERC20(address indexed tokenAddress, address indexed from, address indexed to, uint256 amount, uint256 source);
+```
+
+### Diagram
+
+The following diagram depicts a cross-chain transfer.
+
+```mermaid
+sequenceDiagram
+  participant from
+  participant L2SBA as SuperchainERC20Bridge (Chain A)
+  participant SuperERC20_A as SuperchainERC20 (Chain A)
+  participant Messenger_A as L2ToL2CrossDomainMessenger (Chain A)
+  participant Inbox as CrossL2Inbox
+  participant Messenger_B as L2ToL2CrossDomainMessenger (Chain B)
+  participant L2SBB as SuperchainERC20Bridge (Chain B)
+  participant SuperERC20_B as SuperchainERC20 (Chain B)
+
+  from->>L2SBA: sendERC20To(tokenAddr, to, amount, chainID)
+  L2SBA->>SuperERC20_A: burn(from, amount)
+  L2SBA->>Messenger_A: sendMessage(chainId, message)
+  L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
+  Inbox->>Messenger_B: relayMessage()
+  Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
+  L2SBB->>SuperERC20_B: mint(to, amount)
+  L2SBB-->L2SBB: emit RelayedERC20(tokenAddr, from, to, amount, source)
+```
+
+### Invariants
+
+The bridging of `SuperchainERC20` using the `SuperchainERC20Bridge` will require the following invariants:
+
+- Conservation of bridged `amount`: The minted `amount` in `relayERC20()` should match the `amount`
+  that was burnt in `sendERC20()`, as long as target chain has the initiating chain in the dependency set.
+  - Corollary 1: Finalized cross-chain transactions will conserve the sum of `totalSupply`
+    and each user's balance for each chain in the Superchain.
+  - Corollary 2: Each initiated but not finalized message (included in initiating chain but not yet in target chain)
+    will decrease the `totalSupply` and the initiating user balance precisely by the burnt `amount`.
+  - Corollary 3: `SuperchainERC20s` should not charge a token fee or increase the balance when moving cross-chain.
+  - Note: if the target chain is not in the initiating chain dependency set,
+    funds will be locked, similar to sending funds to the wrong address.
+    If the target chain includes it later, these could be unlocked.
+- Freedom of movement: Users should be able to send and receive tokens in any target
+  chain with the initiating chain in its dependency set
+  using `sendERC20()` and `relayERC20()`, respectively.
+- Unique Messenger: The `sendERC20()` function must exclusively use the `L2toL2CrossDomainMessenger` for messaging.
+  Similarly, the `relayERC20()` function should only process messages originating from the `L2toL2CrossDomainMessenger`.
+- Unique Address: The `sendERC20()` function must exclusively send a message
+  to the same address on the target chain.
+  Similarly, the `relayERC20()` function should only process messages originating from the same address.
+  - Note: The [`Create2Deployer` preinstall](../protocol/preinstalls.md#create2deployer)
+  and the custom Factory will ensure same address deployment.
+- Locally initiated: The bridging action should be initialized
+  from the chain where funds are located only.
+  - This is because the same address might correspond to different users cross-chain.
+    For example, two SAFEs with the same address in two chains might have different owners.
+    With the prospects of a smart wallet future, it is impossible to assume
+    there will be a way to distinguish EOAs from smart wallets.
+  - A way to allow for remotely initiated bridging is to include remote approval,
+    i.e. approve a certain address in a certain chainId to spend local funds.
+- Bridge Events:
+  - `sendERC20()` should emit a `SentERC20` event. `
+  - `relayERC20()` should emit a `RelayedERC20` event.
 
 ## Security Considerations
 
