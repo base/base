@@ -288,7 +288,8 @@ The `signature` is a `secp256k1` signature, and signs over a message:
 
 - `domain` is 32 bytes, reserved for message types and versioning info. All zero for this signature.
 - `chain_id` is a big-endian encoded `uint256`.
-- `payload_hash` is `keccak256(payload)`, where `payload` is the remaining bytes of the payload.
+- `payload_hash` is `keccak256(payload)`, where `payload` is the `payload` in V1 and V2,
+  and `parentBeaconBlockRoot ++ payload` in V3.
 
 The `secp256k1` signature must have `y_parity = 1 or 0`, the `chain_id` is already signed over.
 
