@@ -15,4 +15,4 @@ This document is not finalized and should be considered experimental.
 
 ## Consensus Layer
 
-- [Interop](../interop/overview.md)
+- [Interop](../../interop/overview.md)
