@@ -33,15 +33,15 @@ pub enum FrameDecodingError {
 impl core::fmt::Display for FrameDecodingError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            FrameDecodingError::DataTooLarge(size) => {
+            Self::DataTooLarge(size) => {
                 write!(f, "Frame data too large: {} bytes", size)
             }
-            FrameDecodingError::DataTooShort(size) => {
+            Self::DataTooShort(size) => {
                 write!(f, "Frame data too short: {} bytes", size)
             }
-            FrameDecodingError::InvalidId => write!(f, "Invalid frame id"),
-            FrameDecodingError::InvalidNumber => write!(f, "Invalid frame number"),
-            FrameDecodingError::InvalidDataLength => write!(f, "Invalid frame data length"),
+            Self::InvalidId => write!(f, "Invalid frame id"),
+            Self::InvalidNumber => write!(f, "Invalid frame number"),
+            Self::InvalidDataLength => write!(f, "Invalid frame data length"),
         }
     }
 }
@@ -64,11 +64,11 @@ pub enum FrameParseError {
 impl core::fmt::Display for FrameParseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            FrameParseError::FrameDecodingError(e) => write!(f, "Frame decoding error: {}", e),
-            FrameParseError::NoFrames => write!(f, "No frames to parse"),
-            FrameParseError::UnsupportedVersion => write!(f, "Unsupported derivation version"),
-            FrameParseError::DataLengthMismatch => write!(f, "Frame data length mismatch"),
-            FrameParseError::NoFramesDecoded => write!(f, "No frames decoded"),
+            Self::FrameDecodingError(e) => write!(f, "Frame decoding error: {}", e),
+            Self::NoFrames => write!(f, "No frames to parse"),
+            Self::UnsupportedVersion => write!(f, "Unsupported derivation version"),
+            Self::DataLengthMismatch => write!(f, "Frame data length mismatch"),
+            Self::NoFramesDecoded => write!(f, "No frames decoded"),
         }
     }
 }

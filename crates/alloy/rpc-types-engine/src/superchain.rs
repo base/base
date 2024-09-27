@@ -50,17 +50,26 @@ pub enum ProtocolVersion {
 impl core::fmt::Display for ProtocolVersion {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ProtocolVersion::V0(value) => write!(f, "{}", value),
+            Self::V0(value) => write!(f, "{}", value),
         }
     }
 }
 
+/// An error that can occur when encoding or decoding a ProtocolVersion.
 #[derive(Copy, Clone, Debug, Display, From)]
 pub enum ProtocolVersionError {
-    #[display("Unsupported version: {}", _0)]
+    /// An unsupported version was encountered.
+    #[display("Unsupported version: {_0}")]
     UnsupportedVersion(u8),
+    /// An invalid length was encountered.
     #[display("Invalid length: got {}, expected {}", got, expected)]
-    InvalidLength { got: usize, expected: usize },
+    InvalidLength {
+        /// The length that was encountered.
+        got: usize,
+        /// The expected length.
+        expected: usize,
+    },
+    /// Failed to convert slice to array.
     #[display("Failed to convert slice to array")]
     #[from(TryFromSliceError)]
     TryFromSlice,
@@ -78,7 +87,7 @@ impl ProtocolVersion {
         let mut bytes = [0u8; 32];
 
         match self {
-            ProtocolVersion::V0(value) => {
+            Self::V0(value) => {
                 bytes[0] = 0x00; // this is not necessary, but addded for clarity
                 bytes[1..].copy_from_slice(&value.encode());
                 B256::from_slice(&bytes)
@@ -106,56 +115,56 @@ impl ProtocolVersion {
     /// Returns the inner value of the ProtocolVersion enum
     pub const fn inner(&self) -> ProtocolVersionFormatV0 {
         match self {
-            ProtocolVersion::V0(value) => *value,
+            Self::V0(value) => *value,
         }
     }
 
     /// Returns the inner value of the ProtocolVersion enum if it is V0, otherwise None
     pub const fn as_v0(&self) -> Option<ProtocolVersionFormatV0> {
         match self {
-            ProtocolVersion::V0(value) => Some(*value),
+            Self::V0(value) => Some(*value),
         }
     }
 
     /// Differentiates forks and custom-builds of standard protocol
     pub const fn build(&self) -> B64 {
         match self {
-            ProtocolVersion::V0(value) => value.build,
+            Self::V0(value) => value.build,
         }
     }
 
     /// Incompatible API changes
     pub const fn major(&self) -> u32 {
         match self {
-            ProtocolVersion::V0(value) => value.major,
+            Self::V0(value) => value.major,
         }
     }
 
     /// Identifies additional functionality in backwards compatible manner
     pub const fn minor(&self) -> u32 {
         match self {
-            ProtocolVersion::V0(value) => value.minor,
+            Self::V0(value) => value.minor,
         }
     }
 
     /// Identifies backward-compatible bug-fixes
     pub const fn patch(&self) -> u32 {
         match self {
-            ProtocolVersion::V0(value) => value.patch,
+            Self::V0(value) => value.patch,
         }
     }
 
     /// Identifies unstable versions that may not satisfy the above
     pub const fn pre_release(&self) -> u32 {
         match self {
-            ProtocolVersion::V0(value) => value.pre_release,
+            Self::V0(value) => value.pre_release,
         }
     }
 
     /// Returns a human-readable string representation of the ProtocolVersion
     pub fn display(&self) -> String {
         match self {
-            ProtocolVersion::V0(value) => format!("{}", value),
+            Self::V0(value) => format!("{}", value),
         }
     }
 }
@@ -177,7 +186,7 @@ impl<'de> serde::Deserialize<'de> for ProtocolVersion {
         D: serde::Deserializer<'de>,
     {
         let value = alloy_primitives::B256::deserialize(deserializer)?;
-        ProtocolVersion::decode(value).map_err(serde::de::Error::custom)
+        Self::decode(value).map_err(serde::de::Error::custom)
     }
 }
 

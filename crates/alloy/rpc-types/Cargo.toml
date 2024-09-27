@@ -11,6 +11,9 @@ authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # Workspace
 op-alloy-consensus = { workspace = true, features = ["serde"] }

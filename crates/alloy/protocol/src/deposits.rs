@@ -60,54 +60,54 @@ impl core::error::Error for DepositError {}
 impl Display for DepositError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DepositError::UnexpectedTopicsLen(len) => {
+            Self::UnexpectedTopicsLen(len) => {
                 write!(f, "Unexpected number of deposit event log topics: {}", len)
             }
-            DepositError::InvalidSelector(expected, actual) => {
+            Self::InvalidSelector(expected, actual) => {
                 write!(f, "Invalid deposit event selector: {}, expected {}", actual, expected)
             }
-            DepositError::IncompleteOpaqueData(len) => {
+            Self::IncompleteOpaqueData(len) => {
                 write!(f, "Incomplete opaqueData slice header (incomplete length): {}", len)
             }
-            DepositError::UnalignedData(data) => {
+            Self::UnalignedData(data) => {
                 write!(f, "Unaligned log data, expected multiple of 32 bytes, got: {}", data)
             }
-            DepositError::FromDecode(topic) => {
+            Self::FromDecode(topic) => {
                 write!(f, "Failed to decode the `from` address of the deposit log topic: {}", topic)
             }
-            DepositError::ToDecode(topic) => {
+            Self::ToDecode(topic) => {
                 write!(f, "Failed to decode the `to` address of the deposit log topic: {}", topic)
             }
-            DepositError::InvalidOpaqueDataOffset(offset) => {
+            Self::InvalidOpaqueDataOffset(offset) => {
                 write!(f, "Invalid u64 opaque data content offset: {:?}", offset)
             }
-            DepositError::InvalidOpaqueDataLength(length) => {
+            Self::InvalidOpaqueDataLength(length) => {
                 write!(f, "Invalid u64 opaque data content length: {:?}", length)
             }
-            DepositError::OpaqueDataOverflow(data_len, opaque_len) => {
+            Self::OpaqueDataOverflow(data_len, opaque_len) => {
                 write!(
                     f,
                     "Specified opaque data length {} exceeds the deposit log event data length {}",
                     opaque_len, data_len
                 )
             }
-            DepositError::PaddedOpaqueDataOverflow(data_len, opaque_len) => {
+            Self::PaddedOpaqueDataOverflow(data_len, opaque_len) => {
                 write!(
                     f,
                     "Opaque data with padding exceeds the specified data length: {} > {}",
                     opaque_len, data_len
                 )
             }
-            DepositError::InvalidVersion(version) => {
+            Self::InvalidVersion(version) => {
                 write!(f, "Invalid deposit version: {}", version)
             }
-            DepositError::UnexpectedOpaqueDataLen(len) => {
+            Self::UnexpectedOpaqueDataLen(len) => {
                 write!(f, "Unexpected opaque data length: {}", len)
             }
-            DepositError::MintDecode(data) => {
+            Self::MintDecode(data) => {
                 write!(f, "Failed to decode the u128 deposit mint value: {:?}", data)
             }
-            DepositError::GasDecode(data) => {
+            Self::GasDecode(data) => {
                 write!(f, "Failed to decode the u64 deposit gas value: {:?}", data)
             }
         }

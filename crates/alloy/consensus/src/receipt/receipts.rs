@@ -150,7 +150,7 @@ impl OpTxReceipt for OpDepositReceiptWithBloom {
 impl From<OpDepositReceipt> for OpDepositReceiptWithBloom {
     fn from(receipt: OpDepositReceipt) -> Self {
         let bloom = receipt.bloom_slow();
-        OpDepositReceiptWithBloom { receipt, logs_bloom: bloom }
+        Self { receipt, logs_bloom: bloom }
     }
 }
 

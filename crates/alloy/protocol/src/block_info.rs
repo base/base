@@ -192,14 +192,14 @@ pub enum BlockInfoError {
 impl core::fmt::Display for BlockInfoError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            BlockInfoError::L1BlobBaseFeeScalar => {
+            Self::L1BlobBaseFeeScalar => {
                 write!(f, "Failed to parse the L1 blob base fee scalar")
             }
-            BlockInfoError::BaseFeeScalar => write!(f, "Failed to parse the base fee scalar"),
-            BlockInfoError::Eip1559Denominator => {
+            Self::BaseFeeScalar => write!(f, "Failed to parse the base fee scalar"),
+            Self::Eip1559Denominator => {
                 write!(f, "Failed to parse the EIP-1559 denominator")
             }
-            BlockInfoError::Eip1559Elasticity => {
+            Self::Eip1559Elasticity => {
                 write!(f, "Failed to parse the EIP-1559 elasticity parameter")
             }
         }
@@ -217,9 +217,9 @@ pub enum DecodeError {
 impl core::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            DecodeError::InvalidSelector => write!(f, "Invalid L1 info transaction selector"),
-            DecodeError::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            DecodeError::InvalidLength(msg) => write!(f, "Invalid data length: {}", msg), /* Handle display for length errors */
+            Self::InvalidSelector => write!(f, "Invalid L1 info transaction selector"),
+            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
+            Self::InvalidLength(msg) => write!(f, "Invalid data length: {}", msg), /* Handle display for length errors */
         }
     }
 }
@@ -327,7 +327,7 @@ impl L1BlockInfoTx {
         sequence_number: u64,
         l1_header: &Header,
         l2_block_time: u64,
-    ) -> Result<(L1BlockInfoTx, OpTxEnvelope), BlockInfoError> {
+    ) -> Result<(Self, OpTxEnvelope), BlockInfoError> {
         let l1_info =
             Self::try_new(rollup_config, system_config, sequence_number, l1_header, l2_block_time)?;
 

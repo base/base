@@ -11,6 +11,9 @@ authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # Alloy
 op-alloy-rpc-types.workspace = true

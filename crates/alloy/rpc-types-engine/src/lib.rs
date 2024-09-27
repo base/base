@@ -3,15 +3,6 @@
     html_logo_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/alloy.jpg",
     html_favicon_url = "https://raw.githubusercontent.com/alloy-rs/core/main/assets/favicon.ico"
 )]
-#![warn(
-    missing_copy_implementations,
-    missing_debug_implementations,
-    missing_docs,
-    unreachable_pub,
-    clippy::missing_const_for_fn,
-    rustdoc::all
-)]
-#![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -39,7 +30,9 @@ mod payload_v4;
 pub use payload_v4::OptimismExecutionPayloadEnvelopeV4;
 
 mod superchain;
-pub use superchain::{ProtocolVersion, SuperchainSignal};
+pub use superchain::{
+    ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
+};
 
 mod errors;
 pub use errors::{ToL2BlockRefError, ToSystemConfigError};

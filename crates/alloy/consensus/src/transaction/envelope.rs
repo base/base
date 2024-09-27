@@ -40,26 +40,21 @@ pub enum OpTxType {
 
 impl OpTxType {
     /// List of all variants.
-    pub const ALL: [OpTxType; 5] = [
-        OpTxType::Legacy,
-        OpTxType::Eip2930,
-        OpTxType::Eip1559,
-        OpTxType::Eip4844,
-        OpTxType::Deposit,
-    ];
+    pub const ALL: [Self; 5] =
+        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip4844, Self::Deposit];
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
-        let i = u.choose_index(OpTxType::ALL.len())?;
-        Ok(OpTxType::ALL[i])
+        let i = u.choose_index(Self::ALL.len())?;
+        Ok(Self::ALL[i])
     }
 }
 
 impl From<OpTxType> for u8 {
-    fn from(v: OpTxType) -> u8 {
-        v as u8
+    fn from(v: OpTxType) -> Self {
+        v as Self
     }
 }
 
@@ -324,7 +319,7 @@ impl Decodable2718 for OpTxEnvelope {
     }
 
     fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
-        Ok(OpTxEnvelope::Legacy(TxLegacy::decode_signed_fields(buf)?))
+        Ok(Self::Legacy(TxLegacy::decode_signed_fields(buf)?))
     }
 }
 
@@ -346,17 +341,17 @@ impl Encodable2718 for OpTxEnvelope {
     fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
         match self {
             // Legacy transactions have no difference between network and 2718
-            OpTxEnvelope::Legacy(tx) => tx.tx().encode_with_signature_fields(tx.signature(), out),
-            OpTxEnvelope::Eip2930(tx) => {
+            Self::Legacy(tx) => tx.tx().encode_with_signature_fields(tx.signature(), out),
+            Self::Eip2930(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            OpTxEnvelope::Eip1559(tx) => {
+            Self::Eip1559(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            OpTxEnvelope::Eip4844(tx) => {
+            Self::Eip4844(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
-            OpTxEnvelope::Deposit(tx) => {
+            Self::Deposit(tx) => {
                 tx.encode_inner(out, false);
             }
         }
@@ -366,10 +361,8 @@ impl Encodable2718 for OpTxEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{hex, Address, Bytes, TxKind, B256, U256};
-
-    #[cfg(not(feature = "std"))]
     use alloc::vec;
+    use alloy_primitives::{hex, Address, Bytes, TxKind, B256, U256};
 
     #[test]
     fn test_encode_decode_deposit() {

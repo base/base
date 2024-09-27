@@ -35,7 +35,7 @@ pub fn rollup_config_from_chain_id(chain_id: u64) -> Result<RollupConfig, &'stat
 impl TryFrom<u64> for RollupConfig {
     type Error = &'static str;
 
-    fn try_from(chain_id: u64) -> Result<RollupConfig, &'static str> {
+    fn try_from(chain_id: u64) -> Result<Self, &'static str> {
         match chain_id {
             10 => Ok(OP_MAINNET_CONFIG),
             11155420 => Ok(OP_SEPOLIA_CONFIG),
@@ -144,7 +144,7 @@ pub struct RollupConfig {
 impl Default for RollupConfig {
     fn default() -> Self {
         let config = base_fee_params(10);
-        RollupConfig {
+        Self {
             genesis: ChainGenesis::default(),
             block_time: 0,
             max_sequencer_drift: 0,
@@ -266,7 +266,7 @@ impl RollupConfig {
     }
 
     /// Returns the [RollupConfig] for the given L2 chain ID.
-    pub const fn from_l2_chain_id(l2_chain_id: u64) -> Option<RollupConfig> {
+    pub const fn from_l2_chain_id(l2_chain_id: u64) -> Option<Self> {
         match l2_chain_id {
             10 => Some(OP_MAINNET_CONFIG),
             11155420 => Some(OP_SEPOLIA_CONFIG),

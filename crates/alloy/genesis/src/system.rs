@@ -51,10 +51,10 @@ impl TryFrom<u64> for SystemConfigUpdateType {
 
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(SystemConfigUpdateType::Batcher),
-            1 => Ok(SystemConfigUpdateType::GasConfig),
-            2 => Ok(SystemConfigUpdateType::GasLimit),
-            3 => Ok(SystemConfigUpdateType::UnsafeBlockSigner),
+            0 => Ok(Self::Batcher),
+            1 => Ok(Self::GasConfig),
+            2 => Ok(Self::GasLimit),
+            3 => Ok(Self::UnsafeBlockSigner),
             _ => Err(SystemConfigUpdateError::LogProcessing(
                 LogProcessingError::InvalidSystemConfigUpdateType(value),
             )),

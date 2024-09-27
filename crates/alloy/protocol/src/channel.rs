@@ -30,10 +30,10 @@ pub enum ChannelError {
 impl core::fmt::Display for ChannelError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ChannelError::FrameIdMismatch => write!(f, "Frame id does not match channel id"),
-            ChannelError::ChannelClosed => write!(f, "Channel is closed"),
-            ChannelError::FrameNumberExists(n) => write!(f, "Frame number {} already exists", n),
-            ChannelError::FrameBeyondEndFrame(n) => {
+            Self::FrameIdMismatch => write!(f, "Frame id does not match channel id"),
+            Self::ChannelClosed => write!(f, "Channel is closed"),
+            Self::FrameNumberExists(n) => write!(f, "Frame number {} already exists", n),
+            Self::FrameBeyondEndFrame(n) => {
                 write!(f, "Frame number {} is beyond end frame", n)
             }
         }

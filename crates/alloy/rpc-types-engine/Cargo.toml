@@ -11,6 +11,9 @@ authors.workspace = true
 repository.workspace = true
 exclude.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
