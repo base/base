@@ -13,7 +13,7 @@ use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
 
 /// The system transaction gas limit post-Regolith
-const REGOLITH_SYSTEM_TX_GAS: u128 = 1_000_000;
+const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
 /// The type byte identifier for the L1 scalar format in Ecotone.
 const L1_SCALAR_ECOTONE: u8 = 1;
 /// The length of an L1 info transaction in Bedrock.
@@ -263,7 +263,7 @@ impl L1BlockInfoTx {
             return Ok(Self::Holocene(L1BlockInfoHolocene {
                 number: l1_header.number,
                 time: l1_header.timestamp,
-                base_fee: l1_header.base_fee_per_gas.unwrap_or(0) as u64,
+                base_fee: l1_header.base_fee_per_gas.unwrap_or(0),
                 block_hash: l1_header.hash_slow(),
                 sequence_number,
                 batcher_address: system_config.batcher_address,
@@ -297,7 +297,7 @@ impl L1BlockInfoTx {
             Ok(Self::Ecotone(L1BlockInfoEcotone {
                 number: l1_header.number,
                 time: l1_header.timestamp,
-                base_fee: l1_header.base_fee_per_gas.unwrap_or(0) as u64,
+                base_fee: l1_header.base_fee_per_gas.unwrap_or(0),
                 block_hash: l1_header.hash_slow(),
                 sequence_number,
                 batcher_address: system_config.batcher_address,
@@ -309,7 +309,7 @@ impl L1BlockInfoTx {
             Ok(Self::Bedrock(L1BlockInfoBedrock {
                 number: l1_header.number,
                 time: l1_header.timestamp,
-                base_fee: l1_header.base_fee_per_gas.unwrap_or(0) as u64,
+                base_fee: l1_header.base_fee_per_gas.unwrap_or(0),
                 block_hash: l1_header.hash_slow(),
                 sequence_number,
                 batcher_address: system_config.batcher_address,
@@ -791,7 +791,7 @@ mod test {
 
         assert_eq!(l1_info.number, l1_header.number);
         assert_eq!(l1_info.time, l1_header.timestamp);
-        assert_eq!(l1_info.base_fee, l1_header.base_fee_per_gas.unwrap_or(0) as u64);
+        assert_eq!(l1_info.base_fee, { l1_header.base_fee_per_gas.unwrap_or(0) });
         assert_eq!(l1_info.block_hash, l1_header.hash_slow());
         assert_eq!(l1_info.sequence_number, sequence_number);
         assert_eq!(l1_info.batcher_address, system_config.batcher_address);
@@ -822,7 +822,7 @@ mod test {
 
         assert_eq!(l1_info.number, l1_header.number);
         assert_eq!(l1_info.time, l1_header.timestamp);
-        assert_eq!(l1_info.base_fee, l1_header.base_fee_per_gas.unwrap_or(0) as u64);
+        assert_eq!(l1_info.base_fee, { l1_header.base_fee_per_gas.unwrap_or(0) });
         assert_eq!(l1_info.block_hash, l1_header.hash_slow());
         assert_eq!(l1_info.sequence_number, sequence_number);
         assert_eq!(l1_info.batcher_address, system_config.batcher_address);

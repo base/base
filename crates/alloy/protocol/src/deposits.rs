@@ -376,7 +376,7 @@ pub(crate) fn unmarshal_deposit_version0(
     let raw_gas: [u8; 8] = data[offset..offset + 8]
         .try_into()
         .map_err(|_| DepositError::GasDecode(Bytes::copy_from_slice(&data[offset..offset + 8])))?;
-    tx.gas_limit = u64::from_be_bytes(raw_gas) as u128;
+    tx.gas_limit = u64::from_be_bytes(raw_gas);
     offset += 8;
 
     // uint8 isCreation

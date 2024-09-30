@@ -28,7 +28,7 @@ pub struct TxDeposit {
     pub value: U256,
     /// The gas limit for the L2 transaction.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "gas"))]
-    pub gas_limit: u128,
+    pub gas_limit: u64,
     /// Field indicating if this transaction is exempt from the L2 gas limit.
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "isSystemTx"))]
     pub is_system_transaction: bool,
@@ -163,12 +163,28 @@ impl Transaction for TxDeposit {
         0u64
     }
 
-    fn gas_limit(&self) -> u128 {
+    fn gas_limit(&self) -> u64 {
         self.gas_limit
     }
 
     fn gas_price(&self) -> Option<u128> {
         None
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        0
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        None
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        0
     }
 
     fn to(&self) -> TxKind {
@@ -183,31 +199,15 @@ impl Transaction for TxDeposit {
         &self.input
     }
 
+    fn ty(&self) -> u8 {
+        OpTxType::Deposit as u8
+    }
+
     fn access_list(&self) -> Option<&AccessList> {
         None
     }
 
     fn blob_versioned_hashes(&self) -> Option<&[B256]> {
-        None
-    }
-
-    fn max_fee_per_gas(&self) -> u128 {
-        0
-    }
-
-    fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        None
-    }
-
-    fn priority_fee_or_price(&self) -> u128 {
-        0
-    }
-
-    fn ty(&self) -> u8 {
-        OpTxType::Deposit as u8
-    }
-
-    fn max_fee_per_blob_gas(&self) -> Option<u128> {
         None
     }
 

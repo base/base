@@ -148,8 +148,8 @@ impl OpReceiptEnvelope {
 }
 
 impl<T> TxReceipt<T> for OpReceiptEnvelope<T> {
-    fn status_or_post_state(&self) -> &Eip658Value {
-        &self.as_receipt().unwrap().status
+    fn status_or_post_state(&self) -> Eip658Value {
+        self.as_receipt().unwrap().status
     }
 
     fn status(&self) -> bool {

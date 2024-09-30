@@ -387,7 +387,7 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_serde_roundtrip_deposit() {
         let tx = TxDeposit {
-            gas_limit: u128::MAX,
+            gas_limit: u64::MAX,
             to: TxKind::Call(Address::random()),
             value: U256::MAX,
             input: Bytes::new(),

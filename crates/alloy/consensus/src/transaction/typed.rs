@@ -149,7 +149,7 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
-    fn gas_limit(&self) -> u128 {
+    fn gas_limit(&self) -> u64 {
         match self {
             Self::Legacy(tx) => tx.gas_limit(),
             Self::Eip2930(tx) => tx.gas_limit(),
@@ -166,6 +166,46 @@ impl Transaction for OpTypedTransaction {
             Self::Eip1559(tx) => tx.gas_price(),
             Self::Eip4844(tx) => tx.gas_price(),
             Self::Deposit(tx) => tx.gas_price(),
+        }
+    }
+
+    fn max_fee_per_gas(&self) -> u128 {
+        match self {
+            Self::Legacy(tx) => tx.max_fee_per_gas(),
+            Self::Eip2930(tx) => tx.max_fee_per_gas(),
+            Self::Eip1559(tx) => tx.max_fee_per_gas(),
+            Self::Eip4844(tx) => tx.max_fee_per_gas(),
+            Self::Deposit(tx) => tx.max_fee_per_gas(),
+        }
+    }
+
+    fn max_priority_fee_per_gas(&self) -> Option<u128> {
+        match self {
+            Self::Legacy(tx) => tx.max_priority_fee_per_gas(),
+            Self::Eip2930(tx) => tx.max_priority_fee_per_gas(),
+            Self::Eip1559(tx) => tx.max_priority_fee_per_gas(),
+            Self::Eip4844(tx) => tx.max_priority_fee_per_gas(),
+            Self::Deposit(tx) => tx.max_priority_fee_per_gas(),
+        }
+    }
+
+    fn max_fee_per_blob_gas(&self) -> Option<u128> {
+        match self {
+            Self::Legacy(tx) => tx.max_fee_per_blob_gas(),
+            Self::Eip2930(tx) => tx.max_fee_per_blob_gas(),
+            Self::Eip1559(tx) => tx.max_fee_per_blob_gas(),
+            Self::Eip4844(tx) => tx.max_fee_per_blob_gas(),
+            Self::Deposit(tx) => tx.max_fee_per_blob_gas(),
+        }
+    }
+
+    fn priority_fee_or_price(&self) -> u128 {
+        match self {
+            Self::Legacy(tx) => tx.priority_fee_or_price(),
+            Self::Eip2930(tx) => tx.priority_fee_or_price(),
+            Self::Eip1559(tx) => tx.priority_fee_or_price(),
+            Self::Eip4844(tx) => tx.priority_fee_or_price(),
+            Self::Deposit(tx) => tx.priority_fee_or_price(),
         }
     }
 
@@ -199,6 +239,16 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
+    fn ty(&self) -> u8 {
+        match self {
+            Self::Legacy(_) => OpTxType::Legacy as u8,
+            Self::Eip2930(_) => OpTxType::Eip2930 as u8,
+            Self::Eip1559(_) => OpTxType::Eip1559 as u8,
+            Self::Eip4844(_) => OpTxType::Eip4844 as u8,
+            Self::Deposit(_) => OpTxType::Deposit as u8,
+        }
+    }
+
     fn access_list(&self) -> Option<&AccessList> {
         match self {
             Self::Legacy(tx) => tx.access_list(),
@@ -216,56 +266,6 @@ impl Transaction for OpTypedTransaction {
             Self::Eip1559(tx) => tx.blob_versioned_hashes(),
             Self::Eip4844(tx) => tx.blob_versioned_hashes(),
             Self::Deposit(tx) => tx.blob_versioned_hashes(),
-        }
-    }
-
-    fn max_fee_per_gas(&self) -> u128 {
-        match self {
-            Self::Legacy(tx) => tx.max_fee_per_gas(),
-            Self::Eip2930(tx) => tx.max_fee_per_gas(),
-            Self::Eip1559(tx) => tx.max_fee_per_gas(),
-            Self::Eip4844(tx) => tx.max_fee_per_gas(),
-            Self::Deposit(tx) => tx.max_fee_per_gas(),
-        }
-    }
-
-    fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        match self {
-            Self::Legacy(tx) => tx.max_priority_fee_per_gas(),
-            Self::Eip2930(tx) => tx.max_priority_fee_per_gas(),
-            Self::Eip1559(tx) => tx.max_priority_fee_per_gas(),
-            Self::Eip4844(tx) => tx.max_priority_fee_per_gas(),
-            Self::Deposit(tx) => tx.max_priority_fee_per_gas(),
-        }
-    }
-
-    fn ty(&self) -> u8 {
-        match self {
-            Self::Legacy(_) => OpTxType::Legacy as u8,
-            Self::Eip2930(_) => OpTxType::Eip2930 as u8,
-            Self::Eip1559(_) => OpTxType::Eip1559 as u8,
-            Self::Eip4844(_) => OpTxType::Eip4844 as u8,
-            Self::Deposit(_) => OpTxType::Deposit as u8,
-        }
-    }
-
-    fn priority_fee_or_price(&self) -> u128 {
-        match self {
-            Self::Legacy(tx) => tx.priority_fee_or_price(),
-            Self::Eip2930(tx) => tx.priority_fee_or_price(),
-            Self::Eip1559(tx) => tx.priority_fee_or_price(),
-            Self::Eip4844(tx) => tx.priority_fee_or_price(),
-            Self::Deposit(tx) => tx.priority_fee_or_price(),
-        }
-    }
-
-    fn max_fee_per_blob_gas(&self) -> Option<u128> {
-        match self {
-            Self::Legacy(tx) => tx.max_fee_per_blob_gas(),
-            Self::Eip2930(tx) => tx.max_fee_per_blob_gas(),
-            Self::Eip1559(tx) => tx.max_fee_per_blob_gas(),
-            Self::Eip4844(tx) => tx.max_fee_per_blob_gas(),
-            Self::Deposit(tx) => tx.max_fee_per_blob_gas(),
         }
     }
 
