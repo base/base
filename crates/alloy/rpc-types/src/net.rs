@@ -1,9 +1,8 @@
 #![allow(missing_docs)]
 //! Network RPC types
 
-use crate::collections::HashMap;
 use alloc::{string::String, vec::Vec};
-use alloy_primitives::ChainId;
+use alloy_primitives::{map::HashMap, ChainId};
 use core::net::IpAddr;
 use serde::{
     de::{self, Unexpected},

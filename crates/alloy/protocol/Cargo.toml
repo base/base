@@ -20,13 +20,10 @@ op-alloy-genesis.workspace = true
 op-alloy-consensus.workspace = true
 
 # Alloy
-alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["map"] }
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
-
-# Misc
-hashbrown.workspace = true
 
 # `serde` feature dependencies
 serde = { workspace = true, optional = true }
