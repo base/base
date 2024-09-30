@@ -356,3 +356,120 @@ mod tests {
         assert!(total_len > len_without_header);
     }
 }
+
+/// Bincode-compatible [`TxDeposit`] serde implementation.
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub(super) mod serde_bincode_compat {
+    use alloc::borrow::Cow;
+    use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_with::{DeserializeAs, SerializeAs};
+
+    /// Bincode-compatible [`super::TxDeposit`] serde implementation.
+    ///
+    /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
+    /// ```rust
+    /// use op_alloy_consensus::{serde_bincode_compat, TxDeposit};
+    /// use serde::{Deserialize, Serialize};
+    /// use serde_with::serde_as;
+    ///
+    /// #[serde_as]
+    /// #[derive(Serialize, Deserialize)]
+    /// struct Data {
+    ///     #[serde_as(as = "serde_bincode_compat::TxDeposit")]
+    ///     transaction: TxDeposit,
+    /// }
+    /// ```
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct TxDeposit<'a> {
+        source_hash: B256,
+        from: Address,
+        #[serde(default)]
+        to: TxKind,
+        #[serde(default)]
+        mint: Option<u128>,
+        value: U256,
+        gas_limit: u64,
+        is_system_transaction: bool,
+        input: Cow<'a, Bytes>,
+    }
+
+    impl<'a> From<&'a super::TxDeposit> for TxDeposit<'a> {
+        fn from(value: &'a super::TxDeposit) -> Self {
+            Self {
+                source_hash: value.source_hash,
+                from: value.from,
+                to: value.to,
+                mint: value.mint,
+                value: value.value,
+                gas_limit: value.gas_limit,
+                is_system_transaction: value.is_system_transaction,
+                input: Cow::Borrowed(&value.input),
+            }
+        }
+    }
+
+    impl<'a> From<TxDeposit<'a>> for super::TxDeposit {
+        fn from(value: TxDeposit<'a>) -> Self {
+            Self {
+                source_hash: value.source_hash,
+                from: value.from,
+                to: value.to,
+                mint: value.mint,
+                value: value.value,
+                gas_limit: value.gas_limit,
+                is_system_transaction: value.is_system_transaction,
+                input: value.input.into_owned(),
+            }
+        }
+    }
+
+    impl<'a> SerializeAs<super::TxDeposit> for TxDeposit<'a> {
+        fn serialize_as<S>(source: &super::TxDeposit, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            TxDeposit::from(source).serialize(serializer)
+        }
+    }
+
+    impl<'de> DeserializeAs<'de, super::TxDeposit> for TxDeposit<'de> {
+        fn deserialize_as<D>(deserializer: D) -> Result<super::TxDeposit, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            TxDeposit::deserialize(deserializer).map(Into::into)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use arbitrary::Arbitrary;
+        use rand::Rng;
+        use serde::{Deserialize, Serialize};
+        use serde_with::serde_as;
+
+        use super::super::{serde_bincode_compat, TxDeposit};
+
+        #[test]
+        fn test_tx_deposit_bincode_roundtrip() {
+            #[serde_as]
+            #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+            struct Data {
+                #[serde_as(as = "serde_bincode_compat::TxDeposit")]
+                transaction: TxDeposit,
+            }
+
+            let mut bytes = [0u8; 1024];
+            rand::thread_rng().fill(bytes.as_mut_slice());
+            let data = Data {
+                transaction: TxDeposit::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
+                    .unwrap(),
+            };
+
+            let encoded = bincode::serialize(&data).unwrap();
+            let decoded: Data = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(decoded, data);
+        }
+    }
+}

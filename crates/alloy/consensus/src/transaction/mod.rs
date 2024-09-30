@@ -12,3 +12,9 @@ pub use source::{
     DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
     UserDepositSource,
 };
+
+/// Bincode-compatible serde implementations for transaction types.
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub(super) mod serde_bincode_compat {
+    pub use super::deposit::serde_bincode_compat::TxDeposit;
+}

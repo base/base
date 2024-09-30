@@ -26,6 +26,7 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 # serde
 alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
+serde_with = { version = "3.9", optional = true }
 
 # misc
 spin.workspace = true
@@ -35,8 +36,10 @@ derive_more = { workspace = true, features = ["display"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 alloy-signer.workspace = true
 arbitrary = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["macros"] }
+bincode = "1.3"
+rand.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros"] }
 
 [features]
 default = ["std"]
@@ -45,3 +48,4 @@ k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
 kzg = ["alloy-eips/kzg", "alloy-consensus/kzg", "std"]
 arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/rand"]
 serde = ["dep:serde", "dep:alloy-serde", "alloy-primitives/serde", "alloy-consensus/serde", "alloy-eips/serde"]
+serde-bincode-compat = ["serde_with"]
