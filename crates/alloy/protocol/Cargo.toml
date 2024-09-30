@@ -25,6 +25,9 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
+# Misc
+derive_more.workspace = true
+
 # `serde` feature dependencies
 serde = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }

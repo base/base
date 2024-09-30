@@ -1,7 +1,10 @@
 //! Block Types for Optimism.
 
-use alloy_eips::BlockNumHash;
+use crate::block_info::{DecodeError, L1BlockInfoTx};
+use alloy_eips::{eip2718::Eip2718Error, BlockNumHash};
 use alloy_primitives::B256;
+use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
+use op_alloy_genesis::ChainGenesis;
 
 /// Block Header Info
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -32,6 +35,23 @@ impl BlockInfo {
     }
 }
 
+impl From<OpBlock> for BlockInfo {
+    fn from(block: OpBlock) -> Self {
+        Self::from(&block)
+    }
+}
+
+impl From<&OpBlock> for BlockInfo {
+    fn from(block: &OpBlock) -> Self {
+        Self {
+            hash: block.header.hash_slow(),
+            number: block.header.number,
+            parent_hash: block.header.parent_hash,
+            timestamp: block.header.timestamp,
+        }
+    }
+}
+
 impl core::fmt::Display for BlockInfo {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
@@ -56,10 +76,92 @@ pub struct L2BlockInfo {
     pub seq_num: u64,
 }
 
+/// An error that can occur when converting an [OpBlock] to an [L2BlockInfo].
+#[derive(Debug, derive_more::Display)]
+pub enum FromBlockError {
+    /// The genesis block hash does not match the expected value.
+    #[display("Invalid genesis hash")]
+    InvalidGenesisHash,
+    /// The L2 block is missing the L1 info deposit transaction.
+    #[display("L2 block is missing L1 info deposit transaction ({_0})")]
+    MissingL1InfoDeposit(B256),
+    /// The first payload transaction has an unexpected type.
+    #[display("First payload transaction has unexpected type: {_0}")]
+    UnexpectedTxType(u8),
+    /// Failed to decode the first transaction into an [OpTxEnvelope].
+    #[display("Failed to decode the first transaction into an OpTxEnvelope: {_0}")]
+    TxEnvelopeDecodeError(Eip2718Error),
+    /// The first payload transaction is not a deposit transaction.
+    #[display("First payload transaction is not a deposit transaction, type: {_0}")]
+    FirstTxNonDeposit(u8),
+    /// Failed to decode the [L1BlockInfoTx] from the deposit transaction.
+    #[display("Failed to decode the L1BlockInfoTx from the deposit transaction: {_0}")]
+    BlockInfoDecodeError(DecodeError),
+}
+
+// Since `Eip2718Error` uses an msrv prior to rust `1.81`, the `core::error::Error` type
+// is not stabalized and `Eip2718Error` only implements `std::error::Error` and not
+// `core::error::Error`. So we need to implement `std::error::Error` to provide the `Eip2718Error`
+// as a source when the `std` feature is enabled.
+#[cfg(feature = "std")]
+impl std::error::Error for FromBlockError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::TxEnvelopeDecodeError(err) => Some(err),
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(feature = "std"))]
+impl core::error::Error for FromBlockError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::BlockInfoDecodeError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 impl L2BlockInfo {
     /// Instantiates a new [L2BlockInfo].
     pub const fn new(block_info: BlockInfo, l1_origin: BlockNumHash, seq_num: u64) -> Self {
         Self { block_info, l1_origin, seq_num }
+    }
+
+    /// Constructs an [L2BlockInfo] from a given [OpBlock] and [ChainGenesis].
+    pub fn from_block_and_genesis(
+        block: &OpBlock,
+        genesis: &ChainGenesis,
+    ) -> Result<Self, FromBlockError> {
+        let block_info = BlockInfo::from(block);
+
+        let (l1_origin, sequence_number) = if block_info.number == genesis.l2.number {
+            if block_info.hash != genesis.l2.hash {
+                return Err(FromBlockError::InvalidGenesisHash);
+            }
+            (genesis.l1, 0)
+        } else {
+            if block.body.transactions.is_empty() {
+                return Err(FromBlockError::MissingL1InfoDeposit(block_info.hash));
+            }
+
+            let tx = &block.body.transactions[0];
+            if tx.tx_type() != OpTxType::Deposit {
+                return Err(FromBlockError::UnexpectedTxType(tx.tx_type().into()));
+            }
+
+            let OpTxEnvelope::Deposit(tx) = tx else {
+                return Err(FromBlockError::FirstTxNonDeposit(tx.tx_type().into()));
+            };
+
+            let l1_info = L1BlockInfoTx::decode_calldata(tx.input.as_ref())
+                .map_err(FromBlockError::BlockInfoDecodeError)?;
+            (l1_info.id(), l1_info.sequence_number())
+        };
+
+        Ok(Self { block_info, l1_origin, seq_num: sequence_number })
     }
 }
 

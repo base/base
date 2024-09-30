@@ -16,7 +16,7 @@ pub const CHANNEL_ID_LENGTH: usize = 16;
 pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
 
 mod block;
-pub use block::{BlockInfo, L2BlockInfo};
+pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
 
 mod batch_tx;
 pub use batch_tx::BatchTransaction;
