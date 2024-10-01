@@ -169,11 +169,8 @@ span batch stage before it would similarly only hold at most one staging span ba
 ## Engine Queue
 
 If the engine returns an `INVALID` status for a regularly derived payload, the payload is replaced
-by a payload with the same fields, except for the `transaction_list`, which is replaced
-
-- by the deposit transactions included in the L1 block, if the payloads are for the first block of
-the current sequencing epoch,
-- by an empty list otherwise.
+by a payload with the same fields, except for the `transaction_list`, which is trimmed to include
+only its deposit transactions.
 
 As before, a failure to then process the deposit-only attributes is a critical error.
 
