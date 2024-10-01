@@ -15,12 +15,9 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
 op-alloy-protocol.workspace = true
-op-alloy-genesis.workspace = true
-op-alloy-consensus.workspace = true
 
 derive_more = { workspace = true, features = ["display"] }
 
@@ -37,14 +34,10 @@ std = [
   "alloy-primitives/std",
   "alloy-rpc-types-engine/std",
   "op-alloy-protocol/std",
-  "op-alloy-genesis/std",
-  "op-alloy-consensus/std",
 ]
 serde = [
   "dep:serde",
   "dep:alloy-serde",
-  "op-alloy-genesis/serde",
   "op-alloy-protocol/serde",
   "alloy-rpc-types-engine/serde",
-  "op-alloy-consensus/serde",
 ]

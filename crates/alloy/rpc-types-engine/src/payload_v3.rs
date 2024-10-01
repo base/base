@@ -1,7 +1,7 @@
 //! Optimism execution payload envelope V3.
 
 use alloy_primitives::{B256, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV1, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
 
 /// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
 /// V3.
@@ -23,13 +23,6 @@ pub struct OptimismExecutionPayloadEnvelopeV3 {
     pub should_override_builder: bool,
     /// Ecotone parent beacon block root
     pub parent_beacon_block_root: B256,
-}
-
-impl crate::AsInnerPayload for OptimismExecutionPayloadEnvelopeV3 {
-    /// Returns the inner [ExecutionPayloadV1] from the envelope.
-    fn as_v1_payload(&self) -> alloc::borrow::Cow<'_, ExecutionPayloadV1> {
-        alloc::borrow::Cow::Borrowed(&self.execution_payload.payload_inner.payload_inner)
-    }
 }
 
 #[cfg(test)]
