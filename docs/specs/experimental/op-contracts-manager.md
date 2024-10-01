@@ -1,6 +1,5 @@
 # OP Contracts Manager
 
-[`op-contracts/v1.4.0`]: https://github.com/ethereum-optimism/optimism/releases/tag/op-contracts%2Fv1.6.0
 [Optimism Monorepo releases]: https://github.com/ethereum-optimism/optimism/releases
 [contract releases]: https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/VERSIONING.md
 [standard configuration]: ../protocol/configurability.md

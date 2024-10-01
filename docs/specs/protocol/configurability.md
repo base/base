@@ -408,8 +408,8 @@ existing [permissioned dispute games](../fault-proof/stage-one/bridge-integratio
 [^of-gnosis-safe-l1]<br/>
 **Notes:** Optimism Foundation (OF) multisig
 leveraging [battle-tested software](https://github.com/safe-global/safe-smart-account). This role is only active when
-the `OptimismPortal` respected game type is [
-`PERMISSIONED_CANNON`](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31).<br/>
+the `OptimismPortal` respected game type is [`PERMISSIONED_CANNON`]
+(<https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31>).<br/>
 
 ### [Guardian address](https://github.com/ethereum-optimism/optimism/blob/c927ed9e8af501fd330349607a2b09a876a9a1fb/packages/contracts-bedrock/src/L1/SuperchainConfig.sol#L50)
 
@@ -429,8 +429,8 @@ with [permissioned dispute games](../fault-proof/stage-one/bridge-integration.md
 L1.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
 **Requirement:** No requirement<br/>
-**Notes:** This role is only active when the `OptimismPortal` respected game type is [
-`PERMISSIONED_CANNON`](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31).
+**Notes:** This role is only active when the `OptimismPortal` respected game type is [`PERMISSIONED_CANNON`]
+(<https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31>).
 The `L1ProxyAdmin` sets the implementation of the `PERMISSIONED_CANNON` game type. Thus, it determines the proposer
 configuration of the permissioned dispute game.<br/>
 
