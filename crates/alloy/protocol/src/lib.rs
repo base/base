@@ -27,7 +27,7 @@ pub use frame::{
 };
 
 mod utils;
-pub use utils::starts_with_2718_deposit;
+pub use utils::{starts_with_2718_deposit, to_system_config, OpBlockConversionError};
 
 mod channel;
 pub use channel::{
