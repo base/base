@@ -14,6 +14,8 @@
   - [Interface](#interface)
     - [EIP-1559 Params](#eip-1559-params)
       - [`setEIP1559Params`](#seteip1559params)
+      - [`eip1559Elasticity`](#eip1559elasticity)
+      - [`eip1559Denominator`](#eip1559denominator)
     - [Fee Vault Config](#fee-vault-config)
       - [`setBaseFeeVaultConfig`](#setbasefeevaultconfig)
       - [`setL1FeeVaultConfig`](#setl1feevaultconfig)
@@ -50,7 +52,7 @@ The `ConfigType` enum represents configuration that can be modified.
 
 ### `ConfigUpdate`
 
-The following `ConfigUpdate` enum is defined where the `CONFIG_VERSION` is `uint256(0)`:
+The following `ConfigUpdate` event is defined where the `CONFIG_VERSION` is `uint256(0)`:
 
 | Name | Value | Definition | Usage |
 | ---- | ----- | --- | -- |
@@ -58,7 +60,7 @@ The following `ConfigUpdate` enum is defined where the `CONFIG_VERSION` is `uint
 | `FEE_SCALARS` | `uint8(1)` | `(uint256(0x01) << 248) \| (uint256(_blobbasefeeScalar) << 32) \| _basefeeScalar` | Modifies the fee scalars |
 | `GAS_LIMIT` | `uint8(2)` | `abi.encode(uint64 _gasLimit)` | Modifies the L2 gas limit |
 | `UNSAFE_BLOCK_SIGNER` | `uint8(3)` | `abi.encode(address)` | Modifies the account that is authorized to progress the unsafe chain |
-| `EIP_1559_PARAMS` | `uint8(4)` | `uint256(uint64(_denominator)) << 32 \| uint64(_elasticity)` | Modifies the EIP-1559 denominator and elasticity |
+| `EIP_1559_PARAMS` | `uint8(4)` | `uint256(uint64(uint32(_denominator))) << 32 \| uint64(uint32(_elasticity))` | Modifies the EIP-1559 denominator and elasticity |
 
 ### Initialization
 
@@ -95,11 +97,27 @@ operator to modify the `BASE_FEE_MAX_CHANGE_DENOMINATOR` and the `ELASTICITY_MUL
 This function MUST only be callable by the chain governor.
 
 ```solidity
-function setEIP1559Params(uint64 _denominator, uint64 _elasticity)
+function setEIP1559Params(uint32 _denominator, uint32 _elasticity)
 ```
 
 The `_denominator` and `_elasticity` MUST be set to values greater to than 0.
 It is possible for the chain operator to set EIP-1559 parameters that result in poor user experience.
+
+##### `eip1559Elasticity`
+
+This function returns the currently configured EIP-1559 elasticity.
+
+```solidity
+function eip1559Elasticity()(uint64)
+```
+
+##### `eip1559Denominator`
+
+This function returns the currently configured EIP-1559 denominator.
+
+```solidity
+function eip1559Denominator()(uint64)
+```
 
 #### Fee Vault Config
 
