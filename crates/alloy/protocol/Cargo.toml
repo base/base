@@ -34,6 +34,9 @@ alloy-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
+rstest = "0.22.0"
+revm = "14.0.2"
+alloy-sol-types.workspace = true
 
 [features]
 default = ["serde", "std"]
