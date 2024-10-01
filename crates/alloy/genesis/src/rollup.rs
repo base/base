@@ -296,6 +296,8 @@ pub const OP_MAINNET_CONFIG: RollupConfig = RollupConfig {
             gas_limit: 30_000_000_u64,
             base_fee_scalar: None,
             blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
         }),
     },
     block_time: 2_u64,
@@ -342,6 +344,8 @@ pub const OP_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
             gas_limit: 30_000_000,
             base_fee_scalar: None,
             blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
         }),
     },
     block_time: 2,
@@ -388,6 +392,8 @@ pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
             gas_limit: 30_000_000_u64,
             base_fee_scalar: None,
             blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
         }),
     },
     block_time: 2,
@@ -434,6 +440,8 @@ pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
             gas_limit: 25000000,
             base_fee_scalar: None,
             blob_base_fee_scalar: None,
+            eip1559_denominator: None,
+            eip1559_elasticity: None,
         }),
     },
     block_time: 2,
@@ -620,7 +628,9 @@ mod tests {
                     scalar: U256::from(0xf4240),
                     gas_limit: 30_000_000,
                     base_fee_scalar: None,
-                    blob_base_fee_scalar: None
+                    blob_base_fee_scalar: None,
+                    eip1559_denominator: None,
+                    eip1559_elasticity: None,
                 })
             }
         );

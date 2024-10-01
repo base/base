@@ -31,6 +31,9 @@ pub enum OpBlockConversionError {
     /// Empty transactions.
     #[display("Empty transactions in payload. Block hash: {_0}")]
     EmptyTransactions(B256),
+    /// EIP-1559 parameter decoding error.
+    #[display("Failed to decode EIP-1559 parameters from header's `nonce` field.")]
+    Eip1559DecodeError,
 }
 
 impl core::error::Error for OpBlockConversionError {
@@ -94,14 +97,30 @@ pub fn to_system_config(
         }
     };
 
-    Ok(SystemConfig {
+    let mut cfg = SystemConfig {
         batcher_address: l1_info.batcher_address(),
         overhead: l1_info.l1_fee_overhead(),
         scalar: l1_fee_scalar,
         gas_limit: block.header.gas_limit,
-        base_fee_scalar: None,
-        blob_base_fee_scalar: None,
-    })
+        ..Default::default()
+    };
+
+    // After holocene's activation, the EIP-1559 parameters are stored in the block header's nonce.
+    if rollup_config.is_holocene_active(block.header.timestamp) {
+        let eip1559_params = block.header.nonce;
+        cfg.eip1559_denominator = Some(u32::from_be_bytes(
+            eip1559_params[0..4]
+                .try_into()
+                .map_err(|_| OpBlockConversionError::Eip1559DecodeError)?,
+        ));
+        cfg.eip1559_elasticity = Some(u32::from_be_bytes(
+            eip1559_params[4..8]
+                .try_into()
+                .map_err(|_| OpBlockConversionError::Eip1559DecodeError)?,
+        ));
+    }
+
+    Ok(cfg)
 }
 
 #[cfg(test)]

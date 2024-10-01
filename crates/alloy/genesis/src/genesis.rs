@@ -41,6 +41,8 @@ mod tests {
                 gas_limit: 30000000,
                 base_fee_scalar: None,
                 blob_base_fee_scalar: None,
+                eip1559_denominator: None,
+                eip1559_elasticity: None,
             }),
         }
     }

@@ -30,6 +30,10 @@ pub struct SystemConfig {
     pub base_fee_scalar: Option<u64>,
     /// Blob base fee scalar value
     pub blob_base_fee_scalar: Option<u64>,
+    /// EIP-1559 denominator
+    pub eip1559_denominator: Option<u32>,
+    /// EIP-1559 elasticity
+    pub eip1559_elasticity: Option<u32>,
 }
 
 /// Represents type of update to the system config.
@@ -44,6 +48,8 @@ pub enum SystemConfigUpdateType {
     GasLimit = 2,
     /// Unsafe block signer update type
     UnsafeBlockSigner = 3,
+    /// EIP-1559 parameters update type
+    Eip1559 = 4,
 }
 
 impl TryFrom<u64> for SystemConfigUpdateType {
@@ -55,6 +61,7 @@ impl TryFrom<u64> for SystemConfigUpdateType {
             1 => Ok(Self::GasConfig),
             2 => Ok(Self::GasLimit),
             3 => Ok(Self::UnsafeBlockSigner),
+            4 => Ok(Self::Eip1559),
             _ => Err(SystemConfigUpdateError::LogProcessing(
                 LogProcessingError::InvalidSystemConfigUpdateType(value),
             )),
@@ -142,6 +149,9 @@ impl SystemConfig {
                 .map_err(SystemConfigUpdateError::GasConfig),
             SystemConfigUpdateType::GasLimit => {
                 self.update_gas_limit(log_data).map_err(SystemConfigUpdateError::GasLimit)
+            }
+            SystemConfigUpdateType::Eip1559 => {
+                self.update_eip1559_params(log_data).map_err(SystemConfigUpdateError::Eip1559)
             }
             // Ignored in derivation
             SystemConfigUpdateType::UnsafeBlockSigner => {
@@ -254,6 +264,38 @@ impl SystemConfig {
         self.gas_limit = U64::from(gas_limit).saturating_to::<u64>();
         Ok(SystemConfigUpdateType::GasLimit)
     }
+
+    /// Updates the EIP-1559 parameters of the [SystemConfig] given the log data.
+    fn update_eip1559_params(
+        &mut self,
+        log_data: &[u8],
+    ) -> Result<SystemConfigUpdateType, EIP1559UpdateError> {
+        if log_data.len() != 96 {
+            return Err(EIP1559UpdateError::InvalidDataLen(log_data.len()));
+        }
+
+        let Ok(pointer) = <sol!(uint64)>::abi_decode(&log_data[0..32], true) else {
+            return Err(EIP1559UpdateError::PointerDecodingError);
+        };
+        if pointer != 32 {
+            return Err(EIP1559UpdateError::InvalidDataPointer(pointer));
+        }
+        let Ok(length) = <sol!(uint64)>::abi_decode(&log_data[32..64], true) else {
+            return Err(EIP1559UpdateError::LengthDecodingError);
+        };
+        if length != 32 {
+            return Err(EIP1559UpdateError::InvalidDataLength(length));
+        }
+
+        let Ok(eip1559_params) = <sol!(uint64)>::abi_decode(&log_data[64..], true) else {
+            return Err(EIP1559UpdateError::EIP1559DecodingError);
+        };
+
+        self.eip1559_denominator = Some((eip1559_params >> 32) as u32);
+        self.eip1559_elasticity = Some(eip1559_params as u32);
+
+        Ok(SystemConfigUpdateType::Eip1559)
+    }
 }
 
 /// An error for processing the [SystemConfig] update log.
@@ -268,6 +310,8 @@ pub enum SystemConfigUpdateError {
     GasConfig(GasConfigUpdateError),
     /// A gas limit update error.
     GasLimit(GasLimitUpdateError),
+    /// An EIP-1559 parameter update error.
+    Eip1559(EIP1559UpdateError),
 }
 
 impl core::fmt::Display for SystemConfigUpdateError {
@@ -277,6 +321,7 @@ impl core::fmt::Display for SystemConfigUpdateError {
             Self::Batcher(err) => write!(f, "Batcher update error: {}", err),
             Self::GasConfig(err) => write!(f, "Gas config update error: {}", err),
             Self::GasLimit(err) => write!(f, "Gas limit update error: {}", err),
+            Self::Eip1559(err) => write!(f, "EIP-1559 parameter update error: {}", err),
         }
     }
 }
@@ -453,6 +498,54 @@ impl core::fmt::Display for GasLimitUpdateError {
 
 impl core::error::Error for GasLimitUpdateError {}
 
+/// An error for updating the EIP-1559 parameters on the [SystemConfig].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum EIP1559UpdateError {
+    /// Invalid data length.
+    InvalidDataLen(usize),
+    /// Failed to decode the data pointer argument from the eip 1559 update log.
+    PointerDecodingError,
+    /// The data pointer is invalid.
+    InvalidDataPointer(u64),
+    /// Failed to decode the data length argument from the eip 1559 update log.
+    LengthDecodingError,
+    /// The data length is invalid.
+    InvalidDataLength(u64),
+    /// Failed to decode the eip1559 params argument from the eip 1559 update log.
+    EIP1559DecodingError,
+}
+
+impl core::fmt::Display for EIP1559UpdateError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidDataLen(len) => {
+                write!(f, "Invalid config update log: invalid data length: {}", len)
+            }
+            Self::PointerDecodingError => {
+                write!(f, "Failed to decode eip1559 parameter update log: data pointer")
+            }
+            Self::InvalidDataPointer(pointer) => {
+                write!(f, "Invalid config update log: invalid data pointer: {}", pointer)
+            }
+            Self::LengthDecodingError => {
+                write!(f, "Failed to decode eip1559 parameter update log: data length")
+            }
+            Self::InvalidDataLength(length) => {
+                write!(f, "Invalid config update log: invalid data length: {}", length)
+            }
+            Self::EIP1559DecodingError => {
+                write!(
+                    f,
+                    "Failed to decode eip1559 parameter update log: eip1559 parameters invalid"
+                )
+            }
+        }
+    }
+}
+
+impl core::error::Error for EIP1559UpdateError {}
+
 /// System accounts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -623,7 +716,7 @@ mod test {
             )
         };
 
-        // Update the batcher address.
+        // Update the gas limit.
         system_config.process_config_update_log(&update_log, true).unwrap();
 
         assert_eq!(system_config.overhead, U256::from(0));
@@ -649,9 +742,34 @@ mod test {
             )
         };
 
-        // Update the batcher address.
+        // Update the gas limit.
         system_config.process_config_update_log(&update_log, false).unwrap();
 
         assert_eq!(system_config.gas_limit, 0xbeef_u64);
+    }
+
+    #[test]
+    fn test_system_config_update_eip1559_params_log() {
+        const UPDATE_TYPE: B256 =
+            b256!("0000000000000000000000000000000000000000000000000000000000000004");
+
+        let mut system_config = SystemConfig::default();
+        let update_log = Log {
+            address: Address::ZERO,
+            data: LogData::new_unchecked(
+                vec![
+                    CONFIG_UPDATE_TOPIC,
+                    CONFIG_UPDATE_EVENT_VERSION_0,
+                    UPDATE_TYPE,
+                ],
+                hex!("000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000babe0000beef").into()
+            )
+        };
+
+        // Update the EIP-1559 parameters.
+        system_config.process_config_update_log(&update_log, false).unwrap();
+
+        assert_eq!(system_config.eip1559_denominator, Some(0xbabe_u32));
+        assert_eq!(system_config.eip1559_elasticity, Some(0xbeef_u32));
     }
 }
