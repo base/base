@@ -1,6 +1,6 @@
 # op-alloy-genesis
 
-<a href="https://crates.io/crates/op-alloy-genesis"><img src="https://img.shield.io/crates/v/op-alloy-genesis.svg" alt="op-alloy-genesis crate"></a>
+<a href="https://crates.io/crates/op-alloy-genesis"><img src="https://img.shields.io/crates/v/op-alloy-genesis.svg" alt="op-alloy-genesis crate"></a>
 
 Genesis types for Optimism.
 

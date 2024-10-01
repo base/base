@@ -1,6 +1,8 @@
 # op-alloy-consensus
 
-OP Stack consensus interface.
+<a href="https://crates.io/crates/op-alloy-consensus"><img src="https://img.shields.io/crates/v/op-alloy-consensus.svg" alt="op-alloy-consensus crate"></a>
+
+Optimism consensus interface.
 
 This crate contains constants, types, and functions for implementing Optimism EL consensus and communication. This
 includes an extended `OpTxEnvelope` type with [deposit transactions][deposit], and receipts containing OP Stack
