@@ -171,7 +171,7 @@ The following diagram demonstrates this interaction and all key OP Stack compone
 ```mermaid
 graph TD
     subgraph "Ethereum L1"
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
     end
 
@@ -206,7 +206,7 @@ graph LR
         BatchInbox(<a href="../glossary.html#batcher-transaction">Batch Inbox Address</a>)
         DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
-        OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
+        OptimismPortal(<a href="./protocol/withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
         ExternalContracts(External Contracts)
     end
 
