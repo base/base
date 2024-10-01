@@ -20,18 +20,11 @@ const L1_SCALAR_ECOTONE: u8 = 1;
 const L1_INFO_TX_LEN_BEDROCK: usize = 4 + 32 * 8;
 /// The length of an L1 info transaction in Ecotone.
 const L1_INFO_TX_LEN_ECOTONE: usize = 4 + 32 * 5;
-/// The length of an L1 info transaction in Holocene.
-///
-/// The Holocene L1 info transaction size is [L1_INFO_TX_LEN_ECOTONE] + 8 * 2
-/// for the EIP-1559 denominator and elasticity parameters.
-const L1_INFO_TX_LEN_HOLOCENE: usize = 4 + 32 * 5 + 8 * 2;
 /// The 4 byte selector of the
 /// "setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)" function
 const L1_INFO_TX_SELECTOR_BEDROCK: [u8; 4] = [0x01, 0x5d, 0x8e, 0xb9];
 /// The 4 byte selector of "setL1BlockValuesEcotone()"
 const L1_INFO_TX_SELECTOR_ECOTONE: [u8; 4] = [0x44, 0x0a, 0x5e, 0x20];
-/// The 4 byte selector of "setL1BlockValuesHolocene()"
-const L1_INFO_TX_SELECTOR_HOLOCENE: [u8; 4] = [0xd1, 0xfb, 0xe1, 0x5b];
 /// The address of the L1 Block contract
 const L1_BLOCK_ADDRESS: Address = address!("4200000000000000000000000000000000000015");
 /// The depositor address of the L1 info transaction
@@ -49,8 +42,6 @@ pub enum L1BlockInfoTx {
     Bedrock(L1BlockInfoBedrock),
     /// An Ecotone L1 info transaction
     Ecotone(L1BlockInfoEcotone),
-    /// A Holocene L1 info transaction
-    Holocene(L1BlockInfoHolocene),
 }
 
 /// Represents the fields within a Bedrock L1 block info transaction.
@@ -130,52 +121,6 @@ pub struct L1BlockInfoEcotone {
     pub base_fee_scalar: u32,
 }
 
-/// Represents the fields within a Holocene L1 block info transaction.
-///
-/// Holocene Binary Format
-/// +---------+--------------------------+
-/// | Bytes   | Field                    |
-/// +---------+--------------------------+
-/// | 4       | Function signature       |
-/// | 4       | BaseFeeScalar            |
-/// | 4       | BlobBaseFeeScalar        |
-/// | 8       | SequenceNumber           |
-/// | 8       | Timestamp                |
-/// | 8       | L1BlockNumber            |
-/// | 32      | BaseFee                  |
-/// | 32      | BlobBaseFee              |
-/// | 32      | BlockHash                |
-/// | 32      | BatcherHash              |
-/// | 8       | Eip1559Denominator       |
-/// | 8       | Eip1559Elasticity        |
-/// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct L1BlockInfoHolocene {
-    /// The current L1 origin block number
-    pub number: u64,
-    /// The current L1 origin block's timestamp
-    pub time: u64,
-    /// The current L1 origin block's basefee
-    pub base_fee: u64,
-    /// The current L1 origin block's hash
-    pub block_hash: B256,
-    /// The current sequence number
-    pub sequence_number: u64,
-    /// The address of the batch submitter
-    pub batcher_address: Address,
-    /// The current blob base fee on L1
-    pub blob_base_fee: u128,
-    /// The fee scalar for L1 blobspace data
-    pub blob_base_fee_scalar: u32,
-    /// The fee scalar for L1 data
-    pub base_fee_scalar: u32,
-    /// The EIP-1559 denominator
-    pub eip_1559_denominator: u64,
-    /// The EIP-1559 elasticity parameter
-    pub eip_1559_elasticity: u64,
-}
-
 /// An error type for parsing L1 block info transactions.
 #[derive(Debug, Copy, Clone)]
 pub enum BlockInfoError {
@@ -235,45 +180,6 @@ impl L1BlockInfoTx {
         l1_header: &Header,
         l2_block_time: u64,
     ) -> Result<Self, BlockInfoError> {
-        if rollup_config.is_holocene_active(l2_block_time) {
-            let scalar = system_config.scalar.to_be_bytes::<32>();
-            let blob_base_fee_scalar = (scalar[0] == L1_SCALAR_ECOTONE)
-                .then(|| {
-                    Ok::<u32, BlockInfoError>(u32::from_be_bytes(
-                        scalar[24..28]
-                            .try_into()
-                            .map_err(|_| BlockInfoError::L1BlobBaseFeeScalar)?,
-                    ))
-                })
-                .transpose()?
-                .unwrap_or_default();
-            let base_fee_scalar = u32::from_be_bytes(
-                scalar[28..32].try_into().map_err(|_| BlockInfoError::BaseFeeScalar)?,
-            );
-            let eip_1559_denominator = rollup_config
-                .canyon_base_fee_params
-                .max_change_denominator
-                .try_into()
-                .map_err(|_| BlockInfoError::Eip1559Denominator)?;
-            let eip_1559_elasticity = rollup_config
-                .canyon_base_fee_params
-                .elasticity_multiplier
-                .try_into()
-                .map_err(|_| BlockInfoError::Eip1559Elasticity)?;
-            return Ok(Self::Holocene(L1BlockInfoHolocene {
-                number: l1_header.number,
-                time: l1_header.timestamp,
-                base_fee: l1_header.base_fee_per_gas.unwrap_or(0),
-                block_hash: l1_header.hash_slow(),
-                sequence_number,
-                batcher_address: system_config.batcher_address,
-                blob_base_fee: l1_header.blob_fee().unwrap_or(1),
-                blob_base_fee_scalar,
-                base_fee_scalar,
-                eip_1559_denominator,
-                eip_1559_elasticity,
-            }));
-        }
         // In the first block of Ecotone, the L1Block contract has not been upgraded yet due to the
         // upgrade transactions being placed after the L1 info transaction. Because of this,
         // for the first block of Ecotone, we send a Bedrock style L1 block info transaction
@@ -374,9 +280,6 @@ impl L1BlockInfoTx {
             L1_INFO_TX_SELECTOR_ECOTONE => L1BlockInfoEcotone::decode_calldata(r)
                 .map(Self::Ecotone)
                 .map_err(|e| DecodeError::ParseError(format!("Ecotone decode error: {}", e))),
-            L1_INFO_TX_SELECTOR_HOLOCENE => L1BlockInfoHolocene::decode_calldata(r)
-                .map(Self::Holocene)
-                .map_err(|e| DecodeError::ParseError(format!("Holocene decode error: {}", e))),
             _ => Err(DecodeError::InvalidSelector),
         }
     }
@@ -386,7 +289,6 @@ impl L1BlockInfoTx {
         match self {
             Self::Bedrock(ref tx) => tx.block_hash,
             Self::Ecotone(ref tx) => tx.block_hash,
-            Self::Holocene(ref tx) => tx.block_hash,
         }
     }
 
@@ -395,7 +297,6 @@ impl L1BlockInfoTx {
         match self {
             Self::Bedrock(bedrock_tx) => bedrock_tx.encode_calldata(),
             Self::Ecotone(ecotone_tx) => ecotone_tx.encode_calldata(),
-            Self::Holocene(holocene_tx) => holocene_tx.encode_calldata(),
         }
     }
 
@@ -408,9 +309,6 @@ impl L1BlockInfoTx {
             Self::Bedrock(L1BlockInfoBedrock { number, block_hash, .. }) => {
                 BlockNumHash { number: *number, hash: *block_hash }
             }
-            Self::Holocene(L1BlockInfoHolocene { number, block_hash, .. }) => {
-                BlockNumHash { number: *number, hash: *block_hash }
-            }
         }
     }
 
@@ -418,7 +316,7 @@ impl L1BlockInfoTx {
     pub const fn l1_fee_overhead(&self) -> U256 {
         match self {
             Self::Bedrock(L1BlockInfoBedrock { l1_fee_overhead, .. }) => *l1_fee_overhead,
-            Self::Ecotone(_) | Self::Holocene(_) => U256::ZERO,
+            Self::Ecotone(_) => U256::ZERO,
         }
     }
 
@@ -427,7 +325,6 @@ impl L1BlockInfoTx {
         match self {
             Self::Bedrock(L1BlockInfoBedrock { batcher_address, .. }) => *batcher_address,
             Self::Ecotone(L1BlockInfoEcotone { batcher_address, .. }) => *batcher_address,
-            Self::Holocene(L1BlockInfoHolocene { batcher_address, .. }) => *batcher_address,
         }
     }
 
@@ -436,7 +333,6 @@ impl L1BlockInfoTx {
         match self {
             Self::Bedrock(L1BlockInfoBedrock { sequence_number, .. }) => *sequence_number,
             Self::Ecotone(L1BlockInfoEcotone { sequence_number, .. }) => *sequence_number,
-            Self::Holocene(L1BlockInfoHolocene { sequence_number, .. }) => *sequence_number,
         }
     }
 }
@@ -568,82 +464,6 @@ impl L1BlockInfoEcotone {
     }
 }
 
-impl L1BlockInfoHolocene {
-    /// Encodes the [L1BlockInfoHolocene] object into Ethereum transaction calldata.
-    pub fn encode_calldata(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(L1_INFO_TX_LEN_HOLOCENE);
-        buf.extend_from_slice(L1_INFO_TX_SELECTOR_HOLOCENE.as_ref());
-        buf.extend_from_slice(self.base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.blob_base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.sequence_number.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.time.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.number.to_be_bytes().as_ref());
-        buf.extend_from_slice(U256::from(self.base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(U256::from(self.blob_base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(self.block_hash.as_ref());
-        buf.extend_from_slice(self.batcher_address.into_word().as_ref());
-        buf.extend_from_slice(self.eip_1559_denominator.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.eip_1559_elasticity.to_be_bytes().as_ref());
-        buf.into()
-    }
-
-    /// Decodes the [L1BlockInfoHolocene] object from ethereum transaction calldata.
-    pub fn decode_calldata(r: &[u8]) -> Result<Self, DecodeError> {
-        if r.len() != L1_INFO_TX_LEN_HOLOCENE {
-            return Err(DecodeError::InvalidLength(format!(
-                "Invalid calldata length for Holocene L1 info transaction, expected {}, got {}",
-                L1_INFO_TX_LEN_HOLOCENE,
-                r.len()
-            )));
-        }
-        let base_fee_scalar = u32::from_be_bytes(r[4..8].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for base fee scalar".to_string())
-        })?);
-        let blob_base_fee_scalar = u32::from_be_bytes(r[8..12].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for blob base fee scalar".to_string())
-        })?);
-        let sequence_number = u64::from_be_bytes(r[12..20].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for sequence number".to_string())
-        })?);
-        let timestamp =
-            u64::from_be_bytes(r[20..28].try_into().map_err(|_| {
-                DecodeError::ParseError("Conversion error for timestamp".to_string())
-            })?);
-        let l1_block_number = u64::from_be_bytes(r[28..36].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for L1 block number".to_string())
-        })?);
-        let base_fee =
-            u64::from_be_bytes(r[60..68].try_into().map_err(|_| {
-                DecodeError::ParseError("Conversion error for base fee".to_string())
-            })?);
-        let blob_base_fee = u128::from_be_bytes(r[84..100].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for blob base fee".to_string())
-        })?);
-        let block_hash = B256::from_slice(r[100..132].as_ref());
-        let batcher_address = Address::from_slice(r[144..164].as_ref());
-        let eip_1559_denominator = u64::from_be_bytes(r[164..172].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for EIP-1559 denominator".to_string())
-        })?);
-        let eip_1559_elasticity = u64::from_be_bytes(r[172..180].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for EIP-1559 elasticity".to_string())
-        })?);
-
-        Ok(Self {
-            number: l1_block_number,
-            time: timestamp,
-            base_fee,
-            block_hash,
-            sequence_number,
-            batcher_address,
-            blob_base_fee,
-            blob_base_fee_scalar,
-            base_fee_scalar,
-            eip_1559_denominator,
-            eip_1559_elasticity,
-        })
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -652,7 +472,6 @@ mod test {
 
     const RAW_BEDROCK_INFO_TX: [u8; L1_INFO_TX_LEN_BEDROCK] = hex!("015d8eb9000000000000000000000000000000000000000000000000000000000117c4eb0000000000000000000000000000000000000000000000000000000065280377000000000000000000000000000000000000000000000000000000026d05d953392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc00000000000000000000000000000000000000000000000000000000000000040000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f3298500000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0");
     const RAW_ECOTONE_INFO_TX: [u8; L1_INFO_TX_LEN_ECOTONE] = hex!("440a5e2000000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
-    const RAW_HOLOCENE_INFO_TX: [u8; L1_INFO_TX_LEN_HOLOCENE] = hex!("d1fbe15b00000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f3298500000000000012340000000000005678");
 
     #[test]
     fn bedrock_l1_block_info_invalid_len() {
@@ -741,31 +560,6 @@ mod test {
         };
         assert_eq!(expected, decoded);
         assert_eq!(decoded.encode_calldata().as_ref(), RAW_ECOTONE_INFO_TX);
-    }
-
-    #[test]
-    fn holocene_l1_block_info_tx_roundtrip() {
-        let expected = L1BlockInfoHolocene {
-            number: 19655712,
-            time: 1713121139,
-            base_fee: 10445852825,
-            block_hash: b256!("1c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add3"),
-            sequence_number: 5,
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            blob_base_fee: 1,
-            blob_base_fee_scalar: 810949,
-            base_fee_scalar: 1368,
-            eip_1559_denominator: 0x1234,
-            eip_1559_elasticity: 0x5678,
-        };
-
-        let L1BlockInfoTx::Holocene(decoded) =
-            L1BlockInfoTx::decode_calldata(RAW_HOLOCENE_INFO_TX.as_ref()).unwrap()
-        else {
-            panic!("Wrong fork");
-        };
-        assert_eq!(expected, decoded);
-        assert_eq!(decoded.encode_calldata().as_ref(), RAW_HOLOCENE_INFO_TX);
     }
 
     #[test]
