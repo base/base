@@ -45,7 +45,7 @@ TODO.
 
 ## Interface
 
-Version 1.0.0 of the OP Contracts Manager deploys the [`op-contracts/v1.6.0`]
+Version 1.0.0 of the OP Contracts Manager deploys the `op-contracts/v1.6.0`
 contracts release.
 
 ### `Proxy.sol`

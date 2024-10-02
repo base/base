@@ -10,11 +10,9 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-This document is not finalized and should be considered experimental.
-
 ## Execution Layer
 
-- [L2ToL1MessagePasser Storage Root in Header](./exec-engine.md##l2tol1messagepasser-storage-root-in-header)
+- [Dynamic EIP-1559 Parameters](./exec-engine.md#dynamic-eip-1559-parameters)
 
 ## Consensus Layer
 
@@ -22,5 +20,4 @@ This document is not finalized and should be considered experimental.
 
 ## Smart Contracts
 
-- [Predeploys](./predeploys.md)
-- [Configurability](./configurability.md)
+- [System Config](./system-config.md)

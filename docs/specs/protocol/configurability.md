@@ -130,7 +130,7 @@ to finalize withdrawals.<br/>
 **Requirement:** [`CANNON` (
 `0`)](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L28)<br/>
 **Notes:** The game type may be changed to [`PERMISSIONED_CANNON` (
-`1`)](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31)
+`1`)](<https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/lib/Types.sol#L31>)
 as a fallback to permissioned proposals, in the event of a failure in the Fault Proof system.<br/>
 
 ### Fault Game Max Depth

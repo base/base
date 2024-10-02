@@ -54,7 +54,7 @@
       - [Derivation](./protocol/holocene/derivation.md)
       - [Execution Engine](./protocol/holocene/exec-engine.md)
       - [Predeploys](./protocol/holocene/predeploys.md)
-      - [Configurability](./protocol/holocene/configurability.md)
+      - [System Config](./protocol/holocene/system-config.md)
 - [Governance]()
   - [Governance Token](./governance/gov-token.md)
 - [Experimental]()

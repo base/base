@@ -6,6 +6,7 @@
 
 - [Execution Layer](#execution-layer)
 - [Consensus Layer](#consensus-layer)
+- [Smart Contracts](#smart-contracts)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -13,6 +14,10 @@ This document is not finalized and should be considered experimental.
 
 ## Execution Layer
 
+- [L2ToL1MessagePasser Storage Root in Header](./exec-engine.md##l2tol1messagepasser-storage-root-in-header)
+
 ## Consensus Layer
 
-- [Interop](../../interop/overview.md)
+## Smart Contracts
+
+- [SuperchainConfig](./superchain-config.md)
