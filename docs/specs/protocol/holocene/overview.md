@@ -19,7 +19,6 @@ This document is not finalized and should be considered experimental.
 ## Consensus Layer
 
 - [Holocene Derivation](./derivation.md#holocene-derivation)
-- [Network upgrade automation transactions](./derivation.md#network-upgrade-automation-transactions)
 
 ## Smart Contracts
 

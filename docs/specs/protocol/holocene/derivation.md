@@ -27,7 +27,6 @@
   - [Reorgs](#reorgs)
   - [Batcher Hardening](#batcher-hardening)
   - [Sync Start](#sync-start)
-- [Network upgrade automation transactions](#network-upgrade-automation-transactions)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -341,16 +340,3 @@ Note regarding the last case that if we don't find a starting frame within a cha
 the channel we did find a frame from must be timed out and would be discarded. The safe block we're
 looking for can't be in any channel that timed out before its L1 origin so we wouldn't need to
 search any further back, so we go back a channel timeout before the finalized L2 head.
-
-# Network upgrade automation transactions
-
-The Holocene hardfork activation block contains the following transactions, in this order:
-
-- L1 Attributes Transaction
-- User deposits from L1
-- Network Upgrade Transactions
-  - L1Block deployment
-  - Update L1Block Proxy ERC-1967 Implementation
-  - L1Block Enable Holocene
-  - OptimismMintableERC20Factory deployment
-  - Update OptimismMintableERC20Factory Proxy ERC-1967 Implementation
