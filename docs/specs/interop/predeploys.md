@@ -922,7 +922,7 @@ sequenceDiagram
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: __superchainMint(to, amount)
-  SuperERC20_B-->SuperERC20_B: emit SuperchainMint(to, amount)
+  SuperERC20_B-->SuperERC20_B: emit SuperchainMinted(to, amount)
   L2SBB-->L2SBB: emit RelayedERC20(tokenAddr, from, to, amount, source)
 ```
 
