@@ -95,6 +95,11 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Creates a new [Frame].
+    pub const fn new(id: ChannelId, number: u16, data: Vec<u8>, is_last: bool) -> Self {
+        Self { id, number, data, is_last }
+    }
+
     /// Encode the frame into a byte vector.
     pub fn encode(&self) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(16 + 2 + 4 + self.data.len() + 1);
@@ -129,6 +134,13 @@ impl Frame {
         let data = encoded[22..22 + data_len].to_vec();
         let is_last = encoded[22 + data_len] == 1;
         Ok((BASE_FRAME_LEN + data_len, Self { id, number, data, is_last }))
+    }
+
+    /// Parses a single frame from the given data at the given starting position,
+    /// returning the frame and the number of bytes consumed.
+    pub fn parse_frame(data: &[u8], start: usize) -> Result<(usize, Self), FrameDecodingError> {
+        let (frame_len, frame) = Self::decode(&data[start..])?;
+        Ok((frame_len, frame))
     }
 
     /// Parse the on chain serialization of frame(s) in an L1 transaction. Currently

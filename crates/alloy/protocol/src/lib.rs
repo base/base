@@ -26,6 +26,9 @@ pub use frame::{
     Frame, FrameDecodingError, FrameParseError, DERIVATION_VERSION_0, FRAME_OVERHEAD, MAX_FRAME_LEN,
 };
 
+mod iter;
+pub use iter::FrameIter;
+
 mod utils;
 pub use utils::{starts_with_2718_deposit, to_system_config, OpBlockConversionError};
 
