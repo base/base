@@ -15,7 +15,9 @@
       "scalar": "0xa6fe0",
       "gasLimit": 30000000,
       "baseFeeScalar": null,
-      "blobBaseFeeScalar": null
+      "blobBaseFeeScalar": null,
+      "eip1559Denominator": null,
+      "eip1559Elasticity": null
     }
   },
   "block_time": 2,
