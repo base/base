@@ -60,6 +60,11 @@ impl fmt::Display for ExecutionStats {
         write_stat(f, "Batch End", self.batch_end)?;
         write_stat(
             f,
+            "Witness Generation (seconds)",
+            self.witness_generation_time_sec,
+        )?;
+        write_stat(
+            f,
             "Execution Duration (seconds)",
             self.total_execution_time_sec,
         )?;
