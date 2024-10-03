@@ -1,19 +1,19 @@
 //! Contains the concrete implementation of the [L2ChainProvider] trait for the client program.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use alloy_consensus::Header;
+use alloy_consensus::{BlockBody, Header};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rlp::Decodable;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use kona_client::{BootInfo, HintType};
-use kona_derive::{block::OpBlock, traits::L2ChainProvider};
+use kona_derive::pipeline::L2ChainProvider;
 use kona_mpt::{OrderedListWalker, TrieHinter, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
-use op_alloy_protocol::L2BlockInfo;
+use op_alloy_protocol::{to_system_config, L2BlockInfo};
 use std::{collections::HashMap, sync::Mutex};
 
 use crate::block_on;
@@ -69,9 +69,9 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
         self.system_config_by_number
             .lock()
             .unwrap()
-            .insert(header.number, block.to_system_config(config).unwrap());
+            .insert(header.number, to_system_config(&block, config)?);
 
-        let l2_block_info = block.to_l2_block_ref(config)?;
+        let l2_block_info = L2BlockInfo::from_block_and_genesis(&block, &config.genesis)?;
         self.l2_block_info_by_number
             .lock()
             .unwrap()
@@ -132,10 +132,11 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         }
 
         // Get the payload at the given block number.
-        let payload = self.block_by_number(number).await?;
+        let block = self.block_by_number(number).await?;
 
         // Construct the system config from the payload.
-        Ok(payload.to_l2_block_ref(&self.boot_info.rollup_config)?)
+        L2BlockInfo::from_block_and_genesis(&block, &self.boot_info.rollup_config.genesis)
+            .map_err(Into::into)
     }
 
     async fn block_by_number(&mut self, number: u64) -> Result<OpBlock> {
@@ -169,13 +170,16 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
 
         let optimism_block = OpBlock {
             header,
-            body: transactions,
-            withdrawals: self
-                .boot_info
-                .rollup_config
-                .is_canyon_active(timestamp)
-                .then(Vec::new),
-            ..Default::default()
+            body: BlockBody {
+                transactions,
+                ommers: Vec::new(),
+                withdrawals: self
+                    .boot_info
+                    .rollup_config
+                    .is_canyon_active(timestamp)
+                    .then(Vec::new),
+                requests: None,
+            },
         };
         Ok(optimism_block)
     }
@@ -191,10 +195,10 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         }
 
         // Get the payload at the given block number.
-        let payload = self.block_by_number(number).await?;
+        let block = self.block_by_number(number).await?;
 
         // Construct the system config from the payload.
-        Ok(payload.to_system_config(rollup_config.as_ref())?)
+        to_system_config(&block, rollup_config.as_ref()).map_err(Into::into)
     }
 }
 

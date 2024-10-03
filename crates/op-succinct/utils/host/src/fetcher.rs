@@ -289,7 +289,7 @@ impl OPSuccinctDataFetcher {
             block_data.push(BlockInfo {
                 block_number,
                 transaction_count: block.transactions.len() as u64,
-                gas_used: block.header.gas_used as u64,
+                gas_used: block.header.gas_used,
             });
         }
         Ok(block_data)

@@ -12,17 +12,16 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 
-use alloy_consensus::Sealed;
+use alloy_consensus::{BlockBody, Sealed};
 use alloy_eips::eip2718::Decodable2718;
 use cfg_if::cfg_if;
 use kona_client::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
 };
-use kona_derive::block::OpBlock;
 use kona_executor::StatelessL2BlockExecutor;
 use log::info;
-use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use op_succinct_client_utils::{
     driver::MultiBlockDerivationDriver, l2_chain_provider::MultiblockOracleL2ChainProvider,
     precompiles::zkvm_handle_register,
@@ -152,18 +151,21 @@ fn main() {
             // Generate the Payload Envelope, which can be used to derive cached data.
             let optimism_block = OpBlock {
                 header: new_block_header.clone(),
-                body: payload
-                    .attributes
-                    .transactions
-                    .unwrap()
-                    .iter()
-                    .map(|raw_tx| OpTxEnvelope::decode_2718(&mut raw_tx.as_ref()).unwrap())
-                    .collect::<Vec<OpTxEnvelope>>(),
-                withdrawals: boot
-                    .rollup_config
-                    .is_canyon_active(new_block_header.timestamp)
-                    .then(Vec::new),
-                ..Default::default()
+                body: BlockBody {
+                    transactions: payload
+                        .attributes
+                        .transactions
+                        .unwrap()
+                        .iter()
+                        .map(|raw_tx| OpTxEnvelope::decode_2718(&mut raw_tx.as_ref()).unwrap())
+                        .collect::<Vec<OpTxEnvelope>>(),
+                    ommers: Vec::new(),
+                    withdrawals: boot
+                        .rollup_config
+                        .is_canyon_active(new_block_header.timestamp)
+                        .then(Vec::new),
+                    requests: None,
+                },
             };
             // Add all data from this block's execution to the cache.
             l2_block_info = l2_provider
