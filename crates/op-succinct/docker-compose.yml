@@ -21,4 +21,4 @@ services:
     depends_on:
       - op-succinct-server
     volumes:
-      - ./db:/usr/local/bin/dbdata/
+      - ./db:/usr/local/bin/dbdata
