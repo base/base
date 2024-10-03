@@ -13,11 +13,12 @@ use kona_client::{
     BootInfo, HintType,
 };
 use kona_derive::{
+    attributes::StatefulAttributesBuilder,
     pipeline::{DerivationPipeline, Pipeline, PipelineBuilder, StepResult},
     sources::EthereumDataSource,
     stages::{
-        AttributesQueue, BatchQueue, ChannelBank, ChannelReader, FrameQueue, L1Retrieval,
-        L1Traversal, StatefulAttributesBuilder,
+        AttributesQueue, BatchQueue, BatchStream, ChannelBank, ChannelReader, FrameQueue,
+        L1Retrieval, L1Traversal,
     },
     traits::{ChainProvider, L2ChainProvider},
 };
@@ -46,8 +47,10 @@ pub type OracleAttributesBuilder<O> =
 /// An oracle-backed attributes queue for the derivation pipeline.
 pub type OracleAttributesQueue<DAP, O> = AttributesQueue<
     BatchQueue<
-        ChannelReader<
-            ChannelBank<FrameQueue<L1Retrieval<DAP, L1Traversal<OracleL1ChainProvider<O>>>>>,
+        BatchStream<
+            ChannelReader<
+                ChannelBank<FrameQueue<L1Retrieval<DAP, L1Traversal<OracleL1ChainProvider<O>>>>>,
+            >,
         >,
         MultiblockOracleL2ChainProvider<O>,
     >,

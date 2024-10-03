@@ -54,13 +54,14 @@ async fn main() -> Result<()> {
         .await?;
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
+    let start_time = Instant::now();
     if !args.use_cache {
         // Start the server and native client.
         let mut witnessgen_executor = WitnessGenExecutor::default();
         witnessgen_executor.spawn_witnessgen(&host_cli).await?;
         witnessgen_executor.flush().await?;
     }
-
+    let witness_generation_time_sec = start_time.elapsed().as_secs();
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
@@ -105,8 +106,9 @@ async fn main() -> Result<()> {
         stats
             .add_block_data(&data_fetcher, args.l2_block, args.l2_block)
             .await;
-        stats.add_report_data(&report, execution_duration);
+        stats.add_report_data(&report);
         stats.add_aggregate_data();
+        stats.add_timing_data(execution_duration.as_secs(), witness_generation_time_sec);
         println!("Execution Stats: \n{:?}", stats);
 
         // Write to CSV.

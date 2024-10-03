@@ -18,10 +18,10 @@ use std::{
     fs::{self},
     future::Future,
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Instant,
 };
-use tokio::{sync::Mutex, task::block_in_place};
+use tokio::task::block_in_place;
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
@@ -62,7 +62,7 @@ fn get_max_span_batch_range_size(l2_chain_id: u64) -> u64 {
     const DEFAULT_SIZE: u64 = 1000;
     match l2_chain_id {
         8453 => 5,      // Base
-        11155420 => 40, // OP Sepolia
+        11155420 => 30, // OP Sepolia
         10 => 10,       // OP Mainnet
         _ => DEFAULT_SIZE,
     }
@@ -91,7 +91,7 @@ async fn run_native_data_generation(
     data_fetcher: &OPSuccinctDataFetcher,
     split_ranges: &[SpanBatchRange],
 ) -> Vec<BatchHostCli> {
-    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
+    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 20;
 
     // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
     // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
@@ -164,7 +164,7 @@ async fn execute_blocks_parallel(
             let data_fetcher = OPSuccinctDataFetcher::new().await;
             let mut exec_stats = ExecutionStats::default();
             exec_stats.add_block_data(&data_fetcher, start, end).await;
-            let mut execution_stats_map = execution_stats_map.lock().await;
+            let mut execution_stats_map = execution_stats_map.lock().unwrap();
             execution_stats_map.insert((start, end), exec_stats);
         });
         handles.push(handle);
@@ -175,14 +175,21 @@ async fn execute_blocks_parallel(
     host_clis.par_iter().for_each(|r| {
         let sp1_stdin = get_proof_stdin(&r.host_cli).unwrap();
 
-        let start_time = Instant::now();
-        let (_, report) = prover.execute(MULTI_BLOCK_ELF, sp1_stdin).run().unwrap();
-        let execution_duration = start_time.elapsed();
+        // TODO: Implement retries with a smaller block range if this fails.
+        let (_, report) = prover
+            .execute(MULTI_BLOCK_ELF, sp1_stdin)
+            .run()
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to execute blocks {:?} - {:?}: {:?}",
+                    r.start, r.end, e
+                )
+            });
 
         // Get the existing execution stats and modify it in place.
-        let mut execution_stats_map = block_on(execution_stats_map.lock());
+        let mut execution_stats_map = execution_stats_map.lock().unwrap();
         let exec_stats = execution_stats_map.get_mut(&(r.start, r.end)).unwrap();
-        exec_stats.add_report_data(&report, execution_duration);
+        exec_stats.add_report_data(&report);
         exec_stats.add_aggregate_data();
     });
 
@@ -190,7 +197,7 @@ async fn execute_blocks_parallel(
 
     let execution_stats = execution_stats_map
         .lock()
-        .await
+        .unwrap()
         .clone()
         .into_values()
         .collect();
@@ -225,7 +232,11 @@ fn write_execution_stats_to_csv(
 }
 
 /// Aggregate the execution statistics for an array of execution stats objects.
-fn aggregate_execution_stats(execution_stats: &[ExecutionStats]) -> ExecutionStats {
+fn aggregate_execution_stats(
+    execution_stats: &[ExecutionStats],
+    total_execution_time_sec: u64,
+    witness_generation_time_sec: u64,
+) -> ExecutionStats {
     let mut aggregate_stats = ExecutionStats::default();
     let mut batch_start = u64::MAX;
     let mut batch_end = u64::MIN;
@@ -234,7 +245,6 @@ fn aggregate_execution_stats(execution_stats: &[ExecutionStats]) -> ExecutionSta
         batch_end = max(batch_end, stats.batch_end);
 
         // Accumulate most statistics across all blocks.
-        aggregate_stats.execution_duration_sec += stats.execution_duration_sec;
         aggregate_stats.total_instruction_count += stats.total_instruction_count;
         aggregate_stats.oracle_verify_instruction_count += stats.oracle_verify_instruction_count;
         aggregate_stats.derivation_instruction_count += stats.derivation_instruction_count;
@@ -269,6 +279,10 @@ fn aggregate_execution_stats(execution_stats: &[ExecutionStats]) -> ExecutionSta
     aggregate_stats.batch_start = batch_start;
     aggregate_stats.batch_end = batch_end;
 
+    // Set the total execution time to the total execution time of the entire range.
+    aggregate_stats.total_execution_time_sec = total_execution_time_sec;
+    aggregate_stats.witness_generation_time_sec = witness_generation_time_sec;
+
     aggregate_stats
 }
 
@@ -290,16 +304,25 @@ async fn main() -> Result<()> {
     );
 
     let prover = ProverClient::new();
-    let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;
 
+    let start_time = Instant::now();
+    let host_clis = run_native_data_generation(&data_fetcher, &split_ranges).await;
+    let witness_generation_time_sec = start_time.elapsed().as_secs();
+
+    let start_time = Instant::now();
     let execution_stats = execute_blocks_parallel(host_clis, &prover).await;
+    let total_execution_time_sec = start_time.elapsed().as_secs();
 
     // Sort the execution stats by batch start block.
     let mut sorted_execution_stats = execution_stats.clone();
     sorted_execution_stats.sort_by_key(|stats| stats.batch_start);
     write_execution_stats_to_csv(&sorted_execution_stats, l2_chain_id, &args)?;
 
-    let aggregate_execution_stats = aggregate_execution_stats(&sorted_execution_stats);
+    let aggregate_execution_stats = aggregate_execution_stats(
+        &sorted_execution_stats,
+        total_execution_time_sec,
+        witness_generation_time_sec,
+    );
     println!(
         "Aggregate Execution Stats: \n {}",
         aggregate_execution_stats
