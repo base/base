@@ -92,8 +92,8 @@ var (
 	}
 	DbPathFlag = &cli.StringFlag{
 		Name:    "db-path",
-		Usage:   "Path to the database used to track OP Succinct proof generation",
-		Value:   "./op-proposer/proofs.db",
+		Usage:   "Path to the database folder used to track OP Succinct proof generation. The DB file is always stored at DbPathFlag/{chain_id}/proofs.db",
+		Value:   "./op-proposer",
 		EnvVars: prefixEnvVars("DB_PATH"),
 	}
 	UseCachedDbFlag = &cli.BoolFlag{

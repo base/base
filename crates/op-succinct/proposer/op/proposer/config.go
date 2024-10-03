@@ -2,7 +2,9 @@ package proposer
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -142,6 +144,9 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		log.Fatal(err)
 	}
 
+	dbPath := ctx.String(flags.DbPathFlag.Name)
+	dbPath = filepath.Join(dbPath, fmt.Sprintf("%d", rollupConfig.L2ChainID.Uint64()), "proofs.db")
+
 	return &CLIConfig{
 		// Required Flags
 		L1EthRpc:     ctx.String(flags.L1EthRpcFlag.Name),
@@ -164,7 +169,7 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		DisputeGameType:              uint32(ctx.Uint(flags.DisputeGameTypeFlag.Name)),
 		ActiveSequencerCheckDuration: ctx.Duration(flags.ActiveSequencerCheckDurationFlag.Name),
 		WaitNodeSync:                 ctx.Bool(flags.WaitNodeSyncFlag.Name),
-		DbPath:                       ctx.String(flags.DbPathFlag.Name),
+		DbPath:                       dbPath,
 		UseCachedDb:                  ctx.Bool(flags.UseCachedDbFlag.Name),
 		MaxSpanBatchDeviation:        ctx.Uint64(flags.MaxSpanBatchDeviationFlag.Name),
 		MaxBlockRangePerSpanProof:    ctx.Uint64(flags.MaxBlockRangePerSpanProofFlag.Name),
