@@ -1,4 +1,4 @@
-use std::{fmt, time::Duration};
+use std::fmt;
 
 use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use num_format::{Locale, ToFormattedString};
@@ -10,7 +10,10 @@ use sp1_sdk::{CostEstimator, ExecutionReport};
 pub struct ExecutionStats {
     pub batch_start: u64,
     pub batch_end: u64,
-    pub execution_duration_sec: u64,
+    /// The wall clock time to generate the witness.
+    pub witness_generation_time_sec: u64,
+    /// The wall clock time to execute the range on the machine.
+    pub total_execution_time_sec: u64,
     pub total_instruction_count: u64,
     pub oracle_verify_instruction_count: u64,
     pub derivation_instruction_count: u64,
@@ -58,7 +61,7 @@ impl fmt::Display for ExecutionStats {
         write_stat(
             f,
             "Execution Duration (seconds)",
-            self.execution_duration_sec,
+            self.total_execution_time_sec,
         )?;
         write_stat(f, "Total Instruction Count", self.total_instruction_count)?;
         write_stat(
@@ -119,7 +122,7 @@ impl ExecutionStats {
     }
 
     /// Add the execution report data to the stats.
-    pub fn add_report_data(&mut self, report: &ExecutionReport, execution_duration: Duration) {
+    pub fn add_report_data(&mut self, report: &ExecutionReport) {
         let cycle_tracker = &report.cycle_tracker;
         let get_cycles = |key: &str| *cycle_tracker.get(key).unwrap_or(&0);
 
@@ -134,7 +137,6 @@ impl ExecutionStats {
         self.kzg_eval_cycles = get_cycles("precompile-kzg-eval");
         self.ec_recover_cycles = get_cycles("precompile-ec-recover");
         self.total_sp1_gas = report.estimate_gas();
-        self.execution_duration_sec = execution_duration.as_secs();
     }
 
     /// Add the aggregate statistics data (assumes that the block data and report data have already been added)
@@ -144,6 +146,16 @@ impl ExecutionStats {
         self.transactions_per_block = self.nb_transactions / self.nb_blocks;
         self.gas_used_per_block = self.eth_gas_used / self.nb_blocks;
         self.gas_used_per_transaction = self.eth_gas_used / self.nb_transactions;
+    }
+
+    /// Add timing data.
+    pub fn add_timing_data(
+        &mut self,
+        total_execution_time_sec: u64,
+        witness_generation_time_sec: u64,
+    ) {
+        self.total_execution_time_sec = total_execution_time_sec;
+        self.witness_generation_time_sec = witness_generation_time_sec;
     }
 }
 

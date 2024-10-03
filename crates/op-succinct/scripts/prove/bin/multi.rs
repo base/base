@@ -64,8 +64,11 @@ async fn main() -> Result<()> {
         witnessgen_executor.spawn_witnessgen(&host_cli).await?;
         witnessgen_executor.flush().await?;
     }
-    let execution_duration = start_time.elapsed();
-    println!("Execution Duration: {:?}", execution_duration);
+    let witness_generation_time_sec = start_time.elapsed();
+    println!(
+        "Witness Generation Duration: {:?}",
+        witness_generation_time_sec.as_secs()
+    );
 
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
@@ -115,9 +118,12 @@ async fn main() -> Result<()> {
         stats
             .add_block_data(&data_fetcher, args.start, args.end)
             .await;
-        stats.add_report_data(&report, execution_duration);
+        stats.add_report_data(&report);
         stats.add_aggregate_data();
-
+        stats.add_timing_data(
+            execution_duration.as_secs(),
+            witness_generation_time_sec.as_secs(),
+        );
         println!("Execution Stats: \n{:?}", stats);
 
         // Write to CSV.

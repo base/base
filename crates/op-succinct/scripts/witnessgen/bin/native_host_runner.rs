@@ -9,17 +9,17 @@ async fn main() -> Result<()> {
     init_tracing_subscriber(cfg.v)?;
 
     if cfg.server {
-        let res = start_server(cfg).await;
+        let res = start_server(cfg.clone()).await;
         if res.is_err() {
             std::process::exit(1);
         }
     } else {
-        let res = start_server_and_native_client(cfg).await;
+        let res = start_server_and_native_client(cfg.clone()).await;
         if res.is_err() {
             std::process::exit(1);
         }
     }
 
-    println!("Exiting host program.");
+    println!("Ran host program with end block: {:?}", cfg.l2_block_number);
     std::process::exit(0);
 }

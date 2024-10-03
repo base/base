@@ -10,7 +10,7 @@
     },
     "l2_time": 1691802540,
     "system_config": {
-      "batcherAddr": "0x8f23bb38f531600e5d8fddaaec41f13fab46e98c",
+      "batcherAddr": "0x8F23BB38F531600e5d8FDDaAEC41F13FaB46E98c",
       "overhead": "0xbc",
       "scalar": "0xa6fe0",
       "gasLimit": 30000000,
@@ -40,7 +40,7 @@
   "fjord_time": 1716998400,
   "granite_time": 1723478400,
   "batch_inbox_address": "0xff00000000000000000000000000000011155420",
-  "deposit_contract_address": "0x16fc5058f25648194471939df75cf27a2fdc48bc",
-  "l1_system_config_address": "0x034edd2a225f7f429a63e0f1d2084b9e0a93b538",
-  "protocol_versions_address": "0x79add5713b383daa0a138d3c4780c7a1804a8090"
+  "deposit_contract_address": "0x16Fc5058F25648194471939df75CF27A2fdC48BC",
+  "l1_system_config_address": "0x034edD2A225f7f429A63E0f1D2084B9E0A93b538",
+  "protocol_versions_address": "0x79ADD5713B383DAa0a138d3C4780C7A1804a8090"
 }
