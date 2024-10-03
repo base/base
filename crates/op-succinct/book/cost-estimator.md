@@ -22,6 +22,8 @@ just cost-estimator <start_l2_block> <end_l2_block>
 
 This command will split the block range into smaller ranges as if the `op-succinct-proposer` service was running. It will then fetch the required data for generating the ZKP for each of these ranges, and execute the SP1 `range` program. Once each program finishes, it will collect the statistics and output the aggregate statistics.
 
+> Running the cost estimator for a large block range may be slow on machines with limited network bandwidth to the L2 node. For optimal performance, we recommend using a remote machine with high-speed connectivity to avoid slow witness generation.
+
 ## Example
 
 On Optimism Sepolia, proving the block range 17664000 to 17664125 (125 blocks) takes 4 range proofs and ~11.1B cycles.
