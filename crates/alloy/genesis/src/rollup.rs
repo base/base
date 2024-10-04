@@ -516,12 +516,10 @@ mod tests {
     use rand::Rng;
 
     #[test]
-    #[cfg(feature = "std")]
-    fn arbitrary_rollup_config() {
+    fn test_arbitrary_rollup_config() {
         let mut bytes = [0u8; 1024];
         rand::thread_rng().fill(bytes.as_mut_slice());
-        let _: RollupConfig =
-            RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+        RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
     }
 
     #[test]

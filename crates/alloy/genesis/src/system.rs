@@ -578,12 +578,10 @@ mod test {
     use rand::Rng;
 
     #[test]
-    #[cfg(feature = "std")]
-    fn arbitrary_system_config() {
+    fn test_arbitrary_system_config() {
         let mut bytes = [0u8; 1024];
         rand::thread_rng().fill(bytes.as_mut_slice());
-        let _: SystemConfig =
-            SystemConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+        SystemConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
     }
 
     #[test]
