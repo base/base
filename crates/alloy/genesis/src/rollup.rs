@@ -143,6 +143,11 @@ pub struct RollupConfig {
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let params = match u32::arbitrary(u)? % 3 {
+            0 => OP_MAINNET_BASE_FEE_PARAMS,
+            1 => OP_SEPOLIA_BASE_FEE_PARAMS,
+            _ => BASE_SEPOLIA_BASE_FEE_PARAMS,
+        };
         Ok(Self {
             genesis: ChainGenesis::arbitrary(u)?,
             block_time: u.arbitrary()?,
@@ -152,14 +157,8 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             granite_channel_timeout: u.arbitrary()?,
             l1_chain_id: u.arbitrary()?,
             l2_chain_id: u.arbitrary()?,
-            base_fee_params: BaseFeeParams {
-                max_change_denominator: u.arbitrary()?,
-                elasticity_multiplier: u.arbitrary()?,
-            },
-            canyon_base_fee_params: BaseFeeParams {
-                max_change_denominator: u.arbitrary()?,
-                elasticity_multiplier: u.arbitrary()?,
-            },
+            base_fee_params: params.as_base_fee_params(),
+            canyon_base_fee_params: params.as_canyon_base_fee_params(),
             regolith_time: Option::<u64>::arbitrary(u)?,
             canyon_time: Option::<u64>::arbitrary(u)?,
             delta_time: Option::<u64>::arbitrary(u)?,
