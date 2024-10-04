@@ -28,11 +28,16 @@ alloy-consensus.workspace = true
 # Misc
 derive_more.workspace = true
 
-# `serde` feature dependencies
+# `arbitrary` feature
+arbitrary = { workspace = true, features = ["derive"], optional = true }
+
+# `serde` feature
 serde = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 
 [dev-dependencies]
+arbitrary = { workspace = true, features = ["derive"] }
+rand.workspace = true
 serde_json.workspace = true
 rstest = "0.22.0"
 revm = "14.0.2"
@@ -40,5 +45,6 @@ alloy-sol-types.workspace = true
 
 [features]
 default = ["serde", "std"]
+arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/rand"]
 std = ["op-alloy-consensus/std", "op-alloy-genesis/std"]
 serde = ["dep:serde", "dep:alloy-serde", "op-alloy-consensus/serde", "op-alloy-genesis/serde"]

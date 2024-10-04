@@ -8,6 +8,7 @@ use op_alloy_genesis::ChainGenesis;
 
 /// Block Header Info
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, Default)]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct BlockInfo {
@@ -63,8 +64,8 @@ impl core::fmt::Display for BlockInfo {
 }
 
 /// L2 Block Header Info
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct L2BlockInfo {
     /// The base [BlockInfo]
@@ -74,6 +75,17 @@ pub struct L2BlockInfo {
     /// The sequence number of the L2 block
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity"))]
     pub seq_num: u64,
+}
+
+#[cfg(any(test, feature = "arbitrary"))]
+impl arbitrary::Arbitrary<'_> for L2BlockInfo {
+    fn arbitrary(g: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            block_info: g.arbitrary()?,
+            l1_origin: BlockNumHash { number: g.arbitrary()?, hash: g.arbitrary()? },
+            seq_num: g.arbitrary()?,
+        })
+    }
 }
 
 /// An error that can occur when converting an [OpBlock] to an [L2BlockInfo].
@@ -169,6 +181,22 @@ impl L2BlockInfo {
 #[cfg(feature = "serde")]
 mod tests {
     use super::*;
+    use arbitrary::Arbitrary;
+    use rand::Rng;
+
+    #[test]
+    fn test_arbitrary_block_info() {
+        let mut bytes = [0u8; 1024];
+        rand::thread_rng().fill(bytes.as_mut_slice());
+        BlockInfo::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
+
+    #[test]
+    fn test_arbitrary_l2_block_info() {
+        let mut bytes = [0u8; 1024];
+        rand::thread_rng().fill(bytes.as_mut_slice());
+        L2BlockInfo::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
 
     #[test]
     fn test_block_id_bounds() {
