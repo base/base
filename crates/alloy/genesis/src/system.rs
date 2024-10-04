@@ -14,6 +14,7 @@ pub const CONFIG_UPDATE_EVENT_VERSION_0: B256 = B256::ZERO;
 
 /// System configuration.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SystemConfig {
@@ -573,6 +574,17 @@ mod test {
     use super::*;
     use alloc::vec;
     use alloy_primitives::{b256, hex, LogData, B256};
+    use arbitrary::Arbitrary;
+    use rand::Rng;
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn arbitrary_system_config() {
+        let mut bytes = [0u8; 1024];
+        rand::thread_rng().fill(bytes.as_mut_slice());
+        let _: SystemConfig =
+            SystemConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
 
     #[test]
     #[cfg(feature = "serde")]

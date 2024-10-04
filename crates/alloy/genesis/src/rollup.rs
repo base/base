@@ -140,6 +140,44 @@ pub struct RollupConfig {
     pub da_challenge_address: Option<Address>,
 }
 
+#[cfg(any(test, feature = "arbitrary"))]
+impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            genesis: ChainGenesis::arbitrary(u)?,
+            block_time: u.arbitrary()?,
+            max_sequencer_drift: u.arbitrary()?,
+            seq_window_size: u.arbitrary()?,
+            channel_timeout: u.arbitrary()?,
+            granite_channel_timeout: u.arbitrary()?,
+            l1_chain_id: u.arbitrary()?,
+            l2_chain_id: u.arbitrary()?,
+            base_fee_params: BaseFeeParams {
+                max_change_denominator: u.arbitrary()?,
+                elasticity_multiplier: u.arbitrary()?,
+            },
+            canyon_base_fee_params: BaseFeeParams {
+                max_change_denominator: u.arbitrary()?,
+                elasticity_multiplier: u.arbitrary()?,
+            },
+            regolith_time: Option::<u64>::arbitrary(u)?,
+            canyon_time: Option::<u64>::arbitrary(u)?,
+            delta_time: Option::<u64>::arbitrary(u)?,
+            ecotone_time: Option::<u64>::arbitrary(u)?,
+            fjord_time: Option::<u64>::arbitrary(u)?,
+            granite_time: Option::<u64>::arbitrary(u)?,
+            holocene_time: Option::<u64>::arbitrary(u)?,
+            batch_inbox_address: Address::arbitrary(u)?,
+            deposit_contract_address: Address::arbitrary(u)?,
+            l1_system_config_address: Address::arbitrary(u)?,
+            protocol_versions_address: Address::arbitrary(u)?,
+            superchain_config_address: Option::<Address>::arbitrary(u)?,
+            blobs_enabled_l1_timestamp: Option::<u64>::arbitrary(u)?,
+            da_challenge_address: Option::<Address>::arbitrary(u)?,
+        })
+    }
+}
+
 // Need to manually implement Default because [`BaseFeeParams`] has no Default impl.
 impl Default for RollupConfig {
     fn default() -> Self {
@@ -474,6 +512,17 @@ mod tests {
     use super::*;
     #[cfg(feature = "serde")]
     use alloy_primitives::U256;
+    use arbitrary::Arbitrary;
+    use rand::Rng;
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn arbitrary_rollup_config() {
+        let mut bytes = [0u8; 1024];
+        rand::thread_rng().fill(bytes.as_mut_slice());
+        let _: RollupConfig =
+            RollupConfig::arbitrary(&mut arbitrary::Unstructured::new(&bytes)).unwrap();
+    }
 
     #[test]
     fn test_regolith_active() {

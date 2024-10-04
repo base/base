@@ -4,6 +4,7 @@ use alloy_primitives::Address;
 
 /// The set of network-specific contracts for a given chain.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Default)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "PascalCase"))]
 pub struct AddressList {

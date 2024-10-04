@@ -9,6 +9,7 @@ use alloy_primitives::Address;
 
 /// Level of integration with the superchain.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde_repr::Serialize_repr, serde_repr::Deserialize_repr))]
 #[repr(u8)]
 pub enum SuperchainLevel {
@@ -23,6 +24,7 @@ pub enum SuperchainLevel {
 
 /// AltDA configuration.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AltDAConfig {
     /// AltDA challenge address
@@ -35,6 +37,7 @@ pub struct AltDAConfig {
 
 /// Hardfork configuration.
 #[derive(Debug, Copy, Clone, Default, Hash, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HardForkConfiguration {
     /// Canyon hardfork activation time
@@ -65,6 +68,7 @@ pub struct HardForkConfiguration {
 /// [ccg]: https://github.com/ethereum-optimism/op-geth/blob/optimism/params/config.go#L342
 /// [ccr]: https://github.com/ethereum-optimism/superchain-registry/blob/main/superchain/superchain.go#L80
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ChainConfig {
     /// Chain name (e.g. "Base")

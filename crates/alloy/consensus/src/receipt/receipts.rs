@@ -261,7 +261,7 @@ impl alloy_rlp::Decodable for OpDepositReceiptWithBloom {
     }
 }
 
-#[cfg(all(test, feature = "arbitrary"))]
+#[cfg(any(test, feature = "arbitrary"))]
 impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceipt<T>
 where
     T: arbitrary::Arbitrary<'a>,
@@ -284,7 +284,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "arbitrary"))]
+#[cfg(any(test, feature = "arbitrary"))]
 impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceiptWithBloom<T>
 where
     T: arbitrary::Arbitrary<'a>,

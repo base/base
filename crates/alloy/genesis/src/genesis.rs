@@ -17,6 +17,22 @@ pub struct ChainGenesis {
     pub system_config: Option<SystemConfig>,
 }
 
+#[cfg(any(test, feature = "arbitrary"))]
+impl<'a> arbitrary::Arbitrary<'a> for ChainGenesis {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        let system_config = Option::<SystemConfig>::arbitrary(u)?;
+        let l1_num_hash = BlockNumHash {
+            number: u64::arbitrary(u)?,
+            hash: alloy_primitives::B256::arbitrary(u)?,
+        };
+        let l2_num_hash = BlockNumHash {
+            number: u64::arbitrary(u)?,
+            hash: alloy_primitives::B256::arbitrary(u)?,
+        };
+        Ok(Self { l1: l1_num_hash, l2: l2_num_hash, l2_time: u.arbitrary()?, system_config })
+    }
+}
+
 #[cfg(test)]
 #[cfg(feature = "serde")]
 mod tests {

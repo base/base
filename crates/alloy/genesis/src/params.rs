@@ -64,6 +64,7 @@ pub const fn base_fee_params(chain_id: u64) -> OptimismBaseFeeParams {
 
 /// Optimism Base Fee Configuration
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OptimismBaseFeeParams {
     /// EIP 1559 Elasticity Parameter
