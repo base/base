@@ -55,6 +55,8 @@ struct ProofStatus {
 async fn main() {
     utils::setup_logger();
 
+    dotenv::dotenv().ok();
+
     env::set_var("SKIP_SIMULATION", "true");
 
     let app = Router::new()
@@ -75,10 +77,9 @@ async fn request_span_proof(
     Json(payload): Json<SpanProofRequest>,
 ) -> Result<(StatusCode, Json<ProofResponse>), AppError> {
     info!("Received span proof request: {:?}", payload);
-    dotenv::dotenv().ok();
     // TODO: Save data fetcher, NetworkProver, and NetworkClient globally
     // and access via Store.
-    let data_fetcher = OPSuccinctDataFetcher::new().await;
+    let data_fetcher = OPSuccinctDataFetcher::default();
 
     let host_cli = data_fetcher
         .get_host_cli_args(
@@ -144,7 +145,7 @@ async fn request_agg_proof(
     )?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
-    let fetcher = OPSuccinctDataFetcher::new().await;
+    let fetcher = OPSuccinctDataFetcher::default();
     let headers = fetcher
         .get_header_preimages(&boot_infos, l1_head.into())
         .await?;
@@ -169,7 +170,6 @@ async fn get_proof_status(
     Path(proof_id): Path<String>,
 ) -> Result<(StatusCode, Json<ProofStatus>), AppError> {
     info!("Received proof status request: {:?}", proof_id);
-    dotenv::dotenv().ok();
     let private_key = env::var("SP1_PRIVATE_KEY")?;
 
     let client = NetworkClient::new(&private_key);

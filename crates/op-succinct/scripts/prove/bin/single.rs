@@ -1,5 +1,3 @@
-use std::{env, time::Instant};
-
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
@@ -10,6 +8,7 @@ use op_succinct_host_utils::{
     ProgramType,
 };
 use sp1_sdk::{utils, ProverClient};
+use std::time::Instant;
 
 pub const SINGLE_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/fault-proof-elf");
 
@@ -36,10 +35,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher {
-        l2_rpc: env::var("L2_RPC").expect("L2_RPC is not set."),
-        ..Default::default()
-    };
+    let data_fetcher = OPSuccinctDataFetcher::default();
 
     let l2_safe_head = args.l2_block - 1;
 

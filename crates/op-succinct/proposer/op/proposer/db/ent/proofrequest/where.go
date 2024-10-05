@@ -77,6 +77,11 @@ func ProofRequestTime(v uint64) predicate.ProofRequest {
 	return predicate.ProofRequest(sql.FieldEQ(FieldProofRequestTime, v))
 }
 
+// LastUpdatedTime applies equality check predicate on the "last_updated_time" field. It's identical to LastUpdatedTimeEQ.
+func LastUpdatedTime(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldEQ(FieldLastUpdatedTime, v))
+}
+
 // L1BlockNumber applies equality check predicate on the "l1_block_number" field. It's identical to L1BlockNumberEQ.
 func L1BlockNumber(v uint64) predicate.ProofRequest {
 	return predicate.ProofRequest(sql.FieldEQ(FieldL1BlockNumber, v))
@@ -375,6 +380,46 @@ func ProofRequestTimeIsNil() predicate.ProofRequest {
 // ProofRequestTimeNotNil applies the NotNil predicate on the "proof_request_time" field.
 func ProofRequestTimeNotNil() predicate.ProofRequest {
 	return predicate.ProofRequest(sql.FieldNotNull(FieldProofRequestTime))
+}
+
+// LastUpdatedTimeEQ applies the EQ predicate on the "last_updated_time" field.
+func LastUpdatedTimeEQ(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldEQ(FieldLastUpdatedTime, v))
+}
+
+// LastUpdatedTimeNEQ applies the NEQ predicate on the "last_updated_time" field.
+func LastUpdatedTimeNEQ(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldNEQ(FieldLastUpdatedTime, v))
+}
+
+// LastUpdatedTimeIn applies the In predicate on the "last_updated_time" field.
+func LastUpdatedTimeIn(vs ...uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldIn(FieldLastUpdatedTime, vs...))
+}
+
+// LastUpdatedTimeNotIn applies the NotIn predicate on the "last_updated_time" field.
+func LastUpdatedTimeNotIn(vs ...uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldNotIn(FieldLastUpdatedTime, vs...))
+}
+
+// LastUpdatedTimeGT applies the GT predicate on the "last_updated_time" field.
+func LastUpdatedTimeGT(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldGT(FieldLastUpdatedTime, v))
+}
+
+// LastUpdatedTimeGTE applies the GTE predicate on the "last_updated_time" field.
+func LastUpdatedTimeGTE(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldGTE(FieldLastUpdatedTime, v))
+}
+
+// LastUpdatedTimeLT applies the LT predicate on the "last_updated_time" field.
+func LastUpdatedTimeLT(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldLT(FieldLastUpdatedTime, v))
+}
+
+// LastUpdatedTimeLTE applies the LTE predicate on the "last_updated_time" field.
+func LastUpdatedTimeLTE(v uint64) predicate.ProofRequest {
+	return predicate.ProofRequest(sql.FieldLTE(FieldLastUpdatedTime, v))
 }
 
 // L1BlockNumberEQ applies the EQ predicate on the "l1_block_number" field.

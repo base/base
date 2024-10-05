@@ -30,6 +30,8 @@ type ProofRequest struct {
 	ProverRequestID string `json:"prover_request_id,omitempty"`
 	// ProofRequestTime holds the value of the "proof_request_time" field.
 	ProofRequestTime uint64 `json:"proof_request_time,omitempty"`
+	// LastUpdatedTime holds the value of the "last_updated_time" field.
+	LastUpdatedTime uint64 `json:"last_updated_time,omitempty"`
 	// L1BlockNumber holds the value of the "l1_block_number" field.
 	L1BlockNumber uint64 `json:"l1_block_number,omitempty"`
 	// L1BlockHash holds the value of the "l1_block_hash" field.
@@ -46,7 +48,7 @@ func (*ProofRequest) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proofrequest.FieldProof:
 			values[i] = new([]byte)
-		case proofrequest.FieldID, proofrequest.FieldStartBlock, proofrequest.FieldEndBlock, proofrequest.FieldRequestAddedTime, proofrequest.FieldProofRequestTime, proofrequest.FieldL1BlockNumber:
+		case proofrequest.FieldID, proofrequest.FieldStartBlock, proofrequest.FieldEndBlock, proofrequest.FieldRequestAddedTime, proofrequest.FieldProofRequestTime, proofrequest.FieldLastUpdatedTime, proofrequest.FieldL1BlockNumber:
 			values[i] = new(sql.NullInt64)
 		case proofrequest.FieldType, proofrequest.FieldStatus, proofrequest.FieldProverRequestID, proofrequest.FieldL1BlockHash:
 			values[i] = new(sql.NullString)
@@ -112,6 +114,12 @@ func (pr *ProofRequest) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field proof_request_time", values[i])
 			} else if value.Valid {
 				pr.ProofRequestTime = uint64(value.Int64)
+			}
+		case proofrequest.FieldLastUpdatedTime:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field last_updated_time", values[i])
+			} else if value.Valid {
+				pr.LastUpdatedTime = uint64(value.Int64)
 			}
 		case proofrequest.FieldL1BlockNumber:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -187,6 +195,9 @@ func (pr *ProofRequest) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("proof_request_time=")
 	builder.WriteString(fmt.Sprintf("%v", pr.ProofRequestTime))
+	builder.WriteString(", ")
+	builder.WriteString("last_updated_time=")
+	builder.WriteString(fmt.Sprintf("%v", pr.LastUpdatedTime))
 	builder.WriteString(", ")
 	builder.WriteString("l1_block_number=")
 	builder.WriteString(fmt.Sprintf("%v", pr.L1BlockNumber))

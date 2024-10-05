@@ -165,6 +165,27 @@ func (pru *ProofRequestUpdate) ClearProofRequestTime() *ProofRequestUpdate {
 	return pru
 }
 
+// SetLastUpdatedTime sets the "last_updated_time" field.
+func (pru *ProofRequestUpdate) SetLastUpdatedTime(u uint64) *ProofRequestUpdate {
+	pru.mutation.ResetLastUpdatedTime()
+	pru.mutation.SetLastUpdatedTime(u)
+	return pru
+}
+
+// SetNillableLastUpdatedTime sets the "last_updated_time" field if the given value is not nil.
+func (pru *ProofRequestUpdate) SetNillableLastUpdatedTime(u *uint64) *ProofRequestUpdate {
+	if u != nil {
+		pru.SetLastUpdatedTime(*u)
+	}
+	return pru
+}
+
+// AddLastUpdatedTime adds u to the "last_updated_time" field.
+func (pru *ProofRequestUpdate) AddLastUpdatedTime(u int64) *ProofRequestUpdate {
+	pru.mutation.AddLastUpdatedTime(u)
+	return pru
+}
+
 // SetL1BlockNumber sets the "l1_block_number" field.
 func (pru *ProofRequestUpdate) SetL1BlockNumber(u uint64) *ProofRequestUpdate {
 	pru.mutation.ResetL1BlockNumber()
@@ -321,6 +342,12 @@ func (pru *ProofRequestUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	}
 	if pru.mutation.ProofRequestTimeCleared() {
 		_spec.ClearField(proofrequest.FieldProofRequestTime, field.TypeUint64)
+	}
+	if value, ok := pru.mutation.LastUpdatedTime(); ok {
+		_spec.SetField(proofrequest.FieldLastUpdatedTime, field.TypeUint64, value)
+	}
+	if value, ok := pru.mutation.AddedLastUpdatedTime(); ok {
+		_spec.AddField(proofrequest.FieldLastUpdatedTime, field.TypeUint64, value)
 	}
 	if value, ok := pru.mutation.L1BlockNumber(); ok {
 		_spec.SetField(proofrequest.FieldL1BlockNumber, field.TypeUint64, value)
@@ -498,6 +525,27 @@ func (pruo *ProofRequestUpdateOne) AddProofRequestTime(u int64) *ProofRequestUpd
 // ClearProofRequestTime clears the value of the "proof_request_time" field.
 func (pruo *ProofRequestUpdateOne) ClearProofRequestTime() *ProofRequestUpdateOne {
 	pruo.mutation.ClearProofRequestTime()
+	return pruo
+}
+
+// SetLastUpdatedTime sets the "last_updated_time" field.
+func (pruo *ProofRequestUpdateOne) SetLastUpdatedTime(u uint64) *ProofRequestUpdateOne {
+	pruo.mutation.ResetLastUpdatedTime()
+	pruo.mutation.SetLastUpdatedTime(u)
+	return pruo
+}
+
+// SetNillableLastUpdatedTime sets the "last_updated_time" field if the given value is not nil.
+func (pruo *ProofRequestUpdateOne) SetNillableLastUpdatedTime(u *uint64) *ProofRequestUpdateOne {
+	if u != nil {
+		pruo.SetLastUpdatedTime(*u)
+	}
+	return pruo
+}
+
+// AddLastUpdatedTime adds u to the "last_updated_time" field.
+func (pruo *ProofRequestUpdateOne) AddLastUpdatedTime(u int64) *ProofRequestUpdateOne {
+	pruo.mutation.AddLastUpdatedTime(u)
 	return pruo
 }
 
@@ -687,6 +735,12 @@ func (pruo *ProofRequestUpdateOne) sqlSave(ctx context.Context) (_node *ProofReq
 	}
 	if pruo.mutation.ProofRequestTimeCleared() {
 		_spec.ClearField(proofrequest.FieldProofRequestTime, field.TypeUint64)
+	}
+	if value, ok := pruo.mutation.LastUpdatedTime(); ok {
+		_spec.SetField(proofrequest.FieldLastUpdatedTime, field.TypeUint64, value)
+	}
+	if value, ok := pruo.mutation.AddedLastUpdatedTime(); ok {
+		_spec.AddField(proofrequest.FieldLastUpdatedTime, field.TypeUint64, value)
 	}
 	if value, ok := pruo.mutation.L1BlockNumber(); ok {
 		_spec.SetField(proofrequest.FieldL1BlockNumber, field.TypeUint64, value)

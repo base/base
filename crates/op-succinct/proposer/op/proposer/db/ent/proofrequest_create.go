@@ -77,6 +77,12 @@ func (prc *ProofRequestCreate) SetNillableProofRequestTime(u *uint64) *ProofRequ
 	return prc
 }
 
+// SetLastUpdatedTime sets the "last_updated_time" field.
+func (prc *ProofRequestCreate) SetLastUpdatedTime(u uint64) *ProofRequestCreate {
+	prc.mutation.SetLastUpdatedTime(u)
+	return prc
+}
+
 // SetL1BlockNumber sets the "l1_block_number" field.
 func (prc *ProofRequestCreate) SetL1BlockNumber(u uint64) *ProofRequestCreate {
 	prc.mutation.SetL1BlockNumber(u)
@@ -170,6 +176,9 @@ func (prc *ProofRequestCreate) check() error {
 	if _, ok := prc.mutation.RequestAddedTime(); !ok {
 		return &ValidationError{Name: "request_added_time", err: errors.New(`ent: missing required field "ProofRequest.request_added_time"`)}
 	}
+	if _, ok := prc.mutation.LastUpdatedTime(); !ok {
+		return &ValidationError{Name: "last_updated_time", err: errors.New(`ent: missing required field "ProofRequest.last_updated_time"`)}
+	}
 	return nil
 }
 
@@ -223,6 +232,10 @@ func (prc *ProofRequestCreate) createSpec() (*ProofRequest, *sqlgraph.CreateSpec
 	if value, ok := prc.mutation.ProofRequestTime(); ok {
 		_spec.SetField(proofrequest.FieldProofRequestTime, field.TypeUint64, value)
 		_node.ProofRequestTime = value
+	}
+	if value, ok := prc.mutation.LastUpdatedTime(); ok {
+		_spec.SetField(proofrequest.FieldLastUpdatedTime, field.TypeUint64, value)
+		_node.LastUpdatedTime = value
 	}
 	if value, ok := prc.mutation.L1BlockNumber(); ok {
 		_spec.SetField(proofrequest.FieldL1BlockNumber, field.TypeUint64, value)

@@ -27,6 +27,8 @@ const (
 	FieldProverRequestID = "prover_request_id"
 	// FieldProofRequestTime holds the string denoting the proof_request_time field in the database.
 	FieldProofRequestTime = "proof_request_time"
+	// FieldLastUpdatedTime holds the string denoting the last_updated_time field in the database.
+	FieldLastUpdatedTime = "last_updated_time"
 	// FieldL1BlockNumber holds the string denoting the l1_block_number field in the database.
 	FieldL1BlockNumber = "l1_block_number"
 	// FieldL1BlockHash holds the string denoting the l1_block_hash field in the database.
@@ -47,6 +49,7 @@ var Columns = []string{
 	FieldRequestAddedTime,
 	FieldProverRequestID,
 	FieldProofRequestTime,
+	FieldLastUpdatedTime,
 	FieldL1BlockNumber,
 	FieldL1BlockHash,
 	FieldProof,
@@ -151,6 +154,11 @@ func ByProverRequestID(opts ...sql.OrderTermOption) OrderOption {
 // ByProofRequestTime orders the results by the proof_request_time field.
 func ByProofRequestTime(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldProofRequestTime, opts...).ToFunc()
+}
+
+// ByLastUpdatedTime orders the results by the last_updated_time field.
+func ByLastUpdatedTime(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastUpdatedTime, opts...).ToFunc()
 }
 
 // ByL1BlockNumber orders the results by the l1_block_number field.

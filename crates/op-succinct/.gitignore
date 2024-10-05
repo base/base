@@ -28,7 +28,7 @@ execution-reports/
 **/rollup-config.json
 
 # DB
-db/proofs.db
+db/*
 
 **/bin/op-proposer
 

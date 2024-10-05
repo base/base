@@ -1,5 +1,3 @@
-use std::{fs, time::Instant};
-
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
@@ -10,6 +8,7 @@ use op_succinct_host_utils::{
     ProgramType,
 };
 use sp1_sdk::{utils, ProverClient};
+use std::{fs, time::Instant};
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
@@ -44,7 +43,7 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     let args = Args::parse();
 
-    let data_fetcher = OPSuccinctDataFetcher::new().await;
+    let data_fetcher = OPSuccinctDataFetcher::default();
 
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache

@@ -26,7 +26,7 @@ WORKDIR /app
 COPY ./proposer/op /app/op-proposer-go
 
 # Copy the rollup configs
-COPY ../rollup-configs /rollup-configs
+COPY ../configs /configs
 
 # Change to the server directory and build the application
 WORKDIR /app/op-proposer-go/server

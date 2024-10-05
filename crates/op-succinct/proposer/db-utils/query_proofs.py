@@ -96,14 +96,17 @@ if __name__ == "__main__":
         raise ValueError("L2OO_ADDRESS not found in .env file")
 
     print(f"L2OO_ADDRESS: {L2OO_ADDRESS}")
-    db_path = "../../db/proofs.db"
+    db_path = "../../db/11155420/proofs.db"
 
     # Get all span proofs
     print("\nSpan Proofs:")
     span_proofs = query_span_proofs(db_path)
     
     for proof in span_proofs:
-        print(f"Request ID: {proof.id}, Type: {proof.type}, Start Block: {proof.start_block}, End Block: {proof.end_block}, Status: {proof.status}, Prover Request ID: {proof.prover_request_id}, Time: {proof.request_added_time}")
+        proof_time_difference = None
+        if proof.proof_request_time is not None:
+            proof_time_difference = proof.proof_request_time - proof.request_added_time
+            print(f"Request ID: {proof.id}, Type: {proof.type}, Start Block: {proof.start_block}, End Block: {proof.end_block}, Status: {proof.status}, Prover Request ID: {proof.prover_request_id}, Request Added Time: {proof.request_added_time}, Proof Request Time: {proof.proof_request_time}, Proof Time Difference: {proof_time_difference}")
     
     # Query for aggregation proofs
     print("\nAggregation Proofs:")
