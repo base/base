@@ -26,7 +26,7 @@ COPY --from=optimism-builder /optimism/op-proposer/proposer/bin/op-proposer /usr
 COPY ./proposer/op/op_proposer.sh /usr/local/bin/op_proposer.sh
 
 # Copy the rollup configs
-COPY ../rollup-configs /rollup-configs
+COPY ../configs /configs
 
 # Make the binary and entrypoint executable.
 RUN ls -l /usr/local/bin/

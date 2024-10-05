@@ -43,6 +43,8 @@ type ProofRequestMutation struct {
 	prover_request_id     *string
 	proof_request_time    *uint64
 	addproof_request_time *int64
+	last_updated_time     *uint64
+	addlast_updated_time  *int64
 	l1_block_number       *uint64
 	addl1_block_number    *int64
 	l1_block_hash         *string
@@ -510,6 +512,62 @@ func (m *ProofRequestMutation) ResetProofRequestTime() {
 	delete(m.clearedFields, proofrequest.FieldProofRequestTime)
 }
 
+// SetLastUpdatedTime sets the "last_updated_time" field.
+func (m *ProofRequestMutation) SetLastUpdatedTime(u uint64) {
+	m.last_updated_time = &u
+	m.addlast_updated_time = nil
+}
+
+// LastUpdatedTime returns the value of the "last_updated_time" field in the mutation.
+func (m *ProofRequestMutation) LastUpdatedTime() (r uint64, exists bool) {
+	v := m.last_updated_time
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastUpdatedTime returns the old "last_updated_time" field's value of the ProofRequest entity.
+// If the ProofRequest object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProofRequestMutation) OldLastUpdatedTime(ctx context.Context) (v uint64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastUpdatedTime is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastUpdatedTime requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastUpdatedTime: %w", err)
+	}
+	return oldValue.LastUpdatedTime, nil
+}
+
+// AddLastUpdatedTime adds u to the "last_updated_time" field.
+func (m *ProofRequestMutation) AddLastUpdatedTime(u int64) {
+	if m.addlast_updated_time != nil {
+		*m.addlast_updated_time += u
+	} else {
+		m.addlast_updated_time = &u
+	}
+}
+
+// AddedLastUpdatedTime returns the value that was added to the "last_updated_time" field in this mutation.
+func (m *ProofRequestMutation) AddedLastUpdatedTime() (r int64, exists bool) {
+	v := m.addlast_updated_time
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetLastUpdatedTime resets all changes to the "last_updated_time" field.
+func (m *ProofRequestMutation) ResetLastUpdatedTime() {
+	m.last_updated_time = nil
+	m.addlast_updated_time = nil
+}
+
 // SetL1BlockNumber sets the "l1_block_number" field.
 func (m *ProofRequestMutation) SetL1BlockNumber(u uint64) {
 	m.l1_block_number = &u
@@ -712,7 +770,7 @@ func (m *ProofRequestMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProofRequestMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
 	if m._type != nil {
 		fields = append(fields, proofrequest.FieldType)
 	}
@@ -733,6 +791,9 @@ func (m *ProofRequestMutation) Fields() []string {
 	}
 	if m.proof_request_time != nil {
 		fields = append(fields, proofrequest.FieldProofRequestTime)
+	}
+	if m.last_updated_time != nil {
+		fields = append(fields, proofrequest.FieldLastUpdatedTime)
 	}
 	if m.l1_block_number != nil {
 		fields = append(fields, proofrequest.FieldL1BlockNumber)
@@ -765,6 +826,8 @@ func (m *ProofRequestMutation) Field(name string) (ent.Value, bool) {
 		return m.ProverRequestID()
 	case proofrequest.FieldProofRequestTime:
 		return m.ProofRequestTime()
+	case proofrequest.FieldLastUpdatedTime:
+		return m.LastUpdatedTime()
 	case proofrequest.FieldL1BlockNumber:
 		return m.L1BlockNumber()
 	case proofrequest.FieldL1BlockHash:
@@ -794,6 +857,8 @@ func (m *ProofRequestMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldProverRequestID(ctx)
 	case proofrequest.FieldProofRequestTime:
 		return m.OldProofRequestTime(ctx)
+	case proofrequest.FieldLastUpdatedTime:
+		return m.OldLastUpdatedTime(ctx)
 	case proofrequest.FieldL1BlockNumber:
 		return m.OldL1BlockNumber(ctx)
 	case proofrequest.FieldL1BlockHash:
@@ -858,6 +923,13 @@ func (m *ProofRequestMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetProofRequestTime(v)
 		return nil
+	case proofrequest.FieldLastUpdatedTime:
+		v, ok := value.(uint64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastUpdatedTime(v)
+		return nil
 	case proofrequest.FieldL1BlockNumber:
 		v, ok := value.(uint64)
 		if !ok {
@@ -899,6 +971,9 @@ func (m *ProofRequestMutation) AddedFields() []string {
 	if m.addproof_request_time != nil {
 		fields = append(fields, proofrequest.FieldProofRequestTime)
 	}
+	if m.addlast_updated_time != nil {
+		fields = append(fields, proofrequest.FieldLastUpdatedTime)
+	}
 	if m.addl1_block_number != nil {
 		fields = append(fields, proofrequest.FieldL1BlockNumber)
 	}
@@ -918,6 +993,8 @@ func (m *ProofRequestMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedRequestAddedTime()
 	case proofrequest.FieldProofRequestTime:
 		return m.AddedProofRequestTime()
+	case proofrequest.FieldLastUpdatedTime:
+		return m.AddedLastUpdatedTime()
 	case proofrequest.FieldL1BlockNumber:
 		return m.AddedL1BlockNumber()
 	}
@@ -956,6 +1033,13 @@ func (m *ProofRequestMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddProofRequestTime(v)
+		return nil
+	case proofrequest.FieldLastUpdatedTime:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLastUpdatedTime(v)
 		return nil
 	case proofrequest.FieldL1BlockNumber:
 		v, ok := value.(int64)
@@ -1044,6 +1128,9 @@ func (m *ProofRequestMutation) ResetField(name string) error {
 		return nil
 	case proofrequest.FieldProofRequestTime:
 		m.ResetProofRequestTime()
+		return nil
+	case proofrequest.FieldLastUpdatedTime:
+		m.ResetLastUpdatedTime()
 		return nil
 	case proofrequest.FieldL1BlockNumber:
 		m.ResetL1BlockNumber()

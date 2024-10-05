@@ -18,6 +18,7 @@ var (
 		{Name: "request_added_time", Type: field.TypeUint64},
 		{Name: "prover_request_id", Type: field.TypeString, Nullable: true},
 		{Name: "proof_request_time", Type: field.TypeUint64, Nullable: true},
+		{Name: "last_updated_time", Type: field.TypeUint64},
 		{Name: "l1_block_number", Type: field.TypeUint64, Nullable: true},
 		{Name: "l1_block_hash", Type: field.TypeString, Nullable: true},
 		{Name: "proof", Type: field.TypeBytes, Nullable: true},

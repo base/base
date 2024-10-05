@@ -1,5 +1,3 @@
-use std::fs;
-
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
@@ -9,6 +7,7 @@ use op_succinct_host_utils::{
     get_agg_proof_stdin,
 };
 use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
+use std::fs;
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -66,7 +65,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let prover = ProverClient::new();
-    let fetcher = OPSuccinctDataFetcher::new().await;
+    let fetcher = OPSuccinctDataFetcher::default();
 
     let l2_chain_id = fetcher.get_chain_id(RPCMode::L2).await?;
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, l2_chain_id);

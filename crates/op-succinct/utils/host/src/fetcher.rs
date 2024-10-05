@@ -19,7 +19,7 @@ use tokio::time::sleep;
 use alloy_primitives::keccak256;
 
 use crate::{
-    rollup_config::{merge_rollup_config, save_rollup_config},
+    rollup_config::{get_rollup_config_path, merge_rollup_config, save_rollup_config},
     L2Output, ProgramType,
 };
 
@@ -28,11 +28,8 @@ use crate::{
 /// given block number. It is used to generate the boot info for the native host program.
 /// TODO: Add retries for all requests (3 retries).
 pub struct OPSuccinctDataFetcher {
-    pub l1_rpc: String,
+    pub rpc_config: RPCConfig,
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
-    pub l1_beacon_rpc: String,
-    pub l2_rpc: String,
-    pub l2_node_rpc: String,
     pub l2_provider: Arc<RootProvider<Http<Client>>>,
     pub rollup_config: RollupConfig,
 }
@@ -41,6 +38,14 @@ impl Default for OPSuccinctDataFetcher {
     fn default() -> Self {
         block_on(OPSuccinctDataFetcher::new())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct RPCConfig {
+    l1_rpc: String,
+    l1_beacon_rpc: String,
+    l2_rpc: String,
+    l2_node_rpc: String,
 }
 
 /// The mode corresponding to the chain we are fetching data for.
@@ -59,6 +64,17 @@ pub enum CacheMode {
     DeleteCache,
 }
 
+fn get_rpcs() -> RPCConfig {
+    RPCConfig {
+        l1_rpc: env::var("L1_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string()),
+        l1_beacon_rpc: env::var("L1_BEACON_RPC")
+            .unwrap_or_else(|_| "http://localhost:5052".to_string()),
+        l2_rpc: env::var("L2_RPC").unwrap_or_else(|_| "http://localhost:9545".to_string()),
+        l2_node_rpc: env::var("L2_NODE_RPC")
+            .unwrap_or_else(|_| "http://localhost:5058".to_string()),
+    }
+}
+
 /// The info to fetch for a block.
 pub struct BlockInfo {
     pub block_number: u64,
@@ -67,27 +83,21 @@ pub struct BlockInfo {
 }
 
 impl OPSuccinctDataFetcher {
-    /// Gets the RPC URL's and saves the rollup config for the chain to `rollup-configs/{l2_chain_id}.json`.
+    /// Gets the RPC URL's and saves the rollup config for the chain to the rollup config file.
     pub async fn new() -> Self {
-        dotenv::dotenv().ok();
-        let l1_rpc = env::var("L1_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string());
-        let l1_provider =
-            Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l1_rpc).unwrap()));
-        let l1_beacon_rpc =
-            env::var("L1_BEACON_RPC").unwrap_or_else(|_| "http://localhost:5052".to_string());
-        let l2_rpc = env::var("L2_RPC").unwrap_or_else(|_| "http://localhost:9545".to_string());
-        let l2_node_rpc =
-            env::var("L2_NODE_RPC").unwrap_or_else(|_| "http://localhost:5058".to_string());
-        let l2_provider =
-            Arc::new(ProviderBuilder::default().on_http(Url::from_str(&l2_rpc).unwrap()));
+        let rpc_config = get_rpcs();
+
+        let l1_provider = Arc::new(
+            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l1_rpc).unwrap()),
+        );
+        let l2_provider = Arc::new(
+            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l2_rpc).unwrap()),
+        );
 
         let mut fetcher = OPSuccinctDataFetcher {
-            l1_rpc,
+            rpc_config,
             l1_provider,
-            l1_beacon_rpc,
-            l2_rpc,
             l2_provider,
-            l2_node_rpc,
             rollup_config: RollupConfig::default(),
         };
 
@@ -105,10 +115,10 @@ impl OPSuccinctDataFetcher {
     /// Get the RPC URL for the given RPC mode.
     pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> String {
         match rpc_mode {
-            RPCMode::L1 => self.l1_rpc.clone(),
-            RPCMode::L2 => self.l2_rpc.clone(),
-            RPCMode::L1Beacon => self.l1_beacon_rpc.clone(),
-            RPCMode::L2Node => self.l2_node_rpc.clone(),
+            RPCMode::L1 => self.rpc_config.l1_rpc.clone(),
+            RPCMode::L2 => self.rpc_config.l2_rpc.clone(),
+            RPCMode::L1Beacon => self.rpc_config.l1_beacon_rpc.clone(),
+            RPCMode::L2Node => self.rpc_config.l2_node_rpc.clone(),
         }
     }
 
@@ -453,7 +463,7 @@ impl OPSuccinctDataFetcher {
         }
 
         // Create the path to the rollup config file.
-        let rollup_config_path = format!("{}/rollup-configs/{}.json", workspace_root, l2_chain_id);
+        let rollup_config_path = get_rollup_config_path(l2_chain_id)?;
 
         // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
         // witness data.
@@ -466,13 +476,13 @@ impl OPSuccinctDataFetcher {
             l2_block_number: l2_end_block,
             l2_chain_id: Some(l2_chain_id),
             l2_head: l2_head.0.into(),
-            l2_node_address: Some(self.l2_rpc.clone()),
-            l1_node_address: Some(self.l1_rpc.clone()),
-            l1_beacon_address: Some(self.l1_beacon_rpc.clone()),
+            l2_node_address: Some(self.rpc_config.l2_node_rpc.clone()),
+            l1_node_address: Some(self.rpc_config.l1_rpc.clone()),
+            l1_beacon_address: Some(self.rpc_config.l1_beacon_rpc.clone()),
             data_dir: Some(data_directory.into()),
             exec: Some(exec_directory),
             server: false,
-            rollup_config_path: Some(rollup_config_path.into()),
+            rollup_config_path: Some(rollup_config_path),
             v: std::env::var("VERBOSITY")
                 .unwrap_or("0".to_string())
                 .parse()

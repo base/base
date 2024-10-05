@@ -38,7 +38,7 @@ struct L2OOConfig {
 /// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.
 ///
 /// Specifically, updates the following fields in `opsuccinctl2ooconfig.json`:
-/// - rollup_config_hash: Get the hash of the rollup config in rollup-configs/{l2_chain_id}.json.
+/// - rollup_config_hash: Get the hash of the rollup config from the rollup config file.
 /// - l2_block_time: Get the block time from the rollup config.
 /// - starting_block_number: If `USE_CACHED_STARTING_BLOCK` is `false`, set starting_block_number to 10 blocks before the latest block on L2.
 /// - starting_output_root: Set to the output root of the starting block number.
@@ -95,9 +95,13 @@ async fn update_l2oo_config() -> Result<()> {
         .unwrap();
 
     // Set the submission interval.
-    l2oo_config.submission_interval = env::var("SUBMISSION_INTERVAL")
+    // The order of precedence is:
+    // 1. SUBMISSION_INTERVAL environment variable
+    // 2. 1000 (default)
+    let submission_interval: u64 = env::var("SUBMISSION_INTERVAL")
         .unwrap_or("1000".to_string())
         .parse()?;
+    l2oo_config.submission_interval = submission_interval;
 
     // Set the chain id.
     l2oo_config.chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
@@ -164,14 +168,32 @@ fn find_project_root() -> Option<PathBuf> {
     Some(path)
 }
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// L2 chain ID
+    #[arg(long, default_value = ".env")]
+    env_file: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     // This fetches the .env file from the project root. If the command is invoked in the contracts/ directory,
     // the .env file in the root of the repo is used.
     if let Some(root) = find_project_root() {
-        dotenv::from_path(root.join(".env")).ok();
+        dotenv::from_path(root.join(args.env_file)).ok();
     } else {
-        eprintln!("Warning: Could not find project root. .env file not loaded.");
+        eprintln!(
+            "Warning: Could not find project root. {} file not loaded.",
+            args.env_file
+        );
     }
-    update_l2oo_config().await
+
+    update_l2oo_config().await?;
+
+    Ok(())
 }

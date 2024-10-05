@@ -41,7 +41,6 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 		}
 	}
 	newL2StartBlock := latestL2EndBlock + 1
-	l.Log.Info("deriving span batch for L2 block", "nextBlock", newL2StartBlock)
 
 	rollupClient, err := l.RollupProvider.RollupClient(ctx)
 	if err != nil {
@@ -62,7 +61,7 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 	// Add each span to the DB. If there are no spans, we will not create any proofs.
 	for _, span := range spans {
 		err := l.db.NewEntry("SPAN", span.Start, span.End)
-		l.Log.Info("New SPAN proof request", "start", span.Start, "end", span.End)
+		l.Log.Info("New range proof request.", "start", span.Start, "end", span.End)
 		if err != nil {
 			l.Log.Error("failed to add span to db", "err", err)
 			return err

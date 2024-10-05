@@ -161,7 +161,7 @@ async fn execute_blocks_parallel(
         let execution_stats_map = Arc::clone(&execution_stats_map);
         let handle = tokio::spawn(async move {
             // Create a new data fetcher. This avoids the runtime dropping the provider dispatch task.
-            let data_fetcher = OPSuccinctDataFetcher::new().await;
+            let data_fetcher = OPSuccinctDataFetcher::default();
             let mut exec_stats = ExecutionStats::default();
             exec_stats.add_block_data(&data_fetcher, start, end).await;
             let mut execution_stats_map = execution_stats_map.lock().unwrap();
@@ -292,7 +292,7 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     let args = HostArgs::parse();
-    let data_fetcher = OPSuccinctDataFetcher::new().await;
+    let data_fetcher = OPSuccinctDataFetcher::default();
 
     let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
 

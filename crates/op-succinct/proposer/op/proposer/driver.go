@@ -466,6 +466,7 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 		if err != nil {
 			return err
 		}
+		// TODO: This currently blocks the loop while it waits for the transaction to be confirmed. Up to 3 minutes.
 		receipt, err = l.Txmgr.Send(ctx, txmgr.TxCandidate{
 			TxData:   data,
 			To:       l.Cfg.L2OutputOracleAddr,
@@ -495,6 +496,7 @@ func (l *L2OutputSubmitter) sendCheckpointTransaction(ctx context.Context, block
 	if err != nil {
 		return 0, common.Hash{}, err
 	}
+	// TODO: This currently blocks the loop while it waits for the transaction to be confirmed. Up to 3 minutes.
 	receipt, err = l.Txmgr.Send(ctx, txmgr.TxCandidate{
 		TxData:   data,
 		To:       l.Cfg.L2OutputOracleAddr,

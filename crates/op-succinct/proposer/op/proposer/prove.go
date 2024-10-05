@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"time"
@@ -33,7 +32,9 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 	// Combine the two lists of proofs.
 	reqsToRetry := append(failedReqs, timedOutReqs...)
 
-	l.Log.Info("Retrying all proofs that failed to reach the prover network with a timeout.", "failed", len(failedReqs), "timedOut", len(timedOutReqs))
+	if len(reqsToRetry) > 0 {
+		l.Log.Info("Retrying failed and timed out proofs.", "failed", len(failedReqs), "timedOut", len(timedOutReqs))
+	}
 
 	for _, req := range reqsToRetry {
 		err = l.RetryRequest(req)
@@ -49,7 +50,7 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 	if err != nil {
 		return err
 	}
-	l.Log.Info("Got all pending proofs from DB.", "count", len(reqs))
+	l.Log.Info("Number of Pending Proofs.", "count", len(reqs))
 	for _, req := range reqs {
 		status, proof, err := l.GetProofStatus(req.ProverRequestID)
 		if err != nil {
@@ -58,7 +59,7 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 		}
 		if status == "PROOF_FULFILLED" {
 			// Update the proof in the DB and update status to COMPLETE.
-			l.Log.Info("proof fulfilled", "id", req.ProverRequestID)
+			l.Log.Info("Fulfilled Proof", "id", req.ProverRequestID)
 			err = l.db.AddProof(req.ID, proof)
 			if err != nil {
 				l.Log.Error("failed to update completed proof status", "err", err)
@@ -155,7 +156,7 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 		}
 	}
 	go func(p ent.ProofRequest) {
-		l.Log.Info("requesting proof from server", "proof", p)
+		l.Log.Info("requesting proof from server", "type", p.Type, "start", p.StartBlock, "end", p.EndBlock, "id", p.ID)
 		err = l.db.UpdateProofStatus(nextProofToRequest.ID, "REQ")
 		if err != nil {
 			l.Log.Error("failed to update proof status", "err", err)
@@ -170,7 +171,7 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 				l.Log.Error("failed to revert proof status", "err", err, "proverRequestID", nextProofToRequest.ID)
 			}
 
-			// If the proof fails to request from the server, we should retry it with a smaller span proof.
+			// If the proof fails to be requested, we should add it to the queue to be retried.
 			err = l.RetryRequest(nextProofToRequest)
 			if err != nil {
 				l.Log.Error("failed to retry request", "err", err)
@@ -198,7 +199,7 @@ func (l *L2OutputSubmitter) DeriveAggProofs(ctx context.Context) error {
 		return fmt.Errorf("failed to get next L2OO output: %w", err)
 	}
 
-	l.Log.Info("Determining if next AGG proof can be created from span proofs", "latestBlock", from, "minOutputBlock", minTo.Uint64())
+	l.Log.Info("Checking for AGG proof", "blocksToProve", minTo.Uint64()-from, "latestProvenBlock", from, "minBlockToProveToAgg", minTo.Uint64())
 	created, end, err := l.db.TryCreateAggProofFromSpanProofs(from, minTo.Uint64())
 	if err != nil {
 		return fmt.Errorf("failed to create agg proof from span proofs: %w", err)
@@ -317,7 +318,7 @@ func (l *L2OutputSubmitter) RequestProofFromServer(urlPath string, jsonBody []by
 	defer resp.Body.Close()
 
 	// Read the response body.
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("error reading the response body: %v", err)
 	}
