@@ -13,7 +13,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
@@ -88,7 +87,7 @@ type L2OutputSubmitter struct {
 	l2ooContract L2OOContract
 	l2ooABI      *abi.ABI
 
-	dgfContract *opbindings.DisputeGameFactoryCaller
+	dgfContract *opbindings.L2OutputOracleCaller
 	dgfABI      *abi.ABI
 
 	db db.ProofDB
@@ -157,7 +156,7 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 
 // Create a new submitter for the DisputeGameFactory. Note: This is unused in OP-Succinct.
 func newDGFSubmitter(ctx context.Context, cancel context.CancelFunc, setup DriverSetup) (*L2OutputSubmitter, error) {
-	dgfCaller, err := opbindings.NewDisputeGameFactoryCaller(*setup.Cfg.DisputeGameFactoryAddr, setup.L1Client)
+	dgfCaller, err := opbindings.NewL2OutputOracleCaller(*setup.Cfg.DisputeGameFactoryAddr, setup.L1Client)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create DGF at address %s: %w", setup.Cfg.DisputeGameFactoryAddr, err)
@@ -170,9 +169,9 @@ func newDGFSubmitter(ctx context.Context, cancel context.CancelFunc, setup Drive
 		cancel()
 		return nil, err
 	}
-	log.Info("Connected to DisputeGameFactory", "address", setup.Cfg.DisputeGameFactoryAddr, "version", version)
+	log.Info("Connected to L2OutputOracle", "address", setup.Cfg.DisputeGameFactoryAddr, "version", version)
 
-	parsed, err := opbindings.DisputeGameFactoryMetaData.GetAbi()
+	parsed, err := opbindings.L2OutputOracleMetaData.GetAbi()
 	if err != nil {
 		cancel()
 		return nil, err
@@ -389,23 +388,6 @@ func proposeL2OutputTxData(abi *abi.ABI, output *eth.OutputResponse, proof []byt
 		proof)
 }
 
-func (l *L2OutputSubmitter) ProposeL2OutputDGFTxData(output *eth.OutputResponse) ([]byte, *big.Int, error) {
-	bond, err := l.dgfContract.InitBonds(&bind.CallOpts{}, l.Cfg.DisputeGameType)
-	if err != nil {
-		return nil, nil, err
-	}
-	data, err := proposeL2OutputDGFTxData(l.dgfABI, l.Cfg.DisputeGameType, output)
-	if err != nil {
-		return nil, nil, err
-	}
-	return data, bond, err
-}
-
-// proposeL2OutputDGFTxData creates the transaction data for the DisputeGameFactory's `create` function
-func proposeL2OutputDGFTxData(abi *abi.ABI, gameType uint32, output *eth.OutputResponse) ([]byte, error) {
-	return abi.Pack("create", gameType, output.OutputRoot, math.U256Bytes(new(big.Int).SetUint64(output.BlockRef.Number)))
-}
-
 func (l *L2OutputSubmitter) CheckpointBlockHashTxData(blockNumber *big.Int, blockHash common.Hash) ([]byte, error) {
 	return l.l2ooABI.Pack("checkpointBlockHash", blockNumber, blockHash)
 }
@@ -448,19 +430,7 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 	l.Log.Info("Proposing output root", "output", output.OutputRoot, "block", output.BlockRef)
 	var receipt *types.Receipt
 	if l.Cfg.DisputeGameFactoryAddr != nil {
-		data, bond, err := l.ProposeL2OutputDGFTxData(output)
-		if err != nil {
-			return err
-		}
-		receipt, err = l.Txmgr.Send(ctx, txmgr.TxCandidate{
-			TxData:   data,
-			To:       l.Cfg.DisputeGameFactoryAddr,
-			GasLimit: 0,
-			Value:    bond,
-		})
-		if err != nil {
-			return err
-		}
+		return errors.New("not implemented")
 	} else {
 		data, err := l.ProposeL2OutputTxData(output, proof, l1BlockNum, l1BlockHash)
 		if err != nil {
