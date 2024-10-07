@@ -145,6 +145,15 @@ impl OpTxEnvelope {
         matches!(self, Self::Deposit(_))
     }
 
+    /// Returns true if the transaction is a system transaction.
+    #[inline]
+    pub const fn is_system_transaction(&self) -> bool {
+        match self {
+            Self::Deposit(tx) => tx.is_system_transaction,
+            _ => false,
+        }
+    }
+
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
     pub const fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
         match self {
@@ -301,6 +310,17 @@ mod tests {
     use super::*;
     use alloc::vec;
     use alloy_primitives::{hex, Address, Bytes, TxKind, B256, U256};
+
+    #[test]
+    fn test_system_transaction() {
+        let mut tx = TxDeposit { is_system_transaction: true, ..Default::default() };
+        let tx_envelope = OpTxEnvelope::Deposit(tx.clone());
+        assert!(tx_envelope.is_system_transaction());
+
+        tx.is_system_transaction = false;
+        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        assert!(!tx_envelope.is_system_transaction());
+    }
 
     #[test]
     fn test_encode_decode_deposit() {
