@@ -44,22 +44,26 @@ contract Utils is Test, JSONDecoder {
         // If we are spoofing the admin (used in testing), start prank.
         if (_spoofedAdmin != address(0)) vm.startPrank(_spoofedAdmin);
 
-        Proxy(payable(l2OutputOracleProxy)).upgradeToAndCall(
-            impl,
-            abi.encodeCall(
-                OPSuccinctL2OutputOracle.initialize,
-                (
-                    cfg.submissionInterval,
-                    cfg.l2BlockTime,
-                    cfg.startingBlockNumber,
-                    cfg.startingTimestamp,
-                    cfg.proposer,
-                    cfg.challenger,
-                    cfg.finalizationPeriod,
-                    initParams
-                )
+        bytes memory upgradeCalldata = abi.encodeCall(
+            OPSuccinctL2OutputOracle.initialize,
+            (
+                cfg.submissionInterval,
+                cfg.l2BlockTime,
+                cfg.startingBlockNumber,
+                cfg.startingTimestamp,
+                cfg.proposer,
+                cfg.challenger,
+                cfg.finalizationPeriod,
+                initParams
             )
         );
+
+        // Raw calldata for an upgrade call by a multisig.
+        bytes memory multisigCalldata = abi.encodeWithSelector(Proxy.upgradeToAndCall.selector, impl, upgradeCalldata);
+        console.log("Raw calldata for the upgrade call:");
+        console.logBytes(multisigCalldata);
+
+        Proxy(payable(l2OutputOracleProxy)).upgradeToAndCall(impl, upgradeCalldata);
     }
 
     // Read the config from the json file.
@@ -74,7 +78,7 @@ contract Utils is Test, JSONDecoder {
     // This script updates the rollup config hash and the block number in the config.
     function updateRollupConfig() public {
         // If ENV_FILE is set, pass it to the fetch-rollup-config binary.
-        string memory envFile = vm.envOr("ENV_FILE", string(".env.conduit"));
+        string memory envFile = vm.envOr("ENV_FILE", string(".env"));
 
         // Build the fetch-rollup-config binary. Use the quiet flag to suppress build output.
         string[] memory inputs = new string[](6);

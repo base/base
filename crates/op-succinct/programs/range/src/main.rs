@@ -113,7 +113,7 @@ fn main() {
 
         // The initial payload requires block derivation.
         println!("cycle-tracker-report-start: payload-derivation");
-        let mut payload = driver.produce_payloads().await.unwrap();
+        let mut payload = driver.produce_payload().await.unwrap();
         println!("cycle-tracker-report-end: payload-derivation");
 
         println!("cycle-tracker-start: execution-instantiation");
@@ -180,7 +180,7 @@ fn main() {
 
             println!("cycle-tracker-report-start: payload-derivation");
             // Produce the next payload. If a span batch boundary is passed, the driver will step until the next batch.
-            payload = driver.produce_payloads().await.unwrap();
+            payload = driver.produce_payload().await.unwrap();
             println!("cycle-tracker-report-end: payload-derivation");
         }
 

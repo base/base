@@ -70,8 +70,12 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 
 		timeout := uint64(time.Now().Unix()) > req.ProofRequestTime+l.DriverSetup.Cfg.ProofTimeout
 		if timeout || status == "PROOF_UNCLAIMED" {
+			if timeout {
+				l.Log.Info("proof timed out", "id", req.ProverRequestID)
+			} else {
+				l.Log.Info("proof unclaimed", "id", req.ProverRequestID)
+			}
 			// update status in db to "FAILED"
-			l.Log.Info("proof timed out", "id", req.ProverRequestID)
 			err = l.db.UpdateProofStatus(req.ID, "FAILED")
 			if err != nil {
 				l.Log.Error("failed to update failed proof status", "err", err)
@@ -213,6 +217,8 @@ func (l *L2OutputSubmitter) DeriveAggProofs(ctx context.Context) error {
 
 // Request a proof from the OP Succinct server.
 func (l *L2OutputSubmitter) RequestOPSuccinctProof(p ent.ProofRequest) error {
+	// TODO: Subtract 1 from the start block to get the previous confirmed block. The start block of the new span proof
+	// should be the same as the end block of the previous span proof.
 	prevConfirmedBlock := p.StartBlock - 1
 	var proofId string
 	var err error
