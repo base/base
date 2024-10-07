@@ -1,6 +1,4 @@
-use alloy_consensus::{
-    Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip4844WithSidecar, TxLegacy,
-};
+use alloy_consensus::{Signed, TxEip1559, TxEip2930, TxLegacy};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
 use alloy_rlp::{Decodable, Encodable, Header};
 use derive_more::Display;
@@ -30,9 +28,6 @@ pub enum OpTxType {
     /// EIP-1559 transaction type.
     #[display("eip1559")]
     Eip1559 = 2,
-    /// EIP-4844 transaction type.
-    #[display("eip4844")]
-    Eip4844 = 3,
     /// Optimism Deposit transaction type.
     #[display("deposit")]
     Deposit = 126,
@@ -40,8 +35,7 @@ pub enum OpTxType {
 
 impl OpTxType {
     /// List of all variants.
-    pub const ALL: [Self; 5] =
-        [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Eip4844, Self::Deposit];
+    pub const ALL: [Self; 4] = [Self::Legacy, Self::Eip2930, Self::Eip1559, Self::Deposit];
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
@@ -66,7 +60,6 @@ impl TryFrom<u8> for OpTxType {
             0 => Self::Legacy,
             1 => Self::Eip2930,
             2 => Self::Eip1559,
-            3 => Self::Eip4844,
             126 => Self::Deposit,
             _ => return Err(Eip2718Error::UnexpectedType(value)),
         })
@@ -98,15 +91,6 @@ pub enum OpTxEnvelope {
     /// A [`TxEip1559`] tagged with type 2.
     #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
     Eip1559(Signed<TxEip1559>),
-    /// A TxEip4844 tagged with type 3.
-    /// An EIP-4844 transaction has two network representations:
-    /// 1 - The transaction itself, which is a regular RLP-encoded transaction and used to retrieve
-    /// historical transactions..
-    ///
-    /// 2 - The transaction with a sidecar, which is the form used to
-    /// send transactions to the network.
-    #[cfg_attr(feature = "serde", serde(rename = "0x3", alias = "0x03"))]
-    Eip4844(Signed<TxEip4844Variant>),
     /// A [`TxDeposit`] tagged with type 0x7E.
     #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
     Deposit(TxDeposit),
@@ -127,30 +111,6 @@ impl From<Signed<TxEip2930>> for OpTxEnvelope {
 impl From<Signed<TxEip1559>> for OpTxEnvelope {
     fn from(v: Signed<TxEip1559>) -> Self {
         Self::Eip1559(v)
-    }
-}
-
-impl From<Signed<TxEip4844Variant>> for OpTxEnvelope {
-    fn from(v: Signed<TxEip4844Variant>) -> Self {
-        Self::Eip4844(v)
-    }
-}
-
-impl From<Signed<TxEip4844>> for OpTxEnvelope {
-    fn from(v: Signed<TxEip4844>) -> Self {
-        let (tx, signature, hash) = v.into_parts();
-        Self::Eip4844(Signed::new_unchecked(TxEip4844Variant::TxEip4844(tx), signature, hash))
-    }
-}
-
-impl From<Signed<TxEip4844WithSidecar>> for OpTxEnvelope {
-    fn from(v: Signed<TxEip4844WithSidecar>) -> Self {
-        let (tx, signature, hash) = v.into_parts();
-        Self::Eip4844(Signed::new_unchecked(
-            TxEip4844Variant::TxEip4844WithSidecar(tx),
-            signature,
-            hash,
-        ))
     }
 }
 
@@ -223,7 +183,6 @@ impl OpTxEnvelope {
             Self::Legacy(_) => OpTxType::Legacy,
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
-            Self::Eip4844(_) => OpTxType::Eip4844,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -240,22 +199,6 @@ impl OpTxEnvelope {
                 let payload_length = t.tx().fields_len() + t.signature().rlp_vrs_len();
                 Header { list: true, payload_length }.length() + payload_length
             }
-            Self::Eip4844(t) => match t.tx() {
-                TxEip4844Variant::TxEip4844(tx) => {
-                    let payload_length = tx.fields_len() + t.signature().rlp_vrs_len();
-                    Header { list: true, payload_length }.length() + payload_length
-                }
-                TxEip4844Variant::TxEip4844WithSidecar(tx) => {
-                    let inner_payload_length = tx.tx().fields_len() + t.signature().rlp_vrs_len();
-                    let inner_header = Header { list: true, payload_length: inner_payload_length };
-
-                    let outer_payload_length =
-                        inner_header.length() + inner_payload_length + tx.sidecar.fields_len();
-                    let outer_header = Header { list: true, payload_length: outer_payload_length };
-
-                    outer_header.length() + outer_payload_length
-                }
-            },
             Self::Deposit(t) => {
                 let payload_length = t.fields_len();
                 Header { list: true, payload_length }.length() + payload_length
@@ -309,7 +252,6 @@ impl Decodable2718 for OpTxEnvelope {
         match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
             OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
             OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
-            OpTxType::Eip4844 => Ok(Self::Eip4844(TxEip4844Variant::decode_signed_fields(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
             OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
@@ -329,7 +271,6 @@ impl Encodable2718 for OpTxEnvelope {
             Self::Legacy(_) => None,
             Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
             Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
-            Self::Eip4844(_) => Some(OpTxType::Eip4844 as u8),
             Self::Deposit(_) => Some(OpTxType::Deposit as u8),
         }
     }
@@ -346,9 +287,6 @@ impl Encodable2718 for OpTxEnvelope {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
             Self::Eip1559(tx) => {
-                tx.tx().encode_with_signature(tx.signature(), out, false);
-            }
-            Self::Eip4844(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
             Self::Deposit(tx) => {
