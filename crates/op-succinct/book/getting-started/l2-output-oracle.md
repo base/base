@@ -82,6 +82,14 @@ Submitting verification for [lib/optimism/packages/contracts-bedrock/src/univers
 
 In these deployment logs, `0x9b520F7d8031d45Eb8A1D9fE911038576931ab95` is the address of the Proxy contract for the `OPSuccinctL2OutputOracle`. This deployed Proxy contract will keep track of the state roots of the OP Stack chain.
 
+#### Configure Environment
+
+To use a configurable environment, pass the `ENV_FILE` flag with the path to your `.env` file. By default this is the `.env` in your root directory.
+
+```bash
+ENV_FILE=.env.new forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer ...
+```
+
 ### 6) Add Proxy Address to `.env`
 
 Add the address for the `OPSuccinctL2OutputOracle` proxy contract to the `.env` file in the root directory.

@@ -6,11 +6,11 @@
   "owner": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
   "proposer": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
   "rollupConfigHash": "0x50efb1261373319cd7ba429612d9a18e585627618ec04560e7d27ba7e36d4c05",
-  "startingBlockNumber": 2299525,
-  "startingOutputRoot": "0x02eaaec341031b9f19b16b8570ad0f3ed4c1ce96b353ee24f1ef8c8c1ba3398f",
-  "startingTimestamp": 1728086402,
+  "startingBlockNumber": 2388661,
+  "startingOutputRoot": "0x8ef839cbbc8228ec45ac3a17a1dc7323c0b6aff59e3f9b27a5374dcefedb4417",
+  "startingTimestamp": 1728264674,
   "submissionInterval": 1000,
   "verifierGateway": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
   "aggregationVkey": "0x00e4dc504bcd3355a4bf7382ba15d74e058aa144948edb753879055d243ebad0",
-  "rangeVkeyCommitment": "0x58660c1a1ab2cc77620b051a4d9006883dcb81fa5a856f654bbc5f8739d83868"
+  "rangeVkeyCommitment": "0x33a4ae25566346bb578b113564a7b67e359a22ea59016fdc49e0054f19228e96"
 }

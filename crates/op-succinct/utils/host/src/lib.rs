@@ -10,6 +10,7 @@ use kona_host::{
     kv::{DiskKeyValueStore, MemoryKeyValueStore},
     HostCli,
 };
+use op_alloy_genesis::RollupConfig;
 use op_succinct_client_utils::{
     boot::BootInfoStruct, types::AggregationInputs, BootInfoWithBytesConfig, InMemoryOracle,
 };
@@ -46,16 +47,20 @@ sol! {
 pub fn get_proof_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
     let mut stdin = SP1Stdin::new();
 
+    // Read the rollup config.
     let mut rollup_config_file = File::open(host_cli.rollup_config_path.as_ref().unwrap())?;
     let mut rollup_config_bytes = Vec::new();
     rollup_config_file.read_to_end(&mut rollup_config_bytes)?;
+
+    let ser_config = std::fs::read_to_string(host_cli.rollup_config_path.as_ref().unwrap())?;
+    let rollup_config: RollupConfig = serde_json::from_str(&ser_config)?;
 
     let boot_info = BootInfoWithBytesConfig {
         l1_head: host_cli.l1_head,
         l2_output_root: host_cli.l2_output_root,
         l2_claim: host_cli.l2_claim,
         l2_claim_block: host_cli.l2_block_number,
-        chain_id: host_cli.l2_chain_id.unwrap(),
+        chain_id: rollup_config.l2_chain_id,
         rollup_config_bytes,
     };
     stdin.write(&boot_info);

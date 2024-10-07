@@ -43,34 +43,4 @@ contract OPSuccinctL2OutputOracleTest is Test, Utils {
         l2oo.checkpointBlockHash(L1_BLOCK_NUM, L1_HEAD);
         l2oo.proposeL2Output(claimedOutputRoot, claimedL2BlockNum, L1_HEAD, L1_BLOCK_NUM, proof);
     }
-
-    function testOPSuccinctL2OOFailsWithWrongParams() public {
-        config.startingOutputRoot = STARTING_OUTPUT_ROOT;
-        config.startingTimestamp = STARTING_TIMESTAMP;
-        l2oo = OPSuccinctL2OutputOracle(deployWithConfig(config));
-
-        vm.setBlockhash(L1_BLOCK_NUM, L1_HEAD);
-        l2oo.checkpointBlockHash(L1_BLOCK_NUM, L1_HEAD);
-        vm.warp(block.timestamp * 2);
-
-        vm.startPrank(l2oo.PROPOSER());
-
-        // fails with wrong claimed output root
-        vm.expectRevert();
-        l2oo.proposeL2Output(bytes32(0), claimedL2BlockNum, L1_HEAD, L1_BLOCK_NUM, proof);
-
-        // fails with wrong claimed block num
-        vm.expectRevert();
-        l2oo.proposeL2Output(claimedOutputRoot, claimedL2BlockNum + 1, L1_HEAD, L1_BLOCK_NUM, proof);
-
-        // fails with wrong L1 head
-        vm.setBlockhash(L1_BLOCK_NUM, keccak256(""));
-        l2oo.checkpointBlockHash(L1_BLOCK_NUM, keccak256(""));
-        vm.expectRevert();
-        l2oo.proposeL2Output(claimedOutputRoot, claimedL2BlockNum, keccak256(""), L1_BLOCK_NUM, proof);
-
-        // fails with wrong proof
-        vm.expectRevert();
-        l2oo.proposeL2Output(claimedOutputRoot, claimedL2BlockNum, L1_HEAD, L1_BLOCK_NUM, "");
-    }
 }

@@ -14,6 +14,7 @@ use kona_client::{
 };
 use kona_derive::{
     attributes::StatefulAttributesBuilder,
+    errors::PipelineErrorKind,
     pipeline::{DerivationPipeline, Pipeline, PipelineBuilder, StepResult},
     prelude::{ChainProvider, L2ChainProvider},
     sources::EthereumDataSource,
@@ -21,13 +22,14 @@ use kona_derive::{
         AttributesQueue, BatchQueue, BatchStream, ChannelBank, ChannelReader, FrameQueue,
         L1Retrieval, L1Traversal,
     },
+    traits::{OriginProvider, Signal},
 };
 use kona_mpt::TrieProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use op_alloy_protocol::{BlockInfo, L2BlockInfo};
 use op_alloy_rpc_types_engine::OptimismAttributesWithParent;
 
-use log::{debug, error};
+use log::{info, warn};
 
 /// An oracle-backed derivation pipeline.
 pub type OraclePipeline<O> = DerivationPipeline<
@@ -146,33 +148,49 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
         self.l2_safe_head_header = new_safe_head_header;
     }
 
-    /// Produces the disputed [Vec<OptimismAttributesWithParent>] payloads, starting with the one after
-    /// the L2 output root, for all the payloads derived in a given span batch.
-    pub async fn produce_payloads(&mut self) -> Result<OptimismAttributesWithParent> {
+    /// Produces the disputed [OptimismAttributesWithParent] payload, directly from the pipeline.
+    pub async fn produce_payload(&mut self) -> Result<OptimismAttributesWithParent> {
         // As we start the safe head at the disputed block's parent, we step the pipeline until the
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.
-        let mut attributes = None;
-        while attributes.is_none() {
+        loop {
             match self.pipeline.step(self.l2_safe_head).await {
                 StepResult::PreparedAttributes => {
-                    debug!(target: "client_derivation_driver", "Stepped derivation pipeline")
+                    info!(target: "client_derivation_driver", "Stepped derivation pipeline")
                 }
                 StepResult::AdvancedOrigin => {
-                    debug!(target: "client_derivation_driver", "Advanced origin")
+                    info!(target: "client_derivation_driver", "Advanced origin")
                 }
-                StepResult::OriginAdvanceErr(e) => {
-                    error!(target: "client_derivation_driver", "Failed to advance origin: {:?}", e)
-                }
-                StepResult::StepFailed(e) => {
-                    error!(target: "client_derivation_driver", "Failed to step derivation pipeline: {:?}", e)
+                StepResult::OriginAdvanceErr(e) | StepResult::StepFailed(e) => {
+                    warn!(target: "client_derivation_driver", "Failed to step derivation pipeline: {:?}", e);
+
+                    // Break the loop unless the error signifies that there is not enough data to
+                    // complete the current step. In this case, we retry the step to see if other
+                    // stages can make progress.
+                    match e {
+                        PipelineErrorKind::Temporary(_) => { /* continue */ }
+                        PipelineErrorKind::Reset(_) => {
+                            // Reset the pipeline to the initial L2 safe head and L1 origin,
+                            // and try again.
+                            self.pipeline
+                                .signal(Signal::Reset {
+                                    l2_safe_head: self.l2_safe_head,
+                                    l1_origin: self
+                                        .pipeline
+                                        .origin()
+                                        .ok_or_else(|| anyhow!("Missing L1 origin"))?,
+                                })
+                                .await?;
+                        }
+                        PipelineErrorKind::Critical(_) => return Err(e.into()),
+                    }
                 }
             }
 
-            attributes = self.pipeline.next();
+            if let Some(attrs) = self.pipeline.next() {
+                return Ok(attrs);
+            }
         }
-
-        Ok(attributes.expect("Must be some"))
     }
 
     /// Finds the startup information for the derivation pipeline.
