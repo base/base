@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 //! OP rollup config types.
 
+use alloy_eips::BlockNumHash;
 use alloy_primitives::{Address, B256};
-use alloy_rpc_types_eth::BlockId;
 use serde::{Deserialize, Serialize};
 
 // https://github.com/ethereum-optimism/optimism/blob/c7ad0ebae5dca3bf8aa6f219367a95c15a15ae41/op-service/eth/types.go#L371
@@ -17,13 +17,13 @@ pub struct SystemConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genesis {
-    pub l1: BlockId,
-    pub l2: BlockId,
+    pub l1: BlockNumHash,
+    pub l2: BlockNumHash,
     pub l2_time: u64,
     pub system_config: SystemConfig,
 }
 
-// https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/types.go#L53
+// <https://github.com/ethereum-optimism/optimism/blob/77c91d09eaa44d2c53bec60eb89c5c55737bc325/op-node/rollup/types.go#L66>
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RollupConfig {
     pub genesis: Genesis,
@@ -68,13 +68,16 @@ pub struct RollupConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn test_rollup_config() {
-        let s = r#"{"genesis":{"l1":{"blockHash":"0x438335a20d98863a4c0c97999eb2481921ccd28553eac6f913af7c12aec04108"},"l2":{"blockHash":"0xdbf6a80fef073de06add9b0d14026d6e5a86c85f6d102c36d3d8e9cf89c2afd3"},"l2_time":1686068903,"system_config":{"batcherAddr":"0x6887246668a3b87F54DeB3b94Ba47a6f63F32985","overhead":"0x00000000000000000000000000000000000000000000000000000000000000bc","scalar":"0x00000000000000000000000000000000000000000000000000000000000a6fe0","gasLimit":30000000}},"block_time":2,"max_sequencer_drift":600,"seq_window_size":3600,"channel_timeout":300,"channel_timeout_granite":50,"l1_chain_id":1,"l2_chain_id":10,"regolith_time":0,"canyon_time":1704992401,"delta_time":1708560000,"ecotone_time":1710374401,"batch_inbox_address":"0xFF00000000000000000000000000000000000010","deposit_contract_address":"0xbEb5Fc579115071764c7423A4f12eDde41f106Ed","l1_system_config_address":"0x229047fed2591dbec1eF1118d64F7aF3dB9EB290","protocol_versions_address":"0x8062AbC286f5e7D9428a0Ccb9AbD71e50d93b935","da_challenge_address":"0x0000000000000000000000000000000000000000","da_challenge_window":0,"da_resolve_window":0,"use_plasma":false}"#;
+        let s = r#"{"genesis":{"l1":{"hash":"0x438335a20d98863a4c0c97999eb2481921ccd28553eac6f913af7c12aec04108", "number": 424242 },"l2":{"hash":"0xdbf6a80fef073de06add9b0d14026d6e5a86c85f6d102c36d3d8e9cf89c2afd3", "number": 1337 },"l2_time":1686068903,"system_config":{"batcherAddr":"0x6887246668a3b87F54DeB3b94Ba47a6f63F32985","overhead":"0x00000000000000000000000000000000000000000000000000000000000000bc","scalar":"0x00000000000000000000000000000000000000000000000000000000000a6fe0","gasLimit":30000000}},"block_time":2,"max_sequencer_drift":600,"seq_window_size":3600,"channel_timeout":300,"channel_timeout_granite":50,"l1_chain_id":1,"l2_chain_id":10,"regolith_time":0,"canyon_time":1704992401,"delta_time":1708560000,"ecotone_time":1710374401,"batch_inbox_address":"0xFF00000000000000000000000000000000000010","deposit_contract_address":"0xbEb5Fc579115071764c7423A4f12eDde41f106Ed","l1_system_config_address":"0x229047fed2591dbec1eF1118d64F7aF3dB9EB290","protocol_versions_address":"0x8062AbC286f5e7D9428a0Ccb9AbD71e50d93b935","da_challenge_address":"0x0000000000000000000000000000000000000000","da_challenge_window":0,"da_resolve_window":0,"use_plasma":false}"#;
 
         let deserialize = serde_json::from_str::<RollupConfig>(s).unwrap();
-        assert_eq!(json!(s), json!(serde_json::to_string(&deserialize).unwrap()));
+
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(s).unwrap(),
+            serde_json::to_value(&deserialize).unwrap()
+        );
     }
 }
