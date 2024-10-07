@@ -59,14 +59,17 @@ PayloadAttributesV3: {
 ### Execution
 
 During execution, the EIP-1559 parameters used to calculate the next block base fee should come from the
-`PayloadAttributesV3` type rather than the previous protocol constants, if it is non-null.
+parent header's `nonce` field rather than the previous protocol constants, if it is non-zero.
 
-- If, before Holocene activation, `eip1559Parameters` is non-zero, the attributes are to be considered invalid by the
-  engine.
-- After Holocene activation:
-  - if `eip1559Params` is zero, the [canyon base fee parameter constants](../exec-engine.md#1559-parameters) are
-    used.
-  - if `eip1559Params` are non-null, the values from the attributes are used.
+- If, before Holocene activation, `eip1559Parameters` in the `PayloadAttributesV3` is non-null, the attributes are to
+  be considered invalid by the engine.
+- At and after Holocene activation:
+  - if `eip1559Parameters` in the `PayloadAttributesV3` is null, the attributes are to be considered invalid by the
+    engine.
+  - if `parent_header.nonce` is zero, the [canyon base fee parameter constants](../exec-engine.md#1559-parameters) are
+    used for the block's base fee parameters.
+  - if `parent_header.nonce` is non-zero, the EIP-1559 parameters encoded within the parent header's `nonce` field are
+    used for the block's base fee parameters.
 
 ### Rationale
 
@@ -77,13 +80,14 @@ how it must reference the `SystemConfig` for the `gasLimit` field.
 
 ### `eip1559Params` in Header
 
-Upon Holocene activation, the L2 block header's `nonce` field will consist of the 8-byte `eip1559Params` value.
+Upon Holocene activation, the L2 block header's `nonce` field will consist of the 8-byte `eip1559Params` value from
+the `PayloadAttributesV3`, or the canyon EIP-1559 constants if `eip1559Params` is equal to zero.
 
 #### Header Validity Rules
 
 Prior to Holocene activation, the L2 block header's `nonce` field is valid iff it is equal to `u64(0)`.
 
-After Holocene activation, The L2 block header's `nonce` field is valid iff it is non-zero.
+At and after Holocene activation, The L2 block header's `nonce` field is valid iff it is non-zero.
 
 #### Encoding
 
