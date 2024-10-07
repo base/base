@@ -107,6 +107,7 @@ The `SuperchainERC20Bridge` includes two functions for bridging:
 - `sendERC20`: initializes a cross-chain transfer of a `SuperchainERC20`
 by burning the tokens locally and sending a message to the `SuperchainERC20Bridge`
 on the target chain using the `L2toL2CrossDomainMessenger`.
+Additionaly, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
 - `relayERC20`: process incoming messages from the `L2toL2CrossDomainMessenger`
 and mints the corresponding amount of the `SuperchainERC20`
 
@@ -130,11 +131,13 @@ sequenceDiagram
   participant L2SBB as SuperchainERC20Bridge (Chain B)
   participant SuperERC20_B as SuperchainERC20 (Chain B)
 
-  from->>L2SBA: sendERC20To(tokenAddr, to, amount, chainID)
+  from->>L2SBA: sendERC20(tokenAddr, to, amount, chainID)
   L2SBA->>SuperERC20_A: __crosschainBurn(from, amount)
   SuperERC20_A-->SuperERC20_A: emit CrosschainBurnt(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
+  Messenger_A->>L2SBA: return msgHash_ 
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
+  L2SBA->>from: return msgHash_ 
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: __crosschainMint(to, amount)
@@ -147,13 +150,14 @@ sequenceDiagram
 An example implementation for the `sendERC20` and `relayERC20` functions is provided.
 
 ```solidity
-function sendERC20(SuperchainERC20 _token, address _to, uint256 _amount, uint256 _chainId) external {
+function sendERC20(SuperchainERC20 _token, address _to, uint256 _amount, uint256 _chainId) external returns (bytes32 msgHash_) {
   _token.__crosschainBurn(msg.sender, _amount);
 
   bytes memory _message = abi.encodeCall(this.relayERC20, (_token, msg.sender, _to, _amount));
-  L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
+
+  msgHash_ = L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
   
-  emit SendERC20(address(_token), msg.sender, _to, _amount, _chainId);
+  emit SentERC20(address(_token), msg.sender, _to, _amount, _chainId);
 }
 
 function relayERC20(SuperchainERC20 _token, address _from, address _to, uint256 _amount) external {
@@ -164,7 +168,7 @@ function relayERC20(SuperchainERC20 _token, address _from, address _to, uint256 
 
   _token.__crosschainMint(_to, _amount);
 
-  emit RelayERC20(address(_token), _from, _to, _amount, _source);
+  emit RelayedERC20(address(_token), _from, _to, _amount, _source);
 }
 ```
 

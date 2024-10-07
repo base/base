@@ -860,8 +860,10 @@ which is included as part of the the `ICrosschainERC20`
 [interface](./token-bridging.md#__crosschainburn)
 implemented by the `SuperchainERC20` standard.
 
+Returns the `msgHash_` crafted by the `L2ToL2CrossChainMessenger`.
+
 ```solidity
-sendERC20(address _tokenAddress, address _to, uint256 _amount, uint256 _chainId)
+sendERC20(address _tokenAddress, address _to, uint256 _amount, uint256 _chainId) returns (bytes32 msgHash_)
 ```
 
 #### `relayERC20`
@@ -916,11 +918,13 @@ sequenceDiagram
   participant L2SBB as SuperchainERC20Bridge (Chain B)
   participant SuperERC20_B as SuperchainERC20 (Chain B)
 
-  from->>L2SBA: sendERC20To(tokenAddr, to, amount, chainID)
+  from->>L2SBA: sendERC20(tokenAddr, to, amount, chainID)
   L2SBA->>SuperERC20_A: __crosschainBurn(from, amount)
   SuperERC20_A-->SuperERC20_A: emit SuperchainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
+  Messenger_A->>L2SBA: return msgHash_ 
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
+  L2SBA->>from: return msgHash_ 
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: __crosschainMint(to, amount)
