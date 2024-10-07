@@ -1,9 +1,7 @@
 use super::OpTxType;
-#[cfg(not(feature = "std"))]
-use alloc::vec::Vec;
-use alloy_consensus::{SignableTransaction, Signed, Transaction};
+use alloy_consensus::Transaction;
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{keccak256, Address, Bytes, ChainId, Signature, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, ChainId, TxKind, B256, U256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
 };
@@ -240,28 +238,6 @@ impl Decodable for TxDeposit {
         }
 
         Self::decode_fields(data)
-    }
-}
-
-impl SignableTransaction<Signature> for TxDeposit {
-    fn set_chain_id(&mut self, _chain_id: ChainId) {}
-
-    fn payload_len_for_signature(&self) -> usize {
-        self.encoded_len(false)
-    }
-
-    fn encode_for_signing(&self, out: &mut dyn alloy_rlp::BufMut) {
-        self.encode_inner(out, false);
-    }
-
-    fn into_signed(self, signature: Signature) -> alloy_consensus::Signed<Self> {
-        let payload_length = self.encoded_len(false) + signature.rlp_vrs_len();
-        let mut out = Vec::with_capacity(payload_length);
-        self.encode_inner(&mut out, false);
-        signature.write_rlp_vrs(&mut out);
-        let hash = keccak256(out);
-
-        Signed::new_unchecked(self, signature, hash)
     }
 }
 
