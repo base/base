@@ -39,7 +39,7 @@ impl OpTxType {
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for OpTxType {
+impl arbitrary::Arbitrary<'_> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let i = u.choose_index(Self::ALL.len())?;
         Ok(Self::ALL[i])

@@ -424,7 +424,7 @@ pub(super) mod serde_bincode_compat {
         }
     }
 
-    impl<'a> SerializeAs<super::TxDeposit> for TxDeposit<'a> {
+    impl SerializeAs<super::TxDeposit> for TxDeposit<'_> {
         fn serialize_as<S>(source: &super::TxDeposit, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: Serializer,

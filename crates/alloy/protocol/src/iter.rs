@@ -22,7 +22,7 @@ impl<'a> From<&'a [u8]> for FrameIter<'a> {
     }
 }
 
-impl<'a> Iterator for FrameIter<'a> {
+impl Iterator for FrameIter<'_> {
     type Item = Result<Frame, FrameParseError>;
 
     fn next(&mut self) -> Option<Self::Item> {
