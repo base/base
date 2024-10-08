@@ -1,7 +1,7 @@
 //! Chain Config Types
 
 use crate::{
-    base_fee_params, AddressList, ChainGenesis, OptimismBaseFeeParams, RollupConfig,
+    base_fee_params, AddressList, ChainGenesis, OpBaseFeeParams, RollupConfig,
     GRANITE_CHANNEL_TIMEOUT,
 };
 use alloc::string::String;
@@ -134,7 +134,7 @@ pub struct ChainConfig {
     pub data_availability_type: String,
     /// Optimism configuration
     #[cfg_attr(feature = "serde", serde(rename = "optimism"))]
-    pub optimism: Option<OptimismBaseFeeParams>,
+    pub optimism: Option<OpBaseFeeParams>,
 
     // -- Optional Features --
     /// Alternative DA configuration
