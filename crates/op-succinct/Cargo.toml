@@ -71,6 +71,7 @@ alloy-sol-types = { version = "0.8" }
 op-alloy-consensus = { version = "0.3.3", default-features = false }
 op-alloy-genesis = { version = "0.3.3", default-features = false }
 op-alloy-protocol = { version = "0.3.3", default-features = false }
+op-alloy-rpc-types = { version = "0.3.3", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.3.3", default-features = false }
 
 # sp1

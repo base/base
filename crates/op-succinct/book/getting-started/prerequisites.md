@@ -20,7 +20,7 @@ The following RPC endpoints must be accessible:
 - L2 Execution Node (`op-geth`): Archive node with hash state scheme.
   - `debug_getRawHeader`, `debug_getRawTransaction`, `debug_getRawBlock`, `debug_getExecutionWitness`, `debug_dbGet`
 - L2 Optimism Node (`op-node`)
-  - `optimism_outputAtBlock`, `optimism_rollupConfig`, `optimism_syncStatus`
+  - `optimism_outputAtBlock`, `optimism_rollupConfig`, `optimism_syncStatus`, `optimism_safeHeadAtL1Block`.
 
 If you do not have access to an L2 OP Geth node + rollup node for your OP Stack chain, you can follow the [L2 node setup instructions](../node-setup.md) to spin them up.
 
