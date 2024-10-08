@@ -83,7 +83,7 @@ impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[doc(alias = "OptimismTxReceiptFields")]
-pub struct OptimismTransactionReceiptFields {
+pub struct OpTransactionReceiptFields {
     /// L1 block info.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -130,15 +130,15 @@ mod l1_fee_scalar_serde {
     }
 }
 
-impl From<OptimismTransactionReceiptFields> for OtherFields {
-    fn from(value: OptimismTransactionReceiptFields) -> Self {
+impl From<OpTransactionReceiptFields> for OtherFields {
+    fn from(value: OpTransactionReceiptFields) -> Self {
         serde_json::to_value(value).unwrap().try_into().unwrap()
     }
 }
 
 /// L1 block info extracted from inout of first transaction in every block.
 ///
-/// The subset of [`OptimismTransactionReceiptFields`], that encompasses L1 block
+/// The subset of [`OpTransactionReceiptFields`], that encompasses L1 block
 /// info:
 /// <https://github.com/ethereum-optimism/op-geth/blob/f2e69450c6eec9c35d56af91389a1c47737206ca/core/types/receipt.go#L87-L87>
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -224,7 +224,7 @@ mod tests {
 
     #[test]
     fn serialize_empty_optimism_transaction_receipt_fields_struct() {
-        let op_fields = OptimismTransactionReceiptFields::default();
+        let op_fields = OpTransactionReceiptFields::default();
 
         let json = serde_json::to_value(op_fields).unwrap();
         assert_eq!(json, json!({}));
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn serialize_l1_fee_scalar() {
-        let op_fields = OptimismTransactionReceiptFields {
+        let op_fields = OpTransactionReceiptFields {
             l1_block_info: L1BlockInfo { l1_fee_scalar: Some(0.678), ..Default::default() },
             ..Default::default()
         };
@@ -248,19 +248,19 @@ mod tests {
             "l1FeeScalar": "0.678"
         });
 
-        let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
+        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
         assert_eq!(op_fields.l1_block_info.l1_fee_scalar, Some(0.678f64));
 
         let json = json!({
             "l1FeeScalar": Value::Null
         });
 
-        let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
+        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
         assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
 
         let json = json!({});
 
-        let op_fields: OptimismTransactionReceiptFields = serde_json::from_value(json).unwrap();
+        let op_fields: OpTransactionReceiptFields = serde_json::from_value(json).unwrap();
         assert_eq!(op_fields.l1_block_info.l1_fee_scalar, None);
     }
 }

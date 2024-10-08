@@ -18,5 +18,5 @@ pub mod safe_head;
 pub mod sync;
 pub mod transaction;
 
-pub use receipt::{OpTransactionReceipt, OptimismTransactionReceiptFields};
-pub use transaction::{OptimismTransactionFields, Transaction};
+pub use receipt::{OpTransactionReceipt, OpTransactionReceiptFields};
+pub use transaction::{OpTransactionFields, Transaction};

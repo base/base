@@ -127,7 +127,7 @@ impl alloy_network_primitives::TransactionResponse for Transaction {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[doc(alias = "OptimismTxFields")]
 #[serde(rename_all = "camelCase")]
-pub struct OptimismTransactionFields {
+pub struct OpTransactionFields {
     /// The ETH value to mint on L2
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub mint: Option<u128>,
@@ -143,8 +143,8 @@ pub struct OptimismTransactionFields {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl From<OptimismTransactionFields> for OtherFields {
-    fn from(value: OptimismTransactionFields) -> Self {
+impl From<OpTransactionFields> for OtherFields {
+    fn from(value: OpTransactionFields) -> Self {
         serde_json::to_value(value).unwrap().try_into().unwrap()
     }
 }

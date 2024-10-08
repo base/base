@@ -6,14 +6,14 @@ use serde::de::Error;
 /// Container type for all Optimism specific fields in a genesis file.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OptimismChainInfo {
+pub struct OpChainInfo {
     /// Genesis information
     pub genesis_info: Option<OptimismGenesisInfo>,
     /// Base fee information
     pub base_fee_info: Option<OptimismBaseFeeInfo>,
 }
 
-impl OptimismChainInfo {
+impl OpChainInfo {
     /// Extracts the Optimism specific fields from a genesis file. These fields are expected to be
     /// contained in the `genesis.config` under `extra_fields` property.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
@@ -21,7 +21,7 @@ impl OptimismChainInfo {
     }
 }
 
-impl TryFrom<&OtherFields> for OptimismChainInfo {
+impl TryFrom<&OtherFields> for OpChainInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -172,11 +172,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = OptimismChainInfo::extract_from(&others).unwrap();
+        let chain_info = OpChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OptimismChainInfo {
+            OpChainInfo {
                 genesis_info: Some(OptimismGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
@@ -194,11 +194,11 @@ mod tests {
             }
         );
 
-        let chain_info = OptimismChainInfo::try_from(&others).unwrap();
+        let chain_info = OpChainInfo::try_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OptimismChainInfo {
+            OpChainInfo {
                 genesis_info: Some(OptimismGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
@@ -232,11 +232,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(chain_info).unwrap();
-        let chain_info = OptimismChainInfo::extract_from(&others).unwrap();
+        let chain_info = OpChainInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             chain_info,
-            OptimismChainInfo {
+            OpChainInfo {
                 genesis_info: Some(OptimismGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
