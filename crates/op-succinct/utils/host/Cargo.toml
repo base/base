@@ -31,6 +31,7 @@ op-succinct-client-utils.workspace = true
 
 # op-alloy
 op-alloy-genesis.workspace = true
+op-alloy-rpc-types.workspace = true
 
 # kona
 kona-host.workspace = true

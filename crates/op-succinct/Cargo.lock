@@ -4213,6 +4213,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-alloy-rpc-types"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "547d29c5ab957ff32e14edddb93652dad748d2ef6cbe4b0fe8615ce06b0a3ddb"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-network-primitives",
+ "alloy-primitives 0.8.5",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "op-alloy-consensus",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "op-alloy-rpc-types-engine"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4273,6 +4290,7 @@ dependencies = [
  "kona-primitives",
  "num-format",
  "op-alloy-genesis",
+ "op-alloy-rpc-types",
  "op-succinct-client-utils",
  "reqwest 0.12.8",
  "rkyv 0.7.45",
@@ -6526,7 +6544,7 @@ dependencies = [
 [[package]]
 name = "sp1-lib"
 version = "2.0.0"
-source = "git+https://github.com/succinctlabs/sp1.git?branch=tamir/v1.3.0-rc2#a8db6b19673ed7f5bf7007faff1d2ef177713e3b"
+source = "git+https://github.com/succinctlabs/sp1.git?branch=tamir/v1.3.0-rc2#dcd99a39ddc33bc8d2867a6d4c59bf5a22080dbd"
 dependencies = [
  "bincode",
  "serde",
