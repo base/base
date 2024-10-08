@@ -66,7 +66,7 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     /// See also <https://github.com/ethereum/execution-apis/blob/6709c2a795b707202e93c4f2867fa0bf2640a84f/src/engine/shanghai.md#engine_forkchoiceupdatedv2>
     ///
     /// OP modifications:
-    /// - The `payload_attributes` parameter is extended with the `OptimismPayloadAttributes` type
+    /// - The `payload_attributes` parameter is extended with the [`OpPayloadAttributes`] type
     ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
     async fn fork_choice_updated_v2(
         &self,
@@ -82,7 +82,7 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     /// OP modifications:
     /// - Must be called with an Ecotone payload
     /// - Attributes must contain the parent beacon block root field
-    /// - The `payload_attributes` parameter is extended with the `OptimismPayloadAttributes` type
+    /// - The `payload_attributes` parameter is extended with the [`OpPayloadAttributes`] type
     ///   as described in <https://specs.optimism.io/protocol/exec-engine.html#extended-payloadattributesv2>
     async fn fork_choice_updated_v3(
         &self,

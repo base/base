@@ -8,9 +8,9 @@ use serde::de::Error;
 #[serde(rename_all = "camelCase")]
 pub struct OpChainInfo {
     /// Genesis information
-    pub genesis_info: Option<OptimismGenesisInfo>,
+    pub genesis_info: Option<OpGenesisInfo>,
     /// Base fee information
-    pub base_fee_info: Option<OptimismBaseFeeInfo>,
+    pub base_fee_info: Option<OpBaseFeeInfo>,
 }
 
 impl OpChainInfo {
@@ -25,8 +25,8 @@ impl TryFrom<&OtherFields> for OpChainInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        let genesis_info = OptimismGenesisInfo::try_from(others).ok();
-        let base_fee_info = OptimismBaseFeeInfo::try_from(others).ok();
+        let genesis_info = OpGenesisInfo::try_from(others).ok();
+        let base_fee_info = OpBaseFeeInfo::try_from(others).ok();
 
         Ok(Self { genesis_info, base_fee_info })
     }
@@ -35,7 +35,7 @@ impl TryFrom<&OtherFields> for OpChainInfo {
 /// The Optimism-specific genesis block specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OptimismGenesisInfo {
+pub struct OpGenesisInfo {
     /// bedrock block number
     pub bedrock_block: Option<u64>,
     /// regolith hardfork timestamp
@@ -52,14 +52,14 @@ pub struct OptimismGenesisInfo {
     pub holocene_time: Option<u64>,
 }
 
-impl OptimismGenesisInfo {
+impl OpGenesisInfo {
     /// Extract the Optimism-specific genesis info from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
         Self::try_from(others).ok()
     }
 }
 
-impl TryFrom<&OtherFields> for OptimismGenesisInfo {
+impl TryFrom<&OtherFields> for OpGenesisInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -70,7 +70,7 @@ impl TryFrom<&OtherFields> for OptimismGenesisInfo {
 /// The Optimism-specific base fee specification.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OptimismBaseFeeInfo {
+pub struct OpBaseFeeInfo {
     /// EIP-1559 elasticity
     pub eip1559_elasticity: Option<u64>,
     /// EIP-1559 denominator
@@ -79,7 +79,7 @@ pub struct OptimismBaseFeeInfo {
     pub eip1559_denominator_canyon: Option<u64>,
 }
 
-impl OptimismBaseFeeInfo {
+impl OpBaseFeeInfo {
     /// Extracts the Optimism base fee info by looking for the `optimism` key. It is intended to be
     /// parsed from a genesis file.
     pub fn extract_from(others: &OtherFields) -> Option<Self> {
@@ -87,7 +87,7 @@ impl OptimismBaseFeeInfo {
     }
 }
 
-impl TryFrom<&OtherFields> for OptimismBaseFeeInfo {
+impl TryFrom<&OtherFields> for OpBaseFeeInfo {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
@@ -115,11 +115,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(genesis_info).unwrap();
-        let genesis_info = OptimismGenesisInfo::extract_from(&others).unwrap();
+        let genesis_info = OpGenesisInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             genesis_info,
-            OptimismGenesisInfo {
+            OpGenesisInfo {
                 bedrock_block: Some(10),
                 regolith_time: Some(12),
                 canyon_time: Some(0),
@@ -144,11 +144,11 @@ mod tests {
         "#;
 
         let others: OtherFields = serde_json::from_str(base_fee_info).unwrap();
-        let base_fee_info = OptimismBaseFeeInfo::extract_from(&others).unwrap();
+        let base_fee_info = OpBaseFeeInfo::extract_from(&others).unwrap();
 
         assert_eq!(
             base_fee_info,
-            OptimismBaseFeeInfo {
+            OpBaseFeeInfo {
                 eip1559_elasticity: Some(0),
                 eip1559_denominator: Some(8),
                 eip1559_denominator_canyon: Some(8),
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(
             chain_info,
             OpChainInfo {
-                genesis_info: Some(OptimismGenesisInfo {
+                genesis_info: Some(OpGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -186,7 +186,7 @@ mod tests {
                     granite_time: None,
                     holocene_time: None,
                 }),
-                base_fee_info: Some(OptimismBaseFeeInfo {
+                base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(
             chain_info,
             OpChainInfo {
-                genesis_info: Some(OptimismGenesisInfo {
+                genesis_info: Some(OpGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
@@ -208,7 +208,7 @@ mod tests {
                     granite_time: None,
                     holocene_time: None,
                 }),
-                base_fee_info: Some(OptimismBaseFeeInfo {
+                base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
                     eip1559_denominator: Some(8),
                     eip1559_denominator_canyon: Some(8),
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(
             chain_info,
             OpChainInfo {
-                genesis_info: Some(OptimismGenesisInfo {
+                genesis_info: Some(OpGenesisInfo {
                     bedrock_block: Some(10),
                     regolith_time: Some(12),
                     canyon_time: Some(0),
