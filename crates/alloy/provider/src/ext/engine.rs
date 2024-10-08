@@ -8,8 +8,8 @@ use alloy_rpc_types_engine::{
 };
 use alloy_transport::{Transport, TransportResult};
 use op_alloy_rpc_types_engine::{
-    OptimismExecutionPayloadEnvelopeV3, OptimismExecutionPayloadEnvelopeV4,
-    OptimismPayloadAttributes, ProtocolVersion, SuperchainSignal,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpPayloadAttributes,
+    ProtocolVersion, SuperchainSignal,
 };
 
 /// Extension trait that gives access to Optimism engine API RPC methods.
@@ -71,7 +71,7 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OptimismPayloadAttributes>,
+        payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Cancun
@@ -87,7 +87,7 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OptimismPayloadAttributes>,
+        payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated>;
 
     /// Retrieves an execution payload from a previously started build process, as specified for the
@@ -113,11 +113,11 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// OP modifications:
-    /// - the response type is extended to [`OptimismExecutionPayloadEnvelopeV3`].
+    /// - the response type is extended to [`OpExecutionPayloadEnvelopeV3`].
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OptimismExecutionPayloadEnvelopeV3>;
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV3>;
 
     /// Returns the most recent version of the payload that is available in the corresponding
     /// payload build process at the time of receiving this call.
@@ -128,11 +128,11 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     /// > Provider software MAY stop the corresponding build process after serving this call.
     ///
     /// OP modifications:
-    /// - the response type is extended to [`OptimismExecutionPayloadEnvelopeV4`].
+    /// - the response type is extended to [`OpExecutionPayloadEnvelopeV4`].
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OptimismExecutionPayloadEnvelopeV4>;
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV4>;
 
     /// Returns the execution payload bodies by the given hash.
     ///
@@ -232,7 +232,7 @@ where
     async fn fork_choice_updated_v2(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OptimismPayloadAttributes>,
+        payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV2", (fork_choice_state, payload_attributes))
@@ -242,7 +242,7 @@ where
     async fn fork_choice_updated_v3(
         &self,
         fork_choice_state: ForkchoiceState,
-        payload_attributes: Option<OptimismPayloadAttributes>,
+        payload_attributes: Option<OpPayloadAttributes>,
     ) -> TransportResult<ForkchoiceUpdated> {
         self.client()
             .request("engine_forkchoiceUpdatedV3", (fork_choice_state, payload_attributes))
@@ -259,14 +259,14 @@ where
     async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OptimismExecutionPayloadEnvelopeV3> {
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV3> {
         self.client().request("engine_getPayloadV3", (payload_id,)).await
     }
 
     async fn get_payload_v4(
         &self,
         payload_id: PayloadId,
-    ) -> TransportResult<OptimismExecutionPayloadEnvelopeV4> {
+    ) -> TransportResult<OpExecutionPayloadEnvelopeV4> {
         self.client().request("engine_getPayloadV4", (payload_id,)).await
     }
 

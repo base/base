@@ -10,13 +10,13 @@
 extern crate alloc;
 
 mod attributes;
-pub use attributes::{OptimismAttributesWithParent, OptimismPayloadAttributes};
+pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
 
 mod payload_v3;
-pub use payload_v3::OptimismExecutionPayloadEnvelopeV3;
+pub use payload_v3::OpExecutionPayloadEnvelopeV3;
 
 mod payload_v4;
-pub use payload_v4::OptimismExecutionPayloadEnvelopeV4;
+pub use payload_v4::OpExecutionPayloadEnvelopeV4;
 
 mod superchain;
 pub use superchain::{
