@@ -14,7 +14,7 @@ var (
 		{Name: "type", Type: field.TypeEnum, Enums: []string{"SPAN", "AGG"}},
 		{Name: "start_block", Type: field.TypeUint64},
 		{Name: "end_block", Type: field.TypeUint64},
-		{Name: "status", Type: field.TypeEnum, Enums: []string{"UNREQ", "REQ", "FAILED", "COMPLETE"}},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"UNREQ", "WITNESSGEN", "PROVING", "FAILED", "COMPLETE"}},
 		{Name: "request_added_time", Type: field.TypeUint64},
 		{Name: "prover_request_id", Type: field.TypeString, Nullable: true},
 		{Name: "proof_request_time", Type: field.TypeUint64, Nullable: true},

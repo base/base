@@ -17,7 +17,8 @@ type ProofDB struct {
 	client *ent.Client
 }
 
-// Initialize the database and return a handle to it. If useCachedDb is false, the existing DB at the path will be deleted (if it exists).
+// InitDB initializes the database and returns a handle to it.
+// If useCachedDb is false, the existing DB at the path will be deleted (if it exists).
 func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 	if !useCachedDb {
 		os.Remove(dbPath)
@@ -45,6 +46,7 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 	return &ProofDB{client: client}, nil
 }
 
+// CloseDB closes the connection to the database.
 func (db *ProofDB) CloseDB() error {
 	if db.client != nil {
 		if err := db.client.Close(); err != nil {
@@ -54,25 +56,12 @@ func (db *ProofDB) CloseDB() error {
 	return nil
 }
 
-func (db *ProofDB) NewEntry(proofType string, start, end uint64) error {
-	return db.newEntryWithReqAddedTimestamp(proofType, start, end, uint64(time.Now().Unix()))
-}
-
-func (db *ProofDB) newEntryWithReqAddedTimestamp(proofType string, start, end, now uint64) error {
-	// Convert string to proofrequest.Type
-	var pType proofrequest.Type
-	switch proofType {
-	case "SPAN":
-		pType = proofrequest.TypeSPAN
-	case "AGG":
-		pType = proofrequest.TypeAGG
-	default:
-		return fmt.Errorf("invalid proof type: %s", proofType)
-	}
-
+// NewEntry creates a new proof request entry in the database.
+func (db *ProofDB) NewEntry(proofType proofrequest.Type, start, end uint64) error {
+	now := uint64(time.Now().Unix())
 	_, err := db.client.ProofRequest.
 		Create().
-		SetType(pType).
+		SetType(proofType).
 		SetStartBlock(start).
 		SetEndBlock(end).
 		SetStatus(proofrequest.StatusUNREQ).
@@ -87,31 +76,18 @@ func (db *ProofDB) newEntryWithReqAddedTimestamp(proofType string, start, end, n
 	return nil
 }
 
-func (db *ProofDB) UpdateProofStatus(id int, newStatus string) error {
-	// Convert string to proofrequest.Type
-	var pStatus proofrequest.Status
-	switch newStatus {
-	case "UNREQ":
-		pStatus = proofrequest.StatusUNREQ
-	case "REQ":
-		pStatus = proofrequest.StatusREQ
-	case "COMPLETE":
-		pStatus = proofrequest.StatusCOMPLETE
-	case "FAILED":
-		pStatus = proofrequest.StatusFAILED
-	default:
-		return fmt.Errorf("invalid proof status: %s", newStatus)
-	}
-
+// UpdateProofStatus updates the status of a proof request in the database.
+func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) error {
 	_, err := db.client.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
-		SetStatus(pStatus).
+		SetStatus(proofStatus).
 		SetLastUpdatedTime(uint64(time.Now().Unix())).
 		Save(context.Background())
 
 	return err
 }
 
+// SetProverRequestID sets the prover request ID for a proof request in the database.
 func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
 	_, err := db.client.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
@@ -127,7 +103,8 @@ func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
 	return nil
 }
 
-func (db *ProofDB) AddProof(id int, proof []byte) error {
+// AddFulfilledProof adds a proof to a proof request in the database and sets the status to COMPLETE.
+func (db *ProofDB) AddFulfilledProof(id int, proof []byte) error {
 	// Start a transaction
 	tx, err := db.client.Tx(context.Background())
 	if err != nil {
@@ -140,17 +117,16 @@ func (db *ProofDB) AddProof(id int, proof []byte) error {
 		Query().
 		Where(proofrequest.ID(id)).
 		Only(context.Background())
-
 	if err != nil {
 		return fmt.Errorf("failed to find existing proof: %w", err)
 	}
 
-	// Check if the status is REQ
-	if existingProof.Status != proofrequest.StatusREQ {
-		return fmt.Errorf("proof request status is not REQ: %v", id)
+	// Check if the status is PROVING.
+	if existingProof.Status != proofrequest.StatusPROVING {
+		return fmt.Errorf("proof request status is not PROVING: %v", id)
 	}
 
-	// Check if the proof is already set
+	// Check if the proof is already set.
 	if existingProof.Proof != nil {
 		return fmt.Errorf("proof is already set: %v", id)
 	}
@@ -175,6 +151,22 @@ func (db *ProofDB) AddProof(id int, proof []byte) error {
 	return nil
 }
 
+// GetNumberOfProofsWithStatuses returns the number of proofs with the given status(es).
+func (db *ProofDB) GetNumberOfProofsWithStatuses(statuses ...proofrequest.Status) (int, error) {
+	count, err := db.client.ProofRequest.Query().
+		Where(
+			proofrequest.StatusIn(statuses...),
+		).
+		Count(context.Background())
+
+	if err != nil {
+		return 0, fmt.Errorf("failed to count proofs with statuses %v: %w", statuses, err)
+	}
+
+	return count, nil
+}
+
+// AddL1BlockInfoToAggRequest adds the L1 block info to the existing AGG proof request.
 func (db *ProofDB) AddL1BlockInfoToAggRequest(startBlock, endBlock, l1BlockNumber uint64, l1BlockHash string) (*ent.ProofRequest, error) {
 	// Perform the update
 	rowsAffected, err := db.client.ProofRequest.Update().
@@ -216,6 +208,7 @@ func (db *ProofDB) AddL1BlockInfoToAggRequest(startBlock, endBlock, l1BlockNumbe
 	return updatedProof, nil
 }
 
+// GetLatestEndBlock returns the latest end block of a proof request in the database.
 func (db *ProofDB) GetLatestEndBlock() (uint64, error) {
 	maxEnd, err := db.client.ProofRequest.Query().
 		Order(ent.Desc(proofrequest.FieldEndBlock)).
@@ -238,7 +231,7 @@ func (db *ProofDB) GetWitnessGenerationTimeoutProofsOnServer() ([]*ent.ProofRequ
 
 	proofs, err := db.client.ProofRequest.Query().
 		Where(
-			proofrequest.StatusEQ(proofrequest.StatusREQ),
+			proofrequest.StatusEQ(proofrequest.StatusWITNESSGEN),
 			proofrequest.ProverRequestIDIsNil(),
 			proofrequest.LastUpdatedTimeLT(uint64(twentyMinutesAgo)),
 		).
@@ -275,8 +268,7 @@ func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
 func (db *ProofDB) GetAllPendingProofs() ([]*ent.ProofRequest, error) {
 	proofs, err := db.client.ProofRequest.Query().
 		Where(
-			proofrequest.StatusEQ(proofrequest.StatusREQ),
-			proofrequest.ProverRequestIDNEQ(""),
+			proofrequest.StatusEQ(proofrequest.StatusPROVING),
 		).
 		All(context.Background())
 
@@ -304,29 +296,15 @@ func (db *ProofDB) GetAllProofsWithStatus(status proofrequest.Status) ([]*ent.Pr
 	return proofs, nil
 }
 
-// Return the number of proofs with the given status.
-func (db *ProofDB) GetNumberOfProofsWithStatus(status proofrequest.Status) (int, error) {
-	count, err := db.client.ProofRequest.Query().
-		Where(
-			proofrequest.StatusEQ(status),
-		).
-		Count(context.Background())
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to count proofs with status %s: %w", status, err)
-	}
-
-	return count, nil
-}
-
+// GetNextUnrequestedProof returns the next unrequested proof in the database.
 func (db *ProofDB) GetNextUnrequestedProof() (*ent.ProofRequest, error) {
-	// First, try to get an AGG type proof
+	// Get the unrequested AGG proof with the lowest start block.
 	aggProof, err := db.client.ProofRequest.Query().
 		Where(
 			proofrequest.StatusEQ(proofrequest.StatusUNREQ),
 			proofrequest.TypeEQ(proofrequest.TypeAGG),
 		).
-		Order(ent.Asc(proofrequest.FieldRequestAddedTime)).
+		Order(ent.Asc(proofrequest.FieldStartBlock)).
 		First(context.Background())
 
 	if err == nil {
@@ -337,13 +315,13 @@ func (db *ProofDB) GetNextUnrequestedProof() (*ent.ProofRequest, error) {
 		return nil, fmt.Errorf("failed to query AGG unrequested proof: %w", err)
 	}
 
-	// If we're here, it means no AGG proof was found. Let's try SPAN proof.
+	// If there's no AGG proof available, get the unrequested SPAN proof with the lowest start block.
 	spanProof, err := db.client.ProofRequest.Query().
 		Where(
 			proofrequest.StatusEQ(proofrequest.StatusUNREQ),
 			proofrequest.TypeEQ(proofrequest.TypeSPAN),
 		).
-		Order(ent.Asc(proofrequest.FieldRequestAddedTime)).
+		Order(ent.Asc(proofrequest.FieldStartBlock)).
 		First(context.Background())
 
 	if err != nil {
@@ -354,10 +332,11 @@ func (db *ProofDB) GetNextUnrequestedProof() (*ent.ProofRequest, error) {
 		return nil, fmt.Errorf("failed to query SPAN unrequested proof: %w", err)
 	}
 
-	// We found a SPAN proof
+	// Return the SPAN proof
 	return spanProof, nil
 }
 
+// GetAllCompletedAggProofs returns all completed AGG proofs for a given start block.
 func (db *ProofDB) GetAllCompletedAggProofs(startBlock uint64) ([]*ent.ProofRequest, error) {
 	proofs, err := db.client.ProofRequest.Query().
 		Where(
@@ -377,7 +356,7 @@ func (db *ProofDB) GetAllCompletedAggProofs(startBlock uint64) ([]*ent.ProofRequ
 	return proofs, nil
 }
 
-// Try to create an AGG proof from the span proofs that cover the range [from, minTo).
+// TryCreateAggProofFromSpanProofs tries to create an AGG proof from the span proofs that cover the range [from, minTo).
 // Returns true if a new AGG proof was created, false otherwise.
 func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, uint64, error) {
 	// If there's already an AGG proof in progress/completed with the same start block, return.
@@ -416,7 +395,7 @@ func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, ui
 	return true, maxContigousEnd, nil
 }
 
-// Returns the start and end of the contiguous span proof chain. Use this to determine when to create an AGG proof.
+// GetMaxContiguousSpanProofRange returns the start and end of the contiguous span proof chain.
 func (db *ProofDB) GetMaxContiguousSpanProofRange(start uint64) (uint64, error) {
 	ctx := context.Background()
 	client := db.client
@@ -441,14 +420,14 @@ func (db *ProofDB) GetMaxContiguousSpanProofRange(start uint64) (uint64, error) 
 		if span.StartBlock != currentBlock {
 			break
 		}
-		currentBlock = span.EndBlock + 1
+		currentBlock = span.EndBlock
 	}
 
-	return max(start, currentBlock-1), nil
+	return max(start, currentBlock), nil
 }
 
-// Get the span proofs that cover the range [start, end]. If there's a gap in the proofs, or the proofs
-// don't fully cover the range, return an error.
+// GetConsecutiveSpanProofs returns the span proofs that cover the range [start, end].
+// If there's a gap in the proofs, or the proofs don't fully cover the range, return an error.
 func (db *ProofDB) GetConsecutiveSpanProofs(start, end uint64) ([][]byte, error) {
 	ctx := context.Background()
 	client := db.client
@@ -478,7 +457,7 @@ func (db *ProofDB) GetConsecutiveSpanProofs(start, end uint64) ([][]byte, error)
 			return nil, fmt.Errorf("gap in proof chain: expected start block %d, got %d", currentBlock, span.StartBlock)
 		}
 		result = append(result, span.Proof)
-		currentBlock = span.EndBlock + 1
+		currentBlock = span.EndBlock
 	}
 
 	if currentBlock-1 != end {

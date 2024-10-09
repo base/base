@@ -16,7 +16,7 @@ func (ProofRequest) Fields() []ent.Field {
 		field.Enum("type").Values("SPAN", "AGG"),
 		field.Uint64("start_block"),
 		field.Uint64("end_block"),
-		field.Enum("status").Values("UNREQ", "REQ", "FAILED", "COMPLETE"),
+		field.Enum("status").Values("UNREQ", "WITNESSGEN", "PROVING", "FAILED", "COMPLETE"),
 		field.Uint64("request_added_time"),
 		field.String("prover_request_id").Optional(),
 		field.Uint64("proof_request_time").Optional(),
