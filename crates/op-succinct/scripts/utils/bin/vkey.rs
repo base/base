@@ -1,7 +1,6 @@
 use alloy::sol;
-use alloy_primitives::{hex, keccak256, B256};
+use alloy_primitives::B256;
 use anyhow::Result;
-use log::info;
 use op_succinct_client_utils::types::u32_to_u8;
 use sp1_sdk::{utils, HashableKey, ProverClient};
 
@@ -38,24 +37,17 @@ async fn main() -> Result<()> {
 
     let prover = ProverClient::new();
 
-    let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
-
-    let program_hash = keccak256(MULTI_BLOCK_ELF);
-    info!("Program Hash [view on Explorer]:");
-    info!("0x{}", hex::encode(program_hash));
-
-    println!(
-        "Range ELF Verification Key U32 Hash: {:?}",
-        vkey.vk.hash_u32()
-    );
+    let (_, range_vk) = prover.setup(MULTI_BLOCK_ELF);
 
     // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
-    let multi_block_vkey_u8 = u32_to_u8(vkey.vk.hash_u32());
+    let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
     let multi_block_vkey_b256 = B256::from(multi_block_vkey_u8);
-    println!("Range ELF Verification Key B256: {}", multi_block_vkey_b256);
+    println!(
+        "Range ELF Verification Key Commitment: {}",
+        multi_block_vkey_b256
+    );
 
     let (_, agg_vk) = prover.setup(AGG_ELF);
-    info!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
     println!("Aggregation ELF Verification Key: {}", agg_vk.bytes32());
 
     Ok(())
