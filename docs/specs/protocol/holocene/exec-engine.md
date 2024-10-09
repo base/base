@@ -8,6 +8,7 @@
 - [Timestamp Activation](#timestamp-activation)
 - [Dynamic EIP-1559 Parameters](#dynamic-eip-1559-parameters)
   - [Extended `PayloadAttributesV3`](#extended-payloadattributesv3)
+    - [PayloadID computation](#payloadid-computation)
     - [`eip1559Params` encoding](#eip1559params-encoding)
   - [Execution](#execution)
   - [Rationale](#rationale)
@@ -49,6 +50,11 @@ PayloadAttributesV3: {
 }
 ```
 
+#### PayloadID computation
+
+If `eip1559Params != null`, the `eip1559Params` is included in the `PayloadID` hasher directly after the `gasLimit`
+field.
+
 #### `eip1559Params` encoding
 
 | Name          | Type               | Byte Offset |
@@ -64,8 +70,9 @@ parent header's `nonce` field rather than the previous protocol constants, if it
 - If, before Holocene activation, `eip1559Parameters` in the `PayloadAttributesV3` is non-null, the attributes are to
   be considered invalid by the engine.
 - At and after Holocene activation:
-  - if `eip1559Parameters` in the `PayloadAttributesV3` is null, the attributes are to be considered invalid by the
+  - if `eip1559Params` in the `PayloadAttributesV3` is null, the attributes are to be considered invalid by the
     engine.
+  - if `eip1559Params`' `denominator` is `0`, the attributes are to be considered invalid by the engine.
   - if `parent_header.nonce` is zero, the [canyon base fee parameter constants](../exec-engine.md#1559-parameters) are
     used for the block's base fee parameters.
   - if `parent_header.nonce` is non-zero, the EIP-1559 parameters encoded within the parent header's `nonce` field are
