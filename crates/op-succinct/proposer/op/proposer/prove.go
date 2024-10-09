@@ -60,7 +60,7 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 		if status == "PROOF_FULFILLED" {
 			// Update the proof in the DB and update status to COMPLETE.
 			l.Log.Info("Fulfilled Proof", "id", req.ProverRequestID)
-			err = l.db.AddProof(req.ID, proof)
+			err = l.db.AddFulfilledProof(req.ID, proof)
 			if err != nil {
 				l.Log.Error("failed to update completed proof status", "err", err)
 				return err
@@ -76,7 +76,7 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 				l.Log.Info("proof unclaimed", "id", req.ProverRequestID)
 			}
 			// update status in db to "FAILED"
-			err = l.db.UpdateProofStatus(req.ID, "FAILED")
+			err = l.db.UpdateProofStatus(req.ID, proofrequest.StatusFAILED)
 			if err != nil {
 				l.Log.Error("failed to update failed proof status", "err", err)
 				return err
@@ -93,31 +93,18 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 }
 
 func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest) error {
-	// If an AGG proof failed, something went deeply wrong. Simply try again.
-	if req.Type == proofrequest.TypeAGG {
-		l.Log.Error("Agg proof failed. Adding to DB to retry.", "req", req)
+	err := l.db.UpdateProofStatus(req.ID, proofrequest.StatusFAILED)
+	if err != nil {
+		l.Log.Error("failed to update proof status", "err", err)
+		return err
+	}
 
-		err := l.db.NewEntry("AGG", req.StartBlock, req.EndBlock)
-		if err != nil {
-			l.Log.Error("failed to add new proof request", "err")
-			return err
-		}
-	} else {
-		// Set the existing request to FAILED.
-		err := l.db.UpdateProofStatus(req.ID, "FAILED")
-		if err != nil {
-			l.Log.Error("failed to update proof status", "err", err)
-			return err
-		}
-
-		// Always just retry SPAN proofs to avoid spamming the cluster with requests.
-		// TODO: We may need to split the SPAN proof in half to avoid OOMing the SP1 runtime.
-		l.Log.Info("Span proof failed. Adding to DB to retry.", "req", req)
-		err = l.db.NewEntry("SPAN", req.StartBlock, req.EndBlock)
-		if err != nil {
-			l.Log.Error("failed to add new proof request", "err", err)
-			return err
-		}
+	l.Log.Info("Retrying proof", "id", req.ID, "type", req.Type, "start", req.StartBlock, "end", req.EndBlock)
+	// TODO: For range proofs, add custom logic to split the proof into two if the error is an execution error.
+	err = l.db.NewEntry(req.Type, req.StartBlock, req.EndBlock)
+	if err != nil {
+		l.Log.Error("failed to add new proof request", "err", err)
+		return err
 	}
 
 	return nil
@@ -150,7 +137,7 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 			l.Log.Info("found agg proof with already checkpointed l1 block info")
 		}
 	} else {
-		currentRequestedProofs, err := l.db.GetNumberOfProofsWithStatus(proofrequest.StatusREQ)
+		currentRequestedProofs, err := l.db.GetNumberOfProofsWithStatuses(proofrequest.StatusPROVING, proofrequest.StatusWITNESSGEN)
 		if err != nil {
 			return fmt.Errorf("failed to count requested proofs: %w", err)
 		}
@@ -161,7 +148,8 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 	}
 	go func(p ent.ProofRequest) {
 		l.Log.Info("requesting proof from server", "type", p.Type, "start", p.StartBlock, "end", p.EndBlock, "id", p.ID)
-		err = l.db.UpdateProofStatus(nextProofToRequest.ID, "REQ")
+		// Set the proof status to WITNESSGEN.
+		err = l.db.UpdateProofStatus(nextProofToRequest.ID, proofrequest.StatusWITNESSGEN)
 		if err != nil {
 			l.Log.Error("failed to update proof status", "err", err)
 			return
@@ -170,9 +158,9 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 		err = l.RequestOPSuccinctProof(p)
 		if err != nil {
 			l.Log.Error("failed to request proof from the OP Succinct server", "err", err, "proof", p)
-			err = l.db.UpdateProofStatus(nextProofToRequest.ID, "FAILED")
+			err = l.db.UpdateProofStatus(nextProofToRequest.ID, proofrequest.StatusFAILED)
 			if err != nil {
-				l.Log.Error("failed to revert proof status", "err", err, "proverRequestID", nextProofToRequest.ID)
+				l.Log.Error("failed to set proof status to failed", "err", err, "proverRequestID", nextProofToRequest.ID)
 			}
 
 			// If the proof fails to be requested, we should add it to the queue to be retried.
@@ -195,7 +183,6 @@ func (l *L2OutputSubmitter) DeriveAggProofs(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get latest L2OO output: %w", err)
 	}
-	from := latest.Uint64() + 1
 
 	// This fetches the next block number, which is the currentBlock + submissionInterval.
 	minTo, err := l.l2ooContract.NextBlockNumber(&bind.CallOpts{Context: ctx})
@@ -203,13 +190,13 @@ func (l *L2OutputSubmitter) DeriveAggProofs(ctx context.Context) error {
 		return fmt.Errorf("failed to get next L2OO output: %w", err)
 	}
 
-	l.Log.Info("Checking for AGG proof", "blocksToProve", minTo.Uint64()-from, "latestProvenBlock", from, "minBlockToProveToAgg", minTo.Uint64())
-	created, end, err := l.db.TryCreateAggProofFromSpanProofs(from, minTo.Uint64())
+	l.Log.Info("Checking for AGG proof", "blocksToProve", minTo.Uint64()-latest.Uint64(), "latestProvenBlock", latest.Uint64(), "minBlockToProveToAgg", minTo.Uint64())
+	created, end, err := l.db.TryCreateAggProofFromSpanProofs(latest.Uint64(), minTo.Uint64())
 	if err != nil {
 		return fmt.Errorf("failed to create agg proof from span proofs: %w", err)
 	}
 	if created {
-		l.Log.Info("created new AGG proof", "from", from, "to", end)
+		l.Log.Info("created new AGG proof", "from", latest.Uint64(), "to", end)
 	}
 
 	return nil
@@ -217,24 +204,28 @@ func (l *L2OutputSubmitter) DeriveAggProofs(ctx context.Context) error {
 
 // Request a proof from the OP Succinct server.
 func (l *L2OutputSubmitter) RequestOPSuccinctProof(p ent.ProofRequest) error {
-	// TODO: Subtract 1 from the start block to get the previous confirmed block. The start block of the new span proof
-	// should be the same as the end block of the previous span proof.
-	prevConfirmedBlock := p.StartBlock - 1
 	var proofId string
 	var err error
 
+	// TODO: This process should poll the server to get the witness generation status.
 	if p.Type == proofrequest.TypeAGG {
-		proofId, err = l.RequestAggProof(prevConfirmedBlock, p.EndBlock, p.L1BlockHash)
+		proofId, err = l.RequestAggProof(p.StartBlock, p.EndBlock, p.L1BlockHash)
 		if err != nil {
 			return fmt.Errorf("failed to request AGG proof: %w", err)
 		}
 	} else if p.Type == proofrequest.TypeSPAN {
-		proofId, err = l.RequestSpanProof(prevConfirmedBlock, p.EndBlock)
+		proofId, err = l.RequestSpanProof(p.StartBlock, p.EndBlock)
 		if err != nil {
 			return fmt.Errorf("failed to request SPAN proof: %w", err)
 		}
 	} else {
 		return fmt.Errorf("unknown proof type: %s", p.Type)
+	}
+
+	// Set the proof status to PROVING once the prover ID has been retrieved. Only proofs with status PROVING, SUCCESS or FAILED have a prover request ID.
+	err = l.db.UpdateProofStatus(p.ID, proofrequest.StatusPROVING)
+	if err != nil {
+		return fmt.Errorf("failed to set proof status to PROVING: %w", err)
 	}
 
 	err = l.db.SetProverRequestID(p.ID, proofId)

@@ -247,7 +247,7 @@ func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
 	}
 
 	// Check for a completed AGG proof starting at the next index
-	completedAggProofs, err := l.db.GetAllCompletedAggProofs(latestBlockNumber.Uint64() + 1)
+	completedAggProofs, err := l.db.GetAllCompletedAggProofs(latestBlockNumber.Uint64())
 	if err != nil {
 		return fmt.Errorf("failed to query for completed AGG proof: %w", err)
 	}

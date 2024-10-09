@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent"
+	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
 )
 
 type Span struct {
@@ -18,7 +19,7 @@ func (l *L2OutputSubmitter) CreateSpans(start, end uint64) []Span {
 	// Create spans of size MaxBlockRangePerSpanProof from start to end.
 	// Each span starts where the previous one ended + 1.
 	// Continue until we can't fit another full span before reaching end.
-	for i := start; i+l.Cfg.MaxBlockRangePerSpanProof <= end; i += l.Cfg.MaxBlockRangePerSpanProof + 1 {
+	for i := start; i+l.Cfg.MaxBlockRangePerSpanProof <= end; i += l.Cfg.MaxBlockRangePerSpanProof {
 		spans = append(spans, Span{Start: i, End: i + l.Cfg.MaxBlockRangePerSpanProof})
 	}
 	return spans
@@ -40,7 +41,7 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 			return err
 		}
 	}
-	newL2StartBlock := latestL2EndBlock + 1
+	newL2StartBlock := latestL2EndBlock
 
 	rollupClient, err := l.RollupProvider.RollupClient(ctx)
 	if err != nil {
@@ -60,7 +61,7 @@ func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
 	spans := l.CreateSpans(newL2StartBlock, newL2EndBlock)
 	// Add each span to the DB. If there are no spans, we will not create any proofs.
 	for _, span := range spans {
-		err := l.db.NewEntry("SPAN", span.Start, span.End)
+		err := l.db.NewEntry(proofrequest.TypeSPAN, span.Start, span.End)
 		l.Log.Info("New range proof request.", "start", span.Start, "end", span.End)
 		if err != nil {
 			l.Log.Error("failed to add span to db", "err", err)
