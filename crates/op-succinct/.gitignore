@@ -28,7 +28,10 @@ execution-reports/
 **/rollup-config.json
 
 # DB
-db/*
+db
+
+# Stdins
+stdins
 
 **/bin/op-proposer
 

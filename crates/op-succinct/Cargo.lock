@@ -4314,6 +4314,7 @@ dependencies = [
  "futures",
  "kona-host",
  "kona-primitives",
+ "log",
  "num-format",
  "op-alloy-genesis",
  "op-alloy-rpc-types",

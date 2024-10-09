@@ -22,6 +22,7 @@ futures.workspace = true
 num-format.workspace = true
 serde.workspace = true
 reqwest.workspace = true
+log.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
