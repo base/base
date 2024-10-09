@@ -4,6 +4,7 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
+- [Overview](#overview)
 - [CrossL2Inbox](#crossl2inbox)
   - [Functions](#functions)
     - [executeMessage](#executemessage)
@@ -26,7 +27,7 @@
     - [Relaying Expired Message Hashes](#relaying-expired-message-hashes)
 - [OptimismSuperchainERC20Factory](#optimismsuperchainerc20factory)
   - [OptimismSuperchainERC20](#optimismsuperchainerc20)
-  - [Overview](#overview)
+  - [Overview](#overview-1)
     - [Proxy](#proxy)
     - [Beacon Pattern](#beacon-pattern)
     - [Deployment history](#deployment-history)
@@ -36,7 +37,7 @@
     - [`OptimismSuperchainERC20Created`](#optimismsuperchainerc20created)
   - [Deployment Flow](#deployment-flow)
 - [BeaconContract](#beaconcontract)
-  - [Overview](#overview-1)
+  - [Overview](#overview-2)
 - [L1Block](#l1block)
   - [Static Configuration](#static-configuration)
   - [Dependency Set](#dependency-set)
@@ -60,7 +61,7 @@
   - [Invariants](#invariants)
   - [Conversion Flow](#conversion-flow)
 - [SuperchainERC20Bridge](#superchainerc20bridge)
-  - [Overview](#overview-2)
+  - [Overview](#overview-3)
   - [Functions](#functions-3)
     - [`sendERC20`](#senderc20)
     - [`relayERC20`](#relayerc20)
@@ -72,6 +73,8 @@
 - [Security Considerations](#security-considerations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Overview
 
 Four new system level predeploys are introduced for managing cross chain messaging and tokens, along with
 an update to the `L1Block`, `OptimismMintableERC20Factory` and `L2StandardBridge` contracts with additional functionalities.
@@ -348,6 +351,33 @@ every call to `sendMessage`.
 Note that `sendMessage` is not `payable`.
 
 #### Relaying Messages
+
+The following diagram shows the flow for sending a cross chain message using the `L2ToL2CrossDomainMessenger`.
+Each subsequent call is labeled with a number.
+
+```mermaid
+flowchart LR
+    user -->|"1#46; sendMessage"| al2tol2
+    user --> |"2#46; relayMessage"|bl2tol2
+    em{{SentMessage Event}}
+
+    direction TB
+    al2tol2 --> em
+
+    bcl2[CrossL2Inbox]
+    al2tol2[L2ToL2CrossDomainMessenger]
+    bl2tol2[L2ToL2CrossDomainMessenger]
+
+    subgraph "Chain A"
+      al2tol2
+    end
+
+    subgraph "Chain B"
+      bl2tol2  --> |"3#46; validateMessage"|bcl2
+      bcl2 --> |"4#46;"| bl2tol2
+      bl2tol2 --> |"5#46;"| Contract
+    end
+```
 
 When relaying a message through the `L2ToL2CrossDomainMessenger`, it is important to require that
 the `_destination` equal to `block.chainid` to ensure that the message is only valid on a single
