@@ -1,5 +1,5 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
-use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxLegacy};
+use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::TxKind;
 
@@ -24,6 +24,9 @@ pub enum OpTypedTransaction {
     /// EIP-1559 transaction
     #[cfg_attr(feature = "serde", serde(rename = "0x02", alias = "0x2"))]
     Eip1559(TxEip1559),
+    /// EIP-7702 transaction
+    #[cfg_attr(feature = "serde", serde(rename = "0x04", alias = "0x4"))]
+    Eip7702(TxEip7702),
     /// Optimism deposit transaction
     #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
     Deposit(TxDeposit),
@@ -59,6 +62,7 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
             OpTxEnvelope::Legacy(tx) => Self::Legacy(tx.strip_signature()),
             OpTxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
             OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
+            OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
             OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
         }
     }
@@ -71,6 +75,7 @@ impl OpTypedTransaction {
             Self::Legacy(_) => OpTxType::Legacy,
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -114,6 +119,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.chain_id(),
             Self::Eip2930(tx) => tx.chain_id(),
             Self::Eip1559(tx) => tx.chain_id(),
+            Self::Eip7702(tx) => tx.chain_id(),
             Self::Deposit(tx) => tx.chain_id(),
         }
     }
@@ -123,6 +129,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.nonce(),
             Self::Eip2930(tx) => tx.nonce(),
             Self::Eip1559(tx) => tx.nonce(),
+            Self::Eip7702(tx) => tx.nonce(),
             Self::Deposit(tx) => tx.nonce(),
         }
     }
@@ -132,6 +139,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.gas_limit(),
             Self::Eip2930(tx) => tx.gas_limit(),
             Self::Eip1559(tx) => tx.gas_limit(),
+            Self::Eip7702(tx) => tx.gas_limit(),
             Self::Deposit(tx) => tx.gas_limit(),
         }
     }
@@ -141,6 +149,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.gas_price(),
             Self::Eip2930(tx) => tx.gas_price(),
             Self::Eip1559(tx) => tx.gas_price(),
+            Self::Eip7702(tx) => tx.gas_price(),
             Self::Deposit(tx) => tx.gas_price(),
         }
     }
@@ -150,6 +159,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.max_fee_per_gas(),
             Self::Eip2930(tx) => tx.max_fee_per_gas(),
             Self::Eip1559(tx) => tx.max_fee_per_gas(),
+            Self::Eip7702(tx) => tx.max_fee_per_gas(),
             Self::Deposit(tx) => tx.max_fee_per_gas(),
         }
     }
@@ -159,6 +169,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.max_priority_fee_per_gas(),
             Self::Eip2930(tx) => tx.max_priority_fee_per_gas(),
             Self::Eip1559(tx) => tx.max_priority_fee_per_gas(),
+            Self::Eip7702(tx) => tx.max_priority_fee_per_gas(),
             Self::Deposit(tx) => tx.max_priority_fee_per_gas(),
         }
     }
@@ -168,6 +179,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.max_fee_per_blob_gas(),
             Self::Eip2930(tx) => tx.max_fee_per_blob_gas(),
             Self::Eip1559(tx) => tx.max_fee_per_blob_gas(),
+            Self::Eip7702(tx) => tx.max_fee_per_blob_gas(),
             Self::Deposit(tx) => tx.max_fee_per_blob_gas(),
         }
     }
@@ -177,6 +189,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.priority_fee_or_price(),
             Self::Eip2930(tx) => tx.priority_fee_or_price(),
             Self::Eip1559(tx) => tx.priority_fee_or_price(),
+            Self::Eip7702(tx) => tx.priority_fee_or_price(),
             Self::Deposit(tx) => tx.priority_fee_or_price(),
         }
     }
@@ -186,6 +199,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.to(),
             Self::Eip2930(tx) => tx.to(),
             Self::Eip1559(tx) => tx.to(),
+            Self::Eip7702(tx) => tx.to(),
             Self::Deposit(tx) => tx.to(),
         }
     }
@@ -195,6 +209,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.value(),
             Self::Eip2930(tx) => tx.value(),
             Self::Eip1559(tx) => tx.value(),
+            Self::Eip7702(tx) => tx.value(),
             Self::Deposit(tx) => tx.value(),
         }
     }
@@ -204,6 +219,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.input(),
             Self::Eip2930(tx) => tx.input(),
             Self::Eip1559(tx) => tx.input(),
+            Self::Eip7702(tx) => tx.input(),
             Self::Deposit(tx) => tx.input(),
         }
     }
@@ -213,6 +229,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(_) => OpTxType::Legacy as u8,
             Self::Eip2930(_) => OpTxType::Eip2930 as u8,
             Self::Eip1559(_) => OpTxType::Eip1559 as u8,
+            Self::Eip7702(_) => OpTxType::Eip7702 as u8,
             Self::Deposit(_) => OpTxType::Deposit as u8,
         }
     }
@@ -222,6 +239,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.access_list(),
             Self::Eip2930(tx) => tx.access_list(),
             Self::Eip1559(tx) => tx.access_list(),
+            Self::Eip7702(tx) => tx.access_list(),
             Self::Deposit(tx) => tx.access_list(),
         }
     }
@@ -231,6 +249,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.blob_versioned_hashes(),
             Self::Eip2930(tx) => tx.blob_versioned_hashes(),
             Self::Eip1559(tx) => tx.blob_versioned_hashes(),
+            Self::Eip7702(tx) => tx.blob_versioned_hashes(),
             Self::Deposit(tx) => tx.blob_versioned_hashes(),
         }
     }
@@ -240,6 +259,7 @@ impl Transaction for OpTypedTransaction {
             Self::Legacy(tx) => tx.authorization_list(),
             Self::Eip2930(tx) => tx.authorization_list(),
             Self::Eip1559(tx) => tx.authorization_list(),
+            Self::Eip7702(tx) => tx.authorization_list(),
             Self::Deposit(tx) => tx.authorization_list(),
         }
     }

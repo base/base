@@ -1,4 +1,4 @@
-use alloy_consensus::{Signed, Transaction, TxEip1559, TxEip2930, TxLegacy};
+use alloy_consensus::{Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
@@ -33,6 +33,9 @@ pub enum OpTxType {
     /// EIP-1559 transaction type.
     #[display("eip1559")]
     Eip1559 = 2,
+    /// EIP-7702 transaction type.
+    #[display("eip7702")]
+    Eip7702 = 4,
     /// Optimism Deposit transaction type.
     #[display("deposit")]
     Deposit = 126,
@@ -96,6 +99,9 @@ pub enum OpTxEnvelope {
     /// A [`TxEip1559`] tagged with type 2.
     #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
     Eip1559(Signed<TxEip1559>),
+    /// A [`TxEip7702`] tagged with type 4.
+    #[cfg_attr(feature = "serde", serde(rename = "0x4", alias = "0x04"))]
+    Eip7702(Signed<TxEip7702>),
     /// A [`TxDeposit`] tagged with type 0x7E.
     #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
     Deposit(TxDeposit),
@@ -131,6 +137,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().chain_id(),
             Self::Eip2930(tx) => tx.tx().chain_id(),
             Self::Eip1559(tx) => tx.tx().chain_id(),
+            Self::Eip7702(tx) => tx.tx().chain_id(),
             Self::Deposit(tx) => tx.chain_id(),
         }
     }
@@ -140,6 +147,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().nonce(),
             Self::Eip2930(tx) => tx.tx().nonce(),
             Self::Eip1559(tx) => tx.tx().nonce(),
+            Self::Eip7702(tx) => tx.tx().nonce(),
             Self::Deposit(tx) => tx.nonce(),
         }
     }
@@ -149,6 +157,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().gas_limit(),
             Self::Eip2930(tx) => tx.tx().gas_limit(),
             Self::Eip1559(tx) => tx.tx().gas_limit(),
+            Self::Eip7702(tx) => tx.tx().gas_limit(),
             Self::Deposit(tx) => tx.gas_limit(),
         }
     }
@@ -158,6 +167,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().gas_price(),
             Self::Eip2930(tx) => tx.tx().gas_price(),
             Self::Eip1559(tx) => tx.tx().gas_price(),
+            Self::Eip7702(tx) => tx.tx().gas_price(),
             Self::Deposit(tx) => tx.gas_price(),
         }
     }
@@ -167,6 +177,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().max_fee_per_gas(),
             Self::Eip2930(tx) => tx.tx().max_fee_per_gas(),
             Self::Eip1559(tx) => tx.tx().max_fee_per_gas(),
+            Self::Eip7702(tx) => tx.tx().max_fee_per_gas(),
             Self::Deposit(tx) => tx.max_fee_per_gas(),
         }
     }
@@ -176,6 +187,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().max_priority_fee_per_gas(),
             Self::Eip2930(tx) => tx.tx().max_priority_fee_per_gas(),
             Self::Eip1559(tx) => tx.tx().max_priority_fee_per_gas(),
+            Self::Eip7702(tx) => tx.tx().max_priority_fee_per_gas(),
             Self::Deposit(tx) => tx.max_priority_fee_per_gas(),
         }
     }
@@ -185,6 +197,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().max_fee_per_blob_gas(),
             Self::Eip2930(tx) => tx.tx().max_fee_per_blob_gas(),
             Self::Eip1559(tx) => tx.tx().max_fee_per_blob_gas(),
+            Self::Eip7702(tx) => tx.tx().max_fee_per_blob_gas(),
             Self::Deposit(tx) => tx.max_fee_per_blob_gas(),
         }
     }
@@ -194,6 +207,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().priority_fee_or_price(),
             Self::Eip2930(tx) => tx.tx().priority_fee_or_price(),
             Self::Eip1559(tx) => tx.tx().priority_fee_or_price(),
+            Self::Eip7702(tx) => tx.tx().priority_fee_or_price(),
             Self::Deposit(tx) => tx.priority_fee_or_price(),
         }
     }
@@ -203,6 +217,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().to(),
             Self::Eip2930(tx) => tx.tx().to(),
             Self::Eip1559(tx) => tx.tx().to(),
+            Self::Eip7702(tx) => tx.tx().to(),
             Self::Deposit(tx) => tx.to(),
         }
     }
@@ -212,6 +227,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().value(),
             Self::Eip2930(tx) => tx.tx().value(),
             Self::Eip1559(tx) => tx.tx().value(),
+            Self::Eip7702(tx) => tx.tx().value(),
             Self::Deposit(tx) => tx.value(),
         }
     }
@@ -221,6 +237,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().input(),
             Self::Eip2930(tx) => tx.tx().input(),
             Self::Eip1559(tx) => tx.tx().input(),
+            Self::Eip7702(tx) => tx.tx().input(),
             Self::Deposit(tx) => tx.input(),
         }
     }
@@ -230,6 +247,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().ty(),
             Self::Eip2930(tx) => tx.tx().ty(),
             Self::Eip1559(tx) => tx.tx().ty(),
+            Self::Eip7702(tx) => tx.tx().ty(),
             Self::Deposit(tx) => tx.ty(),
         }
     }
@@ -239,6 +257,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().access_list(),
             Self::Eip2930(tx) => tx.tx().access_list(),
             Self::Eip1559(tx) => tx.tx().access_list(),
+            Self::Eip7702(tx) => tx.tx().access_list(),
             Self::Deposit(tx) => tx.access_list(),
         }
     }
@@ -248,6 +267,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().blob_versioned_hashes(),
             Self::Eip2930(tx) => tx.tx().blob_versioned_hashes(),
             Self::Eip1559(tx) => tx.tx().blob_versioned_hashes(),
+            Self::Eip7702(tx) => tx.tx().blob_versioned_hashes(),
             Self::Deposit(tx) => tx.blob_versioned_hashes(),
         }
     }
@@ -257,6 +277,7 @@ impl Transaction for OpTxEnvelope {
             Self::Legacy(tx) => tx.tx().authorization_list(),
             Self::Eip2930(tx) => tx.tx().authorization_list(),
             Self::Eip1559(tx) => tx.tx().authorization_list(),
+            Self::Eip7702(tx) => tx.tx().authorization_list(),
             Self::Deposit(tx) => tx.authorization_list(),
         }
     }
@@ -334,6 +355,7 @@ impl OpTxEnvelope {
             Self::Legacy(_) => OpTxType::Legacy,
             Self::Eip2930(_) => OpTxType::Eip2930,
             Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
         }
     }
@@ -347,6 +369,10 @@ impl OpTxEnvelope {
                 Header { list: true, payload_length }.length() + payload_length
             }
             Self::Eip1559(t) => {
+                let payload_length = t.tx().fields_len() + t.signature().rlp_vrs_len();
+                Header { list: true, payload_length }.length() + payload_length
+            }
+            Self::Eip7702(t) => {
                 let payload_length = t.tx().fields_len() + t.signature().rlp_vrs_len();
                 Header { list: true, payload_length }.length() + payload_length
             }
@@ -403,6 +429,7 @@ impl Decodable2718 for OpTxEnvelope {
         match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
             OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::decode_signed_fields(buf)?)),
             OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::decode_signed_fields(buf)?)),
+            OpTxType::Eip7702 => Ok(Self::Eip7702(TxEip7702::decode_signed_fields(buf)?)),
             OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
             OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
@@ -422,6 +449,7 @@ impl Encodable2718 for OpTxEnvelope {
             Self::Legacy(_) => None,
             Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
             Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
+            Self::Eip7702(_) => Some(OpTxType::Eip7702 as u8),
             Self::Deposit(_) => Some(OpTxType::Deposit as u8),
         }
     }
@@ -438,6 +466,9 @@ impl Encodable2718 for OpTxEnvelope {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
             Self::Eip1559(tx) => {
+                tx.tx().encode_with_signature(tx.signature(), out, false);
+            }
+            Self::Eip7702(tx) => {
                 tx.tx().encode_with_signature(tx.signature(), out, false);
             }
             Self::Deposit(tx) => {
