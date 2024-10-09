@@ -53,6 +53,7 @@ pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(1200);
 struct WitnessGenProcess {
     child: tokio::process::Child,
     exec: String,
+    host_cli: HostCli,
 }
 
 /// Stateful executor for witness generation. Useful for executing several witness generation
@@ -95,6 +96,7 @@ impl WitnessGenExecutor {
         self.ongoing_processes.push(WitnessGenProcess {
             child,
             exec: host_cli.exec.clone().unwrap(),
+            host_cli: host_cli.clone(),
         });
         Ok(())
     }
@@ -135,16 +137,16 @@ impl WitnessGenExecutor {
                 result = child.child.wait() => {
                     match result {
                         Ok(status) if !status.success() => {
-                            return Err(anyhow::anyhow!("Witness generation process exited because it failed."));
+                            return Err(anyhow::anyhow!("Witness generation process for end block {} failed.", child.host_cli.l2_block_number));
                         }
                         Err(e) => {
-                            return Err(anyhow::anyhow!("Failed to get witness generation process status: {}", e));
+                            return Err(anyhow::anyhow!("Failed to get witness generation process status for end block {}: {}", child.host_cli.l2_block_number, e));
                         }
                         _ => {}
                     }
                 }
                 _ = tokio::time::sleep(self.timeout) => {
-                    return Err(anyhow::anyhow!("Witness generation process timed out."));
+                    return Err(anyhow::anyhow!("Witness generation process for end block {} timed out.", child.host_cli.l2_block_number));
                 }
             }
         }
