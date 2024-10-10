@@ -69,7 +69,7 @@ func TestCreateSpans(t *testing.T) {
 			}
 
 			for i := 0; i < len(spans)-1; i++ {
-				assert.Equal(t, spans[i].End+1, spans[i+1].Start, "Spans should be contiguous")
+				assert.Equal(t, spans[i].End, spans[i+1].Start, "Spans should be contiguous")
 				assert.Equal(t, tt.maxBlockRange, spans[i].End-spans[i].Start, "Span range should match maxBlockRange")
 			}
 		})
