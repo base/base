@@ -75,10 +75,10 @@ op-alloy-rpc-types = { version = "0.3.3", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.3.3", default-features = false }
 
 # sp1
-sp1-lib = { version = "3.0.0-rc1", features = ["verify"] }
-sp1-zkvm = { version = "3.0.0-rc1", features = ["verify"] }
-sp1-sdk = { version = "3.0.0-rc1" }
-sp1-build = { version = "3.0.0-rc1" }
+sp1-lib = { version = "3.0.0-rc3", features = ["verify"] }
+sp1-zkvm = { version = "3.0.0-rc3", features = ["verify"] }
+sp1-sdk = { version = "3.0.0-rc3" }
+sp1-build = { version = "3.0.0-rc3" }
 
 [profile.release-client-lto]
 inherits = "release"
