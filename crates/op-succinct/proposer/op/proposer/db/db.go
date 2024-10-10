@@ -460,8 +460,8 @@ func (db *ProofDB) GetConsecutiveSpanProofs(start, end uint64) ([][]byte, error)
 		currentBlock = span.EndBlock
 	}
 
-	if currentBlock-1 != end {
-		return nil, fmt.Errorf("incomplete proof chain: ends at block %d, expected %d", currentBlock-1, end)
+	if currentBlock != end {
+		return nil, fmt.Errorf("incomplete proof chain: ends at block %d, expected %d", currentBlock, end)
 	}
 
 	return result, nil
