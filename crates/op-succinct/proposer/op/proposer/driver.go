@@ -243,6 +243,7 @@ func (l *L2OutputSubmitter) StopL2OutputSubmitting() error {
 // ProposerMetrics contains relevant statistics for the proposer.
 type ProposerMetrics struct {
 	L2UnsafeHeadBlock              uint64
+	L2FinalizedBlock               uint64
 	LatestContractL2Block          uint64
 	HighestProvenContiguousL2Block uint64
 	NumProving                     uint64
@@ -265,6 +266,7 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMet
 
 	// The unsafe head block on L2.
 	l2UnsafeHeadBlock := status.UnsafeL2.Number
+	l2FinalizedBlock := status.FinalizedL2.Number
 
 	// The latest block number on the L2OO contract.
 	latestContractL2Block, err := l.l2ooContract.LatestBlockNumber(&bind.CallOpts{Context: ctx})
@@ -295,6 +297,7 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMet
 
 	return ProposerMetrics{
 		L2UnsafeHeadBlock:              l2UnsafeHeadBlock,
+		L2FinalizedBlock:               l2FinalizedBlock,
 		LatestContractL2Block:          latestContractL2Block.Uint64(),
 		HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
 		NumProving:                     uint64(numProving),
