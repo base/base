@@ -238,7 +238,7 @@ See [Predeploy](../glossary.md#l2-genesis-block).<br/>
 
 **Description:** Frequency with which blocks are produced as a result of derivation.<br/>
 **Administrator:** [L1 Proxy Admin](#admin-roles)<br/>
-**Requirement:** 2 seconds<br/>
+**Requirement:** 1 or 2 seconds<br/>
 **Notes:** High security & [interoperability](../interop/overview.md) compatibility requirement, until de-risked/solved
 at app layer.<br/>
 
