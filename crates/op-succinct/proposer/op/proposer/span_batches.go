@@ -17,7 +17,7 @@ type Span struct {
 func (l *L2OutputSubmitter) CreateSpans(start, end uint64) []Span {
 	spans := []Span{}
 	// Create spans of size MaxBlockRangePerSpanProof from start to end.
-	// Each span starts where the previous one ended + 1.
+	// Each span starts where the previous one ended.
 	// Continue until we can't fit another full span before reaching end.
 	for i := start; i+l.Cfg.MaxBlockRangePerSpanProof <= end; i += l.Cfg.MaxBlockRangePerSpanProof {
 		spans = append(spans, Span{Start: i, End: i + l.Cfg.MaxBlockRangePerSpanProof})

@@ -268,13 +268,13 @@ func (l *L2OutputSubmitter) RequestSpanProof(l2Start, l2End uint64) (string, err
 	return l.RequestProofFromServer("request_span_proof", jsonBody)
 }
 
-// Request an aggregate proof for the range [start+1, end]. If there is not a consecutive set of span proofs,
+// Request an aggregate proof for the range [start, end]. If there is not a consecutive set of span proofs,
 // which cover the range, the request will error.
 func (l *L2OutputSubmitter) RequestAggProof(start, end uint64, l1BlockHash string) (string, error) {
 	l.Log.Info("requesting agg proof", "start", start, "end", end)
 
-	// Query the DB for the consecutive span proofs that cover the range [start+1, end].
-	subproofs, err := l.db.GetConsecutiveSpanProofs(start+1, end)
+	// Query the DB for the consecutive span proofs that cover the range [start, end].
+	subproofs, err := l.db.GetConsecutiveSpanProofs(start, end)
 	if err != nil {
 		return "", fmt.Errorf("failed to get subproofs: %w", err)
 	}
