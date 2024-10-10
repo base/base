@@ -224,7 +224,7 @@ func (l *L2OutputSubmitter) RequestOPSuccinctProof(p ent.ProofRequest) error {
 	// Set the proof status to PROVING once the prover ID has been retrieved. Only proofs with status PROVING, SUCCESS or FAILED have a prover request ID.
 	err = l.db.UpdateProofStatus(p.ID, proofrequest.StatusPROVING)
 	if err != nil {
-		return fmt.Errorf("failed to set proof status to PROVING: %w", err)
+		return fmt.Errorf("failed to set proof status to proving: %w", err)
 	}
 
 	err = l.db.SetProverRequestID(p.ID, proofId)
