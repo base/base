@@ -137,7 +137,7 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 			l.Log.Info("found agg proof with already checkpointed l1 block info")
 		}
 	} else {
-		currentRequestedProofs, err := l.db.GetNumberOfProofsWithStatuses(proofrequest.StatusPROVING, proofrequest.StatusWITNESSGEN)
+		currentRequestedProofs, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusPROVING, proofrequest.StatusWITNESSGEN)
 		if err != nil {
 			return fmt.Errorf("failed to count requested proofs: %w", err)
 		}

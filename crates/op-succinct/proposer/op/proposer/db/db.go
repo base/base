@@ -152,7 +152,7 @@ func (db *ProofDB) AddFulfilledProof(id int, proof []byte) error {
 }
 
 // GetNumberOfProofsWithStatuses returns the number of proofs with the given status(es).
-func (db *ProofDB) GetNumberOfProofsWithStatuses(statuses ...proofrequest.Status) (int, error) {
+func (db *ProofDB) GetNumberOfRequestsWithStatuses(statuses ...proofrequest.Status) (int, error) {
 	count, err := db.client.ProofRequest.Query().
 		Where(
 			proofrequest.StatusIn(statuses...),
@@ -160,7 +160,7 @@ func (db *ProofDB) GetNumberOfProofsWithStatuses(statuses ...proofrequest.Status
 		Count(context.Background())
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to count proofs with statuses %v: %w", statuses, err)
+		return 0, fmt.Errorf("failed to count requests with statuses %v: %w", statuses, err)
 	}
 
 	return count, nil

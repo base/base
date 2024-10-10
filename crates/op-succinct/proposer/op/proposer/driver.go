@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/txmgr"
 	"github.com/succinctlabs/op-succinct-go/proposer/db"
+	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
 )
 
 var (
@@ -237,6 +238,69 @@ func (l *L2OutputSubmitter) StopL2OutputSubmitting() error {
 
 	l.Log.Info("Proposer stopped")
 	return nil
+}
+
+// ProposerMetrics contains relevant statistics for the proposer.
+type ProposerMetrics struct {
+	L2UnsafeHeadBlock              uint64
+	LatestContractL2Block          uint64
+	HighestProvenContiguousL2Block uint64
+	NumProving                     uint64
+	NumWitnessgen                  uint64
+	NumUnrequested                 uint64
+}
+
+// GetProposerMetrics gets the performance metrics for the proposer.
+// TODO: Add a metric for the latest proven transaction.
+func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMetrics, error) {
+	rollupClient, err := l.RollupProvider.RollupClient(ctx)
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("getting rollup client: %w", err)
+	}
+
+	status, err := rollupClient.SyncStatus(ctx)
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("getting sync status: %w", err)
+	}
+
+	// The unsafe head block on L2.
+	l2UnsafeHeadBlock := status.UnsafeL2.Number
+
+	// The latest block number on the L2OO contract.
+	latestContractL2Block, err := l.l2ooContract.LatestBlockNumber(&bind.CallOpts{Context: ctx})
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("failed to get latest output index: %w", err)
+	}
+
+	// Get the highest proven L2 block contiguous with the contract's latest block.
+	highestProvenContiguousL2Block, err := l.db.GetMaxContiguousSpanProofRange(latestContractL2Block.Uint64())
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("failed to get max contiguous span proof range: %w", err)
+	}
+
+	numProving, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusPROVING)
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("failed to get number of proofs proving: %w", err)
+	}
+
+	numWitnessgen, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusWITNESSGEN)
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("failed to get number of proofs witnessgen: %w", err)
+	}
+
+	numUnrequested, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusUNREQ)
+	if err != nil {
+		return ProposerMetrics{}, fmt.Errorf("failed to get number of unrequested proofs: %w", err)
+	}
+
+	return ProposerMetrics{
+		L2UnsafeHeadBlock:              l2UnsafeHeadBlock,
+		LatestContractL2Block:          latestContractL2Block.Uint64(),
+		HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
+		NumProving:                     uint64(numProving),
+		NumWitnessgen:                  uint64(numWitnessgen),
+		NumUnrequested:                 uint64(numUnrequested),
+	}, nil
 }
 
 func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
@@ -532,12 +596,18 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			// 1) Queue up any span batches that are ready to prove.
-			// This is done by checking the chain for completed channels and pulling span batches out.
-			// We break apart span batches if they exceed the max size, and gracefully handle bugs in span batch decoding.
-			// We add ranges to be proven to the DB as "UNREQ" so they are queued up to request later.
+			// Get the current metrics for the proposer.
+			metrics, err := l.GetProposerMetrics(ctx)
+			if err != nil {
+				l.Log.Error("failed to get metrics", "err", err)
+				continue
+			}
+			l.Log.Info("Proposer status", "metrics", metrics)
+
+			// 1) Queue up the span proofs that are ready to prove. Determine these range proofs based on the latest L2 finalized block,
+			// and the current L2 unsafe head.
 			l.Log.Info("Stage 1: Deriving Span Batches...")
-			err := l.DeriveNewSpanBatches(ctx)
+			err = l.DeriveNewSpanBatches(ctx)
 			if err != nil {
 				l.Log.Error("failed to add next span batches to db", "err", err)
 				continue
@@ -553,9 +623,8 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 				continue
 			}
 
-			// 3) Determine if any agg proofs are ready to be submitted and queue them up.
-			// This is done by checking if we have contiguous span proofs from the last on chain
-			// output root through at least the submission interval.
+			// 3) Determine if there is a continguous chain of span proofs starting from the latest block on the L2OO contract.
+			// If there is, queue an aggregate proof for all of the span proofs.
 			l.Log.Info("Stage 3: Deriving Agg Proofs...")
 			err = l.DeriveAggProofs(ctx)
 			if err != nil {
