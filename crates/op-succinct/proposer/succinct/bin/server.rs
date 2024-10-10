@@ -17,9 +17,11 @@ use op_succinct_host_utils::{
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
-    network::client::NetworkClient,
-    proto::network::{ProofMode, ProofStatus as SP1ProofStatus},
-    utils, NetworkProver, Prover, SP1Proof, SP1ProofWithPublicValues,
+    network::{
+        client::NetworkClient,
+        proto::network::{ProofMode, ProofStatus as SP1ProofStatus},
+    },
+    utils, NetworkProverV1, Prover, SP1Proof, SP1ProofWithPublicValues,
 };
 use std::{env, time::Duration};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -99,7 +101,7 @@ async fn request_span_proof(
 
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
-    let prover = NetworkProver::new();
+    let prover = NetworkProverV1::new();
     let res = prover
         .request_proof(MULTI_BLOCK_ELF, sp1_stdin, ProofMode::Compressed)
         .await;
@@ -150,7 +152,7 @@ async fn request_agg_proof(
         .get_header_preimages(&boot_infos, l1_head.into())
         .await?;
 
-    let prover = NetworkProver::new();
+    let prover = NetworkProverV1::new();
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
     let stdin = get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, l1_head.into()).unwrap();

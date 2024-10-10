@@ -2,7 +2,7 @@ use alloy::{hex, sol_types::SolValue};
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, AGGREGATION_OUTPUTS_SIZE};
-use sp1_sdk::{NetworkProver, SP1ProofWithPublicValues};
+use sp1_sdk::{NetworkProverV1, SP1ProofWithPublicValues};
 use std::{fs, path::Path};
 
 #[derive(Parser, Debug)]
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     let args = Args::parse();
 
-    let prover = NetworkProver::new();
+    let prover = NetworkProverV1::new();
 
     // Fetch the proof
     let mut proof: SP1ProofWithPublicValues = prover.wait_proof(&args.request_id, None).await?;
