@@ -50,7 +50,6 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 	if err != nil {
 		return err
 	}
-	l.Log.Info("Number of Pending Proofs.", "count", len(reqs))
 	for _, req := range reqs {
 		status, proof, err := l.GetProofStatus(req.ProverRequestID)
 		if err != nil {
