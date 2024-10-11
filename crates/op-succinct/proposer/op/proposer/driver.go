@@ -18,7 +18,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 
 	// Original Optimism Bindings
-	opbindings "github.com/ethereum-optimism/optimism/op-proposer/bindings"
+
 	// OP Succinct Contract Bindings
 	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
 
@@ -88,9 +88,6 @@ type L2OutputSubmitter struct {
 	l2ooContract L2OOContract
 	l2ooABI      *abi.ABI
 
-	dgfContract *opbindings.L2OutputOracleCaller
-	dgfABI      *abi.ABI
-
 	db db.ProofDB
 }
 
@@ -108,10 +105,8 @@ func NewL2OutputSubmitter(setup DriverSetup) (_ *L2OutputSubmitter, err error) {
 
 	if setup.Cfg.L2OutputOracleAddr != nil {
 		return newL2OOSubmitter(ctx, cancel, setup)
-	} else if setup.Cfg.DisputeGameFactoryAddr != nil {
-		return newDGFSubmitter(ctx, cancel, setup)
 	} else {
-		return nil, errors.New("neither the `L2OutputOracle` nor `DisputeGameFactory` addresses were provided")
+		return nil, errors.New("the `L2OutputOracle` address was not provided")
 	}
 }
 
@@ -155,40 +150,6 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 	}, nil
 }
 
-// Create a new submitter for the DisputeGameFactory. Note: This is unused in OP-Succinct.
-func newDGFSubmitter(ctx context.Context, cancel context.CancelFunc, setup DriverSetup) (*L2OutputSubmitter, error) {
-	dgfCaller, err := opbindings.NewL2OutputOracleCaller(*setup.Cfg.DisputeGameFactoryAddr, setup.L1Client)
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("failed to create DGF at address %s: %w", setup.Cfg.DisputeGameFactoryAddr, err)
-	}
-
-	cCtx, cCancel := context.WithTimeout(ctx, setup.Cfg.NetworkTimeout)
-	defer cCancel()
-	version, err := dgfCaller.Version(&bind.CallOpts{Context: cCtx})
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	log.Info("Connected to L2OutputOracle", "address", setup.Cfg.DisputeGameFactoryAddr, "version", version)
-
-	parsed, err := opbindings.L2OutputOracleMetaData.GetAbi()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	return &L2OutputSubmitter{
-		DriverSetup: setup,
-		done:        make(chan struct{}),
-		ctx:         ctx,
-		cancel:      cancel,
-
-		dgfContract: dgfCaller,
-		dgfABI:      parsed,
-	}, nil
-}
-
 func (l *L2OutputSubmitter) StartL2OutputSubmitting() error {
 	l.Log.Info("Starting Proposer")
 
@@ -199,6 +160,18 @@ func (l *L2OutputSubmitter) StartL2OutputSubmitting() error {
 		return errors.New("proposer is already running")
 	}
 	l.running = true
+
+	// When restarting the proposer using a cached database, we need to mark all proofs that are in witness generation state as failed, and retry them.
+	witnessGenReqs, err := l.db.GetAllRequestsProving()
+	if err != nil {
+		return fmt.Errorf("failed to get witness generation pending proofs: %w", err)
+	}
+	for _, req := range witnessGenReqs {
+		err = l.RetryRequest(req)
+		if err != nil {
+			return fmt.Errorf("failed to retry request: %w", err)
+		}
+	}
 
 	l.wg.Add(1)
 	go l.loop()
@@ -386,20 +359,6 @@ func (l *L2OutputSubmitter) FetchL2OOOutput(ctx context.Context) (*eth.OutputRes
 	return output, true, nil
 }
 
-// FetchDGFOutput gets the next output proposal for the DGF.
-// The passed context is expected to be a lifecycle context. A network timeout
-// context will be derived from it.
-func (l *L2OutputSubmitter) FetchDGFOutput(ctx context.Context) (*eth.OutputResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, l.Cfg.NetworkTimeout)
-	defer cancel()
-
-	blockNum, err := l.FetchCurrentBlockNumber(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return l.FetchOutput(ctx, blockNum)
-}
-
 // FetchCurrentBlockNumber gets the current block number from the [L2OutputSubmitter]'s [RollupClient]. If the `AllowNonFinalized` configuration
 // option is set, it will return the safe head block number, and if not, it will return the finalized head block number.
 func (l *L2OutputSubmitter) FetchCurrentBlockNumber(ctx context.Context) (uint64, error) {
@@ -566,11 +525,7 @@ func (l *L2OutputSubmitter) loop() {
 		}
 	}
 
-	if l.dgfContract == nil {
-		l.loopL2OO(ctx)
-	} else {
-		l.loopDGF(ctx)
-	}
+	l.loopL2OO(ctx)
 }
 
 func (l *L2OutputSubmitter) waitNodeSync() error {
@@ -653,45 +608,6 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 			if err != nil {
 				l.Log.Error("failed to submit agg proofs", "err", err)
 			}
-		case <-l.done:
-			return
-		}
-	}
-}
-
-// The loopDGF proposes a new output every proposal interval. It does _not_ query
-// the DGF for when to next propose, as the DGF doesn't have the concept of a
-// proposal interval, like in the L2OO case. For this reason, it has to keep track
-// of the interval itself, for which it uses an internal ticker.
-func (l *L2OutputSubmitter) loopDGF(ctx context.Context) {
-	defer l.Log.Info("loopDGF returning")
-	ticker := time.NewTicker(l.Cfg.ProposalInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			var (
-				output *eth.OutputResponse
-				err    error
-			)
-			// A note on retrying: because the proposal interval is usually much
-			// larger than the interval at which to retry proposing on a failed attempt,
-			// we want to keep retrying getting the output proposal until we succeed.
-			for output == nil || err != nil {
-				select {
-				case <-l.done:
-					return
-				default:
-				}
-
-				output, err = l.FetchDGFOutput(ctx)
-				if err != nil {
-					l.Log.Warn("Error getting DGF output, retrying...", "err", err)
-					time.Sleep(l.Cfg.OutputRetryInterval)
-				}
-			}
-
-			l.proposeOutput(ctx, output, nil, 0, common.Hash{})
 		case <-l.done:
 			return
 		}

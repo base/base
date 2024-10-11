@@ -520,7 +520,6 @@ impl OPSuccinctDataFetcher {
         Ok(l1_head.timestamp - l1_block_minus_1.header.timestamp)
     }
 
-    // TODO: Use op-alloy types.
     /// Get the L1 block from which the `l2_end_block` can be derived.
     async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<B256> {
         let latest_l1_header = self.get_head(RPCMode::L1).await?;
