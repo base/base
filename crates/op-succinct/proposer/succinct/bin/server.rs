@@ -79,8 +79,6 @@ async fn request_span_proof(
     Json(payload): Json<SpanProofRequest>,
 ) -> Result<(StatusCode, Json<ProofResponse>), AppError> {
     info!("Received span proof request: {:?}", payload);
-    // TODO: Save data fetcher, NetworkProver, and NetworkClient globally
-    // and access via Store.
     let data_fetcher = OPSuccinctDataFetcher::default();
 
     let host_cli = data_fetcher
@@ -97,7 +95,15 @@ async fn request_span_proof(
     // host, and return an ID that the client can poll on to check if the proof was submitted.
     let mut witnessgen_executor = WitnessGenExecutor::default();
     witnessgen_executor.spawn_witnessgen(&host_cli).await?;
-    witnessgen_executor.flush().await?;
+    // Log any errors from running the witness generation process.
+    let res = witnessgen_executor.flush().await;
+    if let Err(e) = res {
+        log::error!("Failed to generate witness: {}", e);
+        return Err(AppError(anyhow::anyhow!(
+            "Failed to generate witness: {}",
+            e
+        )));
+    }
 
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
@@ -110,7 +116,7 @@ async fn request_span_proof(
     let proof_id = match res {
         Ok(proof_id) => proof_id,
         Err(e) => {
-            println!("Failed to request proof: {}", e);
+            log::error!("Failed to request proof: {}", e);
             return Err(AppError(anyhow::anyhow!("Failed to request proof: {}", e)));
         }
     };

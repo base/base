@@ -15,6 +15,9 @@ import (
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
 )
 
+const PROOF_STATUS_TIMEOUT = 30 * time.Second
+const WITNESS_GEN_TIMEOUT = 20 * time.Minute
+
 // Process all of the pending proofs.
 func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 	// Retrieve all proofs that failed without reaching the prover network (specifically, proofs that failed with no proof ID).
@@ -23,30 +26,19 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 		return fmt.Errorf("failed to get proofs failed on server: %w", err)
 	}
 
-	// Get all proofs that failed to reach the prover network with a timeout.
-	timedOutReqs, err := l.db.GetWitnessGenerationTimeoutProofsOnServer()
-	if err != nil {
-		return fmt.Errorf("failed to get witness generation timeout proofs on server: %w", err)
+	if len(failedReqs) > 0 {
+		l.Log.Info("Retrying failed proofs.", "failed", len(failedReqs))
 	}
 
-	// Combine the two lists of proofs.
-	reqsToRetry := append(failedReqs, timedOutReqs...)
-
-	if len(reqsToRetry) > 0 {
-		l.Log.Info("Retrying failed and timed out proofs.", "failed", len(failedReqs), "timedOut", len(timedOutReqs))
-	}
-
-	for _, req := range reqsToRetry {
+	for _, req := range failedReqs {
 		err = l.RetryRequest(req)
 		if err != nil {
 			return fmt.Errorf("failed to retry request: %w", err)
 		}
 	}
 
-	// Get all pending proofs with a status of requested and a prover ID that is not empty.
-	// TODO: There should be a separate proofrequest status for proofs that failed before reaching the prover network,
-	// and those that failed after reaching the prover network.
-	reqs, err := l.db.GetAllPendingProofs()
+	// Get all proof requests that are currently in the PROVING state.
+	reqs, err := l.db.GetAllRequestsProving()
 	if err != nil {
 		return err
 	}
@@ -299,15 +291,15 @@ func (l *L2OutputSubmitter) RequestProofFromServer(urlPath string, jsonBody []by
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	/// The witness generation for larger proofs can take up to 20 minutes.
-	// TODO: Given that the timeout will take a while, we should have a mechanism for querying the status of the witness generation.
+	/// The witness generation for larger proofs can take up to ~10 minutes for large ranges.
+	// TODO: In the future, we can poll the server for the witness generation status.
 	client := &http.Client{
-		Timeout: 20 * time.Minute,
+		Timeout: WITNESS_GEN_TIMEOUT,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			return "", fmt.Errorf("request timed out after 10 minutes: %w", err)
+			return "", fmt.Errorf("request timed out after %s: %w", WITNESS_GEN_TIMEOUT, err)
 		}
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
@@ -345,12 +337,12 @@ func (l *L2OutputSubmitter) GetProofStatus(proofId string) (string, []byte, erro
 	}
 
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: PROOF_STATUS_TIMEOUT,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if err, ok := err.(net.Error); ok && err.Timeout() {
-			return "", nil, fmt.Errorf("request timed out after 30 seconds: %w", err)
+			return "", nil, fmt.Errorf("request timed out after %s: %w", PROOF_STATUS_TIMEOUT, err)
 		}
 		return "", nil, fmt.Errorf("failed to send request: %w", err)
 	}

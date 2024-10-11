@@ -290,8 +290,8 @@ func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
 	return proofs, nil
 }
 
-// Get all pending proofs with a status of requested and a prover ID that is not empty.
-func (db *ProofDB) GetAllPendingProofs() ([]*ent.ProofRequest, error) {
+// Get all proofs that are currently in the PROVING state.
+func (db *ProofDB) GetAllRequestsProving() ([]*ent.ProofRequest, error) {
 	proofs, err := db.readClient.ProofRequest.Query().
 		Where(
 			proofrequest.StatusEQ(proofrequest.StatusPROVING),
@@ -299,7 +299,7 @@ func (db *ProofDB) GetAllPendingProofs() ([]*ent.ProofRequest, error) {
 		All(context.Background())
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to query pending proofs: %w", err)
+		return nil, fmt.Errorf("failed to query proofs in PROVING state: %w", err)
 	}
 	return proofs, nil
 }
