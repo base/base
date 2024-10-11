@@ -20,6 +20,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    println!("Ran host program with end block: {:?}", cfg.l2_block_number);
+    println!(
+        "Ran host program with end block: {:?}",
+        cfg.claimed_l2_block_number
+    );
     std::process::exit(0);
 }

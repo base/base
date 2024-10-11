@@ -90,13 +90,17 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
         // Fetch the starting L2 output preimage.
         self.oracle
             .write(
-                &HintType::StartingL2Output.encode_with(&[self.boot_info.l2_output_root.as_ref()]),
+                &HintType::StartingL2Output.encode_with(&[self
+                    .boot_info
+                    .agreed_l2_output_root
+                    .0
+                    .as_ref()]),
             )
             .await?;
         let output_preimage = self
             .oracle
             .get(PreimageKey::new(
-                *self.boot_info.l2_output_root,
+                self.boot_info.agreed_l2_output_root.0,
                 PreimageKeyType::Keccak256,
             ))
             .await?;

@@ -59,14 +59,15 @@ fn build_zkvm_program(program: &str) {
         &format!("../../programs/{}", program),
         BuildArgs {
             elf_name: format!("{}-elf", program),
-            // docker: true,
+            docker: true,
+            tag: "v3.0.0-rc3".to_string(),
             ..Default::default()
         },
     );
 }
 
 fn main() {
-    let programs = vec!["range"];
+    let programs = vec!["fault-proof", "range"];
 
     for program in programs {
         // Note: Don't comment this out, because the Docker program depends on the native program

@@ -57,22 +57,26 @@ op-succinct-client-utils = { path = "utils/client" }
 op-succinct-host-utils = { path = "utils/host" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
-# ethereum / op
-alloy = { version = "0.4", default-features = false, features = ["full"] }
+# Alloy
+alloy = { version = "0.4.2", default-features = false, features = ["full"] }
 # Uses sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
 alloy-primitives = { version = "0.8.4", default-features = false, features = [
     "sha3-keccak",
 ] }
 alloy-rlp = { version = "0.3.8", default-features = false }
-alloy-eips = { version = "0.4", default-features = false }
+alloy-eips = { version = "0.4.2", default-features = false }
 revm = { version = "14.0", default-features = false, features = ["kzg-rs"] }
-alloy-consensus = { version = "0.4", default-features = false }
+alloy-consensus = { version = "0.4.2", default-features = false }
 alloy-sol-types = { version = "0.8" }
-op-alloy-consensus = { version = "0.3.3", default-features = false }
-op-alloy-genesis = { version = "0.3.3", default-features = false }
-op-alloy-protocol = { version = "0.3.3", default-features = false }
-op-alloy-rpc-types = { version = "0.3.3", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.3.3", default-features = false }
+
+# OP Alloy
+op-alloy-consensus = { version = "0.4.0", default-features = false }
+op-alloy-genesis = { version = "0.4.0", default-features = false, features = [
+    "serde",
+] }
+op-alloy-protocol = { version = "0.4.0", default-features = false }
+op-alloy-rpc-types = { version = "0.4.0", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.4.0", default-features = false }
 
 # sp1
 sp1-lib = { version = "3.0.0-rc3", features = ["verify"] }
