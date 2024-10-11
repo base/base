@@ -55,9 +55,9 @@ fn main() {
                 let rollup_config: RollupConfig = serde_json::from_slice(&boot_info_with_bytes_config.rollup_config_bytes).expect("failed to parse rollup config");
                 let boot: Arc<BootInfo> = Arc::new(BootInfo {
                     l1_head: boot_info_with_bytes_config.l1_head,
-                    l2_output_root: boot_info_with_bytes_config.l2_output_root,
-                    l2_claim: boot_info_with_bytes_config.l2_claim,
-                    l2_claim_block: boot_info_with_bytes_config.l2_claim_block,
+                    agreed_l2_output_root: boot_info_with_bytes_config.l2_output_root,
+                    claimed_l2_output_root: boot_info_with_bytes_config.l2_claim,
+                    claimed_l2_block_number: boot_info_with_bytes_config.l2_claim_block,
                     chain_id: boot_info_with_bytes_config.chain_id,
                     rollup_config,
                 });
@@ -116,8 +116,8 @@ fn main() {
         //                          EPILOGUE                          //
         ////////////////////////////////////////////////////////////////
 
-        assert_eq!(number, boot.l2_claim_block);
-        assert_eq!(output_root, boot.l2_claim);
+        assert_eq!(number, boot.claimed_l2_block_number);
+        assert_eq!(output_root, boot.claimed_l2_output_root);
 
         println!("Validated derivation and STF. Output Root: {}", output_root);
     });

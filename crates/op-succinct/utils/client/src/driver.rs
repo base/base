@@ -27,7 +27,7 @@ use kona_derive::{
 use kona_mpt::TrieProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use op_alloy_protocol::{BlockInfo, L2BlockInfo};
-use op_alloy_rpc_types_engine::OptimismAttributesWithParent;
+use op_alloy_rpc_types_engine::OpAttributesWithParent;
 
 use log::{info, warn};
 
@@ -130,7 +130,7 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             .origin(l1_origin)
             .build();
 
-        let l2_claim_block = boot_info.l2_claim_block;
+        let l2_claim_block = boot_info.claimed_l2_block_number;
         Ok(Self {
             l2_safe_head,
             l2_safe_head_header,
@@ -148,8 +148,8 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
         self.l2_safe_head_header = new_safe_head_header;
     }
 
-    /// Produces the disputed [OptimismAttributesWithParent] payload, directly from the pipeline.
-    pub async fn produce_payload(&mut self) -> Result<OptimismAttributesWithParent> {
+    /// Produces the disputed [OpAttributesWithParent] payload, directly from the pipeline.
+    pub async fn produce_payload(&mut self) -> Result<OpAttributesWithParent> {
         // As we start the safe head at the disputed block's parent, we step the pipeline until the
         // first attributes are produced. All batches at and before the safe head will be
         // dropped, so the first payload will always be the disputed one.
@@ -211,12 +211,18 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
     ) -> Result<(BlockInfo, L2BlockInfo, Sealed<Header>)> {
         // Find the initial safe head, based off of the starting L2 block number in the boot info.
         caching_oracle
-            .write(&HintType::StartingL2Output.encode_with(&[boot_info.l2_output_root.as_ref()]))
+            .write(
+                &HintType::StartingL2Output
+                    .encode_with(&[boot_info.agreed_l2_output_root.as_ref()]),
+            )
             .await?;
         let mut output_preimage = [0u8; 128];
         caching_oracle
             .get_exact(
-                PreimageKey::new(*boot_info.l2_output_root, PreimageKeyType::Keccak256),
+                PreimageKey::new(
+                    boot_info.agreed_l2_output_root.0,
+                    PreimageKeyType::Keccak256,
+                ),
                 &mut output_preimage,
             )
             .await?;

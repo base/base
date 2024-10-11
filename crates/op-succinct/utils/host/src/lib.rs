@@ -57,9 +57,9 @@ pub fn get_proof_stdin(host_cli: &HostCli) -> Result<SP1Stdin> {
 
     let boot_info = BootInfoWithBytesConfig {
         l1_head: host_cli.l1_head,
-        l2_output_root: host_cli.l2_output_root,
-        l2_claim: host_cli.l2_claim,
-        l2_claim_block: host_cli.l2_block_number,
+        l2_output_root: host_cli.agreed_l2_output_root,
+        l2_claim: host_cli.claimed_l2_output_root,
+        l2_claim_block: host_cli.claimed_l2_block_number,
         chain_id: rollup_config.l2_chain_id,
         rollup_config_bytes,
     };

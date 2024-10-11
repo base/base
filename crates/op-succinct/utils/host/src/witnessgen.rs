@@ -7,10 +7,12 @@ use kona_host::HostCli;
 pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
     let mut args = vec![
         format!("--l1-head={}", host_cli.l1_head),
-        format!("--l2-head={}", host_cli.l2_head),
-        format!("--l2-output-root={}", host_cli.l2_output_root),
-        format!("--l2-claim={}", host_cli.l2_claim),
-        format!("--l2-block-number={}", host_cli.l2_block_number),
+        format!("--agreed-l2-head-hash={}", host_cli.agreed_l2_head_hash),
+        format!("--agreed-l2-output-root={}", host_cli.agreed_l2_output_root),
+        format!(
+            "--claimed-l2-output-root={}",
+            host_cli.claimed_l2_output_root
+        ),
     ];
     // The verbosity should be passed as -v, -vv, -vvv, etc.
     if host_cli.v > 0 {
@@ -137,16 +139,25 @@ impl WitnessGenExecutor {
                 result = child.child.wait() => {
                     match result {
                         Ok(status) if !status.success() => {
-                            return Err(anyhow::anyhow!("Witness generation process for end block {} failed.", child.host_cli.l2_block_number));
+                            return Err(anyhow::anyhow!(
+                                "Witness generation process for end block {} failed.",
+                                child.host_cli.claimed_l2_block_number
+                            ));
                         }
                         Err(e) => {
-                            return Err(anyhow::anyhow!("Failed to get witness generation process status for end block {}: {}", child.host_cli.l2_block_number, e));
+                            return Err(anyhow::anyhow!(
+                                "Failed to get witness generation process status for end block {}: {}",
+                                child.host_cli.claimed_l2_block_number, e
+                            ));
                         }
                         _ => {}
                     }
                 }
                 _ = tokio::time::sleep(self.timeout) => {
-                    return Err(anyhow::anyhow!("Witness generation process for end block {} timed out.", child.host_cli.l2_block_number));
+                    return Err(anyhow::anyhow!(
+                        "Witness generation process for end block {} timed out.",
+                        child.host_cli.claimed_l2_block_number
+                    ));
                 }
             }
         }

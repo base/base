@@ -11,7 +11,7 @@ use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use kona_host::HostCli;
 use op_alloy_genesis::RollupConfig;
-use op_alloy_rpc_types::output::OutputResponse;
+use op_alloy_rpc_types::{output::OutputResponse, safe_head::SafeHeadResponse};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use serde_json::{json, Value};
 use sp1_sdk::block_on;
@@ -397,7 +397,7 @@ impl OPSuccinctDataFetcher {
                 anyhow::anyhow!("Block not found for block number {}", l2_start_block)
             })?;
         let l2_output_state_root = l2_output_block.header.state_root;
-        let l2_head = l2_output_block.header.hash;
+        let agreed_l2_head_hash = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
             .get_proof(
                 Address::from_str("0x4200000000000000000000000000000000000016")?,
@@ -411,9 +411,9 @@ impl OPSuccinctDataFetcher {
             zero: 0,
             l2_state_root: l2_output_state_root.0.into(),
             l2_storage_hash: l2_output_storage_hash.0.into(),
-            l2_claim_hash: l2_head.0.into(),
+            l2_claim_hash: agreed_l2_head_hash.0.into(),
         };
-        let l2_output_root = keccak256(l2_output_encoded.abi_encode());
+        let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
         let l2_claim_block = l2_provider
@@ -437,7 +437,7 @@ impl OPSuccinctDataFetcher {
             l2_storage_hash: l2_claim_storage_hash.0.into(),
             l2_claim_hash: l2_claim_hash.0.into(),
         };
-        let l2_claim = keccak256(l2_claim_encoded.abi_encode());
+        let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
         let l1_head = self.get_l1_head(l2_end_block).await?;
 
@@ -488,11 +488,11 @@ impl OPSuccinctDataFetcher {
 
         Ok(HostCli {
             l1_head,
-            l2_output_root,
-            l2_claim,
-            l2_block_number: l2_end_block,
+            agreed_l2_output_root,
+            agreed_l2_head_hash,
+            claimed_l2_output_root,
+            claimed_l2_block_number: l2_end_block,
             l2_chain_id: None,
-            l2_head,
             l2_node_address: Some(self.rpc_config.l2_rpc.clone()),
             l1_node_address: Some(self.rpc_config.l1_rpc.clone()),
             l1_beacon_address: Some(self.rpc_config.l1_beacon_rpc.clone()),
@@ -547,17 +547,16 @@ impl OPSuccinctDataFetcher {
             }
 
             let l1_block_number_hex = format!("0x{:x}", current_l1_block_number);
-            // TODO: Use op-alloy types once the bug for safeHeadResponse is fixed: https://github.com/alloy-rs/op-alloy/issues/155
-            let result: Value = self
+            let result: SafeHeadResponse = self
                 .fetch_rpc_data(
                     RPCMode::L2Node,
                     "optimism_safeHeadAtL1Block",
                     vec![l1_block_number_hex.into()],
                 )
                 .await?;
-            let l2_safe_head = result["safeHead"]["number"].as_u64().unwrap();
+            let l2_safe_head = result.safe_head.number;
             if l2_safe_head > l2_end_block {
-                return Ok(B256::from_str(result["l1Block"]["hash"].as_str().unwrap()).unwrap());
+                return Ok(result.l1_block.hash);
             }
 
             // Move forward in 5 minute increments.
