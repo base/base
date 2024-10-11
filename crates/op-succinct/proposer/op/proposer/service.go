@@ -53,6 +53,7 @@ type ProposerConfig struct {
 	// Additional fields required for OP Succinct Proposer
 	DbPath                     string
 	UseCachedDb                bool
+	SlackToken                 string
 	BeaconRpc                  string
 	TxCacheOutDir              string
 	BatchDecoderConcurrentReqs uint64
@@ -114,6 +115,7 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	// Additional fields required for OP Succinct Proposer
 	ps.DbPath = cfg.DbPath
 	ps.UseCachedDb = cfg.UseCachedDb
+	ps.SlackToken = cfg.SlackToken
 	ps.BeaconRpc = cfg.BeaconRpc
 	ps.TxCacheOutDir = cfg.TxCacheOutDir
 	ps.BatchDecoderConcurrentReqs = cfg.BatchDecoderConcurrentReqs

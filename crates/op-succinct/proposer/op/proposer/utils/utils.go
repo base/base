@@ -90,7 +90,7 @@ func LoadOPStackRollupConfigFromChainID(l2ChainId uint64) (*rollup.Config, error
 	// Determine the path to the rollup config file.
 	_, currentFile, _, _ := runtime.Caller(0)
 	currentDir := filepath.Dir(currentFile)
-	path := filepath.Join(currentDir, "..", "..", "..", "..", "rollup-configs", fmt.Sprintf("%d.json", l2ChainId))
+	path := filepath.Join(currentDir, "..", "..", "..", "..", "configs", strconv.FormatUint(l2ChainId, 10), "rollup.json")
 
 	// Read the rollup config file.
 	rollupCfg, err := os.ReadFile(path)
