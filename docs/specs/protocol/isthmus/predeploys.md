@@ -13,13 +13,7 @@
     - [Interface](#interface)
       - [`setIsthmus`](#setisthmus)
       - [`setConfig`](#setconfig)
-      - [`baseFeeVaultConfig`](#basefeevaultconfig)
-      - [`sequencerFeeVaultConfig`](#sequencerfeevaultconfig)
-      - [`l1FeeVaultConfig`](#l1feevaultconfig)
-      - [`l1CrossDomainMessenger`](#l1crossdomainmessenger)
-      - [`l1StandardBridge`](#l1standardbridge)
-      - [`l1ERC721Bridge`](#l1erc721bridge)
-      - [`remoteChainId`](#remotechainid)
+      - [`getConfig`](#getconfig)
   - [FeeVault](#feevault)
     - [Interface](#interface-1)
       - [`config`](#config)
@@ -70,13 +64,13 @@ graph LR
   end
   subgraph L2
   L1Block
-  BaseFeeVault -- "baseFeeVaultConfig()(address,uint256,uint8)" --> L1Block
-  SequencerFeeVault -- "sequencerFeeVaultConfig()(address,uint256,uint8)" --> L1Block
-  L1FeeVault -- "l1FeeVaultConfig()(address,uint256,uint8)" --> L1Block
-  L2CrossDomainMessenger -- "l1CrossDomainMessenger()(address)" --> L1Block
-  L2StandardBridge -- "l1StandardBridge()(address)" --> L1Block
-  L2ERC721Bridge -- "l1ERC721Bridge()(address)" --> L1Block
-  OptimismMintableERC721Factory -- "remoteChainId()(uint256)" --> L1Block
+  BaseFeeVault -- "getConfig(ConfigType.GAS_PAYING_TOKEN)(address,uint256,uint8)" --> L1Block
+  SequencerFeeVault -- "getConfig(ConfigType.SEQUENCER_FEE_VAULT_CONFIG)(address,uint256,uint8)" --> L1Block
+  L1FeeVault -- "getConfig(ConfigType.L1_FEE_VAULT_CONFIG)(address,uint256,uint8)" --> L1Block
+  L2CrossDomainMessenger -- "getConfig(ConfigType.L1_CROSS_DOMAIN_MESSENGER_ADDRESS)(address)" --> L1Block
+  L2StandardBridge -- "getConfig(ConfigType.L1_STANDARD_BRIDGE_ADDRESS)(address)" --> L1Block
+  L2ERC721Bridge -- "getConfig(ConfigType.L1_ERC721_BRIDGE_ADDRESS)(address)" --> L1Block
+  OptimismMintableERC721Factory -- "getConfig(ConfigType.REMOTE_CHAIN_ID)(uint256)" --> L1Block
   end
   OptimismPortal -- "setConfig(uint8,bytes)" --> L1Block
 ```
@@ -132,62 +126,17 @@ function setConfig(ConfigType,bytes)
 
 Note that `ConfigType` is an enum which is an alias for a `uint8`.
 
-##### `baseFeeVaultConfig`
+##### `getConfig`
 
-This function MUST be called by the `BaseFeeVault` to fetch network specific configuration.
-
-```solidity
-function baseFeeVaultConfig()(address,uint256,WithdrawalNetwork)
-```
-
-##### `sequencerFeeVaultConfig`
-
-This function MUST be called by the `SequencerFeeVault` to fetch network specific configuration.
+This function is called by each contract with the appropriate `ConfigType` to fetch
+the network specific configuration. Using this pattern reduces the ABI of the `L1Block`
+contract by removing the need for special getters for each piece of config.
 
 ```solidity
-function sequencerFeeVaultConfig()(address,uint256,WithdrawalNetwork)
+function getConfig(ConfigType)(bytes)
 ```
 
-##### `l1FeeVaultConfig`
-
-This function MUST be called by the `L1FeeVault` to fetch network specific configuration.
-
-```solidity
-function l1FeeVaultConfig()(address,uint256,WithdrawalNetwork)
-```
-
-##### `l1CrossDomainMessenger`
-
-This function MUST be called by the `L2CrossDomainMessenger` to fetch the address of the `L1CrossDomainMessenger`.
-
-```solidity
-function l1CrossDomainMessenger()(address)
-```
-
-##### `l1StandardBridge`
-
-This function MUST be called by the `L2StandardBridge` to fetch the address of the `L2CrossDomainMessenger`.
-
-```solidity
-function l1StandardBridge()(address)
-```
-
-##### `l1ERC721Bridge`
-
-This function MUST be called by the `L2ERC721Bridge` to fetch the address of the `L1ERC721Bridge`.
-
-```solidity
-function l1ERC721Bridge()(address)
-```
-
-##### `remoteChainId`
-
-This function MUST be called by the `OptimismMintableERC721Factory` to fetch the chain id of the remote chain.
-For an L2, this is the L1 chain id.
-
-```solidity
-function remoteChainId()(uint256)
-```
+The caller needs to ABI decode the data into the desired type.
 
 ### FeeVault
 
@@ -204,9 +153,9 @@ The following functions are updated to read from the `L1Block` contract:
 
 | Name | Call |
 | ---- | -------- |
-| `BaseFeeVault` | `L1Block.baseFeeVaultConfig()` |
-| `SequencerFeeVault` | `L1Block.sequencerFeeVaultConfig()` |
-| `L1FeeVault` | `L1Block.l1FeeVaultConfig()` |
+| `BaseFeeVault` | `L1Block.getConfig(ConfigType.BASE_FEE_VAULT_CONFIG)` |
+| `SequencerFeeVault` | `L1Block.getConfig(ConfigType.SEQUENCER_FEE_VAULT_CONFIG)` |
+| `L1FeeVault` | `L1Block.getConfig(ConfigType.L1_FEE_VAULT_CONFIG)` |
 
 ##### `config`
 
@@ -220,7 +169,7 @@ function config()(address,uint256,WithdrawalNetwork)
 
 #### Interface
 
-The following functions are updated to read from the `L1Block` contract by calling `L1Block.l1CrossDomainMessenger()`:
+The following functions are updated to read from the `L1Block` contract by calling `L1Block.getConfig(ConfigType.L1_CROSS_DOMAIN_MESSENGER_ADDRESS)`:
 
 - `otherMessenger()(address)`
 - `OTHER_MESSENGER()(address)`
@@ -229,7 +178,7 @@ The following functions are updated to read from the `L1Block` contract by calli
 
 #### Interface
 
-The following functions are updated to read from the `L1Block` contract by calling `L1Block.l1ERC721Bridge()`
+The following functions are updated to read from the `L1Block` contract by calling `L1Block.getConfig(ConfigType.L1_ERC721_BRIDGE_ADDRESS)`:
 
 - `otherBridge()(address)`
 - `OTHER_BRIDGE()(address)`
@@ -238,7 +187,7 @@ The following functions are updated to read from the `L1Block` contract by calli
 
 #### Interface
 
-The following functions are updated to read from the `L1Block` contract by calling `L1Block.l1StandardBridge()`
+The following functions are updated to read from the `L1Block` contract by calling `L1Block.getConfig(ConfigType.L1_STANDARD_BRIDGE_ADDRESS)`:
 
 - `otherBridge()(address)`
 - `OTHER_BRIDGE()(address)`
@@ -246,7 +195,7 @@ The following functions are updated to read from the `L1Block` contract by calli
 ### OptimismMintableERC721Factory
 
 The chain id is no longer read from storage but instead is read from the `L1Block` contract by calling
-`L1Block.remoteChainId()`
+`L1Block.getConfig(ConfigType.REMOTE_CHAIN_ID)`
 
 ## Security Considerations
 

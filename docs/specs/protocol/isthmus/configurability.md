@@ -35,14 +35,14 @@ The `ConfigType` enum represents configuration that can be modified.
 
 | Name | Value | Description |
 | ---- | ----- | --- |
-| `SET_GAS_PAYING_TOKEN` | `uint8(0)` | Modifies the gas paying token for the chain |
-| `SET_BASE_FEE_VAULT_CONFIG` | `uint8(1)` | Sets the Fee Vault Config for the `BaseFeeVault` |
-| `SET_L1_FEE_VAULT_CONFIG` | `uint8(2)` | Sets the Fee Vault Config for the `L1FeeVault` |
-| `SET_SEQUENCER_FEE_VAULT_CONFIG` | `uint8(3)` | Sets the Fee Vault Config for the `SequencerFeeVault` |
-| `SET_L1_CROSS_DOMAIN_MESSENGER_ADDRESS` | `uint8(4)` | Sets the `L1CrossDomainMessenger` address |
-| `SET_L1_ERC_721_BRIDGE_ADDRESS` | `uint8(5)` | Sets the `L1ERC721Bridge` address |
-| `SET_L1_STANDARD_BRIDGE_ADDRESS` | `uint8(6)` | Sets the `L1StandardBridge` address |
-| `SET_REMOTE_CHAIN_ID` | `uint8(7)` | Sets the chain id of the base chain |
+| `GAS_PAYING_TOKEN` | `uint8(0)` | Modifies the gas paying token for the chain |
+| `BASE_FEE_VAULT_CONFIG` | `uint8(1)` | Sets the Fee Vault Config for the `BaseFeeVault` |
+| `L1_FEE_VAULT_CONFIG` | `uint8(2)` | Sets the Fee Vault Config for the `L1FeeVault` |
+| `SEQUENCER_FEE_VAULT_CONFIG` | `uint8(3)` | Sets the Fee Vault Config for the `SequencerFeeVault` |
+| `L1_CROSS_DOMAIN_MESSENGER_ADDRESS` | `uint8(4)` | Sets the `L1CrossDomainMessenger` address |
+| `L1_ERC_721_BRIDGE_ADDRESS` | `uint8(5)` | Sets the `L1ERC721Bridge` address |
+| `L1_STANDARD_BRIDGE_ADDRESS` | `uint8(6)` | Sets the `L1StandardBridge` address |
+| `REMOTE_CHAIN_ID` | `uint8(7)` | Sets the chain id of the base chain |
 
 ## `SystemConfig`
 
