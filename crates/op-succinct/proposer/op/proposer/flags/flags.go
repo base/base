@@ -80,6 +80,11 @@ var (
 		Value:   false,
 		EnvVars: prefixEnvVars("USE_CACHED_DB"),
 	}
+	SlackTokenFlag = &cli.StringFlag{
+		Name:    "slack-token",
+		Usage:   "Token for the Slack API",
+		EnvVars: prefixEnvVars("SLACK_TOKEN"),
+	}
 	MaxBlockRangePerSpanProofFlag = &cli.Uint64Flag{
 		Name:    "max-block-range-per-span-proof",
 		Usage:   "Maximum number of blocks to include in a single span proof",
@@ -146,6 +151,7 @@ var optionalFlags = []cli.Flag{
 	WaitNodeSyncFlag,
 	DbPathFlag,
 	UseCachedDbFlag,
+	SlackTokenFlag,
 	MaxBlockRangePerSpanProofFlag,
 	TxCacheOutDirFlag,
 	BatchDecoderConcurrentReqsFlag,

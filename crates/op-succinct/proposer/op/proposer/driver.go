@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/slack-go/slack"
 
 	// Original Optimism Bindings
 
@@ -31,8 +32,9 @@ import (
 )
 
 var (
-	supportedL2OutputVersion = eth.Bytes32{}
-	ErrProposerNotRunning    = errors.New("proposer is not running")
+	slackMetricsTickerInterval = 30 * time.Minute
+	supportedL2OutputVersion   = eth.Bytes32{}
+	ErrProposerNotRunning      = errors.New("proposer is not running")
 )
 
 type L1Client interface {
@@ -277,6 +279,43 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMet
 		NumWitnessgen:                  uint64(numWitnessgen),
 		NumUnrequested:                 uint64(numUnrequested),
 	}, nil
+}
+
+// SendSlackNotification sends a Slack notification with the proposer metrics.
+func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetrics) error {
+	if l.Cfg.SlackToken == "" {
+		return nil // Slack notifications disabled if token not set
+	}
+
+	api := slack.New(l.Cfg.SlackToken)
+	channelID := "op-succinct-tests"
+
+	message := fmt.Sprintf("**Chain %d Proposer Metrics**:\n"+
+		"L2 Unsafe Head: %d\n"+
+		"L2 Finalized: %d\n"+
+		"Latest Contract L2 Block: %d\n"+
+		"Highest Proven Contiguous L2 Block: %d\n"+
+		"Num Proving: %d\n"+
+		"Num Witnessgen: %d\n"+
+		"Num Unrequested: %d",
+		l.Cfg.L2ChainID,
+		proposerMetrics.L2UnsafeHeadBlock,
+		proposerMetrics.L2FinalizedBlock,
+		proposerMetrics.LatestContractL2Block,
+		proposerMetrics.HighestProvenContiguousL2Block,
+		proposerMetrics.NumProving,
+		proposerMetrics.NumWitnessgen,
+		proposerMetrics.NumUnrequested)
+
+	_, _, err := api.PostMessage(
+		channelID,
+		slack.MsgOptionText(message, false),
+	)
+	if err != nil {
+		return fmt.Errorf("error sending Slack notification: %w", err)
+	}
+
+	return nil
 }
 
 func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
@@ -550,7 +589,9 @@ func (l *L2OutputSubmitter) waitNodeSync() error {
 // proposes it.
 func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 	ticker := time.NewTicker(l.Cfg.PollInterval)
+	slackMetricsTicker := time.NewTicker(slackMetricsTickerInterval)
 	defer ticker.Stop()
+	defer slackMetricsTicker.Stop()
 	for {
 		select {
 		case <-ticker.C:
@@ -607,6 +648,16 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 			err = l.SubmitAggProofs(ctx)
 			if err != nil {
 				l.Log.Error("failed to submit agg proofs", "err", err)
+			}
+		case <-slackMetricsTicker.C:
+			metrics, err := l.GetProposerMetrics(ctx)
+			if err != nil {
+				l.Log.Error("failed to get metrics for Slack notification", "err", err)
+				continue
+			}
+			err = l.SendSlackNotification(metrics)
+			if err != nil {
+				l.Log.Error("failed to send Slack notification", "err", err)
 			}
 		case <-l.done:
 			return
