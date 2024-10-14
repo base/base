@@ -326,13 +326,15 @@ chain is included instead.
 The following function is used for sending messages between domains:
 
 ```solidity
-function sendMessage(uint256 _destination, address _target, bytes calldata _message) external;
+function sendMessage(uint256 _destination, address _target, bytes calldata _message) external returns (bytes32);
 ```
 
+It returns the hash of the message being sent,
+used to track whether the message has successfully been relayed.
 It emits a `SentMessage` event with the necessary metadata to execute when relayed on the destination chain.
 
 ```solidity
-event SentMessage(uint256 indexed destination, address indexed target, uint256 indexed messageNonce, address sender, bytes message);``
+event SentMessage(uint256 indexed destination, address indexed target, uint256 indexed messageNonce, address sender, bytes message);
 ```
 
 An explicit `_destination` chain and `nonce` are used to ensure that the message can only be played on a single remote
