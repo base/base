@@ -37,9 +37,9 @@ Predeploys are used instead of precompiles to make it easier for multiclient
 implementations as well as allowing for more integration with hardhat/foundry
 network forking.
 
-Predeploy addresses exist in 1 byte namespace `0x42000000000000000000000000000000000000xx`.
-Proxies are set at each possible predeploy address except for the
-`GovernanceToken` and the `ProxyAdmin`.
+Predeploy addresses exist in a prefixed namespace `0x4200000000000000000000000000000000000xxx`.
+Proxies are set at the first 2048 addresses in the namespace, except for the addresses reserved for the
+`GovernanceToken` and `WETH` predeploys.
 
 The `LegacyERC20ETH` predeploy lives at a special address `0xDeadDeAddeAddEAddeadDEaDDEAdDeaDDeAD0000`
 and there is no proxy deployed at that account.
