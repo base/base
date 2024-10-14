@@ -125,6 +125,12 @@ impl From<Signed<TxEip1559>> for OpTxEnvelope {
     }
 }
 
+impl From<Signed<TxEip7702>> for OpTxEnvelope {
+    fn from(v: Signed<TxEip7702>) -> Self {
+        Self::Eip7702(v)
+    }
+}
+
 impl From<TxDeposit> for OpTxEnvelope {
     fn from(v: TxDeposit) -> Self {
         Self::Deposit(v)
