@@ -115,12 +115,6 @@ var (
 		Value:   "/tmp/batch_decoder/transactions_cache",
 		EnvVars: prefixEnvVars("TX_CACHE_OUT_DIR"),
 	}
-	BatchDecoderConcurrentReqsFlag = &cli.Uint64Flag{
-		Name:    "batch-decoder-concurrent-reqs",
-		Usage:   "Concurrency level when fetching transactions to determine span batch boundaries",
-		Value:   10,
-		EnvVars: prefixEnvVars("BATCH_DECODER_CONCURRENT_REQS"),
-	}
 	BatchInboxFlag = &cli.StringFlag{
 		Name:    "batch-inbox",
 		Usage:   "Batch Inbox Address",
@@ -154,8 +148,8 @@ var optionalFlags = []cli.Flag{
 	SlackTokenFlag,
 	MaxBlockRangePerSpanProofFlag,
 	TxCacheOutDirFlag,
-	BatchDecoderConcurrentReqsFlag,
 	OPSuccinctServerUrlFlag,
+	ProofTimeoutFlag,
 	MaxConcurrentProofRequestsFlag,
 	BatchInboxFlag,
 	BatcherAddressFlag,
