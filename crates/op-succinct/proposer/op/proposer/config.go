@@ -78,8 +78,6 @@ type CLIConfig struct {
 	BeaconRpc string
 	// Directory to store the transaction cache when determining span batch boundaries.
 	TxCacheOutDir string
-	// Number of concurrent requests to make when fetching L1 data to determine span batch boundaries.
-	BatchDecoderConcurrentReqs uint64
 	// The max size (in blocks) of a proof we will attempt to generate. If span batches are larger, we break them up.
 	MaxBlockRangePerSpanProof uint64
 	// The Chain ID of the L2 chain.
@@ -157,7 +155,6 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		MaxBlockRangePerSpanProof:    ctx.Uint64(flags.MaxBlockRangePerSpanProofFlag.Name),
 		ProofTimeout:                 ctx.Uint64(flags.ProofTimeoutFlag.Name),
 		TxCacheOutDir:                ctx.String(flags.TxCacheOutDirFlag.Name),
-		BatchDecoderConcurrentReqs:   ctx.Uint64(flags.BatchDecoderConcurrentReqsFlag.Name),
 		OPSuccinctServerUrl:          ctx.String(flags.OPSuccinctServerUrlFlag.Name),
 		MaxConcurrentProofRequests:   ctx.Uint64(flags.MaxConcurrentProofRequestsFlag.Name),
 		BatchInbox:                   ctx.String(flags.BatchInboxFlag.Name),

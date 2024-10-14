@@ -284,13 +284,14 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMet
 // SendSlackNotification sends a Slack notification with the proposer metrics.
 func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetrics) error {
 	if l.Cfg.SlackToken == "" {
+		l.Log.Info("Slack notifications disabled, token not set")
 		return nil // Slack notifications disabled if token not set
 	}
 
 	api := slack.New(l.Cfg.SlackToken)
 	channelID := "op-succinct-tests"
 
-	message := fmt.Sprintf("**Chain %d Proposer Metrics**:\n"+
+	message := fmt.Sprintf("*Chain %d Proposer Metrics*:\n"+
 		"L2 Unsafe Head: %d\n"+
 		"L2 Finalized: %d\n"+
 		"Latest Contract L2 Block: %d\n"+

@@ -56,7 +56,6 @@ type ProposerConfig struct {
 	SlackToken                 string
 	BeaconRpc                  string
 	TxCacheOutDir              string
-	BatchDecoderConcurrentReqs uint64
 	MaxBlockRangePerSpanProof  uint64
 	L2ChainID                  uint64
 	ProofTimeout               uint64
@@ -118,7 +117,6 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.SlackToken = cfg.SlackToken
 	ps.BeaconRpc = cfg.BeaconRpc
 	ps.TxCacheOutDir = cfg.TxCacheOutDir
-	ps.BatchDecoderConcurrentReqs = cfg.BatchDecoderConcurrentReqs
 	ps.MaxBlockRangePerSpanProof = cfg.MaxBlockRangePerSpanProof
 	ps.OPSuccinctServerUrl = cfg.OPSuccinctServerUrl
 	ps.ProofTimeout = cfg.ProofTimeout

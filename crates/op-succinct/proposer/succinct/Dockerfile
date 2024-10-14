@@ -36,8 +36,9 @@ COPY programs ./programs
 # Build the server
 RUN cargo build --bin server --release
 
-# Expose port 3000
-EXPOSE 3000
+# Expose port based on environment variable or default to 3000
+ENV PORT=${PORT:-3000}
+EXPOSE $PORT
 
 # Run the server
 CMD ["/app/target/release/server"]
