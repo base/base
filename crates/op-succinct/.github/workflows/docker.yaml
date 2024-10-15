@@ -13,8 +13,10 @@ jobs:
     name: Build the Docker Compose setup
     runs-on:
       - runs-on
-      - runner=64cpu-linux-arm64
+      - cpu=16
       - ram=64
+      - family=m7a+m7i-flex
+      - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}    
     steps:
       - uses: actions/checkout@v4
