@@ -23,6 +23,10 @@ pub mod hardforks;
 pub use hardforks::Hardforks;
 
 mod block;
+mod traits;
+
+pub use traits::DepositTransaction;
+
 pub use block::OpBlock;
 
 /// Bincode-compatible serde implementations for consensus types.
