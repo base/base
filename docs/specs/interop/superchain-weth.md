@@ -12,9 +12,8 @@
   - [Invariants](#invariants)
     - [`deposit`](#deposit)
     - [`withdraw`](#withdraw)
-    - [`sendERC20`](#senderc20)
-    - [`sendERC20To`](#senderc20to)
-    - [`relayERC20`](#relayerc20)
+    - [`crosschainBurn`](#crosschainburn)
+    - [`crosschainMint`](#crosschainmint)
 - [ETHLiquidity](#ethliquidity)
   - [Invariants](#invariants-1)
     - [Global Invariants](#global-invariants)
@@ -25,6 +24,8 @@
 
 Superchain WETH is a version of the standard WETH contract that allows ETH to be interoperable across the Superchain.
 Superchain WETH treats ETH as an ERC-20 token for interoperability and avoids native ETH support.
+Superchain WETH integrates with the [SuperchainTokenBridge](./predeploys.md#superchainerc20bridge) as its entrypoint
+for interopable actions.
 Superchain WETH also introduces a liquidity contract used to provide liquidity for native ETH across chains.
 
 ## Motivation and Constraints
@@ -67,31 +68,24 @@ but does not preclude a protocol-layer solution as long as we minimize implement
 
 - Reverts if triggered on a chain that does not use ETH as a native token.
 
-#### `sendERC20`
+#### `crosschainBurn`
 
+- Reverts if called by any address other than the `SuperchainTokenBridge`.
 - Reverts if attempting to send more than the sender's available balance.
 - Reduce's the sender's balance by the sent amount.
 - Emits a transfer event from sender to null address for the sent amount.
-- Emits a `SendERC20` event.
 - Burns liquidity by sending the sent amount of ETH into the `ETHLiquidity` contract if native token is ETH.
   - Must not revert.
-- Sends a message to `SuperchainWETH` on the recipient chain finalizing a send of WETH.
-  - Must not revert.
+- Emits a `CrosschainBurnt` event.
 
-#### `sendERC20To`
+#### `crosschainMint`
 
-- All invariants of `sendERC20`.
-- Message sent to `SuperchainWETH` on recipient chain includes `to` address as recipient.
-
-#### `relayERC20`
-
-- Reverts if called by any address other than the `L2ToL2CrossDomainMessenger`.
-- Reverts if `crossDomainMessageSender` is not the `SuperchainWETH` contract.
+- Reverts if called by any address other than the `SuperchainTokenBridge`.
 - Mints liquidity from the `ETHLiquidity` contract if native token is ETH.
   - Must not revert.
 - Increases the recipient's balance by the sent amount.
 - Emits a transfer event from null address to recipient for the sent amount.
-- Emits a `RelayERC0` event.
+- Emits a `CrosschainMinted` event.
 
 ## ETHLiquidity
 
