@@ -213,32 +213,32 @@ impl Default for RollupConfig {
 impl RollupConfig {
     /// Returns true if Regolith is active at the given timestamp.
     pub fn is_regolith_active(&self, timestamp: u64) -> bool {
-        self.regolith_time.map_or(false, |t| timestamp >= t)
+        self.regolith_time.map_or(false, |t| timestamp >= t) || self.is_canyon_active(timestamp)
     }
 
     /// Returns true if Canyon is active at the given timestamp.
     pub fn is_canyon_active(&self, timestamp: u64) -> bool {
-        self.canyon_time.map_or(false, |t| timestamp >= t)
+        self.canyon_time.map_or(false, |t| timestamp >= t) || self.is_delta_active(timestamp)
     }
 
     /// Returns true if Delta is active at the given timestamp.
     pub fn is_delta_active(&self, timestamp: u64) -> bool {
-        self.delta_time.map_or(false, |t| timestamp >= t)
+        self.delta_time.map_or(false, |t| timestamp >= t) || self.is_ecotone_active(timestamp)
     }
 
     /// Returns true if Ecotone is active at the given timestamp.
     pub fn is_ecotone_active(&self, timestamp: u64) -> bool {
-        self.ecotone_time.map_or(false, |t| timestamp >= t)
+        self.ecotone_time.map_or(false, |t| timestamp >= t) || self.is_fjord_active(timestamp)
     }
 
     /// Returns true if Fjord is active at the given timestamp.
     pub fn is_fjord_active(&self, timestamp: u64) -> bool {
-        self.fjord_time.map_or(false, |t| timestamp >= t)
+        self.fjord_time.map_or(false, |t| timestamp >= t) || self.is_granite_active(timestamp)
     }
 
     /// Returns true if Granite is active at the given timestamp.
     pub fn is_granite_active(&self, timestamp: u64) -> bool {
-        self.granite_time.map_or(false, |t| timestamp >= t)
+        self.granite_time.map_or(false, |t| timestamp >= t) || self.is_holocene_active(timestamp)
     }
 
     /// Returns true if Holocene is active at the given timestamp.
@@ -535,6 +535,7 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_canyon_active(0));
         config.canyon_time = Some(10);
+        assert!(config.is_regolith_active(10));
         assert!(config.is_canyon_active(10));
         assert!(!config.is_canyon_active(9));
     }
@@ -544,6 +545,8 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_delta_active(0));
         config.delta_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
         assert!(config.is_delta_active(10));
         assert!(!config.is_delta_active(9));
     }
@@ -553,6 +556,9 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_ecotone_active(0));
         config.ecotone_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
+        assert!(config.is_delta_active(10));
         assert!(config.is_ecotone_active(10));
         assert!(!config.is_ecotone_active(9));
     }
@@ -562,6 +568,10 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_fjord_active(0));
         config.fjord_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
+        assert!(config.is_delta_active(10));
+        assert!(config.is_ecotone_active(10));
         assert!(config.is_fjord_active(10));
         assert!(!config.is_fjord_active(9));
     }
@@ -571,6 +581,11 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_granite_active(0));
         config.granite_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
+        assert!(config.is_delta_active(10));
+        assert!(config.is_ecotone_active(10));
+        assert!(config.is_fjord_active(10));
         assert!(config.is_granite_active(10));
         assert!(!config.is_granite_active(9));
     }
@@ -580,6 +595,12 @@ mod tests {
         let mut config = RollupConfig::default();
         assert!(!config.is_holocene_active(0));
         config.holocene_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
+        assert!(config.is_delta_active(10));
+        assert!(config.is_ecotone_active(10));
+        assert!(config.is_fjord_active(10));
+        assert!(config.is_granite_active(10));
         assert!(config.is_holocene_active(10));
         assert!(!config.is_holocene_active(9));
     }
