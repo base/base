@@ -12,6 +12,9 @@ extern crate alloc;
 mod attributes;
 pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
 
+mod envelope;
+pub use envelope::{OpNetworkPayloadEnvelope, PayloadEnvelopeError, PayloadHash};
+
 mod payload_v3;
 pub use payload_v3::OpExecutionPayloadEnvelopeV3;
 
