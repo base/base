@@ -1,7 +1,7 @@
 use super::OpTxType;
 use alloy_consensus::Transaction;
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{Address, Bytes, ChainId, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, ChainId, Parity, Signature, TxKind, B256, U256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
 };
@@ -151,6 +151,12 @@ impl TxDeposit {
         } else {
             inner_payload_length
         }
+    }
+
+    /// Returns the signature for the optimism deposit transactions, which don't include a
+    /// signature.
+    pub fn signature() -> Signature {
+        Signature::new(U256::ZERO, U256::ZERO, Parity::Parity(false))
     }
 }
 
