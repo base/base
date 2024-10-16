@@ -110,6 +110,9 @@ frame loading becomes simpler in the channel bank:
 correct frame for this channel, the frame and channel are dropped, including all future frames for
 the channel that might still be in the frame queue. Note that the equivalent rule was already
 present pre-Holocene.
+- After adding a frame to the staging channel, the channel is dropped if its raw compressed size as
+defined in the Bedrock specification is larger than `MAX_RLP_BYTES_PER_CHANNEL`. This rule replaces
+the total limit of all channels' combined sizes by `MAX_CHANNEL_BANK_SIZE` before Holocene.
 
 ## Span Batches
 
