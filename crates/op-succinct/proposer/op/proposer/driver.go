@@ -291,15 +291,30 @@ func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetric
 	api := slack.New(l.Cfg.SlackToken)
 	channelID := "op-succinct-tests"
 
+	ctx, cancel := context.WithTimeout(l.ctx, l.Cfg.NetworkTimeout)
+	defer cancel()
+
+	rollupClient, err := l.RollupProvider.RollupClient(ctx)
+	if err != nil {
+		return fmt.Errorf("getting rollup client: %w", err)
+	}
+	cfg, err := rollupClient.RollupConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("getting rollup config: %w", err)
+	}
+	l2BlockTime := cfg.BlockTime
+
+	// Get the number of minutes behind the L2 finalized block the contract is.
+	minutesBehind := (proposerMetrics.L2FinalizedBlock - proposerMetrics.LatestContractL2Block) * l2BlockTime / 60
+
 	message := fmt.Sprintf("*Chain %d Proposer Metrics*:\n"+
-		"L2 Unsafe Head: %d\n"+
-		"L2 Finalized: %d\n"+
-		"Latest Contract L2 Block: %d\n"+
-		"Highest Proven Contiguous L2 Block: %d\n"+
-		"Num Proving: %d\n"+
-		"Num Witnessgen: %d\n"+
-		"Num Unrequested: %d",
+		"Minutes Behind L2 Finalized: %d\n"+
+		"| L2 Unsafe | L2 Finalized | Contract L2 | Proven L2 |\n"+
+		"| %-9d | %-12d | %-11d | %-9d |\n"+
+		"| Proving   | Witness Gen | Unrequested |\n"+
+		"| %-9d | %-11d | %-11d |",
 		l.Cfg.L2ChainID,
+		minutesBehind,
 		proposerMetrics.L2UnsafeHeadBlock,
 		proposerMetrics.L2FinalizedBlock,
 		proposerMetrics.LatestContractL2Block,
@@ -308,7 +323,7 @@ func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetric
 		proposerMetrics.NumWitnessgen,
 		proposerMetrics.NumUnrequested)
 
-	_, _, err := api.PostMessage(
+	_, _, err = api.PostMessage(
 		channelID,
 		slack.MsgOptionText(message, false),
 	)
