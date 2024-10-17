@@ -164,7 +164,7 @@ func (l *L2OutputSubmitter) StartL2OutputSubmitting() error {
 	l.running = true
 
 	// When restarting the proposer using a cached database, we need to mark all proofs that are in witness generation state as failed, and retry them.
-	witnessGenReqs, err := l.db.GetAllRequestsProving()
+	witnessGenReqs, err := l.db.GetAllProofsWithStatus(proofrequest.StatusWITNESSGEN)
 	if err != nil {
 		return fmt.Errorf("failed to get witness generation pending proofs: %w", err)
 	}
