@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
+	"runtime"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -19,7 +19,6 @@ import (
 type ProofDB struct {
 	writeClient *ent.Client
 	readClient  *ent.Client
-	writeMutex  sync.Mutex
 }
 
 // InitDB initializes the database and returns a handle to it.
@@ -37,14 +36,16 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 		return nil, fmt.Errorf("failed to create directories for DB: %w", err)
 	}
 
-	connectionUrl := fmt.Sprintf("file:%s?_fk=1", dbPath)
+	// Use the TL;DR SQLite settings from https://kerkour.com/sqlite-for-servers.
+	connectionUrl := fmt.Sprintf("file:%s?_fk=1&journal_mode=WAL&synchronous=normal&cache_size=100000000&busy_timeout=15000&_txlock=immediate", dbPath)
 
 	writeDrv, err := sql.Open("sqlite3", connectionUrl)
 	if err != nil {
 		return nil, fmt.Errorf("failed opening connection to sqlite: %v", err)
 	}
 	writeDb := writeDrv.DB()
-	// The write lock will be managed behind a Mutex.
+
+	// The write lock only allows one connection to the DB at a time.
 	writeDb.SetMaxOpenConns(1)
 	writeDb.SetConnMaxLifetime(time.Hour)
 
@@ -53,7 +54,7 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 		return nil, fmt.Errorf("failed opening connection to sqlite: %v", err)
 	}
 	readDb := readDrv.DB()
-	readDb.SetMaxOpenConns(4)
+	readDb.SetMaxOpenConns(max(4, runtime.NumCPU()/4))
 	readDb.SetConnMaxLifetime(time.Hour)
 
 	readClient := ent.NewClient(ent.Driver(readDrv))
@@ -86,9 +87,6 @@ func (db *ProofDB) CloseDB() error {
 
 // NewEntry creates a new proof request entry in the database.
 func (db *ProofDB) NewEntry(proofType proofrequest.Type, start, end uint64) error {
-	db.writeMutex.Lock()
-	defer db.writeMutex.Unlock()
-
 	now := uint64(time.Now().Unix())
 	_, err := db.writeClient.ProofRequest.
 		Create().
@@ -109,9 +107,6 @@ func (db *ProofDB) NewEntry(proofType proofrequest.Type, start, end uint64) erro
 
 // UpdateProofStatus updates the status of a proof request in the database.
 func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) error {
-	db.writeMutex.Lock()
-	defer db.writeMutex.Unlock()
-
 	_, err := db.writeClient.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
 		SetStatus(proofStatus).
@@ -123,9 +118,6 @@ func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) er
 
 // SetProverRequestID sets the prover request ID for a proof request in the database.
 func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
-	db.writeMutex.Lock()
-	defer db.writeMutex.Unlock()
-
 	_, err := db.writeClient.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
 		SetProverRequestID(proverRequestID).
@@ -142,9 +134,6 @@ func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
 
 // AddFulfilledProof adds a proof to a proof request in the database and sets the status to COMPLETE.
 func (db *ProofDB) AddFulfilledProof(id int, proof []byte) error {
-	db.writeMutex.Lock()
-	defer db.writeMutex.Unlock()
-
 	// Start a transaction
 	tx, err := db.writeClient.Tx(context.Background())
 	if err != nil {
@@ -208,9 +197,6 @@ func (db *ProofDB) GetNumberOfRequestsWithStatuses(statuses ...proofrequest.Stat
 
 // AddL1BlockInfoToAggRequest adds the L1 block info to the existing AGG proof request.
 func (db *ProofDB) AddL1BlockInfoToAggRequest(startBlock, endBlock, l1BlockNumber uint64, l1BlockHash string) (*ent.ProofRequest, error) {
-	db.writeMutex.Lock()
-	defer db.writeMutex.Unlock()
-
 	// Perform the update
 	rowsAffected, err := db.writeClient.ProofRequest.Update().
 		Where(
@@ -304,20 +290,6 @@ func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
 		return nil, fmt.Errorf("failed to query failed proof: %w", err)
 	}
 
-	return proofs, nil
-}
-
-// Get all proofs that are currently in the PROVING state.
-func (db *ProofDB) GetAllRequestsProving() ([]*ent.ProofRequest, error) {
-	proofs, err := db.readClient.ProofRequest.Query().
-		Where(
-			proofrequest.StatusEQ(proofrequest.StatusPROVING),
-		).
-		All(context.Background())
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to query proofs in PROVING state: %w", err)
-	}
 	return proofs, nil
 }
 

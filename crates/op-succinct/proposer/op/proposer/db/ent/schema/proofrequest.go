@@ -2,12 +2,21 @@ package schema
 
 import (
 	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
+	"entgo.io/ent/schema"
 	"entgo.io/ent/schema/field"
 )
 
 // ProofRequest holds the schema definition for the ProofRequest entity.
 type ProofRequest struct {
 	ent.Schema
+}
+
+func (ProofRequest) Annotations() []schema.Annotation {
+	// Use STRICT mode to enforce strong typing.
+	return []schema.Annotation{
+		entsql.Annotation{Table: "proof_requests", Options: "STRICT"},
+	}
 }
 
 // Fields of the ProofRequest.
