@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -18,6 +19,7 @@ import (
 type ProofDB struct {
 	writeClient *ent.Client
 	readClient  *ent.Client
+	writeMutex  sync.Mutex
 }
 
 // InitDB initializes the database and returns a handle to it.
@@ -84,6 +86,9 @@ func (db *ProofDB) CloseDB() error {
 
 // NewEntry creates a new proof request entry in the database.
 func (db *ProofDB) NewEntry(proofType proofrequest.Type, start, end uint64) error {
+	db.writeMutex.Lock()
+	defer db.writeMutex.Unlock()
+
 	now := uint64(time.Now().Unix())
 	_, err := db.writeClient.ProofRequest.
 		Create().
@@ -104,6 +109,9 @@ func (db *ProofDB) NewEntry(proofType proofrequest.Type, start, end uint64) erro
 
 // UpdateProofStatus updates the status of a proof request in the database.
 func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) error {
+	db.writeMutex.Lock()
+	defer db.writeMutex.Unlock()
+
 	_, err := db.writeClient.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
 		SetStatus(proofStatus).
@@ -115,6 +123,9 @@ func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) er
 
 // SetProverRequestID sets the prover request ID for a proof request in the database.
 func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
+	db.writeMutex.Lock()
+	defer db.writeMutex.Unlock()
+
 	_, err := db.writeClient.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
 		SetProverRequestID(proverRequestID).
@@ -131,6 +142,9 @@ func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
 
 // AddFulfilledProof adds a proof to a proof request in the database and sets the status to COMPLETE.
 func (db *ProofDB) AddFulfilledProof(id int, proof []byte) error {
+	db.writeMutex.Lock()
+	defer db.writeMutex.Unlock()
+
 	// Start a transaction
 	tx, err := db.writeClient.Tx(context.Background())
 	if err != nil {
@@ -194,6 +208,9 @@ func (db *ProofDB) GetNumberOfRequestsWithStatuses(statuses ...proofrequest.Stat
 
 // AddL1BlockInfoToAggRequest adds the L1 block info to the existing AGG proof request.
 func (db *ProofDB) AddL1BlockInfoToAggRequest(startBlock, endBlock, l1BlockNumber uint64, l1BlockHash string) (*ent.ProofRequest, error) {
+	db.writeMutex.Lock()
+	defer db.writeMutex.Unlock()
+
 	// Perform the update
 	rowsAffected, err := db.writeClient.ProofRequest.Update().
 		Where(
