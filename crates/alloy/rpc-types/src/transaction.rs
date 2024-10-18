@@ -1,8 +1,7 @@
 //! Optimism specific types related to transactions.
 
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
-use alloy_primitives::{BlockHash, ChainId, TxKind, B256, U256};
-use alloy_rpc_types_eth::Signature;
+use alloy_primitives::{Address, BlockHash, Bytes, ChainId, TxKind, B256, U256};
 use alloy_serde::OtherFields;
 use serde::{Deserialize, Serialize};
 
@@ -62,15 +61,19 @@ impl alloy_consensus::Transaction for Transaction {
         self.inner.priority_fee_or_price()
     }
 
-    fn to(&self) -> TxKind {
+    fn to(&self) -> Option<Address> {
         self.inner.to()
+    }
+
+    fn kind(&self) -> TxKind {
+        self.inner.kind()
     }
 
     fn value(&self) -> U256 {
         self.inner.value()
     }
 
-    fn input(&self) -> &[u8] {
+    fn input(&self) -> &Bytes {
         self.inner.input()
     }
 
@@ -92,8 +95,6 @@ impl alloy_consensus::Transaction for Transaction {
 }
 
 impl alloy_network_primitives::TransactionResponse for Transaction {
-    type Signature = Signature;
-
     fn tx_hash(&self) -> alloy_primitives::TxHash {
         self.inner.tx_hash()
     }
@@ -116,10 +117,6 @@ impl alloy_network_primitives::TransactionResponse for Transaction {
 
     fn to(&self) -> Option<alloy_primitives::Address> {
         self.inner.to()
-    }
-
-    fn signature(&self) -> Option<Self::Signature> {
-        self.inner.signature()
     }
 }
 

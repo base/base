@@ -108,6 +108,6 @@ mod tests {
         assert_eq!(tx.mint(), Some(200));
         assert!(!tx.is_system_transaction());
         assert!(tx.is_deposit());
-        assert_eq!(tx.to(), TxKind::Call(contract_address));
+        assert_eq!(tx.kind(), TxKind::Call(contract_address));
     }
 }

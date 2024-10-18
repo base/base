@@ -61,7 +61,7 @@ impl<T> AsRef<Receipt<T>> for OpDepositReceipt<T> {
 
 impl<T> TxReceipt<T> for OpDepositReceipt<T>
 where
-    T: Borrow<Log>,
+    T: Borrow<Log> + Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
 {
     fn status_or_post_state(&self) -> Eip658Value {
         self.inner.status_or_post_state()

@@ -1,10 +1,9 @@
 use alloy_network::Network;
-use alloy_primitives::{BlockHash, B256};
+use alloy_primitives::{BlockHash, Bytes, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,
-    ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadId,
-    PayloadStatus,
+    ExecutionPayloadV3, ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use alloy_transport::{Transport, TransportResult};
 use op_alloy_rpc_types_engine::{
@@ -54,8 +53,9 @@ pub trait OpEngineApi<N, T>: Send + Sync {
     /// OP modifications: TODO
     async fn new_payload_v4(
         &self,
-        payload: ExecutionPayloadV4,
+        payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
+        execution_requests: Vec<Bytes>,
     ) -> TransportResult<PayloadStatus>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
@@ -218,14 +218,18 @@ where
 
     async fn new_payload_v4(
         &self,
-        payload: ExecutionPayloadV4,
+        payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
+        execution_requests: Vec<Bytes>,
     ) -> TransportResult<PayloadStatus> {
         // Note: The `versioned_hashes` parameter is always an empty array for OP chains.
         let versioned_hashes: Vec<B256> = vec![];
 
         self.client()
-            .request("engine_newPayloadV4", (payload, versioned_hashes, parent_beacon_block_root))
+            .request(
+                "engine_newPayloadV4",
+                (payload, versioned_hashes, parent_beacon_block_root, execution_requests),
+            )
             .await
     }
 

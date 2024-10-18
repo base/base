@@ -1,7 +1,7 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
 use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::TxKind;
+use alloy_primitives::{Address, Bytes, TxKind};
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
 /// Stack.
@@ -194,13 +194,23 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
-    fn to(&self) -> TxKind {
+    fn to(&self) -> Option<Address> {
         match self {
             Self::Legacy(tx) => tx.to(),
             Self::Eip2930(tx) => tx.to(),
             Self::Eip1559(tx) => tx.to(),
             Self::Eip7702(tx) => tx.to(),
             Self::Deposit(tx) => tx.to(),
+        }
+    }
+
+    fn kind(&self) -> TxKind {
+        match self {
+            Self::Legacy(tx) => tx.kind(),
+            Self::Eip2930(tx) => tx.kind(),
+            Self::Eip1559(tx) => tx.kind(),
+            Self::Eip7702(tx) => tx.kind(),
+            Self::Deposit(tx) => tx.kind(),
         }
     }
 
@@ -214,7 +224,7 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
-    fn input(&self) -> &[u8] {
+    fn input(&self) -> &Bytes {
         match self {
             Self::Legacy(tx) => tx.input(),
             Self::Eip2930(tx) => tx.input(),

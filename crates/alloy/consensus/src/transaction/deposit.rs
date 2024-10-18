@@ -193,7 +193,11 @@ impl Transaction for TxDeposit {
         0
     }
 
-    fn to(&self) -> TxKind {
+    fn to(&self) -> Option<Address> {
+        self.to.into()
+    }
+
+    fn kind(&self) -> TxKind {
         self.to
     }
 
@@ -201,7 +205,7 @@ impl Transaction for TxDeposit {
         self.value
     }
 
-    fn input(&self) -> &[u8] {
+    fn input(&self) -> &Bytes {
         &self.input
     }
 

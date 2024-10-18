@@ -4,7 +4,7 @@ use alloy_eips::{
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable, Header};
 use derive_more::Display;
 
@@ -218,13 +218,23 @@ impl Transaction for OpTxEnvelope {
         }
     }
 
-    fn to(&self) -> TxKind {
+    fn to(&self) -> Option<Address> {
         match self {
             Self::Legacy(tx) => tx.tx().to(),
             Self::Eip2930(tx) => tx.tx().to(),
             Self::Eip1559(tx) => tx.tx().to(),
             Self::Eip7702(tx) => tx.tx().to(),
             Self::Deposit(tx) => tx.to(),
+        }
+    }
+
+    fn kind(&self) -> TxKind {
+        match self {
+            Self::Legacy(tx) => tx.tx().kind(),
+            Self::Eip2930(tx) => tx.tx().kind(),
+            Self::Eip1559(tx) => tx.tx().kind(),
+            Self::Eip7702(tx) => tx.tx().kind(),
+            Self::Deposit(tx) => tx.kind(),
         }
     }
 
@@ -238,7 +248,7 @@ impl Transaction for OpTxEnvelope {
         }
     }
 
-    fn input(&self) -> &[u8] {
+    fn input(&self) -> &Bytes {
         match self {
             Self::Legacy(tx) => tx.tx().input(),
             Self::Eip2930(tx) => tx.tx().input(),
