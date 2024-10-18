@@ -7,34 +7,55 @@
 - [Overview](#overview)
 - [Timestamp Activation](#timestamp-activation)
 - [Dynamic EIP-1559 Parameters](#dynamic-eip-1559-parameters)
-  - [Extended `PayloadAttributesV3`](#extended-payloadattributesv3)
-    - [PayloadID computation](#payloadid-computation)
-    - [`eip1559Params` encoding](#eip1559params-encoding)
-  - [Execution](#execution)
-  - [Rationale](#rationale)
-  - [`eip1559Params` in Header](#eip1559params-in-header)
-    - [Header Validity Rules](#header-validity-rules)
+  - [EIP-1559 Parameters in Block Header](#eip-1559-parameters-in-block-header)
+  - [EIP-1559 Parameters in `PayloadAttributesV3`](#eip-1559-parameters-in-payloadattributesv3)
     - [Encoding](#encoding)
-    - [Rationale](#rationale-1)
+    - [PayloadID computation](#payloadid-computation)
+  - [Execution](#execution)
+    - [Payload Attributes Processing](#payload-attributes-processing)
+    - [Base Fee Computation](#base-fee-computation)
+  - [Rationale](#rationale)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 
-The EIP-1559 parameters are encoded in the block header's `nonce` field and can be
-configured dynamically through the `SystemConfig`.
+The EIP-1559 parameters are encoded in the block header's `extraData` field and can be configured dynamically through
+the `SystemConfig`.
 
 ## Timestamp Activation
 
-Holocene, like other network upgrades, is activated at a timestamp.
-Changes to the L2 Block execution rules are applied when the `L2 Timestamp >= activation time`.
+Holocene, like other network upgrades, is activated at a timestamp.  Changes to the L2 Block execution rules are applied
+when the `L2 Timestamp >= activation time`.
 
 ## Dynamic EIP-1559 Parameters
 
-### Extended `PayloadAttributesV3`
+### EIP-1559 Parameters in Block Header
+
+With the Holocene upgrade, the `extraData` header field of each block must have the following format:
+
+| Name          | Type               | Byte Offset |
+| ------------- | ------------------ | ----------- |
+| `version`     | `u8`               | `[0, 1)`    |
+| `denominator` | `u32 (big-endian)` | `[1, 5)`    |
+| `elasticity`  | `u32 (big-endian)` | `[5, 9)`    |
+
+Additionally,
+
+- `version` must be 0
+- `denominator` must be non-zero
+- there is no additional data beyond these 9 bytes
+
+Note that `extraData` has a maximum capacity of 32 bytes (to fit in the L1 beacon-chain `extraData` data-type) and its
+format may be modified/extended by future upgrades.
+
+Note also that if the chain had Holocene genesis, the genesis block must have an above-formated `extraData` representing
+the initial parameters to be used by the chain.
+
+### EIP-1559 Parameters in `PayloadAttributesV3`
 
 The [`PayloadAttributesV3`](https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#payloadattributesv3)
-type is extended to:
+type is extended with an additional value, `eip1559Params`:
 
 ```rs
 PayloadAttributesV3: {
@@ -46,68 +67,52 @@ PayloadAttributesV3: {
     transactions: array of DATA
     noTxPool: bool
     gasLimit: QUANTITY or null
-    eip1559Params: DATA (8 bytes)
+    eip1559Params: DATA (8 bytes) or null
 }
 ```
 
-#### PayloadID computation
+#### Encoding
 
-If `eip1559Params != null`, the `eip1559Params` is included in the `PayloadID` hasher directly after the `gasLimit`
-field.
-
-#### `eip1559Params` encoding
+At and after Holocene activation, `eip1559Parameters` in `PayloadAttributeV3` must be exactly 8 bytes with the following
+format:
 
 | Name          | Type               | Byte Offset |
 | ------------- | ------------------ | ----------- |
 | `denominator` | `u32 (big-endian)` | `[0, 4)`    |
 | `elasticity`  | `u32 (big-endian)` | `[4, 8)`    |
 
+#### PayloadID computation
+
+If `eip1559Params != null`, the `eip1559Params` is included in the `PayloadID` hasher directly after the `gasLimit`
+field.
+
 ### Execution
 
-During execution, the EIP-1559 parameters used to calculate the next block base fee should come from the
-parent header's `nonce` field rather than the previous protocol constants, if it is non-zero.
+#### Payload Attributes Processing
 
-- If, before Holocene activation, `eip1559Parameters` in the `PayloadAttributesV3` is non-null, the attributes are to
-  be considered invalid by the engine.
-- At and after Holocene activation:
-  - if `eip1559Params` in the `PayloadAttributesV3` is null, the attributes are to be considered invalid by the
-    engine.
-  - if `eip1559Params`' `denominator` is `0`, the attributes are to be considered invalid by the engine.
-  - if `parent_header.nonce` is zero, the [canyon base fee parameter constants](../exec-engine.md#1559-parameters) are
-    used for the block's base fee parameters.
-  - if `parent_header.nonce` is non-zero, the EIP-1559 parameters encoded within the parent header's `nonce` field are
-    used for the block's base fee parameters.
+Prior to Holocene activation, `eip1559Parameters` in `PayloadAttributesV3` must be null and is otherwise considered
+invalid.
+
+At and after Holocene activation, any `ExecutionPayload` corresponding to some `PayloadAttributesV3` must contain
+`extraData` formatted as the [header value](#eip-1559-parameters-in-block-header). The `denominator` and `elasticity`
+values within this `extraData` must correspond to those in `eip1559Parameters`, unless both are 0.  When both are 0, the
+[prior EIP-1559 constants](../exec-engine.md#1559-parameters) must be used to populate `extraData` instead.
+
+#### Base Fee Computation
+
+Prior to the Holocene upgrade, the EIP-1559 denominator and elasticity parameters used to compute the block base fee
+were [constants](../exec-engine.md#1559-parameters).
+
+With the Holocene upgrade, these parameters are instead determined as follows:
+
+- if Holocene is not active in `parent_header.timestamp`, the [prior EIP-1559
+  constants](../exec-engine.md#1559-parameters) constants are used. While `parent_header.extraData` is typically empty
+  prior to Holocene, there are some legacy cases where it may be set arbitrarily, so it must not be assumed to be empty.
+- if Holocene is active in `parent_header.timestamp`, then the parameters from `parent_header.extraData` are used.
 
 ### Rationale
 
-This type is made available in the payload attributes to allow the block builder to dynamically control the EIP-1559
-parameters of the chain. As described in the [derivation - AttributesBuilder](./derivation.md#attributes-builder)
-section, the derivation pipeline must populate this field from the `SystemConfig` during payload building, similar to
-how it must reference the `SystemConfig` for the `gasLimit` field.
-
-### `eip1559Params` in Header
-
-Upon Holocene activation, the L2 block header's `nonce` field will consist of the 8-byte `eip1559Params` value from
-the `PayloadAttributesV3`, or the canyon EIP-1559 constants if `eip1559Params` is equal to zero.
-
-#### Header Validity Rules
-
-Prior to Holocene activation, the L2 block header's `nonce` field is valid iff it is equal to `u64(0)`.
-
-At and after Holocene activation, The L2 block header's `nonce` field is valid iff it is non-zero.
-
-#### Encoding
-
-The encoding of the `eip1559Params` value is described in [`eip1559Params` encoding](#eip1559params-encoding).
-
-#### Rationale
-
-By chosing to put the `eip1559Params` in the `PayloadAttributes` rather than in the L1 block info transaction,
-the EIP-1559 parameters for the chain are not available within history. This would place a burden on performing
-historical execution, as L1 would have to be consulted for fetching the values from the `SystemConfig` contract.
-Instead, we re-use an unused field in the L1 block header as to make these parameters available, retaining the
-purity of the function that computes the next block's base fee from the chain configuration, parent block header,
-and next block timestamp.
-
-[l2-to-l1-mp]: ../../protocol/predeploys.md#L2ToL1MessagePasser
-[output-root]: ../../glossary.md#l2-output-root
+Placing the EIP-1559 parameters within the L2 block header allows us to retain the purity of the function that computes
+the next block's base fee from its parent block header, while still allowing them to be dynamically configured.  Dynamic
+configuration is handled similarly to `gasLimit`, with the derivation pipeline providing the appropriate `SystemConfig`
+contract values to the block builder via `PayloadAttributesV3` parameters.
