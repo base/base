@@ -952,7 +952,7 @@ sequenceDiagram
 
   from->>L2SBA: sendERC20(tokenAddr, to, amount, chainID)
   L2SBA->>SuperERC20_A: crosschainBurn(from, amount)
-  SuperERC20_A-->SuperERC20_A: emit SuperchainBurn(from, amount)
+  SuperERC20_A-->SuperERC20_A: emit CrosschainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
   Messenger_A->>L2SBA: return msgHash_ 
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
@@ -960,7 +960,7 @@ sequenceDiagram
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: crosschainMint(to, amount)
-  SuperERC20_B-->SuperERC20_B: emit SuperchainMinted(to, amount)
+  SuperERC20_B-->SuperERC20_B: emit CrosschainMint(to, amount)
   L2SBB-->L2SBB: emit RelayedERC20(tokenAddr, from, to, amount, source)
 ```
 

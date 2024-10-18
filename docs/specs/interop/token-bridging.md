@@ -10,8 +10,8 @@
   - [`ICrosschainERC20`](#icrosschainerc20)
     - [`crosschainMint`](#crosschainmint)
     - [`crosschainBurn`](#crosschainburn)
-    - [`CrosschainMinted`](#crosschainminted)
-    - [`CrosschainBurnt`](#crosschainburnt)
+    - [`CrosschainMint`](#crosschainmint)
+    - [`CrosschainBurn`](#crosschainburn)
 - [`SuperchainERC20Bridge`](#superchainerc20bridge)
 - [Diagram](#diagram)
 - [Implementation](#implementation)
@@ -79,20 +79,20 @@ Burns `_amount` of token from address `_account`.
 crosschainBurn(address _account, uint256 _amount)
 ```
 
-#### `CrosschainMinted`
+#### `CrosschainMint`
 
 MUST trigger when `crosschainMint` is called
 
 ```solidity
-event CrosschainMinted(address indexed _to, uint256 _amount)
+event CrosschainMint(address indexed _to, uint256 _amount)
 ```
 
-#### `CrosschainBurnt`
+#### `CrosschainBurn`
 
 MUST trigger when `crosschainBurn` is called
 
 ```solidity
-event CrosschainBurnt(address indexed _from, uint256 _amount)
+event CrosschainBurn(address indexed _from, uint256 _amount)
 ```
 
 ## `SuperchainERC20Bridge`
@@ -133,7 +133,7 @@ sequenceDiagram
 
   from->>L2SBA: sendERC20(tokenAddr, to, amount, chainID)
   L2SBA->>SuperERC20_A: crosschainBurn(from, amount)
-  SuperERC20_A-->SuperERC20_A: emit CrosschainBurnt(from, amount)
+  SuperERC20_A-->SuperERC20_A: emit CrosschainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
   Messenger_A->>L2SBA: return msgHash_ 
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
@@ -141,7 +141,7 @@ sequenceDiagram
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: crosschainMint(to, amount)
-  SuperERC20_B-->SuperERC20_B: emit CrosschainMinted(to, amount)
+  SuperERC20_B-->SuperERC20_B: emit CrosschainMint(to, amount)
   L2SBB-->L2SBB: emit RelayedERC20(tokenAddr, from, to, amount, source)
 ```
 
@@ -230,14 +230,14 @@ sequenceDiagram
   from->>Intermediate_A: sendWithData(data)
   Intermediate_A->>L2SBA: sendERC20To(tokenAddr, to, amount, chainID)
   L2SBA->>SuperERC20_A: crosschainBurn(from, amount)
-  SuperERC20_A-->SuperERC20_A: emit CrosschainBurnt(from, amount)
+  SuperERC20_A-->SuperERC20_A: emit CrosschainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
   Intermediate_A->>Messenger_A: sendMessage(chainId, to, data)
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: crosschainMint(to, amount)
-  SuperERC20_B-->SuperERC20_B: emit CrosschainMinted(to, amount)
+  SuperERC20_B-->SuperERC20_B: emit CrosschainMint(to, amount)
   Inbox->>Messenger_B: relayMessage(): call
   L2SBB-->L2SBB: emit RelayedERC20(tokenAddr, from, to, amount, source)
   Messenger_B->>to: call(data)
