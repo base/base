@@ -19,26 +19,26 @@ workspace = true
 op-alloy-consensus = { workspace = true, features = ["serde"] }
 
 # Alloy
-alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 alloy-serde.workspace = true
 alloy-consensus.workspace = true
 alloy-network-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["serde"] }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
+alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 
 # Serde
+serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
-alloy-consensus = { workspace = true, features = ["arbitrary"] }
-alloy-rpc-types = { workspace = true, features = ["arbitrary"] }
-arbitrary = { workspace = true, features = ["derive"] }
 rand.workspace = true
+arbitrary = { workspace = true, features = ["derive"] }
+alloy-consensus = { workspace = true, features = ["arbitrary"] }
+alloy-primitives = { workspace = true, features = ["arbitrary"] }
+alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
 
 [features]
 default = ["std"]

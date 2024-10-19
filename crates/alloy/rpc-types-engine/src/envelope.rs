@@ -147,7 +147,7 @@ impl PayloadHash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{b256, hex};
+    use alloy_primitives::b256;
 
     #[test]
     fn test_signature_message() {
@@ -171,6 +171,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn decode_payload_v1() {
+        use alloy_primitives::hex;
         let data = hex::decode("0xbd04f043128457c6ccf35128497167442bcc0f8cce78cda8b366e6a12e526d938d1e4c1046acffffbfc542a7e212bb7d80d3a4b2f84f7b196d935398a24eb84c519789b401000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c4a8fd56621ad04fc0101067601008ce60be0005b220117c32c0f3b394b346c2aa42cfa8157cd41f891aa0bec485a62fc010000").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v1(&data).unwrap();
         assert_eq!(1725271882, payload_envelop.payload.timestamp());
@@ -179,6 +180,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn decode_payload_v2() {
+        use alloy_primitives::hex;
         let data = hex::decode("0xc104f0433805080eb36c0b130a7cc1dc74c3f721af4e249aa6f61bb89d1557143e971bb738a3f3b98df7c457e74048e9d2d7e5cd82bb45e3760467e2270e9db86d1271a700000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c6b89d46525ad000205067201009cda69cb5b9b73fc4eb2458b37d37f04ff507fe6c9cd2ab704a05ea9dae3cd61760002000000020000").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v2(&data).unwrap();
         assert_eq!(1708427627, payload_envelop.payload.timestamp());
@@ -187,6 +189,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn decode_payload_v3() {
+        use alloy_primitives::hex;
         let data = hex::decode("0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v3(&data).unwrap();
         assert_eq!(1708427461, payload_envelop.payload.timestamp());

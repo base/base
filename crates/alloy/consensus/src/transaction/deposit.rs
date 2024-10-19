@@ -193,10 +193,6 @@ impl Transaction for TxDeposit {
         0
     }
 
-    fn to(&self) -> Option<Address> {
-        self.to.into()
-    }
-
     fn kind(&self) -> TxKind {
         self.to
     }
