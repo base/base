@@ -388,6 +388,7 @@ func (l *L2OutputSubmitter) ValidateConfig(address string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{
 		Timeout: PROOF_STATUS_TIMEOUT,
@@ -406,6 +407,8 @@ func (l *L2OutputSubmitter) ValidateConfig(address string) error {
 	if err != nil {
 		return fmt.Errorf("error reading the response body: %v", err)
 	}
+
+	fmt.Println("validate config response", string(body))
 
 	// Create a variable of the ValidateConfigResponse type
 	var response ValidateConfigResponse

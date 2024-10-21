@@ -86,6 +86,7 @@ async fn validate_config(
     State(state): State<ContractConfig>,
     Json(payload): Json<ValidateConfigRequest>,
 ) -> Result<(StatusCode, Json<ValidateConfigResponse>), AppError> {
+    info!("Received validate config request: {:?}", payload);
     let fetcher = OPSuccinctDataFetcher::default();
 
     let address = Address::from_str(&payload.address).unwrap();
