@@ -38,17 +38,17 @@ kzg-rs = { version = "0.2.2" }
 
 # kona
 # Note: Switch to latest version of kona once the std::process::Command issue is resolved.
-kona-common = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-common-proc = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-preimage = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged", features = [
+kona-common = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-common-proc = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-preimage = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-mpt = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-derive = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged", default-features = false }
-kona-executor = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-client = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
-kona-host = { git = "https://github.com/moongate-forks/kona", branch = "ratan/native-client-command-bugged" }
+kona-primitives = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-mpt = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-derive = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona", default-features = false }
+kona-executor = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-client = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-host = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -93,7 +93,7 @@ lto = "fat"
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", branch = "patch-v2.0.2" }
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", branch = "patch-sha2-v0.10.8" }
-# TODO: Change this back to the original patch branch once the changes to sp1-lib to fix secp256k1 addition have been merged and a stable version tag is released.
+# TODO: Update this to patch-ecdsa-v0.16.8 when updating SP1 to v3.0.0.
 ecdsa = { git = "https://github.com/sp1-patches/signatures", branch = "ratan/secp256k1-add-fixes-v0.16.8" }
 bn = { git = "https://github.com/0xWOLAND/bn.git", package = "substrate-bn" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", branch = "patch-sha3-v0.10.8" }

@@ -45,10 +45,10 @@ impl Default for OPSuccinctDataFetcher {
 
 #[derive(Debug, Clone)]
 pub struct RPCConfig {
-    l1_rpc: String,
-    l1_beacon_rpc: String,
-    l2_rpc: String,
-    l2_node_rpc: String,
+    pub l1_rpc: String,
+    pub l1_beacon_rpc: String,
+    pub l2_rpc: String,
+    pub l2_node_rpc: String,
 }
 
 /// The mode corresponding to the chain we are fetching data for.

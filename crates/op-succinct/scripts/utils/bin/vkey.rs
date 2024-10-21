@@ -1,4 +1,3 @@
-use alloy::sol;
 use alloy_primitives::B256;
 use anyhow::Result;
 use op_succinct_client_utils::types::u32_to_u8;
@@ -6,28 +5,6 @@ use sp1_sdk::{utils, HashableKey, ProverClient};
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
-
-use clap::Parser;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Contract address to check the vkey against.
-    #[arg(short, long, required = false)]
-    contract_address: Option<String>,
-
-    /// RPC URL to use for the provider.
-    #[arg(short, long, required = false)]
-    rpc_url: Option<String>,
-}
-
-sol! {
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    contract L2OutputOracle {
-        bytes32 public vkey;
-    }
-}
 
 // Get the verification keys for the ELFs and check them against the contract.
 #[tokio::main]
