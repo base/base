@@ -8,15 +8,19 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "fetch_and_save_proof"
+name = "fetch-and-save-proof"
 path = "bin/fetch_and_save_proof.rs"
+
+[[bin]]
+name = "update-vkeys"
+path = "bin/update_vkeys.rs"
 
 [[bin]]
 name = "vkey"
 path = "bin/vkey.rs"
 
 [[bin]]
-name = "cost_estimator"
+name = "cost-estimator"
 path = "bin/cost_estimator.rs"
 
 [[bin]]
@@ -36,6 +40,7 @@ dotenv.workspace = true
 log.workspace = true
 csv.workspace = true
 serde = { workspace = true }
+reqwest = { workspace = true }
 futures.workspace = true
 rayon = "1.10.0"
 serde_json.workspace = true

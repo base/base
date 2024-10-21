@@ -175,6 +175,13 @@ func (l *L2OutputSubmitter) StartL2OutputSubmitting() error {
 		}
 	}
 
+	// Validate the contract's configuration of the aggregation and range verification keys as well
+	// as the rollup config hash.
+	err = l.ValidateConfig(l.Cfg.L2OutputOracleAddr.Hex())
+	if err != nil {
+		return fmt.Errorf("failed to validate config: %w", err)
+	}
+
 	l.wg.Add(1)
 	go l.loop()
 

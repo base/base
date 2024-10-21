@@ -2,7 +2,7 @@
 
 The last step is to update your OP Stack configuration to use the new `OPSuccinctL2OutputOracle` contract managed by the `op-succinct-proposer` service.
 
-> ⚠️ **Warning**: All proposed, non-finalized output roots on the `L2OutputOracleProxy` will be automatically finalized after the upgrade to `op-succinct`, as the `finalizationPeriod` is set to 0 by default. For security, we recommend ensuring that all old proposer output roots are correct before upgrading.
+> ⚠️ **Caution**: When upgrading to the `OPSuccinctL2OutputOracle` contract, maintain the existing `finalizationPeriod` for a duration equal to at least one `finalizationPeriod`. Failure to do so will result in immediate finalization of all pending output roots upon upgrade, which is unsafe. Only after this waiting period has elapsed should you set the `finalizationPeriod` to 0.
 
 ## Self-Managed OP Stack Chains
 

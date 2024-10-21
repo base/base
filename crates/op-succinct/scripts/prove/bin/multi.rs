@@ -34,14 +34,21 @@ struct Args {
     /// Generate proof.
     #[arg(short, long)]
     prove: bool,
+
+    /// Env file.
+    #[arg(short, long, default_value = ".env")]
+    env_file: Option<String>,
 }
 
 /// Execute the OP Succinct program for multiple blocks.
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
-    utils::setup_logger();
     let args = Args::parse();
+
+    if let Some(env_file) = args.env_file {
+        dotenv::from_filename(env_file).ok();
+    }
+    utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::default();
 
