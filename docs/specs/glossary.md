@@ -489,7 +489,7 @@ then made available using [batcher transactions][batcher-transaction].
 
 A batcher transaction is a transaction submitted by a [batcher] to a data availability provider, in order to make
 channels available. These transactions carry one or more full frames, which may belong to different channels. A
-channel's frame may be split between multiple batcher transactions.
+channel's frames may be split between multiple batcher transactions.
 
 When submitted to Ethereum calldata, the batcher transaction's receiver must be the sequencer inbox address. The
 transaction must also be signed by a recognized batch submitter account. The recognized batch submitter account
