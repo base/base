@@ -408,8 +408,6 @@ func (l *L2OutputSubmitter) ValidateConfig(address string) error {
 		return fmt.Errorf("error reading the response body: %v", err)
 	}
 
-	fmt.Println("validate config response", string(body))
-
 	// Create a variable of the ValidateConfigResponse type
 	var response ValidateConfigResponse
 
