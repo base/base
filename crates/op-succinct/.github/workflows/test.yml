@@ -53,3 +53,4 @@ jobs:
         id: test
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+          L1_RPC: ${{ secrets.L1_RPC }}
