@@ -1,4 +1,7 @@
+//! Deposit Transaction type.
+
 use super::OpTxType;
+use crate::DepositTransaction;
 use alloy_consensus::Transaction;
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, ChainId, Parity, Signature, TxKind, B256, U256};
@@ -35,6 +38,24 @@ pub struct TxDeposit {
     /// Input has two uses depending if transaction is Create or Call (if `to` field is None or
     /// Some).
     pub input: Bytes,
+}
+
+impl DepositTransaction for TxDeposit {
+    fn source_hash(&self) -> Option<B256> {
+        Some(self.source_hash)
+    }
+
+    fn mint(&self) -> Option<u128> {
+        self.mint
+    }
+
+    fn is_system_transaction(&self) -> bool {
+        self.is_system_transaction
+    }
+
+    fn is_deposit(&self) -> bool {
+        true
+    }
 }
 
 impl TxDeposit {
@@ -250,9 +271,67 @@ impl Decodable for TxDeposit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    //use crate::TxEnvelope;
     use alloy_primitives::hex;
     use alloy_rlp::BytesMut;
+
+    #[test]
+    fn test_deposit_transaction_trait() {
+        let tx = TxDeposit {
+            source_hash: B256::with_last_byte(42),
+            from: Address::default(),
+            to: TxKind::default(),
+            mint: Some(100),
+            value: U256::from(1000),
+            gas_limit: 50000,
+            is_system_transaction: true,
+            input: Bytes::default(),
+        };
+
+        assert_eq!(tx.source_hash(), Some(B256::with_last_byte(42)));
+        assert_eq!(tx.mint(), Some(100));
+        assert!(tx.is_system_transaction());
+        assert!(tx.is_deposit());
+    }
+
+    #[test]
+    fn test_deposit_transaction_without_mint() {
+        let tx = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::default(),
+            to: TxKind::default(),
+            mint: None,
+            value: U256::default(),
+            gas_limit: 50000,
+            is_system_transaction: false,
+            input: Bytes::default(),
+        };
+
+        assert_eq!(tx.source_hash(), Some(B256::default()));
+        assert_eq!(tx.mint(), None);
+        assert!(!tx.is_system_transaction());
+        assert!(tx.is_deposit());
+    }
+
+    #[test]
+    fn test_deposit_transaction_to_contract() {
+        let contract_address = Address::with_last_byte(0xFF);
+        let tx = TxDeposit {
+            source_hash: B256::default(),
+            from: Address::default(),
+            to: TxKind::Call(contract_address),
+            mint: Some(200),
+            value: U256::from(500),
+            gas_limit: 100000,
+            is_system_transaction: false,
+            input: Bytes::from_static(&[1, 2, 3]),
+        };
+
+        assert_eq!(tx.source_hash(), Some(B256::default()));
+        assert_eq!(tx.mint(), Some(200));
+        assert!(!tx.is_system_transaction());
+        assert!(tx.is_deposit());
+        assert_eq!(tx.kind(), TxKind::Call(contract_address));
+    }
 
     #[test]
     fn test_rlp_roundtrip() {

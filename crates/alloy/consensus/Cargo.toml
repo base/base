@@ -15,10 +15,11 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-alloy-primitives = { workspace = true, features = ["rlp"] }
-alloy-consensus.workspace = true
+# Alloy
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }

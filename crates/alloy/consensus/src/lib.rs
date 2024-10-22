@@ -14,8 +14,8 @@ pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope
 
 mod transaction;
 pub use transaction::{
-    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, OpTxEnvelope,
-    OpTxType, OpTypedTransaction, TxDeposit, UpgradeDepositSource, UserDepositSource,
+    DepositSourceDomain, DepositSourceDomainIdentifier, DepositTransaction, L1InfoDepositSource,
+    OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit, UpgradeDepositSource, UserDepositSource,
     DEPOSIT_TX_TYPE_ID,
 };
 
@@ -23,10 +23,6 @@ pub mod hardforks;
 pub use hardforks::Hardforks;
 
 mod block;
-mod traits;
-
-pub use traits::DepositTransaction;
-
 pub use block::OpBlock;
 
 /// Bincode-compatible serde implementations for consensus types.

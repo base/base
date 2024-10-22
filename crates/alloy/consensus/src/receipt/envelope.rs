@@ -1,3 +1,5 @@
+//! Receipt envelope types for Optimism.
+
 use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
@@ -260,5 +262,49 @@ where
             2 => Ok(Self::Eip1559(ReceiptWithBloom::<T>::arbitrary(u)?)),
             _ => Ok(Self::Deposit(OpDepositReceiptWithBloom::<T>::arbitrary(u)?)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{Receipt, ReceiptWithBloom};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{address, b256, bytes, hex, Log, LogData};
+    use alloy_rlp::Encodable;
+
+    #[cfg(not(feature = "std"))]
+    use alloc::{vec, vec::Vec};
+
+    // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
+    #[test]
+    fn encode_legacy_receipt() {
+        let expected = hex!("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff");
+
+        let mut data = vec![];
+        let receipt =
+            OpReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: false.into(),
+                    cumulative_gas_used: 0x1u128,
+                    logs: vec![Log {
+                        address: address!("0000000000000000000000000000000000000011"),
+                        data: LogData::new_unchecked(
+                            vec![
+                        b256!("000000000000000000000000000000000000000000000000000000000000dead"),
+                        b256!("000000000000000000000000000000000000000000000000000000000000beef"),
+                    ],
+                            bytes!("0100ff"),
+                        ),
+                    }],
+                },
+                logs_bloom: [0; 256].into(),
+            });
+
+        receipt.network_encode(&mut data);
+
+        // check that the rlp length equals the length of the expected rlp
+        assert_eq!(receipt.length(), expected.len());
+        assert_eq!(data, expected);
     }
 }
