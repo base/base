@@ -9,6 +9,8 @@ import {Utils} from "./helpers/Utils.sol";
 
 contract UpgradeTest is Test, Utils {
     function testFreshDeployment() public {
+        vm.startBroadcast();
+
         bytes32 exampleOutputRoot = keccak256("output root");
         vm.warp(12345678);
         uint256 exampleTimestamp = block.timestamp - 1;
@@ -22,5 +24,7 @@ contract UpgradeTest is Test, Utils {
 
         assertEq(l2oo.getL2Output(l2oo.latestOutputIndex()).outputRoot, exampleOutputRoot);
         assertEq(l2oo.getL2Output(l2oo.latestOutputIndex()).timestamp, exampleTimestamp);
+
+        vm.stopBroadcast();
     }
 }
