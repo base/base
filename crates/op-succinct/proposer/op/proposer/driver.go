@@ -315,7 +315,7 @@ func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetric
 	minutesBehind := (proposerMetrics.L2FinalizedBlock - proposerMetrics.LatestContractL2Block) * l2BlockTime / 60
 
 	message := fmt.Sprintf("*Chain %d Proposer Metrics*:\n"+
-		"Minutes Behind L2 Finalized: %d\n"+
+		"Contract is %d minutes behind L2 Finalized\n"+
 		"| L2 Unsafe | L2 Finalized | Contract L2 | Proven L2 |\n"+
 		"| %-9d | %-12d | %-11d | %-9d |\n"+
 		"| Proving   | Witness Gen | Unrequested |\n"+

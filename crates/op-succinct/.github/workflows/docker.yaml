@@ -27,18 +27,3 @@ jobs:
       - name: Build Docker Compose setup
         run: |
           docker compose build
-  span_batch_server:
-    name: Build Span Batch Server Docker Image
-    runs-on:
-      - runs-on
-      - runner=64cpu-linux-x64
-      - run-id=${{ github.run_id }}    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Compose
-        uses: docker/setup-buildx-action@v1
-
-      - name: Build Span Batch Server Container
-        run: |
-          docker build -f ./proposer/op/Dockerfile.span_batch_server .
