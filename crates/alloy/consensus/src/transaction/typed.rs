@@ -12,6 +12,7 @@ use alloy_primitives::{Address, Bytes, TxKind};
 /// 3. EIP1559 [`TxEip1559`]
 /// 4. Deposit [`TxDeposit`]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
 pub enum OpTypedTransaction {
