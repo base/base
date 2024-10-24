@@ -3,7 +3,6 @@
 OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour using SP1.
 
 **[Docs](https://succinctlabs.github.io/op-succinct)**
-| [Learn More](https://succinctlabs.github.io/op-succinct)
 
 ## Getting Started
 
