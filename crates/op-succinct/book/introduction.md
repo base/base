@@ -10,6 +10,4 @@ OP Succinct transforms any OP Stack rollup into a [fully type-1 ZK rollup](https
 
 All of this has been possible thanks to close collaboration with the core team at [OP Labs](https://www.oplabs.co/).
 
-**Reach out [today]() if you want a Type-1 zkEVM rollup powered by SP1 (either a new rollup or a conversion from an optimistic rollup).**
-
-
+**Reach out [today](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/) if you want a Type-1 zkEVM rollup powered by SP1 (either a new rollup or a conversion from an optimistic rollup).**
