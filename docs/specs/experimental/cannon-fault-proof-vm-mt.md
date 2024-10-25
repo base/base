@@ -5,6 +5,9 @@
 **Table of Contents**
 
 - [Overview](#overview)
+  - [Definitions](#definitions)
+    - [Data types](#data-types)
+    - [Constants](#constants)
   - [New Features](#new-features)
     - [Multithreading](#multithreading)
     - [Robustness](#robustness)
@@ -59,6 +62,22 @@ single instruction encoded in the state to produce a new state $S_{post}$.
 $$f(S_{pre}) \rightarrow S_{post}$$
 
 Thus, the trace of a program executed by the FPVM is an ordered set of VM states.
+
+### Definitions
+
+#### Data types
+
+- `Boolean` - An 8-bit boolean value equal to 0 (false) or 1 (true).
+- `Byte` - An 8-bit value.
+- `Hash` - A 256-bit fixed-size value produced by the Keccak-256 cryptographic hash function.
+- `UInt64` - A 64-bit unsigned integer value.
+- `Word` - A 32-bit value.
+
+#### Constants
+
+- `MaxWord` - A `Word` with all bits set to 1: `0xFFFFFFFF`.
+When interpreted as a signed value, this is equivalent to -1.
+- `WordSize` - The number of bytes in a `Word` (4).
 
 ### New Features
 
@@ -140,7 +159,7 @@ Wakeup traversal proceeds as follows across multiple steps:
         left, then right so this is the end of the traversal).
       - The wakeup traversal completes [^traversal-completion].
 
-[^traversal-completion]: Wakeup traversal is completed by setting the FPVM state's `wakeup` field to `0xFFFFFFFF` (-1),
+[^traversal-completion]: Wakeup traversal is completed by setting the FPVM state's `wakeup` field to `MaxWord`,
 causing the FPVM to resume normal execution.
 
 ### Exited Threads
@@ -153,7 +172,7 @@ the VM state.
 Threads enter a waiting state when a futex wait syscall is successfully executed, setting the thread's
 `futexAddr`, `futexVal`, and `futexTimeoutStep` fields according to the futex syscall arguments.
 
-During normal execution, when the active thread is in a waiting state (its `futexAddr` is not `0xFFFFFFFF`), the VM
+During normal execution, when the active thread is in a waiting state (its `futexAddr` is not equal to `MaxWord`), the VM
 checks if it can be woken up.
 
 A waiting thread will be woken up if:
@@ -163,7 +182,7 @@ A waiting thread will be woken up if:
 
 The VM will wake such a thread by resetting its futex fields:
 
-- `futexAddr` = `0xFFFFFFFF`
+- `futexAddr` = `MaxWord`
 - `futexVal` = 0
 - `futexTimeoutStep` = 0
 
@@ -229,29 +248,29 @@ On failure, `sc` returns `0`.
 
 The FPVM is a state transition function that operates on a state object consisting of the following fields:
 
-1. `memRoot` - A `bytes32` value representing the merkle root of VM memory.
-1. `preimageKey` - `bytes32` value of the last requested pre-image key.
-1. `preimageOffset` - The 32-bit value of the last requested pre-image offset.
-1. `heap` - 32-bit base address of the most recent memory allocation via mmap.
-1. `llReservationActive` - 8-bit boolean indicator of whether a memory reservation,
+1. `memRoot` - [`Hash`] A value representing the merkle root of VM memory.
+1. `preimageKey` - [`Hash`] The value of the last requested pre-image key.
+1. `preimageOffset` - [`Word`] The value of the last requested pre-image offset.
+1. `heap` - [`Word`] The base address of the most recent memory allocation via mmap.
+1. `llReservationActive` - [`Boolean`] Indicates whether a memory reservation,
    which is reserved via a Load Linked Word (`ll`) instruction, is active.
-1. `llAddress` - 32-bit address of the currently active memory reservation if one exists.
-1. `llOwnerThread` - 32-bit id of the thread that initiated the current memory reservation if one exists.
-1. `exitCode` - 8-bit exit code.
-1. `exited` - 8-bit boolean valuel indicating whether the VM has exited.
-1. `step` - 64-bit step counter.
-1. `stepsSinceLastContextSwitch` - 64-bit step counter that tracks the number of steps executed on the current
+1. `llAddress` - [`Word`] The address of the currently active memory reservation if one exists.
+1. `llOwnerThread` - [`Word`] The id of the thread that initiated the current memory reservation if one exists.
+1. `exitCode` - [`Byte`] The exit code value.
+1. `exited` - [`Boolean`] Indicates whether the VM has exited.
+1. `step` - [`UInt64`] A step counter.
+1. `stepsSinceLastContextSwitch` - [`UInt64`] A step counter that tracks the number of steps executed on the current
    thread since the last [preemption](#thread-preemption).
-1. `wakeup` - 32-bit address set via a futex syscall signaling that the VM has entered wakeup traversal or else
-    `0xFFFFFFFF` (-1) if there is no active wakeup signal. For details see ["Wakeup Traversal"](#wakeup-traversal).
-1. `traverseRight` - 8-bit boolean that indicates whether the currently active thread is on the left or right thread
+1. `wakeup` - [`Word`] The address set via a futex syscall signaling that the VM has entered wakeup traversal or else
+   `MaxWord` if there is no active wakeup signal. For details see ["Wakeup Traversal"](#wakeup-traversal).
+1. `traverseRight` - [`Boolean`] Indicates whether the currently active thread is on the left or right thread
     stack, as well as some details on thread traversal mechanics.
     See ["Thread Traversal Mechanics"](#thread-traversal-mechanics) for details.
-1. `leftThreadStack` - a `bytes32` hash of the contents of the left thread stack.
+1. `leftThreadStack` - [`Hash`] A hash of the contents of the left thread stack.
    For details, see the [“Thread Stack Hashing” section.](#thread-stack-hashing)
-1. `rightThreadStack` - a `bytes32` hash of the contents of the right thread stack.
+1. `rightThreadStack` - [`Hash`] A hash of the contents of the right thread stack.
    For details, see the [“Thread Stack Hashing” section.](#thread-stack-hashing)
-1. `nextThreadID` - 32-bit value defining the id to assign to the next thread that is created.
+1. `nextThreadID` - [`Word`] The value defining the id to assign to the next thread that is created.
 
 The state is represented by packing the above fields, in order, into a 172-byte buffer.
 
@@ -287,20 +306,20 @@ fn vm_status(exit_code: u8, exited: bool) -> u8 {
 
 The state of a single thread is tracked and represented by a thread state object consisting of the following fields:
 
-1. `threadID` - 32-bit unique thread identifier.
-1. `exitCode` - 8-bit exit code.
-1. `exited` - 8-bit boolean value indicating whether the thread has exited.
-1. `futexAddr` - 32-bit address set via a futex syscall indicating that this thread is waiting on a value change
+1. `threadID` - [`Word`] A unique thread identifier.
+1. `exitCode` - [`Byte`] The exit code value.
+1. `exited` - [`Boolean`] Indicates whether the thread has exited.
+1. `futexAddr` - [`Word`] An address set via a futex syscall indicating that this thread is waiting on a value change
     at this address.
-1. `futexVal` - 32-bit value representing the memory contents at `futexAddr` when this thread began waiting.
-1. `futexTimeoutStep` - 64-bit value representing the future `step` at which the futex wait will time out.  Set to the
-   max uint64 value (-1) if no timeout is active.
-1. `pc` - 32-bit program counter.
-1. `nextPC` - 32-bit next program counter. Note that this value may not always be $pc+4$
+1. `futexVal` - [`Word`] A value representing the memory contents at `futexAddr` when this thread began waiting.
+1. `futexTimeoutStep` - [`UInt64`] A value representing the future `step` at which the futex wait will time out.
+Set to `MaxWord` if no timeout is active.
+1. `pc` - [`Word`] The program counter.
+1. `nextPC` - [`Word`] The next program counter. Note that this value may not always be $pc+4$
    when executing a branch/jump delay slot.
-1. `lo` - 32-bit MIPS LO special register.
-1. `hi` - 32-bit MIPS HI special register.
-1. `registers` - General-purpose MIPS32 registers. Each register is a 32-bit value.
+1. `lo` - [`Word`] The MIPS LO special register.
+1. `hi` - [`Word`] The MIPS HI special register.
+1. `registers` - 32 general-purpose MIPS registers numbered 0 - 31. Each register contains a `Word` value.
 
 A thread is represented by packing the above fields, in order, into a 166-byte buffer.
 
@@ -334,7 +353,7 @@ Memory is represented as a binary merkle tree.
 The tree has a fixed-depth of 27 levels, with leaf values of 32 bytes each.
 This spans the full 32-bit address space, where each leaf contains the memory at that part of the tree.
 The state `memRoot` represents the merkle root of the tree, reflecting the effects of memory writes.
-As a result of this memory representation, all memory operations are 4-byte aligned.
+As a result of this memory representation, all memory operations are `WordSize`-byte aligned.
 Memory access doesn't require any privileges. An instruction step can access any memory
 location as the entire address space is unprotected.
 
@@ -373,7 +392,7 @@ However, the FPVM supports a subset of Linux/MIPS syscalls with slightly differe
 These syscalls have identical syscall numbers and ABIs as Linux/MIPS.
 
 For all of the following syscalls, an error is indicated by setting the return
-register (`$v0`) to `0xFFFFFFFF` (-1) and `errno` (`$a3`) is set accordingly.
+register (`$v0`) to `MaxWord` and `errno` (`$a3`) is set accordingly.
 The VM must not modify any register other than `$v0` and `$a3` during syscall handling.
 
 The following tables summarize supported syscalls and their behaviors.
@@ -381,23 +400,23 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 
 ### Supported Syscalls
 
-| \$v0 | system call   | \$a0            | \$a1             | \$a2         | \$a3             | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-|------|---------------|-----------------|------------------|--------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 4090 | mmap          | uint32 addr     | uint32 len       | 🚫           | 🚫               | Allocates a page from the heap. See [heap](#heap) for details.                                                                                                                                                                                                                                                                                                                                                                                     |
-| 4045 | brk           | 🚫              | 🚫               | 🚫           | 🚫               | Returns a fixed address for the program break at `0x40000000`                                                                                                                                                                                                                                                                                                                                                                                      |
-| 4246 | exit_group    | uint8 exit_code | 🚫               | 🚫           | 🚫               | Sets the exited and exitCode state fields to `true` and `$a0` respectively.                                                                                                                                                                                                                                                                                                                                                                        |
-| 4003 | read          | uint32 fd       | char \*buf       | uint32 count | 🚫               | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details.                                                                                                                                                                                                                                                                                                                                                  |
-| 4004 | write         | uint32 fd       | char \*buf       | uint32 count | 🚫               | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details.                                                                                                                                                                                                                                                                                                                                                 |
-| 4055 | fcntl         | uint32 fd       | int32 cmd        | 🚫           | 🚫               | Similar behavior as Linux/MIPS. Only the `F_GETFD`(1) and `F_GETFL` (3) cmds are supported. Sets errno to `0x16` for all other commands.                                                                                                                                                                                                                                                                                                           |
-| 4120 | clone         | uint32 flags    | uint32 stack_ptr | 🚫           | 🚫               | Creates a new thread based on the currently active thread's state.  Supports a `flags` argument equal to `0x00050f00`, other values cause the VM to exit with exit_code `VmStatus.PANIC`.                                                                                                                                                                                                                                                          |
-| 4001 | exit          | uint8 exit_code | 🚫               | 🚫           | 🚫               | Sets the active thread's exited and exitCode state fields to `true` and `$a0` respectively.                                                                                                                                                                                                                                                                                                                                                        |
-| 4162 | sched_yield   | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 4222 | gettid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns the active thread's threadID field.                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 4238 | futex         | uint32 addr     | uint32 futex_op  | uint32 val   | uint32 \*timeout | Supports `futex_op`'s `FUTEX_WAIT_PRIVATE` (128) and `FUTEX_WAKE_PRIVATE` (129). Other operations set errno to `0x16`.                                                                                                                                                                                                                                                                                                                             |
-| 4005 | open          | 🚫              | 🚫               | 🚫           | 🚫               | Sets errno to `0x9`.                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 4166 | nanosleep     | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 4263 | clock_gettime | uint32 clock_id | uint32 addr      | 🚫           | 🚫               | Supports `clock_id`'s `REALTIME`(0) and `MONOTONIC`(1). For other `clock_id`'s, sets errno to `0x16`.  Calculates a deterministic time value based on the state's `step` field and a constant `HZ` (10,000,000) where `HZ` represents the approximate clock rate (steps / second) of the FPVM:<br/><br/>`seconds = step/HZ`<br/>`nsecs = (step % HZ) * 10^9/HZ`<br/><br/>Seconds are set at memory address `addr` and nsecs are set at `addr + 4`. |
-| 4020 | getpid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| \$v0 | system call   | \$a0            | \$a1             | \$a2         | \$a3             | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+|------|---------------|-----------------|------------------|--------------|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 4090 | mmap          | uint32 addr     | uint32 len       | 🚫           | 🚫               | Allocates a page from the heap. See [heap](#heap) for details.                                                                                                                                                                                                                                                                                                                                                                                            |
+| 4045 | brk           | 🚫              | 🚫               | 🚫           | 🚫               | Returns a fixed address for the program break at `0x40000000`                                                                                                                                                                                                                                                                                                                                                                                             |
+| 4246 | exit_group    | uint8 exit_code | 🚫               | 🚫           | 🚫               | Sets the exited and exitCode state fields to `true` and `$a0` respectively.                                                                                                                                                                                                                                                                                                                                                                               |
+| 4003 | read          | uint32 fd       | char \*buf       | uint32 count | 🚫               | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details.                                                                                                                                                                                                                                                                                                                                                         |
+| 4004 | write         | uint32 fd       | char \*buf       | uint32 count | 🚫               | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details.                                                                                                                                                                                                                                                                                                                                                        |
+| 4055 | fcntl         | uint32 fd       | int32 cmd        | 🚫           | 🚫               | Similar behavior as Linux/MIPS. Only the `F_GETFD`(1) and `F_GETFL` (3) cmds are supported. Sets errno to `0x16` for all other commands.                                                                                                                                                                                                                                                                                                                  |
+| 4120 | clone         | uint32 flags    | uint32 stack_ptr | 🚫           | 🚫               | Creates a new thread based on the currently active thread's state.  Supports a `flags` argument equal to `0x00050f00`, other values cause the VM to exit with exit_code `VmStatus.PANIC`.                                                                                                                                                                                                                                                                 |
+| 4001 | exit          | uint8 exit_code | 🚫               | 🚫           | 🚫               | Sets the active thread's exited and exitCode state fields to `true` and `$a0` respectively.                                                                                                                                                                                                                                                                                                                                                               |
+| 4162 | sched_yield   | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 4222 | gettid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns the active thread's threadID field.                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 4238 | futex         | uint32 addr     | uint32 futex_op  | uint32 val   | uint32 \*timeout | Supports `futex_op`'s `FUTEX_WAIT_PRIVATE` (128) and `FUTEX_WAKE_PRIVATE` (129). Other operations set errno to `0x16`.                                                                                                                                                                                                                                                                                                                                    |
+| 4005 | open          | 🚫              | 🚫               | 🚫           | 🚫               | Sets errno to `0x9`.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 4166 | nanosleep     | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 4263 | clock_gettime | uint32 clock_id | uint32 addr      | 🚫           | 🚫               | Supports `clock_id`'s `REALTIME`(0) and `MONOTONIC`(1). For other `clock_id`'s, sets errno to `0x16`.  Calculates a deterministic time value based on the state's `step` field and a constant `HZ` (10,000,000) where `HZ` represents the approximate clock rate (steps / second) of the FPVM:<br/><br/>`seconds = step/HZ`<br/>`nsecs = (step % HZ) * 10^9/HZ`<br/><br/>Seconds are set at memory address `addr` and nsecs are set at `addr + WordSize`. |
+| 4020 | getpid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ### Noop Syscalls
 
@@ -433,6 +452,8 @@ and errno (`$a3`) registers.
 | 4140 | llseek             |
 | 4217 | mincore            |
 | 4266 | tgkill             |
+| 4076 | getrlimit          |
+| 4019 | lseek              |
 | 4104 | setitimer          |
 | 4257 | timer_create       |
 | 4258 | timer_settime      |
@@ -457,9 +478,10 @@ Syscalls referencing unknown file descriptors fail with an `EBADF` errno as done
 Writing to and reading from standard output, input and error streams have no effect on the FPVM state.
 FPVM implementations may use them for debugging purposes as long as I/O is stateless.
 
-All I/O operations are restricted to a maximum of 4 bytes per operation.
-Any read or write syscall request exceeding this limit will be truncated to 4 bytes.
-Consequently, the return value of read/write syscalls is at most 4, indicating the actual number of bytes read/written.
+All I/O operations are restricted to a maximum of `WordSize` bytes per operation.
+Any read or write syscall request exceeding this limit will be truncated to `WordSize` bytes.
+Consequently, the return value of read/write syscalls is at most `WordSize` bytes,
+indicating the actual number of bytes read/written.
 
 ### Standard Streams
 
@@ -482,13 +504,13 @@ The `preimageKey` buffer is shifted to accommodate new bytes written to the end 
 A write also resets the `preimageOffset` to 0, indicating the intent to read a new pre-image.
 
 When handling pre-image reads, the `preimageKey` is used to lookup the pre-image data from an Oracle.
-A max 4-byte chunk of the pre-image at the `preimageOffset` is read to the specified address.
+A max `WordSize`-byte chunk of the pre-image at the `preimageOffset` is read to the specified address.
 Each read operation increases the `preimageOffset` by the number of bytes requested
-(truncated to 4 bytes and subject to alignment constraints).
+(truncated to `WordSize` bytes and subject to alignment constraints).
 
 #### Pre-image I/O Alignment
 
-As mentioned earlier in [memory](#memory), all memory operations are 4-byte aligned.
+As mentioned earlier in [memory](#memory), all memory operations are `WordSize`-byte aligned.
 Since pre-image I/O occurs on memory, all pre-image I/O operations must strictly adhere to alignment boundaries.
 This means the start and end of a read/write operation must fall within the same alignment boundary.
 If an operation were to violate this, the input `count` of the read/write syscall must be
@@ -509,7 +531,6 @@ transition. Nominally, the FPVM must raise an exception in at least the followin
 - Pre-image read at an offset larger than the size of the pre-image.
 - Delay slot contains branch/jump instruction types.
 - Invalid thread state:
-  - There are no threads - both thread stacks are empty.
   - The active thread stack is empty.
 
 VM implementations may raise an exception in other cases that is specific to the implementation.
