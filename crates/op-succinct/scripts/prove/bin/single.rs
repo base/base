@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::default();
+    let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
     let l2_safe_head = args.l2_block - 1;
 
@@ -71,10 +72,7 @@ async fn main() -> Result<()> {
         let proof = prover.prove(&pk, sp1_stdin).plonk().run().unwrap();
 
         // Create a proof directory for the chain ID if it doesn't exist.
-        let proof_dir = format!(
-            "data/{}/proofs",
-            data_fetcher.get_chain_id(RPCMode::L2).await.unwrap()
-        );
+        let proof_dir = format!("data/{}/proofs", l2_chain_id);
         if !std::path::Path::new(&proof_dir).exists() {
             std::fs::create_dir_all(&proof_dir)?;
         }
@@ -86,7 +84,6 @@ async fn main() -> Result<()> {
         let (_, report) = prover.execute(SINGLE_BLOCK_ELF, sp1_stdin).run().unwrap();
         let execution_duration = start_time.elapsed();
 
-        let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await.unwrap();
         let report_path = format!(
             "execution-reports/single/{}/{}.csv",
             l2_chain_id, args.l2_block

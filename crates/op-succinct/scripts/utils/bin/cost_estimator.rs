@@ -3,7 +3,7 @@ use clap::Parser;
 use kona_host::HostCli;
 use log::info;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
@@ -91,7 +91,7 @@ async fn run_native_data_generation(
     data_fetcher: &OPSuccinctDataFetcher,
     split_ranges: &[SpanBatchRange],
 ) -> Vec<BatchHostCli> {
-    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 20;
+    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
 
     // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
     // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
@@ -294,7 +294,7 @@ async fn main() -> Result<()> {
     let args = HostArgs::parse();
     let data_fetcher = OPSuccinctDataFetcher::default();
 
-    let l2_chain_id = data_fetcher.get_chain_id(RPCMode::L2).await?;
+    let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
     let split_ranges = split_range(args.start, args.end, l2_chain_id);
 
