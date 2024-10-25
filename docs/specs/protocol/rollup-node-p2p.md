@@ -30,6 +30,7 @@
   - [`blocksv1`](#blocksv1)
   - [`blocksv2`](#blocksv2)
   - [`blocksv3`](#blocksv3)
+  - [`blocksv4`](#blocksv4)
   - [Block encoding](#block-encoding)
   - [Block signatures](#block-signatures)
   - [Block validation](#block-validation)
@@ -252,7 +253,7 @@ The extended validator emits one of the following validation signals:
 
 ## Gossip Topics
 
-There are three topics for distributing blocks to other nodes faster than proxying through L1 would. These are:
+Listed below are the topics for distributing blocks to other nodes faster than proxying through L1 would. These are:
 
 ### `blocksv1`
 
@@ -266,6 +267,10 @@ Canyon/Delta blocks are broadcast on `/optimism/<chainId>/1/blocks`.
 
 Ecotone blocks are broadcast on `/optimism/<chainId>/2/blocks`.
 
+### `blocksv4`
+
+Isthmus blocks are broadcast on `/optimism/<chainId>/3/blocks`.
+
 ### Block encoding
 
 A block is structured as the concatenation of:
@@ -276,6 +281,11 @@ A block is structured as the concatenation of:
 - V3 topic
   - `signature`: A `secp256k1` signature, always 65 bytes, `r (uint256), s (uint256), y_parity (uint8)`
   - `parentBeaconBlockRoot`: L1 origin parent beacon block root, always 32 bytes
+  - `payload`: A SSZ-encoded `ExecutionPayload`, always the remaining bytes.
+- V4 topic
+  - `signature`: A `secp256k1` signature, always 65 bytes, `r (uint256), s (uint256), y_parity (uint8)`
+  - `parentBeaconBlockRoot`: L1 origin parent beacon block root, always 32 bytes
+  - `withdrawalsRoot`: L2 withdrawals root, always 32 bytes.
   - `payload`: A SSZ-encoded `ExecutionPayload`, always the remaining bytes.
 
 All topics use Snappy block-compression (i.e. no snappy frames):
@@ -288,8 +298,10 @@ The `signature` is a `secp256k1` signature, and signs over a message:
 
 - `domain` is 32 bytes, reserved for message types and versioning info. All zero for this signature.
 - `chain_id` is a big-endian encoded `uint256`.
-- `payload_hash` is `keccak256(payload)`, where `payload` is the `payload` in V1 and V2,
-  and `parentBeaconBlockRoot ++ payload` in V3.
+- `payload_hash` is `keccak256(payload)`, where `payload` is:
+  - the `payload` in V1 and V2,
+  - `parentBeaconBlockRoot ++ payload` in V3.
+  - `parentBeaconBlockRoot ++  withdrawalsRoot ++ payload` in V4.
 
 The `secp256k1` signature must have `y_parity = 1 or 0`, the `chain_id` is already signed over.
 
@@ -312,6 +324,7 @@ An [extended-validator] checks the incoming messages as follows, in order of ope
 - `[REJECT]` if the block is on a topic >= V3 and has an excess blob gas value that is not zero
 - `[REJECT]` if the block is on a topic <= V2 and the parent beacon block root is not nil
 - `[REJECT]` if the block is on a topic >= V3 and the parent beacon block root is nil
+- `[REJECT]` if the block is on a topic >= V3 and the l2 withdrawals root is nil
 - `[REJECT]` if more than 5 different blocks have been seen with the same block height
 - `[IGNORE]` if the block has already been seen
 - `[REJECT]` if the signature by the sequencer is not valid
@@ -403,6 +416,8 @@ Implementations may opt for a different limit, since this sync method is optiona
   matching the `ExecutionPayload` SSZ definition of the L1 Merge, L2 Bedrock and L2 Regolith, L2 Canyon versions.
 - `1`: SSZ-encoded `ExecutionPayloadEnvelope` with Snappy framing compression,
   matching the `ExecutionPayloadEnvelope` SSZ definition of the L2 Ecotone version.
+- `2`: SSZ-encoded `ExecutionPayload` with Snappy framing compression,
+  matching the `ExecutionPayload` SSZ definition of the L2 Isthmus version.
 
 The request is by block-number, enabling parallel fetching of a chain across many peers.
 

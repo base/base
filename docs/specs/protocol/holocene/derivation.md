@@ -135,7 +135,7 @@ invalid.
 due to the new strict batch ordering rules.
 - If `span_end.timestamp < next_timestamp`, the span batch is set to have `past` validity, as it
 doesn't contain any new batches (this would also happen if applying timestamp checks to each derived
-singular batch individually). See below in the [Batch Queue][#batch-queue] section about the new
+singular batch individually). See below in the [Batch Queue](#batch-queue) section about the new
 `past` validity.
 - Note that we still allow span batches to overlap with the safe chain (`span_start.timestamp <
 next_timestamp`).
