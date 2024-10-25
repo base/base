@@ -132,7 +132,7 @@ algorithms, with the [legacy channel format][legacy-channel-format] remaining su
 versioned format is as follows:
 
 ```text
-channel_encoding = `channel_version_byte ++ compress(rlp_batches)`
+channel_encoding = channel_version_byte ++ compress(rlp_batches)
 ```
 
 The `channel_version_byte` must never have its 4 lower order bits set to `0b1000 = 8` or `0b1111 =
