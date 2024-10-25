@@ -45,15 +45,15 @@ async fn main() -> Result<()> {
         println!("Boot info: {:?}", boot_info);
     } else {
         // Read the BootInfoStruct from the proof
-        let boot_info: BootInfoStruct = proof.public_values.read();
+        let _boot_info: BootInfoStruct = proof.public_values.read();
 
         // Create the proofs directory if it doesn't exist
-        let proof_path = format!("data/{}/proofs", boot_info.chainId);
+        let proof_path = "data/fetched_proofs".to_string();
         let proof_dir = Path::new(&proof_path);
         fs::create_dir_all(proof_dir)?;
 
         // Generate the filename
-        let filename = format!("{}.bin", boot_info.l2BlockNumber);
+        let filename = format!("{}.bin", args.request_id);
         let file_path = proof_dir.join(filename);
 
         // Save the proof

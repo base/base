@@ -31,12 +31,10 @@ var (
 
 // OPSuccinctL2OutputOracleInitParams is an auto generated low-level Go binding around an user-defined struct.
 type OPSuccinctL2OutputOracleInitParams struct {
-	ChainId             *big.Int
 	AggregationVkey     [32]byte
 	RangeVkeyCommitment [32]byte
 	VerifierGateway     common.Address
 	StartingOutputRoot  [32]byte
-	Owner               common.Address
 	RollupConfigHash    [32]byte
 }
 
@@ -49,8 +47,8 @@ type TypesOutputProposal struct {
 
 // OPSuccinctL2OutputOracleMetaData contains all meta data concerning the OPSuccinctL2OutputOracle contract.
 var OPSuccinctL2OutputOracleMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"constructor\",\"inputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"CHALLENGER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"FINALIZATION_PERIOD_SECONDS\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"L2_BLOCK_TIME\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PROPOSER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"SUBMISSION_INTERVAL\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"aggregationVkey\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"chainId\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"challenger\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"checkpointBlockHash\",\"inputs\":[{\"name\":\"_blockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_blockHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"computeL2Timestamp\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"deleteL2Outputs\",\"inputs\":[{\"name\":\"_l2OutputIndex\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"finalizationPeriodSeconds\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2Output\",\"inputs\":[{\"name\":\"_l2OutputIndex\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structTypes.OutputProposal\",\"components\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"timestamp\",\"type\":\"uint128\",\"internalType\":\"uint128\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint128\",\"internalType\":\"uint128\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2OutputAfter\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structTypes.OutputProposal\",\"components\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"timestamp\",\"type\":\"uint128\",\"internalType\":\"uint128\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint128\",\"internalType\":\"uint128\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2OutputIndexAfter\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"historicBlockHashes\",\"inputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"initialize\",\"inputs\":[{\"name\":\"_submissionInterval\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_l2BlockTime\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_startingBlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_startingTimestamp\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_proposer\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_challenger\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_finalizationPeriodSeconds\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_initParams\",\"type\":\"tuple\",\"internalType\":\"structOPSuccinctL2OutputOracle.InitParams\",\"components\":[{\"name\":\"chainId\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"aggregationVkey\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"rangeVkeyCommitment\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"verifierGateway\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"startingOutputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"owner\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"rollupConfigHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}]}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"l2BlockTime\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"latestBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"latestOutputIndex\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nextBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nextOutputIndex\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"owner\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"proposeL2Output\",\"inputs\":[{\"name\":\"_outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_l1BlockHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"_l1BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"proposer\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"rangeVkeyCommitment\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"rollupConfigHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"startingBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"startingTimestamp\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"submissionInterval\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"transferOwnership\",\"inputs\":[{\"name\":\"_newOwner\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"updateAggregationVKey\",\"inputs\":[{\"name\":\"_aggregationVKey\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"updateRangeVkeyCommitment\",\"inputs\":[{\"name\":\"_rangeVkeyCommitment\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"updateRollupConfigHash\",\"inputs\":[{\"name\":\"_rollupConfigHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"updateVerifierGateway\",\"inputs\":[{\"name\":\"_verifierGateway\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"verifierGateway\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractSP1VerifierGateway\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"version\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"Initialized\",\"inputs\":[{\"name\":\"version\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"OutputProposed\",\"inputs\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"l2OutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"l1Timestamp\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"OutputsDeleted\",\"inputs\":[{\"name\":\"prevNextOutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"newNextOutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"OwnershipTransferred\",\"inputs\":[{\"name\":\"previousOwner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"newOwner\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UpdatedAggregationVKey\",\"inputs\":[{\"name\":\"oldVkey\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"newVkey\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UpdatedRangeVkeyCommitment\",\"inputs\":[{\"name\":\"oldRangeVkeyCommitment\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"newRangeVkeyCommitment\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UpdatedRollupConfigHash\",\"inputs\":[{\"name\":\"oldRollupConfigHash\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"newRollupConfigHash\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"UpdatedVerifierGateway\",\"inputs\":[{\"name\":\"oldVerifierGateway\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"newVerifierGateway\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"}],\"anonymous\":false}]",
-	Bin: "0x608060405234801561001057600080fd5b5061001961001e565b6100de565b600054610100900460ff161561008a5760405162461bcd60e51b815260206004820152602760248201527f496e697469616c697a61626c653a20636f6e747261637420697320696e697469604482015266616c697a696e6760c81b606482015260840160405180910390fd5b60005460ff90811610156100dc576000805460ff191660ff9081179091556040519081527f7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb38474024989060200160405180910390a15b565b611c34806100ed6000396000f3fe6080604052600436106102195760003560e01c806393991af311610123578063ce5db8d6116100ab578063e1a41bcf1161006f578063e1a41bcf14610602578063e5c325c614610618578063f2fde38b14610638578063f4daa29114610658578063fb3c491c1461066d57600080fd5b8063ce5db8d614610577578063cf8e5cf01461058d578063d1de856c146105ad578063dbf33074146105cd578063dcec3348146105ed57600080fd5b8063a8e4fb90116100f2578063a8e4fb90146104f0578063a9efd6b814610510578063bc91ce3314610523578063bffa7f0f14610543578063c32e4e3e1461056157600080fd5b806393991af3146104445780639a8a05921461045a578063a196b52514610470578063a25ae5571461049d57600080fd5b80636abcf563116101a65780637f006420116101755780637f006420146103ae57806380fdb3e1146103ce57806388786272146103ee57806389c44cbb146104045780638da5cb5b1461042457600080fd5b80636abcf5631461034f5780636b4d98dd146103645780636d9a1c8b1461038257806370872aa51461039857600080fd5b80634599c788116101ed5780634599c7881461029a578063529933df146102af578063534db0e2146102c457806354fd4d50146102fc57806369f16eec1461033a57600080fd5b80622134cc1461021e5780631bdd450c146102425780632b31841e146102645780634418db5e1461027a575b600080fd5b34801561022a57600080fd5b506005545b6040519081526020015b60405180910390f35b34801561024e57600080fd5b5061026261025d366004611804565b61068d565b005b34801561027057600080fd5b5061022f600b5481565b34801561028657600080fd5b50610262610295366004611839565b6106cc565b3480156102a657600080fd5b5061022f6106ff565b3480156102bb57600080fd5b5060045461022f565b3480156102d057600080fd5b506006546102e4906001600160a01b031681565b6040516001600160a01b039091168152602001610239565b34801561030857600080fd5b5061032d604051806040016040528060058152602001640322e302e360dc1b81525081565b60405161023991906118a8565b34801561034657600080fd5b5061022f61075c565b34801561035b57600080fd5b5060035461022f565b34801561037057600080fd5b506006546001600160a01b03166102e4565b34801561038e57600080fd5b5061022f600e5481565b3480156103a457600080fd5b5061022f60015481565b3480156103ba57600080fd5b5061022f6103c9366004611804565b61076e565b3480156103da57600080fd5b506102626103e9366004611804565b61090c565b3480156103fa57600080fd5b5061022f60025481565b34801561041057600080fd5b5061026261041f366004611804565b61093f565b34801561043057600080fd5b50600d546102e4906001600160a01b031681565b34801561045057600080fd5b5061022f60055481565b34801561046657600080fd5b5061022f60095481565b34801561047c57600080fd5b5061022f61048b366004611804565b600f6020526000908152604090205481565b3480156104a957600080fd5b506104bd6104b8366004611804565b610b44565b60408051825181526020808401516001600160801b03908116918301919091529282015190921690820152606001610239565b3480156104fc57600080fd5b506007546102e4906001600160a01b031681565b61026261051e36600461192b565b610bc2565b34801561052f57600080fd5b5061026261053e366004611804565b6111bb565b34801561054f57600080fd5b506007546001600160a01b03166102e4565b34801561056d57600080fd5b5061022f600a5481565b34801561058357600080fd5b5061022f60085481565b34801561059957600080fd5b506104bd6105a8366004611804565b6111ee565b3480156105b957600080fd5b5061022f6105c8366004611804565b611226565b3480156105d957600080fd5b506102626105e83660046119e7565b611256565b3480156105f957600080fd5b5061022f6112de565b34801561060e57600080fd5b5061022f60045481565b34801561062457600080fd5b50610262610633366004611a09565b6112f5565b34801561064457600080fd5b50610262610653366004611839565b61167d565b34801561066457600080fd5b5060085461022f565b34801561067957600080fd5b50600c546102e4906001600160a01b031681565b600d546001600160a01b031633146106c05760405162461bcd60e51b81526004016106b790611ae6565b60405180910390fd5b6106c9816116b0565b50565b600d546001600160a01b031633146106f65760405162461bcd60e51b81526004016106b790611ae6565b6106c9816116e4565b60035460009015610753576003805461071a90600190611b43565b8154811061072a5761072a611b5a565b6000918252602090912060029091020160010154600160801b90046001600160801b0316919050565b6001545b905090565b60035460009061075790600190611b43565b60006107786106ff565b8211156107fe5760405162461bcd60e51b815260206004820152604860248201527f4c324f75747075744f7261636c653a2063616e6e6f7420676574206f7574707560448201527f7420666f72206120626c6f636b207468617420686173206e6f74206265656e206064820152671c1c9bdc1bdcd95960c21b608482015260a4016106b7565b6003546108825760405162461bcd60e51b815260206004820152604660248201527f4c324f75747075744f7261636c653a2063616e6e6f7420676574206f7574707560448201527f74206173206e6f206f7574707574732068617665206265656e2070726f706f736064820152651959081e595d60d21b608482015260a4016106b7565b6003546000905b80821015610905576000600261089f8385611b70565b6108a99190611b88565b905084600382815481106108bf576108bf611b5a565b6000918252602090912060029091020160010154600160801b90046001600160801b031610156108fb576108f4816001611b70565b92506108ff565b8091505b50610889565b5092915050565b600d546001600160a01b031633146109365760405162461bcd60e51b81526004016106b790611ae6565b6106c981611740565b6006546001600160a01b031633146109bf5760405162461bcd60e51b815260206004820152603e60248201527f4c324f75747075744f7261636c653a206f6e6c7920746865206368616c6c656e60448201527f67657220616464726573732063616e2064656c657465206f757470757473000060648201526084016106b7565b6003548110610a425760405162461bcd60e51b815260206004820152604360248201527f4c324f75747075744f7261636c653a2063616e6e6f742064656c657465206f7560448201527f747075747320616674657220746865206c6174657374206f757470757420696e6064820152620c8caf60eb1b608482015260a4016106b7565b60085460038281548110610a5857610a58611b5a565b6000918252602090912060016002909202010154610a7f906001600160801b031642611b43565b10610b015760405162461bcd60e51b815260206004820152604660248201527f4c324f75747075744f7261636c653a2063616e6e6f742064656c657465206f7560448201527f74707574732074686174206861766520616c7265616479206265656e2066696e606482015265185b1a5e995960d21b608482015260a4016106b7565b6000610b0c60035490565b90508160035581817f4ee37ac2c786ec85e87592d3c5c8a1dd66f8496dda3f125d9ea8ca5f657629b660405160405180910390a35050565b604080516060810182526000808252602082018190529181019190915260038281548110610b7457610b74611b5a565b600091825260209182902060408051606081018252600290930290910180548352600101546001600160801b0380821694840194909452600160801b90049092169181019190915292915050565b6007546001600160a01b0316331480610be457506007546001600160a01b0316155b610c605760405162461bcd60e51b815260206004820152604160248201527f4c324f75747075744f7261636c653a206f6e6c79207468652070726f706f736560448201527f7220616464726573732063616e2070726f706f7365206e6577206f75747075746064820152607360f81b608482015260a4016106b7565b610c686112de565b841015610d035760405162461bcd60e51b815260206004820152605860248201527f4c324f75747075744f7261636c653a20626c6f636b206e756d626572206d757360448201527f742062652067726561746572207468616e206f7220657175616c20746f206e6560648201527f787420657870656374656420626c6f636b206e756d6265720000000000000000608482015260a4016106b7565b42610d0d85611226565b10610d795760405162461bcd60e51b815260206004820152603660248201527f4c324f75747075744f7261636c653a2063616e6e6f742070726f706f7365204c60448201527532206f757470757420696e207468652066757475726560501b60648201526084016106b7565b84610dec5760405162461bcd60e51b815260206004820152603a60248201527f4c324f75747075744f7261636c653a204c32206f75747075742070726f706f7360448201527f616c2063616e6e6f7420626520746865207a65726f206861736800000000000060648201526084016106b7565b600a54610e715760405162461bcd60e51b815260206004820152604760248201527f4c324f75747075744f7261636c653a206167677265676174696f6e20766b657960448201527f206d75737420626520736574206265666f72652070726f706f73696e6720616e606482015266081bdd5d1c1d5d60ca1b608482015260a4016106b7565b600b54610efb5760405162461bcd60e51b815260206004820152604c60248201527f4c324f75747075744f7261636c653a2072616e676520766b657920636f6d6d6960448201527f746d656e74206d75737420626520736574206265666f72652070726f706f736960648201526b1b99c8185b881bdd5d1c1d5d60a21b608482015260a4016106b7565b6000828152600f60205260409020548314610f8a5760405162461bcd60e51b815260206004820152604360248201527f4c324f75747075744f7261636c653a2070726f706f73656420626c6f636b206860448201527f61736820616e64206e756d62657220617265206e6f7420636865636b706f696e6064820152621d195960ea1b608482015260a4016106b7565b60006040518060e001604052808581526020016003610fa761075c565b81548110610fb757610fb7611b5a565b90600052602060002090600202016000015481526020018781526020018681526020016009548152602001600e548152602001600b548152509050600c60009054906101000a90046001600160a01b03166001600160a01b03166341493c60600a54836040516020016110739190600060e082019050825182526020830151602083015260408301516040830152606083015160608301526080830151608083015260a083015160a083015260c083015160c083015292915050565b604051602081830303815290604052856040518463ffffffff1660e01b81526004016110a193929190611baa565b60006040518083038186803b1580156110b957600080fd5b505afa1580156110cd573d6000803e3d6000fd5b50505050846110db60035490565b877fa7aaf2512769da4e444e3de247be2564225c2e7a8f74cfe528e46e17d24868e24260405161110d91815260200190565b60405180910390a45050604080516060810182529485526001600160801b034281166020870190815294811691860191825260038054600181018255600091909152955160029096027fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b810196909655935190518416600160801b029316929092177fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c909301929092555050565b600d546001600160a01b031633146111e55760405162461bcd60e51b81526004016106b790611ae6565b6106c981611774565b604080516060810182526000808252602082018190529181019190915260036112168361076e565b81548110610b7457610b74611b5a565b6000600554600154836112399190611b43565b6112439190611bdf565b6002546112509190611b70565b92915050565b808240146112cc5760405162461bcd60e51b815260206004820152603c60248201527f4c324f75747075744f7261636c653a20626c6f636b206861736820616e64206e60448201527f756d6265722063616e6e6f7420626520636865636b706f696e7465640000000060648201526084016106b7565b6000918252600f602052604090912055565b60006004546112eb6106ff565b6107579190611b70565b600054600290610100900460ff16158015611317575060005460ff8083169116105b61137a5760405162461bcd60e51b815260206004820152602e60248201527f496e697469616c697a61626c653a20636f6e747261637420697320616c72656160448201526d191e481a5b9a5d1a585b1a5e995960921b60648201526084016106b7565b6000805461ffff191660ff831617610100179055886114015760405162461bcd60e51b815260206004820152603a60248201527f4c324f75747075744f7261636c653a207375626d697373696f6e20696e74657260448201527f76616c206d7573742062652067726561746572207468616e203000000000000060648201526084016106b7565b6000881161146e5760405162461bcd60e51b815260206004820152603460248201527f4c324f75747075744f7261636c653a204c3220626c6f636b2074696d65206d75604482015273073742062652067726561746572207468616e20360641b60648201526084016106b7565b428611156114f25760405162461bcd60e51b8152602060048201526044602482018190527f4c324f75747075744f7261636c653a207374617274696e67204c322074696d65908201527f7374616d70206d757374206265206c657373207468616e2063757272656e742060648201526374696d6560e01b608482015260a4016106b7565b60048990556005889055600780546001600160a01b038088166001600160a01b031992831617909255600680549287169290911691909117905560088390556003546000036115ea5760408051606081018252608084015181526001600160801b03808916602083019081528a82169383019384526003805460018181018355600092909252935160029485027fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b810191909155915194518316600160801b0294909216939093177fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c90930192909255908890558690555b815160095560a08201516115fd906117a8565b61160a8260200151611740565b6116178260400151611774565b61162482606001516116e4565b6116318260c001516116b0565b6000805461ff001916905560405160ff821681527f7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb38474024989060200160405180910390a1505050505050505050565b600d546001600160a01b031633146116a75760405162461bcd60e51b81526004016106b790611ae6565b6106c9816117a8565b600e546040518291907fda2f5f014ada26cff39a0f2a9dc6fa4fca1581376fc91ec09506c8fb8657bc3590600090a3600e55565b600c546040516001600160a01b038084169216907f1379941631ff0ed9178ab16ab67a2e5db3aeada7f87e518f761e79c8e38377e390600090a3600c80546001600160a01b0319166001600160a01b0392909216919091179055565b600a546040518291907fb81f9c41933b730a90fba96ab14541de7cab774f762ea0c183054947bc49aee790600090a3600a55565b600b546040518291907f1035606f0606905acdf851342466a5b64406fa798b7440235cd5811cea2850fd90600090a3600b55565b600d546040516001600160a01b038084169216907f8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e090600090a3600d80546001600160a01b0319166001600160a01b0392909216919091179055565b60006020828403121561181657600080fd5b5035919050565b80356001600160a01b038116811461183457600080fd5b919050565b60006020828403121561184b57600080fd5b6118548261181d565b9392505050565b6000815180845260005b8181101561188157602081850181015186830182015201611865565b81811115611893576000602083870101525b50601f01601f19169290920160200192915050565b602081526000611854602083018461185b565b634e487b7160e01b600052604160045260246000fd5b60405160e0810167ffffffffffffffff811182821017156118f4576118f46118bb565b60405290565b604051601f8201601f1916810167ffffffffffffffff81118282101715611923576119236118bb565b604052919050565b600080600080600060a0868803121561194357600080fd5b8535945060208087013594506040870135935060608701359250608087013567ffffffffffffffff8082111561197857600080fd5b818901915089601f83011261198c57600080fd5b81358181111561199e5761199e6118bb565b6119b0601f8201601f191685016118fa565b91508082528a848285010111156119c657600080fd5b80848401858401376000848284010152508093505050509295509295909350565b600080604083850312156119fa57600080fd5b50508035926020909101359150565b600080600080600080600080888a036101c0811215611a2757600080fd5b8935985060208a0135975060408a0135965060608a01359550611a4c60808b0161181d565b9450611a5a60a08b0161181d565b935060c08a0135925060e060df1982011215611a7557600080fd5b50611a7e6118d1565b60e08a013581526101008a013560208201526101208a01356040820152611aa86101408b0161181d565b60608201526101608a01356080820152611ac56101808b0161181d565b60a08201526101a08a013560c0820152809150509295985092959890939650565b60208082526027908201527f4c324f75747075744f7261636c653a2063616c6c6572206973206e6f74207468604082015266329037bbb732b960c91b606082015260800190565b634e487b7160e01b600052601160045260246000fd5b600082821015611b5557611b55611b2d565b500390565b634e487b7160e01b600052603260045260246000fd5b60008219821115611b8357611b83611b2d565b500190565b600082611ba557634e487b7160e01b600052601260045260246000fd5b500490565b838152606060208201526000611bc3606083018561185b565b8281036040840152611bd5818561185b565b9695505050505050565b6000816000190483118215151615611bf957611bf9611b2d565b50029056fea2646970667358221220aa553c66641347ef3e3eb537823d0a58132882a8fe2508e5879407da8f1fd0b664736f6c634300080f0033",
+	ABI: "[{\"type\":\"constructor\",\"inputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"CHALLENGER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"FINALIZATION_PERIOD_SECONDS\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"L2_BLOCK_TIME\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"PROPOSER\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"SUBMISSION_INTERVAL\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"aggregationVkey\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"challenger\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"checkpointBlockHash\",\"inputs\":[{\"name\":\"_blockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"computeL2Timestamp\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"deleteL2Outputs\",\"inputs\":[{\"name\":\"_l2OutputIndex\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"finalizationPeriodSeconds\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2Output\",\"inputs\":[{\"name\":\"_l2OutputIndex\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structTypes.OutputProposal\",\"components\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"timestamp\",\"type\":\"uint128\",\"internalType\":\"uint128\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint128\",\"internalType\":\"uint128\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2OutputAfter\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"tuple\",\"internalType\":\"structTypes.OutputProposal\",\"components\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"timestamp\",\"type\":\"uint128\",\"internalType\":\"uint128\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint128\",\"internalType\":\"uint128\"}]}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getL2OutputIndexAfter\",\"inputs\":[{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"historicBlockHashes\",\"inputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"initialize\",\"inputs\":[{\"name\":\"_submissionInterval\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_l2BlockTime\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_startingBlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_startingTimestamp\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_proposer\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_challenger\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"_finalizationPeriodSeconds\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_initParams\",\"type\":\"tuple\",\"internalType\":\"structOPSuccinctL2OutputOracle.InitParams\",\"components\":[{\"name\":\"aggregationVkey\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"rangeVkeyCommitment\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"verifierGateway\",\"type\":\"address\",\"internalType\":\"address\"},{\"name\":\"startingOutputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"rollupConfigHash\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}]}],\"outputs\":[],\"stateMutability\":\"nonpayable\"},{\"type\":\"function\",\"name\":\"l2BlockTime\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"latestBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"latestOutputIndex\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nextBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"nextOutputIndex\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"proposeL2Output\",\"inputs\":[{\"name\":\"_outputRoot\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"_l2BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_l1BlockNumber\",\"type\":\"uint256\",\"internalType\":\"uint256\"},{\"name\":\"_proof\",\"type\":\"bytes\",\"internalType\":\"bytes\"}],\"outputs\":[],\"stateMutability\":\"payable\"},{\"type\":\"function\",\"name\":\"proposer\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"rangeVkeyCommitment\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"rollupConfigHash\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"startingBlockNumber\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"startingTimestamp\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"submissionInterval\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"uint256\",\"internalType\":\"uint256\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"verifierGateway\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"contractSP1VerifierGateway\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"version\",\"inputs\":[],\"outputs\":[{\"name\":\"\",\"type\":\"string\",\"internalType\":\"string\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"Initialized\",\"inputs\":[{\"name\":\"version\",\"type\":\"uint8\",\"indexed\":false,\"internalType\":\"uint8\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"OutputProposed\",\"inputs\":[{\"name\":\"outputRoot\",\"type\":\"bytes32\",\"indexed\":true,\"internalType\":\"bytes32\"},{\"name\":\"l2OutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"l2BlockNumber\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"l1Timestamp\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"event\",\"name\":\"OutputsDeleted\",\"inputs\":[{\"name\":\"prevNextOutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"},{\"name\":\"newNextOutputIndex\",\"type\":\"uint256\",\"indexed\":true,\"internalType\":\"uint256\"}],\"anonymous\":false},{\"type\":\"error\",\"name\":\"L1BlockHashNotAvailable\",\"inputs\":[]},{\"type\":\"error\",\"name\":\"L1BlockHashNotCheckpointed\",\"inputs\":[]}]",
+	Bin: "0x608060405234801561001057600080fd5b5061001961001e565b6100de565b600054610100900460ff161561008a5760405162461bcd60e51b815260206004820152602760248201527f496e697469616c697a61626c653a20636f6e747261637420697320696e697469604482015266616c697a696e6760c81b606482015260840160405180910390fd5b60005460ff90811610156100dc576000805460ff191660ff9081179091556040519081527f7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb38474024989060200160405180910390a15b565b61161d806100ed6000396000f3fe6080604052600436106101cc5760003560e01c806393991af3116100f7578063c32e4e3e11610095578063dcec334811610064578063dcec33481461050a578063e1a41bcf1461051f578063f4daa29114610535578063fb3c491c1461054a57600080fd5b8063c32e4e3e1461049e578063ce5db8d6146104b4578063cf8e5cf0146104ca578063d1de856c146104ea57600080fd5b8063a25ae557116100d1578063a25ae557146103ed578063a8e4fb9014610440578063bffa7f0f14610460578063c0e8e2a11461047e57600080fd5b806393991af3146103975780639ad84880146103ad578063a196b525146103c057600080fd5b806369f16eec1161016f57806370872aa51161013e57806370872aa51461032b5780637f00642014610341578063887862721461036157806389c44cbb1461037757600080fd5b806369f16eec146102cd5780636abcf563146102e25780636b4d98dd146102f75780636d9a1c8b1461031557600080fd5b80634599c788116101ab5780634599c7881461022d578063529933df14610242578063534db0e21461025757806354fd4d501461028f57600080fd5b80622134cc146101d15780631e856800146101f55780632b31841e14610217575b600080fd5b3480156101dd57600080fd5b506005545b6040519081526020015b60405180910390f35b34801561020157600080fd5b50610215610210366004611298565b61056a565b005b34801561022357600080fd5b506101e2600a5481565b34801561023957600080fd5b506101e261059c565b34801561024e57600080fd5b506004546101e2565b34801561026357600080fd5b50600654610277906001600160a01b031681565b6040516001600160a01b0390911681526020016101ec565b34801561029b57600080fd5b506102c0604051806040016040528060058152602001640302e312e360dc1b81525081565b6040516101ec91906112fe565b3480156102d957600080fd5b506101e26105f9565b3480156102ee57600080fd5b506003546101e2565b34801561030357600080fd5b506006546001600160a01b0316610277565b34801561032157600080fd5b506101e2600c5481565b34801561033757600080fd5b506101e260015481565b34801561034d57600080fd5b506101e261035c366004611298565b61060b565b34801561036d57600080fd5b506101e260025481565b34801561038357600080fd5b50610215610392366004611298565b6107ae565b3480156103a357600080fd5b506101e260055481565b6102156103bb366004611388565b6109b3565b3480156103cc57600080fd5b506101e26103db366004611298565b600d6020526000908152604090205481565b3480156103f957600080fd5b5061040d610408366004611298565b610e09565b60408051825181526020808401516001600160801b039081169183019190915292820151909216908201526060016101ec565b34801561044c57600080fd5b50600754610277906001600160a01b031681565b34801561046c57600080fd5b506007546001600160a01b0316610277565b34801561048a57600080fd5b50610215610499366004611456565b610e87565b3480156104aa57600080fd5b506101e260095481565b3480156104c057600080fd5b506101e260085481565b3480156104d657600080fd5b5061040d6104e5366004611298565b611219565b3480156104f657600080fd5b506101e2610505366004611298565b611251565b34801561051657600080fd5b506101e2611281565b34801561052b57600080fd5b506101e260045481565b34801561054157600080fd5b506008546101e2565b34801561055657600080fd5b50600b54610277906001600160a01b031681565b80408061058a576040516321301a1960e21b815260040160405180910390fd5b6000918252600d602052604090912055565b600354600090156105f057600380546105b79060019061152c565b815481106105c7576105c7611543565b6000918252602090912060029091020160010154600160801b90046001600160801b0316919050565b6001545b905090565b6003546000906105f49060019061152c565b600061061561059c565b8211156106a05760405162461bcd60e51b815260206004820152604860248201527f4c324f75747075744f7261636c653a2063616e6e6f7420676574206f7574707560448201527f7420666f72206120626c6f636b207468617420686173206e6f74206265656e206064820152671c1c9bdc1bdcd95960c21b608482015260a4015b60405180910390fd5b6003546107245760405162461bcd60e51b815260206004820152604660248201527f4c324f75747075744f7261636c653a2063616e6e6f7420676574206f7574707560448201527f74206173206e6f206f7574707574732068617665206265656e2070726f706f736064820152651959081e595d60d21b608482015260a401610697565b6003546000905b808210156107a757600060026107418385611559565b61074b9190611571565b9050846003828154811061076157610761611543565b6000918252602090912060029091020160010154600160801b90046001600160801b0316101561079d57610796816001611559565b92506107a1565b8091505b5061072b565b5092915050565b6006546001600160a01b0316331461082e5760405162461bcd60e51b815260206004820152603e60248201527f4c324f75747075744f7261636c653a206f6e6c7920746865206368616c6c656e60448201527f67657220616464726573732063616e2064656c657465206f75747075747300006064820152608401610697565b60035481106108b15760405162461bcd60e51b815260206004820152604360248201527f4c324f75747075744f7261636c653a2063616e6e6f742064656c657465206f7560448201527f747075747320616674657220746865206c6174657374206f757470757420696e6064820152620c8caf60eb1b608482015260a401610697565b600854600382815481106108c7576108c7611543565b60009182526020909120600160029092020101546108ee906001600160801b03164261152c565b106109705760405162461bcd60e51b815260206004820152604660248201527f4c324f75747075744f7261636c653a2063616e6e6f742064656c657465206f7560448201527f74707574732074686174206861766520616c7265616479206265656e2066696e606482015265185b1a5e995960d21b608482015260a401610697565b600061097b60035490565b90508160035581817f4ee37ac2c786ec85e87592d3c5c8a1dd66f8496dda3f125d9ea8ca5f657629b660405160405180910390a35050565b6007546001600160a01b03163314806109d557506007546001600160a01b0316155b610a515760405162461bcd60e51b815260206004820152604160248201527f4c324f75747075744f7261636c653a206f6e6c79207468652070726f706f736560448201527f7220616464726573732063616e2070726f706f7365206e6577206f75747075746064820152607360f81b608482015260a401610697565b610a59611281565b831015610af45760405162461bcd60e51b815260206004820152605860248201527f4c324f75747075744f7261636c653a20626c6f636b206e756d626572206d757360448201527f742062652067726561746572207468616e206f7220657175616c20746f206e6560648201527f787420657870656374656420626c6f636b206e756d6265720000000000000000608482015260a401610697565b42610afe84611251565b10610b6a5760405162461bcd60e51b815260206004820152603660248201527f4c324f75747075744f7261636c653a2063616e6e6f742070726f706f7365204c60448201527532206f757470757420696e207468652066757475726560501b6064820152608401610697565b83610bdd5760405162461bcd60e51b815260206004820152603a60248201527f4c324f75747075744f7261636c653a204c32206f75747075742070726f706f7360448201527f616c2063616e6e6f7420626520746865207a65726f20686173680000000000006064820152608401610697565b6000828152600d602052604090205480610c0a57604051630455475360e31b815260040160405180910390fd5b60006040518060c001604052808381526020016003610c276105f9565b81548110610c3757610c37611543565b60009182526020918290206002909102015482528181018990526040808301899052600c54606080850191909152600a54608094850152600b5460095483518751818701529487015185850152928601518483015290850151838501529284015160a08084019190915284015160c08301529293506001600160a01b03909116916341493c609160e001604051602081830303815290604052866040518463ffffffff1660e01b8152600401610cef93929190611593565b60006040518083038186803b158015610d0757600080fd5b505afa158015610d1b573d6000803e3d6000fd5b5050505084610d2960035490565b877fa7aaf2512769da4e444e3de247be2564225c2e7a8f74cfe528e46e17d24868e242604051610d5b91815260200190565b60405180910390a45050604080516060810182529485526001600160801b034281166020870190815294811691860191825260038054600181018255600091909152955160029096027fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b810196909655935190518416600160801b029316929092177fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c909301929092555050565b604080516060810182526000808252602082018190529181019190915260038281548110610e3957610e39611543565b600091825260209182902060408051606081018252600290930290910180548352600101546001600160801b0380821694840194909452600160801b90049092169181019190915292915050565b600054610100900460ff1615808015610ea75750600054600160ff909116105b80610ec15750303b158015610ec1575060005460ff166001145b610f245760405162461bcd60e51b815260206004820152602e60248201527f496e697469616c697a61626c653a20636f6e747261637420697320616c72656160448201526d191e481a5b9a5d1a585b1a5e995960921b6064820152608401610697565b6000805460ff191660011790558015610f47576000805461ff0019166101001790555b60008911610fbd5760405162461bcd60e51b815260206004820152603a60248201527f4c324f75747075744f7261636c653a207375626d697373696f6e20696e74657260448201527f76616c206d7573742062652067726561746572207468616e20300000000000006064820152608401610697565b6000881161102a5760405162461bcd60e51b815260206004820152603460248201527f4c324f75747075744f7261636c653a204c3220626c6f636b2074696d65206d75604482015273073742062652067726561746572207468616e20360641b6064820152608401610697565b428611156110ae5760405162461bcd60e51b8152602060048201526044602482018190527f4c324f75747075744f7261636c653a207374617274696e67204c322074696d65908201527f7374616d70206d757374206265206c657373207468616e2063757272656e742060648201526374696d6560e01b608482015260a401610697565b6004899055600588905560035460000361117057604080516060808201835284015181526001600160801b03808916602083019081528a82169383019384526003805460018181018355600092909252935160029485027fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85b810191909155915194518316600160801b0294909216939093177fc2575a0e9e593c00f959f8c92f12db2869c3395a3b0502d05e2516446f71f85c90930192909255908890558690555b600780546001600160a01b038088166001600160a01b03199283161790925560068054878416908316179055600885905583516009556020840151600a556040840151600b80549190931691161790556080820151600c55801561120e576000805461ff0019169055604051600181527f7f26b83ff96e1f2b6a682f133852f6798a09c465da95921460cefb38474024989060200160405180910390a15b505050505050505050565b604080516060810182526000808252602082018190529181019190915260036112418361060b565b81548110610e3957610e39611543565b600060055460015483611264919061152c565b61126e91906115c8565b60025461127b9190611559565b92915050565b600060045461128e61059c565b6105f49190611559565b6000602082840312156112aa57600080fd5b5035919050565b6000815180845260005b818110156112d7576020818501810151868301820152016112bb565b818111156112e9576000602083870101525b50601f01601f19169290920160200192915050565b60208152600061131160208301846112b1565b9392505050565b634e487b7160e01b600052604160045260246000fd5b60405160a0810167ffffffffffffffff8111828210171561135157611351611318565b60405290565b604051601f8201601f1916810167ffffffffffffffff8111828210171561138057611380611318565b604052919050565b6000806000806080858703121561139e57600080fd5b84359350602080860135935060408601359250606086013567ffffffffffffffff808211156113cc57600080fd5b818801915088601f8301126113e057600080fd5b8135818111156113f2576113f2611318565b611404601f8201601f19168501611357565b9150808252898482850101111561141a57600080fd5b808484018584013760008482840101525080935050505092959194509250565b80356001600160a01b038116811461145157600080fd5b919050565b600080600080600080600080888a0361018081121561147457600080fd5b8935985060208a0135975060408a0135965060608a0135955061149960808b0161143a565b94506114a760a08b0161143a565b935060c08a0135925060a060df19820112156114c257600080fd5b506114cb61132e565b60e08a013581526101008a013560208201526114ea6101208b0161143a565b60408201526101408a013560608201526101608a01356080820152809150509295985092959890939650565b634e487b7160e01b600052601160045260246000fd5b60008282101561153e5761153e611516565b500390565b634e487b7160e01b600052603260045260246000fd5b6000821982111561156c5761156c611516565b500190565b60008261158e57634e487b7160e01b600052601260045260246000fd5b500490565b8381526060602082015260006115ac60608301856112b1565b82810360408401526115be81856112b1565b9695505050505050565b60008160001904831182151516156115e2576115e2611516565b50029056fea26469706673582212209748fe6756ae65e8713878b7ae53834f7ef414ff1fa8a982a53824a2bfa4c20364736f6c634300080f0033",
 }
 
 // OPSuccinctL2OutputOracleABI is the input ABI used to generate the binding from.
@@ -404,37 +402,6 @@ func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) AggregationVke
 // Solidity: function aggregationVkey() view returns(bytes32)
 func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCallerSession) AggregationVkey() ([32]byte, error) {
 	return _OPSuccinctL2OutputOracle.Contract.AggregationVkey(&_OPSuccinctL2OutputOracle.CallOpts)
-}
-
-// ChainId is a free data retrieval call binding the contract method 0x9a8a0592.
-//
-// Solidity: function chainId() view returns(uint256)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCaller) ChainId(opts *bind.CallOpts) (*big.Int, error) {
-	var out []interface{}
-	err := _OPSuccinctL2OutputOracle.contract.Call(opts, &out, "chainId")
-
-	if err != nil {
-		return *new(*big.Int), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new(*big.Int)).(**big.Int)
-
-	return out0, err
-
-}
-
-// ChainId is a free data retrieval call binding the contract method 0x9a8a0592.
-//
-// Solidity: function chainId() view returns(uint256)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) ChainId() (*big.Int, error) {
-	return _OPSuccinctL2OutputOracle.Contract.ChainId(&_OPSuccinctL2OutputOracle.CallOpts)
-}
-
-// ChainId is a free data retrieval call binding the contract method 0x9a8a0592.
-//
-// Solidity: function chainId() view returns(uint256)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCallerSession) ChainId() (*big.Int, error) {
-	return _OPSuccinctL2OutputOracle.Contract.ChainId(&_OPSuccinctL2OutputOracle.CallOpts)
 }
 
 // Challenger is a free data retrieval call binding the contract method 0x534db0e2.
@@ -809,37 +776,6 @@ func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCallerSession) NextOutp
 	return _OPSuccinctL2OutputOracle.Contract.NextOutputIndex(&_OPSuccinctL2OutputOracle.CallOpts)
 }
 
-// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
-//
-// Solidity: function owner() view returns(address)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCaller) Owner(opts *bind.CallOpts) (common.Address, error) {
-	var out []interface{}
-	err := _OPSuccinctL2OutputOracle.contract.Call(opts, &out, "owner")
-
-	if err != nil {
-		return *new(common.Address), err
-	}
-
-	out0 := *abi.ConvertType(out[0], new(common.Address)).(*common.Address)
-
-	return out0, err
-
-}
-
-// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
-//
-// Solidity: function owner() view returns(address)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) Owner() (common.Address, error) {
-	return _OPSuccinctL2OutputOracle.Contract.Owner(&_OPSuccinctL2OutputOracle.CallOpts)
-}
-
-// Owner is a free data retrieval call binding the contract method 0x8da5cb5b.
-//
-// Solidity: function owner() view returns(address)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCallerSession) Owner() (common.Address, error) {
-	return _OPSuccinctL2OutputOracle.Contract.Owner(&_OPSuccinctL2OutputOracle.CallOpts)
-}
-
 // Proposer is a free data retrieval call binding the contract method 0xa8e4fb90.
 //
 // Solidity: function proposer() view returns(address)
@@ -1088,25 +1024,25 @@ func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleCallerSession) Version(
 	return _OPSuccinctL2OutputOracle.Contract.Version(&_OPSuccinctL2OutputOracle.CallOpts)
 }
 
-// CheckpointBlockHash is a paid mutator transaction binding the contract method 0xdbf33074.
+// CheckpointBlockHash is a paid mutator transaction binding the contract method 0x1e856800.
 //
-// Solidity: function checkpointBlockHash(uint256 _blockNumber, bytes32 _blockHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) CheckpointBlockHash(opts *bind.TransactOpts, _blockNumber *big.Int, _blockHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "checkpointBlockHash", _blockNumber, _blockHash)
+// Solidity: function checkpointBlockHash(uint256 _blockNumber) returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) CheckpointBlockHash(opts *bind.TransactOpts, _blockNumber *big.Int) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "checkpointBlockHash", _blockNumber)
 }
 
-// CheckpointBlockHash is a paid mutator transaction binding the contract method 0xdbf33074.
+// CheckpointBlockHash is a paid mutator transaction binding the contract method 0x1e856800.
 //
-// Solidity: function checkpointBlockHash(uint256 _blockNumber, bytes32 _blockHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) CheckpointBlockHash(_blockNumber *big.Int, _blockHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.CheckpointBlockHash(&_OPSuccinctL2OutputOracle.TransactOpts, _blockNumber, _blockHash)
+// Solidity: function checkpointBlockHash(uint256 _blockNumber) returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) CheckpointBlockHash(_blockNumber *big.Int) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.Contract.CheckpointBlockHash(&_OPSuccinctL2OutputOracle.TransactOpts, _blockNumber)
 }
 
-// CheckpointBlockHash is a paid mutator transaction binding the contract method 0xdbf33074.
+// CheckpointBlockHash is a paid mutator transaction binding the contract method 0x1e856800.
 //
-// Solidity: function checkpointBlockHash(uint256 _blockNumber, bytes32 _blockHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) CheckpointBlockHash(_blockNumber *big.Int, _blockHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.CheckpointBlockHash(&_OPSuccinctL2OutputOracle.TransactOpts, _blockNumber, _blockHash)
+// Solidity: function checkpointBlockHash(uint256 _blockNumber) returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) CheckpointBlockHash(_blockNumber *big.Int) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.Contract.CheckpointBlockHash(&_OPSuccinctL2OutputOracle.TransactOpts, _blockNumber)
 }
 
 // DeleteL2Outputs is a paid mutator transaction binding the contract method 0x89c44cbb.
@@ -1130,151 +1066,46 @@ func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) Dele
 	return _OPSuccinctL2OutputOracle.Contract.DeleteL2Outputs(&_OPSuccinctL2OutputOracle.TransactOpts, _l2OutputIndex)
 }
 
-// Initialize is a paid mutator transaction binding the contract method 0xe5c325c6.
+// Initialize is a paid mutator transaction binding the contract method 0xc0e8e2a1.
 //
-// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (uint256,bytes32,bytes32,address,bytes32,address,bytes32) _initParams) returns()
+// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (bytes32,bytes32,address,bytes32,bytes32) _initParams) returns()
 func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) Initialize(opts *bind.TransactOpts, _submissionInterval *big.Int, _l2BlockTime *big.Int, _startingBlockNumber *big.Int, _startingTimestamp *big.Int, _proposer common.Address, _challenger common.Address, _finalizationPeriodSeconds *big.Int, _initParams OPSuccinctL2OutputOracleInitParams) (*types.Transaction, error) {
 	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "initialize", _submissionInterval, _l2BlockTime, _startingBlockNumber, _startingTimestamp, _proposer, _challenger, _finalizationPeriodSeconds, _initParams)
 }
 
-// Initialize is a paid mutator transaction binding the contract method 0xe5c325c6.
+// Initialize is a paid mutator transaction binding the contract method 0xc0e8e2a1.
 //
-// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (uint256,bytes32,bytes32,address,bytes32,address,bytes32) _initParams) returns()
+// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (bytes32,bytes32,address,bytes32,bytes32) _initParams) returns()
 func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) Initialize(_submissionInterval *big.Int, _l2BlockTime *big.Int, _startingBlockNumber *big.Int, _startingTimestamp *big.Int, _proposer common.Address, _challenger common.Address, _finalizationPeriodSeconds *big.Int, _initParams OPSuccinctL2OutputOracleInitParams) (*types.Transaction, error) {
 	return _OPSuccinctL2OutputOracle.Contract.Initialize(&_OPSuccinctL2OutputOracle.TransactOpts, _submissionInterval, _l2BlockTime, _startingBlockNumber, _startingTimestamp, _proposer, _challenger, _finalizationPeriodSeconds, _initParams)
 }
 
-// Initialize is a paid mutator transaction binding the contract method 0xe5c325c6.
+// Initialize is a paid mutator transaction binding the contract method 0xc0e8e2a1.
 //
-// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (uint256,bytes32,bytes32,address,bytes32,address,bytes32) _initParams) returns()
+// Solidity: function initialize(uint256 _submissionInterval, uint256 _l2BlockTime, uint256 _startingBlockNumber, uint256 _startingTimestamp, address _proposer, address _challenger, uint256 _finalizationPeriodSeconds, (bytes32,bytes32,address,bytes32,bytes32) _initParams) returns()
 func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) Initialize(_submissionInterval *big.Int, _l2BlockTime *big.Int, _startingBlockNumber *big.Int, _startingTimestamp *big.Int, _proposer common.Address, _challenger common.Address, _finalizationPeriodSeconds *big.Int, _initParams OPSuccinctL2OutputOracleInitParams) (*types.Transaction, error) {
 	return _OPSuccinctL2OutputOracle.Contract.Initialize(&_OPSuccinctL2OutputOracle.TransactOpts, _submissionInterval, _l2BlockTime, _startingBlockNumber, _startingTimestamp, _proposer, _challenger, _finalizationPeriodSeconds, _initParams)
 }
 
-// ProposeL2Output is a paid mutator transaction binding the contract method 0xa9efd6b8.
+// ProposeL2Output is a paid mutator transaction binding the contract method 0x9ad84880.
 //
-// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1BlockHash, uint256 _l1BlockNumber, bytes _proof) payable returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) ProposeL2Output(opts *bind.TransactOpts, _outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockHash [32]byte, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "proposeL2Output", _outputRoot, _l2BlockNumber, _l1BlockHash, _l1BlockNumber, _proof)
+// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes _proof) payable returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) ProposeL2Output(opts *bind.TransactOpts, _outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "proposeL2Output", _outputRoot, _l2BlockNumber, _l1BlockNumber, _proof)
 }
 
-// ProposeL2Output is a paid mutator transaction binding the contract method 0xa9efd6b8.
+// ProposeL2Output is a paid mutator transaction binding the contract method 0x9ad84880.
 //
-// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1BlockHash, uint256 _l1BlockNumber, bytes _proof) payable returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) ProposeL2Output(_outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockHash [32]byte, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.ProposeL2Output(&_OPSuccinctL2OutputOracle.TransactOpts, _outputRoot, _l2BlockNumber, _l1BlockHash, _l1BlockNumber, _proof)
+// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes _proof) payable returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) ProposeL2Output(_outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.Contract.ProposeL2Output(&_OPSuccinctL2OutputOracle.TransactOpts, _outputRoot, _l2BlockNumber, _l1BlockNumber, _proof)
 }
 
-// ProposeL2Output is a paid mutator transaction binding the contract method 0xa9efd6b8.
+// ProposeL2Output is a paid mutator transaction binding the contract method 0x9ad84880.
 //
-// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1BlockHash, uint256 _l1BlockNumber, bytes _proof) payable returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) ProposeL2Output(_outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockHash [32]byte, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.ProposeL2Output(&_OPSuccinctL2OutputOracle.TransactOpts, _outputRoot, _l2BlockNumber, _l1BlockHash, _l1BlockNumber, _proof)
-}
-
-// TransferOwnership is a paid mutator transaction binding the contract method 0xf2fde38b.
-//
-// Solidity: function transferOwnership(address _newOwner) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) TransferOwnership(opts *bind.TransactOpts, _newOwner common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "transferOwnership", _newOwner)
-}
-
-// TransferOwnership is a paid mutator transaction binding the contract method 0xf2fde38b.
-//
-// Solidity: function transferOwnership(address _newOwner) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) TransferOwnership(_newOwner common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.TransferOwnership(&_OPSuccinctL2OutputOracle.TransactOpts, _newOwner)
-}
-
-// TransferOwnership is a paid mutator transaction binding the contract method 0xf2fde38b.
-//
-// Solidity: function transferOwnership(address _newOwner) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) TransferOwnership(_newOwner common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.TransferOwnership(&_OPSuccinctL2OutputOracle.TransactOpts, _newOwner)
-}
-
-// UpdateAggregationVKey is a paid mutator transaction binding the contract method 0x80fdb3e1.
-//
-// Solidity: function updateAggregationVKey(bytes32 _aggregationVKey) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) UpdateAggregationVKey(opts *bind.TransactOpts, _aggregationVKey [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "updateAggregationVKey", _aggregationVKey)
-}
-
-// UpdateAggregationVKey is a paid mutator transaction binding the contract method 0x80fdb3e1.
-//
-// Solidity: function updateAggregationVKey(bytes32 _aggregationVKey) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) UpdateAggregationVKey(_aggregationVKey [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateAggregationVKey(&_OPSuccinctL2OutputOracle.TransactOpts, _aggregationVKey)
-}
-
-// UpdateAggregationVKey is a paid mutator transaction binding the contract method 0x80fdb3e1.
-//
-// Solidity: function updateAggregationVKey(bytes32 _aggregationVKey) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) UpdateAggregationVKey(_aggregationVKey [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateAggregationVKey(&_OPSuccinctL2OutputOracle.TransactOpts, _aggregationVKey)
-}
-
-// UpdateRangeVkeyCommitment is a paid mutator transaction binding the contract method 0xbc91ce33.
-//
-// Solidity: function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) UpdateRangeVkeyCommitment(opts *bind.TransactOpts, _rangeVkeyCommitment [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "updateRangeVkeyCommitment", _rangeVkeyCommitment)
-}
-
-// UpdateRangeVkeyCommitment is a paid mutator transaction binding the contract method 0xbc91ce33.
-//
-// Solidity: function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) UpdateRangeVkeyCommitment(_rangeVkeyCommitment [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateRangeVkeyCommitment(&_OPSuccinctL2OutputOracle.TransactOpts, _rangeVkeyCommitment)
-}
-
-// UpdateRangeVkeyCommitment is a paid mutator transaction binding the contract method 0xbc91ce33.
-//
-// Solidity: function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) UpdateRangeVkeyCommitment(_rangeVkeyCommitment [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateRangeVkeyCommitment(&_OPSuccinctL2OutputOracle.TransactOpts, _rangeVkeyCommitment)
-}
-
-// UpdateRollupConfigHash is a paid mutator transaction binding the contract method 0x1bdd450c.
-//
-// Solidity: function updateRollupConfigHash(bytes32 _rollupConfigHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) UpdateRollupConfigHash(opts *bind.TransactOpts, _rollupConfigHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "updateRollupConfigHash", _rollupConfigHash)
-}
-
-// UpdateRollupConfigHash is a paid mutator transaction binding the contract method 0x1bdd450c.
-//
-// Solidity: function updateRollupConfigHash(bytes32 _rollupConfigHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) UpdateRollupConfigHash(_rollupConfigHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateRollupConfigHash(&_OPSuccinctL2OutputOracle.TransactOpts, _rollupConfigHash)
-}
-
-// UpdateRollupConfigHash is a paid mutator transaction binding the contract method 0x1bdd450c.
-//
-// Solidity: function updateRollupConfigHash(bytes32 _rollupConfigHash) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) UpdateRollupConfigHash(_rollupConfigHash [32]byte) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateRollupConfigHash(&_OPSuccinctL2OutputOracle.TransactOpts, _rollupConfigHash)
-}
-
-// UpdateVerifierGateway is a paid mutator transaction binding the contract method 0x4418db5e.
-//
-// Solidity: function updateVerifierGateway(address _verifierGateway) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactor) UpdateVerifierGateway(opts *bind.TransactOpts, _verifierGateway common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.contract.Transact(opts, "updateVerifierGateway", _verifierGateway)
-}
-
-// UpdateVerifierGateway is a paid mutator transaction binding the contract method 0x4418db5e.
-//
-// Solidity: function updateVerifierGateway(address _verifierGateway) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleSession) UpdateVerifierGateway(_verifierGateway common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateVerifierGateway(&_OPSuccinctL2OutputOracle.TransactOpts, _verifierGateway)
-}
-
-// UpdateVerifierGateway is a paid mutator transaction binding the contract method 0x4418db5e.
-//
-// Solidity: function updateVerifierGateway(address _verifierGateway) returns()
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) UpdateVerifierGateway(_verifierGateway common.Address) (*types.Transaction, error) {
-	return _OPSuccinctL2OutputOracle.Contract.UpdateVerifierGateway(&_OPSuccinctL2OutputOracle.TransactOpts, _verifierGateway)
+// Solidity: function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes _proof) payable returns()
+func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleTransactorSession) ProposeL2Output(_outputRoot [32]byte, _l2BlockNumber *big.Int, _l1BlockNumber *big.Int, _proof []byte) (*types.Transaction, error) {
+	return _OPSuccinctL2OutputOracle.Contract.ProposeL2Output(&_OPSuccinctL2OutputOracle.TransactOpts, _outputRoot, _l2BlockNumber, _l1BlockNumber, _proof)
 }
 
 // OPSuccinctL2OutputOracleInitializedIterator is returned from FilterInitialized and is used to iterate over the raw logs and unpacked data for Initialized events raised by the OPSuccinctL2OutputOracle contract.
@@ -1721,771 +1552,6 @@ func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchOutputsD
 func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseOutputsDeleted(log types.Log) (*OPSuccinctL2OutputOracleOutputsDeleted, error) {
 	event := new(OPSuccinctL2OutputOracleOutputsDeleted)
 	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "OutputsDeleted", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// OPSuccinctL2OutputOracleOwnershipTransferredIterator is returned from FilterOwnershipTransferred and is used to iterate over the raw logs and unpacked data for OwnershipTransferred events raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleOwnershipTransferredIterator struct {
-	Event *OPSuccinctL2OutputOracleOwnershipTransferred // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *OPSuccinctL2OutputOracleOwnershipTransferredIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(OPSuccinctL2OutputOracleOwnershipTransferred)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(OPSuccinctL2OutputOracleOwnershipTransferred)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *OPSuccinctL2OutputOracleOwnershipTransferredIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *OPSuccinctL2OutputOracleOwnershipTransferredIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// OPSuccinctL2OutputOracleOwnershipTransferred represents a OwnershipTransferred event raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleOwnershipTransferred struct {
-	PreviousOwner common.Address
-	NewOwner      common.Address
-	Raw           types.Log // Blockchain specific contextual infos
-}
-
-// FilterOwnershipTransferred is a free log retrieval operation binding the contract event 0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0.
-//
-// Solidity: event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) FilterOwnershipTransferred(opts *bind.FilterOpts, previousOwner []common.Address, newOwner []common.Address) (*OPSuccinctL2OutputOracleOwnershipTransferredIterator, error) {
-
-	var previousOwnerRule []interface{}
-	for _, previousOwnerItem := range previousOwner {
-		previousOwnerRule = append(previousOwnerRule, previousOwnerItem)
-	}
-	var newOwnerRule []interface{}
-	for _, newOwnerItem := range newOwner {
-		newOwnerRule = append(newOwnerRule, newOwnerItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.FilterLogs(opts, "OwnershipTransferred", previousOwnerRule, newOwnerRule)
-	if err != nil {
-		return nil, err
-	}
-	return &OPSuccinctL2OutputOracleOwnershipTransferredIterator{contract: _OPSuccinctL2OutputOracle.contract, event: "OwnershipTransferred", logs: logs, sub: sub}, nil
-}
-
-// WatchOwnershipTransferred is a free log subscription operation binding the contract event 0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0.
-//
-// Solidity: event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchOwnershipTransferred(opts *bind.WatchOpts, sink chan<- *OPSuccinctL2OutputOracleOwnershipTransferred, previousOwner []common.Address, newOwner []common.Address) (event.Subscription, error) {
-
-	var previousOwnerRule []interface{}
-	for _, previousOwnerItem := range previousOwner {
-		previousOwnerRule = append(previousOwnerRule, previousOwnerItem)
-	}
-	var newOwnerRule []interface{}
-	for _, newOwnerItem := range newOwner {
-		newOwnerRule = append(newOwnerRule, newOwnerItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.WatchLogs(opts, "OwnershipTransferred", previousOwnerRule, newOwnerRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(OPSuccinctL2OutputOracleOwnershipTransferred)
-				if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "OwnershipTransferred", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseOwnershipTransferred is a log parse operation binding the contract event 0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0.
-//
-// Solidity: event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseOwnershipTransferred(log types.Log) (*OPSuccinctL2OutputOracleOwnershipTransferred, error) {
-	event := new(OPSuccinctL2OutputOracleOwnershipTransferred)
-	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "OwnershipTransferred", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator is returned from FilterUpdatedAggregationVKey and is used to iterate over the raw logs and unpacked data for UpdatedAggregationVKey events raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator struct {
-	Event *OPSuccinctL2OutputOracleUpdatedAggregationVKey // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(OPSuccinctL2OutputOracleUpdatedAggregationVKey)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(OPSuccinctL2OutputOracleUpdatedAggregationVKey)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedAggregationVKey represents a UpdatedAggregationVKey event raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedAggregationVKey struct {
-	OldVkey [32]byte
-	NewVkey [32]byte
-	Raw     types.Log // Blockchain specific contextual infos
-}
-
-// FilterUpdatedAggregationVKey is a free log retrieval operation binding the contract event 0xb81f9c41933b730a90fba96ab14541de7cab774f762ea0c183054947bc49aee7.
-//
-// Solidity: event UpdatedAggregationVKey(bytes32 indexed oldVkey, bytes32 indexed newVkey)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) FilterUpdatedAggregationVKey(opts *bind.FilterOpts, oldVkey [][32]byte, newVkey [][32]byte) (*OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator, error) {
-
-	var oldVkeyRule []interface{}
-	for _, oldVkeyItem := range oldVkey {
-		oldVkeyRule = append(oldVkeyRule, oldVkeyItem)
-	}
-	var newVkeyRule []interface{}
-	for _, newVkeyItem := range newVkey {
-		newVkeyRule = append(newVkeyRule, newVkeyItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.FilterLogs(opts, "UpdatedAggregationVKey", oldVkeyRule, newVkeyRule)
-	if err != nil {
-		return nil, err
-	}
-	return &OPSuccinctL2OutputOracleUpdatedAggregationVKeyIterator{contract: _OPSuccinctL2OutputOracle.contract, event: "UpdatedAggregationVKey", logs: logs, sub: sub}, nil
-}
-
-// WatchUpdatedAggregationVKey is a free log subscription operation binding the contract event 0xb81f9c41933b730a90fba96ab14541de7cab774f762ea0c183054947bc49aee7.
-//
-// Solidity: event UpdatedAggregationVKey(bytes32 indexed oldVkey, bytes32 indexed newVkey)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchUpdatedAggregationVKey(opts *bind.WatchOpts, sink chan<- *OPSuccinctL2OutputOracleUpdatedAggregationVKey, oldVkey [][32]byte, newVkey [][32]byte) (event.Subscription, error) {
-
-	var oldVkeyRule []interface{}
-	for _, oldVkeyItem := range oldVkey {
-		oldVkeyRule = append(oldVkeyRule, oldVkeyItem)
-	}
-	var newVkeyRule []interface{}
-	for _, newVkeyItem := range newVkey {
-		newVkeyRule = append(newVkeyRule, newVkeyItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.WatchLogs(opts, "UpdatedAggregationVKey", oldVkeyRule, newVkeyRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(OPSuccinctL2OutputOracleUpdatedAggregationVKey)
-				if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedAggregationVKey", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseUpdatedAggregationVKey is a log parse operation binding the contract event 0xb81f9c41933b730a90fba96ab14541de7cab774f762ea0c183054947bc49aee7.
-//
-// Solidity: event UpdatedAggregationVKey(bytes32 indexed oldVkey, bytes32 indexed newVkey)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseUpdatedAggregationVKey(log types.Log) (*OPSuccinctL2OutputOracleUpdatedAggregationVKey, error) {
-	event := new(OPSuccinctL2OutputOracleUpdatedAggregationVKey)
-	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedAggregationVKey", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator is returned from FilterUpdatedRangeVkeyCommitment and is used to iterate over the raw logs and unpacked data for UpdatedRangeVkeyCommitment events raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator struct {
-	Event *OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment represents a UpdatedRangeVkeyCommitment event raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment struct {
-	OldRangeVkeyCommitment [32]byte
-	NewRangeVkeyCommitment [32]byte
-	Raw                    types.Log // Blockchain specific contextual infos
-}
-
-// FilterUpdatedRangeVkeyCommitment is a free log retrieval operation binding the contract event 0x1035606f0606905acdf851342466a5b64406fa798b7440235cd5811cea2850fd.
-//
-// Solidity: event UpdatedRangeVkeyCommitment(bytes32 indexed oldRangeVkeyCommitment, bytes32 indexed newRangeVkeyCommitment)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) FilterUpdatedRangeVkeyCommitment(opts *bind.FilterOpts, oldRangeVkeyCommitment [][32]byte, newRangeVkeyCommitment [][32]byte) (*OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator, error) {
-
-	var oldRangeVkeyCommitmentRule []interface{}
-	for _, oldRangeVkeyCommitmentItem := range oldRangeVkeyCommitment {
-		oldRangeVkeyCommitmentRule = append(oldRangeVkeyCommitmentRule, oldRangeVkeyCommitmentItem)
-	}
-	var newRangeVkeyCommitmentRule []interface{}
-	for _, newRangeVkeyCommitmentItem := range newRangeVkeyCommitment {
-		newRangeVkeyCommitmentRule = append(newRangeVkeyCommitmentRule, newRangeVkeyCommitmentItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.FilterLogs(opts, "UpdatedRangeVkeyCommitment", oldRangeVkeyCommitmentRule, newRangeVkeyCommitmentRule)
-	if err != nil {
-		return nil, err
-	}
-	return &OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitmentIterator{contract: _OPSuccinctL2OutputOracle.contract, event: "UpdatedRangeVkeyCommitment", logs: logs, sub: sub}, nil
-}
-
-// WatchUpdatedRangeVkeyCommitment is a free log subscription operation binding the contract event 0x1035606f0606905acdf851342466a5b64406fa798b7440235cd5811cea2850fd.
-//
-// Solidity: event UpdatedRangeVkeyCommitment(bytes32 indexed oldRangeVkeyCommitment, bytes32 indexed newRangeVkeyCommitment)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchUpdatedRangeVkeyCommitment(opts *bind.WatchOpts, sink chan<- *OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment, oldRangeVkeyCommitment [][32]byte, newRangeVkeyCommitment [][32]byte) (event.Subscription, error) {
-
-	var oldRangeVkeyCommitmentRule []interface{}
-	for _, oldRangeVkeyCommitmentItem := range oldRangeVkeyCommitment {
-		oldRangeVkeyCommitmentRule = append(oldRangeVkeyCommitmentRule, oldRangeVkeyCommitmentItem)
-	}
-	var newRangeVkeyCommitmentRule []interface{}
-	for _, newRangeVkeyCommitmentItem := range newRangeVkeyCommitment {
-		newRangeVkeyCommitmentRule = append(newRangeVkeyCommitmentRule, newRangeVkeyCommitmentItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.WatchLogs(opts, "UpdatedRangeVkeyCommitment", oldRangeVkeyCommitmentRule, newRangeVkeyCommitmentRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment)
-				if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedRangeVkeyCommitment", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseUpdatedRangeVkeyCommitment is a log parse operation binding the contract event 0x1035606f0606905acdf851342466a5b64406fa798b7440235cd5811cea2850fd.
-//
-// Solidity: event UpdatedRangeVkeyCommitment(bytes32 indexed oldRangeVkeyCommitment, bytes32 indexed newRangeVkeyCommitment)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseUpdatedRangeVkeyCommitment(log types.Log) (*OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment, error) {
-	event := new(OPSuccinctL2OutputOracleUpdatedRangeVkeyCommitment)
-	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedRangeVkeyCommitment", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator is returned from FilterUpdatedRollupConfigHash and is used to iterate over the raw logs and unpacked data for UpdatedRollupConfigHash events raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator struct {
-	Event *OPSuccinctL2OutputOracleUpdatedRollupConfigHash // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(OPSuccinctL2OutputOracleUpdatedRollupConfigHash)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(OPSuccinctL2OutputOracleUpdatedRollupConfigHash)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedRollupConfigHash represents a UpdatedRollupConfigHash event raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedRollupConfigHash struct {
-	OldRollupConfigHash [32]byte
-	NewRollupConfigHash [32]byte
-	Raw                 types.Log // Blockchain specific contextual infos
-}
-
-// FilterUpdatedRollupConfigHash is a free log retrieval operation binding the contract event 0xda2f5f014ada26cff39a0f2a9dc6fa4fca1581376fc91ec09506c8fb8657bc35.
-//
-// Solidity: event UpdatedRollupConfigHash(bytes32 indexed oldRollupConfigHash, bytes32 indexed newRollupConfigHash)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) FilterUpdatedRollupConfigHash(opts *bind.FilterOpts, oldRollupConfigHash [][32]byte, newRollupConfigHash [][32]byte) (*OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator, error) {
-
-	var oldRollupConfigHashRule []interface{}
-	for _, oldRollupConfigHashItem := range oldRollupConfigHash {
-		oldRollupConfigHashRule = append(oldRollupConfigHashRule, oldRollupConfigHashItem)
-	}
-	var newRollupConfigHashRule []interface{}
-	for _, newRollupConfigHashItem := range newRollupConfigHash {
-		newRollupConfigHashRule = append(newRollupConfigHashRule, newRollupConfigHashItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.FilterLogs(opts, "UpdatedRollupConfigHash", oldRollupConfigHashRule, newRollupConfigHashRule)
-	if err != nil {
-		return nil, err
-	}
-	return &OPSuccinctL2OutputOracleUpdatedRollupConfigHashIterator{contract: _OPSuccinctL2OutputOracle.contract, event: "UpdatedRollupConfigHash", logs: logs, sub: sub}, nil
-}
-
-// WatchUpdatedRollupConfigHash is a free log subscription operation binding the contract event 0xda2f5f014ada26cff39a0f2a9dc6fa4fca1581376fc91ec09506c8fb8657bc35.
-//
-// Solidity: event UpdatedRollupConfigHash(bytes32 indexed oldRollupConfigHash, bytes32 indexed newRollupConfigHash)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchUpdatedRollupConfigHash(opts *bind.WatchOpts, sink chan<- *OPSuccinctL2OutputOracleUpdatedRollupConfigHash, oldRollupConfigHash [][32]byte, newRollupConfigHash [][32]byte) (event.Subscription, error) {
-
-	var oldRollupConfigHashRule []interface{}
-	for _, oldRollupConfigHashItem := range oldRollupConfigHash {
-		oldRollupConfigHashRule = append(oldRollupConfigHashRule, oldRollupConfigHashItem)
-	}
-	var newRollupConfigHashRule []interface{}
-	for _, newRollupConfigHashItem := range newRollupConfigHash {
-		newRollupConfigHashRule = append(newRollupConfigHashRule, newRollupConfigHashItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.WatchLogs(opts, "UpdatedRollupConfigHash", oldRollupConfigHashRule, newRollupConfigHashRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(OPSuccinctL2OutputOracleUpdatedRollupConfigHash)
-				if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedRollupConfigHash", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseUpdatedRollupConfigHash is a log parse operation binding the contract event 0xda2f5f014ada26cff39a0f2a9dc6fa4fca1581376fc91ec09506c8fb8657bc35.
-//
-// Solidity: event UpdatedRollupConfigHash(bytes32 indexed oldRollupConfigHash, bytes32 indexed newRollupConfigHash)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseUpdatedRollupConfigHash(log types.Log) (*OPSuccinctL2OutputOracleUpdatedRollupConfigHash, error) {
-	event := new(OPSuccinctL2OutputOracleUpdatedRollupConfigHash)
-	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedRollupConfigHash", log); err != nil {
-		return nil, err
-	}
-	event.Raw = log
-	return event, nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator is returned from FilterUpdatedVerifierGateway and is used to iterate over the raw logs and unpacked data for UpdatedVerifierGateway events raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator struct {
-	Event *OPSuccinctL2OutputOracleUpdatedVerifierGateway // Event containing the contract specifics and raw log
-
-	contract *bind.BoundContract // Generic contract to use for unpacking event data
-	event    string              // Event name to use for unpacking event data
-
-	logs chan types.Log        // Log channel receiving the found contract events
-	sub  ethereum.Subscription // Subscription for errors, completion and termination
-	done bool                  // Whether the subscription completed delivering logs
-	fail error                 // Occurred error to stop iteration
-}
-
-// Next advances the iterator to the subsequent event, returning whether there
-// are any more events found. In case of a retrieval or parsing error, false is
-// returned and Error() can be queried for the exact failure.
-func (it *OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator) Next() bool {
-	// If the iterator failed, stop iterating
-	if it.fail != nil {
-		return false
-	}
-	// If the iterator completed, deliver directly whatever's available
-	if it.done {
-		select {
-		case log := <-it.logs:
-			it.Event = new(OPSuccinctL2OutputOracleUpdatedVerifierGateway)
-			if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-				it.fail = err
-				return false
-			}
-			it.Event.Raw = log
-			return true
-
-		default:
-			return false
-		}
-	}
-	// Iterator still in progress, wait for either a data or an error event
-	select {
-	case log := <-it.logs:
-		it.Event = new(OPSuccinctL2OutputOracleUpdatedVerifierGateway)
-		if err := it.contract.UnpackLog(it.Event, it.event, log); err != nil {
-			it.fail = err
-			return false
-		}
-		it.Event.Raw = log
-		return true
-
-	case err := <-it.sub.Err():
-		it.done = true
-		it.fail = err
-		return it.Next()
-	}
-}
-
-// Error returns any retrieval or parsing error occurred during filtering.
-func (it *OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator) Error() error {
-	return it.fail
-}
-
-// Close terminates the iteration process, releasing any pending underlying
-// resources.
-func (it *OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator) Close() error {
-	it.sub.Unsubscribe()
-	return nil
-}
-
-// OPSuccinctL2OutputOracleUpdatedVerifierGateway represents a UpdatedVerifierGateway event raised by the OPSuccinctL2OutputOracle contract.
-type OPSuccinctL2OutputOracleUpdatedVerifierGateway struct {
-	OldVerifierGateway common.Address
-	NewVerifierGateway common.Address
-	Raw                types.Log // Blockchain specific contextual infos
-}
-
-// FilterUpdatedVerifierGateway is a free log retrieval operation binding the contract event 0x1379941631ff0ed9178ab16ab67a2e5db3aeada7f87e518f761e79c8e38377e3.
-//
-// Solidity: event UpdatedVerifierGateway(address indexed oldVerifierGateway, address indexed newVerifierGateway)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) FilterUpdatedVerifierGateway(opts *bind.FilterOpts, oldVerifierGateway []common.Address, newVerifierGateway []common.Address) (*OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator, error) {
-
-	var oldVerifierGatewayRule []interface{}
-	for _, oldVerifierGatewayItem := range oldVerifierGateway {
-		oldVerifierGatewayRule = append(oldVerifierGatewayRule, oldVerifierGatewayItem)
-	}
-	var newVerifierGatewayRule []interface{}
-	for _, newVerifierGatewayItem := range newVerifierGateway {
-		newVerifierGatewayRule = append(newVerifierGatewayRule, newVerifierGatewayItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.FilterLogs(opts, "UpdatedVerifierGateway", oldVerifierGatewayRule, newVerifierGatewayRule)
-	if err != nil {
-		return nil, err
-	}
-	return &OPSuccinctL2OutputOracleUpdatedVerifierGatewayIterator{contract: _OPSuccinctL2OutputOracle.contract, event: "UpdatedVerifierGateway", logs: logs, sub: sub}, nil
-}
-
-// WatchUpdatedVerifierGateway is a free log subscription operation binding the contract event 0x1379941631ff0ed9178ab16ab67a2e5db3aeada7f87e518f761e79c8e38377e3.
-//
-// Solidity: event UpdatedVerifierGateway(address indexed oldVerifierGateway, address indexed newVerifierGateway)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) WatchUpdatedVerifierGateway(opts *bind.WatchOpts, sink chan<- *OPSuccinctL2OutputOracleUpdatedVerifierGateway, oldVerifierGateway []common.Address, newVerifierGateway []common.Address) (event.Subscription, error) {
-
-	var oldVerifierGatewayRule []interface{}
-	for _, oldVerifierGatewayItem := range oldVerifierGateway {
-		oldVerifierGatewayRule = append(oldVerifierGatewayRule, oldVerifierGatewayItem)
-	}
-	var newVerifierGatewayRule []interface{}
-	for _, newVerifierGatewayItem := range newVerifierGateway {
-		newVerifierGatewayRule = append(newVerifierGatewayRule, newVerifierGatewayItem)
-	}
-
-	logs, sub, err := _OPSuccinctL2OutputOracle.contract.WatchLogs(opts, "UpdatedVerifierGateway", oldVerifierGatewayRule, newVerifierGatewayRule)
-	if err != nil {
-		return nil, err
-	}
-	return event.NewSubscription(func(quit <-chan struct{}) error {
-		defer sub.Unsubscribe()
-		for {
-			select {
-			case log := <-logs:
-				// New log arrived, parse the event and forward to the user
-				event := new(OPSuccinctL2OutputOracleUpdatedVerifierGateway)
-				if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedVerifierGateway", log); err != nil {
-					return err
-				}
-				event.Raw = log
-
-				select {
-				case sink <- event:
-				case err := <-sub.Err():
-					return err
-				case <-quit:
-					return nil
-				}
-			case err := <-sub.Err():
-				return err
-			case <-quit:
-				return nil
-			}
-		}
-	}), nil
-}
-
-// ParseUpdatedVerifierGateway is a log parse operation binding the contract event 0x1379941631ff0ed9178ab16ab67a2e5db3aeada7f87e518f761e79c8e38377e3.
-//
-// Solidity: event UpdatedVerifierGateway(address indexed oldVerifierGateway, address indexed newVerifierGateway)
-func (_OPSuccinctL2OutputOracle *OPSuccinctL2OutputOracleFilterer) ParseUpdatedVerifierGateway(log types.Log) (*OPSuccinctL2OutputOracleUpdatedVerifierGateway, error) {
-	event := new(OPSuccinctL2OutputOracleUpdatedVerifierGateway)
-	if err := _OPSuccinctL2OutputOracle.contract.UnpackLog(event, "UpdatedVerifierGateway", log); err != nil {
 		return nil, err
 	}
 	event.Raw = log

@@ -32,10 +32,6 @@ pub fn main() {
         // boot.
         assert_eq!(prev_boot_info.l2PostRoot, boot_info.l2PreRoot);
 
-        // The chain ID must be the same for all the boot infos, to ensure they're
-        // from the same chain and span batch range.
-        assert_eq!(prev_boot_info.chainId, boot_info.chainId);
-
         // The rollup config must be the same for all the boot infos, to ensure they're
         // from the same chain and span batch range.
         assert_eq!(prev_boot_info.rollupConfigHash, boot_info.rollupConfigHash);
@@ -92,7 +88,6 @@ pub fn main() {
         l2BlockNumber: last_boot_info.l2BlockNumber,
         l2PostRoot: last_boot_info.l2PostRoot,
         l1Head: agg_inputs.latest_l1_checkpoint_head,
-        chainId: last_boot_info.chainId,
         rollupConfigHash: last_boot_info.rollupConfigHash,
     };
 
@@ -104,7 +99,6 @@ pub fn main() {
         l2PreRoot: final_boot_info.l2PreRoot,
         l2PostRoot: final_boot_info.l2PostRoot,
         l2BlockNumber: final_boot_info.l2BlockNumber,
-        chainId: final_boot_info.chainId,
         rollupConfigHash: final_boot_info.rollupConfigHash,
         multiBlockVKey: multi_block_vkey_b256,
     };

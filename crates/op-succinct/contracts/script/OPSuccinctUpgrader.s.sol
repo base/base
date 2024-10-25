@@ -11,6 +11,9 @@ contract OPSuccinctUpgrader is Script, Utils {
     function run() public {
         vm.startBroadcast();
 
+        // Update the rollup config to match the current chain. If the starting block number is 0, the latest block number and starting output root will be fetched.
+        updateRollupConfig();
+
         Config memory cfg = readJson("opsuccinctl2ooconfig.json");
 
         address l2OutputOracleProxy = vm.envAddress("L2OO_ADDRESS");
@@ -19,29 +22,7 @@ contract OPSuccinctUpgrader is Script, Utils {
 
         address OPSuccinctL2OutputOracleImpl = address(new OPSuccinctL2OutputOracle());
 
-        bytes memory initializationParams = abi.encodeWithSelector(
-            OPSuccinctL2OutputOracle.upgradeWithInitParams.selector,
-            cfg.chainId,
-            cfg.aggregationVkey,
-            cfg.rangeVkeyCommitment,
-            cfg.verifierGateway,
-            cfg.rollupConfigHash
-        );
-
-        if (executeUpgradeCall) {
-            Proxy existingProxy = Proxy(payable(l2OutputOracleProxy));
-            existingProxy.upgradeToAndCall(OPSuccinctL2OutputOracleImpl, initializationParams);
-        } else {
-            // Raw calldata for an upgrade call by a multisig.
-            bytes memory multisigCalldata =
-                abi.encodeWithSelector(Proxy.upgradeTo.selector, OPSuccinctL2OutputOracleImpl);
-            console.log("Upgrade calldata:");
-            console.logBytes(multisigCalldata);
-
-            // Raw calldata for an upgrade call with initialization parameters.
-            console.log("Update contract parameter calldata:");
-            console.logBytes(initializationParams);
-        }
+        upgradeAndInitialize(OPSuccinctL2OutputOracleImpl, cfg, l2OutputOracleProxy, executeUpgradeCall);
 
         vm.stopBroadcast();
     }
