@@ -446,7 +446,7 @@ Requests the host to prepare all preimages used in the execution of the block at
 
 #### `l2-account-proof <blockhash_and_address>`
 
-Requests the host send account proof for a certain block number and address. `<blockhash_and_address>` is hex
+Requests the host send account proof for a certain block hash and address. `<blockhash_and_address>` is hex
 encoded: 32-byte block hash + 20-byte address.
 
 `l2-execution-witness` and `l2-account-proof` hints are preferred over the more granular `l2-code` and `l2-state-node`,
