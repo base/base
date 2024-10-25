@@ -77,6 +77,7 @@ op-alloy-genesis = { version = "0.4.0", default-features = false, features = [
 op-alloy-protocol = { version = "0.4.0", default-features = false }
 op-alloy-rpc-types = { version = "0.4.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.4.0", default-features = false }
+op-alloy-network = { version = "0.4.0", default-features = false }
 
 # sp1
 sp1-lib = { version = "3.0.0-rc3", features = ["verify"] }

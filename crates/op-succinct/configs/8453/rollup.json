@@ -1,16 +1,16 @@
 {
   "genesis": {
     "l1": {
-      "number": 17422590,
-      "hash": "0x438335a20d98863a4c0c97999eb2481921ccd28553eac6f913af7c12aec04108"
+      "number": 17481768,
+      "hash": "0x5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"
     },
     "l2": {
-      "number": 105235063,
-      "hash": "0xdbf6a80fef073de06add9b0d14026d6e5a86c85f6d102c36d3d8e9cf89c2afd3"
+      "number": 0,
+      "hash": "0xf712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"
     },
-    "l2_time": 1686068903,
+    "l2_time": 1686789347,
     "system_config": {
-      "batcherAddr": "0x6887246668a3b87f54deb3b94ba47a6f63f32985",
+      "batcherAddr": "0x5050f69a9786f081509234f1a7f4684b5e5b76c9",
       "overhead": "0xbc",
       "scalar": "0xa6fe0",
       "gasLimit": 30000000,
@@ -26,7 +26,7 @@
   "channel_timeout": 300,
   "granite_channel_timeout": 50,
   "l1_chain_id": 1,
-  "l2_chain_id": 10,
+  "l2_chain_id": 8453,
   "base_fee_params": {
     "max_change_denominator": "0x32",
     "elasticity_multiplier": "0x6"
@@ -41,8 +41,8 @@
   "ecotone_time": 1710374401,
   "fjord_time": 1720627201,
   "granite_time": 1726070401,
-  "batch_inbox_address": "0xff00000000000000000000000000000000000010",
-  "deposit_contract_address": "0xbeb5fc579115071764c7423a4f12edde41f106ed",
-  "l1_system_config_address": "0x229047fed2591dbec1ef1118d64f7af3db9eb290",
+  "batch_inbox_address": "0xff00000000000000000000000000000000008453",
+  "deposit_contract_address": "0x49048044d57e1c92a77f79988d21fa8faf74e97e",
+  "l1_system_config_address": "0x73a79fab69143498ed3712e519a88a918e1f4072",
   "protocol_versions_address": "0x0000000000000000000000000000000000000000"
 }

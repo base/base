@@ -4150,6 +4150,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-alloy-network"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d113b325527ba7da271a8793f1c14bdf7f035ce9e0611e668c36fc6812568c7f"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives 0.8.8",
+ "alloy-rpc-types-eth",
+ "op-alloy-consensus",
+ "op-alloy-rpc-types",
+]
+
+[[package]]
 name = "op-alloy-protocol"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4229,12 +4243,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-fees"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives 0.8.8",
+ "anyhow",
+ "clap",
+ "dotenv",
+ "op-succinct-host-utils",
+ "tokio",
+]
+
+[[package]]
 name = "op-succinct-host-utils"
 version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-consensus",
  "alloy-primitives 0.8.8",
+ "alloy-rlp",
  "alloy-sol-types 0.8.8",
  "anyhow",
  "cargo_metadata",
@@ -4244,7 +4271,10 @@ dependencies = [
  "kona-primitives",
  "log",
  "num-format",
+ "op-alloy-consensus",
  "op-alloy-genesis",
+ "op-alloy-network",
+ "op-alloy-protocol",
  "op-alloy-rpc-types",
  "op-succinct-client-utils",
  "reqwest 0.12.8",
