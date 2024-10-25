@@ -11,20 +11,31 @@ contract Utils is Test, JSONDecoder {
     function deployWithConfig(Config memory cfg) public returns (address) {
         address OPSuccinctL2OutputOracleImpl = address(new OPSuccinctL2OutputOracle());
         Proxy l2OutputOracleProxy = new Proxy(msg.sender);
-        l2OutputOracleProxy.upgradeTo(OPSuccinctL2OutputOracleImpl);
+        upgradeAndInitialize(OPSuccinctL2OutputOracleImpl, cfg, address(l2OutputOracleProxy), true);
 
-        OPSuccinctL2OutputOracle l2oo = OPSuccinctL2OutputOracle(address(l2OutputOracleProxy));
+        return address(l2OutputOracleProxy);
+    }
+
+    // If `executeUpgradeCall` is false, the upgrade call will not be executed.
+    function upgradeAndInitialize(address impl, Config memory cfg, address l2OutputOracleProxy, bool executeUpgradeCall)
+        public
+    {
+        // Require that the verifier gateway is deployed
+        require(
+            address(cfg.verifierGateway).code.length > 0,
+            "OPSuccinctL2OutputOracleUpgrader: verifier gateway not deployed"
+        );
+
         OPSuccinctL2OutputOracle.InitParams memory initParams = OPSuccinctL2OutputOracle.InitParams({
-            chainId: cfg.chainId,
             verifierGateway: cfg.verifierGateway,
             aggregationVkey: cfg.aggregationVkey,
             rangeVkeyCommitment: cfg.rangeVkeyCommitment,
-            owner: cfg.owner,
             startingOutputRoot: cfg.startingOutputRoot,
             rollupConfigHash: cfg.rollupConfigHash
         });
 
-        l2oo.initialize(
+        bytes memory initializationParams = abi.encodeWithSelector(
+            OPSuccinctL2OutputOracle.initialize.selector,
             cfg.submissionInterval,
             cfg.l2BlockTime,
             cfg.startingBlockNumber,
@@ -33,38 +44,6 @@ contract Utils is Test, JSONDecoder {
             cfg.challenger,
             cfg.finalizationPeriod,
             initParams
-        );
-
-        // Transfer ownership of proxy to owner specified in the config.
-        Proxy(payable(l2OutputOracleProxy)).changeAdmin(cfg.owner);
-
-        return address(l2OutputOracleProxy);
-    }
-
-    // If `executeUpgradeCall` is false, the upgrade call will not be executed.
-    function upgradeAndInitialize(
-        address impl,
-        Config memory cfg,
-        address l2OutputOracleProxy,
-        address _spoofedAdmin,
-        bool executeUpgradeCall
-    ) public {
-        // require that the verifier gateway is deployed
-        require(
-            address(cfg.verifierGateway).code.length > 0,
-            "OPSuccinctL2OutputOracleUpgrader: verifier gateway not deployed"
-        );
-
-        // If we are spoofing the admin (used in testing), start prank.
-        if (_spoofedAdmin != address(0)) vm.startPrank(_spoofedAdmin);
-
-        bytes memory initializationParams = abi.encodeWithSelector(
-            OPSuccinctL2OutputOracle.upgradeWithInitParams.selector,
-            cfg.chainId,
-            cfg.aggregationVkey,
-            cfg.rangeVkeyCommitment,
-            cfg.verifierGateway,
-            cfg.rollupConfigHash
         );
 
         if (executeUpgradeCall) {

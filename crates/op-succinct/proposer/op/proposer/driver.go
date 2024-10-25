@@ -364,7 +364,7 @@ func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
 			return fmt.Errorf("failed to fetch output at block %d: %w", aggProof.EndBlock, err)
 		}
 
-		l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber, common.HexToHash(aggProof.L1BlockHash))
+		l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber)
 		l.Log.Info("AGG proof submitted on-chain", "start", aggProof.StartBlock, "end", aggProof.EndBlock)
 	}
 
@@ -461,31 +461,28 @@ func (l *L2OutputSubmitter) FetchOutput(ctx context.Context, block uint64) (*eth
 }
 
 // ProposeL2OutputTxData creates the transaction data for the ProposeL2Output function
-func (l *L2OutputSubmitter) ProposeL2OutputTxData(output *eth.OutputResponse, proof []byte, l1BlockNum uint64, l1BlockHash common.Hash) ([]byte, error) {
-	return proposeL2OutputTxData(l.l2ooABI, output, proof, l1BlockNum, l1BlockHash)
+func (l *L2OutputSubmitter) ProposeL2OutputTxData(output *eth.OutputResponse, proof []byte, l1BlockNum uint64) ([]byte, error) {
+	return proposeL2OutputTxData(l.l2ooABI, output, proof, l1BlockNum)
 }
 
 // proposeL2OutputTxData creates the transaction data for the ProposeL2Output function
-func proposeL2OutputTxData(abi *abi.ABI, output *eth.OutputResponse, proof []byte, l1BlockNum uint64, l1BlockHash common.Hash) ([]byte, error) {
+func proposeL2OutputTxData(abi *abi.ABI, output *eth.OutputResponse, proof []byte, l1BlockNum uint64) ([]byte, error) {
 	return abi.Pack(
 		"proposeL2Output",
 		output.OutputRoot,
 		new(big.Int).SetUint64(output.BlockRef.Number),
-		l1BlockHash,
 		new(big.Int).SetUint64(l1BlockNum),
 		proof)
 }
 
-func (l *L2OutputSubmitter) CheckpointBlockHashTxData(blockNumber *big.Int, blockHash common.Hash) ([]byte, error) {
-	return l.l2ooABI.Pack("checkpointBlockHash", blockNumber, blockHash)
+func (l *L2OutputSubmitter) CheckpointBlockHashTxData(blockNumber *big.Int) ([]byte, error) {
+	return l.l2ooABI.Pack("checkpointBlockHash", blockNumber)
 }
 
-// We wait until l1head advances beyond blocknum. This is used to make sure proposal tx won't
-// immediately fail when checking the l1 blockhash. Note that EstimateGas uses "latest" state to
-// execute the transaction by default, meaning inside the call, the head block is considered
-// "pending" instead of committed. In the case l1blocknum == l1head then, blockhash(l1blocknum)
-// will produce a value of 0 within EstimateGas, and the call will fail when the contract checks
-// that l1blockhash matches blockhash(l1blocknum).
+// Wait for L1 head to advance beyond blocknum to ensure proposal transaction validity.
+// EstimateGas uses "latest" state, treating head block as "pending".
+// If l1blocknum == l1head, blockhash(l1blocknum) returns 0 in EstimateGas,
+// causing failure when contract verifies l1blockhash against blockhash(l1blocknum).
 func (l *L2OutputSubmitter) waitForL1Head(ctx context.Context, blockNum uint64) error {
 	ticker := time.NewTicker(l.Cfg.PollInterval)
 	defer ticker.Stop()
@@ -509,7 +506,7 @@ func (l *L2OutputSubmitter) waitForL1Head(ctx context.Context, blockNum uint64) 
 }
 
 // sendTransaction creates & sends transactions through the underlying transaction manager.
-func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64, l1BlockHash common.Hash) error {
+func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64) error {
 	err := l.waitForL1Head(ctx, output.Status.HeadL1.Number+1)
 	if err != nil {
 		return err
@@ -520,7 +517,7 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 	if l.Cfg.DisputeGameFactoryAddr != nil {
 		return errors.New("not implemented")
 	} else {
-		data, err := l.ProposeL2OutputTxData(output, proof, l1BlockNum, l1BlockHash)
+		data, err := l.ProposeL2OutputTxData(output, proof, l1BlockNum)
 		if err != nil {
 			return err
 		}
@@ -538,21 +535,17 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 	if receipt.Status == types.ReceiptStatusFailed {
 		l.Log.Error("Proposer tx successfully published but reverted", "tx_hash", receipt.TxHash)
 	} else {
-		l.Log.Info("Proposer tx successfully published",
-			"tx_hash", receipt.TxHash,
-			"l1blocknum", l1BlockNum,
-			"l1blockhash", l1BlockHash)
+		l.Log.Info("Proposer tx successfully published", "tx_hash", receipt.TxHash)
 	}
 	return nil
 }
 
-// sendCheckpointTransaction creates & sends transaction to checkpoint blockhash on L2OO contract.
-func (l *L2OutputSubmitter) sendCheckpointTransaction(ctx context.Context, blockNumber *big.Int, blockHash common.Hash) (uint64, common.Hash, error) {
+// sendCheckpointTransaction sends a transaction to checkpoint the blockhash corresponding to `blockNumber` on the L2OO contract.
+func (l *L2OutputSubmitter) sendCheckpointTransaction(ctx context.Context, blockNumber *big.Int) error {
 	var receipt *types.Receipt
-	data, err := l.CheckpointBlockHashTxData(blockNumber, blockHash)
-
+	data, err := l.CheckpointBlockHashTxData(blockNumber)
 	if err != nil {
-		return 0, common.Hash{}, err
+		return err
 	}
 	// TODO: This currently blocks the loop while it waits for the transaction to be confirmed. Up to 3 minutes.
 	receipt, err = l.Txmgr.Send(ctx, txmgr.TxCandidate{
@@ -561,7 +554,7 @@ func (l *L2OutputSubmitter) sendCheckpointTransaction(ctx context.Context, block
 		GasLimit: 0,
 	})
 	if err != nil {
-		return 0, common.Hash{}, err
+		return err
 	}
 
 	if receipt.Status == types.ReceiptStatusFailed {
@@ -570,7 +563,7 @@ func (l *L2OutputSubmitter) sendCheckpointTransaction(ctx context.Context, block
 		l.Log.Info("checkpoint blockhash tx successfully published",
 			"tx_hash", receipt.TxHash)
 	}
-	return blockNumber.Uint64(), blockHash, nil
+	return nil
 }
 
 // loop is responsible for creating & submitting the next outputs
@@ -688,15 +681,14 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 	}
 }
 
-func (l *L2OutputSubmitter) proposeOutput(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64, l1BlockHash common.Hash) {
+func (l *L2OutputSubmitter) proposeOutput(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64) {
 	cCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	if err := l.sendTransaction(cCtx, output, proof, l1BlockNum, l1BlockHash); err != nil {
+	if err := l.sendTransaction(cCtx, output, proof, l1BlockNum); err != nil {
 		l.Log.Error("Failed to send proposal transaction",
 			"err", err,
 			"l1blocknum", l1BlockNum,
-			"l1blockhash", l1BlockHash,
 			"l1head", output.Status.HeadL1.Number,
 			"proof", proof)
 		return
@@ -719,5 +711,9 @@ func (l *L2OutputSubmitter) checkpointBlockHash(ctx context.Context) (uint64, co
 	blockHash := header.Hash()
 	blockNumber := header.Number
 
-	return l.sendCheckpointTransaction(cCtx, blockNumber, blockHash)
+	err = l.sendCheckpointTransaction(cCtx, blockNumber)
+	if err != nil {
+		return 0, common.Hash{}, err
+	}
+	return blockNumber.Uint64(), blockHash, nil
 }

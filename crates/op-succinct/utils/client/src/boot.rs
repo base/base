@@ -34,7 +34,6 @@ sol! {
         bytes32 l2PreRoot;
         bytes32 l2PostRoot;
         uint64 l2BlockNumber;
-        uint64 chainId;
         bytes32 rollupConfigHash;
     }
 }
@@ -48,7 +47,6 @@ impl From<BootInfoWithBytesConfig> for BootInfoStruct {
             l2PreRoot: boot_info.l2_output_root,
             l2PostRoot: boot_info.l2_claim,
             l2BlockNumber: boot_info.l2_claim_block,
-            chainId: boot_info.chain_id,
             rollupConfigHash: hash_rollup_config(&rollup_config),
         }
     }

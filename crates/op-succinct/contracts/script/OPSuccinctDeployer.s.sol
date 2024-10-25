@@ -20,34 +20,10 @@ contract OPSuccinctDeployer is Script, Utils {
         OPSuccinctL2OutputOracle oracleImpl = new OPSuccinctL2OutputOracle();
         Proxy proxy = new Proxy(msg.sender);
 
-        // Upgrade the proxy to the implementation.
-        proxy.upgradeTo(address(oracleImpl));
-
-        OPSuccinctL2OutputOracle oracle = OPSuccinctL2OutputOracle(address(proxy));
-
-        OPSuccinctL2OutputOracle.InitParams memory initParams = OPSuccinctL2OutputOracle.InitParams({
-            chainId: config.chainId,
-            verifierGateway: config.verifierGateway,
-            aggregationVkey: config.aggregationVkey,
-            rangeVkeyCommitment: config.rangeVkeyCommitment,
-            owner: config.owner,
-            startingOutputRoot: config.startingOutputRoot,
-            rollupConfigHash: config.rollupConfigHash
-        });
-
-        oracle.initialize(
-            config.submissionInterval,
-            config.l2BlockTime,
-            config.startingBlockNumber,
-            config.startingTimestamp,
-            config.proposer,
-            config.challenger,
-            config.finalizationPeriod,
-            initParams
-        );
+        upgradeAndInitialize(address(oracleImpl), config, address(proxy), true);
 
         vm.stopBroadcast();
 
-        return address(oracle);
+        return address(proxy);
     }
 }

@@ -87,8 +87,7 @@ func TestCheckpointBlockHash(t *testing.T) {
 
 	var receipt *types.Receipt
 	blockNumber := big.NewInt(6601696)
-	blockHash := common.HexToHash("0x80958d9d5b18f4e189d12ae568576f5bb7d3b132f247bdc0475b9d7d00e638e0")
-	data, err := l2ooABI.Pack("checkpointBlockHash", blockNumber, blockHash)
+	data, err := l2ooABI.Pack("checkpointBlockHash", blockNumber)
 	if err != nil {
 		t.Fatalf("failed to pack checkpointBlockHash: %v", err)
 	}

@@ -18,7 +18,6 @@ sol! {
         bytes32 l2PreRoot;
         bytes32 l2PostRoot;
         uint64 l2BlockNumber;
-        uint64 chainId;
         bytes32 rollupConfigHash;
         bytes32 multiBlockVKey;
     }
