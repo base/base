@@ -37,5 +37,4 @@ base64.workspace = true
 tower-http.workspace = true
 
 [build-dependencies]
-sp1-build = { workspace = true }
-cargo_metadata.workspace = true
+op-succinct-build-utils.workspace = true

@@ -55,6 +55,7 @@ op-succinct-prove = { path = "scripts/prove" }
 op-succinct-witnessgen = { path = "scripts/witnessgen" }
 op-succinct-client-utils = { path = "utils/client" }
 op-succinct-host-utils = { path = "utils/host" }
+op-succinct-build-utils = { path = "utils/build" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
 # Alloy

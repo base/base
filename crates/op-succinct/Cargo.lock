@@ -4212,6 +4212,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-build-utils"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "sp1-build",
+]
+
+[[package]]
 name = "op-succinct-client-utils"
 version = "0.1.0"
 dependencies = [
@@ -4296,13 +4304,12 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bincode",
- "cargo_metadata",
  "dotenv",
  "log",
+ "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
  "serde",
- "sp1-build",
  "sp1-sdk",
  "tokio",
  "tower-http",
@@ -4319,9 +4326,9 @@ dependencies = [
  "dotenv",
  "num-format",
  "op-alloy-genesis",
+ "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
- "sp1-build",
  "sp1-sdk",
  "tokio",
 ]
@@ -4340,13 +4347,13 @@ dependencies = [
  "futures",
  "kona-host",
  "log",
+ "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
  "rayon",
  "reqwest 0.12.8",
  "serde",
  "serde_json",
- "sp1-build",
  "sp1-sdk",
  "tokio",
 ]
