@@ -1,0 +1,9 @@
+[package]
+name = "op-succinct-build-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+sp1-build.workspace = true
+cargo_metadata.workspace = true
