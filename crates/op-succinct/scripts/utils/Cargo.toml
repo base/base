@@ -12,10 +12,6 @@ name = "fetch-and-save-proof"
 path = "bin/fetch_and_save_proof.rs"
 
 [[bin]]
-name = "update-vkeys"
-path = "bin/update_vkeys.rs"
-
-[[bin]]
 name = "vkey"
 path = "bin/vkey.rs"
 
