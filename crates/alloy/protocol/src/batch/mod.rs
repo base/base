@@ -8,3 +8,6 @@ pub use validity::BatchValidity;
 
 mod single;
 pub use single::SingleBatch;
+
+mod traits;
+pub use traits::BatchValidationProvider;
