@@ -10,7 +10,7 @@
 extern crate alloc;
 
 mod batch;
-pub use batch::{BatchType, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE};
+pub use batch::{BatchType, BatchValidity, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE};
 
 mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
