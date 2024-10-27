@@ -9,11 +9,8 @@
 
 extern crate alloc;
 
-/// [CHANNEL_ID_LENGTH] is the length of the channel ID.
-pub const CHANNEL_ID_LENGTH: usize = 16;
-
-/// [ChannelId] is an opaque identifier for a channel.
-pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
+mod batch;
+pub use batch::{BatchType, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE};
 
 mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
@@ -34,7 +31,8 @@ pub use utils::{starts_with_2718_deposit, to_system_config, OpBlockConversionErr
 
 mod channel;
 pub use channel::{
-    Channel, ChannelError, FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL,
+    Channel, ChannelError, ChannelId, CHANNEL_ID_LENGTH, FJORD_MAX_RLP_BYTES_PER_CHANNEL,
+    MAX_RLP_BYTES_PER_CHANNEL,
 };
 
 pub mod deposits;

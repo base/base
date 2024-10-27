@@ -3,7 +3,13 @@
 use alloc::vec::Vec;
 use alloy_primitives::{map::HashMap, Bytes};
 
-use crate::{block::BlockInfo, frame::Frame, ChannelId};
+use crate::{block::BlockInfo, frame::Frame};
+
+/// [CHANNEL_ID_LENGTH] is the length of the channel ID.
+pub const CHANNEL_ID_LENGTH: usize = 16;
+
+/// [ChannelId] is an opaque identifier for a channel.
+pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
 
 /// [MAX_RLP_BYTES_PER_CHANNEL] is the maximum amount of bytes that will be read from
 /// a channel. This limit is set when decoding the RLP.
