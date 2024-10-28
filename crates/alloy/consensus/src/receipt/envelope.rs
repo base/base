@@ -1,9 +1,10 @@
 //! Receipt envelope types for Optimism.
 
 use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
+use alloc::vec::Vec;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
 use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
-use alloy_primitives::{Bloom, Log};
+use alloy_primitives::{logs_bloom, Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
 /// Receipt envelope, as defined in [EIP-2718], modified for OP Stack chains.
@@ -44,6 +45,48 @@ pub enum OpReceiptEnvelope<T = Log> {
     /// [deposit]: https://specs.optimism.io/protocol/deposits.html
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
     Deposit(OpDepositReceiptWithBloom<T>),
+}
+
+impl OpReceiptEnvelope<Log> {
+    /// Creates a new [`OpReceiptEnvelope`] from the given parts.
+    pub fn from_parts<'a>(
+        status: bool,
+        cumulative_gas_used: u128,
+        logs: impl IntoIterator<Item = &'a Log>,
+        tx_type: OpTxType,
+        deposit_nonce: Option<u64>,
+        deposit_receipt_version: Option<u64>,
+    ) -> Self {
+        let logs = logs.into_iter().cloned().collect::<Vec<_>>();
+        let logs_bloom = logs_bloom(&logs);
+        let inner_receipt =
+            Receipt { status: Eip658Value::Eip658(status), cumulative_gas_used, logs };
+        match tx_type {
+            OpTxType::Legacy => {
+                Self::Legacy(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
+            OpTxType::Eip2930 => {
+                Self::Eip2930(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
+            OpTxType::Eip1559 => {
+                Self::Eip1559(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
+            OpTxType::Eip7702 => {
+                Self::Eip7702(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
+            OpTxType::Deposit => {
+                let inner = OpDepositReceiptWithBloom {
+                    receipt: OpDepositReceipt {
+                        inner: inner_receipt,
+                        deposit_nonce,
+                        deposit_receipt_version,
+                    },
+                    logs_bloom,
+                };
+                Self::Deposit(inner)
+            }
+        }
+    }
 }
 
 impl<T> OpReceiptEnvelope<T> {
@@ -306,5 +349,27 @@ mod tests {
         // check that the rlp length equals the length of the expected rlp
         assert_eq!(receipt.length(), expected.len());
         assert_eq!(data, expected);
+    }
+
+    #[test]
+    fn legacy_receipt_from_parts() {
+        let receipt =
+            OpReceiptEnvelope::from_parts(true, 100, vec![], OpTxType::Legacy, None, None);
+        assert!(receipt.status());
+        assert_eq!(receipt.cumulative_gas_used(), 100);
+        assert_eq!(receipt.logs().len(), 0);
+        assert_eq!(receipt.tx_type(), OpTxType::Legacy);
+    }
+
+    #[test]
+    fn deposit_receipt_from_parts() {
+        let receipt =
+            OpReceiptEnvelope::from_parts(true, 100, vec![], OpTxType::Deposit, Some(1), Some(2));
+        assert!(receipt.status());
+        assert_eq!(receipt.cumulative_gas_used(), 100);
+        assert_eq!(receipt.logs().len(), 0);
+        assert_eq!(receipt.tx_type(), OpTxType::Deposit);
+        assert_eq!(receipt.deposit_nonce(), Some(1));
+        assert_eq!(receipt.deposit_receipt_version(), Some(2));
     }
 }
