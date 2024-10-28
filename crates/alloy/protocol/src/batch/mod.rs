@@ -6,6 +6,9 @@ pub use r#type::*;
 mod errors;
 pub use errors::{SpanBatchError, SpanDecodingError};
 
+mod bits;
+pub use bits::SpanBatchBits;
+
 mod element;
 pub use element::{SpanBatchElement, MAX_SPAN_BATCH_ELEMENTS};
 
