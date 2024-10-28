@@ -368,15 +368,18 @@ where:
 A channel is encoded by applying a streaming compression algorithm to a list of batches:
 
 ```text
-rlp_batches = []
+encoded_batches = []
 for batch in batches:
-    rlp_batches.append(batch)
+    encoded_batches ++ batch.encode()
+rlp_batches = rlp_encode(encoded_batches)
 ```
 
 where:
 
-- `batches` is the input, a sequence of batches byte-encoded as per the next section ("Batch Encoding")
-- `rlp_batches` is the concatenation of the RLP-encoded batches
+- `batches` is the input, a sequence of batches each with a byte-encoder
+function `.encode()` as per the next section ("Batch Encoding")
+- `encoded_batches` is a byte array: the concatenation of the encoded batches
+- `rlp_batches` is the rlp encoding of the concatenated encoded batches
 
 ```text
 channel_encoding = zlib_compress(rlp_batches)
