@@ -28,6 +28,7 @@ alloy-consensus.workspace = true
 # Misc
 derive_more.workspace = true
 async-trait.workspace = true
+unsigned-varint.workspace = true
 
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }

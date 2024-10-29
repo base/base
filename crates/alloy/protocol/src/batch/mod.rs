@@ -12,6 +12,9 @@ pub use bits::SpanBatchBits;
 mod element;
 pub use element::{SpanBatchElement, MAX_SPAN_BATCH_ELEMENTS};
 
+mod transactions;
+pub use transactions::SpanBatchTransactions;
+
 mod validity;
 pub use validity::BatchValidity;
 
