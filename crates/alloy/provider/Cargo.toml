@@ -19,11 +19,11 @@ workspace = true
 op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
 
 # Alloy
+alloy-network.workspace = true
+alloy-provider.workspace = true
+alloy-transport.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp", "serde"] }
 alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
-alloy-provider.workspace = true
-alloy-network.workspace = true
-alloy-transport.workspace = true
 
 # misc
-async-trait = "0.1.82"
+async-trait.workspace = true

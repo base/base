@@ -35,8 +35,8 @@ derive_more = { workspace = true, features = ["display"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
-serde_json.workspace = true
 arbtest.workspace = true
+serde_json.workspace = true
 arbitrary = { workspace = true, features = ["derive"] }
 
 [features]

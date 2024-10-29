@@ -43,16 +43,16 @@ spin = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
 
 [dev-dependencies]
+revm.workspace = true
 spin.workspace = true
-proptest.workspace = true
-tokio = { workspace = true, features = ["full"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
-arbitrary = { workspace = true, features = ["derive"] }
 rand.workspace = true
+rstest.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
-rstest = "0.23.0"
-revm = "14.0.2"
 alloy-sol-types.workspace = true
+tokio = { workspace = true, features = ["full"] }
+arbitrary = { workspace = true, features = ["derive"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [features]
 default = ["serde", "std"]

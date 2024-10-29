@@ -29,10 +29,10 @@ serde = { workspace = true, optional = true }
 serde_repr = { workspace = true, optional = true }
 
 [dev-dependencies]
-alloy-primitives = { workspace = true, features = ["rand"] }
-arbitrary = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 rand.workspace = true
+serde_json.workspace = true
+arbitrary = { workspace = true, features = ["derive"] }
+alloy-primitives = { workspace = true, features = ["rand"] }
 
 [features]
 default = ["serde", "std"]
