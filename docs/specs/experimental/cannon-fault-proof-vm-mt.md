@@ -434,6 +434,7 @@ and errno (`$a3`) registers.
 | 4338 | prlimit64          |
 | 4006 | close              |
 | 4200 | pread64            |
+| 4106 | stat               |
 | 4108 | fstat              |
 | 4215 | fstat64            |
 | 4288 | openat             |
