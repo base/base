@@ -26,6 +26,7 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
 # Misc
+tracing.workspace = true
 derive_more.workspace = true
 async-trait.workspace = true
 unsigned-varint.workspace = true
@@ -37,17 +38,28 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 
+# `test-utils` feature
+spin = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
+
 [dev-dependencies]
+spin.workspace = true
 proptest.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 arbitrary = { workspace = true, features = ["derive"] }
 rand.workspace = true
 serde_json.workspace = true
-rstest = "0.22.0"
+rstest = "0.23.0"
 revm = "14.0.2"
 alloy-sol-types.workspace = true
 
 [features]
 default = ["serde", "std"]
+test-utils = [
+  "dep:spin",
+  "dep:tracing-subscriber",
+]
 arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/rand"]
 std = ["op-alloy-consensus/std", "op-alloy-genesis/std"]
 serde = ["dep:serde", "dep:alloy-serde", "op-alloy-consensus/serde", "op-alloy-genesis/serde"]
