@@ -1,6 +1,6 @@
 # Cost Estimator
 
-We provide a convenient CLI tool to fetch the RISC-V cycle counts for generating ZKPs for a range of blocks for a given rollup.
+We provide a convenient CLI tool to fetch the RISC-V instruction counts for generating ZKPs for a range of blocks for a given rollup. We recommend running the cost estimator on a remote machine with fast network connectivity because witness generation fetches a significant amount of data.
 
 ## Overview
 
