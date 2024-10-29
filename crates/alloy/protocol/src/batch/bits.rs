@@ -16,6 +16,11 @@ impl AsRef<[u8]> for SpanBatchBits {
 }
 
 impl SpanBatchBits {
+    /// Creates a new span batch bits.
+    pub const fn new(inner: Vec<u8>) -> Self {
+        Self(inner)
+    }
+
     /// Decodes a standard span-batch bitlist from a reader.
     /// The bitlist is encoded as big-endian integer, left-padded with zeroes to a multiple of 8
     /// bits. The encoded bitlist cannot be longer than `bit_length`.

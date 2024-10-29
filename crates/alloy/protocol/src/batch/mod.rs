@@ -3,8 +3,23 @@
 mod r#type;
 pub use r#type::*;
 
+mod core;
+pub use core::Batch;
+
+mod raw;
+pub use raw::RawSpanBatch;
+
+mod payload;
+pub use payload::SpanBatchPayload;
+
+mod prefix;
+pub use prefix::SpanBatchPrefix;
+
+mod inclusion;
+pub use inclusion::BatchWithInclusionBlock;
+
 mod errors;
-pub use errors::{SpanBatchError, SpanDecodingError};
+pub use errors::{BatchDecodingError, SpanBatchError, SpanDecodingError};
 
 mod bits;
 pub use bits::SpanBatchBits;

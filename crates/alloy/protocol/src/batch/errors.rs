@@ -35,6 +35,41 @@ impl core::error::Error for SpanBatchError {
     }
 }
 
+/// An error decoding a batch.
+#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+pub enum BatchDecodingError {
+    /// Empty buffer
+    #[display("Empty buffer")]
+    EmptyBuffer,
+    /// Error decoding an Alloy RLP
+    #[display("Error decoding an Alloy RLP: {_0}")]
+    AlloyRlpError(alloy_rlp::Error),
+    /// Error decoding a span batch
+    #[display("Error decoding a span batch: {_0}")]
+    SpanBatchError(SpanBatchError),
+}
+
+impl From<alloy_rlp::Error> for BatchDecodingError {
+    fn from(err: alloy_rlp::Error) -> Self {
+        Self::AlloyRlpError(err)
+    }
+}
+
+impl From<SpanBatchError> for BatchDecodingError {
+    fn from(err: SpanBatchError) -> Self {
+        Self::SpanBatchError(err)
+    }
+}
+
+impl core::error::Error for BatchDecodingError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::SpanBatchError(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 /// Decoding Error
 #[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
 pub enum SpanDecodingError {
