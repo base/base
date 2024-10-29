@@ -12,8 +12,9 @@ extern crate alloc;
 mod batch;
 pub use batch::{
     BatchType, BatchValidationProvider, BatchValidity, SingleBatch, SpanBatchBits,
-    SpanBatchElement, SpanBatchError, SpanDecodingError, MAX_SPAN_BATCH_ELEMENTS,
-    SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE,
+    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData, SpanBatchElement,
+    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchTransactionData, SpanDecodingError,
+    MAX_SPAN_BATCH_ELEMENTS, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE,
 };
 
 mod block;

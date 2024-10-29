@@ -18,5 +18,11 @@ pub use validity::BatchValidity;
 mod single;
 pub use single::SingleBatch;
 
+mod tx_data;
+pub use tx_data::{
+    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchLegacyTransactionData, SpanBatchTransactionData,
+};
+
 mod traits;
 pub use traits::BatchValidationProvider;
