@@ -5,7 +5,7 @@ use sp1_build::{build_program_with_args, BuildArgs};
 /// Build a native program.
 fn build_native_program(program: &str) {
     // Build with tracing-subscriber feature enabled for `kona-client` logging.
-    let status = Command::new("cargo") 
+    let status = Command::new("cargo")
         .args([
             "build",
             "--workspace",

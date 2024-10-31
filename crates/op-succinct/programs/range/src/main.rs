@@ -50,8 +50,12 @@ fn main() {
         use anyhow::anyhow;
         use tracing::Level;
 
-        let subscriber = tracing_subscriber::fmt().with_max_level(Level::DEBUG).finish();
-        tracing::subscriber::set_global_default(subscriber).map_err(|e| anyhow!(e)).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(Level::DEBUG)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .map_err(|e| anyhow!(e))
+            .unwrap();
     }
 
     op_succinct_client_utils::block_on(async move {

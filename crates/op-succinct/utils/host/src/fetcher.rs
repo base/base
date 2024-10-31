@@ -626,8 +626,7 @@ impl OPSuccinctDataFetcher {
         // TODO: Get the L1 origin of the L2 start block. Now, we can determine the number of L1 blocks being traversed.
         // May need to walk back from the most recently posted batch to the L1 origin of the L2 start block.
         // Use optimism_safeHeadAtL1Block to get the L1 origin of the L2 start block.
-        let (l1_head_hash, _l1_head_number) =
-            self.get_l1_head(l2_start_block, l2_end_block).await?;
+        let (l1_head_hash, _l1_head_number) = self.get_l1_head(l2_end_block).await?;
 
         // Get the workspace root, which is where the data directory is.
         let metadata = MetadataCommand::new().exec().unwrap();
@@ -705,20 +704,7 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
-    async fn get_l1_head_with_safe_head(
-        &self,
-        l2_start_block: u64,
-        l2_end_block: u64,
-    ) -> Result<(B256, u64)> {
-        let l2_start_block_hex = format!("0x{:x}", l2_start_block);
-        let optimism_output_data: OutputResponse = self
-            .fetch_rpc_data(
-                RPCMode::L2Node,
-                "optimism_outputAtBlock",
-                vec![l2_start_block_hex.into()],
-            )
-            .await?;
-
+    async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
         let latest_l1_header = self.get_l1_header(BlockId::latest()).await?;
 
         // Get the l1 origin of the l2 end block.
@@ -766,11 +752,9 @@ impl OPSuccinctDataFetcher {
     /// the batcher may post as infrequently as every couple hours. The l1Head is set as the l1 block from which all of the
     /// relevant L2 block data can be derived.
     /// E.g. Origin Advance Error: BlockInfoFetch(Block number past L1 head.).
-    async fn get_l1_head(&self, l2_start_block: u64, l2_end_block: u64) -> Result<(B256, u64)> {
+    async fn get_l1_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
         // See if optimism_safeHeadAtL1Block is available. If there's an error, then estimate the L1 block necessary based on the chain config.
-        let result = self
-            .get_l1_head_with_safe_head(l2_start_block, l2_end_block)
-            .await;
+        let result = self.get_l1_head_with_safe_head(l2_end_block).await;
 
         if let Ok(safe_head_at_l1_block) = result {
             Ok(safe_head_at_l1_block)
@@ -809,10 +793,7 @@ mod tests {
         // Get the L2 block number from 1 hour ago.
         let l2_end_block = latest_l2_block.number - ((60 * 60) / fetcher.rollup_config.block_time);
 
-        let _ = fetcher
-            .get_l1_head(latest_l2_block.number, l2_end_block)
-            .await
-            .unwrap();
+        let _ = fetcher.get_l1_head(l2_end_block).await.unwrap();
     }
 
     #[tokio::test]
