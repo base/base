@@ -6,26 +6,6 @@ edition.workspace = true
 
 [dependencies]
 
-# workspace
-alloy = { workspace = true }
-alloy-rlp.workspace = true
-
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
-alloy-sol-types.workspace = true
-rkyv.workspace = true
-serde_json.workspace = true
-anyhow.workspace = true
-cargo_metadata.workspace = true
-serde_cbor.workspace = true
-dotenv.workspace = true
-tokio.workspace = true
-futures.workspace = true
-num-format.workspace = true
-serde.workspace = true
-reqwest.workspace = true
-log.workspace = true
-
 # sp1
 sp1-sdk.workspace = true
 
@@ -39,6 +19,29 @@ op-alloy-network.workspace = true
 op-alloy-protocol.workspace = true
 op-alloy-consensus.workspace = true
 
+# alloy
+alloy = { workspace = true }
+alloy-rlp.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-sol-types.workspace = true
+
 # kona
 kona-host.workspace = true
 kona-primitives.workspace = true
+
+# general
+rkyv.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+cargo_metadata.workspace = true
+serde_cbor.workspace = true
+dotenv.workspace = true
+tokio.workspace = true
+futures.workspace = true
+num-format.workspace = true
+serde.workspace = true
+reqwest.workspace = true
+log.workspace = true
+sysinfo = "0.32.0"
+

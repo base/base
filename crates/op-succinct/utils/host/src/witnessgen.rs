@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::time::Duration;
+use sysinfo::System;
 
 use kona_host::HostCli;
 
@@ -54,11 +55,10 @@ pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
 }
 
 /// Default timeout for witness generation.
-pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(1200);
+pub const WITNESSGEN_TIMEOUT: Duration = Duration::from_secs(60 * 20);
 
 struct WitnessGenProcess {
     child: tokio::process::Child,
-    exec: String,
     host_cli: HostCli,
 }
 
@@ -101,7 +101,6 @@ impl WitnessGenExecutor {
             .spawn()?;
         self.ongoing_processes.push(WitnessGenProcess {
             child,
-            exec: host_cli.exec.clone().unwrap(),
             host_cli: host_cli.clone(),
         });
         Ok(())
@@ -110,13 +109,6 @@ impl WitnessGenExecutor {
     /// Wait for all ongoing witness generation processes to complete. If any process fails,
     /// kill all ongoing processes and return an error.
     pub async fn flush(&mut self) -> Result<()> {
-        let binary_name = self.ongoing_processes[0]
-            .exec
-            .split('/')
-            .last()
-            .unwrap()
-            .to_string();
-
         // TODO: If any process fails or a Ctrl+C is received, kill all ongoing processes. This is
         // quite involved, as the behavior differs between Unix and Windows. When using
         // Ctrl+C handler, you also need to be careful to restore the original behavior
@@ -125,7 +117,7 @@ impl WitnessGenExecutor {
         // Wait for all processes to complete.
 
         if let Some(err) = self.wait_for_processes().await.err() {
-            self.kill_all(binary_name).await?;
+            self.kill_all().await?;
             Err(anyhow::anyhow!(
                 "Killed all witness generation processes because one failed. Error: {}",
                 err
@@ -173,19 +165,26 @@ impl WitnessGenExecutor {
     /// client" process that spawns a "witness gen" program. Just killing the "native client"
     /// process will not kill the "witness gen" program, so we need to explicitly kill the
     /// "witness gen" program as well.
-    async fn kill_all(&mut self, binary_name: String) -> Result<()> {
-        // Kill the "native client" processes.
+    async fn kill_all(&mut self) -> Result<()> {
+        let mut sys = System::new();
+        sys.refresh_all();
+
+        // Kill the "native client" processes, and the associated spawned native program process from start_server_and_native_client.
         for mut child in self.ongoing_processes.drain(..) {
-            if let Ok(None) = child.child.try_wait() {
+            if let Some(pid) = child.child.id() {
+                // Kill all child processes
+                for process in sys.processes().values() {
+                    if let Some(parent_pid) = process.parent() {
+                        if parent_pid.as_u32() == pid {
+                            process.kill();
+                        }
+                    }
+                }
+                // Kill the parent process.
                 child.child.kill().await?;
             }
         }
 
-        // Kill the spawned witness gen program.
-        std::process::Command::new("pkill")
-            .arg("-f")
-            .arg(binary_name)
-            .output()?;
         Ok(())
     }
 }
