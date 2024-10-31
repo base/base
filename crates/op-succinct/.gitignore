@@ -23,6 +23,7 @@ data
 
 # Execution Report
 execution-reports/
+block-data/
 
 # Rollup Config
 **/rollup-config.json

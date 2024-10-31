@@ -4,7 +4,8 @@ use sp1_build::{build_program_with_args, BuildArgs};
 
 /// Build a native program.
 fn build_native_program(program: &str) {
-    let status = Command::new("cargo")
+    // Build with tracing-subscriber feature enabled for `kona-client` logging.
+    let status = Command::new("cargo") 
         .args([
             "build",
             "--workspace",
@@ -12,6 +13,8 @@ fn build_native_program(program: &str) {
             program,
             "--profile",
             "release-client-lto",
+            "--features",
+            "tracing-subscriber",
         ])
         .status()
         .expect("Failed to execute cargo build command");

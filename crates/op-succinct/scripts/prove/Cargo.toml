@@ -30,6 +30,9 @@ dotenv.workspace = true
 num-format.workspace = true
 csv.workspace = true
 
+# kona
+kona-host = { workspace = true }
+
 # local
 op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true

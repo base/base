@@ -9,6 +9,7 @@ pub struct AggregateFeeData {
     pub end: u64,
     pub num_transactions: u64,
     pub total_l1_fee: U256,
+    pub total_tx_fees: u128,
 }
 
 impl fmt::Display for AggregateFeeData {
@@ -30,11 +31,13 @@ pub fn aggregate_fee_data(fee_data: Vec<FeeData>) -> Result<AggregateFeeData> {
         end: fee_data[fee_data.len() - 1].block_number,
         num_transactions: 0,
         total_l1_fee: U256::ZERO,
+        total_tx_fees: 0,
     };
 
     for data in fee_data {
         aggregate_fee_data.num_transactions += 1;
         aggregate_fee_data.total_l1_fee += data.l1_gas_cost;
+        aggregate_fee_data.total_tx_fees += data.tx_fee;
     }
 
     Ok(aggregate_fee_data)

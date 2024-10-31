@@ -11,6 +11,8 @@ repository.workspace = true
 cfg-if.workspace = true
 serde_json.workspace = true
 log.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
 
 # workspace (ethereum)
 op-alloy-consensus.workspace = true
@@ -29,3 +31,9 @@ kona-derive.workspace = true
 
 # op-succinct
 op-succinct-client-utils.workspace = true
+
+# `tracing-subscriber` feature dependencies
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+tracing-subscriber = ["dep:tracing-subscriber"]
