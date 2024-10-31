@@ -5,18 +5,21 @@ use alloy::{
     transports::http::{reqwest::Url, Client, Http},
 };
 use alloy_consensus::Header;
+use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::anyhow;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use kona_host::HostCli;
 use log::info;
+use op_alloy_consensus::OpBlock;
 use op_alloy_genesis::RollupConfig;
 use op_alloy_network::{
     primitives::{BlockTransactions, BlockTransactionsKind},
     Optimism,
 };
 use op_alloy_protocol::calculate_tx_l1_cost_fjord;
+use op_alloy_protocol::L2BlockInfo;
 use op_alloy_rpc_types::{
     output::OutputResponse, safe_head::SafeHeadResponse, OpTransactionReceipt,
 };
@@ -30,7 +33,7 @@ use std::{
 };
 use tokio::time::sleep;
 
-use alloy_primitives::{keccak256, Bytes, U256};
+use alloy_primitives::{keccak256, Bytes, U256, U64};
 
 use crate::{
     rollup_config::{get_rollup_config_path, merge_rollup_config, save_rollup_config},
@@ -65,7 +68,7 @@ pub struct RPCConfig {
 }
 
 /// The mode corresponding to the chain we are fetching data for.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum RPCMode {
     L1,
     L1Beacon,
@@ -484,7 +487,9 @@ impl OPSuccinctDataFetcher {
         // Check for RPC error from the JSON RPC response.
         if let Some(error) = response.get("error") {
             let error_message = error["message"].as_str().unwrap_or("Unknown error");
-            return Err(anyhow::anyhow!("RPC error: {}", error_message));
+            return Err(anyhow::anyhow!(
+                "Error calling {method} on {rpc_mode:?}: {error_message}"
+            ));
         }
 
         serde_json::from_value(response["result"].clone()).map_err(Into::into)
@@ -623,9 +628,6 @@ impl OPSuccinctDataFetcher {
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
-        // TODO: Get the L1 origin of the L2 start block. Now, we can determine the number of L1 blocks being traversed.
-        // May need to walk back from the most recently posted batch to the L1 origin of the L2 start block.
-        // Use optimism_safeHeadAtL1Block to get the L1 origin of the L2 start block.
         let (l1_head_hash, _l1_head_number) = self.get_l1_head(l2_end_block).await?;
 
         // Get the workspace root, which is where the data directory is.
@@ -773,6 +775,61 @@ impl OPSuccinctDataFetcher {
 
             let target_timestamp = l2_block_timestamp + (max_batch_post_delay_minutes * 60);
             Ok(self.find_l1_block_by_timestamp(target_timestamp).await?)
+        }
+    }
+
+    // Source from: https://github.com/anton-rs/kona/blob/85b1c88b44e5f54edfc92c781a313717bad5dfc7/crates/derive-alloy/src/alloy_providers.rs#L225.
+    pub async fn get_l2_block_by_number(&self, block_number: u64) -> Result<OpBlock> {
+        let raw_block: Bytes = self
+            .l2_provider
+            .raw_request("debug_getRawBlock".into(), [U64::from(block_number)])
+            .await?;
+        let block = OpBlock::decode(&mut raw_block.as_ref()).map_err(|e| anyhow::anyhow!(e))?;
+        Ok(block)
+    }
+
+    pub async fn l2_block_info_by_number(&self, block_number: u64) -> Result<L2BlockInfo> {
+        let block = self.get_l2_block_by_number(block_number).await?;
+        Ok(L2BlockInfo::from_block_and_genesis(
+            &block,
+            &self.rollup_config.genesis,
+        )?)
+    }
+
+    /// Get the L2 safe head corresponding to the L1 block number using optimism_safeHeadAtBlock.
+    pub async fn get_l2_safe_head_from_l1_block_number(&self, l1_block_number: u64) -> Result<u64> {
+        let l1_block_number_hex = format!("0x{:x}", l1_block_number);
+        let result: SafeHeadResponse = self
+            .fetch_rpc_data(
+                RPCMode::L2Node,
+                "optimism_safeHeadAtL1Block",
+                vec![l1_block_number_hex.into()],
+            )
+            .await?;
+        Ok(result.safe_head.number)
+    }
+
+    /// Get the l2_end_block number given the l2_start_block number and the ideal block interval.
+    /// Picks the l2 end block that minimizes the derivation cost by picking the l2 block that can be derived from the same batch as the l2_start_block.
+    pub async fn get_l2_end_block(
+        &self,
+        l2_start_block: u64,
+        ideal_block_interval: u64,
+    ) -> Result<u64> {
+        let ideal_l2_block_end = l2_start_block + ideal_block_interval;
+        let l2_end_block_info = self.l2_block_info_by_number(ideal_l2_block_end).await?;
+
+        let l2_derivable_block_end = self
+            .get_l2_safe_head_from_l1_block_number(l2_end_block_info.l1_origin.number)
+            .await?;
+
+        // TODO: This code will need to be replicated in the proposer to fetch the block range.
+        // If blocks are in same batch or if derivable end is past ideal end, use ideal end block, as it will just pull in one batch.
+        if l2_derivable_block_end < l2_start_block || l2_derivable_block_end > ideal_l2_block_end {
+            Ok(ideal_l2_block_end)
+        } else {
+            // Otherwise use derivable end to avoid pulling in multiple batches.
+            Ok(l2_derivable_block_end)
         }
     }
 }
