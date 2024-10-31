@@ -68,10 +68,10 @@ async fn main() -> Result<()> {
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, l2_chain_id);
     let latest_checkpoint_head = fetcher
         .get_l1_header(args.latest_checkpoint_head_nb.into())
-        .await?
-        .hash_slow();
+        .await?;
+    let latest_checkpoint_head_hash = latest_checkpoint_head.hash_slow();
     let headers = fetcher
-        .get_header_preimages(&boot_infos, latest_checkpoint_head)
+        .get_header_preimages(&boot_infos, latest_checkpoint_head_hash)
         .await?;
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
@@ -81,8 +81,14 @@ async fn main() -> Result<()> {
         vkey.vk.hash_u32()
     );
 
-    let stdin =
-        get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, latest_checkpoint_head).unwrap();
+    let stdin = get_agg_proof_stdin(
+        proofs,
+        boot_infos,
+        headers,
+        &vkey,
+        latest_checkpoint_head_hash,
+    )
+    .unwrap();
 
     let (agg_pk, agg_vk) = prover.setup(AGG_ELF);
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());

@@ -36,6 +36,10 @@ base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
 kzg-rs = { version = "0.2.2" }
 
+# program tracing
+tracing = { version = "0.1.40", default-features = false }
+tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
+
 # kona
 # Note: Switch to latest version of kona once the std::process::Command issue is resolved.
 kona-common = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
@@ -83,7 +87,7 @@ op-alloy-network = { version = "0.4.0", default-features = false }
 # sp1
 sp1-lib = { version = "3.0.0", features = ["verify"] }
 sp1-zkvm = { version = "3.0.0", features = ["verify"] }
-sp1-sdk = { version = "3.0.0" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", branch = "dev" }
 sp1-build = { version = "3.0.0" }
 
 [profile.release-client-lto]
