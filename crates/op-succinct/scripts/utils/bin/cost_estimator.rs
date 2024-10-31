@@ -186,7 +186,7 @@ async fn execute_blocks_parallel(
         .par_iter()
         .zip(ranges.par_iter())
         .for_each(|(host_cli, range)| {
-            let sp1_stdin = get_proof_stdin(&host_cli).unwrap();
+            let sp1_stdin = get_proof_stdin(host_cli).unwrap();
 
             // TODO: Implement retries with a smaller block range if this fails.
             let (_, report) = prover
@@ -209,7 +209,6 @@ async fn execute_blocks_parallel(
 
             let mut file = OpenOptions::new()
                 .read(true)
-                .write(true)
                 .append(true)
                 .open(&report_path)
                 .unwrap();
@@ -229,9 +228,7 @@ async fn execute_blocks_parallel(
 
     info!("Execution is complete.");
 
-    let execution_stats = execution_stats_map.iter().map(|(_, v)| v.clone()).collect();
-    drop(execution_stats_map);
-    execution_stats
+    execution_stats_map.values().cloned().collect()
 }
 
 /// Write the block data to a CSV file.
@@ -253,32 +250,6 @@ fn write_block_data_to_csv(
     for block in block_data {
         csv_writer
             .serialize(block)
-            .expect("Failed to write execution stats to CSV.");
-    }
-    csv_writer.flush().expect("Failed to flush CSV writer.");
-
-    Ok(())
-}
-
-/// Write the execution stats to a CSV file.
-fn write_execution_stats_to_csv(
-    execution_stats: &[ExecutionStats],
-    l2_chain_id: u64,
-    args: &HostArgs,
-) -> Result<()> {
-    let report_path = PathBuf::from(format!(
-        "execution-reports/{}/{}-{}-report.csv",
-        l2_chain_id, args.start, args.end
-    ));
-    if let Some(parent) = report_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut csv_writer = csv::Writer::from_path(report_path)?;
-
-    for stats in execution_stats {
-        csv_writer
-            .serialize(stats)
             .expect("Failed to write execution stats to CSV.");
     }
     csv_writer.flush().expect("Failed to flush CSV writer.");
