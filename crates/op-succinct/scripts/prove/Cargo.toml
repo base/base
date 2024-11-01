@@ -40,6 +40,9 @@ op-succinct-client-utils.workspace = true
 # op-alloy
 op-alloy-genesis.workspace = true
 
+# alloy
+alloy-primitives = { workspace = true }
+
 # sp1
 sp1-sdk = { workspace = true }
 

@@ -365,7 +365,6 @@ func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
 		}
 
 		l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber)
-		l.Log.Info("AGG proof submitted on-chain", "start", aggProof.StartBlock, "end", aggProof.EndBlock)
 	}
 
 	return nil
@@ -693,6 +692,7 @@ func (l *L2OutputSubmitter) proposeOutput(ctx context.Context, output *eth.Outpu
 			"proof", proof)
 		return
 	}
+	l.Log.Info("AGG proof submitted on-chain", "end", output.BlockRef.Number)
 	l.Metr.RecordL2BlocksProposed(output.BlockRef)
 }
 

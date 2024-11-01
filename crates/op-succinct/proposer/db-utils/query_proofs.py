@@ -12,7 +12,8 @@ class ProofType(Enum):
 # Possible statuses for a proof request
 class ProofStatus(Enum):
     UNREQ = "UNREQ"
-    REQ = "REQ"
+    WITNESSING = "WITNESSGEN"
+    PROVING = "PROVING"
     COMPLETE = "COMPLETE"
     FAILED = "FAILED"
 
@@ -96,7 +97,7 @@ if __name__ == "__main__":
         raise ValueError("L2OO_ADDRESS not found in .env file")
 
     print(f"L2OO_ADDRESS: {L2OO_ADDRESS}")
-    db_path = "../../db/11155420/proofs.db"
+    db_path = "../../db/808813/proofs.db"
 
     # Get all span proofs
     print("\nSpan Proofs:")

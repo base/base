@@ -1,9 +1,12 @@
+use alloy_primitives::B256;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
-use op_succinct_client_utils::boot::BootInfoStruct;
+use op_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
 use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin};
-use sp1_sdk::{utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues};
+use sp1_sdk::{
+    utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
+};
 use std::fs;
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
@@ -16,10 +19,6 @@ struct Args {
     #[arg(short, long, num_args = 1.., value_delimiter = ',')]
     proofs: Vec<String>,
 
-    /// The block number corresponding to the latest L1 checkpoint.
-    #[arg(short, long)]
-    latest_checkpoint_head_nb: u64,
-
     /// Prove flag.
     #[arg(short, long)]
     prove: bool,
@@ -28,11 +27,12 @@ struct Args {
 /// Load the aggregation proof data.
 fn load_aggregation_proof_data(
     proof_names: Vec<String>,
-    l2_chain_id: u64,
+    range_vkey: &SP1VerifyingKey,
+    prover: &ProverClient,
 ) -> (Vec<SP1Proof>, Vec<BootInfoStruct>) {
     let metadata = MetadataCommand::new().exec().unwrap();
     let workspace_root = metadata.workspace_root;
-    let proof_directory = format!("{}/data/{}/proofs", workspace_root, l2_chain_id);
+    let proof_directory = format!("{}/data/fetched_proofs", workspace_root);
 
     let mut proofs = Vec::with_capacity(proof_names.len());
     let mut boot_infos = Vec::with_capacity(proof_names.len());
@@ -44,6 +44,9 @@ fn load_aggregation_proof_data(
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
+        prover
+            .verify(&deserialized_proof, range_vkey)
+            .expect("proof verification failed");
         proofs.push(deserialized_proof.proof);
 
         // The public values are the BootInfoStruct.
@@ -64,31 +67,22 @@ async fn main() -> Result<()> {
     let prover = ProverClient::new();
     let fetcher = OPSuccinctDataFetcher::default();
 
-    let l2_chain_id = fetcher.get_l2_chain_id().await?;
-    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, l2_chain_id);
-    let latest_checkpoint_head = fetcher
-        .get_l1_header(args.latest_checkpoint_head_nb.into())
-        .await?;
-    let latest_checkpoint_head_hash = latest_checkpoint_head.hash_slow();
-    let headers = fetcher
-        .get_header_preimages(&boot_infos, latest_checkpoint_head_hash)
-        .await?;
-
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
-    println!(
-        "Range ELF Verification Key U32 Hash: {:?}",
-        vkey.vk.hash_u32()
-    );
+    let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey, &prover);
 
-    let stdin = get_agg_proof_stdin(
-        proofs,
-        boot_infos,
-        headers,
-        &vkey,
-        latest_checkpoint_head_hash,
-    )
-    .unwrap();
+    let header = fetcher.get_latest_l1_head_in_batch(&boot_infos).await?;
+    let headers = fetcher
+        .get_header_preimages(&boot_infos, header.hash_slow())
+        .await?;
+    let multi_block_vkey_u8 = u32_to_u8(vkey.vk.hash_u32());
+    let multi_block_vkey_b256 = B256::from(multi_block_vkey_u8);
+    println!(
+        "Range ELF Verification Key Commitment: {}",
+        multi_block_vkey_b256
+    );
+    let stdin =
+        get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, header.hash_slow()).unwrap();
 
     let (agg_pk, agg_vk) = prover.setup(AGG_ELF);
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
