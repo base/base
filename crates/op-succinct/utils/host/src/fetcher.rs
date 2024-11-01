@@ -513,6 +513,24 @@ impl OPSuccinctDataFetcher {
         Ok(earliest_l1_header.unwrap())
     }
 
+    /// Get the latest L1 header in a batch of boot infos.
+    pub async fn get_latest_l1_head_in_batch(
+        &self,
+        boot_infos: &Vec<BootInfoStruct>,
+    ) -> Result<Header> {
+        let mut latest_block_num: u64 = u64::MIN;
+        let mut latest_l1_header: Option<Header> = None;
+
+        for boot_info in boot_infos {
+            let l1_block_header = self.get_l1_header(boot_info.l1Head.into()).await?;
+            if l1_block_header.number > latest_block_num {
+                latest_block_num = l1_block_header.number;
+                latest_l1_header = Some(l1_block_header);
+            }
+        }
+        Ok(latest_l1_header.unwrap())
+    }
+
     /// Fetch headers for a range of blocks inclusive.
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
         let mut headers: Vec<Header> = Vec::with_capacity((end - start + 1).try_into().unwrap());
@@ -894,10 +912,8 @@ mod tests {
                 .collect::<Vec<_>>()
                 .await;
 
-        for result in safe_heads {
-            if let Ok(response) = result {
-                l2_safe_heads.push(response.safe_head.number);
-            }
+        for result in safe_heads.into_iter().flatten() {
+            l2_safe_heads.push(result.safe_head.number);
         }
     }
 }

@@ -87,7 +87,7 @@ op-alloy-network = { version = "0.4.0", default-features = false }
 # sp1
 sp1-lib = { version = "3.0.0", features = ["verify"] }
 sp1-zkvm = { version = "3.0.0", features = ["verify"] }
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", branch = "dev" }
+sp1-sdk = { version = "3.0.0" }
 sp1-build = { version = "3.0.0" }
 
 [profile.release-client-lto]
