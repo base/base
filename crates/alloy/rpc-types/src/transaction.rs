@@ -11,6 +11,9 @@ use alloy_serde::OtherFields;
 use op_alloy_consensus::{OpTxEnvelope, OpTxType, TxDeposit};
 use serde::{Deserialize, Serialize};
 
+mod request;
+pub use request::OpTransactionRequest;
+
 /// OP Transaction type
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]

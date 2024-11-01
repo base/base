@@ -19,4 +19,4 @@ pub mod sync;
 pub mod transaction;
 
 pub use receipt::{OpTransactionReceipt, OpTransactionReceiptFields};
-pub use transaction::{OpTransactionFields, Transaction};
+pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
