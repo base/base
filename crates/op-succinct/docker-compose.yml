@@ -22,3 +22,6 @@ services:
       - op-succinct-server
     volumes:
       - ./db:/usr/local/bin/dbdata
+    # The metrics port is the default port for the OP Proposer.
+    ports:
+      - "7300:7300"

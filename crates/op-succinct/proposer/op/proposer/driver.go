@@ -20,15 +20,15 @@ import (
 
 	// Original Optimism Bindings
 
-	// OP Succinct Contract Bindings
-	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
-
-	"github.com/ethereum-optimism/optimism/op-proposer/metrics"
 	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 	"github.com/ethereum-optimism/optimism/op-service/txmgr"
+
+	// OP Succinct
+	opsuccinctbindings "github.com/succinctlabs/op-succinct-go/bindings"
 	"github.com/succinctlabs/op-succinct-go/proposer/db"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
+	opsuccinctmetrics "github.com/succinctlabs/op-succinct-go/proposer/metrics"
 )
 
 var (
@@ -65,7 +65,7 @@ type RollupClient interface {
 
 type DriverSetup struct {
 	Log      log.Logger
-	Metr     metrics.Metricer
+	Metr     opsuccinctmetrics.OPSuccinctMetricer
 	Cfg      ProposerConfig
 	Txmgr    txmgr.TxManager
 	L1Client *ethclient.Client
@@ -222,28 +222,17 @@ func (l *L2OutputSubmitter) StopL2OutputSubmitting() error {
 	return nil
 }
 
-// ProposerMetrics contains relevant statistics for the proposer.
-type ProposerMetrics struct {
-	L2UnsafeHeadBlock              uint64
-	L2FinalizedBlock               uint64
-	LatestContractL2Block          uint64
-	HighestProvenContiguousL2Block uint64
-	NumProving                     uint64
-	NumWitnessgen                  uint64
-	NumUnrequested                 uint64
-}
-
 // GetProposerMetrics gets the performance metrics for the proposer.
 // TODO: Add a metric for the latest proven transaction.
-func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMetrics, error) {
+func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (opsuccinctmetrics.ProposerMetrics, error) {
 	rollupClient, err := l.RollupProvider.RollupClient(ctx)
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("getting rollup client: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("getting rollup client: %w", err)
 	}
 
 	status, err := rollupClient.SyncStatus(ctx)
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("getting sync status: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("getting sync status: %w", err)
 	}
 
 	// The unsafe head block on L2.
@@ -253,43 +242,50 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (ProposerMet
 	// The latest block number on the L2OO contract.
 	latestContractL2Block, err := l.l2ooContract.LatestBlockNumber(&bind.CallOpts{Context: ctx})
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("failed to get latest output index: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get latest output index: %w", err)
 	}
 
 	// Get the highest proven L2 block contiguous with the contract's latest block.
 	highestProvenContiguousL2Block, err := l.db.GetMaxContiguousSpanProofRange(latestContractL2Block.Uint64())
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("failed to get max contiguous span proof range: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get max contiguous span proof range: %w", err)
 	}
 
 	numProving, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusPROVING)
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("failed to get number of proofs proving: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get number of proofs proving: %w", err)
 	}
 
 	numWitnessgen, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusWITNESSGEN)
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("failed to get number of proofs witnessgen: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get number of proofs witnessgen: %w", err)
 	}
 
 	numUnrequested, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusUNREQ)
 	if err != nil {
-		return ProposerMetrics{}, fmt.Errorf("failed to get number of unrequested proofs: %w", err)
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get number of unrequested proofs: %w", err)
 	}
 
-	return ProposerMetrics{
+	metrics := opsuccinctmetrics.ProposerMetrics{
 		L2UnsafeHeadBlock:              l2UnsafeHeadBlock,
 		L2FinalizedBlock:               l2FinalizedBlock,
-		LatestContractL2Block:          latestContractL2Block.Uint64(),
-		HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
-		NumProving:                     uint64(numProving),
-		NumWitnessgen:                  uint64(numWitnessgen),
-		NumUnrequested:                 uint64(numUnrequested),
-	}, nil
+			LatestContractL2Block:          latestContractL2Block.Uint64(),
+			HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
+				NumProving:                     uint64(numProving),
+				NumWitnessgen:                  uint64(numWitnessgen),
+				NumUnrequested:                 uint64(numUnrequested),
+	}
+
+	// Record the metrics
+	if m, ok := l.Metr.(*opsuccinctmetrics.OPSuccinctMetrics); ok {
+		m.RecordProposerStatus(metrics)
+	}
+
+	return metrics, nil
 }
 
 // SendSlackNotification sends a Slack notification with the proposer metrics.
-func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics ProposerMetrics) error {
+func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics opsuccinctmetrics.ProposerMetrics) error {
 	if l.Cfg.SlackToken == "" {
 		l.Log.Info("Slack notifications disabled, token not set")
 		return nil // Slack notifications disabled if token not set

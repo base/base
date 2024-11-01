@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum-optimism/optimism/op-proposer/metrics"
 	"github.com/ethereum-optimism/optimism/op-proposer/proposer/rpc"
 	opservice "github.com/ethereum-optimism/optimism/op-service"
 	"github.com/ethereum-optimism/optimism/op-service/cliapp"
@@ -23,6 +22,8 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/log"
+
+	opsuccinctmetrics "github.com/succinctlabs/op-succinct-go/proposer/metrics"
 )
 
 var ErrAlreadyStopped = errors.New("already stopped")
@@ -67,7 +68,7 @@ type ProposerConfig struct {
 
 type ProposerService struct {
 	Log     log.Logger
-	Metrics metrics.Metricer
+	Metrics opsuccinctmetrics.OPSuccinctMetricer
 
 	ProposerConfig
 
@@ -176,9 +177,9 @@ func (ps *ProposerService) initRPCClients(ctx context.Context, cfg *CLIConfig) e
 func (ps *ProposerService) initMetrics(cfg *CLIConfig) {
 	if cfg.MetricsConfig.Enabled {
 		procName := "default"
-		ps.Metrics = metrics.NewMetrics(procName)
+		ps.Metrics = opsuccinctmetrics.NewMetrics(procName)
 	} else {
-		ps.Metrics = metrics.NoopMetrics
+		ps.Metrics = opsuccinctmetrics.NoopMetrics
 	}
 }
 
