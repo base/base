@@ -10,6 +10,10 @@ Today, you can already use OP Succinct to upgrade any existing OP Stack rollup t
 
 ## Repository Overview
 
+> [!CAUTION]
+> `main` is the development branch and may contain unstable code.
+> For production use, please use the [latest release](https://github.com/succinctlabs/op-succinct/releases).
+
 The repository is organized into the following directories:
 
 - `book`: The documentation for OP Succinct users and developers.
