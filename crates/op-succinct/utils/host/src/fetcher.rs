@@ -95,7 +95,7 @@ fn get_rpcs() -> RPCConfig {
 }
 
 /// The info to fetch for a block.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlockInfo {
     pub block_number: u64,
     pub transaction_count: u64,
