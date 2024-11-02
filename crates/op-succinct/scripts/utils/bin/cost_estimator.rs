@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
-    collections::HashMap,
     fs::{self, OpenOptions},
     future::Future,
     io::Seek,
@@ -134,35 +133,29 @@ pub fn block_on<T>(fut: impl Future<Output = T>) -> T {
     }
 }
 
-/// Run the zkVM execution process for each split range in parallel.
+/// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
+/// each block range to a CSV file (not guaranteed to be in order).
 async fn execute_blocks_parallel(
     host_clis: &[HostCli],
     ranges: Vec<SpanBatchRange>,
     prover: &ProverClient,
     l2_chain_id: u64,
     args: &HostArgs,
-) -> Vec<ExecutionStats> {
-    // Create a new execution stats map between the start and end block and the default ExecutionStats.
-    let mut execution_stats_map = HashMap::new();
-
+) {
     // Fetch all of the execution stats block ranges in parallel.
-    let exec_stats = futures::stream::iter(ranges.clone())
+    let block_data = futures::stream::iter(ranges.clone())
         .map(|range| async move {
             // Create a new data fetcher. This avoids the runtime dropping the provider dispatch task.
             let data_fetcher = OPSuccinctDataFetcher::default();
-            let mut exec_stats = ExecutionStats::default();
-            exec_stats
-                .add_block_data(&data_fetcher, range.start, range.end)
-                .await;
-            ((range.start, range.end), exec_stats)
+            let block_data = data_fetcher
+                .get_l2_block_data_range(range.start, range.end)
+                .await
+                .expect("Failed to fetch block data range.");
+            (range, block_data)
         })
         .buffered(15)
         .collect::<Vec<_>>()
         .await;
-
-    for (range, stats) in exec_stats {
-        execution_stats_map.insert(range, stats);
-    }
 
     let cargo_metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
@@ -184,8 +177,8 @@ async fn execute_blocks_parallel(
     // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
     host_clis
         .par_iter()
-        .zip(ranges.par_iter())
-        .for_each(|(host_cli, range)| {
+        .zip(block_data.par_iter())
+        .for_each(|(host_cli, (range, block_data))| {
             let sp1_stdin = get_proof_stdin(host_cli).unwrap();
 
             // TODO: Implement retries with a smaller block range if this fails.
@@ -198,14 +191,8 @@ async fn execute_blocks_parallel(
                         range.start, range.end, e
                     )
                 });
-
             // Get the existing execution stats and modify it in place.
-            let mut exec_stats = execution_stats_map
-                .get(&(range.start, range.end))
-                .unwrap()
-                .clone();
-            exec_stats.add_report_data(&report);
-            exec_stats.add_aggregate_data();
+            let execution_stats = ExecutionStats::new(block_data, &report, 0, 0);
 
             let mut file = OpenOptions::new()
                 .read(true)
@@ -221,14 +208,12 @@ async fn execute_blocks_parallel(
                 .from_writer(file);
 
             csv_writer
-                .serialize(exec_stats.clone())
+                .serialize(execution_stats.clone())
                 .expect("Failed to write execution stats to CSV.");
             csv_writer.flush().expect("Failed to flush CSV writer.");
         });
 
     info!("Execution is complete.");
-
-    execution_stats_map.values().cloned().collect()
 }
 
 /// Write the block data to a CSV file.
@@ -364,20 +349,13 @@ async fn main() -> Result<()> {
         // Get the host CLI args
         run_native_data_generation(&host_clis).await;
     }
-    let witness_generation_time_sec = start_time.elapsed().as_secs();
+    let total_witness_generation_time_sec = start_time.elapsed().as_secs();
 
     let start_time = Instant::now();
-    let execution_stats =
-        execute_blocks_parallel(&host_clis, split_ranges, &prover, l2_chain_id, &args).await;
+    execute_blocks_parallel(&host_clis, split_ranges, &prover, l2_chain_id, &args).await;
     let total_execution_time_sec = start_time.elapsed().as_secs();
 
-    let aggregate_execution_stats = aggregate_execution_stats(
-        &execution_stats,
-        total_execution_time_sec,
-        witness_generation_time_sec,
-    );
-
-    // Read the execution stats from the CSV file.
+    // Get the path to the execution report CSV file.
     let cargo_metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
     let report_path = root_dir.join(format!(
@@ -385,6 +363,7 @@ async fn main() -> Result<()> {
         l2_chain_id, args.start, args.end
     ));
 
+    // Read the execution stats from the CSV file and aggregate them to output to the user.
     let mut final_execution_stats = Vec::new();
     let mut csv_reader = csv::Reader::from_path(report_path)?;
     for result in csv_reader.deserialize() {
@@ -392,9 +371,15 @@ async fn main() -> Result<()> {
         final_execution_stats.push(stats);
     }
 
+    // Aggregate the execution stats and print them to the user.
     println!(
         "Aggregate Execution Stats for Chain {}: \n {}",
-        l2_chain_id, aggregate_execution_stats
+        l2_chain_id,
+        aggregate_execution_stats(
+            &final_execution_stats,
+            total_execution_time_sec,
+            total_witness_generation_time_sec
+        )
     );
 
     Ok(())

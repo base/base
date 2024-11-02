@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         witnessgen_executor.spawn_witnessgen(&host_cli).await?;
         witnessgen_executor.flush().await?;
     }
-    let witness_generation_time_sec = start_time.elapsed().as_secs();
+    let witness_generation_time_sec = start_time.elapsed();
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
@@ -95,13 +95,16 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(&report_dir)?;
         }
 
-        let mut stats = ExecutionStats::default();
-        stats
-            .add_block_data(&data_fetcher, args.l2_block, args.l2_block)
-            .await;
-        stats.add_report_data(&report);
-        stats.add_aggregate_data();
-        stats.add_timing_data(execution_duration.as_secs(), witness_generation_time_sec);
+        let block_data = data_fetcher
+            .get_l2_block_data_range(args.l2_block, args.l2_block)
+            .await?;
+
+        let stats = ExecutionStats::new(
+            &block_data,
+            &report,
+            witness_generation_time_sec.as_secs(),
+            execution_duration.as_secs(),
+        );
         println!("Execution Stats: \n{:?}", stats);
 
         // Write to CSV.

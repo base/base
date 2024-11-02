@@ -120,15 +120,15 @@ async fn main() -> Result<()> {
             fs::create_dir_all(&report_dir).unwrap();
         }
 
-        let mut stats = ExecutionStats::default();
-        stats
-            .add_block_data(&data_fetcher, args.start, args.end)
-            .await;
-        stats.add_report_data(&report);
-        stats.add_aggregate_data();
-        stats.add_timing_data(
-            execution_duration.as_secs(),
+        let block_data = data_fetcher
+            .get_l2_block_data_range(args.start, args.end)
+            .await?;
+
+        let stats = ExecutionStats::new(
+            &block_data,
+            &report,
             witness_generation_time_sec.as_secs(),
+            execution_duration.as_secs(),
         );
         println!("Execution Stats: \n{:?}", stats);
 
