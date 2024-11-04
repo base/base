@@ -130,15 +130,15 @@ syscall calling conventions and general syscall handling behavior.
 However, the FPVM supports a subset of Linux/MIPS syscalls with slightly different behaviors.
 The following table list summarizes the supported syscalls and their behaviors.
 
-| \$v0 | system call | \$a0            | \$a1       | \$a2         | Effect                                                                                                               |
-| ---- | ----------- | --------------- | ---------- | ------------ | -------------------------------------------------------------------------------------------------------------------- |
-| 4090 | mmap        | uint32 addr     | uint32 len | 🚫           | Allocates a page from the heap. See [heap](#heap) for details.                                                       |
-| 4045 | brk         | 🚫              | 🚫         | 🚫           | Returns a fixed address for the program break at `0x40000000`                                                        |
-| 4120 | clone       | 🚫              | 🚫         | 🚫           | Returns 1                                                                                                            |
-| 4246 | exit_group  | uint8 exit_code | 🚫         | 🚫           | Sets the Exited and ExitCode states to `true` and `$a0` respectively.                                                |
-| 4003 | read        | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details.                    |
-| 4004 | write       | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details.                   |
-| 4055 | fcntl       | uint32 fd       | int32 cmd  | 🚫           | Similar behavior as Linux/MIPS. Only the `F_GETFL` (3) cmd is supported. Sets errno to `0x16` for all other commands |
+| \$v0 | system call | \$a0            | \$a1       | \$a2         | Effect                                                                                                                                   |
+| ---- | ----------- | --------------- | ---------- | ------------ |------------------------------------------------------------------------------------------------------------------------------------------|
+| 4090 | mmap        | uint32 addr     | uint32 len | 🚫           | Allocates a page from the heap. See [heap](#heap) for details.                                                                           |
+| 4045 | brk         | 🚫              | 🚫         | 🚫           | Returns a fixed address for the program break at `0x40000000`                                                                            |
+| 4120 | clone       | 🚫              | 🚫         | 🚫           | Returns 1                                                                                                                                |
+| 4246 | exit_group  | uint8 exit_code | 🚫         | 🚫           | Sets the Exited and ExitCode states to `true` and `$a0` respectively.                                                                    |
+| 4003 | read        | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned reads. See [I/O](#io) for more details.                                        |
+| 4004 | write       | uint32 fd       | char \*buf | uint32 count | Similar behavior as Linux/MIPS with support for unaligned writes. See [I/O](#io) for more details.                                       |
+| 4055 | fcntl       | uint32 fd       | int32 cmd  | 🚫           | Similar behavior as Linux/MIPS. Only the `F_GETFD`(1) and `F_GETFL` (3) cmds are supported. Sets errno to `0x16` for all other commands. |
 
 For all of the above syscalls, an error is indicated by setting the return
 register (`$v0`) to `0xFFFFFFFF` (-1) and `errno` (`$a3`) is set accordingly.
