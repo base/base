@@ -21,6 +21,9 @@ type noopMetrics struct {
 var NoopMetrics OPSuccinctMetricer = new(noopMetrics)
 
 func (*noopMetrics) RecordProposerStatus(metrics ProposerMetrics) {}
+func (*noopMetrics) RecordError(label string, num uint64)         {}
+func (*noopMetrics) RecordProveFailure(reason string)             {}
+func (*noopMetrics) RecordWitnessGenFailure(reason string)        {}
 
 func (*noopMetrics) RecordInfo(version string) {}
 func (*noopMetrics) RecordUp()                 {}

@@ -96,8 +96,14 @@ if __name__ == "__main__":
     if L2OO_ADDRESS is None:
         raise ValueError("L2OO_ADDRESS not found in .env file")
 
+    # Get chain ID from command line args
+    if len(sys.argv) != 2:
+        print("Usage: python query_proofs.py <chain_id>")
+        sys.exit(1)
+    chain_id = sys.argv[1]
+
     print(f"L2OO_ADDRESS: {L2OO_ADDRESS}")
-    db_path = "../../db/808813/proofs.db"
+    db_path = f"../../db/{chain_id}/proofs.db"
 
     # Get all span proofs
     print("\nSpan Proofs:")

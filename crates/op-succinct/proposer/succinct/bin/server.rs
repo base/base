@@ -19,7 +19,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proposer::{
     AggProofRequest, ContractConfig, ProofResponse, ProofStatus, SpanProofRequest,
-    ValidateConfigRequest, ValidateConfigResponse,
+    UnclaimDescription, ValidateConfigRequest, ValidateConfigResponse,
 };
 use sp1_sdk::{
     network::{
@@ -221,10 +221,34 @@ async fn get_proof_status(
 
     // Time out this request if it takes too long.
     let timeout = Duration::from_secs(10);
-    let (status, maybe_proof) = tokio::time::timeout(timeout, client.get_proof_status(&proof_id))
-        .await
-        .map_err(|_| AppError(anyhow::anyhow!("Proof status request timed out")))?
-        .map_err(|e| AppError(anyhow::anyhow!("Failed to get proof status: {}", e)))?;
+    let (status, maybe_proof) =
+        match tokio::time::timeout(timeout, client.get_proof_status(&proof_id)).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => {
+                return Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ProofStatus {
+                        status: SP1ProofStatus::ProofUnspecifiedStatus.into(),
+                        proof: vec![],
+                        unclaim_description: None,
+                    }),
+                ));
+            }
+            Err(_) => {
+                return Ok((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ProofStatus {
+                        status: SP1ProofStatus::ProofUnspecifiedStatus.into(),
+                        proof: vec![],
+                        unclaim_description: None,
+                    }),
+                ));
+            }
+        };
+
+    let unclaim_description = status.unclaim_description.unwrap_or_default();
+
+    let unclaim_description_enum: UnclaimDescription = unclaim_description.into();
 
     let status: SP1ProofStatus = SP1ProofStatus::try_from(status.status)?;
     if status == SP1ProofStatus::ProofFulfilled {
@@ -239,8 +263,9 @@ async fn get_proof_status(
                 return Ok((
                     StatusCode::OK,
                     Json(ProofStatus {
-                        status: status.as_str_name().to_string(),
+                        status: status.into(),
                         proof: proof_bytes,
+                        unclaim_description: None,
                     }),
                 ));
             }
@@ -250,8 +275,9 @@ async fn get_proof_status(
                 return Ok((
                     StatusCode::OK,
                     Json(ProofStatus {
-                        status: status.as_str_name().to_string(),
+                        status: status.into(),
                         proof: proof_bytes,
+                        unclaim_description: None,
                     }),
                 ));
             }
@@ -261,19 +287,30 @@ async fn get_proof_status(
                 return Ok((
                     StatusCode::OK,
                     Json(ProofStatus {
-                        status: status.as_str_name().to_string(),
+                        status: status.into(),
                         proof: proof_bytes,
+                        unclaim_description: None,
                     }),
                 ));
             }
             _ => (),
         }
+    } else if status == SP1ProofStatus::ProofUnclaimed {
+        return Ok((
+            StatusCode::OK,
+            Json(ProofStatus {
+                status: status.into(),
+                proof: vec![],
+                unclaim_description: Some(unclaim_description_enum),
+            }),
+        ));
     }
     Ok((
         StatusCode::OK,
         Json(ProofStatus {
-            status: status.as_str_name().to_string(),
+            status: status.into(),
             proof: vec![],
+            unclaim_description: None,
         }),
     ))
 }

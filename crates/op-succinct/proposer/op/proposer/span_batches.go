@@ -14,6 +14,7 @@ type Span struct {
 	End   uint64
 }
 
+// CreateSpans creates a list of spans of size MaxBlockRangePerSpanProof from start to end. Note: The end of span i = start of span i+1.
 func (l *L2OutputSubmitter) CreateSpans(start, end uint64) []Span {
 	spans := []Span{}
 	// Create spans of size MaxBlockRangePerSpanProof from start to end.
