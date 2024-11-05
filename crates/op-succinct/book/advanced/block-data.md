@@ -2,7 +2,7 @@
 
 The `block-data` script is a convenient CLI tool to fetch the block & fee data for a given range of blocks on a rollup.
 
-> Performs better with high RPS supported on the L2 RPC endpoint.
+> Performs better with high RPS (requests per second) supported on the L2 RPC endpoint.
 
 ## Overview
 
