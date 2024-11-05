@@ -6,6 +6,12 @@ The `block-data` script is a convenient CLI tool to fetch the block & fee data f
 
 ## Overview
 
+In the root directory, add the following RPC to your `.env` file for your rollup:
+
+| Parameter | Description |
+|-----------|-------------|
+| `L2_RPC` | L2 Execution Node (`op-geth`). |
+
 To perform analysis on the fees collected on L2, you can use the `block-data` script. This script will fetch the block & fee data for each block in the range from the L2 and output a CSV file with the columns: `block_number`, `transaction_count`, `gas_used`, `total_l1_fees`, `total_tx_fees`.
 
 Compared to the cost estimator, the block data script is much faster and requires less resources, so it's recommended to use this script if you only need the block data and want to calculate data quantities like average txns per block, avg gas per block, etc.
