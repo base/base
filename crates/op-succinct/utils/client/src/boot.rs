@@ -7,8 +7,8 @@ use op_alloy_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-// ABI encoding of AggregationOutputs is 7 * 32 bytes.
-pub const AGGREGATION_OUTPUTS_SIZE: usize = 7 * 32;
+// ABI encoding of AggregationOutputs is 6 * 32 bytes.
+pub const AGGREGATION_OUTPUTS_SIZE: usize = 6 * 32;
 
 /// Hash the serialized rollup config using SHA256. Note: The rollup config is never unrolled
 /// on-chain, so switching to a different hash function is not a concern, as long as the config hash
