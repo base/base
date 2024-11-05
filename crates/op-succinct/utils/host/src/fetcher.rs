@@ -10,6 +10,7 @@ use alloy_sol_types::SolValue;
 use anyhow::anyhow;
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
+use futures::{stream, StreamExt};
 use kona_host::HostCli;
 use log::info;
 use op_alloy_consensus::OpBlock;
@@ -27,11 +28,7 @@ use op_succinct_client_utils::boot::BootInfoStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sp1_sdk::block_on;
-use std::{
-    cmp::Ordering, collections::HashMap, env, fs, path::Path, str::FromStr, sync::Arc,
-    time::Duration,
-};
-use tokio::time::sleep;
+use std::{cmp::Ordering, collections::HashMap, env, fs, path::Path, str::FromStr, sync::Arc};
 
 use alloy_primitives::{keccak256, Bytes, U256, U64};
 
@@ -373,7 +370,7 @@ impl OPSuccinctDataFetcher {
                     })
                 }
             })
-            .buffered(300)
+            .buffered(100)
             .collect::<Vec<Result<BlockInfo>>>()
             .await;
 
@@ -533,25 +530,15 @@ impl OPSuccinctDataFetcher {
 
     /// Fetch headers for a range of blocks inclusive.
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
-        let mut headers: Vec<Header> = Vec::with_capacity((end - start + 1).try_into().unwrap());
+        let headers =
+            stream::iter(start..=end)
+                .map(|block_number| async move {
+                    self.get_l1_header(block_number.into()).await.unwrap()
+                })
+                .buffered(100)
+                .collect()
+                .await;
 
-        // Note: Node rate limits at 300 requests per second.
-        let batch_size = 200;
-        let mut block_number = start;
-        while block_number <= end {
-            let batch_end = block_number + batch_size - 1;
-            let batch_headers: Vec<Header> = futures::future::join_all(
-                (block_number..=batch_end.min(end)).map(|num| self.get_l1_header(num.into())),
-            )
-            .await
-            .into_iter()
-            .map(|header| header.unwrap())
-            .collect();
-
-            headers.extend(batch_headers);
-            block_number += batch_size;
-            sleep(Duration::from_millis(1500)).await;
-        }
         Ok(headers)
     }
 
@@ -908,7 +895,7 @@ mod tests {
                         vec![l1_block_number_hex.into()],
                     )
                 })
-                .buffered(300)
+                .buffered(100)
                 .collect::<Vec<_>>()
                 .await;
 
