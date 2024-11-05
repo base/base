@@ -20,6 +20,10 @@ name = "cost-estimator"
 path = "bin/cost_estimator.rs"
 
 [[bin]]
+name = "block-data"
+path = "bin/block_data.rs"
+
+[[bin]]
 name = "fetch-rollup-config"
 path = "bin/fetch_rollup_config.rs"
 

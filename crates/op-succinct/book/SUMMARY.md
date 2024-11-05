@@ -11,4 +11,5 @@
   - [Verify the OP Succinct binaries](./advanced/verify-binaries.md)
   - [L2 Node Setup](./advanced/node-setup.md)
   - [Cost Estimator CLI Tool](./advanced/cost-estimator.md)
+  - [Block Data CLI Tool](./advanced/block-data.md)
 - [FAQ](./faq.md)
