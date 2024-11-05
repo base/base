@@ -42,7 +42,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice An array of L2 output proposals.
     Types.OutputProposal[] internal l2Outputs;
 
-    /// @notice The interval in L2 blocks at which checkpoints must be submitted.
+    /// @notice The minimum interval in L2 blocks at which checkpoints must be submitted.
     /// @custom:network-specific
     uint256 public submissionInterval;
 
