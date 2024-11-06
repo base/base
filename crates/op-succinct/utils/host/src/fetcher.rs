@@ -138,8 +138,7 @@ impl OPSuccinctDataFetcher {
             ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l2_rpc).unwrap()),
         );
 
-        let rollup_config =
-            Self::fetch_and_save_rollup_config(&rpc_config.l2_node_rpc, &rpc_config.l2_rpc).await?;
+        let rollup_config = Self::fetch_and_save_rollup_config(&rpc_config).await?;
 
         Ok(OPSuccinctDataFetcher {
             rpc_config,
@@ -443,10 +442,11 @@ impl OPSuccinctDataFetcher {
     /// Fetch the rollup config. Combines the rollup config from `optimism_rollupConfig` and the
     /// chain config from `debug_chainConfig`. Saves the rollup config to the rollup config file and
     /// in memory.
-    async fn fetch_and_save_rollup_config(l2_rpc: &str, l2_node_rpc: &str) -> Result<RollupConfig> {
+    async fn fetch_and_save_rollup_config(rpc_config: &RPCConfig) -> Result<RollupConfig> {
         let rollup_config =
-            Self::fetch_rpc_data(l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
-        let chain_config = Self::fetch_rpc_data(l2_rpc, "debug_chainConfig", vec![]).await?;
+            Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
+        let chain_config =
+            Self::fetch_rpc_data(&rpc_config.l2_rpc, "debug_chainConfig", vec![]).await?;
         let rollup_config = merge_rollup_config(&rollup_config, &chain_config)?;
 
         // Save rollup config to the rollup config file.
