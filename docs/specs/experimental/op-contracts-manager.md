@@ -177,7 +177,7 @@ used as the source of truth for registrations.
 
 This means, for example, if deploying a chain with a chain ID of 10—which is OP
 Mainnet's chain ID—deployment will execute successfully, but the entry in OP
-Stack Manager may be overwritten in a future upgrade. Therefore, chain ID
+Contracts Manager may be overwritten in a future upgrade. Therefore, chain ID
 uniqueness is not enforced by the OP Contracts Manager, and it is strongly
 recommended to only use chain IDs that are not already present in the
 [ethereum-lists/chains] repository.
