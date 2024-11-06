@@ -1,3 +1,4 @@
+use alloy::eips::BlockId;
 use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
@@ -30,10 +31,10 @@ pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 struct CostEstimatorArgs {
     /// The start block of the range to execute.
     #[clap(long)]
-    start: u64,
+    start: Option<u64>,
     /// The end block of the range to execute.
     #[clap(long)]
-    end: u64,
+    end: Option<u64>,
     /// The number of blocks to execute in a single batch.
     #[clap(long)]
     batch_size: Option<u64>,
@@ -131,7 +132,8 @@ async fn execute_blocks_parallel(
     ranges: Vec<SpanBatchRange>,
     prover: &ProverClient,
     l2_chain_id: u64,
-    args: &CostEstimatorArgs,
+    start: u64,
+    end: u64,
 ) {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
         .await
@@ -154,7 +156,7 @@ async fn execute_blocks_parallel(
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
     let report_path = root_dir.join(format!(
         "execution-reports/{}/{}-{}-report.csv",
-        l2_chain_id, args.start, args.end
+        l2_chain_id, start, end
     ));
     // Create the parent directory if it doesn't exist
     if let Some(parent) = report_path.parent() {
@@ -280,7 +282,22 @@ async fn main() -> Result<()> {
 
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-    let split_ranges = split_range(args.start, args.end, l2_chain_id, args.batch_size);
+    // If the end block is not provided, use the latest finalized block.
+    let l2_end_block = match args.end {
+        Some(end) => end,
+        None => {
+            let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
+            header.number
+        }
+    };
+
+    // If the start block is not provided, use the start block - 5.
+    let l2_start_block = match args.start {
+        Some(start) => start,
+        None => l2_end_block - 5,
+    };
+
+    let split_ranges = split_range(l2_start_block, l2_end_block, l2_chain_id, args.batch_size);
 
     info!(
         "The span batch ranges which will be executed: {:?}",
@@ -315,7 +332,15 @@ async fn main() -> Result<()> {
     let total_witness_generation_time_sec = start_time.elapsed().as_secs();
 
     let start_time = Instant::now();
-    execute_blocks_parallel(&host_clis, split_ranges, &prover, l2_chain_id, &args).await;
+    execute_blocks_parallel(
+        &host_clis,
+        split_ranges,
+        &prover,
+        l2_chain_id,
+        l2_start_block,
+        l2_end_block,
+    )
+    .await;
     let total_execution_time_sec = start_time.elapsed().as_secs();
 
     // Get the path to the execution report CSV file.
@@ -323,7 +348,7 @@ async fn main() -> Result<()> {
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
     let report_path = root_dir.join(format!(
         "execution-reports/{}/{}-{}-report.csv",
-        l2_chain_id, args.start, args.end
+        l2_chain_id, l2_start_block, l2_end_block
     ));
 
     // Read the execution stats from the CSV file and aggregate them to output to the user.

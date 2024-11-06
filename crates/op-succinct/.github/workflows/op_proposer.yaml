@@ -5,12 +5,14 @@ on:
     branches:
       - main
     paths:
-      - 'proposer/**', 'elf/**'
+      - 'proposer/**'
+      - 'elf/**'
   push:
     branches:
       - main
     paths:
-      - 'proposer/**', 'elf/**'
+      - 'proposer/**'
+      - 'elf/**'
 
 jobs:
   test_op_proposer_go:

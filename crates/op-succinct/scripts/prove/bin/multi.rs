@@ -1,3 +1,4 @@
+use alloy_eips::BlockId;
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
@@ -17,11 +18,11 @@ pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 struct Args {
     /// Start L2 block number.
     #[arg(short, long)]
-    start: u64,
+    start: Option<u64>,
 
     /// End L2 block number.
     #[arg(short, long)]
-    end: u64,
+    end: Option<u64>,
 
     /// Verbosity level.
     #[arg(short, long, default_value = "0")]
@@ -60,8 +61,23 @@ async fn main() -> Result<()> {
         CacheMode::DeleteCache
     };
 
+    // If the end block is not provided, use the latest finalized block.
+    let l2_end_block = match args.end {
+        Some(end) => end,
+        None => {
+            let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
+            header.number
+        }
+    };
+
+    // If the start block is not provided, use the end block - 5.
+    let l2_start_block = match args.start {
+        Some(start) => start,
+        None => l2_end_block - 5,
+    };
+
     let host_cli = data_fetcher
-        .get_host_cli_args(args.start, args.end, ProgramType::Multi, cache_mode)
+        .get_host_cli_args(l2_start_block, l2_end_block, ProgramType::Multi, cache_mode)
         .await?;
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
@@ -100,7 +116,10 @@ async fn main() -> Result<()> {
         }
         // Save the proof to the proof directory corresponding to the chain ID.
         proof
-            .save(format!("{}/{}-{}.bin", proof_dir, args.start, args.end))
+            .save(format!(
+                "{}/{}-{}.bin",
+                proof_dir, l2_start_block, l2_end_block
+            ))
             .expect("saving proof failed");
     } else {
         let start_time = Instant::now();
@@ -113,7 +132,7 @@ async fn main() -> Result<()> {
         let l2_chain_id = data_fetcher.get_l2_chain_id().await.unwrap();
         let report_path = format!(
             "execution-reports/multi/{}/{}-{}.csv",
-            l2_chain_id, args.start, args.end
+            l2_chain_id, l2_start_block, l2_end_block
         );
 
         // Create the report directory if it doesn't exist.
@@ -123,7 +142,7 @@ async fn main() -> Result<()> {
         }
 
         let block_data = data_fetcher
-            .get_l2_block_data_range(args.start, args.end)
+            .get_l2_block_data_range(l2_start_block, l2_end_block)
             .await?;
 
         let stats = ExecutionStats::new(
