@@ -42,6 +42,7 @@ op-alloy-genesis.workspace = true
 
 # alloy
 alloy-primitives = { workspace = true }
+alloy-eips = { workspace = true }
 
 # sp1
 sp1-sdk = { workspace = true }

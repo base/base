@@ -4345,6 +4345,7 @@ dependencies = [
 name = "op-succinct-prove"
 version = "0.1.0"
 dependencies = [
+ "alloy-eips",
  "alloy-primitives 0.8.8",
  "anyhow",
  "cargo_metadata",
