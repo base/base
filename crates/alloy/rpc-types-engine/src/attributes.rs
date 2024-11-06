@@ -1,11 +1,13 @@
 //! Optimism-specific payload attributes.
 
-use crate::error::EIP1559ParamError;
 use alloc::vec::Vec;
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Bytes, B64};
 use alloy_rpc_types_engine::PayloadAttributes;
-use op_alloy_protocol::{fee::decode_eip_1559_params, L2BlockInfo};
+use op_alloy_consensus::eip1559::{
+    decode_eip_1559_params, decode_holocene_extra_data, EIP1559ParamError,
+};
+use op_alloy_protocol::L2BlockInfo;
 
 /// Optimism Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -41,31 +43,9 @@ impl OpPayloadAttributes {
         &self,
         default_base_fee_params: BaseFeeParams,
     ) -> Result<Bytes, EIP1559ParamError> {
-        let eip_1559_params = self.eip_1559_params.ok_or(EIP1559ParamError::NoEIP1559Params)?;
-
-        let mut extra_data = [0u8; 9];
-        // If eip 1559 params aren't set, use the canyon base fee param constants
-        // otherwise use them
-        if eip_1559_params.is_zero() {
-            // Try casting max_change_denominator to u32
-            let max_change_denominator: u32 = (default_base_fee_params.max_change_denominator)
-                .try_into()
-                .map_err(|_| EIP1559ParamError::DenominatorOverflow)?;
-
-            // Try casting elasticity_multiplier to u32
-            let elasticity_multiplier: u32 = (default_base_fee_params.elasticity_multiplier)
-                .try_into()
-                .map_err(|_| EIP1559ParamError::ElasticityOverflow)?;
-
-            // Copy the values safely
-            extra_data[1..5].copy_from_slice(&max_change_denominator.to_be_bytes());
-            extra_data[5..9].copy_from_slice(&elasticity_multiplier.to_be_bytes());
-        } else {
-            let (elasticity, denominator) = decode_eip_1559_params(eip_1559_params);
-            extra_data[1..5].copy_from_slice(&denominator.to_be_bytes());
-            extra_data[5..9].copy_from_slice(&elasticity.to_be_bytes());
-        }
-        Ok(Bytes::copy_from_slice(&extra_data))
+        self.eip_1559_params
+            .map(|params| decode_holocene_extra_data(params, default_base_fee_params))
+            .ok_or(EIP1559ParamError::NoEIP1559Params)?
     }
 
     /// Extracts the Holocene 1599 parameters from the encoded form:

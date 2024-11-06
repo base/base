@@ -16,6 +16,7 @@ workspace = true
 
 [dependencies]
 # Workspace
+op-alloy-consensus.workspace = true
 op-alloy-protocol.workspace = true
 
 # Alloy
@@ -48,6 +49,7 @@ std = [
   "alloy-rpc-types-engine/ssz",
   "alloy-primitives/std",
   "alloy-rpc-types-engine/std",
+  "op-alloy-consensus/std",
   "op-alloy-protocol/std",
 ]
 serde = [

@@ -1,5 +1,5 @@
 //! This module contains the L1 block fee calculation function.
-use alloy_primitives::{B64, U256};
+use alloy_primitives::U256;
 
 use crate::utils::flz_compress_len;
 use core::ops::Mul;
@@ -160,17 +160,6 @@ fn calculate_l1_fee_scaled_ecotone(
     let blob_cost_per_byte = blob_base_fee.saturating_mul(blob_base_fee_scalar);
 
     U256::from(calldata_cost_per_byte).saturating_add(blob_cost_per_byte)
-}
-
-/// Extracts the Holocene 1599 parameters from the encoded form:
-/// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
-///
-/// Returns (`elasticity`, `denominator`)
-pub fn decode_eip_1559_params(eip_1559_params: B64) -> (u32, u32) {
-    let denominator: [u8; 4] = eip_1559_params.0[..4].try_into().expect("sufficient length");
-    let elasticity: [u8; 4] = eip_1559_params.0[4..8].try_into().expect("sufficient length");
-
-    (u32::from_be_bytes(elasticity), u32::from_be_bytes(denominator))
 }
 
 #[cfg(test)]
