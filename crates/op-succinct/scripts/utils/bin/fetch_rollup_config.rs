@@ -45,8 +45,9 @@ struct L2OOConfig {
 /// - vkey: Get the vkey from the aggregation program ELF.
 /// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
-    let data_fetcher = OPSuccinctDataFetcher::default();
-
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
+        .await
+        .unwrap();
     // Get the workspace root with cargo metadata to make the paths.
     let workspace_root = PathBuf::from(
         cargo_metadata::MetadataCommand::new()
@@ -67,7 +68,7 @@ async fn update_l2oo_config() -> Result<()> {
     // Convert the starting block number to a hex string for the optimism_outputAtBlock RPC call.
     let starting_block_number_hex = format!("0x{:x}", l2oo_config.starting_block_number);
     let optimism_output_data: Value = data_fetcher
-        .fetch_rpc_data(
+        .fetch_rpc_data_with_mode(
             RPCMode::L2Node,
             "optimism_outputAtBlock",
             vec![starting_block_number_hex.into()],
@@ -75,13 +76,13 @@ async fn update_l2oo_config() -> Result<()> {
         .await?;
 
     // Hash the rollup config.
-    let hash: B256 = hash_rollup_config(&data_fetcher.rollup_config);
+    let hash: B256 = hash_rollup_config(data_fetcher.rollup_config.as_ref().unwrap());
     // Set the rollup config hash.
     let hash_str = format!("0x{:x}", hash);
     l2oo_config.rollup_config_hash = hash_str;
 
     // Set the L2 block time from the rollup config.
-    l2oo_config.l2_block_time = data_fetcher.rollup_config.block_time;
+    l2oo_config.l2_block_time = data_fetcher.rollup_config.as_ref().unwrap().block_time;
 
     // Set the starting output root and starting timestamp.
     l2oo_config.starting_output_root = optimism_output_data["outputRoot"]

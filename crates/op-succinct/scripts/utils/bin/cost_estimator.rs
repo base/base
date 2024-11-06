@@ -133,11 +133,13 @@ async fn execute_blocks_parallel(
     l2_chain_id: u64,
     args: &CostEstimatorArgs,
 ) {
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
+        .await
+        .unwrap();
+
     // Fetch all of the execution stats block ranges in parallel.
     let block_data = futures::stream::iter(ranges.clone())
-        .map(|range| async move {
-            // Create a new data fetcher. This avoids the runtime dropping the provider dispatch task.
-            let data_fetcher = OPSuccinctDataFetcher::default();
+        .map(|range| async {
             let block_data = data_fetcher
                 .get_l2_block_data_range(range.start, range.end)
                 .await

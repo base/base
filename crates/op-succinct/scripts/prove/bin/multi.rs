@@ -50,7 +50,9 @@ async fn main() -> Result<()> {
     }
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::default();
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
+        .await
+        .unwrap();
 
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache
