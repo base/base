@@ -34,6 +34,4 @@ mod sync;
 pub use sync::{L1BlockRef, L2BlockRef, SyncStatus};
 
 mod transaction;
-pub use transaction::{
-    OpTransactionFields, OpTransactionRequest, Transaction, TransactionConversionError,
-};
+pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};

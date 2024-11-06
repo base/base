@@ -260,11 +260,7 @@ impl SpanBatchTransactions {
                 .tx_sigs
                 .get(idx as usize)
                 .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
-            let is_protected = self
-                .protected_bits
-                .get_bit(idx as usize)
-                .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?
-                == 1;
+            let is_protected = self.protected_bits.get_bit(idx as usize).unwrap_or_default() == 1;
             let tx_envelope = tx.to_enveloped_tx(*nonce, *gas, to, chain_id, sig, is_protected)?;
             let mut buf = Vec::new();
             tx_envelope.encode_2718(&mut buf);
