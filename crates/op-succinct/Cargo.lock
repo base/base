@@ -4376,6 +4376,8 @@ dependencies = [
  "futures",
  "kona-host",
  "log",
+ "op-alloy-consensus",
+ "op-alloy-network",
  "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",

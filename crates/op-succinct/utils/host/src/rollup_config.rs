@@ -114,22 +114,6 @@ pub(crate) fn merge_rollup_config(
     Ok(rollup_config)
 }
 
-/// Save rollup config to the rollup config file.
-pub fn save_rollup_config(rollup_config: &RollupConfig) -> Result<()> {
-    let rollup_config_path = get_rollup_config_path(rollup_config.l2_chain_id)?;
-
-    // Create the directory for the rollup config if it doesn't exist.
-    let rollup_configs_dir = rollup_config_path.parent().unwrap();
-    if !rollup_configs_dir.exists() {
-        fs::create_dir_all(rollup_configs_dir)?;
-    }
-
-    // Write the rollup config to the file.
-    let rollup_config_str = serde_json::to_string_pretty(rollup_config)?;
-    fs::write(rollup_config_path, rollup_config_str)?;
-    Ok(())
-}
-
 /// Get the path to the rollup config file for the given chain id.
 pub fn get_rollup_config_path(l2_chain_id: u64) -> Result<PathBuf> {
     let workspace_root = cargo_metadata::MetadataCommand::new()
