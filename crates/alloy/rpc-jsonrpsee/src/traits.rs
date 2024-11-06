@@ -6,11 +6,7 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use op_alloy_rpc_types::{
-    config::RollupConfig,
-    net::{PeerDump, PeerInfo, PeerStats},
-    output::OutputResponse,
-    safe_head::SafeHeadResponse,
-    sync::SyncStatus,
+    OutputResponse, PeerDump, PeerInfo, PeerStats, RollupConfig, SafeHeadResponse, SyncStatus,
 };
 use op_alloy_rpc_types_engine::{ProtocolVersion, SuperchainSignal};
 use std::net::IpAddr;
