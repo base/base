@@ -276,7 +276,7 @@ async fn main() -> Result<()> {
     dotenv::from_path(&args.env_file).ok();
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::default();
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
