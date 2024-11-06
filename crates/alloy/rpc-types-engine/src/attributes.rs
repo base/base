@@ -67,6 +67,14 @@ impl OpPayloadAttributes {
         }
         Ok(Bytes::copy_from_slice(&extra_data))
     }
+
+    /// Extracts the Holocene 1599 parameters from the encoded form:
+    /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>
+    ///
+    /// Returns (`elasticity`, `denominator`)
+    pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
+        self.eip_1559_params.map(decode_eip_1559_params)
+    }
 }
 
 /// Optimism Payload Attributes with parent block reference.
