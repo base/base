@@ -25,3 +25,6 @@ mod superchain;
 pub use superchain::{
     ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
 };
+
+mod error;
+pub use error::EIP1559ParamError;
