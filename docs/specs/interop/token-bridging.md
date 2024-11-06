@@ -7,7 +7,7 @@
 - [Overview](#overview)
 - [`SuperchainERC20` standard](#superchainerc20-standard)
   - [Properties](#properties)
-  - [`ICrosschainERC20`](#icrosschainerc20)
+  - [`IERC7802`](#ierc7802)
     - [`crosschainMint`](#crosschainmint)
     - [`crosschainBurn`](#crosschainburn)
     - [`CrosschainMint`](#crosschainmint)
@@ -32,7 +32,8 @@ The `SuperchainERC20Bridge` is a predeploy that builds on the messaging protocol
 
 ### Properties
 
-The standard will build on top of ERC20, implement the [`ICrosschainERC20`](#icrosschainerc20)
+The standard will build on top of ERC20, implement the
+[`IERC7802`](https://github.com/ethereum/ERCs/pull/692)
 interface and include the following properties:
 
 1. Only allow `SuperchainERC20Bridge` to call
@@ -58,10 +59,11 @@ Notice that ERC20s that do not implement the standard can still be fungible
 using interop message passing
 using a custom bridge or implementing `sendERC20` and `relayERC20` on their own contracts.
 
-### `ICrosschainERC20`
+### `IERC7802`
 
-Implementations of the `SuperchainERC20` standard will need to implement the `ICrosschainERC20`
-token standard, that includes two external functions and two events:
+Implementations of the `SuperchainERC20` standard will
+be required to implement the `IERC7802` interface,
+that includes two external functions and two events:
 
 #### `crosschainMint`
 

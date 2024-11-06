@@ -888,8 +888,8 @@ in the target address `_to` at `_chainId` and emit the `SentERC20` event includi
 
 To burn the token, the `sendERC20` function
 calls `crosschainBurn` in the token contract,
-which is included as part of the the `ICrosschainERC20`
-[interface](./token-bridging.md#crosschainburn)
+which is included as part of the the
+[`IERC7802` interface](https://github.com/ethereum/ERCs/pull/692)
 implemented by the `SuperchainERC20` standard.
 
 Returns the `msgHash_` crafted by the `L2ToL2CrossChainMessenger`.
@@ -909,8 +909,8 @@ and emit an event including the `_tokenAddress`, the `_from` and chain id from t
 
 To mint the token, the `relayERC20` function
 calls `crosschainMint` in the token contract,
-which is included as part of the the `ICrosschainERC20`
-[interface](./token-bridging.md#crosschainmint)
+which is included as part of the the
+[`IERC7802` interface](https://github.com/ethereum/ERCs/pull/692)
 implemented by the `SuperchainERC20` standard.
 
 ```solidity
