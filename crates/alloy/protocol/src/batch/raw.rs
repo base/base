@@ -93,9 +93,6 @@ impl RawSpanBatch {
             }
         }
 
-        // Recover `v` values in transaction signatures within the batch.
-        self.payload.txs.recover_v(chain_id)?;
-
         // Get all transactions in the batch.
         let enveloped_txs = self.payload.txs.full_txs(chain_id)?;
 
@@ -165,8 +162,7 @@ mod test {
     fn test_decode_encode_raw_span_batch() {
         // Load in the raw span batch from the `op-node` derivation pipeline implementation.
         let raw_span_batch_hex = include_bytes!("./testdata/raw_batch.hex");
-        let mut raw_span_batch = RawSpanBatch::decode(&mut raw_span_batch_hex.as_slice()).unwrap();
-        raw_span_batch.payload.txs.recover_v(981).unwrap();
+        let raw_span_batch = RawSpanBatch::decode(&mut raw_span_batch_hex.as_slice()).unwrap();
 
         let mut encoding_buf = Vec::new();
         raw_span_batch.encode(&mut encoding_buf).unwrap();

@@ -2,7 +2,7 @@
 
 use crate::{SpanBatchError, SpanDecodingError};
 use alloy_consensus::{SignableTransaction, Signed, TxLegacy};
-use alloy_primitives::{Address, Signature, TxKind, U256};
+use alloy_primitives::{Address, PrimitiveSignature as Signature, TxKind, U256};
 use alloy_rlp::{Bytes, RlpDecodable, RlpEncodable};
 use op_alloy_consensus::OpTxEnvelope;
 
@@ -26,9 +26,10 @@ impl SpanBatchLegacyTransactionData {
         to: Option<Address>,
         chain_id: u64,
         signature: Signature,
+        is_protected: bool,
     ) -> Result<OpTxEnvelope, SpanBatchError> {
         let legacy_tx = TxLegacy {
-            chain_id: Some(chain_id),
+            chain_id: is_protected.then_some(chain_id),
             nonce,
             gas_price: u128::from_be_bytes(
                 self.gas_price.to_be_bytes::<32>()[16..].try_into().map_err(|_| {

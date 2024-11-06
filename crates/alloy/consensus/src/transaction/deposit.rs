@@ -4,7 +4,9 @@ use super::OpTxType;
 use crate::DepositTransaction;
 use alloy_consensus::Transaction;
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{Address, Bytes, ChainId, Parity, Signature, TxKind, B256, U256};
+use alloy_primitives::{
+    Address, Bytes, ChainId, PrimitiveSignature as Signature, TxKind, B256, U256,
+};
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
 };
@@ -33,7 +35,15 @@ pub struct TxDeposit {
     #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "gas"))]
     pub gas_limit: u64,
     /// Field indicating if this transaction is exempt from the L2 gas limit.
-    #[cfg_attr(feature = "serde", serde(with = "alloy_serde::quantity", rename = "isSystemTx"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            with = "alloy_serde::quantity",
+            rename = "isSystemTx",
+            skip_serializing_if = "core::ops::Not::not"
+        )
+    )]
     pub is_system_transaction: bool,
     /// Input has two uses depending if transaction is Create or Call (if `to` field is None or
     /// Some).
@@ -72,7 +82,7 @@ impl TxDeposit {
     /// - `gas_limit`
     /// - `is_system_transaction`
     /// - `input`
-    pub fn decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+    pub fn rlp_decode_fields(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self {
             source_hash: Decodable::decode(buf)?,
             from: Decodable::decode(buf)?,
@@ -90,9 +100,30 @@ impl TxDeposit {
         })
     }
 
+    /// Decodes the transaction from RLP bytes.
+    pub fn rlp_decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+        let remaining = buf.len();
+
+        if header.payload_length > remaining {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+
+        let this = Self::rlp_decode_fields(buf)?;
+
+        if buf.len() + header.payload_length != remaining {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        Ok(this)
+    }
+
     /// Outputs the length of the transaction's fields, without a RLP header or length of the
     /// eip155 fields.
-    pub(crate) fn fields_len(&self) -> usize {
+    pub(crate) fn rlp_encoded_fields_length(&self) -> usize {
         self.source_hash.length()
             + self.from.length()
             + self.to.length()
@@ -105,7 +136,7 @@ impl TxDeposit {
 
     /// Encodes only the transaction's fields into the desired buffer, without a RLP header.
     /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/deposits.md#the-deposited-transaction-type>
-    pub(crate) fn encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
+    pub(crate) fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.source_hash.encode(out);
         self.from.encode(out);
         self.to.encode(out);
@@ -138,46 +169,55 @@ impl TxDeposit {
         OpTxType::Deposit
     }
 
-    /// Inner encoding function that is used for both rlp [`Encodable`] trait and for calculating
-    /// hash that for eip2718 does not require rlp header
-    pub fn encode_inner(&self, out: &mut dyn BufMut, with_header: bool) {
-        let payload_length = self.fields_len();
-        if with_header {
-            Header {
-                list: false,
-                payload_length: 1 + Header { list: true, payload_length }.length() + payload_length,
-            }
-            .encode(out);
-        }
-        out.put_u8(self.tx_type() as u8);
-        let header = Header { list: true, payload_length };
-        header.encode(out);
-        self.encode_fields(out);
+    /// Create an rlp header for the transaction.
+    fn rlp_header(&self) -> Header {
+        Header { list: true, payload_length: self.rlp_encoded_fields_length() }
     }
 
-    /// Output the length of the RLP signed transaction encoding.
-    ///
-    /// If `with_header` is true, the length includes the RLP header.
-    pub fn encoded_len(&self, with_header: bool) -> usize {
-        // Count the length of the payload
-        let payload_length = self.fields_len();
+    /// RLP encodes the transaction.
+    pub fn rlp_encode(&self, out: &mut dyn BufMut) {
+        self.rlp_header().encode(out);
+        self.rlp_encode_fields(out);
+    }
 
-        // 'transaction type byte length' + 'header length' + 'payload length'
-        let inner_payload_length =
-            1 + Header { list: true, payload_length }.length() + payload_length;
+    /// Get the length of the transaction when RLP encoded.
+    pub fn rlp_encoded_length(&self) -> usize {
+        self.rlp_header().length_with_payload()
+    }
 
-        if with_header {
-            Header { list: true, payload_length: inner_payload_length }.length()
-                + inner_payload_length
-        } else {
-            inner_payload_length
-        }
+    /// Get the length of the transaction when EIP-2718 encoded. This is the
+    /// 1 byte type flag + the length of the RLP encoded transaction.
+    pub fn eip2718_encoded_length(&self) -> usize {
+        self.rlp_encoded_length() + 1
+    }
+
+    /// EIP-2718 encode the transaction with the given signature and the default
+    /// type flag.
+    pub fn eip2718_encode(&self, out: &mut dyn BufMut) {
+        out.put_u8(self.tx_type() as u8);
+        self.rlp_encode(out);
+    }
+
+    fn network_header(&self) -> Header {
+        Header { list: false, payload_length: self.eip2718_encoded_length() }
+    }
+
+    /// Get the length of the transaction when network encoded. This is the
+    /// EIP-2718 encoded length with an outer RLP header.
+    pub fn network_encoded_length(&self) -> usize {
+        self.network_header().length_with_payload()
+    }
+
+    /// Network encode the transaction with the given signature.
+    pub fn network_encode(&self, out: &mut dyn BufMut) {
+        self.network_header().encode(out);
+        self.eip2718_encode(out);
     }
 
     /// Returns the signature for the optimism deposit transactions, which don't include a
     /// signature.
     pub fn signature() -> Signature {
-        Signature::new(U256::ZERO, U256::ZERO, Parity::Parity(false))
+        Signature::new(U256::ZERO, U256::ZERO, false)
     }
 }
 
@@ -245,27 +285,43 @@ impl Transaction for TxDeposit {
 
 impl Encodable for TxDeposit {
     fn encode(&self, out: &mut dyn BufMut) {
-        Header { list: true, payload_length: self.fields_len() }.encode(out);
-        self.encode_fields(out);
+        Header { list: true, payload_length: self.rlp_encoded_fields_length() }.encode(out);
+        self.rlp_encode_fields(out);
     }
 
     fn length(&self) -> usize {
-        let payload_length = self.fields_len();
+        let payload_length = self.rlp_encoded_fields_length();
         Header { list: true, payload_length }.length() + payload_length
     }
 }
 
 impl Decodable for TxDeposit {
     fn decode(data: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let header = Header::decode(data)?;
-        let remaining_len = data.len();
-
-        if header.payload_length > remaining_len {
-            return Err(alloy_rlp::Error::InputTooShort);
-        }
-
-        Self::decode_fields(data)
+        Self::rlp_decode(data)
     }
+}
+
+/// Deposit transactions don't have a signature, however, we include an empty signature in the
+/// response for better compatibility.
+///
+/// This function can be used as `serialize_with` serde attribute for the [`TxDeposit`] and will
+/// flatten [`TxDeposit::signature`] into response.
+#[cfg(feature = "serde")]
+pub fn serde_deposit_tx_rpc<S: serde::Serializer>(
+    value: &TxDeposit,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct SerdeHelper<'a> {
+        #[serde(flatten)]
+        value: &'a TxDeposit,
+        #[serde(flatten)]
+        signature: Signature,
+    }
+
+    SerdeHelper { value, signature: TxDeposit::signature() }.serialize(serializer)
 }
 
 #[cfg(test)]
@@ -356,8 +412,8 @@ mod tests {
         };
 
         let mut buffer = BytesMut::new();
-        original.encode_fields(&mut buffer);
-        let decoded = TxDeposit::decode_fields(&mut &buffer[..]).expect("Failed to decode");
+        original.rlp_encode_fields(&mut buffer);
+        let decoded = TxDeposit::rlp_decode_fields(&mut &buffer[..]).expect("Failed to decode");
 
         assert_eq!(original, decoded);
     }
@@ -379,7 +435,7 @@ mod tests {
         tx_deposit.encode(&mut buffer_with_header);
 
         let mut buffer_without_header = BytesMut::new();
-        tx_deposit.encode_fields(&mut buffer_without_header);
+        tx_deposit.rlp_encode_fields(&mut buffer_without_header);
 
         assert!(buffer_with_header.len() > buffer_without_header.len());
     }
@@ -397,7 +453,7 @@ mod tests {
             input: Bytes::default(),
         };
 
-        assert!(tx_deposit.size() > tx_deposit.fields_len());
+        assert!(tx_deposit.size() > tx_deposit.rlp_encoded_fields_length());
     }
 
     #[test]
@@ -414,10 +470,10 @@ mod tests {
         };
 
         let mut buffer_with_header = BytesMut::new();
-        tx_deposit.encode_inner(&mut buffer_with_header, true);
+        tx_deposit.network_encode(&mut buffer_with_header);
 
         let mut buffer_without_header = BytesMut::new();
-        tx_deposit.encode_inner(&mut buffer_without_header, false);
+        tx_deposit.eip2718_encode(&mut buffer_without_header);
 
         assert!(buffer_with_header.len() > buffer_without_header.len());
     }
@@ -435,8 +491,8 @@ mod tests {
             input: Bytes::default(),
         };
 
-        let total_len = tx_deposit.encoded_len(true);
-        let len_without_header = tx_deposit.encoded_len(false);
+        let total_len = tx_deposit.network_encoded_length();
+        let len_without_header = tx_deposit.eip2718_encoded_length();
 
         assert!(total_len > len_without_header);
     }

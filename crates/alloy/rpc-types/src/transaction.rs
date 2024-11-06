@@ -1,39 +1,28 @@
 //! Optimism specific types related to transactions.
 
-use alloc::string::{String, ToString};
-use alloy_consensus::{
-    SignableTransaction, Transaction as ConsensusTransaction, TxEip1559, TxEip2930, TxEip7702,
-    TxLegacy,
-};
-use alloy_eips::{eip2718::Eip2718Error, eip2930::AccessList, eip7702::SignedAuthorization};
-use alloy_primitives::{Address, BlockHash, Bytes, ChainId, SignatureError, TxKind, B256, U256};
+use alloy_consensus::Transaction as ConsensusTransaction;
+use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_primitives::{Address, BlockHash, Bytes, ChainId, TxKind, B256, U256};
 use alloy_serde::OtherFields;
-use op_alloy_consensus::{OpTxEnvelope, OpTxType, TxDeposit};
+use op_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
 
 mod request;
 pub use request::OpTransactionRequest;
 
 /// OP Transaction type
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[serde(rename_all = "camelCase")]
+#[derive(
+    Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Deref, derive_more::DerefMut,
+)]
+#[serde(try_from = "tx_serde::TransactionSerdeHelper", into = "tx_serde::TransactionSerdeHelper")]
+#[cfg_attr(all(any(test, feature = "arbitrary"), feature = "k256"), derive(arbitrary::Arbitrary))]
 pub struct Transaction {
     /// Ethereum Transaction Types
-    #[serde(flatten)]
-    pub inner: alloy_rpc_types_eth::Transaction,
-    /// The ETH value to mint on L2
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
-    pub mint: Option<u128>,
-    /// Hash that uniquely identifies the source of the deposit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_hash: Option<B256>,
-    /// Field indicating whether the transaction is a system transaction, and therefore
-    /// exempt from the L2 gas limit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub is_system_tx: Option<bool>,
+    #[deref]
+    #[deref_mut]
+    pub inner: alloy_rpc_types_eth::Transaction<OpTxEnvelope>,
+
     /// Deposit receipt version for deposit transactions post-canyon
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub deposit_receipt_version: Option<u64>,
 }
 
@@ -155,149 +144,138 @@ impl From<OpTransactionFields> for OtherFields {
     }
 }
 
-/// Errors that can occur when converting a [Transaction] to an [OpTxEnvelope].
-#[derive(Debug)]
-pub enum TransactionConversionError {
-    /// The transaction type is not supported.
-    UnsupportedTransactionType(Eip2718Error),
-    /// The transaction's signature could not be converted to the consensus type.
-    SignatureConversionError(SignatureError),
-    /// The transaction is missing a required field.
-    MissingRequiredField(String),
-    /// The transaction's signature is missing.
-    MissingSignature,
+impl AsRef<OpTxEnvelope> for Transaction {
+    fn as_ref(&self) -> &OpTxEnvelope {
+        self.inner.as_ref()
+    }
 }
 
-impl core::fmt::Display for TransactionConversionError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::UnsupportedTransactionType(e) => {
-                write!(f, "Unsupported transaction type: {}", e)
+mod tx_serde {
+    //! Helper module for serializing and deserializing OP [`Transaction`].
+    //!
+    //! This is needed because we might need to deserialize the `from` field into both
+    //! [`alloy_rpc_types_eth::Transaction::from`] and [`op_alloy_consensus::TxDeposit::from`].
+    use super::*;
+    use serde::de::Error;
+
+    /// Helper struct which will be flattened into the transaction and will only contain `from`
+    /// field if inner [`OpTxEnvelope`] did not consume it.
+    #[derive(Serialize, Deserialize)]
+    struct MaybeFrom {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<Address>,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub(crate) struct TransactionSerdeHelper {
+        #[serde(flatten)]
+        inner: OpTxEnvelope,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_hash: Option<BlockHash>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
+        block_number: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
+        transaction_index: Option<u64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
+        deposit_receipt_version: Option<u64>,
+
+        #[serde(flatten)]
+        from: MaybeFrom,
+    }
+
+    impl From<Transaction> for TransactionSerdeHelper {
+        fn from(value: Transaction) -> Self {
+            let Transaction {
+                inner:
+                    alloy_rpc_types_eth::Transaction {
+                        inner,
+                        block_hash,
+                        block_number,
+                        transaction_index,
+                        from,
+                    },
+                deposit_receipt_version,
+            } = value;
+
+            // if inner transaction is deposit, then don't serialize `from` directly
+            let from = if matches!(inner, OpTxEnvelope::Deposit(_)) { None } else { Some(from) };
+
+            Self {
+                inner,
+                block_hash,
+                block_number,
+                transaction_index,
+                deposit_receipt_version,
+                from: MaybeFrom { from },
             }
-            Self::SignatureConversionError(e) => {
-                write!(f, "Signature conversion error: {}", e)
-            }
-            Self::MissingRequiredField(field) => {
-                write!(f, "Missing required field for conversion: {}", field)
-            }
-            Self::MissingSignature => {
-                write!(f, "Missing signature")
-            }
+        }
+    }
+
+    impl TryFrom<TransactionSerdeHelper> for Transaction {
+        type Error = serde_json::Error;
+
+        fn try_from(value: TransactionSerdeHelper) -> Result<Self, Self::Error> {
+            let TransactionSerdeHelper {
+                inner,
+                block_hash,
+                block_number,
+                transaction_index,
+                deposit_receipt_version,
+                from,
+            } = value;
+
+            // Try to get `from` field from inner envelope or from `MaybeFrom`, otherwise return
+            // error
+            let from = if let Some(from) = from.from {
+                from
+            } else if let OpTxEnvelope::Deposit(tx) = &inner {
+                tx.from
+            } else {
+                return Err(serde_json::Error::custom("missing `from` field"));
+            };
+
+            Ok(Self {
+                inner: alloy_rpc_types_eth::Transaction {
+                    inner,
+                    block_hash,
+                    block_number,
+                    transaction_index,
+                    from,
+                },
+                deposit_receipt_version,
+            })
         }
     }
 }
 
-impl core::error::Error for TransactionConversionError {}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl TryFrom<Transaction> for OpTxEnvelope {
-    type Error = TransactionConversionError;
+    #[test]
+    fn can_deserialize_deposit() {
+        // cast rpc eth_getTransactionByHash
+        // 0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9 --rpc-url optimism
+        let rpc_tx = r#"{"blockHash":"0x9d86bb313ebeedf4f9f82bf8a19b426be656a365648a7c089b618771311db9f9","blockNumber":"0x798ad0b","hash":"0xbc9329afac05556497441e2b3ee4c5d4da7ca0b2a4c212c212d0739e94a24df9","transactionIndex":"0x0","type":"0x7e","nonce":"0x152ea95","input":"0x440a5e200000146b000f79c50000000000000003000000006725333f000000000141e287000000000000000000000000000000000000000000000000000000012439ee7e0000000000000000000000000000000000000000000000000000000063f363e973e96e7145ff001c81b9562cba7b6104eeb12a2bc4ab9f07c27d45cd81a986620000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985","mint":"0x0","sourceHash":"0x04e9a69416471ead93b02f0c279ab11ca0b635db5c1726a56faf22623bafde52","r":"0x0","s":"0x0","v":"0x0","gas":"0xf4240","from":"0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001","to":"0x4200000000000000000000000000000000000015","depositReceiptVersion":"0x1","value":"0x0","gasPrice":"0x0"}"#;
 
-    fn try_from(value: Transaction) -> Result<Self, Self::Error> {
-        /// Helper function to extract the signature from an RPC [Transaction].
-        #[inline(always)]
-        fn extract_signature(
-            value: &Transaction,
-        ) -> Result<alloy_primitives::Signature, TransactionConversionError> {
-            value
-                .inner
-                .signature
-                .ok_or(TransactionConversionError::MissingSignature)?
-                .try_into()
-                .map_err(TransactionConversionError::SignatureConversionError)
-        }
+        let tx = serde_json::from_str::<Transaction>(rpc_tx).unwrap();
 
-        let ty = OpTxType::try_from(value.ty())
-            .map_err(TransactionConversionError::UnsupportedTransactionType)?;
-        match ty {
-            OpTxType::Legacy => {
-                let signature = extract_signature(&value)?;
-                let legacy = TxLegacy {
-                    chain_id: value.chain_id(),
-                    nonce: value.nonce(),
-                    gas_price: value.gas_price().unwrap_or_default(),
-                    gas_limit: value.gas_limit(),
-                    to: value.inner.to.map(TxKind::Call).unwrap_or(TxKind::Create),
-                    value: value.value(),
-                    input: value.inner.input,
-                };
-                Ok(Self::Legacy(legacy.into_signed(signature)))
-            }
-            OpTxType::Eip2930 => {
-                let signature = extract_signature(&value)?;
-                let access_list_tx = TxEip2930 {
-                    chain_id: value.chain_id().ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("chain_id".to_string())
-                    })?,
-                    nonce: value.nonce(),
-                    gas_price: value.gas_price().unwrap_or_default(),
-                    gas_limit: value.gas_limit(),
-                    to: value.inner.to.map(TxKind::Call).unwrap_or(TxKind::Create),
-                    value: value.value(),
-                    input: value.inner.input,
-                    access_list: value.inner.access_list.unwrap_or_default(),
-                };
-                Ok(Self::Eip2930(access_list_tx.into_signed(signature)))
-            }
-            OpTxType::Eip1559 => {
-                let signature = extract_signature(&value)?;
-                let dynamic_fee_tx = TxEip1559 {
-                    chain_id: value.chain_id().ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("chain_id".to_string())
-                    })?,
-                    nonce: value.nonce(),
-                    gas_limit: value.gas_limit(),
-                    to: value.inner.to.map(TxKind::Call).unwrap_or(TxKind::Create),
-                    value: value.value(),
-                    input: value.inner.input,
-                    access_list: value.inner.access_list.unwrap_or_default(),
-                    max_fee_per_gas: value.inner.max_fee_per_gas.unwrap_or_default(),
-                    max_priority_fee_per_gas: value
-                        .inner
-                        .max_priority_fee_per_gas
-                        .unwrap_or_default(),
-                };
-                Ok(Self::Eip1559(dynamic_fee_tx.into_signed(signature)))
-            }
-            OpTxType::Eip7702 => {
-                let signature = extract_signature(&value)?;
-                let set_code_tx = TxEip7702 {
-                    chain_id: value.chain_id().ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("chain_id".to_string())
-                    })?,
-                    nonce: value.nonce(),
-                    gas_limit: value.gas_limit(),
-                    to: value.inner.to.ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("to".to_string())
-                    })?,
-                    value: value.value(),
-                    input: value.inner.input,
-                    access_list: value.inner.access_list.unwrap_or_default(),
-                    max_fee_per_gas: value.inner.max_fee_per_gas.unwrap_or_default(),
-                    max_priority_fee_per_gas: value
-                        .inner
-                        .max_priority_fee_per_gas
-                        .unwrap_or_default(),
-                    authorization_list: value.inner.authorization_list.unwrap_or_default(),
-                };
-                Ok(Self::Eip7702(set_code_tx.into_signed(signature)))
-            }
-            OpTxType::Deposit => {
-                let deposit_tx = TxDeposit {
-                    source_hash: value.source_hash.ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("source_hash".to_string())
-                    })?,
-                    from: value.inner.from,
-                    to: value.inner.to.map(TxKind::Call).unwrap_or(TxKind::Create),
-                    mint: value.mint,
-                    value: value.inner.value,
-                    gas_limit: value.gas_limit(),
-                    is_system_transaction: value.is_system_tx.ok_or_else(|| {
-                        TransactionConversionError::MissingRequiredField("is_system_tx".to_string())
-                    })?,
-                    input: value.inner.input,
-                };
-                Ok(Self::Deposit(deposit_tx))
-            }
-        }
+        let OpTxEnvelope::Deposit(inner) = tx.as_ref() else {
+            panic!("Expected deposit transaction");
+        };
+        assert_eq!(tx.from, inner.from);
     }
 }

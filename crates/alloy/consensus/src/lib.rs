@@ -25,6 +25,9 @@ pub use hardforks::Hardforks;
 mod block;
 pub use block::OpBlock;
 
+#[cfg(feature = "serde")]
+pub use transaction::serde_deposit_tx_rpc;
+
 /// Bincode-compatible serde implementations for consensus types.
 ///
 /// `bincode` crate doesn't work well with optionally serializable serde fields, but some of the

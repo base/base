@@ -1,7 +1,7 @@
 //! Utility methods used by protocol types.
 
 use alloc::vec::Vec;
-use alloy_consensus::{TxEnvelope, TxType};
+use alloy_consensus::TxType;
 use alloy_primitives::B256;
 use alloy_rlp::{Buf, Header};
 use op_alloy_consensus::{OpBlock, OpTxEnvelope};
@@ -268,28 +268,9 @@ pub fn read_tx_data(r: &mut &[u8]) -> Result<(Vec<u8>, TxType), SpanBatchError> 
     ))
 }
 
-/// Checks if the signature of the passed [TxEnvelope] is protected.
-pub const fn is_protected_v(tx: &TxEnvelope) -> bool {
-    match tx {
-        TxEnvelope::Legacy(tx) => {
-            let v = tx.signature().v().to_u64();
-            if 64 - v.leading_zeros() <= 8 {
-                return v != 27 && v != 28 && v != 1 && v != 0;
-            }
-            // anything not 27 or 28 is considered protected
-            true
-        }
-        _ => true,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{
-        Signed, TxEip1559, TxEip2930, TxEip4844, TxEip4844Variant, TxEip7702, TxLegacy,
-    };
-    use alloy_primitives::{b256, Signature};
     use alloy_sol_types::{sol, SolCall};
     use revm::{
         db::BenchmarkDB,
@@ -298,45 +279,6 @@ mod tests {
     };
     use rstest::rstest;
     use std::vec::Vec;
-
-    #[test]
-    fn test_is_protected_v() {
-        let sig = Signature::test_signature();
-        assert!(!is_protected_v(&TxEnvelope::Legacy(Signed::new_unchecked(
-            TxLegacy::default(),
-            sig,
-            Default::default(),
-        ))));
-        let r = b256!("840cfc572845f5786e702984c2a582528cad4b49b2a10b9db1be7fca90058565");
-        let s = b256!("25e7109ceb98168d95b09b18bbf6b685130e0562f233877d492b94eee0c5b6d1");
-        let v = 27;
-        let valid_sig = Signature::from_scalars_and_parity(r, s, v).unwrap();
-        assert!(!is_protected_v(&TxEnvelope::Legacy(Signed::new_unchecked(
-            TxLegacy::default(),
-            valid_sig,
-            Default::default(),
-        ))));
-        assert!(is_protected_v(&TxEnvelope::Eip2930(Signed::new_unchecked(
-            TxEip2930::default(),
-            sig,
-            Default::default(),
-        ))));
-        assert!(is_protected_v(&TxEnvelope::Eip1559(Signed::new_unchecked(
-            TxEip1559::default(),
-            sig,
-            Default::default(),
-        ))));
-        assert!(is_protected_v(&TxEnvelope::Eip4844(Signed::new_unchecked(
-            TxEip4844Variant::TxEip4844(TxEip4844::default()),
-            sig,
-            Default::default(),
-        ))));
-        assert!(is_protected_v(&TxEnvelope::Eip7702(Signed::new_unchecked(
-            TxEip7702::default(),
-            sig,
-            Default::default(),
-        ))));
-    }
 
     #[rstest]
     #[case::empty(&[], 0)]

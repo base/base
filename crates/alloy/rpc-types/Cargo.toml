@@ -21,7 +21,6 @@ op-alloy-consensus = { workspace = true, features = ["serde"] }
 # Alloy
 alloy-serde.workspace = true
 alloy-consensus.workspace = true
-alloy-network.workspace = true
 alloy-network-primitives.workspace = true
 alloy-eips = { workspace = true, features = ["serde"] }
 alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
@@ -56,7 +55,9 @@ arbitrary = [
   "dep:arbitrary",
   "alloy-primitives/arbitrary",
   "alloy-rpc-types-eth/arbitrary",
+  "op-alloy-consensus/arbitrary",
 ]
 k256 = [
-  "alloy-consensus/k256",
+  "alloy-rpc-types-eth/k256",
+  "op-alloy-consensus/k256",
 ]

@@ -15,6 +15,9 @@ pub use source::{
     UserDepositSource,
 };
 
+#[cfg(feature = "serde")]
+pub use deposit::serde_deposit_tx_rpc;
+
 /// Bincode-compatible serde implementations for transaction types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {

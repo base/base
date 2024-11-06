@@ -14,22 +14,23 @@ use alloy_primitives::{Address, Bytes, TxKind};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(tag = "type"))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        from = "serde_from::MaybeTaggedTypedTransaction",
+        into = "serde_from::TaggedTypedTransaction"
+    )
+)]
 pub enum OpTypedTransaction {
     /// Legacy transaction
-    #[cfg_attr(feature = "serde", serde(rename = "0x00", alias = "0x0"))]
     Legacy(TxLegacy),
     /// EIP-2930 transaction
-    #[cfg_attr(feature = "serde", serde(rename = "0x01", alias = "0x1"))]
     Eip2930(TxEip2930),
     /// EIP-1559 transaction
-    #[cfg_attr(feature = "serde", serde(rename = "0x02", alias = "0x2"))]
     Eip1559(TxEip1559),
     /// EIP-7702 transaction
-    #[cfg_attr(feature = "serde", serde(rename = "0x04", alias = "0x4"))]
     Eip7702(TxEip7702),
     /// Optimism deposit transaction
-    #[cfg_attr(feature = "serde", serde(rename = "0x7E", alias = "0x7E"))]
     Deposit(TxDeposit),
 }
 
@@ -272,6 +273,82 @@ impl Transaction for OpTypedTransaction {
             Self::Eip1559(tx) => tx.authorization_list(),
             Self::Eip7702(tx) => tx.authorization_list(),
             Self::Deposit(tx) => tx.authorization_list(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+mod serde_from {
+    //! NB: Why do we need this?
+    //!
+    //! Because the tag may be missing, we need an abstraction over tagged (with
+    //! type) and untagged (always legacy). This is
+    //! [`MaybeTaggedTypedTransaction`].
+    //!
+    //! The tagged variant is [`TaggedTypedTransaction`], which always has a
+    //! type tag.
+    //!
+    //! We serialize via [`TaggedTypedTransaction`] and deserialize via
+    //! [`MaybeTaggedTypedTransaction`].
+    use super::*;
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(untagged)]
+    pub(crate) enum MaybeTaggedTypedTransaction {
+        Tagged(TaggedTypedTransaction),
+        Untagged(TxLegacy),
+    }
+
+    #[derive(Debug, serde::Serialize, serde::Deserialize)]
+    #[serde(tag = "type")]
+    pub(crate) enum TaggedTypedTransaction {
+        /// Legacy transaction
+        #[serde(rename = "0x00", alias = "0x0")]
+        Legacy(TxLegacy),
+        /// EIP-2930 transaction
+        #[serde(rename = "0x01", alias = "0x1")]
+        Eip2930(TxEip2930),
+        /// EIP-1559 transaction
+        #[serde(rename = "0x02", alias = "0x2")]
+        Eip1559(TxEip1559),
+        /// EIP-7702 transaction
+        #[serde(rename = "0x04", alias = "0x4")]
+        Eip7702(TxEip7702),
+        /// Deposit transaction
+        #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
+        Deposit(TxDeposit),
+    }
+
+    impl From<MaybeTaggedTypedTransaction> for OpTypedTransaction {
+        fn from(value: MaybeTaggedTypedTransaction) -> Self {
+            match value {
+                MaybeTaggedTypedTransaction::Tagged(tagged) => tagged.into(),
+                MaybeTaggedTypedTransaction::Untagged(tx) => Self::Legacy(tx),
+            }
+        }
+    }
+
+    impl From<TaggedTypedTransaction> for OpTypedTransaction {
+        fn from(value: TaggedTypedTransaction) -> Self {
+            match value {
+                TaggedTypedTransaction::Legacy(signed) => Self::Legacy(signed),
+                TaggedTypedTransaction::Eip2930(signed) => Self::Eip2930(signed),
+                TaggedTypedTransaction::Eip1559(signed) => Self::Eip1559(signed),
+                TaggedTypedTransaction::Eip7702(signed) => Self::Eip7702(signed),
+                TaggedTypedTransaction::Deposit(tx) => Self::Deposit(tx),
+            }
+        }
+    }
+
+    impl From<OpTypedTransaction> for TaggedTypedTransaction {
+        fn from(value: OpTypedTransaction) -> Self {
+            match value {
+                OpTypedTransaction::Legacy(signed) => Self::Legacy(signed),
+                OpTypedTransaction::Eip2930(signed) => Self::Eip2930(signed),
+                OpTypedTransaction::Eip1559(signed) => Self::Eip1559(signed),
+                OpTypedTransaction::Eip7702(signed) => Self::Eip7702(signed),
+                OpTypedTransaction::Deposit(tx) => Self::Deposit(tx),
+            }
         }
     }
 }

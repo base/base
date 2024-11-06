@@ -34,10 +34,7 @@ mod iter;
 pub use iter::FrameIter;
 
 mod utils;
-pub use utils::{
-    is_protected_v, read_tx_data, starts_with_2718_deposit, to_system_config,
-    OpBlockConversionError,
-};
+pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config, OpBlockConversionError};
 
 mod channel;
 pub use channel::{
