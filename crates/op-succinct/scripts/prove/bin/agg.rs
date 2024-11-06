@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let prover = ProverClient::new();
-    let fetcher = OPSuccinctDataFetcher::default();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
