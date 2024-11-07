@@ -31,12 +31,10 @@ runs:
       uses: actions/cache@v3
       with:
         path: |
-          ~/.cargo/bin/
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-          ~/.rustup/
         key: rust-1.79.0-${{ hashFiles('**/Cargo.toml') }}
         restore-keys: rust-1.79.0-
 
