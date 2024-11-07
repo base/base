@@ -1,3 +1,4 @@
+pub mod block_range;
 pub mod fetcher;
 pub mod helpers;
 pub mod rollup_config;

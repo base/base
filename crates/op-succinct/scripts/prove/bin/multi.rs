@@ -1,7 +1,7 @@
-use alloy_eips::BlockId;
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
+    block_range::get_validated_block_range,
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
@@ -61,20 +61,11 @@ async fn main() -> Result<()> {
         CacheMode::DeleteCache
     };
 
-    // If the end block is not provided, use the latest finalized block.
-    let l2_end_block = match args.end {
-        Some(end) => end,
-        None => {
-            let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
-            header.number
-        }
-    };
+    const DEFAULT_RANGE: u64 = 5;
 
-    // If the start block is not provided, use the end block - 5.
-    let l2_start_block = match args.start {
-        Some(start) => start,
-        None => l2_end_block - 5,
-    };
+    // If the end block is provided, check that it is less than the latest finalized block. If the end block is not provided, use the latest finalized block.
+    let (l2_start_block, l2_end_block) =
+        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
     let host_cli = data_fetcher
         .get_host_cli_args(l2_start_block, l2_end_block, ProgramType::Multi, cache_mode)

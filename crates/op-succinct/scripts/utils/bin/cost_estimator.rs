@@ -1,10 +1,10 @@
-use alloy::eips::BlockId;
 use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
 use kona_host::HostCli;
 use log::info;
 use op_succinct_host_utils::{
+    block_range::get_validated_block_range,
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
@@ -279,23 +279,11 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
-
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-    // If the end block is not provided, use the latest finalized block.
-    let l2_end_block = match args.end {
-        Some(end) => end,
-        None => {
-            let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
-            header.number
-        }
-    };
-
-    // If the start block is not provided, use the start block - 5.
-    let l2_start_block = match args.start {
-        Some(start) => start,
-        None => l2_end_block - 5,
-    };
+    const DEFAULT_RANGE: u64 = 5;
+    let (l2_start_block, l2_end_block) =
+        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
     let split_ranges = split_range(l2_start_block, l2_end_block, l2_chain_id, args.batch_size);
 
