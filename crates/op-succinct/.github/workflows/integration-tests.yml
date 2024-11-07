@@ -18,7 +18,18 @@ jobs:
       - run-id=${{ github.run_id }}  
     steps:
       - uses: actions/checkout@v4
-        
+
+      - name: rust-cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          restore-keys: rust-1.81.0-
+          key: rust-1.81.0-${{ hashFiles('**/Cargo.toml') }}
+
       - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
@@ -26,9 +37,9 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: Run cost estimator
+      - name: OP Sepolia Blocks 19000000 to 19000030
         run: |
-          RUST_LOG=info cargo run --bin cost-estimator --release
+          RUST_LOG=info cargo run --bin cost-estimator --release -- --start 19000000 --end 19000030
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
