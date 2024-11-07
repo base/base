@@ -25,6 +25,7 @@ alloy-rlp.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
+alloy-eips.workspace = true
 
 # kona
 kona-host.workspace = true
