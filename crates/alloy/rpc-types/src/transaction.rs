@@ -155,15 +155,24 @@ mod tx_serde {
     //!
     //! This is needed because we might need to deserialize the `from` field into both
     //! [`alloy_rpc_types_eth::Transaction::from`] and [`op_alloy_consensus::TxDeposit::from`].
+    //!
+    //! Additionaly, we need similar logic for the `gasPrice` field
     use super::*;
     use serde::de::Error;
 
     /// Helper struct which will be flattened into the transaction and will only contain `from`
     /// field if inner [`OpTxEnvelope`] did not consume it.
     #[derive(Serialize, Deserialize)]
-    struct MaybeFrom {
+    struct OptionalFields {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<Address>,
+        #[serde(
+            default,
+            rename = "gasPrice",
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
+        effective_gas_price: Option<u128>,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -171,19 +180,11 @@ mod tx_serde {
     pub(crate) struct TransactionSerdeHelper {
         #[serde(flatten)]
         inner: OpTxEnvelope,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         block_hash: Option<BlockHash>,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )]
+        #[serde(default, with = "alloy_serde::quantity::opt")]
         block_number: Option<u64>,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            with = "alloy_serde::quantity::opt"
-        )]
+        #[serde(default, with = "alloy_serde::quantity::opt")]
         transaction_index: Option<u64>,
         #[serde(
             default,
@@ -193,7 +194,7 @@ mod tx_serde {
         deposit_receipt_version: Option<u64>,
 
         #[serde(flatten)]
-        from: MaybeFrom,
+        other: OptionalFields,
     }
 
     impl From<Transaction> for TransactionSerdeHelper {
@@ -205,13 +206,17 @@ mod tx_serde {
                         block_hash,
                         block_number,
                         transaction_index,
+                        effective_gas_price,
                         from,
                     },
                 deposit_receipt_version,
             } = value;
 
-            // if inner transaction is deposit, then don't serialize `from` directly
+            // if inner transaction is a deposit, then don't serialize `from` directly
             let from = if matches!(inner, OpTxEnvelope::Deposit(_)) { None } else { Some(from) };
+
+            // if inner transaction has its own `gasPrice` don't serialize it in this struct.
+            let effective_gas_price = effective_gas_price.filter(|_| inner.gas_price().is_none());
 
             Self {
                 inner,
@@ -219,7 +224,7 @@ mod tx_serde {
                 block_number,
                 transaction_index,
                 deposit_receipt_version,
-                from: MaybeFrom { from },
+                other: OptionalFields { from, effective_gas_price },
             }
         }
     }
@@ -234,18 +239,20 @@ mod tx_serde {
                 block_number,
                 transaction_index,
                 deposit_receipt_version,
-                from,
+                other,
             } = value;
 
             // Try to get `from` field from inner envelope or from `MaybeFrom`, otherwise return
             // error
-            let from = if let Some(from) = from.from {
+            let from = if let Some(from) = other.from {
                 from
             } else if let OpTxEnvelope::Deposit(tx) = &inner {
                 tx.from
             } else {
                 return Err(serde_json::Error::custom("missing `from` field"));
             };
+
+            let effective_gas_price = other.effective_gas_price.or(inner.gas_price());
 
             Ok(Self {
                 inner: alloy_rpc_types_eth::Transaction {
@@ -254,6 +261,7 @@ mod tx_serde {
                     block_number,
                     transaction_index,
                     from,
+                    effective_gas_price,
                 },
                 deposit_receipt_version,
             })
