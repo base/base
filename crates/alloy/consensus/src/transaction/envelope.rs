@@ -71,6 +71,7 @@ impl TryFrom<u8> for OpTxType {
             0 => Self::Legacy,
             1 => Self::Eip2930,
             2 => Self::Eip1559,
+            4 => Self::Eip7702,
             126 => Self::Deposit,
             _ => return Err(Eip2718Error::UnexpectedType(value)),
         })
