@@ -22,6 +22,9 @@ pub struct Transaction {
     #[deref_mut]
     pub inner: alloy_rpc_types_eth::Transaction<OpTxEnvelope>,
 
+    /// Nonce for deposit transactions. Only present in RPC responses.
+    pub deposit_nonce: Option<u64>,
+
     /// Deposit receipt version for deposit transactions post-canyon
     pub deposit_receipt_version: Option<u64>,
 }
@@ -177,6 +180,13 @@ mod tx_serde {
             with = "alloy_serde::quantity::opt"
         )]
         effective_gas_price: Option<u128>,
+        #[serde(
+            default,
+            rename = "nonce",
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )]
+        deposit_nonce: Option<u64>,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -214,6 +224,7 @@ mod tx_serde {
                         from,
                     },
                 deposit_receipt_version,
+                deposit_nonce,
             } = value;
 
             // if inner transaction is a deposit, then don't serialize `from` directly
@@ -228,7 +239,7 @@ mod tx_serde {
                 block_number,
                 transaction_index,
                 deposit_receipt_version,
-                other: OptionalFields { from, effective_gas_price },
+                other: OptionalFields { from, effective_gas_price, deposit_nonce },
             }
         }
     }
@@ -256,6 +267,9 @@ mod tx_serde {
                 return Err(serde_json::Error::custom("missing `from` field"));
             };
 
+            // Only serialize deposit_nonce if inner transaction is deposit to avoid duplicated keys
+            let deposit_nonce = other.deposit_nonce.filter(|_| inner.is_deposit());
+
             let effective_gas_price = other.effective_gas_price.or(inner.gas_price());
 
             Ok(Self {
@@ -268,6 +282,7 @@ mod tx_serde {
                     effective_gas_price,
                 },
                 deposit_receipt_version,
+                deposit_nonce,
             })
         }
     }
@@ -289,5 +304,6 @@ mod tests {
             panic!("Expected deposit transaction");
         };
         assert_eq!(tx.from, inner.from);
+        assert_eq!(tx.deposit_nonce, Some(22211221));
     }
 }
