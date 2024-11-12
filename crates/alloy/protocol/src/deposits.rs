@@ -1,11 +1,9 @@
 //! Contains deposit transaction types and helper methods.
 
 use alloc::{string::String, vec::Vec};
-use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, TxKind, B256, U256, U64};
-use alloy_rlp::Encodable;
 use core::fmt::Display;
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
+use op_alloy_consensus::TxDeposit;
 
 /// Deposit log event abi signature.
 pub const DEPOSIT_EVENT_ABI: &str = "TransactionDeposited(address,address,uint256,bytes)";
@@ -337,9 +335,8 @@ pub fn decode_deposit(block_hash: B256, index: usize, log: &Log) -> Result<Bytes
     unmarshal_deposit_version0(&mut deposit_tx, to, opaque_data)?;
 
     // Re-encode the deposit transaction
-    let deposit_envelope = OpTxEnvelope::Deposit(deposit_tx);
-    let mut buffer = Vec::with_capacity(deposit_envelope.length());
-    deposit_envelope.encode_2718(&mut buffer);
+    let mut buffer = Vec::with_capacity(deposit_tx.eip2718_encoded_length());
+    deposit_tx.eip2718_encode(&mut buffer);
     Ok(Bytes::from(buffer))
 }
 

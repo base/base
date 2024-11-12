@@ -4,6 +4,7 @@
 
 use crate::{OpTxEnvelope, TxDeposit};
 use alloc::{string::String, vec, vec::Vec};
+use alloy_consensus::Sealable;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, Address, Bytes, TxKind, U256};
 use spin::Lazy;
@@ -58,46 +59,55 @@ impl super::Hardforks {
         let mut txs = vec![];
 
         let mut buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: DEPLOY_FJORD_GAS_PRICE_ORACLE_SOURCE.source_hash(),
-            from: GAS_PRICE_ORACLE_FJORD_DEPLOYER_ADDRESS,
-            to: TxKind::Create,
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 1_450_000,
-            is_system_transaction: false,
-            input: Self::gas_price_oracle_deployment_bytecode(),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: DEPLOY_FJORD_GAS_PRICE_ORACLE_SOURCE.source_hash(),
+                from: GAS_PRICE_ORACLE_FJORD_DEPLOYER_ADDRESS,
+                to: TxKind::Create,
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 1_450_000,
+                is_system_transaction: false,
+                input: Self::gas_price_oracle_deployment_bytecode(),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Update the gas price oracle proxy.
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: UPDATE_FJORD_GAS_PRICE_ORACLE_SOURCE.source_hash(),
-            from: Address::ZERO,
-            to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 50_000,
-            is_system_transaction: false,
-            input: Self::upgrade_to_calldata(FJORD_GAS_PRICE_ORACLE_ADDRESS),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: UPDATE_FJORD_GAS_PRICE_ORACLE_SOURCE.source_hash(),
+                from: Address::ZERO,
+                to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 50_000,
+                is_system_transaction: false,
+                input: Self::upgrade_to_calldata(FJORD_GAS_PRICE_ORACLE_ADDRESS),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Enable Fjord
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: ENABLE_FJORD_SOURCE.source_hash(),
-            from: L1_INFO_DEPOSITER_ADDRESS,
-            to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 90_000,
-            is_system_transaction: false,
-            input: SET_FJORD_METHOD_SIGNATURE.into(),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: ENABLE_FJORD_SOURCE.source_hash(),
+                from: L1_INFO_DEPOSITER_ADDRESS,
+                to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 90_000,
+                is_system_transaction: false,
+                input: SET_FJORD_METHOD_SIGNATURE.into(),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 

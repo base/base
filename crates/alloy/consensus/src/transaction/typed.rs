@@ -65,7 +65,7 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
             OpTxEnvelope::Eip2930(tx) => Self::Eip2930(tx.strip_signature()),
             OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx.strip_signature()),
             OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
-            OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
+            OpTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
         }
     }
 }

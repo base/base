@@ -1,5 +1,7 @@
 use alloc::vec::Vec;
-use alloy_consensus::{SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction};
+use alloy_consensus::{
+    Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
+};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_network_primitives::TransactionBuilder7702;
 use alloy_primitives::{Address, PrimitiveSignature as Signature, TxKind, U256};
@@ -139,6 +141,12 @@ impl From<TxDeposit> for OpTransactionRequest {
             input: input.into(),
             ..Default::default()
         })
+    }
+}
+
+impl From<Sealed<TxDeposit>> for OpTransactionRequest {
+    fn from(value: Sealed<TxDeposit>) -> Self {
+        value.into_inner().into()
     }
 }
 

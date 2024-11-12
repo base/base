@@ -2,10 +2,11 @@
 
 use super::OpTxType;
 use crate::DepositTransaction;
-use alloy_consensus::Transaction;
+use alloc::vec::Vec;
+use alloy_consensus::{Sealable, Transaction};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{
-    Address, Bytes, ChainId, PrimitiveSignature as Signature, TxKind, B256, U256,
+    keccak256, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256, U256,
 };
 use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
@@ -214,6 +215,13 @@ impl TxDeposit {
         self.eip2718_encode(out);
     }
 
+    /// Calculate the transaction hash.
+    pub fn tx_hash(&self) -> TxHash {
+        let mut buf = Vec::with_capacity(self.eip2718_encoded_length());
+        self.eip2718_encode(&mut buf);
+        keccak256(&buf)
+    }
+
     /// Returns the signature for the optimism deposit transactions, which don't include a
     /// signature.
     pub fn signature() -> Signature {
@@ -305,22 +313,28 @@ impl Decodable for TxDeposit {
     }
 }
 
+impl Sealable for TxDeposit {
+    fn hash_slow(&self) -> B256 {
+        self.tx_hash()
+    }
+}
+
 /// Deposit transactions don't have a signature, however, we include an empty signature in the
 /// response for better compatibility.
 ///
 /// This function can be used as `serialize_with` serde attribute for the [`TxDeposit`] and will
 /// flatten [`TxDeposit::signature`] into response.
 #[cfg(feature = "serde")]
-pub fn serde_deposit_tx_rpc<S: serde::Serializer>(
-    value: &TxDeposit,
+pub fn serde_deposit_tx_rpc<T: serde::Serialize, S: serde::Serializer>(
+    value: &T,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     use serde::Serialize;
 
     #[derive(Serialize)]
-    struct SerdeHelper<'a> {
+    struct SerdeHelper<'a, T> {
         #[serde(flatten)]
-        value: &'a TxDeposit,
+        value: &'a T,
         #[serde(flatten)]
         signature: Signature,
     }

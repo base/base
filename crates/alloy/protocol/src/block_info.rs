@@ -8,7 +8,7 @@ use alloc::{
 };
 use alloy_consensus::Header;
 use alloy_eips::BlockNumHash;
-use alloy_primitives::{address, Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{address, Address, Bytes, Sealable, TxKind, B256, U256};
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
 
@@ -260,7 +260,7 @@ impl L1BlockInfoTx {
             deposit_tx.gas_limit = REGOLITH_SYSTEM_TX_GAS;
         }
 
-        Ok((l1_info, OpTxEnvelope::Deposit(deposit_tx)))
+        Ok((l1_info, OpTxEnvelope::Deposit(deposit_tx.seal_slow())))
     }
 
     /// Decodes the [L1BlockInfoEcotone] object from ethereum transaction calldata.

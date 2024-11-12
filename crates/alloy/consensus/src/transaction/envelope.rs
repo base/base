@@ -1,5 +1,6 @@
 use alloy_consensus::{
-    transaction::RlpEcdsaTx, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy,
+    transaction::RlpEcdsaTx, Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEip7702, TxLegacy,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
@@ -107,7 +108,7 @@ pub enum OpTxEnvelope {
     /// A [`TxEip7702`] tagged with type 4.
     Eip7702(Signed<TxEip7702>),
     /// A [`TxDeposit`] tagged with type 0x7E.
-    Deposit(TxDeposit),
+    Deposit(Sealed<TxDeposit>),
 }
 
 impl From<Signed<TxLegacy>> for OpTxEnvelope {
@@ -136,6 +137,12 @@ impl From<Signed<TxEip7702>> for OpTxEnvelope {
 
 impl From<TxDeposit> for OpTxEnvelope {
     fn from(v: TxDeposit) -> Self {
+        v.seal_slow().into()
+    }
+}
+
+impl From<Sealed<TxDeposit>> for OpTxEnvelope {
+    fn from(v: Sealed<TxDeposit>) -> Self {
         Self::Deposit(v)
     }
 }
@@ -341,7 +348,7 @@ impl OpTxEnvelope {
     #[inline]
     pub const fn is_system_transaction(&self) -> bool {
         match self {
-            Self::Deposit(tx) => tx.is_system_transaction,
+            Self::Deposit(tx) => tx.inner().is_system_transaction,
             _ => false,
         }
     }
@@ -371,7 +378,7 @@ impl OpTxEnvelope {
     }
 
     /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
-    pub const fn as_deposit(&self) -> Option<&TxDeposit> {
+    pub const fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
         match self {
             Self::Deposit(tx) => Some(tx),
             _ => None,
@@ -423,7 +430,7 @@ impl Decodable2718 for OpTxEnvelope {
             OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::rlp_decode_signed(buf)?)),
             OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::rlp_decode_signed(buf)?)),
             OpTxType::Eip7702 => Ok(Self::Eip7702(TxEip7702::rlp_decode_signed(buf)?)),
-            OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?)),
+            OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?.seal_slow())),
             OpTxType::Legacy => {
                 Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
                     .into())
@@ -469,6 +476,16 @@ impl Encodable2718 for OpTxEnvelope {
             }
         }
     }
+
+    fn trie_hash(&self) -> B256 {
+        match self {
+            Self::Legacy(tx) => *tx.hash(),
+            Self::Eip1559(tx) => *tx.hash(),
+            Self::Eip2930(tx) => *tx.hash(),
+            Self::Eip7702(tx) => *tx.hash(),
+            Self::Deposit(tx) => tx.seal(),
+        }
+    }
 }
 
 #[cfg(feature = "serde")]
@@ -508,7 +525,7 @@ mod serde_from {
         #[serde(rename = "0x4", alias = "0x04")]
         Eip7702(Signed<TxEip7702>),
         #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
-        Deposit(TxDeposit),
+        Deposit(Sealed<TxDeposit>),
     }
 
     impl From<MaybeTaggedTxEnvelope> for OpTxEnvelope {
@@ -554,18 +571,18 @@ mod tests {
     #[test]
     fn test_tx_gas_limit() {
         let tx = TxDeposit { gas_limit: 1, ..Default::default() };
-        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
         assert_eq!(tx_envelope.gas_limit(), 1);
     }
 
     #[test]
     fn test_system_transaction() {
         let mut tx = TxDeposit { is_system_transaction: true, ..Default::default() };
-        let tx_envelope = OpTxEnvelope::Deposit(tx.clone());
+        let tx_envelope = OpTxEnvelope::Deposit(tx.clone().seal_slow());
         assert!(tx_envelope.is_system_transaction());
 
         tx.is_system_transaction = false;
-        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
         assert!(!tx_envelope.is_system_transaction());
     }
 
@@ -581,7 +598,7 @@ mod tests {
             input: Bytes::from(vec![5]),
             is_system_transaction: false,
         };
-        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
         let encoded = tx_envelope.encoded_2718();
         let decoded = OpTxEnvelope::decode_2718(&mut encoded.as_ref()).unwrap();
         assert_eq!(encoded.len(), tx_envelope.encode_2718_len());
@@ -601,7 +618,7 @@ mod tests {
             mint: Some(u128::MAX),
             is_system_transaction: false,
         };
-        let tx_envelope = OpTxEnvelope::Deposit(tx);
+        let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
 
         let serialized = serde_json::to_string(&tx_envelope).unwrap();
         let deserialized: OpTxEnvelope = serde_json::from_str(&serialized).unwrap();

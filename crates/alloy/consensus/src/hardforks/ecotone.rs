@@ -4,6 +4,7 @@
 
 use crate::{OpTxEnvelope, TxDeposit};
 use alloc::{string::String, vec, vec::Vec};
+use alloy_consensus::Sealable;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, bytes, Address, Bytes, TxKind, U256};
 use spin::Lazy;
@@ -72,91 +73,109 @@ impl super::Hardforks {
 
         // Deploy the L1 Block Contract
         let mut buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: DEPLOY_L1_BLOCK_SOURCE.source_hash(),
-            from: L1_BLOCK_DEPLOYER_ADDRESS,
-            to: TxKind::Create,
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 375_000,
-            is_system_transaction: false,
-            input: l1_block_deployment_bytecode,
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: DEPLOY_L1_BLOCK_SOURCE.source_hash(),
+                from: L1_BLOCK_DEPLOYER_ADDRESS,
+                to: TxKind::Create,
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 375_000,
+                is_system_transaction: false,
+                input: l1_block_deployment_bytecode,
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Deploy the Gas Price Oracle
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: DEPLOY_GAS_PRICE_ORACLE_SOURCE.source_hash(),
-            from: GAS_PRICE_ORACLE_DEPLOYER_ADDRESS,
-            to: TxKind::Create,
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 1_000_000,
-            is_system_transaction: false,
-            input: gas_price_oracle_deployment_bytecode,
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: DEPLOY_GAS_PRICE_ORACLE_SOURCE.source_hash(),
+                from: GAS_PRICE_ORACLE_DEPLOYER_ADDRESS,
+                to: TxKind::Create,
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 1_000_000,
+                is_system_transaction: false,
+                input: gas_price_oracle_deployment_bytecode,
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Update the l1 block proxy
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: UPDATE_L1_BLOCK_PROXY_SOURCE.source_hash(),
-            from: Address::default(),
-            to: TxKind::Call(L1_BLOCK_DEPLOYER_ADDRESS),
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 50_000,
-            is_system_transaction: false,
-            input: Self::upgrade_to_calldata(NEW_L1_BLOCK_ADDRESS),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: UPDATE_L1_BLOCK_PROXY_SOURCE.source_hash(),
+                from: Address::default(),
+                to: TxKind::Call(L1_BLOCK_DEPLOYER_ADDRESS),
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 50_000,
+                is_system_transaction: false,
+                input: Self::upgrade_to_calldata(NEW_L1_BLOCK_ADDRESS),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Update gas price oracle proxy
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: UPDATE_GAS_PRICE_ORACLE_SOURCE.source_hash(),
-            from: Address::default(),
-            to: TxKind::Call(GAS_PRICE_ORACLE_DEPLOYER_ADDRESS),
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 50_000,
-            is_system_transaction: false,
-            input: Self::upgrade_to_calldata(GAS_PRICE_ORACLE_ADDRESS),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: UPDATE_GAS_PRICE_ORACLE_SOURCE.source_hash(),
+                from: Address::default(),
+                to: TxKind::Call(GAS_PRICE_ORACLE_DEPLOYER_ADDRESS),
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 50_000,
+                is_system_transaction: false,
+                input: Self::upgrade_to_calldata(GAS_PRICE_ORACLE_ADDRESS),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Enable ecotone
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: ENABLE_ECOTONE_SOURCE.source_hash(),
-            from: L1_BLOCK_DEPLOYER_ADDRESS,
-            to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 80_000,
-            is_system_transaction: false,
-            input: ENABLE_ECOTONE_INPUT.into(),
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: ENABLE_ECOTONE_SOURCE.source_hash(),
+                from: L1_BLOCK_DEPLOYER_ADDRESS,
+                to: TxKind::Call(GAS_PRICE_ORACLE_ADDRESS),
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 80_000,
+                is_system_transaction: false,
+                input: ENABLE_ECOTONE_INPUT.into(),
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
         // Deploy EIP4788
         buffer = Vec::new();
-        OpTxEnvelope::Deposit(TxDeposit {
-            source_hash: BEACON_ROOTS_SOURCE.source_hash(),
-            from: EIP4788_FROM,
-            to: TxKind::Create,
-            mint: 0.into(),
-            value: U256::ZERO,
-            gas_limit: 250_000,
-            is_system_transaction: false,
-            input: eip4788_creation_data,
-        })
+        OpTxEnvelope::Deposit(
+            TxDeposit {
+                source_hash: BEACON_ROOTS_SOURCE.source_hash(),
+                from: EIP4788_FROM,
+                to: TxKind::Create,
+                mint: 0.into(),
+                value: U256::ZERO,
+                gas_limit: 250_000,
+                is_system_transaction: false,
+                input: eip4788_creation_data,
+            }
+            .seal_slow(),
+        )
         .encode_2718(&mut buffer);
         txs.push(Bytes::from(buffer));
 
