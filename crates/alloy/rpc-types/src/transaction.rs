@@ -1,6 +1,6 @@
 //! Optimism specific types related to transactions.
 
-use alloy_consensus::Transaction as ConsensusTransaction;
+use alloy_consensus::Transaction as _;
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, BlockHash, Bytes, ChainId, TxKind, B256, U256};
 use alloy_serde::OtherFields;
@@ -29,7 +29,7 @@ pub struct Transaction {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl ConsensusTransaction for Transaction {
+impl alloy_consensus::Transaction for Transaction {
     fn chain_id(&self) -> Option<ChainId> {
         self.inner.chain_id()
     }
@@ -60,6 +60,10 @@ impl ConsensusTransaction for Transaction {
 
     fn priority_fee_or_price(&self) -> u128 {
         self.inner.priority_fee_or_price()
+    }
+
+    fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
+        self.inner.effective_gas_price(base_fee)
     }
 
     fn is_dynamic_fee(&self) -> bool {
@@ -116,12 +120,12 @@ impl alloy_network_primitives::TransactionResponse for Transaction {
         self.inner.transaction_index()
     }
 
-    fn from(&self) -> alloy_primitives::Address {
+    fn from(&self) -> Address {
         self.inner.from()
     }
 
-    fn to(&self) -> Option<alloy_primitives::Address> {
-        ConsensusTransaction::to(&self.inner)
+    fn to(&self) -> Option<Address> {
+        alloy_consensus::Transaction::to(&self.inner)
     }
 }
 

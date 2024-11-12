@@ -262,6 +262,10 @@ impl Transaction for TxDeposit {
         0
     }
 
+    fn effective_gas_price(&self, _: Option<u64>) -> u128 {
+        0
+    }
+
     fn is_dynamic_fee(&self) -> bool {
         false
     }
