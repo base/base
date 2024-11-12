@@ -41,6 +41,7 @@ arbitrary = { workspace = true, features = ["derive"] }
 alloy-consensus = { workspace = true, features = ["arbitrary"] }
 alloy-primitives = { workspace = true, features = ["arbitrary"] }
 alloy-rpc-types-eth = { workspace = true, features = ["arbitrary"] }
+similar-asserts.workspace = true
 
 [features]
 default = ["std"]
