@@ -300,6 +300,16 @@ impl Transaction for OpTxEnvelope {
             Self::Deposit(tx) => tx.authorization_list(),
         }
     }
+
+    fn is_dynamic_fee(&self) -> bool {
+        match self {
+            Self::Legacy(tx) => tx.tx().is_dynamic_fee(),
+            Self::Eip2930(tx) => tx.tx().is_dynamic_fee(),
+            Self::Eip1559(tx) => tx.tx().is_dynamic_fee(),
+            Self::Eip7702(tx) => tx.tx().is_dynamic_fee(),
+            Self::Deposit(tx) => tx.is_dynamic_fee(),
+        }
+    }
 }
 
 impl OpTxEnvelope {

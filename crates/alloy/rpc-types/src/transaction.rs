@@ -90,6 +90,10 @@ impl ConsensusTransaction for Transaction {
     fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
         self.inner.authorization_list()
     }
+
+    fn is_dynamic_fee(&self) -> bool {
+        self.inner.is_dynamic_fee()
+    }
 }
 
 impl alloy_network_primitives::TransactionResponse for Transaction {

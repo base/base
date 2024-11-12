@@ -254,6 +254,10 @@ impl Transaction for TxDeposit {
         0
     }
 
+    fn is_dynamic_fee(&self) -> bool {
+        false
+    }
+
     fn kind(&self) -> TxKind {
         self.to
     }
