@@ -1,0 +1,40 @@
+[package]
+name = "op-rbuilder-node-optimism"
+edition = "2021"
+
+[dependencies]
+# workspace
+op-rbuilder-payload-builder = { path = "../payload_builder" }
+transaction-pool-bundle-ext = { path = "../../transaction-pool-bundle-ext" }
+rbuilder-bundle-pool-operations = { path = "../../transaction-pool-bundle-ext/bundle_pool_ops/rbuilder" }
+
+# reth
+reth-chainspec.workspace = true
+reth-payload-builder.workspace = true
+reth-primitives.workspace = true
+reth-basic-payload-builder.workspace = true
+reth-node-builder.workspace = true
+reth-tracing.workspace = true
+reth-provider.workspace = true
+reth-transaction-pool.workspace = true
+reth-evm.workspace = true
+reth-evm-optimism.workspace = true
+reth-node-optimism = { workspace = true }
+
+# async
+tracing.workspace = true
+
+# misc
+clap.workspace = true
+eyre.workspace = true
+
+[features]
+optimism = [
+	"reth-node-optimism/optimism",
+	"reth-chainspec/optimism",
+	"reth-provider/optimism",
+	"reth-evm-optimism/optimism",
+	"op-rbuilder-payload-builder/optimism",
+	"rbuilder-bundle-pool-operations/optimism",
+	"reth-primitives/optimism"
+]

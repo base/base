@@ -1,0 +1,27 @@
+[package]
+name = "rbuilder-bundle-pool-operations"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+transaction-pool-bundle-ext = { path = "../.." }
+rbuilder = { path = "../../../rbuilder" }
+
+reth-primitives = { workspace = true }
+reth-provider = { workspace = true }
+reth-db-api = { workspace = true }
+reth-rpc-types = { workspace = true }
+
+derive_more = { workspace = true }
+eyre = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+optimism = [
+	"reth-primitives/optimism",
+	"rbuilder/optimism",
+	"reth-provider/optimism",
+	"reth-db-api/optimism"
+]

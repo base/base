@@ -1,0 +1,14 @@
+[package]
+name = "transaction-pool-bundle-ext"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+reth = { workspace = true }
+reth-eth-wire-types = { workspace = true }
+reth-primitives = { workspace = true }
+reth-rpc-types = { workspace = true }
+reth-transaction-pool = { workspace = true }
+
+tokio = { workspace = true }
+

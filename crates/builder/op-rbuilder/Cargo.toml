@@ -1,0 +1,58 @@
+[package]
+name = "op-rbuilder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rbuilder = { path = "../rbuilder" }
+op-rbuilder-node-optimism = { path = "./node" }
+transaction-pool-bundle-ext = { path = "../transaction-pool-bundle-ext" }
+
+reth.workspace = true
+reth-node-optimism.workspace = true
+reth-cli-util.workspace = true
+reth-optimism-rpc.workspace = true
+
+tokio.workspace = true
+tracing.workspace = true
+jsonrpsee = { workspace = true }
+async-trait = { workspace = true }
+clap_builder = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = { version = "0.5.0", optional = true }
+
+[dev-dependencies]
+reth-discv4.workspace = true
+
+[features]
+default = ["jemalloc"]
+
+jemalloc = ["dep:tikv-jemallocator"]
+jemalloc-prof = [
+	"jemalloc",
+	"tikv-jemallocator?/profiling",
+	"reth/jemalloc-prof"
+]
+
+min-error-logs = ["tracing/release_max_level_error"]
+min-warn-logs = ["tracing/release_max_level_warn"]
+min-info-logs = ["tracing/release_max_level_info"]
+min-debug-logs = ["tracing/release_max_level_debug"]
+min-trace-logs = ["tracing/release_max_level_trace"]
+
+optimism = [
+	"reth-node-optimism/optimism",
+	"reth/optimism",
+	"reth-optimism-rpc/optimism",
+	"op-rbuilder-node-optimism/optimism",
+	"rbuilder/optimism"
+]
+
+redact-sensitive = [
+	"rbuilder/redact-sensitive"
+]
+
+[[bin]]
+name = "op-rbuilder"
+path = "src/main.rs"
