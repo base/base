@@ -8,7 +8,7 @@ use alloy_eips::{
     eip7702::SignedAuthorization,
 };
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::{BufMut, Decodable, Encodable};
 use derive_more::Display;
 
 use crate::TxDeposit;
@@ -76,6 +76,36 @@ impl TryFrom<u8> for OpTxType {
             126 => Self::Deposit,
             _ => return Err(Eip2718Error::UnexpectedType(value)),
         })
+    }
+}
+
+impl PartialEq<u8> for OpTxType {
+    fn eq(&self, other: &u8) -> bool {
+        (*self as u8) == *other
+    }
+}
+
+impl PartialEq<OpTxType> for u8 {
+    fn eq(&self, other: &OpTxType) -> bool {
+        *self == *other as Self
+    }
+}
+
+impl Encodable for OpTxType {
+    fn encode(&self, out: &mut dyn BufMut) {
+        (*self as u8).encode(out);
+    }
+
+    fn length(&self) -> usize {
+        1
+    }
+}
+
+impl Decodable for OpTxType {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let ty = u8::decode(buf)?;
+
+        Self::try_from(ty).map_err(|_| alloy_rlp::Error::Custom("invalid transaction type"))
     }
 }
 
