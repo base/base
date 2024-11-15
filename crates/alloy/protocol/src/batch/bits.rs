@@ -2,6 +2,7 @@
 
 use crate::SpanBatchError;
 use alloc::{vec, vec::Vec};
+use alloy_primitives::bytes;
 use alloy_rlp::Buf;
 use core::cmp::Ordering;
 
@@ -48,7 +49,11 @@ impl SpanBatchBits {
     /// Encodes a standard span-batch bitlist.
     /// The bitlist is encoded as big-endian integer, left-padded with zeroes to a multiple of 8
     /// bits. The encoded bitlist cannot be longer than `bit_length`
-    pub fn encode(w: &mut Vec<u8>, bit_length: usize, bits: &Self) -> Result<(), SpanBatchError> {
+    pub fn encode(
+        w: &mut dyn bytes::BufMut,
+        bit_length: usize,
+        bits: &Self,
+    ) -> Result<(), SpanBatchError> {
         if bits.bit_len() > bit_length {
             return Err(SpanBatchError::BitfieldTooLong);
         }
@@ -58,7 +63,7 @@ impl SpanBatchBits {
         let buf_len = bit_length / 8 + if bit_length % 8 != 0 { 1 } else { 0 };
         let mut buf = vec![0; buf_len];
         buf[buf_len - bits.0.len()..].copy_from_slice(bits.as_ref());
-        w.extend_from_slice(&buf);
+        w.put_slice(&buf);
         Ok(())
     }
 

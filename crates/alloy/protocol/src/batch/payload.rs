@@ -3,6 +3,7 @@
 use super::MAX_SPAN_BATCH_ELEMENTS;
 use crate::{SpanBatchBits, SpanBatchError, SpanBatchTransactions, SpanDecodingError};
 use alloc::vec::Vec;
+use alloy_primitives::bytes;
 
 /// Span Batch Payload
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,7 +31,7 @@ impl SpanBatchPayload {
     }
 
     /// Encodes a [SpanBatchPayload] into a writer.
-    pub fn encode_payload(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_payload(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         self.encode_block_count(w);
         self.encode_origin_bits(w)?;
         self.encode_block_tx_counts(w);
@@ -108,27 +109,27 @@ impl SpanBatchPayload {
     }
 
     /// Encode the origin bits into a writer.
-    pub fn encode_origin_bits(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_origin_bits(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         SpanBatchBits::encode(w, self.block_count as usize, &self.origin_bits)
     }
 
     /// Encode the block count into a writer.
-    pub fn encode_block_count(&self, w: &mut Vec<u8>) {
+    pub fn encode_block_count(&self, w: &mut dyn bytes::BufMut) {
         let mut u64_varint_buf = [0u8; 10];
-        w.extend_from_slice(unsigned_varint::encode::u64(self.block_count, &mut u64_varint_buf));
+        w.put_slice(unsigned_varint::encode::u64(self.block_count, &mut u64_varint_buf));
     }
 
     /// Encode the block transaction counts into a writer.
-    pub fn encode_block_tx_counts(&self, w: &mut Vec<u8>) {
+    pub fn encode_block_tx_counts(&self, w: &mut dyn bytes::BufMut) {
         let mut u64_varint_buf = [0u8; 10];
         for block_tx_count in &self.block_tx_counts {
             u64_varint_buf.fill(0);
-            w.extend_from_slice(unsigned_varint::encode::u64(*block_tx_count, &mut u64_varint_buf));
+            w.put_slice(unsigned_varint::encode::u64(*block_tx_count, &mut u64_varint_buf));
         }
     }
 
     /// Encode the transactions into a writer.
-    pub fn encode_txs(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_txs(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         self.txs.encode(w)
     }
 }

@@ -19,7 +19,7 @@ mod inclusion;
 pub use inclusion::BatchWithInclusionBlock;
 
 mod errors;
-pub use errors::{BatchDecodingError, SpanBatchError, SpanDecodingError};
+pub use errors::{BatchDecodingError, BatchEncodingError, SpanBatchError, SpanDecodingError};
 
 mod bits;
 pub use bits::SpanBatchBits;

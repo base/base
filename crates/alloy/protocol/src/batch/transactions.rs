@@ -8,7 +8,7 @@ use crate::{
 use alloc::vec::Vec;
 use alloy_consensus::{Transaction, TxEnvelope, TxType};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bytes, PrimitiveSignature as Signature, U256};
+use alloy_primitives::{bytes, Address, Bytes, PrimitiveSignature as Signature, U256};
 use alloy_rlp::{Buf, Decodable, Encodable};
 
 /// This struct contains the decoded information for transactions in a span batch.
@@ -38,7 +38,7 @@ pub struct SpanBatchTransactions {
 
 impl SpanBatchTransactions {
     /// Encodes the [SpanBatchTransactions] into a writer.
-    pub fn encode(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         self.encode_contract_creation_bits(w)?;
         self.encode_tx_sigs(w)?;
         self.encode_tx_tos(w)?;
@@ -62,19 +62,22 @@ impl SpanBatchTransactions {
     }
 
     /// Encode the contract creation bits into a writer.
-    pub fn encode_contract_creation_bits(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_contract_creation_bits(
+        &self,
+        w: &mut dyn bytes::BufMut,
+    ) -> Result<(), SpanBatchError> {
         SpanBatchBits::encode(w, self.total_block_tx_count as usize, &self.contract_creation_bits)?;
         Ok(())
     }
 
     /// Encode the protected bits into a writer.
-    pub fn encode_protected_bits(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_protected_bits(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         SpanBatchBits::encode(w, self.legacy_tx_count as usize, &self.protected_bits)?;
         Ok(())
     }
 
     /// Encode the transaction signatures into a writer (excluding `v` field).
-    pub fn encode_tx_sigs(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_tx_sigs(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         let mut y_parity_bits = SpanBatchBits::default();
         for (i, sig) in self.tx_sigs.iter().enumerate() {
             y_parity_bits.set_bit(i, sig.v());
@@ -82,44 +85,44 @@ impl SpanBatchTransactions {
 
         SpanBatchBits::encode(w, self.total_block_tx_count as usize, &y_parity_bits)?;
         for sig in &self.tx_sigs {
-            w.extend_from_slice(&sig.r().to_be_bytes::<32>());
-            w.extend_from_slice(&sig.s().to_be_bytes::<32>());
+            w.put_slice(&sig.r().to_be_bytes::<32>());
+            w.put_slice(&sig.s().to_be_bytes::<32>());
         }
         Ok(())
     }
 
     /// Encode the transaction nonces into a writer.
-    pub fn encode_tx_nonces(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_tx_nonces(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         let mut buf = [0u8; 10];
         for nonce in &self.tx_nonces {
             let slice = unsigned_varint::encode::u64(*nonce, &mut buf);
-            w.extend_from_slice(slice);
+            w.put_slice(slice);
         }
         Ok(())
     }
 
     /// Encode the transaction gas limits into a writer.
-    pub fn encode_tx_gases(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_tx_gases(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         let mut buf = [0u8; 10];
         for gas in &self.tx_gases {
             let slice = unsigned_varint::encode::u64(*gas, &mut buf);
-            w.extend_from_slice(slice);
+            w.put_slice(slice);
         }
         Ok(())
     }
 
     /// Encode the `to` addresses of the transactions into a writer.
-    pub fn encode_tx_tos(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_tx_tos(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         for to in &self.tx_tos {
-            w.extend_from_slice(to.as_ref());
+            w.put_slice(to.as_ref());
         }
         Ok(())
     }
 
     /// Encode the transaction data into a writer.
-    pub fn encode_tx_datas(&self, w: &mut Vec<u8>) -> Result<(), SpanBatchError> {
+    pub fn encode_tx_datas(&self, w: &mut dyn bytes::BufMut) -> Result<(), SpanBatchError> {
         for data in &self.tx_datas {
-            w.extend_from_slice(data);
+            w.put_slice(data);
         }
         Ok(())
     }

@@ -1,8 +1,7 @@
 //! Raw Span Batch Prefix
 
 use crate::{SpanBatchError, SpanDecodingError};
-use alloc::vec::Vec;
-use alloy_primitives::FixedBytes;
+use alloy_primitives::{bytes, FixedBytes};
 
 /// Span Batch Prefix
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -65,12 +64,12 @@ impl SpanBatchPrefix {
     }
 
     /// Encodes the [SpanBatchPrefix] into a writer.
-    pub fn encode_prefix(&self, w: &mut Vec<u8>) {
+    pub fn encode_prefix(&self, w: &mut dyn bytes::BufMut) {
         let mut u64_buf = [0u8; 10];
-        w.extend_from_slice(unsigned_varint::encode::u64(self.rel_timestamp, &mut u64_buf));
-        w.extend_from_slice(unsigned_varint::encode::u64(self.l1_origin_num, &mut u64_buf));
-        w.extend_from_slice(self.parent_check.as_slice());
-        w.extend_from_slice(self.l1_origin_check.as_slice());
+        w.put_slice(unsigned_varint::encode::u64(self.rel_timestamp, &mut u64_buf));
+        w.put_slice(unsigned_varint::encode::u64(self.l1_origin_num, &mut u64_buf));
+        w.put_slice(self.parent_check.as_slice());
+        w.put_slice(self.l1_origin_check.as_slice());
     }
 }
 

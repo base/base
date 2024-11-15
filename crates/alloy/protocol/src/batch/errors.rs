@@ -35,6 +35,17 @@ impl core::error::Error for SpanBatchError {
     }
 }
 
+/// An error encoding a batch.
+#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+pub enum BatchEncodingError {
+    /// Error encoding an Alloy RLP
+    #[display("Error encoding an Alloy RLP: {_0}")]
+    AlloyRlpError(alloy_rlp::Error),
+    /// Error encoding a span batch
+    #[display("Error encoding a span batch: {_0}")]
+    SpanBatchError(SpanBatchError),
+}
+
 /// An error decoding a batch.
 #[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
 pub enum BatchDecodingError {
