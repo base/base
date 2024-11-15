@@ -317,7 +317,7 @@ mod tests {
     use alloy_rlp::Encodable;
 
     #[cfg(not(feature = "std"))]
-    use alloc::{vec, vec::Vec};
+    use alloc::vec;
 
     // Test vector from: https://eips.ethereum.org/EIPS/eip-2481
     #[test]

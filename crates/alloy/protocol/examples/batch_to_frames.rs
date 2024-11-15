@@ -12,15 +12,12 @@
 //! Finally, once [Frame]s are built from the [ChannelOut], they are encoded and ready
 //! to be batch-submitted to the data availability layer.
 
-use alloy_consensus::{SignableTransaction, TxEip1559};
-use alloy_eips::eip2718::{Decodable2718, Encodable2718};
-use alloy_primitives::{hex, Address, BlockHash, Bytes, PrimitiveSignature, U256};
-use brotli::enc::{BrotliCompress, BrotliEncoderParams};
-use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_genesis::RollupConfig;
-use op_alloy_protocol::{Batch, ChannelId, ChannelOut, SingleBatch, CHANNEL_ID_LENGTH};
-
+#[cfg(feature = "std")]
 fn main() {
+    use alloy_primitives::BlockHash;
+    use op_alloy_genesis::RollupConfig;
+    use op_alloy_protocol::{Batch, ChannelId, ChannelOut, SingleBatch};
+
     // Use the example transaction
     let transactions = example_transactions();
 
@@ -29,30 +26,16 @@ fn main() {
     let epoch_num = 1;
     let epoch_hash = BlockHash::ZERO;
     let timestamp = 1;
-
     let single_batch = SingleBatch { parent_hash, epoch_num, epoch_hash, timestamp, transactions };
     let batch = Batch::Single(single_batch);
 
-    // Encode the batch.
-    let mut encoded = Vec::new();
-    batch.encode(&mut encoded).unwrap();
-    let config = RollupConfig::default();
-    let decoded = Batch::decode(&mut encoded.as_slice(), &config).unwrap();
-    assert_eq!(batch, decoded);
-    println!("Encoded Batch: {}", hex::encode(&encoded));
-
-    // Compress the encoded batch.
-    let compressed = compress_brotli(&encoded);
-    let expected = hex!("1b1301f82f0f6c3734f4821cd090ef3979d71a98e7e483b1dccdd525024c0ef16f425c7b4976a7acc0c94a0514b72c096d4dcc52f0b22dae193c70c86d0790a304a08152c8250031d091063ea0b00d00005082edde7ccf05bded2004462b5e80e1c42cd08e307f5baac723b22864cc6cd01ddde84efc7c018d7ada56c2fa8e3c5bedd494c3a7a884439d5771afcecaf196cb38");
-    assert_eq!(compressed, expected);
-    println!("Brotli-compressed batch: {}", hex::encode(&compressed));
-
     // Create a new channel.
-    let id = random_channel_id();
+    let id = ChannelId::default();
+    let config = RollupConfig::default();
     let mut channel_out = ChannelOut::new(id, &config);
 
     // Add the compressed batch to the `ChannelOut`.
-    channel_out.add_raw_compressed_batch(compressed.into());
+    channel_out.add_batch(batch).unwrap();
 
     // Output frames
     while channel_out.ready_bytes() > 0 {
@@ -64,24 +47,16 @@ fn main() {
     }
 
     assert!(channel_out.closed);
+    println!("Successfully encoded Batch to frames");
 }
 
-/// Creates a random [ChannelId].
-pub fn random_channel_id() -> ChannelId {
-    let mut id = [0; CHANNEL_ID_LENGTH];
-    id.iter_mut().for_each(|b| *b = rand::random());
-    id
-}
+#[cfg(feature = "std")]
+fn example_transactions() -> Vec<alloy_primitives::Bytes> {
+    use alloy_consensus::{SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::{Decodable2718, Encodable2718};
+    use alloy_primitives::{Address, PrimitiveSignature, U256};
+    use op_alloy_consensus::OpTxEnvelope;
 
-/// Compresses the given bytes data using the Brotli compressor implemented
-/// in the [`brotli`](https://crates.io/crates/brotli) crate.
-pub fn compress_brotli(mut input: &[u8]) -> Vec<u8> {
-    let mut output = vec![];
-    BrotliCompress(&mut input, &mut output, &BrotliEncoderParams::default()).expect("succeeds");
-    output
-}
-
-fn example_transactions() -> Vec<Bytes> {
     let mut transactions = Vec::new();
 
     // First Transaction in the batch.
@@ -127,4 +102,9 @@ fn example_transactions() -> Vec<Bytes> {
     assert!(matches!(decoded, OpTxEnvelope::Eip1559(_)));
 
     transactions
+}
+
+#[cfg(not(feature = "std"))]
+fn main() {
+    /* not implemented for no_std */
 }

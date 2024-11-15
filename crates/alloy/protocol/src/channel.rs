@@ -2,10 +2,9 @@
 
 use alloc::{vec, vec::Vec};
 use alloy_primitives::{map::HashMap, Bytes};
-use alloy_rlp::Encodable;
 use op_alloy_genesis::RollupConfig;
 
-use crate::{block::BlockInfo, frame::Frame, SingleBatch};
+use crate::{block::BlockInfo, frame::Frame};
 
 /// The frame overhead.
 const FRAME_V0_OVERHEAD: usize = 23;
@@ -17,7 +16,7 @@ pub const CHANNEL_ID_LENGTH: usize = 16;
 pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
 
 /// An error returned by the [ChannelOut] when adding single batches.
-#[derive(Debug, Clone, Copy, derive_more::Display, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum ChannelOutError {
     /// The channel is closed.
     ChannelClosed,
@@ -25,6 +24,10 @@ pub enum ChannelOutError {
     MaxFrameSizeTooSmall,
     /// Missing compressed batch data.
     MissingData,
+    /// An error from brotli compression.
+    BrotliCompression,
+    /// An error encoding the `Batch`.
+    BatchEncoding,
 }
 
 impl core::error::Error for ChannelOutError {}
@@ -54,25 +57,26 @@ impl<'a> ChannelOut<'a> {
         Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressed: None }
     }
 
-    /// Accepts the given [SingleBatch] data into the [ChannelOut], compressing it
+    /// Accepts the given [crate::Batch] data into the [ChannelOut], compressing it
     /// into frames.
-    pub fn add_single_batch(&mut self, batch: SingleBatch) -> Result<(), ChannelOutError> {
+    #[cfg(feature = "std")]
+    pub fn add_batch(&mut self, batch: crate::Batch) -> Result<(), ChannelOutError> {
         if self.closed {
             return Err(ChannelOutError::ChannelClosed);
         }
 
         // Encode the batch.
         let mut buf = vec![];
-        batch.encode(&mut buf);
+        batch.encode(&mut buf).map_err(|_| ChannelOutError::BatchEncoding)?;
 
         // Validate that the RLP length is within the channel's limits.
-        let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(batch.timestamp);
+        let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(batch.timestamp());
         if self.rlp_length + buf.len() as u64 > max_rlp_bytes_per_channel {
             return Err(ChannelOutError::ChannelClosed);
         }
 
-        // Compress the batch.
-        todo!("compress the batch with a compression algorithm based on the rollup config")
+        self.compressed = Some(crate::compress_brotli(&buf).into());
+        Ok(())
     }
 
     /// Returns the number of bytes ready to be output to a frame.
@@ -81,6 +85,7 @@ impl<'a> ChannelOut<'a> {
     }
 
     /// Accepts the raw compressed batch data into the [ChannelOut].
+    #[deprecated]
     pub fn add_raw_compressed_batch(&mut self, compressed: Bytes) {
         self.compressed = Some(compressed);
     }

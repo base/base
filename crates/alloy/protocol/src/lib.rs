@@ -37,6 +37,8 @@ mod iter;
 pub use iter::FrameIter;
 
 mod utils;
+#[cfg(feature = "std")]
+pub use utils::compress_brotli;
 pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config};
 
 mod channel;

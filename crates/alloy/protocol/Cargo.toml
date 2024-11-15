@@ -26,6 +26,7 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
 # Misc
+brotli.workspace = true
 tracing.workspace = true
 derive_more.workspace = true
 async-trait.workspace = true
@@ -62,5 +63,5 @@ test-utils = [
   "dep:tracing-subscriber",
 ]
 arbitrary = ["std", "dep:arbitrary", "alloy-consensus/arbitrary", "alloy-eips/arbitrary", "alloy-primitives/rand"]
-std = ["op-alloy-consensus/std", "op-alloy-genesis/std"]
+std = ["op-alloy-consensus/std", "op-alloy-genesis/std", "brotli/std"]
 serde = ["dep:serde", "dep:alloy-serde", "op-alloy-consensus/serde", "op-alloy-genesis/serde"]
