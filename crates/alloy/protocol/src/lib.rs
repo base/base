@@ -19,6 +19,9 @@ pub use batch::{
     SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE,
 };
 
+mod errors;
+pub use errors::OpBlockConversionError;
+
 mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
 
@@ -34,7 +37,7 @@ mod iter;
 pub use iter::FrameIter;
 
 mod utils;
-pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config, OpBlockConversionError};
+pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config};
 
 mod channel;
 pub use channel::{
@@ -42,16 +45,19 @@ pub use channel::{
     FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL,
 };
 
-pub mod deposits;
+mod deposits;
 pub use deposits::{
     decode_deposit, DepositError, DepositSourceDomain, DepositSourceDomainIdentifier,
-    L1InfoDepositSource, UpgradeDepositSource, UserDepositSource, DEPOSIT_EVENT_ABI_HASH,
+    L1InfoDepositSource, UpgradeDepositSource, UserDepositSource, DEPOSIT_EVENT_ABI,
+    DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0,
 };
 
-pub mod block_info;
-pub use block_info::{L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoTx};
+mod block_info;
+pub use block_info::{
+    BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoTx,
+};
 
-pub mod fee;
+mod fee;
 pub use fee::{
     calculate_tx_l1_cost_bedrock, calculate_tx_l1_cost_ecotone, calculate_tx_l1_cost_fjord,
     calculate_tx_l1_cost_regolith, data_gas_bedrock, data_gas_fjord, data_gas_regolith,
