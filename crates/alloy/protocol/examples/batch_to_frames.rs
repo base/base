@@ -15,11 +15,10 @@
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{hex, Address, BlockHash, Bytes, PrimitiveSignature, U256};
-use alloy_rlp::{Decodable, Encodable};
 use brotli::enc::{BrotliCompress, BrotliEncoderParams};
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_genesis::RollupConfig;
-use op_alloy_protocol::{ChannelId, ChannelOut, SingleBatch, CHANNEL_ID_LENGTH};
+use op_alloy_protocol::{Batch, ChannelId, ChannelOut, SingleBatch, CHANNEL_ID_LENGTH};
 
 fn main() {
     // Use the example transaction
@@ -32,23 +31,24 @@ fn main() {
     let timestamp = 1;
 
     let single_batch = SingleBatch { parent_hash, epoch_num, epoch_hash, timestamp, transactions };
+    let batch = Batch::Single(single_batch);
 
     // Encode the batch.
     let mut encoded = Vec::new();
-    single_batch.encode(&mut encoded);
-    let decoded = SingleBatch::decode(&mut encoded.as_slice()).unwrap();
-    assert_eq!(single_batch, decoded);
+    batch.encode(&mut encoded).unwrap();
+    let config = RollupConfig::default();
+    let decoded = Batch::decode(&mut encoded.as_slice(), &config).unwrap();
+    assert_eq!(batch, decoded);
     println!("Encoded Batch: {}", hex::encode(&encoded));
 
     // Compress the encoded batch.
     let compressed = compress_brotli(&encoded);
-    let expected = hex!("1b1201f82f0f6c3734f4821cd090ef3979d71a98e7e483b1dccdd525024c0ef16f425c7b4976a7acc0c94a0514b72c096d4dcc52f0b22dae193c70c86d0790a304a08152c8250031d011fe80c23600004009b67bf33d17f4b6831018ad78018613b3403bc2fc6da91e8fc8a29031b3417774a33bf1f30534ea695b09eb3bf26cb553530e9fa2120e755ec5bd3a2bc75b2ee300");
+    let expected = hex!("1b1301f82f0f6c3734f4821cd090ef3979d71a98e7e483b1dccdd525024c0ef16f425c7b4976a7acc0c94a0514b72c096d4dcc52f0b22dae193c70c86d0790a304a08152c8250031d091063ea0b00d00005082edde7ccf05bded2004462b5e80e1c42cd08e307f5baac723b22864cc6cd01ddde84efc7c018d7ada56c2fa8e3c5bedd494c3a7a884439d5771afcecaf196cb38");
     assert_eq!(compressed, expected);
     println!("Brotli-compressed batch: {}", hex::encode(&compressed));
 
     // Create a new channel.
     let id = random_channel_id();
-    let config = RollupConfig::default();
     let mut channel_out = ChannelOut::new(id, &config);
 
     // Add the compressed batch to the `ChannelOut`.

@@ -3,15 +3,15 @@
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{hex, Address, BlockHash, Bytes, PrimitiveSignature, U256};
-use alloy_rlp::Decodable;
 use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_protocol::{BlockInfo, Channel, Frame, SingleBatch};
+use op_alloy_genesis::RollupConfig;
+use op_alloy_protocol::{Batch, BlockInfo, Channel, Frame, SingleBatch};
 use std::io::Read;
 
 fn main() {
     // Raw frame data taken from the `encode_channel` example.
-    let first_frame = hex!("d9529e42ee95431e983d7e96dc2f2f0400000000004d1b1201f82f0f6c3734f4821cd090ef3979d71a98e7e483b1dccdd525024c0ef16f425c7b4976a7acc0c94a0514b72c096d4dcc52f0b22dae193c70c86d0790a304a08152c8250031d011fe80c200");
-    let second_frame = hex!("d9529e42ee95431e983d7e96dc2f2f040001000000463600004009b67bf33d17f4b6831018ad78018613b3403bc2fc6da91e8fc8a29031b3417774a33bf1f30534ea695b09eb3bf26cb553530e9fa2120e755ec5bd3a2bc75b2ee30001");
+    let first_frame = hex!("60d54f49b71978b1b09288af847b11d200000000004d1b1301f82f0f6c3734f4821cd090ef3979d71a98e7e483b1dccdd525024c0ef16f425c7b4976a7acc0c94a0514b72c096d4dcc52f0b22dae193c70c86d0790a304a08152c8250031d091063ea000");
+    let second_frame = hex!("60d54f49b71978b1b09288af847b11d2000100000046b00d00005082edde7ccf05bded2004462b5e80e1c42cd08e307f5baac723b22864cc6cd01ddde84efc7c018d7ada56c2fa8e3c5bedd494c3a7a884439d5771afcecaf196cb3801");
 
     // Decode the raw frames.
     let decoded_first = Frame::decode(&first_frame).expect("decodes frame").1;
@@ -36,19 +36,20 @@ fn main() {
     println!("Decompressed frame data: {}", hex::encode(&decompressed));
 
     // Decode the single batch from the decompressed data.
-    let batch = SingleBatch::decode(&mut decompressed.as_slice()).expect("batch decodes");
+    let config = RollupConfig::default();
+    let batch = Batch::decode(&mut decompressed.as_slice(), &config).expect("batch decodes");
     assert_eq!(
         batch,
-        SingleBatch {
+        Batch::Single(SingleBatch {
             parent_hash: BlockHash::ZERO,
             epoch_num: 1,
             epoch_hash: BlockHash::ZERO,
             timestamp: 1,
             transactions: example_transactions(),
-        }
+        })
     );
 
-    println!("Successfully decoded frames into a SingleBatch");
+    println!("Successfully decoded frames into a Batch");
 }
 
 /// Decompresses the given bytes data using the Brotli decompressor implemented
