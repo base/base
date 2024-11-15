@@ -675,4 +675,28 @@ mod tests {
         let deposit = tx.as_deposit().unwrap();
         assert!(deposit.mint.is_none());
     }
+
+    #[test]
+    fn eip1559_decode() {
+        use alloy_consensus::SignableTransaction;
+        use alloy_primitives::PrimitiveSignature;
+        let tx = TxEip1559 {
+            chain_id: 1u64,
+            nonce: 2,
+            max_fee_per_gas: 3,
+            max_priority_fee_per_gas: 4,
+            gas_limit: 5,
+            to: Address::left_padding_from(&[6]).into(),
+            value: U256::from(7_u64),
+            input: vec![8].into(),
+            access_list: Default::default(),
+        };
+        let sig = PrimitiveSignature::test_signature();
+        let tx_signed = tx.into_signed(sig);
+        let envelope: OpTxEnvelope = tx_signed.into();
+        let encoded = envelope.encoded_2718();
+        let mut slice = encoded.as_slice();
+        let decoded = OpTxEnvelope::decode_2718(&mut slice).unwrap();
+        assert!(matches!(decoded, OpTxEnvelope::Eip1559(_)));
+    }
 }

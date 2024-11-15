@@ -38,8 +38,8 @@ pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config, OpBloc
 
 mod channel;
 pub use channel::{
-    Channel, ChannelError, ChannelId, CHANNEL_ID_LENGTH, FJORD_MAX_RLP_BYTES_PER_CHANNEL,
-    MAX_RLP_BYTES_PER_CHANNEL,
+    Channel, ChannelError, ChannelId, ChannelOut, ChannelOutError, CHANNEL_ID_LENGTH,
+    FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL,
 };
 
 pub mod deposits;
