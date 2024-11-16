@@ -9,31 +9,35 @@
 
 extern crate alloc;
 
-pub mod params;
+mod params;
 pub use params::{
     base_fee_params, OpBaseFeeParams, BASE_SEPOLIA_BASE_FEE_PARAMS,
     BASE_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER, OP_MAINNET_BASE_FEE_PARAMS,
-    OP_SEPOLIA_BASE_FEE_PARAMS, OP_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
+    OP_MAINNET_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
+    OP_MAINNET_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
+    OP_MAINNET_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER, OP_SEPOLIA_BASE_FEE_PARAMS,
+    OP_SEPOLIA_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_CANYON,
     OP_SEPOLIA_EIP1559_DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR,
     OP_SEPOLIA_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER,
 };
 
-pub mod addresses;
+mod addresses;
 pub use addresses::AddressList;
 
-pub mod system;
+mod system;
 pub use system::{
-    BatcherUpdateError, GasConfigUpdateError, GasLimitUpdateError, LogProcessingError,
-    SystemAccounts, SystemConfig, SystemConfigUpdateError, SystemConfigUpdateType,
+    BatcherUpdateError, EIP1559UpdateError, GasConfigUpdateError, GasLimitUpdateError,
+    LogProcessingError, SystemAccounts, SystemConfig, SystemConfigUpdateError,
+    SystemConfigUpdateType, CONFIG_UPDATE_EVENT_VERSION_0, CONFIG_UPDATE_TOPIC,
 };
 
-pub mod chain;
-pub use chain::{ChainConfig, HardForkConfiguration, SuperchainLevel};
+mod chain;
+pub use chain::{AltDAConfig, ChainConfig, HardForkConfiguration, SuperchainLevel};
 
-pub mod genesis;
+mod genesis;
 pub use genesis::ChainGenesis;
 
-pub mod rollup;
+mod rollup;
 pub use rollup::{
     rollup_config_from_chain_id, RollupConfig, BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG,
     FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK,
