@@ -11,7 +11,7 @@ extern crate alloc;
 
 mod batch;
 pub use batch::{
-    Batch, BatchDecodingError, BatchEncodingError, BatchType, BatchValidationProvider,
+    Batch, BatchDecodingError, BatchEncodingError, BatchReader, BatchType, BatchValidationProvider,
     BatchValidity, BatchWithInclusionBlock, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
     SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData, SpanBatchElement,
     SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
@@ -32,6 +32,9 @@ mod frame;
 pub use frame::{
     Frame, FrameDecodingError, FrameParseError, DERIVATION_VERSION_0, FRAME_OVERHEAD, MAX_FRAME_LEN,
 };
+
+mod brotli;
+pub use brotli::{decompress_brotli, BatchDecompressionError};
 
 mod iter;
 pub use iter::FrameIter;

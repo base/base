@@ -3,6 +3,9 @@
 mod r#type;
 pub use r#type::*;
 
+mod reader;
+pub use reader::BatchReader;
+
 mod core;
 pub use core::Batch;
 

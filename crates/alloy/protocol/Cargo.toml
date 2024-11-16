@@ -25,15 +25,16 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
-# Compression
-brotli.workspace = true
-miniz_oxide.workspace = true
-
 # Misc
 tracing.workspace = true
 derive_more.workspace = true
 async-trait.workspace = true
 unsigned-varint.workspace = true
+
+# Compression
+brotli.workspace = true
+miniz_oxide.workspace = true
+alloc-no-stdlib.workspace = true
 
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }
