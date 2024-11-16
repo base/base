@@ -1,6 +1,6 @@
 //! Utility methods used by protocol types.
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use alloy_consensus::TxType;
 use alloy_primitives::B256;
 use alloy_rlp::{Buf, Header};
@@ -17,7 +17,7 @@ use crate::{
 #[cfg(feature = "std")]
 pub fn compress_brotli(mut input: &[u8]) -> Vec<u8> {
     use brotli::enc::{BrotliCompress, BrotliEncoderParams};
-    let mut output = vec![];
+    let mut output = alloc::vec![];
     BrotliCompress(&mut input, &mut output, &BrotliEncoderParams::default()).expect("succeeds");
     output
 }

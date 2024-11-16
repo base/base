@@ -27,7 +27,7 @@ alloy-consensus.workspace = true
 
 # Misc
 tracing.workspace = true
-derive_more.workspace = true
+thiserror.workspace = true
 async-trait.workspace = true
 unsigned-varint.workspace = true
 

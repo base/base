@@ -33,6 +33,7 @@ serde = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 
 # misc
+thiserror.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 

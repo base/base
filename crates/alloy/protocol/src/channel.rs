@@ -19,21 +19,24 @@ pub const CHANNEL_ID_LENGTH: usize = 16;
 pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
 
 /// An error returned by the [ChannelOut] when adding single batches.
-#[derive(Debug, Clone, derive_more::Display)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ChannelOutError {
     /// The channel is closed.
+    #[error("The channel is already closed")]
     ChannelClosed,
     /// The max frame size is too small.
+    #[error("The max frame size is too small")]
     MaxFrameSizeTooSmall,
     /// Missing compressed batch data.
+    #[error("Missing compressed batch data")]
     MissingData,
     /// An error from brotli compression.
+    #[error("Error from Brotli compression")]
     BrotliCompression,
     /// An error encoding the `Batch`.
+    #[error("Error encoding the batch")]
     BatchEncoding,
 }
-
-impl core::error::Error for ChannelOutError {}
 
 /// [ChannelOut] constructs a channel from compressed, encoded batch data.
 #[derive(Debug, Clone)]

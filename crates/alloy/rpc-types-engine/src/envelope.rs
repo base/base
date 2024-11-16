@@ -5,7 +5,6 @@
 
 use alloy_primitives::{keccak256, Signature, B256};
 use alloy_rpc_types_engine::ExecutionPayload;
-use derive_more::derive::{Display, From};
 
 /// Optimism execution payload envelope in network format.
 ///
@@ -103,23 +102,40 @@ impl OpNetworkPayloadEnvelope {
 }
 
 /// Errors that can occur when decoding a payload envelope.
-#[derive(Debug, Clone, PartialEq, Eq, Display, From)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PayloadEnvelopeError {
     /// The snappy encoding is broken.
-    #[display("Broken snappy encoding")]
-    #[cfg_attr(feature = "std", from(snap::Error))]
+    #[error("Broken snappy encoding")]
     BrokenSnappyEncoding,
     /// The signature is invalid.
-    #[display("Invalid signature")]
-    #[from(alloy_primitives::SignatureError)]
+    #[error("Invalid signature")]
     InvalidSignature,
     /// The SSZ encoding is broken.
-    #[display("Broken SSZ encoding")]
-    #[cfg_attr(feature = "std", from(ssz::DecodeError))]
+    #[error("Broken SSZ encoding")]
     BrokenSszEncoding,
     /// The payload envelope is of invalid length.
-    #[display("Invalid length")]
+    #[error("Invalid length")]
     InvalidLength,
+}
+
+impl From<alloy_primitives::SignatureError> for PayloadEnvelopeError {
+    fn from(_: alloy_primitives::SignatureError) -> Self {
+        Self::InvalidSignature
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<snap::Error> for PayloadEnvelopeError {
+    fn from(_: snap::Error) -> Self {
+        Self::BrokenSnappyEncoding
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<ssz::DecodeError> for PayloadEnvelopeError {
+    fn from(_: ssz::DecodeError) -> Self {
+        Self::BrokenSszEncoding
+    }
 }
 
 /// Represents the Keccak256 hash of the block

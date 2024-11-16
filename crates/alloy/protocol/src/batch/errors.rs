@@ -1,123 +1,85 @@
 //! Span Batch Errors
 
 /// Span Batch Errors
-#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SpanBatchError {
     /// The span batch is too big
-    #[display("The span batch is too big.")]
+    #[error("The span batch is too big.")]
     TooBigSpanBatchSize,
     /// The bit field is too long
-    #[display("The bit field is too long")]
+    #[error("The bit field is too long")]
     BitfieldTooLong,
     /// Empty Span Batch
-    #[display("Empty span batch")]
+    #[error("Empty span batch")]
     EmptySpanBatch,
     /// Missing L1 origin
-    #[display("Missing L1 origin")]
+    #[error("Missing L1 origin")]
     MissingL1Origin,
     /// Decoding errors
-    #[display("Span batch decoding error: {_0}")]
-    Decoding(SpanDecodingError),
-}
-
-impl From<SpanDecodingError> for SpanBatchError {
-    fn from(err: SpanDecodingError) -> Self {
-        Self::Decoding(err)
-    }
-}
-
-impl core::error::Error for SpanBatchError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::Decoding(err) => Some(err),
-            _ => None,
-        }
-    }
+    #[error("Span batch decoding error: {0}")]
+    Decoding(#[from] SpanDecodingError),
 }
 
 /// An error encoding a batch.
-#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum BatchEncodingError {
     /// Error encoding an Alloy RLP
-    #[display("Error encoding an Alloy RLP: {_0}")]
+    #[error("Error encoding an Alloy RLP: {0}")]
     AlloyRlpError(alloy_rlp::Error),
     /// Error encoding a span batch
-    #[display("Error encoding a span batch: {_0}")]
-    SpanBatchError(SpanBatchError),
+    #[error("Error encoding a span batch: {0}")]
+    SpanBatchError(#[from] SpanBatchError),
 }
 
 /// An error decoding a batch.
-#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum BatchDecodingError {
     /// Empty buffer
-    #[display("Empty buffer")]
+    #[error("Empty buffer")]
     EmptyBuffer,
     /// Error decoding an Alloy RLP
-    #[display("Error decoding an Alloy RLP: {_0}")]
+    #[error("Error decoding an Alloy RLP: {0}")]
     AlloyRlpError(alloy_rlp::Error),
     /// Error decoding a span batch
-    #[display("Error decoding a span batch: {_0}")]
-    SpanBatchError(SpanBatchError),
-}
-
-impl From<alloy_rlp::Error> for BatchDecodingError {
-    fn from(err: alloy_rlp::Error) -> Self {
-        Self::AlloyRlpError(err)
-    }
-}
-
-impl From<SpanBatchError> for BatchDecodingError {
-    fn from(err: SpanBatchError) -> Self {
-        Self::SpanBatchError(err)
-    }
-}
-
-impl core::error::Error for BatchDecodingError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::SpanBatchError(err) => Some(err),
-            _ => None,
-        }
-    }
+    #[error("Error decoding a span batch: {0}")]
+    SpanBatchError(#[from] SpanBatchError),
 }
 
 /// Decoding Error
-#[derive(Debug, derive_more::Display, Clone, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum SpanDecodingError {
     /// Failed to decode relative timestamp
-    #[display("Failed to decode relative timestamp")]
+    #[error("Failed to decode relative timestamp")]
     RelativeTimestamp,
     /// Failed to decode L1 origin number
-    #[display("Failed to decode L1 origin number")]
+    #[error("Failed to decode L1 origin number")]
     L1OriginNumber,
     /// Failed to decode parent check
-    #[display("Failed to decode parent check")]
+    #[error("Failed to decode parent check")]
     ParentCheck,
     /// Failed to decode L1 origin check
-    #[display("Failed to decode L1 origin check")]
+    #[error("Failed to decode L1 origin check")]
     L1OriginCheck,
     /// Failed to decode block count
-    #[display("Failed to decode block count")]
+    #[error("Failed to decode block count")]
     BlockCount,
     /// Failed to decode block tx counts
-    #[display("Failed to decode block tx counts")]
+    #[error("Failed to decode block tx counts")]
     BlockTxCounts,
     /// Failed to decode transaction nonces
-    #[display("Failed to decode transaction nonces")]
+    #[error("Failed to decode transaction nonces")]
     TxNonces,
     /// Mismatch in length between the transaction type and signature arrays in a span batch
     /// transaction payload.
-    #[display("Mismatch in length between the transaction type and signature arrays")]
+    #[error("Mismatch in length between the transaction type and signature arrays")]
     TypeSignatureLenMismatch,
     /// Invalid transaction type
-    #[display("Invalid transaction type")]
+    #[error("Invalid transaction type")]
     InvalidTransactionType,
     /// Invalid transaction data
-    #[display("Invalid transaction data")]
+    #[error("Invalid transaction data")]
     InvalidTransactionData,
     /// Invalid transaction signature
-    #[display("Invalid transaction signature")]
+    #[error("Invalid transaction signature")]
     InvalidTransactionSignature,
 }
-
-impl core::error::Error for SpanDecodingError {}

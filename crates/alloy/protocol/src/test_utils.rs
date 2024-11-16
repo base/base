@@ -10,17 +10,15 @@ use tracing_subscriber::{layer::Context, Layer};
 use crate::{BatchValidationProvider, L2BlockInfo};
 
 /// An error for implementations of the [BatchValidationProvider] trait.
-#[derive(Debug, derive_more::Display)]
+#[derive(Debug, thiserror::Error)]
 pub enum TestBatchValidatorError {
     /// The block was not found.
-    #[display("Block not found")]
+    #[error("Block not found")]
     BlockNotFound,
     /// The L2 block was not found.
-    #[display("L2 Block not found")]
+    #[error("L2 Block not found")]
     L2BlockNotFound,
 }
-
-impl core::error::Error for TestBatchValidatorError {}
 
 /// An [TestBatchValidator] implementation for testing.
 #[derive(Debug, Default, Clone)]
