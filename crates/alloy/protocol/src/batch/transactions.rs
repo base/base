@@ -232,6 +232,7 @@ impl SpanBatchTransactions {
     pub fn full_txs(&self, chain_id: u64) -> Result<Vec<Vec<u8>>, SpanBatchError> {
         let mut txs = Vec::new();
         let mut to_idx = 0;
+        let mut protected_bit_idx = 0;
         for idx in 0..self.total_block_tx_count {
             let mut datas = self.tx_datas[idx as usize].as_slice();
             let tx = SpanBatchTransactionData::decode(&mut datas)
@@ -263,7 +264,12 @@ impl SpanBatchTransactions {
                 .tx_sigs
                 .get(idx as usize)
                 .ok_or(SpanBatchError::Decoding(SpanDecodingError::InvalidTransactionData))?;
-            let is_protected = self.protected_bits.get_bit(idx as usize).unwrap_or_default() == 1;
+            let is_protected = if tx.tx_type() == TxType::Legacy {
+                protected_bit_idx += 1;
+                self.protected_bits.get_bit(protected_bit_idx - 1).unwrap_or_default() == 1
+            } else {
+                true
+            };
             let tx_envelope = tx.to_enveloped_tx(*nonce, *gas, to, chain_id, sig, is_protected)?;
             let mut buf = Vec::new();
             tx_envelope.encode_2718(&mut buf);
