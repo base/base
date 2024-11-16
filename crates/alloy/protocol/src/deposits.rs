@@ -19,7 +19,7 @@ pub const DEPOSIT_EVENT_ABI_HASH: B256 =
 pub const DEPOSIT_EVENT_VERSION_0: B256 = B256::ZERO;
 
 /// An [op_alloy_consensus::TxDeposit] validation error.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DepositError {
     /// Unexpected number of deposit event log topics.
     UnexpectedTopicsLen(usize),
@@ -52,8 +52,6 @@ pub enum DepositError {
     /// Failed to decode the deposit gas value.
     GasDecode(Bytes),
 }
-
-impl core::error::Error for DepositError {}
 
 impl Display for DepositError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

@@ -122,7 +122,7 @@ pub struct L1BlockInfoEcotone {
 }
 
 /// An error type for parsing L1 block info transactions.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, thiserror::Error, Copy, Clone)]
 pub enum BlockInfoError {
     /// Failed to parse the L1 blob base fee scalar.
     L1BlobBaseFeeScalar,
@@ -151,11 +151,14 @@ impl core::fmt::Display for BlockInfoError {
     }
 }
 
-#[allow(missing_docs)]
-#[derive(Debug)]
+/// An error decoding an L1 block info transaction.
+#[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
+    /// Invalid selector for the L1 info transaction
     InvalidSelector,
+    /// Parse error for the L1 info transaction
     ParseError(String),
+    /// Invalid length for the L1 info transaction
     InvalidLength(String),
 }
 
@@ -168,8 +171,6 @@ impl core::fmt::Display for DecodeError {
         }
     }
 }
-
-impl core::error::Error for DecodeError {}
 
 impl L1BlockInfoTx {
     /// Creates a new [L1BlockInfoTx] from the given information.

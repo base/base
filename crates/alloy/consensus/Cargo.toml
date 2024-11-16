@@ -21,6 +21,11 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
+# misc
+spin.workspace = true
+thiserror.workspace = true
+derive_more = { workspace = true, features = ["display"] }
+
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
@@ -28,10 +33,6 @@ arbitrary = { workspace = true, features = ["derive"], optional = true }
 serde_with = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
-
-# misc
-spin.workspace = true
-derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 rand.workspace = true

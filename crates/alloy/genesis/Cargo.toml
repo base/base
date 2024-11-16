@@ -21,6 +21,9 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
 
+# Misc
+thiserror.workspace = true
+
 # `arbitrary` feature
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 

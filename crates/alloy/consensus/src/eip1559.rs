@@ -45,7 +45,7 @@ pub fn decode_holocene_extra_data(
 }
 
 /// Error type for EIP-1559 parameters
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 pub enum EIP1559ParamError {
     /// No EIP-1559 parameters provided
     NoEIP1559Params,
@@ -68,8 +68,6 @@ impl core::fmt::Display for EIP1559ParamError {
         }
     }
 }
-
-impl core::error::Error for EIP1559ParamError {}
 
 #[cfg(test)]
 mod tests {

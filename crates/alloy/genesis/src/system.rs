@@ -325,7 +325,7 @@ impl SystemConfig {
 }
 
 /// An error for processing the [SystemConfig] update log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SystemConfigUpdateError {
     /// An error occurred while processing the update log.
@@ -353,7 +353,7 @@ impl core::fmt::Display for SystemConfigUpdateError {
 }
 
 /// An error occurred while processing the update log.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LogProcessingError {
     /// Received an incorrect number of log topics.
@@ -389,7 +389,7 @@ impl core::fmt::Display for LogProcessingError {
 }
 
 /// An error for updating the batcher address on the [SystemConfig].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BatcherUpdateError {
     /// Invalid data length.
@@ -432,7 +432,7 @@ impl core::fmt::Display for BatcherUpdateError {
 }
 
 /// An error for updating the gas config on the [SystemConfig].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasConfigUpdateError {
     /// Invalid data length.
@@ -480,7 +480,7 @@ impl core::fmt::Display for GasConfigUpdateError {
 }
 
 /// An error for updating the gas limit on the [SystemConfig].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasLimitUpdateError {
     /// Invalid data length.
@@ -522,10 +522,8 @@ impl core::fmt::Display for GasLimitUpdateError {
     }
 }
 
-impl core::error::Error for GasLimitUpdateError {}
-
 /// An error for updating the EIP-1559 parameters on the [SystemConfig].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EIP1559UpdateError {
     /// Invalid data length.
@@ -569,8 +567,6 @@ impl core::fmt::Display for EIP1559UpdateError {
         }
     }
 }
-
-impl core::error::Error for EIP1559UpdateError {}
 
 /// System accounts
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
