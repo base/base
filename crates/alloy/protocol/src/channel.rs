@@ -6,6 +6,9 @@ use op_alloy_genesis::RollupConfig;
 
 use crate::{block::BlockInfo, frame::Frame};
 
+/// The best compression.
+const BEST_COMPRESSION: u8 = 9;
+
 /// The frame overhead.
 const FRAME_V0_OVERHEAD: usize = 23;
 
@@ -75,19 +78,19 @@ impl<'a> ChannelOut<'a> {
             return Err(ChannelOutError::ChannelClosed);
         }
 
-        self.compressed = Some(crate::compress_brotli(&buf).into());
+        if self.config.is_fjord_active(batch.timestamp()) {
+            self.compressed = Some(crate::compress_brotli(&buf).into());
+        } else {
+            self.compressed =
+                Some(miniz_oxide::deflate::compress_to_vec(&buf, BEST_COMPRESSION).into());
+        }
+
         Ok(())
     }
 
     /// Returns the number of bytes ready to be output to a frame.
     pub fn ready_bytes(&self) -> usize {
         self.compressed.as_ref().map_or(0, |c| c.len())
-    }
-
-    /// Accepts the raw compressed batch data into the [ChannelOut].
-    #[deprecated]
-    pub fn add_raw_compressed_batch(&mut self, compressed: Bytes) {
-        self.compressed = Some(compressed);
     }
 
     /// Closes the channel if not already closed.
