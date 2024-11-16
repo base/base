@@ -7,7 +7,7 @@ use alloy_eips::{
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, TxKind, B256, U256, U64};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use derive_more::Display;
 
@@ -76,6 +76,24 @@ impl TryFrom<u8> for OpTxType {
             126 => Self::Deposit,
             _ => return Err(Eip2718Error::UnexpectedType(value)),
         })
+    }
+}
+
+impl TryFrom<u64> for OpTxType {
+    type Error = &'static str;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        let err = || "invalid tx type";
+        let value: u8 = value.try_into().map_err(|_| err())?;
+        Self::try_from(value).map_err(|_| err())
+    }
+}
+
+impl TryFrom<U64> for OpTxType {
+    type Error = &'static str;
+
+    fn try_from(value: U64) -> Result<Self, Self::Error> {
+        value.to::<u64>().try_into()
     }
 }
 
