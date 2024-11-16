@@ -8,8 +8,9 @@ use op_alloy_genesis::RollupConfig;
 use tracing::{info, warn};
 
 use crate::{
-    BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo, SingleBatch, SpanBatchBits,
-    SpanBatchElement, SpanBatchError, SpanBatchTransactions,
+    BatchValidationProvider, BatchValidity, BlockInfo, L2BlockInfo, RawSpanBatch, SingleBatch,
+    SpanBatchBits, SpanBatchElement, SpanBatchError, SpanBatchPayload, SpanBatchPrefix,
+    SpanBatchTransactions,
 };
 
 /// The span batch contains the input to build a span of L2 blocks in derived form.
@@ -71,6 +72,32 @@ impl SpanBatch {
     /// Peek at the `n`th-to-last last element in the batch.
     fn peek(&self, n: usize) -> &SpanBatchElement {
         &self.batches[self.batches.len() - 1 - n]
+    }
+
+    /// Constructs a [RawSpanBatch] from the [SpanBatch].
+    pub fn to_raw_span_batch(&self) -> Result<RawSpanBatch, SpanBatchError> {
+        if self.batches.is_empty() {
+            return Err(SpanBatchError::EmptySpanBatch);
+        }
+
+        // These should never error since we check for an empty batch above.
+        let span_start = self.batches.first().ok_or(SpanBatchError::EmptySpanBatch)?;
+        let span_end = self.batches.last().ok_or(SpanBatchError::EmptySpanBatch)?;
+
+        Ok(RawSpanBatch {
+            prefix: SpanBatchPrefix {
+                rel_timestamp: span_start.timestamp - self.genesis_timestamp,
+                l1_origin_num: span_end.epoch_num,
+                parent_check: self.parent_check,
+                l1_origin_check: self.l1_origin_check,
+            },
+            payload: SpanBatchPayload {
+                block_count: self.batches.len() as u64,
+                origin_bits: self.origin_bits.clone(),
+                block_tx_counts: self.block_tx_counts.clone(),
+                txs: self.txs.clone(),
+            },
+        })
     }
 
     /// Converts all [SpanBatchElement]s after the L2 safe head to [SingleBatch]es. The resulting
