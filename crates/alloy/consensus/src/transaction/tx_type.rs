@@ -1,7 +1,7 @@
 //! Contains the transaction type identifier for Optimism.
 
 use alloy_eips::eip2718::Eip2718Error;
-use alloy_primitives::U64;
+use alloy_primitives::{U64, U8};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use derive_more::Display;
 
@@ -47,6 +47,12 @@ impl arbitrary::Arbitrary<'_> for OpTxType {
     fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
         let i = u.choose_index(Self::ALL.len())?;
         Ok(Self::ALL[i])
+    }
+}
+
+impl From<OpTxType> for U8 {
+    fn from(tx_type: OpTxType) -> Self {
+        Self::from(u8::from(tx_type))
     }
 }
 
