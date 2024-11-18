@@ -6,7 +6,7 @@ use crate::{OpTxEnvelope, TxDeposit};
 use alloc::{string::String, vec, vec::Vec};
 use alloy_consensus::Sealable;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, Address, Bytes, TxKind, U256};
+use alloy_primitives::{address, hex, Address, Bytes, TxKind, U256};
 use spin::Lazy;
 
 use crate::UpgradeDepositSource;
@@ -46,7 +46,7 @@ static ENABLE_FJORD_SOURCE: Lazy<UpgradeDepositSource> = Lazy::new(|| UpgradeDep
 pub const ENABLE_FJORD_FUNC_SIGNATURE: &str = "setFjord()";
 
 /// The Set Fjord Four Byte Method Signature.
-pub const SET_FJORD_METHOD_SIGNATURE: &[u8] = &[0x8e, 0x98, 0xb1, 0x06];
+pub const SET_FJORD_METHOD_SIGNATURE: [u8; 4] = hex!("8e98b106");
 
 impl super::Hardforks {
     /// Returns the fjord gas price oracle deployment bytecode.

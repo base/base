@@ -4,7 +4,7 @@ pub mod ecotone;
 pub mod fjord;
 
 /// UpgradeTo Function 4Byte Signature
-pub(crate) const UPGRADE_TO_FUNC_BYTES_4: &[u8] = &[0x36, 0x59, 0xcf, 0xe6];
+pub(crate) const UPGRADE_TO_FUNC_BYTES_4: [u8; 4] = alloy_primitives::hex!("3659cfe6");
 
 /// Optimism Hardforks
 ///

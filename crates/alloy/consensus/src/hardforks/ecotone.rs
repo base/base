@@ -6,7 +6,7 @@ use crate::{OpTxEnvelope, TxDeposit};
 use alloc::{string::String, vec, vec::Vec};
 use alloy_consensus::Sealable;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, bytes, Address, Bytes, TxKind, U256};
+use alloy_primitives::{address, bytes, hex, Address, Bytes, TxKind, U256};
 use spin::Lazy;
 
 use crate::UpgradeDepositSource;
@@ -32,7 +32,7 @@ pub const NEW_L1_BLOCK_ADDRESS: Address = address!("07dbe8500fc591d1852b76fee44d
 pub const GAS_PRICE_ORACLE_ADDRESS: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
 /// The Enable Ecotone Input Method 4Byte Signature
-pub const ENABLE_ECOTONE_INPUT: &[u8] = &[0x22, 0xb9, 0x08, 0xb3];
+pub const ENABLE_ECOTONE_INPUT: [u8; 4] = hex!("22b908b3");
 
 /// EIP-4788 From Address
 pub const EIP4788_FROM: Address = address!("0B799C86a49DEeb90402691F1041aa3AF2d3C875");
