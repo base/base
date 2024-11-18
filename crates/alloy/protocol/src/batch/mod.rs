@@ -6,6 +6,9 @@ pub use r#type::*;
 mod reader;
 pub use reader::BatchReader;
 
+mod tx;
+pub use tx::BatchTransaction;
+
 mod core;
 pub use core::Batch;
 

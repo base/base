@@ -11,12 +11,12 @@ extern crate alloc;
 
 mod batch;
 pub use batch::{
-    Batch, BatchDecodingError, BatchEncodingError, BatchReader, BatchType, BatchValidationProvider,
-    BatchValidity, BatchWithInclusionBlock, RawSpanBatch, SingleBatch, SpanBatch, SpanBatchBits,
-    SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData, SpanBatchElement,
-    SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload, SpanBatchPrefix,
-    SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError, MAX_SPAN_BATCH_ELEMENTS,
-    SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE,
+    Batch, BatchDecodingError, BatchEncodingError, BatchReader, BatchTransaction, BatchType,
+    BatchValidationProvider, BatchValidity, BatchWithInclusionBlock, RawSpanBatch, SingleBatch,
+    SpanBatch, SpanBatchBits, SpanBatchEip1559TransactionData, SpanBatchEip2930TransactionData,
+    SpanBatchElement, SpanBatchError, SpanBatchLegacyTransactionData, SpanBatchPayload,
+    SpanBatchPrefix, SpanBatchTransactionData, SpanBatchTransactions, SpanDecodingError,
+    MAX_SPAN_BATCH_ELEMENTS, SINGLE_BATCH_TYPE, SPAN_BATCH_TYPE,
 };
 
 mod errors;
@@ -24,9 +24,6 @@ pub use errors::OpBlockConversionError;
 
 mod block;
 pub use block::{BlockInfo, FromBlockError, L2BlockInfo};
-
-mod batch_tx;
-pub use batch_tx::BatchTransaction;
 
 mod frame;
 pub use frame::{
