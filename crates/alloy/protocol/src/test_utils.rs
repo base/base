@@ -80,11 +80,6 @@ impl TraceStorage {
             .collect()
     }
 
-    /// Locks the storage and returns the items.
-    pub fn lock(&self) -> spin::MutexGuard<'_, Vec<(Level, String)>> {
-        self.0.lock()
-    }
-
     /// Returns if the storage is empty.
     pub fn is_empty(&self) -> bool {
         self.0.lock().is_empty()

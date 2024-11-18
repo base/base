@@ -1,10 +1,17 @@
 //! OP Stack Hardfork Transaction Updates
 
-pub mod ecotone;
-pub mod fjord;
+use alloy_primitives::{address, Address};
 
-/// UpgradeTo Function 4Byte Signature
-pub(crate) const UPGRADE_TO_FUNC_BYTES_4: [u8; 4] = alloy_primitives::hex!("3659cfe6");
+mod fjord;
+pub use fjord::{FJORD_GAS_PRICE_ORACLE, GAS_PRICE_ORACLE_FJORD_DEPLOYER, L1_INFO_DEPOSITER};
+
+mod ecotone;
+pub use ecotone::{EIP4788_FROM, GAS_PRICE_ORACLE_DEPLOYER, L1_BLOCK_DEPLOYER, NEW_L1_BLOCK};
+
+/// The Gas Price Oracle Address
+/// This is computed by using go-ethereum's `crypto.CreateAddress` function,
+/// with the Gas Price Oracle Deployer Address and nonce 0.
+pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
 /// Optimism Hardforks
 ///
@@ -31,9 +38,12 @@ pub(crate) const UPGRADE_TO_FUNC_BYTES_4: [u8; 4] = alloy_primitives::hex!("3659
 pub struct Hardforks;
 
 impl Hardforks {
+    /// UpgradeTo Function 4Byte Signature
+    pub const UPGRADE_TO_FUNC_BYTES_4: [u8; 4] = alloy_primitives::hex!("3659cfe6");
+
     /// Turns the given address into calldata for the `upgradeTo` function.
     pub(crate) fn upgrade_to_calldata(addr: alloy_primitives::Address) -> alloy_primitives::Bytes {
-        let mut v = UPGRADE_TO_FUNC_BYTES_4.to_vec();
+        let mut v = Self::UPGRADE_TO_FUNC_BYTES_4.to_vec();
         v.extend_from_slice(addr.as_slice());
         alloy_primitives::Bytes::from(v)
     }

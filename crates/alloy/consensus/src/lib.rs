@@ -19,9 +19,14 @@ pub use transaction::{
     DEPOSIT_TX_TYPE_ID,
 };
 
-pub mod eip1559;
-pub mod hardforks;
-pub use hardforks::Hardforks;
+mod eip1559;
+pub use eip1559::{decode_eip_1559_params, decode_holocene_extra_data, EIP1559ParamError};
+
+mod hardforks;
+pub use hardforks::{
+    Hardforks, EIP4788_FROM, FJORD_GAS_PRICE_ORACLE, GAS_PRICE_ORACLE, GAS_PRICE_ORACLE_DEPLOYER,
+    GAS_PRICE_ORACLE_FJORD_DEPLOYER, L1_BLOCK_DEPLOYER, L1_INFO_DEPOSITER, NEW_L1_BLOCK,
+};
 
 mod block;
 pub use block::OpBlock;
