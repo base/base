@@ -5,8 +5,7 @@ use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_primitives::{hex, Address, BlockHash, Bytes, PrimitiveSignature, U256};
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_genesis::RollupConfig;
-use op_alloy_protocol::{Batch, BlockInfo, Channel, Frame, SingleBatch};
-use std::io::Read;
+use op_alloy_protocol::{decompress_brotli, Batch, BlockInfo, Channel, Frame, SingleBatch};
 
 fn main() {
     // Raw frame data taken from the `encode_channel` example.
@@ -32,11 +31,12 @@ fn main() {
     println!("Frame data: {}", hex::encode(&frame_data));
 
     // Decompress the frame data with brotli.
-    let decompressed = decompress_brotli(&frame_data);
+    let config = RollupConfig::default();
+    let max = config.max_rlp_bytes_per_channel(open_block.timestamp) as usize;
+    let decompressed = decompress_brotli(&frame_data, max).expect("decompresses brotli");
     println!("Decompressed frame data: {}", hex::encode(&decompressed));
 
     // Decode the single batch from the decompressed data.
-    let config = RollupConfig::default();
     let batch = Batch::decode(&mut decompressed.as_slice(), &config).expect("batch decodes");
     assert_eq!(
         batch,
@@ -50,33 +50,6 @@ fn main() {
     );
 
     println!("Successfully decoded frames into a Batch");
-}
-
-/// Decompresses the given bytes data using the Brotli decompressor implemented
-/// in the [`brotli`](https://crates.io/crates/brotli) crate.
-pub fn decompress_brotli(data: &[u8]) -> Vec<u8> {
-    let mut reader = brotli::Decompressor::new(data, 4096);
-    let mut buf = [0u8; 4096];
-    let mut written = 0;
-    loop {
-        match reader.read(&mut buf[..]) {
-            Err(e) => {
-                panic!("{}", e);
-            }
-            Ok(size) => {
-                if size == 0 {
-                    break;
-                }
-                written += size;
-                // Re-size the buffer if needed
-            }
-        }
-    }
-
-    // Truncate the output buffer to the written bytes
-    let mut output: Vec<u8> = buf.into();
-    output.truncate(written);
-    output
 }
 
 fn example_transactions() -> Vec<Bytes> {
