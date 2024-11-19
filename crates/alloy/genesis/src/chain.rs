@@ -5,6 +5,7 @@ use crate::{
     GRANITE_CHANNEL_TIMEOUT,
 };
 use alloc::string::String;
+use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 
 /// Level of integration with the superchain.
@@ -180,18 +181,33 @@ impl ChainConfig {
         }
     }
 
+    /// Returns the base fee params for the chain.
+    pub fn base_fee_params(&self) -> BaseFeeParams {
+        self.optimism
+            .as_ref()
+            .map(|op| op.as_base_fee_params())
+            .unwrap_or_else(|| base_fee_params(self.chain_id).as_base_fee_params())
+    }
+
+    /// Returns the canyon base fee params for the chain.
+    pub fn canyon_base_fee_params(&self) -> BaseFeeParams {
+        self.optimism
+            .as_ref()
+            .map(|op| op.as_canyon_base_fee_params())
+            .unwrap_or_else(|| base_fee_params(self.chain_id).as_canyon_base_fee_params())
+    }
+
     /// Loads the rollup config for the OP-Stack chain given the chain config and address list.
     pub fn load_op_stack_rollup_config(&self) -> RollupConfig {
-        let config = base_fee_params(self.chain_id);
         RollupConfig {
             genesis: self.genesis,
             l1_chain_id: self.l1_chain_id,
             l2_chain_id: self.chain_id,
-            base_fee_params: config.as_base_fee_params(),
+            base_fee_params: self.base_fee_params(),
             block_time: self.block_time,
             seq_window_size: self.seq_window_size,
             max_sequencer_drift: self.max_sequencer_drift,
-            canyon_base_fee_params: config.as_canyon_base_fee_params(),
+            canyon_base_fee_params: self.canyon_base_fee_params(),
             regolith_time: Some(0),
             canyon_time: self.hardfork_configuration.canyon_time,
             delta_time: self.hardfork_configuration.delta_time,
