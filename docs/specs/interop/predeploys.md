@@ -16,15 +16,11 @@
   - [`Identifier` Getters](#identifier-getters)
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
-  - [`sendExpire` Invariants](#sendexpire-invariants)
-  - [`relayExpire` Invariants](#relayexpire-invariants)
   - [Message Versioning](#message-versioning)
   - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
-    - [Sending Expired Message Hashes](#sending-expired-message-hashes)
-    - [Relaying Expired Message Hashes](#relaying-expired-message-hashes)
 - [OptimismSuperchainERC20Factory](#optimismsuperchainerc20factory)
   - [OptimismSuperchainERC20](#optimismsuperchainerc20)
   - [Overview](#overview-1)
@@ -118,7 +114,7 @@ It MAY call back to the `CrossL2Inbox` to authenticate
 properties about the `_msg` using the information in the `Identifier`.
 
 ```solidity
-executeMessage(Identifier calldata _id, address _target, bytes memory _message)
+function executeMessage(Identifier calldata _id, address _target, bytes memory _message)
 ```
 
 #### validateMessage
@@ -134,7 +130,7 @@ The following fields are required for validating a cross chain message:
 | `_msgHash` | `bytes32`    | The keccak256 hash of the message payload matching the initiating message. |
 
 ```solidity
-validateMessage(Identifier calldata _id, bytes32 _msgHash)
+function validateMessage(Identifier calldata _id, bytes32 _msgHash)
 ```
 
 ### Interop Start Timestamp
@@ -271,7 +267,6 @@ properties about the `_msg`.
 | ----------------- | -------------------------------------------- |
 | Address           | `0x4200000000000000000000000000000000000023` |
 | `MESSAGE_VERSION` | `uint256(0)`                                 |
-| `EXPIRY_WINDOW`   | `uint256(7200)`                              |
 
 The `L2ToL2CrossDomainMessenger` is a higher level abstraction on top of the `CrossL2Inbox` that
 provides general message passing, utilized for secure transfers ERC20 tokens between L2 chains.
@@ -282,21 +277,6 @@ as well as domain binding, ie the executing transaction can only be valid on a s
 
 - The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
 - The `_destination` chain id MUST be equal to the local chain id
-
-### `sendExpire` Invariants
-
-- The message MUST have not been successfully relayed
-- The `EXPIRY_WINDOW` MUST have elapsed since the message first failed to be relayed
-- The expired message MUST not have been previously sent back to source
-- The expired message MUST not be relayable after being sent back
-
-### `relayExpire` Invariants
-
-- Only callable by the `CrossL2Inbox`
-- The message source MUST be `block.chainid`
-- The `Identifier.origin` MUST be `address(L2ToL2CrossDomainMessenger)`
-- The `expiredMessages` mapping MUST only contain messages that originated in this chain and failed to be relayed on destination.
-- Already expired messages MUST NOT be relayed.
 
 ### Message Versioning
 
@@ -388,11 +368,6 @@ chain. The hash of the message is used for replay protection.
 It is important to ensure that the source chain is in the dependency set of the destination chain, otherwise
 it is possible to send a message that is not playable.
 
-When a message fails to be relayed, only the timestamp at which it
-first failed along with its source chain id are stored. This is
-needed for calculation of the failed message's expiry. The source chain id
-is also required to simplify the function signature of `sendExpire`.
-
 A message is relayed by providing the [identifier](./messaging.md#message-identifier) to a `SentMessage`
 event and its corresponding [message payload](./messaging.md#message-payload).
 
@@ -412,13 +387,9 @@ function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sen
     (address _sender, bytes memory _message) = abi.decode(_sentMessage[128:], (address,bytes));
 
     bool success = SafeCall.call(_target, msg.value, _message);
-
-    if (success) {
-        successfulMessages[messageHash] = true;
-        emit RelayedMessage(_source, _nonce, messageHash);
-    } else {
-        emit FailedRelayedMessage(_source, _nonce, messageHash);
-    }
+    require(success);
+    successfulMessages[messageHash] = true;
+    emit RelayedMessage(_source, _nonce, messageHash);
 }
 ```
 
@@ -426,69 +397,6 @@ Note that the `relayMessage` function is `payable` to enable relayers to earn in
 
 To enable cross chain authorization patterns, both the `_sender` and the `_source` MUST be exposed via `public`
 getters.
-
-#### Sending Expired Message Hashes
-
-When expiring a message that failed to be relayed on the destination chain
-to the source chain, it's crucial to ensure the message can only be sent back
-to the `L2ToL2CrossDomainMessenger` contract in its source chain.
-
-This function has no auth, which allows anyone to expire a given message hash.
-The `EXPIRY_WINDOW` variable is added to give the users enough time to replay their
-failed messages and to prevent malicious actors from performing a griefing attack
-by expiring messages upon arrival.
-
-Once the expired message is sent to the source chain, the message on the local chain is set
-as successful in the `successfulMessages` mapping to ensure non-replayability and deleted
-from `failedMessages`. An initiating message is then emitted to `relayExpire`
-
-```solidity
-function sendExpire(bytes32 _expiredHash) external nonReentrant {
-    if (successfulMessages[_expiredHash]) revert MessageAlreadyRelayed();
-
-    (uint256 messageTimestamp, uint256 messageSource) = failedMessages[_expiredHash];
-
-    if (block.timestamp <  messageTimestamp + EXPIRY_WINDOW) revert ExpiryWindowHasNotEnsued();
-
-    delete failedMessages[_expiredHash];
-    successfulMessages[_expiredHash] = true;
-
-    bytes memory data = abi.encodeCall(
-        L2ToL2CrossDomainMessenger.expired,
-        (_expiredHash, messageSource)
-    );
-    emit SentMessage(data);
-}
-```
-
-#### Relaying Expired Message Hashes
-
-When relaying an expired message, only message hashes
-of actual failed messages should be stored, for this we must ensure the origin
-of the log, and caller are all expected contracts.
-
-It's also important to ensure only the hashes of messages that were initiated
-in this chain are accepted.
-
-If all checks have been successful, the message has is stored in the
-`expiredMessages` mapping. This enables smart contracts to read from it and
-check whether a message expired or not, and handle this case accordingly.
-
-```solidity
-function relayExpire(bytes32 _expiredHash, uint256 _messageSource) external {
-    if (_messageSource != block.chainid) revert IncorrectMessageSource();
-    if (expiredMessages[_expiredHash] != 0) revert ExpiredMessageAlreadyRelayed();
-    if (msg.sender != Predeploys.CROSS_L2_INBOX) revert ExpiredMessageCallerNotCrossL2Inbox();
-
-    if (CrossL2Inbox(Predeploys.CROSS_L2_INBOX).origin() != Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER) {
-        revert CrossL2InboxOriginNotL2ToL2CrossDomainMessenger();
-    }
-
-    expiredMessages[_expiredHash] = block.timestamp;
-
-    emit MessageHashExpired(_expiredHash);
-}
-```
 
 ## OptimismSuperchainERC20Factory
 
@@ -544,7 +452,7 @@ Creates an instance of the `OptimismSuperchainERC20` contract with a set of meta
 - `_decimals`: `OptimismSuperchainERC20` decimals
 
 ```solidity
-deploy(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
+function deploy(address _remoteToken, string memory _name, string memory _symbol, uint8 _decimals) returns (address)
 ```
 
 It returns the address of the deployed `OptimismSuperchainERC20`.
@@ -804,7 +712,7 @@ converts `_amount` of `_from` token to `_amount` of `_to` token,
 if and only if the token addresses are valid (as defined below).
 
 ```solidity
-convert(address _from, address _to, uint256 _amount)
+function convert(address _from, address _to, uint256 _amount)
 ```
 
 The function
@@ -895,7 +803,7 @@ implemented by the `SuperchainERC20` standard.
 Returns the `msgHash_` crafted by the `L2ToL2CrossChainMessenger`.
 
 ```solidity
-sendERC20(address _tokenAddress, address _to, uint256 _amount, uint256 _chainId) returns (bytes32 msgHash_)
+function sendERC20(address _tokenAddress, address _to, uint256 _amount, uint256 _chainId) returns (bytes32 msgHash_)
 ```
 
 #### `relayERC20`
@@ -914,7 +822,7 @@ which is included as part of the the
 implemented by the `SuperchainERC20` standard.
 
 ```solidity
-relayERC20(address _tokenAddress, address _from, address _to, uint256 _amount)
+function relayERC20(address _tokenAddress, address _from, address _to, uint256 _amount)
 ```
 
 ### Events
