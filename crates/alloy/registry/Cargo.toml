@@ -1,0 +1,31 @@
+[package]
+name = "op-alloy-registry"
+description = "A registry of superchain configs"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+exclude.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["map"] }
+op-alloy-genesis = { workspace = true, features = ["serde"] }
+lazy_static = { workspace = true, features = ["spin_no_std"] }
+serde = { workspace = true, features = ["derive", "alloc"] }
+serde_json = { workspace = true, features = ["raw_value"] }
+
+[dev-dependencies]
+alloy-eips.workspace = true
+
+[features]
+default = ["std", "map-foldhash"]
+map-hashbrown = ["alloy-primitives/map-hashbrown"]
+map-foldhash = ["alloy-primitives/map-foldhash"]
+std = ["op-alloy-genesis/std", "serde_json/std"]
