@@ -44,7 +44,7 @@ impl super::Hardforks {
 
     /// Returns the fjord gas price oracle deployment bytecode.
     pub fn gas_price_oracle_deployment_bytecode() -> alloy_primitives::Bytes {
-        include_bytes!("./gas_price_oracle_bytecode.hex").into()
+        include_bytes!("./bytecode/gpo_fjord.hex").into()
     }
 
     /// Constructs the Fjord network upgrade transactions.
