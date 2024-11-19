@@ -37,7 +37,6 @@ they need not be the same entity in practice.
 - [Predeploys](./predeploys.md): system contracts to interface with other chains.
 - [Sequencer](./sequencer.md): Sequencer Policy and block-building information.
 - [Verifier](./verifier.md): Verification of cross-L2 messaging.
-- [Rollup Node P2P](./rollup-node-p2p.md): modifications to the rollup-node P2P layer to support fast interop.
 - [Fault Proof](./fault-proof.md): modifications to prove interop functionality in the fault-proof.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
