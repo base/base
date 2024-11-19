@@ -341,10 +341,11 @@ Each subsequent call is labeled with a number.
 flowchart LR
     user -->|"1#46; sendMessage"| al2tol2
     user --> |"2#46; relayMessage"|bl2tol2
-    em{{SentMessage Event}}
+    im{{SentMessage Event}}
+    em{{ExecutingMessage Event}}
 
     direction TB
-    al2tol2 --> em
+    al2tol2 --> im
 
     bcl2[CrossL2Inbox]
     al2tol2[L2ToL2CrossDomainMessenger]
@@ -356,8 +357,8 @@ flowchart LR
 
     subgraph "Chain B"
       bl2tol2  --> |"3#46; validateMessage"|bcl2
-      bcl2 --> |"4#46;"| bl2tol2
-      bl2tol2 --> |"5#46;"| Contract
+      bcl2 --> em
+      bl2tol2 --> |"4#46;"| Contract
     end
 ```
 
