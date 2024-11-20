@@ -4,7 +4,7 @@ use futures::StreamExt;
 use kona_host::HostCli;
 use log::info;
 use op_succinct_host_utils::{
-    block_range::get_validated_block_range,
+    block_range::{get_rolling_block_range, get_validated_block_range},
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
@@ -20,11 +20,13 @@ use std::{
     future::Future,
     io::Seek,
     path::PathBuf,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tokio::task::block_in_place;
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
+
+const TWO_WEEKS: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]
@@ -41,6 +43,9 @@ struct CostEstimatorArgs {
     /// Use cached witness generation.
     #[clap(long)]
     use_cache: bool,
+    /// Use a fixed recent range.
+    #[clap(long)]
+    rolling: bool,
     /// The environment file to use.
     #[clap(long, default_value = ".env")]
     env_file: PathBuf,
@@ -282,8 +287,11 @@ async fn main() -> Result<()> {
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
     const DEFAULT_RANGE: u64 = 5;
-    let (l2_start_block, l2_end_block) =
-        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
+    let (l2_start_block, l2_end_block) = if args.rolling {
+        get_rolling_block_range(&data_fetcher, TWO_WEEKS, DEFAULT_RANGE).await?
+    } else {
+        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?
+    };
 
     let split_ranges = split_range(l2_start_block, l2_end_block, l2_chain_id, args.batch_size);
 
