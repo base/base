@@ -156,6 +156,73 @@ impl ExecutionStats {
     }
 }
 
+/// A [ExecutionStats] that can be displayed as Markdown.
+pub struct MarkdownExecutionStats(ExecutionStats);
+
+impl MarkdownExecutionStats {
+    /// Creates a [MarkdownExecutionStats].
+    pub fn new(inner: ExecutionStats) -> Self {
+        Self(inner)
+    }
+}
+
+impl fmt::Display for MarkdownExecutionStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "| {:<30} | {:<25} |", "Metric", "Value")?;
+        writeln!(
+            f,
+            "|--------------------------------|---------------------------|"
+        )?;
+        write_stat(f, "Batch Start", self.0.batch_start)?;
+        write_stat(f, "Batch End", self.0.batch_end)?;
+        write_stat(
+            f,
+            "Witness Generation (seconds)",
+            self.0.witness_generation_time_sec,
+        )?;
+        write_stat(
+            f,
+            "Execution Duration (seconds)",
+            self.0.total_execution_time_sec,
+        )?;
+        write_stat(f, "Total Instruction Count", self.0.total_instruction_count)?;
+        write_stat(
+            f,
+            "Oracle Verify Cycles",
+            self.0.oracle_verify_instruction_count,
+        )?;
+        write_stat(f, "Derivation Cycles", self.0.derivation_instruction_count)?;
+        write_stat(
+            f,
+            "Block Execution Cycles",
+            self.0.block_execution_instruction_count,
+        )?;
+        write_stat(
+            f,
+            "Blob Verification Cycles",
+            self.0.blob_verification_instruction_count,
+        )?;
+        write_stat(f, "Total SP1 Gas", self.0.total_sp1_gas)?;
+        write_stat(f, "Number of Blocks", self.0.nb_blocks)?;
+        write_stat(f, "Number of Transactions", self.0.nb_transactions)?;
+        write_stat(f, "Ethereum Gas Used", self.0.eth_gas_used)?;
+        write_stat(f, "Cycles per Block", self.0.cycles_per_block)?;
+        write_stat(f, "Cycles per Transaction", self.0.cycles_per_transaction)?;
+        write_stat(f, "Transactions per Block", self.0.transactions_per_block)?;
+        write_stat(f, "Gas Used per Block", self.0.gas_used_per_block)?;
+        write_stat(
+            f,
+            "Gas Used per Transaction",
+            self.0.gas_used_per_transaction,
+        )?;
+        write_stat(f, "BN Pair Cycles", self.0.bn_pair_cycles)?;
+        write_stat(f, "BN Add Cycles", self.0.bn_add_cycles)?;
+        write_stat(f, "BN Mul Cycles", self.0.bn_mul_cycles)?;
+        write_stat(f, "KZG Eval Cycles", self.0.kzg_eval_cycles)?;
+        write_stat(f, "EC Recover Cycles", self.0.ec_recover_cycles)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SpanBatchStats {
     pub span_start: u64,

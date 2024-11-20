@@ -5,13 +5,11 @@ use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::ExecutionStats,
-    witnessgen::WitnessGenExecutor,
     ProgramType,
 };
+use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, MULTI_BLOCK_ELF};
 use sp1_sdk::{utils, ProverClient};
-use std::{fs, time::Instant};
-
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
+use std::{fs, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -37,7 +35,7 @@ struct Args {
     prove: bool,
 
     /// Env file.
-    #[arg(short, long, default_value = ".env")]
+    #[arg(long, default_value = ".env")]
     env_file: Option<String>,
 }
 
@@ -51,17 +49,13 @@ async fn main() -> Result<()> {
     }
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache
     } else {
         CacheMode::DeleteCache
     };
-
-    const DEFAULT_RANGE: u64 = 5;
 
     // If the end block is provided, check that it is less than the latest finalized block. If the end block is not provided, use the latest finalized block.
     let (l2_start_block, l2_end_block) =
@@ -72,18 +66,11 @@ async fn main() -> Result<()> {
         .await?;
 
     // By default, re-run the native execution unless the user passes `--use-cache`.
-    let start_time = Instant::now();
-    if !args.use_cache {
-        // Start the server and native client.
-        let mut witnessgen_executor = WitnessGenExecutor::default();
-        witnessgen_executor.spawn_witnessgen(&host_cli).await?;
-        witnessgen_executor.flush().await?;
-    }
-    let witness_generation_time_sec = start_time.elapsed();
-    println!(
-        "Witness Generation Duration: {:?}",
-        witness_generation_time_sec.as_secs()
-    );
+    let witness_generation_time_sec = if !args.use_cache {
+        generate_witness(&host_cli).await?
+    } else {
+        Duration::ZERO
+    };
 
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
@@ -113,28 +100,16 @@ async fn main() -> Result<()> {
             ))
             .expect("saving proof failed");
     } else {
-        let start_time = Instant::now();
-        let (_, report) = prover
-            .execute(MULTI_BLOCK_ELF, sp1_stdin.clone())
-            .run()
-            .unwrap();
-        let execution_duration = start_time.elapsed();
+        let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-        let l2_chain_id = data_fetcher.get_l2_chain_id().await.unwrap();
-        let report_path = format!(
-            "execution-reports/multi/{}/{}-{}.csv",
-            l2_chain_id, l2_start_block, l2_end_block
-        );
-
-        // Create the report directory if it doesn't exist.
-        let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
-        if !std::path::Path::new(&report_dir).exists() {
-            fs::create_dir_all(&report_dir).unwrap();
-        }
-
-        let block_data = data_fetcher
-            .get_l2_block_data_range(l2_start_block, l2_end_block)
-            .await?;
+        let (block_data, report, execution_duration) = execute_multi(
+            &prover,
+            &data_fetcher,
+            sp1_stdin,
+            l2_start_block,
+            l2_end_block,
+        )
+        .await?;
 
         let stats = ExecutionStats::new(
             &block_data,
@@ -142,7 +117,19 @@ async fn main() -> Result<()> {
             witness_generation_time_sec.as_secs(),
             execution_duration.as_secs(),
         );
+
         println!("Execution Stats: \n{:?}", stats);
+
+        // Create the report directory if it doesn't exist.
+        let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
+        if !std::path::Path::new(&report_dir).exists() {
+            fs::create_dir_all(&report_dir)?;
+        }
+
+        let report_path = format!(
+            "execution-reports/multi/{}/{}-{}.csv",
+            l2_chain_id, l2_start_block, l2_end_block
+        );
 
         // Write to CSV.
         let mut csv_writer = csv::Writer::from_path(report_path)?;

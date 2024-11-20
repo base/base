@@ -37,9 +37,9 @@ jobs:
           toolchain: stable
           override: true
 
-      - name: OP Sepolia Blocks 19000000 to 19000030
+      - name: OP Sepolia cost estimator on recent block range
         run: |
-          RUST_LOG=info cargo run --bin cost-estimator --release -- --start 19000000 --end 19000030
+          RUST_LOG=info cargo run --bin cost-estimator --release -- --rolling
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
@@ -48,9 +48,13 @@ jobs:
 
       - name: Run multi script
         run: |
-          cargo run --bin multi --release
+          cargo test --test "multi" --release
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
           L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
           L2_RPC: ${{ secrets.L2_RPC }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

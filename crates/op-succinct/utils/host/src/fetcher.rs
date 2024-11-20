@@ -2,7 +2,10 @@ use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     primitives::{Address, B256},
     providers::{Provider, ProviderBuilder, RootProvider},
-    transports::http::{reqwest::Url, Client, Http},
+    transports::{
+        http::{reqwest::Url, Client, Http},
+        Transport,
+    },
 };
 use alloy_consensus::Header;
 use alloy_rlp::Decodable;
@@ -16,7 +19,7 @@ use op_alloy_consensus::OpBlock;
 use op_alloy_genesis::RollupConfig;
 use op_alloy_network::{
     primitives::{BlockTransactions, BlockTransactionsKind},
-    Optimism,
+    BlockResponse, HeaderResponse, Network, Optimism,
 };
 use op_alloy_protocol::calculate_tx_l1_cost_fjord;
 use op_alloy_protocol::L2BlockInfo;
@@ -393,27 +396,47 @@ impl OPSuccinctDataFetcher {
             .unwrap())
     }
 
+    /// Finds the L1 block at the provided timestamp.
     pub async fn find_l1_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        let latest_block = self
-            .l1_provider
+        self.find_block_by_timestamp(&self.l1_provider, target_timestamp)
+            .await
+    }
+
+    /// Finds the L2 block at the provided timestamp.
+    pub async fn find_l2_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
+        self.find_block_by_timestamp(&self.l2_provider, target_timestamp)
+            .await
+    }
+
+    /// Finds the block at the provided timestamp, using the provided provider.
+    async fn find_block_by_timestamp<P, T, N>(
+        &self,
+        provider: &P,
+        target_timestamp: u64,
+    ) -> Result<(B256, u64)>
+    where
+        P: Provider<T, N>,
+        T: Transport + Clone,
+        N: Network,
+    {
+        let latest_block = provider
             .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
             .await?
             .unwrap();
         let mut low = 0;
-        let mut high = latest_block.header.number;
+        let mut high = latest_block.header().number();
 
         while low <= high {
             let mid = (low + high) / 2;
-            let block = self
-                .l1_provider
+            let block = provider
                 .get_block(mid.into(), BlockTransactionsKind::Hashes)
                 .await?
                 .unwrap();
-            let block_timestamp = block.header.timestamp;
+            let block_timestamp = block.header().timestamp();
 
             match block_timestamp.cmp(&target_timestamp) {
                 Ordering::Equal => {
-                    return Ok((block.header.hash.0.into(), block.header.number));
+                    return Ok((block.header().hash().0.into(), block.header().number()));
                 }
                 Ordering::Less => low = mid + 1,
                 Ordering::Greater => high = mid - 1,
@@ -421,12 +444,11 @@ impl OPSuccinctDataFetcher {
         }
 
         // Return the block hash of the closest block after the target timestamp
-        let block = self
-            .l1_provider
+        let block = provider
             .get_block((low - 10).into(), BlockTransactionsKind::Hashes)
             .await?
             .unwrap();
-        Ok((block.header.hash.0.into(), block.header.number))
+        Ok((block.header().hash().0.into(), block.header().number()))
     }
 
     /// Get the RPC URL for the given RPC mode.
@@ -728,6 +750,15 @@ impl OPSuccinctDataFetcher {
         let l1_head_minus_1 = l1_head.number - 1;
         let l1_block_minus_1 = self.get_l1_header(l1_head_minus_1.into()).await?;
         Ok(l1_head.timestamp - l1_block_minus_1.timestamp)
+    }
+
+    /// Get the L2 block time in seconds.
+    pub async fn get_l2_block_time(&self) -> Result<u64> {
+        let l2_head = self.get_l2_header(BlockId::latest()).await?;
+
+        let l2_head_minus_1 = l2_head.number - 1;
+        let l2_block_minus_1 = self.get_l2_header(l2_head_minus_1.into()).await?;
+        Ok(l2_head.timestamp - l2_block_minus_1.timestamp)
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
