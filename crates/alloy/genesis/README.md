@@ -22,16 +22,6 @@ op-alloy-genesis = { version = "x.y.z", default-features = false, features = ["s
 
 `op-alloy-genesis` exports a `RollupConfig`, the primary genesis type for Optimism Consensus.
 
-There are a few constant declarations for various chain's rollup configs.
-
-```rust
-use op_alloy_genesis::{OP_MAINNET_CONFIG, rollup_config_from_chain_id};
-
-let op_mainnet_config = rollup_config_from_chain_id(10).expect("infallible");
-assert_eq!(OP_MAINNET_CONFIG, op_mainnet_config);
-```
-
-
 ## Provenance
 
 This is based off of [alloy-genesis].

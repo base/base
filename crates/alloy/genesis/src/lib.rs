@@ -38,8 +38,9 @@ mod genesis;
 pub use genesis::ChainGenesis;
 
 mod rollup;
+#[allow(deprecated)]
+pub use rollup::rollup_config_from_chain_id;
 pub use rollup::{
-    rollup_config_from_chain_id, RollupConfig, BASE_MAINNET_CONFIG, BASE_SEPOLIA_CONFIG,
-    FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT, MAX_RLP_BYTES_PER_CHANNEL_BEDROCK,
-    MAX_RLP_BYTES_PER_CHANNEL_FJORD, OP_MAINNET_CONFIG, OP_SEPOLIA_CONFIG,
+    RollupConfig, FJORD_MAX_SEQUENCER_DRIFT, GRANITE_CHANNEL_TIMEOUT,
+    MAX_RLP_BYTES_PER_CHANNEL_BEDROCK, MAX_RLP_BYTES_PER_CHANNEL_FJORD,
 };

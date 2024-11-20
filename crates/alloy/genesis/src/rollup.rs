@@ -1,14 +1,8 @@
 //! Rollup Config Types
 
+use crate::{base_fee_params, ChainGenesis};
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_primitives::{address, b256, uint, Address};
-
-use alloy_eips::eip1898::BlockNumHash;
-
-use crate::{
-    base_fee_params, ChainGenesis, SystemConfig, BASE_SEPOLIA_BASE_FEE_PARAMS,
-    OP_MAINNET_BASE_FEE_PARAMS, OP_SEPOLIA_BASE_FEE_PARAMS,
-};
+use alloy_primitives::Address;
 
 /// The max rlp bytes per channel for the Bedrock hardfork.
 pub const MAX_RLP_BYTES_PER_CHANNEL_BEDROCK: u64 = 10_000_000;
@@ -28,22 +22,9 @@ const fn default_granite_channel_timeout() -> u64 {
 }
 
 /// Returns the rollup config for the given chain ID.
-pub fn rollup_config_from_chain_id(chain_id: u64) -> Result<RollupConfig, &'static str> {
-    chain_id.try_into()
-}
-
-impl TryFrom<u64> for RollupConfig {
-    type Error = &'static str;
-
-    fn try_from(chain_id: u64) -> Result<Self, &'static str> {
-        match chain_id {
-            10 => Ok(OP_MAINNET_CONFIG),
-            11155420 => Ok(OP_SEPOLIA_CONFIG),
-            8453 => Ok(BASE_MAINNET_CONFIG),
-            84532 => Ok(BASE_SEPOLIA_CONFIG),
-            _ => Err("Unknown chain ID"),
-        }
-    }
+#[deprecated(since = "0.6.7", note = "Use the `op-alloy-registry` crate instead")]
+pub const fn rollup_config_from_chain_id(_: u64) -> Result<RollupConfig, &'static str> {
+    Err("Use the `op-alloy-registry` crate instead")
 }
 
 /// The Rollup configuration.
@@ -143,6 +124,9 @@ pub struct RollupConfig {
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        use crate::{
+            BASE_SEPOLIA_BASE_FEE_PARAMS, OP_MAINNET_BASE_FEE_PARAMS, OP_SEPOLIA_BASE_FEE_PARAMS,
+        };
         let params = match u32::arbitrary(u)? % 3 {
             0 => OP_MAINNET_BASE_FEE_PARAMS,
             1 => OP_SEPOLIA_BASE_FEE_PARAMS,
@@ -303,214 +287,20 @@ impl RollupConfig {
     }
 
     /// Returns the [RollupConfig] for the given L2 chain ID.
-    pub const fn from_l2_chain_id(l2_chain_id: u64) -> Option<Self> {
-        match l2_chain_id {
-            10 => Some(OP_MAINNET_CONFIG),
-            11155420 => Some(OP_SEPOLIA_CONFIG),
-            8453 => Some(BASE_MAINNET_CONFIG),
-            84532 => Some(BASE_SEPOLIA_CONFIG),
-            _ => None,
-        }
+    #[deprecated(since = "0.6.7", note = "Use the `op-alloy-registry` crate instead")]
+    pub const fn from_l2_chain_id(_: u64) -> Option<Self> {
+        None
     }
 }
-
-/// The [RollupConfig] for OP Mainnet.
-pub const OP_MAINNET_CONFIG: RollupConfig = RollupConfig {
-    genesis: ChainGenesis {
-        l1: BlockNumHash {
-            hash: b256!("438335a20d98863a4c0c97999eb2481921ccd28553eac6f913af7c12aec04108"),
-            number: 17_422_590_u64,
-        },
-        l2: BlockNumHash {
-            hash: b256!("dbf6a80fef073de06add9b0d14026d6e5a86c85f6d102c36d3d8e9cf89c2afd3"),
-            number: 105_235_063_u64,
-        },
-        l2_time: 1_686_068_903_u64,
-        system_config: Some(SystemConfig {
-            batcher_address: address!("6887246668a3b87f54deb3b94ba47a6f63f32985"),
-            overhead: uint!(0xbc_U256),
-            scalar: uint!(0xa6fe0_U256),
-            gas_limit: 30_000_000_u64,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-        }),
-    },
-    block_time: 2_u64,
-    max_sequencer_drift: 600_u64,
-    seq_window_size: 3600_u64,
-    channel_timeout: 300_u64,
-    granite_channel_timeout: 50,
-    l1_chain_id: 1_u64,
-    l2_chain_id: 10_u64,
-    base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_base_fee_params(),
-    canyon_base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
-    regolith_time: Some(0_u64),
-    canyon_time: Some(1_704_992_401_u64),
-    delta_time: Some(1_708_560_000_u64),
-    ecotone_time: Some(1_710_374_401_u64),
-    fjord_time: Some(1_720_627_201_u64),
-    granite_time: Some(1_726_070_401_u64),
-    holocene_time: None,
-    batch_inbox_address: address!("ff00000000000000000000000000000000000010"),
-    deposit_contract_address: address!("beb5fc579115071764c7423a4f12edde41f106ed"),
-    l1_system_config_address: address!("229047fed2591dbec1ef1118d64f7af3db9eb290"),
-    protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
-    superchain_config_address: Some(address!("95703e0982140D16f8ebA6d158FccEde42f04a4C")),
-    da_challenge_address: None,
-    blobs_enabled_l1_timestamp: None,
-};
-
-/// The [RollupConfig] for OP Sepolia.
-pub const OP_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
-    genesis: ChainGenesis {
-        l1: BlockNumHash {
-            hash: b256!("48f520cf4ddaf34c8336e6e490632ea3cf1e5e93b0b2bc6e917557e31845371b"),
-            number: 4071408,
-        },
-        l2: BlockNumHash {
-            hash: b256!("102de6ffb001480cc9b8b548fd05c34cd4f46ae4aa91759393db90ea0409887d"),
-            number: 0,
-        },
-        l2_time: 1691802540,
-        system_config: Some(SystemConfig {
-            batcher_address: address!("8f23bb38f531600e5d8fddaaec41f13fab46e98c"),
-            overhead: uint!(0xbc_U256),
-            scalar: uint!(0xa6fe0_U256),
-            gas_limit: 30_000_000,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-        }),
-    },
-    block_time: 2,
-    max_sequencer_drift: 600,
-    seq_window_size: 3600,
-    channel_timeout: 300,
-    granite_channel_timeout: 50,
-    l1_chain_id: 11155111,
-    l2_chain_id: 11155420,
-    base_fee_params: OP_SEPOLIA_BASE_FEE_PARAMS.as_base_fee_params(),
-    canyon_base_fee_params: OP_SEPOLIA_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
-    regolith_time: Some(0),
-    canyon_time: Some(1699981200),
-    delta_time: Some(1703203200),
-    ecotone_time: Some(1708534800),
-    fjord_time: Some(1716998400),
-    granite_time: Some(1723478400),
-    holocene_time: Some(1732633200),
-    batch_inbox_address: address!("ff00000000000000000000000000000011155420"),
-    deposit_contract_address: address!("16fc5058f25648194471939df75cf27a2fdc48bc"),
-    l1_system_config_address: address!("034edd2a225f7f429a63e0f1d2084b9e0a93b538"),
-    protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
-    superchain_config_address: Some(address!("C2Be75506d5724086DEB7245bd260Cc9753911Be")),
-    da_challenge_address: None,
-    blobs_enabled_l1_timestamp: None,
-};
-
-/// The [RollupConfig] for Base Mainnet.
-pub const BASE_MAINNET_CONFIG: RollupConfig = RollupConfig {
-    genesis: ChainGenesis {
-        l1: BlockNumHash {
-            hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
-            number: 17_481_768_u64,
-        },
-        l2: BlockNumHash {
-            hash: b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"),
-            number: 0_u64,
-        },
-        l2_time: 1686789347_u64,
-        system_config: Some(SystemConfig {
-            batcher_address: address!("5050f69a9786f081509234f1a7f4684b5e5b76c9"),
-            overhead: uint!(0xbc_U256),
-            scalar: uint!(0xa6fe0_U256),
-            gas_limit: 30_000_000_u64,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-        }),
-    },
-    block_time: 2,
-    max_sequencer_drift: 600,
-    seq_window_size: 3600,
-    channel_timeout: 300,
-    granite_channel_timeout: 50,
-    l1_chain_id: 1,
-    l2_chain_id: 8453,
-    base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_base_fee_params(),
-    canyon_base_fee_params: OP_MAINNET_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
-    regolith_time: Some(0_u64),
-    canyon_time: Some(1704992401),
-    delta_time: Some(1708560000),
-    ecotone_time: Some(1710374401),
-    fjord_time: Some(1720627201),
-    granite_time: Some(1_726_070_401_u64),
-    holocene_time: None,
-    batch_inbox_address: address!("ff00000000000000000000000000000000008453"),
-    deposit_contract_address: address!("49048044d57e1c92a77f79988d21fa8faf74e97e"),
-    l1_system_config_address: address!("73a79fab69143498ed3712e519a88a918e1f4072"),
-    protocol_versions_address: address!("8062abc286f5e7d9428a0ccb9abd71e50d93b935"),
-    superchain_config_address: Some(address!("95703e0982140D16f8ebA6d158FccEde42f04a4C")),
-    da_challenge_address: None,
-    blobs_enabled_l1_timestamp: None,
-};
-
-/// The [RollupConfig] for Base Sepolia.
-pub const BASE_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
-    genesis: ChainGenesis {
-        l1: BlockNumHash {
-            hash: b256!("cac9a83291d4dec146d6f7f69ab2304f23f5be87b1789119a0c5b1e4482444ed"),
-            number: 4370868,
-        },
-        l2: BlockNumHash {
-            hash: b256!("0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4"),
-            number: 0,
-        },
-        l2_time: 1695768288,
-        system_config: Some(SystemConfig {
-            batcher_address: address!("6cdebe940bc0f26850285caca097c11c33103e47"),
-            overhead: uint!(0x834_U256),
-            scalar: uint!(0xf4240_U256),
-            gas_limit: 25000000,
-            base_fee_scalar: None,
-            blob_base_fee_scalar: None,
-            eip1559_denominator: None,
-            eip1559_elasticity: None,
-        }),
-    },
-    block_time: 2,
-    max_sequencer_drift: 600,
-    seq_window_size: 3600,
-    channel_timeout: 300,
-    granite_channel_timeout: 50,
-    l1_chain_id: 11155111,
-    l2_chain_id: 84532,
-    base_fee_params: BASE_SEPOLIA_BASE_FEE_PARAMS.as_base_fee_params(),
-    canyon_base_fee_params: BASE_SEPOLIA_BASE_FEE_PARAMS.as_canyon_base_fee_params(),
-    regolith_time: Some(0),
-    canyon_time: Some(1699981200),
-    delta_time: Some(1703203200),
-    ecotone_time: Some(1708534800),
-    fjord_time: Some(1716998400),
-    granite_time: Some(1723478400),
-    holocene_time: Some(1732633200),
-    batch_inbox_address: address!("ff00000000000000000000000000000000084532"),
-    deposit_contract_address: address!("49f53e41452c74589e85ca1677426ba426459e85"),
-    l1_system_config_address: address!("f272670eb55e895584501d564afeb048bed26194"),
-    protocol_versions_address: address!("79add5713b383daa0a138d3c4780c7a1804a8090"),
-    superchain_config_address: Some(address!("C2Be75506d5724086DEB7245bd260Cc9753911Be")),
-    da_challenge_address: None,
-    blobs_enabled_l1_timestamp: None,
-};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SystemConfig, OP_MAINNET_BASE_FEE_PARAMS};
+    use alloy_eips::BlockNumHash;
     #[cfg(feature = "serde")]
     use alloy_primitives::U256;
+    use alloy_primitives::{address, b256};
     use arbitrary::Arbitrary;
     use rand::Rng;
 

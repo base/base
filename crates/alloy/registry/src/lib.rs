@@ -18,6 +18,9 @@ pub use chain_list::{Chain, ChainList};
 pub mod superchain;
 pub use superchain::Registry;
 
+#[cfg(test)]
+pub mod configs;
+
 lazy_static::lazy_static! {
     /// Private initializer that loads the superchain configurations.
     static ref _INIT: Registry = Registry::from_chain_list();
@@ -37,10 +40,10 @@ mod tests {
     #[test]
     fn test_hardcoded_rollup_configs() {
         let test_cases = vec![
-            (10, op_alloy_genesis::OP_MAINNET_CONFIG),
-            (8453, op_alloy_genesis::BASE_MAINNET_CONFIG),
-            (11155420, op_alloy_genesis::OP_SEPOLIA_CONFIG),
-            (84532, op_alloy_genesis::BASE_SEPOLIA_CONFIG),
+            (10, crate::configs::OP_MAINNET_CONFIG),
+            (8453, crate::configs::BASE_MAINNET_CONFIG),
+            (11155420, crate::configs::OP_SEPOLIA_CONFIG),
+            (84532, crate::configs::BASE_SEPOLIA_CONFIG),
         ];
 
         for (chain_id, expected) in test_cases {
