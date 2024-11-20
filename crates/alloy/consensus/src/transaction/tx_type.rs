@@ -17,9 +17,10 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [4844]: https://eips.ethereum.org/EIPS/eip-4844
 /// [deposit-spec]: https://specs.optimism.io/protocol/deposits.html
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Copy, Clone, Eq, Default, PartialEq, PartialOrd, Ord, Hash, Display)]
 pub enum OpTxType {
     /// Legacy transaction type.
+    #[default]
     #[display("legacy")]
     Legacy = 0,
     /// EIP-2930 transaction type.
