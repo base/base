@@ -2,25 +2,33 @@
 //!
 //! [Transaction]: alloy_consensus::Transaction
 
-use crate::{OpTxEnvelope, TxDeposit};
-use alloc::{string::String, vec, vec::Vec};
+use crate::{OpTxEnvelope, TxDeposit, UpgradeDepositSource};
+use alloc::{string::String, vec::Vec};
 use alloy_consensus::Sealable;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
 
-use crate::{UpgradeDepositSource, GAS_PRICE_ORACLE};
+/// The Fjord network upgrade transactions.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Fjord;
 
-/// The L1 Info Depositer Address.
-pub const L1_INFO_DEPOSITER: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
+impl Fjord {
+    /// The Gas Price Oracle Address
+    /// This is computed by using go-ethereum's `crypto.CreateAddress` function,
+    /// with the Gas Price Oracle Deployer Address and nonce 0.
+    pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
-/// Fjord Gas Price Oracle Deployer Address.
-pub const GAS_PRICE_ORACLE_FJORD_DEPLOYER: Address =
-    address!("4210000000000000000000000000000000000002");
+    /// The L1 Info Depositer Address.
+    pub const L1_INFO_DEPOSITER: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
-/// Fjord Gas Price Oracle address.
-pub const FJORD_GAS_PRICE_ORACLE: Address = address!("a919894851548179a0750865e7974da599c0fac7");
+    /// Fjord Gas Price Oracle Deployer Address.
+    pub const GAS_PRICE_ORACLE_FJORD_DEPLOYER: Address =
+        address!("4210000000000000000000000000000000000002");
 
-impl super::Hardforks {
+    /// Fjord Gas Price Oracle address.
+    pub const FJORD_GAS_PRICE_ORACLE: Address =
+        address!("a919894851548179a0750865e7974da599c0fac7");
+
     /// The Set Fjord Four Byte Method Signature.
     pub const SET_FJORD_METHOD_SIGNATURE: [u8; 4] = hex!("8e98b106");
 
@@ -47,63 +55,57 @@ impl super::Hardforks {
         include_bytes!("./bytecode/gpo_fjord.hex").into()
     }
 
-    /// Constructs the Fjord network upgrade transactions.
-    pub fn fjord_txs() -> Vec<Bytes> {
-        let mut txs = vec![];
-
-        let mut buffer = Vec::new();
-        OpTxEnvelope::Deposit(
+    /// Returns the list of [TxDeposit]s for the Fjord network upgrade.
+    pub fn deposits() -> impl Iterator<Item = TxDeposit> {
+        ([
             TxDeposit {
                 source_hash: Self::deploy_fjord_gas_price_oracle_source(),
-                from: GAS_PRICE_ORACLE_FJORD_DEPLOYER,
+                from: Self::GAS_PRICE_ORACLE_FJORD_DEPLOYER,
                 to: TxKind::Create,
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 1_450_000,
                 is_system_transaction: false,
                 input: Self::gas_price_oracle_deployment_bytecode(),
-            }
-            .seal_slow(),
-        )
-        .encode_2718(&mut buffer);
-        txs.push(Bytes::from(buffer));
-
-        // Update the gas price oracle proxy.
-        buffer = Vec::new();
-        OpTxEnvelope::Deposit(
+            },
             TxDeposit {
                 source_hash: Self::update_fjord_gas_price_oracle_source(),
                 from: Address::ZERO,
-                to: TxKind::Call(GAS_PRICE_ORACLE),
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
-                input: Self::upgrade_to_calldata(FJORD_GAS_PRICE_ORACLE),
-            }
-            .seal_slow(),
-        )
-        .encode_2718(&mut buffer);
-        txs.push(Bytes::from(buffer));
-
-        // Enable Fjord
-        buffer = Vec::new();
-        OpTxEnvelope::Deposit(
+                input: super::upgrade_to_calldata(Self::FJORD_GAS_PRICE_ORACLE),
+            },
+            // Enable Fjord
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
-                from: L1_INFO_DEPOSITER,
-                to: TxKind::Call(GAS_PRICE_ORACLE),
+                from: Self::L1_INFO_DEPOSITER,
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 90_000,
                 is_system_transaction: false,
                 input: Self::SET_FJORD_METHOD_SIGNATURE.into(),
-            }
-            .seal_slow(),
-        )
-        .encode_2718(&mut buffer);
-        txs.push(Bytes::from(buffer));
+            },
+        ])
+        .into_iter()
+    }
 
-        txs
+    /// Returns the list of [OpTxEnvelope]s for the Fjord network upgrade.
+    pub fn enveloped_txs() -> impl Iterator<Item = OpTxEnvelope> {
+        Self::deposits().map(|deposit| OpTxEnvelope::Deposit(deposit.seal_slow()))
+    }
+}
+
+impl super::Hardfork for Fjord {
+    /// Constructs the Fjord network upgrade transactions.
+    fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
+        Self::enveloped_txs().map(|tx| {
+            let mut encoded = Vec::new();
+            tx.encode_2718(&mut encoded);
+            Bytes::from(encoded)
+        })
     }
 }
