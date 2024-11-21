@@ -92,6 +92,8 @@ type CLIConfig struct {
 	BatchInbox string
 	// The batcher address to include transactions from. Note that this is ignored if L2 Chain ID is in rollup config.
 	BatcherAddress string
+	// Mock is a flag to use the mock OP Succinct server.
+	Mock bool
 }
 
 func (c *CLIConfig) Check() error {
@@ -159,5 +161,6 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		MaxConcurrentProofRequests:   ctx.Uint64(flags.MaxConcurrentProofRequestsFlag.Name),
 		BatchInbox:                   ctx.String(flags.BatchInboxFlag.Name),
 		BatcherAddress:               ctx.String(flags.BatcherAddressFlag.Name),
+		Mock:                         ctx.Bool(flags.MockFlag.Name),
 	}
 }

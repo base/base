@@ -58,6 +58,10 @@ async fn update_l2oo_config() -> Result<()> {
     // Read the L2OO config from the contracts directory.
     let mut l2oo_config = get_existing_l2oo_config(&workspace_root)?;
 
+    // Set the verifier gateway to the address of the Groth16 VerifierGateway contract.
+    // Source: https://docs.succinct.xyz/verification/onchain/contract-addresses
+    l2oo_config.verifier_gateway = "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string();
+
     // If we are not using a cached starting block number, set it to 10 blocks before the latest block on L2.
     if env::var("USE_CACHED_STARTING_BLOCK").unwrap_or("false".to_string()) != "true" {
         // Set the starting block number to 10 blocks before the latest block on L2.

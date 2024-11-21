@@ -64,6 +64,7 @@ type ProposerConfig struct {
 	MaxConcurrentProofRequests uint64
 	BatchInbox                 common.Address
 	BatcherAddress             common.Address
+	Mock                       bool
 }
 
 type ProposerService struct {
@@ -125,6 +126,7 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.MaxConcurrentProofRequests = cfg.MaxConcurrentProofRequests
 	ps.BatchInbox = common.HexToAddress(cfg.BatchInbox)
 	ps.BatcherAddress = common.HexToAddress(cfg.BatcherAddress)
+	ps.Mock = cfg.Mock
 
 	ps.initL2ooAddress(cfg)
 

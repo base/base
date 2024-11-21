@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use sp1_sdk::SP1VerifyingKey;
+use sp1_sdk::{SP1ProvingKey, SP1VerifyingKey};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ValidateConfigRequest {
@@ -27,6 +27,11 @@ pub struct AggProofRequest {
     #[serde(deserialize_with = "deserialize_base64_vec")]
     pub subproofs: Vec<Vec<u8>>,
     pub head: String,
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct MockProofResponse {
+    pub proof_id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -73,6 +78,8 @@ pub struct ProofStatus {
 #[derive(Clone)]
 pub struct ContractConfig {
     pub range_vk: SP1VerifyingKey,
+    pub range_pk: SP1ProvingKey,
+    pub agg_pk: SP1ProvingKey,
     pub agg_vkey_hash: B256,
     pub range_vkey_commitment: B256,
     pub rollup_config_hash: B256,

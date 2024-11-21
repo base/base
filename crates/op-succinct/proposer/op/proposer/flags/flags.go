@@ -125,6 +125,12 @@ var (
 		Usage:   "Batch Sender Address",
 		EnvVars: prefixEnvVars("BATCHER_ADDRESS"),
 	}
+	MockFlag = &cli.BoolFlag{
+		Name:    "mock",
+		Usage:   "Use the mock OP Succinct server",
+		Value:   false,
+		EnvVars: prefixEnvVars("OP_SUCCINCT_MOCK"),
+	}
 
 	// Legacy Flags
 	L2OutputHDPathFlag = txmgr.L2OutputHDPathFlag
@@ -153,6 +159,7 @@ var optionalFlags = []cli.Flag{
 	MaxConcurrentProofRequestsFlag,
 	BatchInboxFlag,
 	BatcherAddressFlag,
+	MockFlag,
 }
 
 func init() {
