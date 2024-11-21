@@ -3,11 +3,9 @@
 //! [Transaction]: alloy_consensus::Transaction
 
 use alloc::{string::String, vec::Vec};
-use alloy_consensus::Sealable;
-use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
 
-use crate::{OpTxEnvelope, TxDeposit, UpgradeDepositSource};
+use crate::{Hardfork, TxDeposit, UpgradeDepositSource};
 
 /// The Ecotone network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -155,20 +153,39 @@ impl Ecotone {
         ])
         .into_iter()
     }
+}
 
-    /// Returns the list of [OpTxEnvelope]s for the Ecotone network upgrade.
-    pub fn enveloped_txs() -> impl Iterator<Item = OpTxEnvelope> {
-        Self::deposits().map(|deposit| OpTxEnvelope::from(deposit.seal_slow()))
+impl Hardfork for Ecotone {
+    /// Constructs the Ecotone network upgrade transactions.
+    fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
+        Self::deposits().map(|tx| {
+            let mut encoded = Vec::new();
+            tx.eip2718_encode(&mut encoded);
+            Bytes::from(encoded)
+        })
     }
 }
 
-impl super::Hardfork for Ecotone {
-    /// Constructs the Ecotone network upgrade transactions.
-    fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
-        Self::enveloped_txs().map(|tx| {
-            let mut encoded = Vec::new();
-            tx.encode_2718(&mut encoded);
-            Bytes::from(encoded)
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn test_ecotone_txs_encoded() {
+        let ecotone_upgrade_tx = Ecotone.txs().collect::<Vec<_>>();
+        assert_eq!(ecotone_upgrade_tx.len(), 6);
+
+        let expected_txs: Vec<Bytes> = vec![
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_0.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_1.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_2.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_3.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_4.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/ecotone_tx_5.hex")).unwrap().into(),
+        ];
+        for (i, expected) in expected_txs.iter().enumerate() {
+            assert_eq!(ecotone_upgrade_tx[i], *expected);
+        }
     }
 }

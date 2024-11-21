@@ -2,11 +2,10 @@
 //!
 //! [Transaction]: alloy_consensus::Transaction
 
-use crate::{OpTxEnvelope, TxDeposit, UpgradeDepositSource};
 use alloc::{string::String, vec::Vec};
-use alloy_consensus::Sealable;
-use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
+
+use crate::{Hardfork, TxDeposit, UpgradeDepositSource};
 
 /// The Fjord network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]
@@ -92,20 +91,36 @@ impl Fjord {
         ])
         .into_iter()
     }
+}
 
-    /// Returns the list of [OpTxEnvelope]s for the Fjord network upgrade.
-    pub fn enveloped_txs() -> impl Iterator<Item = OpTxEnvelope> {
-        Self::deposits().map(|deposit| OpTxEnvelope::Deposit(deposit.seal_slow()))
+impl Hardfork for Fjord {
+    /// Constructs the Fjord network upgrade transactions.
+    fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
+        Self::deposits().map(|tx| {
+            let mut encoded = Vec::new();
+            tx.eip2718_encode(&mut encoded);
+            Bytes::from(encoded)
+        })
     }
 }
 
-impl super::Hardfork for Fjord {
-    /// Constructs the Fjord network upgrade transactions.
-    fn txs(&self) -> impl Iterator<Item = Bytes> + '_ {
-        Self::enveloped_txs().map(|tx| {
-            let mut encoded = Vec::new();
-            tx.encode_2718(&mut encoded);
-            Bytes::from(encoded)
-        })
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+
+    #[test]
+    fn test_fjord_txs_encoded() {
+        let fjord_upgrade_tx = Fjord.txs().collect::<Vec<_>>();
+        assert_eq!(fjord_upgrade_tx.len(), 3);
+
+        let expected_txs: Vec<Bytes> = vec![
+            hex::decode(include_bytes!("./bytecode/fjord_tx_0.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/fjord_tx_1.hex")).unwrap().into(),
+            hex::decode(include_bytes!("./bytecode/fjord_tx_2.hex")).unwrap().into(),
+        ];
+        for (i, expected) in expected_txs.iter().enumerate() {
+            assert_eq!(fjord_upgrade_tx[i], *expected);
+        }
     }
 }

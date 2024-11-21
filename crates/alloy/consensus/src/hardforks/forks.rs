@@ -25,6 +25,7 @@ use alloc::vec::Vec;
 /// assert_eq!(fjord_upgrade_txs.collect::<Vec<_>>().len(), 3);
 /// ```
 #[derive(Debug, Default, Clone, Copy)]
+#[non_exhaustive]
 pub struct Hardforks;
 
 impl Hardforks {
