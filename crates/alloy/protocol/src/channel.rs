@@ -82,8 +82,9 @@ impl<'a> ChannelOut<'a> {
         }
 
         if self.config.is_fjord_active(batch.timestamp()) {
-            let compressed =
-                crate::compress_brotli(&buf).map_err(|_| ChannelOutError::BrotliCompression)?;
+            let level = crate::BrotliLevel::Brotli10;
+            let compressed = crate::compress_brotli(&buf, level)
+                .map_err(|_| ChannelOutError::BrotliCompression)?;
             self.compressed = Some(compressed.into());
         } else {
             self.compressed =
