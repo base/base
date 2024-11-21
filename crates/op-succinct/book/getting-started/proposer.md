@@ -49,11 +49,11 @@ Before starting the proposer, the following environment variables should be in y
 
 ### Advanced Environment Variables
 
-The following environment variables are optional:
+The following environment variables are optional.
 
 | Parameter | Description |
 |-----------|-------------|
-| `OP_SUCCINCT_MOCK` | Set to `mock` to run in mock proof mode. The `verifierGateway` set in the `OPSuccinctL2OutputOracle` contract must be an `SP1MockVerifier`. Mock proofs will be generated with SP1 and relayed to the contract. You can deploy an `SP1MockVerifier` by running `just deploy-mock-verifier <env_file>`. |
+| `OP_SUCCINCT_MOCK` | Default: `false`. Set to `true` to run in mock proof mode. The `verifierGateway` set in the `OPSuccinctL2OutputOracle` contract must be an `SP1MockVerifier`. Mock proofs will be generated with SP1 and relayed to the contract. You can deploy an `SP1MockVerifier` by running `just deploy-mock-verifier <env_file>`. |
 
 ## Build the Proposer Service
 
