@@ -108,3 +108,33 @@ upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   ADMIN_PK="{{admin_pk}}"
 
   cd contracts && forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
+
+# Deploy mock verifier
+deploy-mock-verifier env_file=".env":
+    #!/usr/bin/env bash
+    set -a
+    source {{env_file}}
+    set +a
+    
+    if [ -z "$L1_RPC" ]; then
+        echo "L1_RPC not set in {{env_file}}"
+        exit 1
+    fi
+    
+    if [ -z "$PRIVATE_KEY" ]; then
+        echo "PRIVATE_KEY not set in {{env_file}}"
+        exit 1
+    fi
+    
+    VERIFY_FLAGS=""
+    if [ ! -z "$ETHERSCAN_API_KEY" ]; then
+        VERIFY_FLAGS="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+    fi
+
+    cd contracts
+    
+    forge script script/DeployMockVerifier.s.sol:DeployMockVerifier \
+    --rpc-url $L1_RPC \
+    --private-key $PRIVATE_KEY \
+    --broadcast \
+    $VERIFY_FLAGS

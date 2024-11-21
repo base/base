@@ -22,6 +22,10 @@ struct Args {
     /// Prove flag.
     #[arg(short, long)]
     prove: bool,
+
+    /// Env file path.
+    #[arg(default_value = ".env", short, long)]
+    env_file: String,
 }
 
 /// Load the aggregation proof data.
@@ -60,10 +64,12 @@ fn load_aggregation_proof_data(
 // Execute the OP Succinct program for a single block.
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv::dotenv().ok();
     utils::setup_logger();
 
     let args = Args::parse();
+
+    dotenv::from_filename(args.env_file).ok();
+
     let prover = ProverClient::new();
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 

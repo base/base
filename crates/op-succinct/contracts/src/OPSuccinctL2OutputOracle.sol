@@ -140,7 +140,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         address _challenger,
         uint256 _finalizationPeriodSeconds,
         InitParams memory _initParams
-    ) public reinitializer(2) {
+    ) public initializer {
         require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
         require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(

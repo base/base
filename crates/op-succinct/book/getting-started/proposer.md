@@ -31,6 +31,8 @@ For advanced configurations, depending on the number of concurrent requests you 
 
 ## Environment Setup
 
+### Required Environment Variables
+
 Before starting the proposer, the following environment variables should be in your `.env` file. You should have already set up your environment when you deployed the L2 Output Oracle. If you have not done so, follow the steps in the [L2 Output Oracle](./l2-output-oracle.md) section.
 
 | Parameter | Description |
@@ -44,6 +46,14 @@ Before starting the proposer, the following environment variables should be in y
 | `SP1_PROVER` | Default: `network`. Set to `network` to use the Succinct Prover Network. |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract and posting output roots to L1. |
 | `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract. |
+
+### Advanced Environment Variables
+
+The following environment variables are optional:
+
+| Parameter | Description |
+|-----------|-------------|
+| `OP_SUCCINCT_MOCK` | Set to `mock` to run in mock proof mode. The `verifierGateway` set in the `OPSuccinctL2OutputOracle` contract must be an `SP1MockVerifier`. Mock proofs will be generated with SP1 and relayed to the contract. You can deploy an `SP1MockVerifier` by running `just deploy-mock-verifier <env_file>`. |
 
 ## Build the Proposer Service
 

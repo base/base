@@ -269,11 +269,11 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (opsuccinctm
 	metrics := opsuccinctmetrics.ProposerMetrics{
 		L2UnsafeHeadBlock:              l2UnsafeHeadBlock,
 		L2FinalizedBlock:               l2FinalizedBlock,
-			LatestContractL2Block:          latestContractL2Block.Uint64(),
-			HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
-				NumProving:                     uint64(numProving),
-				NumWitnessgen:                  uint64(numWitnessgen),
-				NumUnrequested:                 uint64(numUnrequested),
+		LatestContractL2Block:          latestContractL2Block.Uint64(),
+		HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
+		NumProving:                     uint64(numProving),
+		NumWitnessgen:                  uint64(numWitnessgen),
+		NumUnrequested:                 uint64(numUnrequested),
 	}
 
 	// Record the metrics
@@ -359,7 +359,6 @@ func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to fetch output at block %d: %w", aggProof.EndBlock, err)
 		}
-
 		l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber)
 	}
 
