@@ -1,6 +1,8 @@
 name: Integration Tests
 
 on:
+  push:
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -56,3 +58,4 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_TO_GITHUB: ${{ github.event_name == 'pull_request' }}
