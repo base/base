@@ -56,21 +56,27 @@ async fn execute_batch() -> Result<()> {
 
     println!("Execution Stats: \n{:?}", stats.to_string());
 
-    if let (Ok(owner), Ok(repo), Ok(pr_number), Ok(token)) = (
-        std::env::var("REPO_OWNER"),
-        std::env::var("REPO_NAME"),
-        std::env::var("PR_NUMBER"),
-        std::env::var("GITHUB_TOKEN"),
-    ) {
-        post_to_github_pr(
-            &owner,
-            &repo,
-            &pr_number,
-            &token,
-            &MarkdownExecutionStats::new(stats).to_string(),
-        )
-        .await
-        .unwrap();
+    if std::env::var("POST_TO_GITHUB")
+        .ok()
+        .and_then(|v| v.parse::<bool>().ok())
+        .unwrap_or_default()
+    {
+        if let (Ok(owner), Ok(repo), Ok(pr_number), Ok(token)) = (
+            std::env::var("REPO_OWNER"),
+            std::env::var("REPO_NAME"),
+            std::env::var("PR_NUMBER"),
+            std::env::var("GITHUB_TOKEN"),
+        ) {
+            post_to_github_pr(
+                &owner,
+                &repo,
+                &pr_number,
+                &token,
+                &MarkdownExecutionStats::new(stats).to_string(),
+            )
+            .await
+            .unwrap();
+        }
     }
 
     Ok(())
