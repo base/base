@@ -8,6 +8,7 @@ edition.workspace = true
 # workspace (general)
 anyhow.workspace = true
 async-trait.workspace = true
+thiserror.workspace = true
 serde_json.workspace = true
 
 # workspace (ethereum)
@@ -26,11 +27,12 @@ op-alloy-rpc-types-engine.workspace = true
 
 # workspace (kona)
 kona-common.workspace = true
-kona-primitives.workspace = true
 kona-client.workspace = true
 kona-preimage.workspace = true
 kona-mpt.workspace = true
 kona-derive.workspace = true
+kona-proof.workspace = true
+kona-executor.workspace = true
 
 # general
 serde.workspace = true
@@ -38,6 +40,7 @@ rkyv.workspace = true
 sha2.workspace = true
 log.workspace = true
 itertools.workspace = true
+spin.workspace = true
 
 # kzg
 kzg-rs.workspace = true

@@ -13,13 +13,13 @@ extern crate alloc;
 use alloc::sync::Arc;
 
 use alloy_consensus::{BlockBody, Sealed};
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::{eip2718::Decodable2718, eip4895::Withdrawals};
 use cfg_if::cfg_if;
-use kona_client::{
+use kona_executor::StatelessL2BlockExecutor;
+use kona_proof::{
     l1::{OracleBlobProvider, OracleL1ChainProvider},
     BootInfo,
 };
-use kona_executor::StatelessL2BlockExecutor;
 use log::info;
 use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use op_succinct_client_utils::{
@@ -39,7 +39,7 @@ cfg_if! {
         use alloc::vec::Vec;
         use serde_json;
     } else {
-        use kona_client::CachingOracle;
+        use kona_proof::CachingOracle;
         use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
     }
 }
@@ -176,8 +176,7 @@ fn main() {
                     withdrawals: boot
                         .rollup_config
                         .is_canyon_active(new_block_header.timestamp)
-                        .then(Vec::new),
-                    requests: None,
+                        .then(|| Withdrawals(vec![])),
                 },
             };
             // Add all data from this block's execution to the cache.

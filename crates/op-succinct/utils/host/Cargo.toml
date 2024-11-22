@@ -29,7 +29,6 @@ alloy-eips.workspace = true
 
 # kona
 kona-host.workspace = true
-kona-primitives.workspace = true
 
 # general
 rkyv.workspace = true

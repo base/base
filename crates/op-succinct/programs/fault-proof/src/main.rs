@@ -13,9 +13,12 @@ extern crate alloc;
 use alloc::sync::Arc;
 
 use cfg_if::cfg_if;
-use kona_client::{
-    l1::{DerivationDriver, OracleBlobProvider, OracleL1ChainProvider},
+use kona_driver::Driver;
+use kona_proof::{
+    executor::KonaExecutorConstructor,
+    l1::{OracleBlobProvider, OracleL1ChainProvider, OraclePipeline},
     l2::OracleL2ChainProvider,
+    sync::new_pipeline_cursor,
     BootInfo,
 };
 use op_succinct_client_utils::precompiles::zkvm_handle_register;
@@ -28,7 +31,7 @@ cfg_if! {
         use alloc::vec::Vec;
         use serde_json;
     } else {
-        use kona_client::CachingOracle;
+        use kona_proof::CachingOracle;
         use op_succinct_client_utils::pipes::{ORACLE_READER, HINT_WRITER};
     }
 }
@@ -89,25 +92,37 @@ fn main() {
         ////////////////////////////////////////////////////////////////
 
         println!("cycle-tracker-start: derivation-instantiation");
-        let mut driver = DerivationDriver::new(
-            boot.as_ref(),
-            oracle.as_ref(),
-            beacon,
-            l1_provider,
-            l2_provider.clone(),
+        let cursor = new_pipeline_cursor(
+            oracle.clone(),
+            &boot,
+            &mut l1_provider.clone(),
+            &mut l2_provider.clone(),
         )
         .await
         .unwrap();
+
+        let cfg = Arc::new(boot.rollup_config.clone());
+        let pipeline = OraclePipeline::new(
+            cfg.clone(),
+            cursor.clone(),
+            oracle.clone(),
+            beacon,
+            l1_provider.clone(),
+            l2_provider.clone(),
+        );
+        let executor = KonaExecutorConstructor::new(
+            &cfg,
+            l2_provider.clone(),
+            l2_provider,
+            zkvm_handle_register,
+        );
+        let mut driver = Driver::new(cursor, executor, pipeline);
+
         println!("cycle-tracker-end: derivation-instantiation");
 
         println!("cycle-tracker-start: produce-output");
         let (number, output_root) = driver
-            .produce_output(
-                &boot.rollup_config,
-                &l2_provider.clone(),
-                &l2_provider.clone(),
-                zkvm_handle_register,
-            )
+            .advance_to_target(&boot.rollup_config, boot.claimed_l2_block_number)
             .await
             .unwrap();
         println!("cycle-tracker-end: produce-output");

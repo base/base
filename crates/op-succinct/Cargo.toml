@@ -11,6 +11,7 @@ repository = "https://github.com/succinctlabs/op-succinct"
 
 [workspace.dependencies]
 anyhow = { version = "1.0.86", default-features = false }
+thiserror = { version = "2.0.3" }
 cfg-if = "1.0.0"
 spin = { version = "0.9.8", features = ["mutex"] }
 lru = "0.12.3"
@@ -42,17 +43,18 @@ tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
 
 # kona
 # Note: Switch to latest version of kona once the std::process::Command issue is resolved.
-kona-common = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-common-proc = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-preimage = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona", features = [
+kona-common = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-common-proc = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-preimage = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0", features = [
     "rkyv",
 ] }
-kona-primitives = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-mpt = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-derive = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona", default-features = false }
-kona-executor = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-client = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
-kona-host = { git = "https://github.com/moongate-forks/kona", branch = "patch-10-17-kona" }
+kona-mpt = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-driver = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-derive = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0", default-features = false }
+kona-executor = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-client = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-host = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
+kona-proof = { git = "https://github.com/succinctlabs/kona", branch = "patch-kona-proof-v0.1.0" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -63,26 +65,26 @@ op-succinct-build-utils = { path = "utils/build" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
 # Alloy
-alloy = { version = "0.4.2", default-features = false, features = ["full"] }
+alloy = { version = "0.6.4", default-features = false, features = ["full"] }
 # Uses sha3 instead of tiny-keccak. Reduces cycle count for Keccak by 50%.
-alloy-primitives = { version = "0.8.4", default-features = false, features = [
+alloy-primitives = { version = "0.8.12", default-features = false, features = [
     "sha3-keccak",
 ] }
 alloy-rlp = { version = "0.3.8", default-features = false }
-alloy-eips = { version = "0.4.2", default-features = false }
-revm = { version = "14.0", default-features = false, features = ["kzg-rs"] }
-alloy-consensus = { version = "0.4.2", default-features = false }
+alloy-eips = { version = "0.6.4", default-features = false }
+revm = { version = "16.0.0", default-features = false, features = ["kzg-rs"] }
+alloy-consensus = { version = "0.6.4", default-features = false }
 alloy-sol-types = { version = "0.8" }
 
 # OP Alloy
-op-alloy-consensus = { version = "0.4.0", default-features = false }
-op-alloy-genesis = { version = "0.4.0", default-features = false, features = [
+op-alloy-consensus = { version = "0.6.8", default-features = false }
+op-alloy-genesis = { version = "0.6.8", default-features = false, features = [
     "serde",
 ] }
-op-alloy-protocol = { version = "0.4.0", default-features = false }
-op-alloy-rpc-types = { version = "0.4.0", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.4.0", default-features = false }
-op-alloy-network = { version = "0.4.0", default-features = false }
+op-alloy-protocol = { version = "0.6.8", default-features = false }
+op-alloy-rpc-types = { version = "0.6.8", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.6.8", default-features = false }
+op-alloy-network = { version = "0.6.8", default-features = false }
 
 # sp1
 sp1-lib = { version = "3.0.0", features = ["verify"] }
