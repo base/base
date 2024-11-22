@@ -4,7 +4,10 @@ use super::OpTxType;
 use crate::DepositTransaction;
 use alloc::vec::Vec;
 use alloy_consensus::{Sealable, Transaction};
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::{
+    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
+    eip2930::AccessList,
+};
 use alloy_primitives::{
     keccak256, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256, U256,
 };
@@ -192,13 +195,6 @@ impl TxDeposit {
         self.rlp_encoded_length() + 1
     }
 
-    /// EIP-2718 encode the transaction with the given signature and the default
-    /// type flag.
-    pub fn eip2718_encode(&self, out: &mut dyn BufMut) {
-        out.put_u8(self.tx_type() as u8);
-        self.rlp_encode(out);
-    }
-
     fn network_header(&self) -> Header {
         Header { list: false, payload_length: self.eip2718_encoded_length() }
     }
@@ -212,13 +208,13 @@ impl TxDeposit {
     /// Network encode the transaction with the given signature.
     pub fn network_encode(&self, out: &mut dyn BufMut) {
         self.network_header().encode(out);
-        self.eip2718_encode(out);
+        self.encode_2718(out);
     }
 
     /// Calculate the transaction hash.
     pub fn tx_hash(&self) -> TxHash {
         let mut buf = Vec::with_capacity(self.eip2718_encoded_length());
-        self.eip2718_encode(&mut buf);
+        self.encode_2718(&mut buf);
         keccak256(&buf)
     }
 
@@ -296,6 +292,37 @@ impl Transaction for TxDeposit {
 
     fn authorization_list(&self) -> Option<&[alloy_eips::eip7702::SignedAuthorization]> {
         None
+    }
+}
+
+impl Encodable2718 for TxDeposit {
+    fn type_flag(&self) -> Option<u8> {
+        Some(OpTxType::Deposit as u8)
+    }
+
+    fn encode_2718_len(&self) -> usize {
+        self.eip2718_encoded_length()
+    }
+
+    fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
+        out.put_u8(self.tx_type() as u8);
+        self.rlp_encode(out);
+    }
+}
+
+impl Decodable2718 for TxDeposit {
+    fn typed_decode(ty: u8, data: &mut &[u8]) -> Eip2718Result<Self> {
+        let ty: OpTxType = ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))?;
+        if ty != OpTxType::Deposit as u8 {
+            return Err(Eip2718Error::UnexpectedType(ty as u8));
+        }
+        let tx = Self::decode(data)?;
+        Ok(tx)
+    }
+
+    fn fallback_decode(data: &mut &[u8]) -> Eip2718Result<Self> {
+        let tx = Self::decode(data)?;
+        Ok(tx)
     }
 }
 
@@ -495,7 +522,7 @@ mod tests {
         tx_deposit.network_encode(&mut buffer_with_header);
 
         let mut buffer_without_header = BytesMut::new();
-        tx_deposit.eip2718_encode(&mut buffer_without_header);
+        tx_deposit.encode_2718(&mut buffer_without_header);
 
         assert!(buffer_with_header.len() > buffer_without_header.len());
     }

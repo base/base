@@ -415,7 +415,7 @@ impl Encodable2718 for OpTxEnvelope {
                 tx.eip2718_encode(out);
             }
             Self::Deposit(tx) => {
-                tx.eip2718_encode(out);
+                tx.encode_2718(out);
             }
         }
     }

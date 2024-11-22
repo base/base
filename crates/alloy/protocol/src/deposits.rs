@@ -1,6 +1,7 @@
 //! Contains deposit transaction types and helper methods.
 
 use alloc::{string::String, vec::Vec};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, TxKind, B256, U256, U64};
 use core::fmt::Display;
 use op_alloy_consensus::TxDeposit;
@@ -334,7 +335,7 @@ pub fn decode_deposit(block_hash: B256, index: usize, log: &Log) -> Result<Bytes
 
     // Re-encode the deposit transaction
     let mut buffer = Vec::with_capacity(deposit_tx.eip2718_encoded_length());
-    deposit_tx.eip2718_encode(&mut buffer);
+    deposit_tx.encode_2718(&mut buffer);
     Ok(Bytes::from(buffer))
 }
 
