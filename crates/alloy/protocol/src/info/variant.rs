@@ -1,32 +1,24 @@
-//! This module contains the [L1BlockInfoTx] type, and various encoding / decoding methods for it.
+//! Contains the `L1BlockInfoTx` enum, containing different variants of the L1 block info
+//! transaction.
 
-use crate::{DepositSourceDomain, L1InfoDepositSource};
-use alloc::{
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{format, string::ToString};
 use alloy_consensus::Header;
 use alloy_eips::BlockNumHash;
 use alloy_primitives::{address, Address, Bytes, Sealable, TxKind, B256, U256};
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
 
+use crate::{
+    BlockInfoError, DecodeError, DepositSourceDomain, L1BlockInfoBedrock, L1BlockInfoEcotone,
+    L1InfoDepositSource,
+};
+
 /// The system transaction gas limit post-Regolith
 const REGOLITH_SYSTEM_TX_GAS: u64 = 1_000_000;
-/// The type byte identifier for the L1 scalar format in Ecotone.
-const L1_SCALAR_ECOTONE: u8 = 1;
-/// The length of an L1 info transaction in Bedrock.
-const L1_INFO_TX_LEN_BEDROCK: usize = 4 + 32 * 8;
-/// The length of an L1 info transaction in Ecotone.
-const L1_INFO_TX_LEN_ECOTONE: usize = 4 + 32 * 5;
-/// The 4 byte selector of the
-/// "setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)" function
-const L1_INFO_TX_SELECTOR_BEDROCK: [u8; 4] = [0x01, 0x5d, 0x8e, 0xb9];
-/// The 4 byte selector of "setL1BlockValuesEcotone()"
-const L1_INFO_TX_SELECTOR_ECOTONE: [u8; 4] = [0x44, 0x0a, 0x5e, 0x20];
+
 /// The address of the L1 Block contract
 const L1_BLOCK_ADDRESS: Address = address!("4200000000000000000000000000000000000015");
+
 /// The depositor address of the L1 info transaction
 const L1_INFO_DEPOSITOR_ADDRESS: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
@@ -42,134 +34,6 @@ pub enum L1BlockInfoTx {
     Bedrock(L1BlockInfoBedrock),
     /// An Ecotone L1 info transaction
     Ecotone(L1BlockInfoEcotone),
-}
-
-/// Represents the fields within a Bedrock L1 block info transaction.
-///
-/// Bedrock Binary Format
-// +---------+--------------------------+
-// | Bytes   | Field                    |
-// +---------+--------------------------+
-// | 4       | Function signature       |
-// | 32      | Number                   |
-// | 32      | Time                     |
-// | 32      | BaseFee                  |
-// | 32      | BlockHash                |
-// | 32      | SequenceNumber           |
-// | 32      | BatcherHash              |
-// | 32      | L1FeeOverhead            |
-// | 32      | L1FeeScalar              |
-// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct L1BlockInfoBedrock {
-    /// The current L1 origin block number
-    pub number: u64,
-    /// The current L1 origin block's timestamp
-    pub time: u64,
-    /// The current L1 origin block's basefee
-    pub base_fee: u64,
-    /// The current L1 origin block's hash
-    pub block_hash: B256,
-    /// The current sequence number
-    pub sequence_number: u64,
-    /// The address of the batch submitter
-    pub batcher_address: Address,
-    /// The fee overhead for L1 data
-    pub l1_fee_overhead: U256,
-    /// The fee scalar for L1 data
-    pub l1_fee_scalar: U256,
-}
-
-/// Represents the fields within an Ecotone L1 block info transaction.
-///
-/// Ecotone Binary Format
-/// +---------+--------------------------+
-/// | Bytes   | Field                    |
-/// +---------+--------------------------+
-/// | 4       | Function signature       |
-/// | 4       | BaseFeeScalar            |
-/// | 4       | BlobBaseFeeScalar        |
-/// | 8       | SequenceNumber           |
-/// | 8       | Timestamp                |
-/// | 8       | L1BlockNumber            |
-/// | 32      | BaseFee                  |
-/// | 32      | BlobBaseFee              |
-/// | 32      | BlockHash                |
-/// | 32      | BatcherHash              |
-/// +---------+--------------------------+
-#[derive(Debug, Clone, Hash, Eq, PartialEq, Default, Copy)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct L1BlockInfoEcotone {
-    /// The current L1 origin block number
-    pub number: u64,
-    /// The current L1 origin block's timestamp
-    pub time: u64,
-    /// The current L1 origin block's basefee
-    pub base_fee: u64,
-    /// The current L1 origin block's hash
-    pub block_hash: B256,
-    /// The current sequence number
-    pub sequence_number: u64,
-    /// The address of the batch submitter
-    pub batcher_address: Address,
-    /// The current blob base fee on L1
-    pub blob_base_fee: u128,
-    /// The fee scalar for L1 blobspace data
-    pub blob_base_fee_scalar: u32,
-    /// The fee scalar for L1 data
-    pub base_fee_scalar: u32,
-}
-
-/// An error type for parsing L1 block info transactions.
-#[derive(Debug, thiserror::Error, Copy, Clone)]
-pub enum BlockInfoError {
-    /// Failed to parse the L1 blob base fee scalar.
-    L1BlobBaseFeeScalar,
-    /// Failed to parse the base fee scalar.
-    BaseFeeScalar,
-    /// Failed to parse the EIP-1559 denominator.
-    Eip1559Denominator,
-    /// Failed to parse the EIP-1559 elasticity parameter.
-    Eip1559Elasticity,
-}
-
-impl core::fmt::Display for BlockInfoError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::L1BlobBaseFeeScalar => {
-                write!(f, "Failed to parse the L1 blob base fee scalar")
-            }
-            Self::BaseFeeScalar => write!(f, "Failed to parse the base fee scalar"),
-            Self::Eip1559Denominator => {
-                write!(f, "Failed to parse the EIP-1559 denominator")
-            }
-            Self::Eip1559Elasticity => {
-                write!(f, "Failed to parse the EIP-1559 elasticity parameter")
-            }
-        }
-    }
-}
-
-/// An error decoding an L1 block info transaction.
-#[derive(Debug, thiserror::Error)]
-pub enum DecodeError {
-    /// Invalid selector for the L1 info transaction
-    InvalidSelector,
-    /// Parse error for the L1 info transaction
-    ParseError(String),
-    /// Invalid length for the L1 info transaction
-    InvalidLength(String),
-}
-
-impl core::fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidSelector => write!(f, "Invalid L1 info transaction selector"),
-            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            Self::InvalidLength(msg) => write!(f, "Invalid data length: {}", msg), /* Handle display for length errors */
-        }
-    }
 }
 
 impl L1BlockInfoTx {
@@ -188,7 +52,7 @@ impl L1BlockInfoTx {
             && rollup_config.ecotone_time.unwrap_or_default() != l2_block_time
         {
             let scalar = system_config.scalar.to_be_bytes::<32>();
-            let blob_base_fee_scalar = (scalar[0] == L1_SCALAR_ECOTONE)
+            let blob_base_fee_scalar = (scalar[0] == L1BlockInfoEcotone::L1_SCALAR)
                 .then(|| {
                     Ok::<u32, BlockInfoError>(u32::from_be_bytes(
                         scalar[24..28]
@@ -275,10 +139,10 @@ impl L1BlockInfoTx {
                 })
             })?;
         match selector {
-            L1_INFO_TX_SELECTOR_BEDROCK => L1BlockInfoBedrock::decode_calldata(r)
+            L1BlockInfoBedrock::L1_INFO_TX_SELECTOR => L1BlockInfoBedrock::decode_calldata(r)
                 .map(Self::Bedrock)
                 .map_err(|e| DecodeError::ParseError(format!("Bedrock decode error: {}", e))),
-            L1_INFO_TX_SELECTOR_ECOTONE => L1BlockInfoEcotone::decode_calldata(r)
+            L1BlockInfoEcotone::L1_INFO_TX_SELECTOR => L1BlockInfoEcotone::decode_calldata(r)
                 .map(Self::Ecotone)
                 .map_err(|e| DecodeError::ParseError(format!("Ecotone decode error: {}", e))),
             _ => Err(DecodeError::InvalidSelector),
@@ -338,141 +202,14 @@ impl L1BlockInfoTx {
     }
 }
 
-impl L1BlockInfoBedrock {
-    /// Encodes the [L1BlockInfoBedrock] object into Ethereum transaction calldata.
-    pub fn encode_calldata(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(L1_INFO_TX_LEN_BEDROCK);
-        buf.extend_from_slice(L1_INFO_TX_SELECTOR_BEDROCK.as_ref());
-        buf.extend_from_slice(U256::from(self.number).to_be_bytes::<32>().as_slice());
-        buf.extend_from_slice(U256::from(self.time).to_be_bytes::<32>().as_slice());
-        buf.extend_from_slice(U256::from(self.base_fee).to_be_bytes::<32>().as_slice());
-        buf.extend_from_slice(self.block_hash.as_slice());
-        buf.extend_from_slice(U256::from(self.sequence_number).to_be_bytes::<32>().as_slice());
-        buf.extend_from_slice(self.batcher_address.into_word().as_slice());
-        buf.extend_from_slice(self.l1_fee_overhead.to_be_bytes::<32>().as_slice());
-        buf.extend_from_slice(self.l1_fee_scalar.to_be_bytes::<32>().as_slice());
-        buf.into()
-    }
-
-    /// Decodes the [L1BlockInfoBedrock] object from ethereum transaction calldata.
-    pub fn decode_calldata(r: &[u8]) -> Result<Self, DecodeError> {
-        if r.len() != L1_INFO_TX_LEN_BEDROCK {
-            return Err(DecodeError::InvalidLength(format!(
-                "Invalid calldata length for Bedrock L1 info transaction, expected {}, got {}",
-                L1_INFO_TX_LEN_BEDROCK,
-                r.len()
-            )));
-        }
-
-        let number = u64::from_be_bytes(
-            r[28..36]
-                .try_into()
-                .map_err(|_| DecodeError::ParseError("Conversion error for number".to_string()))?,
-        );
-        let time = u64::from_be_bytes(
-            r[60..68]
-                .try_into()
-                .map_err(|_| DecodeError::ParseError("Conversion error for time".to_string()))?,
-        );
-        let base_fee =
-            u64::from_be_bytes(r[92..100].try_into().map_err(|_| {
-                DecodeError::ParseError("Conversion error for base fee".to_string())
-            })?);
-        let block_hash = B256::from_slice(r[100..132].as_ref());
-        let sequence_number = u64::from_be_bytes(r[156..164].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for sequence number".to_string())
-        })?);
-        let batcher_address = Address::from_slice(r[176..196].as_ref());
-        let l1_fee_overhead = U256::from_be_slice(r[196..228].as_ref());
-        let l1_fee_scalar = U256::from_be_slice(r[228..260].as_ref());
-
-        Ok(Self {
-            number,
-            time,
-            base_fee,
-            block_hash,
-            sequence_number,
-            batcher_address,
-            l1_fee_overhead,
-            l1_fee_scalar,
-        })
-    }
-}
-
-impl L1BlockInfoEcotone {
-    /// Encodes the [L1BlockInfoEcotone] object into Ethereum transaction calldata.
-    pub fn encode_calldata(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(L1_INFO_TX_LEN_ECOTONE);
-        buf.extend_from_slice(L1_INFO_TX_SELECTOR_ECOTONE.as_ref());
-        buf.extend_from_slice(self.base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.blob_base_fee_scalar.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.sequence_number.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.time.to_be_bytes().as_ref());
-        buf.extend_from_slice(self.number.to_be_bytes().as_ref());
-        buf.extend_from_slice(U256::from(self.base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(U256::from(self.blob_base_fee).to_be_bytes::<32>().as_ref());
-        buf.extend_from_slice(self.block_hash.as_ref());
-        buf.extend_from_slice(self.batcher_address.into_word().as_ref());
-        buf.into()
-    }
-
-    /// Decodes the [L1BlockInfoEcotone] object from ethereum transaction calldata.
-    pub fn decode_calldata(r: &[u8]) -> Result<Self, DecodeError> {
-        if r.len() != L1_INFO_TX_LEN_ECOTONE {
-            return Err(DecodeError::InvalidLength(format!(
-                "Invalid calldata length for Ecotone L1 info transaction, expected {}, got {}",
-                L1_INFO_TX_LEN_ECOTONE,
-                r.len()
-            )));
-        }
-        let base_fee_scalar = u32::from_be_bytes(r[4..8].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for base fee scalar".to_string())
-        })?);
-        let blob_base_fee_scalar = u32::from_be_bytes(r[8..12].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for blob base fee scalar".to_string())
-        })?);
-        let sequence_number = u64::from_be_bytes(r[12..20].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for sequence number".to_string())
-        })?);
-        let timestamp =
-            u64::from_be_bytes(r[20..28].try_into().map_err(|_| {
-                DecodeError::ParseError("Conversion error for timestamp".to_string())
-            })?);
-        let l1_block_number = u64::from_be_bytes(r[28..36].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for L1 block number".to_string())
-        })?);
-        let base_fee =
-            u64::from_be_bytes(r[60..68].try_into().map_err(|_| {
-                DecodeError::ParseError("Conversion error for base fee".to_string())
-            })?);
-        let blob_base_fee = u128::from_be_bytes(r[84..100].try_into().map_err(|_| {
-            DecodeError::ParseError("Conversion error for blob base fee".to_string())
-        })?);
-        let block_hash = B256::from_slice(r[100..132].as_ref());
-        let batcher_address = Address::from_slice(r[144..164].as_ref());
-
-        Ok(Self {
-            number: l1_block_number,
-            time: timestamp,
-            base_fee,
-            block_hash,
-            sequence_number,
-            batcher_address,
-            blob_base_fee,
-            blob_base_fee_scalar,
-            base_fee_scalar,
-        })
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use alloc::string::ToString;
     use alloy_primitives::{address, b256, hex};
 
-    const RAW_BEDROCK_INFO_TX: [u8; L1_INFO_TX_LEN_BEDROCK] = hex!("015d8eb9000000000000000000000000000000000000000000000000000000000117c4eb0000000000000000000000000000000000000000000000000000000065280377000000000000000000000000000000000000000000000000000000026d05d953392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc00000000000000000000000000000000000000000000000000000000000000040000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f3298500000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0");
-    const RAW_ECOTONE_INFO_TX: [u8; L1_INFO_TX_LEN_ECOTONE] = hex!("440a5e2000000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
+    const RAW_BEDROCK_INFO_TX: [u8; L1BlockInfoBedrock::L1_INFO_TX_LEN] = hex!("015d8eb9000000000000000000000000000000000000000000000000000000000117c4eb0000000000000000000000000000000000000000000000000000000065280377000000000000000000000000000000000000000000000000000000026d05d953392012032675be9f94aae5ab442de73c5f4fb1bf30fa7dd0d2442239899a40fc00000000000000000000000000000000000000000000000000000000000000040000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f3298500000000000000000000000000000000000000000000000000000000000000bc00000000000000000000000000000000000000000000000000000000000a6fe0");
+    const RAW_ECOTONE_INFO_TX: [u8; L1BlockInfoEcotone::L1_INFO_TX_LEN] = hex!("440a5e2000000558000c5fc5000000000000000500000000661c277300000000012bec20000000000000000000000000000000000000000000000000000000026e9f109900000000000000000000000000000000000000000000000000000000000000011c4c84c50740386c7dc081efddd644405f04cde73e30a2e381737acce9f5add30000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
 
     #[test]
     fn bedrock_l1_block_info_invalid_len() {
@@ -624,7 +361,7 @@ mod test {
         assert_eq!(l1_info.blob_base_fee, l1_header.blob_fee().unwrap_or(1));
 
         let scalar = system_config.scalar.to_be_bytes::<32>();
-        let blob_base_fee_scalar = (scalar[0] == L1_SCALAR_ECOTONE)
+        let blob_base_fee_scalar = (scalar[0] == L1BlockInfoEcotone::L1_SCALAR)
             .then(|| {
                 u32::from_be_bytes(
                     scalar[24..28].try_into().expect("Failed to parse L1 blob base fee scalar"),

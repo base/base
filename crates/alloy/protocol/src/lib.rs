@@ -54,8 +54,8 @@ pub use deposits::{
     DEPOSIT_EVENT_ABI_HASH, DEPOSIT_EVENT_VERSION_0,
 };
 
-mod block_info;
-pub use block_info::{
+mod info;
+pub use info::{
     BlockInfoError, DecodeError, L1BlockInfoBedrock, L1BlockInfoEcotone, L1BlockInfoTx,
 };
 

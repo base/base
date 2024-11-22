@@ -1,6 +1,6 @@
 //! Block Types for Optimism.
 
-use crate::block_info::{DecodeError, L1BlockInfoTx};
+use crate::{DecodeError, L1BlockInfoTx};
 use alloy_eips::{eip2718::Eip2718Error, BlockNumHash};
 use alloy_primitives::B256;
 use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
