@@ -82,12 +82,18 @@ pub enum CacheMode {
 
 fn get_rpcs() -> RPCConfig {
     RPCConfig {
-        l1_rpc: env::var("L1_RPC").unwrap_or_else(|_| "http://localhost:8545".to_string()),
-        l1_beacon_rpc: env::var("L1_BEACON_RPC")
-            .unwrap_or_else(|_| "http://localhost:5052".to_string()),
-        l2_rpc: env::var("L2_RPC").unwrap_or_else(|_| "http://localhost:9545".to_string()),
-        l2_node_rpc: env::var("L2_NODE_RPC")
-            .unwrap_or_else(|_| "http://localhost:5058".to_string()),
+        l1_rpc: Url::parse(&env::var("L1_RPC").expect("L1_RPC must be set"))
+            .expect("L1_RPC must be a valid URL")
+            .to_string(),
+        l1_beacon_rpc: Url::parse(&env::var("L1_BEACON_RPC").expect("L1_BEACON_RPC must be set"))
+            .expect("L1_BEACON_RPC must be a valid URL")
+            .to_string(),
+        l2_rpc: Url::parse(&env::var("L2_RPC").expect("L2_RPC must be set"))
+            .expect("L2_RPC must be a valid URL")
+            .to_string(),
+        l2_node_rpc: Url::parse(&env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set"))
+            .expect("L2_NODE_RPC must be a valid URL")
+            .to_string(),
     }
 }
 
