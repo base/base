@@ -2,18 +2,19 @@
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_consensus::{BlockBody, Header};
-use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::{eip2718::Decodable2718, eip4895::Withdrawals};
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rlp::Decodable;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
-use kona_client::{BootInfo, HintType};
-use kona_derive::pipeline::L2ChainProvider;
-use kona_mpt::{OrderedListWalker, TrieHinter, TrieProvider};
+use kona_derive::traits::L2ChainProvider;
+use kona_executor::TrieDBProvider;
+use kona_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
+use kona_proof::{errors::OracleProviderError, BootInfo, HintType};
 use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
-use op_alloy_protocol::{to_system_config, L2BlockInfo};
+use op_alloy_protocol::{to_system_config, BatchValidationProvider, L2BlockInfo};
 use std::{collections::HashMap, sync::Mutex};
 
 use crate::block_on;
@@ -81,7 +82,10 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
 
     /// Returns a [Header] corresponding to the given L2 block number, by walking back from the
     /// L2 safe head.
-    pub async fn header_by_number(&mut self, block_number: u64) -> Result<Header> {
+    pub async fn header_by_number(
+        &mut self,
+        block_number: u64,
+    ) -> Result<Header, OracleProviderError> {
         // First, check if it's already in the cache.
         if let Some(header) = self.header_by_number.lock().unwrap().get(&block_number) {
             return Ok(header.clone());
@@ -96,24 +100,29 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
                     .0
                     .as_ref()]),
             )
-            .await?;
+            .await
+            .map_err(OracleProviderError::Preimage)?;
         let output_preimage = self
             .oracle
             .get(PreimageKey::new(
                 self.boot_info.agreed_l2_output_root.0,
                 PreimageKeyType::Keccak256,
             ))
-            .await?;
+            .await
+            .map_err(OracleProviderError::Preimage)?;
 
         // Fetch the starting block header.
         let block_hash = output_preimage[96..128]
             .try_into()
-            .map_err(|e| anyhow!("Failed to extract block hash from output preimage: {e}"))?;
+            .map_err(OracleProviderError::SliceConversion)?;
         let mut header = self.header_by_hash(block_hash)?;
 
         // Check if the block number is in range. If not, we can fail early.
         if block_number > header.number {
-            anyhow::bail!("Block number past L2 head.");
+            return Err(OracleProviderError::BlockNumberPastHead(
+                block_number,
+                header.number,
+            ));
         }
 
         // Walk back the block headers to the desired block number.
@@ -126,10 +135,13 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
 }
 
 #[async_trait]
-impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainProvider<T> {
-    type Error = anyhow::Error;
+impl<T: CommsClient + Send + Sync> BatchValidationProvider for MultiblockOracleL2ChainProvider<T> {
+    type Error = OracleProviderError;
 
-    async fn l2_block_info_by_number(&mut self, number: u64) -> Result<L2BlockInfo> {
+    async fn l2_block_info_by_number(
+        &mut self,
+        number: u64,
+    ) -> Result<L2BlockInfo, OracleProviderError> {
         // First, check if it's already in the cache.
         if let Some(l2_block_info) = self.l2_block_info_by_number.lock().unwrap().get(&number) {
             return Ok(*l2_block_info);
@@ -140,10 +152,10 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
 
         // Construct the system config from the payload.
         L2BlockInfo::from_block_and_genesis(&block, &self.boot_info.rollup_config.genesis)
-            .map_err(Into::into)
+            .map_err(OracleProviderError::BlockInfo)
     }
 
-    async fn block_by_number(&mut self, number: u64) -> Result<OpBlock> {
+    async fn block_by_number(&mut self, number: u64) -> Result<OpBlock, OracleProviderError> {
         // First, check if it's already in the cache.
         if let Some(block) = self.block_by_number.lock().unwrap().get(&number) {
             return Ok(block.clone());
@@ -160,17 +172,20 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         // Fetch the transactions in the block.
         self.oracle
             .write(&HintType::L2Transactions.encode_with(&[header_hash.as_ref()]))
-            .await?;
-        let trie_walker = OrderedListWalker::try_new_hydrated(transactions_root, self)?;
+            .await
+            .map_err(OracleProviderError::Preimage)?;
+        let trie_walker = OrderedListWalker::try_new_hydrated(transactions_root, self)
+            .map_err(OracleProviderError::TrieWalker)?;
 
         // Decode the transactions within the transactions trie.
         let transactions = trie_walker
             .into_iter()
             .map(|(_, rlp)| {
-                OpTxEnvelope::decode_2718(&mut rlp.as_ref())
-                    .map_err(|e| anyhow!("Failed to decode TxEnvelope RLP: {e}"))
+                let res = OpTxEnvelope::decode_2718(&mut rlp.as_ref())?;
+                Ok(res)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(OracleProviderError::Rlp)?;
 
         let optimism_block = OpBlock {
             header,
@@ -181,18 +196,22 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
                     .boot_info
                     .rollup_config
                     .is_canyon_active(timestamp)
-                    .then(Vec::new),
-                requests: None,
+                    .then(|| Withdrawals(vec![])),
             },
         };
         Ok(optimism_block)
     }
+}
+
+#[async_trait]
+impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainProvider<T> {
+    type Error = OracleProviderError;
 
     async fn system_config_by_number(
         &mut self,
         number: u64,
         rollup_config: Arc<RollupConfig>,
-    ) -> Result<SystemConfig> {
+    ) -> Result<SystemConfig, OracleProviderError> {
         // First, check if it's already in the cache.
         if let Some(system_config) = self.system_config_by_number.lock().unwrap().get(&number) {
             return Ok(*system_config);
@@ -202,53 +221,62 @@ impl<T: CommsClient + Send + Sync> L2ChainProvider for MultiblockOracleL2ChainPr
         let block = self.block_by_number(number).await?;
 
         // Construct the system config from the payload.
-        to_system_config(&block, rollup_config.as_ref()).map_err(Into::into)
+        to_system_config(&block, rollup_config.as_ref())
+            .map_err(OracleProviderError::OpBlockConversion)
     }
 }
 
-impl<T: CommsClient> TrieProvider for MultiblockOracleL2ChainProvider<T> {
-    type Error = anyhow::Error;
-
-    fn trie_node_preimage(&self, key: B256) -> Result<Bytes> {
-        // On L2, trie node preimages are stored as keccak preimage types in the oracle. We assume
-        // that a hint for these preimages has already been sent, prior to this call.
-        block_on(async move {
-            Ok(self
-                .oracle
-                .get(PreimageKey::new(*key, PreimageKeyType::Keccak256))
-                .await?
-                .into())
-        })
-    }
-
-    fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes> {
+impl<T: CommsClient> TrieDBProvider for MultiblockOracleL2ChainProvider<T> {
+    fn bytecode_by_hash(&self, hash: B256) -> Result<Bytes, OracleProviderError> {
         // Fetch the bytecode preimage from the caching oracle.
         block_on(async move {
             self.oracle
                 .write(&HintType::L2Code.encode_with(&[hash.as_ref()]))
-                .await?;
+                .await
+                .map_err(OracleProviderError::Preimage)?;
 
-            Ok(self
-                .oracle
+            self.oracle
                 .get(PreimageKey::new(*hash, PreimageKeyType::Keccak256))
-                .await?
-                .into())
+                .await
+                .map(Into::into)
+                .map_err(OracleProviderError::Preimage)
         })
     }
 
-    fn header_by_hash(&self, hash: B256) -> Result<Header> {
+    fn header_by_hash(&self, hash: B256) -> Result<Header, OracleProviderError> {
         // Fetch the header from the caching oracle.
         block_on(async move {
             self.oracle
                 .write(&HintType::L2BlockHeader.encode_with(&[hash.as_ref()]))
-                .await?;
+                .await
+                .map_err(OracleProviderError::Preimage)?;
 
             let header_bytes = self
                 .oracle
                 .get(PreimageKey::new(*hash, PreimageKeyType::Keccak256))
-                .await?;
-            Header::decode(&mut header_bytes.as_slice())
-                .map_err(|e| anyhow!("Failed to RLP decode Header: {e}"))
+                .await
+                .map_err(OracleProviderError::Preimage)?;
+            Header::decode(&mut header_bytes.as_slice()).map_err(OracleProviderError::Rlp)
+        })
+    }
+}
+
+impl<T: CommsClient> TrieProvider for MultiblockOracleL2ChainProvider<T> {
+    type Error = OracleProviderError;
+
+    fn trie_node_by_hash(&self, key: B256) -> std::result::Result<kona_mpt::TrieNode, Self::Error> {
+        // On L2, trie node preimages are stored as keccak preimage types in the oracle. We assume
+        // that a hint for these preimages has already been sent, prior to this call.
+        crate::block_on(async move {
+            TrieNode::decode(
+                &mut self
+                    .oracle
+                    .get(PreimageKey::new(*key, PreimageKeyType::Keccak256))
+                    .await
+                    .map_err(OracleProviderError::Preimage)?
+                    .as_ref(),
+            )
+            .map_err(OracleProviderError::Rlp)
         })
     }
 }

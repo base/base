@@ -8,25 +8,26 @@ use alloc::sync::Arc;
 use alloy_consensus::{Header, Sealed};
 use anyhow::{anyhow, Result};
 use core::fmt::Debug;
-use kona_client::{
-    l1::{OracleBlobProvider, OracleL1ChainProvider},
-    BootInfo, HintType,
-};
 use kona_derive::{
     attributes::StatefulAttributesBuilder,
     errors::PipelineErrorKind,
-    pipeline::{DerivationPipeline, Pipeline, PipelineBuilder, StepResult},
-    prelude::{ChainProvider, L2ChainProvider},
+    pipeline::{DerivationPipeline, PipelineBuilder},
+    prelude::ChainProvider,
     sources::EthereumDataSource,
     stages::{
-        AttributesQueue, BatchQueue, BatchStream, ChannelBank, ChannelReader, FrameQueue,
+        AttributesQueue, BatchProvider, BatchStream, ChannelProvider, ChannelReader, FrameQueue,
         L1Retrieval, L1Traversal,
     },
-    traits::{OriginProvider, Signal},
+    traits::{OriginProvider, Pipeline, SignalReceiver},
+    types::{ResetSignal, Signal, StepResult},
 };
-use kona_mpt::TrieProvider;
+use kona_executor::TrieDBProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use op_alloy_protocol::{BlockInfo, L2BlockInfo};
+use kona_proof::{
+    l1::{OracleBlobProvider, OracleL1ChainProvider},
+    BootInfo, HintType,
+};
+use op_alloy_protocol::{BatchValidationProvider, BlockInfo, L2BlockInfo};
 use op_alloy_rpc_types_engine::OpAttributesWithParent;
 
 use log::{info, warn};
@@ -48,10 +49,12 @@ pub type OracleAttributesBuilder<O> =
 
 /// An oracle-backed attributes queue for the derivation pipeline.
 pub type MultiblockOracleAttributesQueue<DAP, O> = AttributesQueue<
-    BatchQueue<
+    BatchProvider<
         BatchStream<
             ChannelReader<
-                ChannelBank<FrameQueue<L1Retrieval<DAP, L1Traversal<OracleL1ChainProvider<O>>>>>,
+                ChannelProvider<
+                    FrameQueue<L1Retrieval<DAP, L1Traversal<OracleL1ChainProvider<O>>>>,
+                >,
             >,
             MultiblockOracleL2ChainProvider<O>,
         >,
@@ -120,7 +123,7 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
             l2_chain_provider.clone(),
             chain_provider.clone(),
         );
-        let dap = EthereumDataSource::new(chain_provider.clone(), blob_provider, &cfg);
+        let dap = EthereumDataSource::new_from_parts(chain_provider.clone(), blob_provider, &cfg);
         let pipeline = PipelineBuilder::new()
             .rollup_config(cfg)
             .dap_source(dap)
@@ -172,14 +175,20 @@ impl<O: CommsClient + Send + Sync + Debug> MultiBlockDerivationDriver<O> {
                         PipelineErrorKind::Reset(_) => {
                             // Reset the pipeline to the initial L2 safe head and L1 origin,
                             // and try again.
+                            let system_config = self
+                                .pipeline
+                                .system_config_by_number(self.l2_safe_head.block_info.number)
+                                .await?;
+
                             self.pipeline
-                                .signal(Signal::Reset {
+                                .signal(Signal::Reset(ResetSignal {
                                     l2_safe_head: self.l2_safe_head,
                                     l1_origin: self
                                         .pipeline
                                         .origin()
                                         .ok_or_else(|| anyhow!("Missing L1 origin"))?,
-                                })
+                                    system_config: Some(system_config),
+                                }))
                                 .await?;
                         }
                         PipelineErrorKind::Critical(_) => return Err(e.into()),

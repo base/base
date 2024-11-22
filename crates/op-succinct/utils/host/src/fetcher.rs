@@ -7,7 +7,7 @@ use alloy::{
         Transport,
     },
 };
-use alloy_consensus::Header;
+use alloy_consensus::{BlockHeader, Header};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::anyhow;
@@ -18,14 +18,12 @@ use kona_host::HostCli;
 use op_alloy_consensus::OpBlock;
 use op_alloy_genesis::RollupConfig;
 use op_alloy_network::{
-    primitives::{BlockTransactions, BlockTransactionsKind},
-    BlockResponse, HeaderResponse, Network, Optimism,
+    primitives::{BlockTransactions, BlockTransactionsKind, HeaderResponse},
+    BlockResponse, Network, Optimism,
 };
 use op_alloy_protocol::calculate_tx_l1_cost_fjord;
 use op_alloy_protocol::L2BlockInfo;
-use op_alloy_rpc_types::{
-    output::OutputResponse, safe_head::SafeHeadResponse, OpTransactionReceipt,
-};
+use op_alloy_rpc_types::{OpTransactionReceipt, OutputResponse, SafeHeadResponse};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -163,24 +161,22 @@ impl OPSuccinctDataFetcher {
 
     pub async fn get_l2_head(&self) -> Header {
         self.l2_provider
-            .get_block_by_number(BlockNumberOrTag::Latest, false)
+            .get_block_by_number(BlockNumberOrTag::Latest, BlockTransactionsKind::Hashes)
             .await
             .unwrap()
             .unwrap()
             .header
-            .try_into()
-            .unwrap()
+            .inner
     }
 
     pub async fn get_l2_header_by_number(&self, block_number: u64) -> Header {
         self.l2_provider
-            .get_block_by_number(block_number.into(), false)
+            .get_block_by_number(block_number.into(), BlockTransactionsKind::Hashes)
             .await
             .unwrap()
             .unwrap()
             .header
-            .try_into()
-            .unwrap()
+            .inner
     }
 
     /// Manually calculate the L1 fee data for a range of blocks. Allows for modifying the L1 fee scalar.
@@ -343,7 +339,7 @@ impl OPSuccinctDataFetcher {
             .map(|block_number| async move {
                 let block = self
                     .l2_provider
-                    .get_block_by_number(block_number.into(), false)
+                    .get_block_by_number(block_number.into(), BlockTransactionsKind::Hashes)
                     .await?
                     .unwrap();
                 let receipts = self
@@ -387,8 +383,7 @@ impl OPSuccinctDataFetcher {
             .await?
             .unwrap()
             .header
-            .try_into()
-            .unwrap())
+            .inner)
     }
 
     pub async fn get_l2_header(&self, block_number: BlockId) -> Result<Header> {
@@ -398,8 +393,7 @@ impl OPSuccinctDataFetcher {
             .await?
             .unwrap()
             .header
-            .try_into()
-            .unwrap())
+            .inner)
     }
 
     /// Finds the L1 block at the provided timestamp.
@@ -633,7 +627,7 @@ impl OPSuccinctDataFetcher {
 
         // Get L2 output data.
         let l2_output_block = l2_provider
-            .get_block_by_number(l2_start_block.into(), false)
+            .get_block_by_number(l2_start_block.into(), BlockTransactionsKind::Hashes)
             .await?
             .ok_or_else(|| {
                 anyhow::anyhow!("Block not found for block number {}", l2_start_block)
@@ -659,7 +653,7 @@ impl OPSuccinctDataFetcher {
 
         // Get L2 claim data.
         let l2_claim_block = l2_provider
-            .get_block_by_number(l2_end_block.into(), false)
+            .get_block_by_number(l2_end_block.into(), BlockTransactionsKind::Hashes)
             .await?
             .unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
@@ -933,7 +927,7 @@ mod tests {
     async fn test_l2_safe_head_progression() {
         use alloy::eips::BlockId;
         use futures::StreamExt;
-        use op_alloy_rpc_types::safe_head::SafeHeadResponse;
+        use op_alloy_rpc_types::SafeHeadResponse;
 
         use crate::fetcher::RPCMode;
 
