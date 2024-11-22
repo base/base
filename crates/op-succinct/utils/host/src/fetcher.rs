@@ -54,12 +54,12 @@ impl Default for OPSuccinctDataFetcher {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RPCConfig {
-    pub l1_rpc: String,
-    pub l1_beacon_rpc: String,
-    pub l2_rpc: String,
-    pub l2_node_rpc: String,
+    pub l1_rpc: Url,
+    pub l1_beacon_rpc: Url,
+    pub l2_rpc: Url,
+    pub l2_node_rpc: Url,
 }
 
 /// The mode corresponding to the chain we are fetching data for.
@@ -79,19 +79,22 @@ pub enum CacheMode {
 }
 
 fn get_rpcs() -> RPCConfig {
-    RPCConfig {
-        l1_rpc: Url::parse(&env::var("L1_RPC").expect("L1_RPC must be set"))
+    let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
+    let l1_beacon_rpc = env::var("L1_BEACON_RPC").expect("L1_BEACON_RPC must be set");
+    let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
+    let l2_node_rpc = env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set");
+
+    println!(
+        "l1_rpc: {}",
+        Url::parse(&l1_rpc)
             .expect("L1_RPC must be a valid URL")
-            .to_string(),
-        l1_beacon_rpc: Url::parse(&env::var("L1_BEACON_RPC").expect("L1_BEACON_RPC must be set"))
-            .expect("L1_BEACON_RPC must be a valid URL")
-            .to_string(),
-        l2_rpc: Url::parse(&env::var("L2_RPC").expect("L2_RPC must be set"))
-            .expect("L2_RPC must be a valid URL")
-            .to_string(),
-        l2_node_rpc: Url::parse(&env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set"))
-            .expect("L2_NODE_RPC must be a valid URL")
-            .to_string(),
+            .to_string()
+    );
+    RPCConfig {
+        l1_rpc: Url::parse(&l1_rpc).expect("L1_RPC must be a valid URL"),
+        l1_beacon_rpc: Url::parse(&l1_beacon_rpc).expect("L1_BEACON_RPC must be a valid URL"),
+        l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
+        l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
     }
 }
 
@@ -119,12 +122,8 @@ impl OPSuccinctDataFetcher {
     pub fn new() -> Self {
         let rpc_config = get_rpcs();
 
-        let l1_provider = Arc::new(
-            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l1_rpc).unwrap()),
-        );
-        let l2_provider = Arc::new(
-            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l2_rpc).unwrap()),
-        );
+        let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
+        let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
 
         OPSuccinctDataFetcher {
             rpc_config,
@@ -138,12 +137,8 @@ impl OPSuccinctDataFetcher {
     pub async fn new_with_rollup_config() -> Result<Self> {
         let rpc_config = get_rpcs();
 
-        let l1_provider = Arc::new(
-            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l1_rpc).unwrap()),
-        );
-        let l2_provider = Arc::new(
-            ProviderBuilder::default().on_http(Url::from_str(&rpc_config.l2_rpc).unwrap()),
-        );
+        let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
+        let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
 
         let rollup_config = Self::fetch_and_save_rollup_config(&rpc_config).await?;
 
@@ -452,12 +447,12 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the RPC URL for the given RPC mode.
-    pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> String {
+    pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> &Url {
         match rpc_mode {
-            RPCMode::L1 => self.rpc_config.l1_rpc.clone(),
-            RPCMode::L2 => self.rpc_config.l2_rpc.clone(),
-            RPCMode::L1Beacon => self.rpc_config.l1_beacon_rpc.clone(),
-            RPCMode::L2Node => self.rpc_config.l2_node_rpc.clone(),
+            RPCMode::L1 => &self.rpc_config.l1_rpc,
+            RPCMode::L2 => &self.rpc_config.l2_rpc,
+            RPCMode::L1Beacon => &self.rpc_config.l1_beacon_rpc,
+            RPCMode::L2Node => &self.rpc_config.l2_node_rpc,
         }
     }
 
@@ -487,13 +482,13 @@ impl OPSuccinctDataFetcher {
         Ok(rollup_config)
     }
 
-    async fn fetch_rpc_data<T>(url: &str, method: &str, params: Vec<Value>) -> Result<T>
+    async fn fetch_rpc_data<T>(url: &Url, method: &str, params: Vec<Value>) -> Result<T>
     where
         T: serde::de::DeserializeOwned,
     {
         let client = reqwest::Client::new();
         let response = client
-            .post(url)
+            .post(url.as_str())
             .json(&json!({
                 "jsonrpc": "2.0",
                 "method": method,
@@ -729,9 +724,28 @@ impl OPSuccinctDataFetcher {
             claimed_l2_output_root,
             claimed_l2_block_number: l2_end_block,
             l2_chain_id: None,
-            l2_node_address: Some(self.rpc_config.l2_rpc.clone()),
-            l1_node_address: Some(self.rpc_config.l1_rpc.clone()),
-            l1_beacon_address: Some(self.rpc_config.l1_beacon_rpc.clone()),
+            // Trim the trailing slash to avoid double slashes in the URL.
+            l2_node_address: Some(
+                self.rpc_config
+                    .l2_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
+            l1_node_address: Some(
+                self.rpc_config
+                    .l1_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
+            l1_beacon_address: Some(
+                self.rpc_config
+                    .l1_beacon_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
             data_dir: Some(data_directory.into()),
             exec: Some(exec_directory),
             server: false,
