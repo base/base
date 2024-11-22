@@ -138,3 +138,47 @@ deploy-mock-verifier env_file=".env":
     --private-key $PRIVATE_KEY \
     --broadcast \
     $VERIFY_FLAGS
+# Deploy the OPSuccinct L2 Output Oracle
+deploy-oracle env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # First fetch rollup config using the env file
+    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+    
+    # Run the forge deployment script
+    forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
+        --rpc-url $L1_RPC \
+        --private-key $PRIVATE_KEY \
+        --broadcast \
+        --verify \
+        --verifier etherscan \
+        --etherscan-api-key $ETHERSCAN_API_KEY
+
+
+# Upgrade the OPSuccinct L2 Output Oracle
+upgrade-oracle env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # First fetch rollup config using the env file
+    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+    
+    # Run the forge upgrade script
+    EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        --rpc-url $L1_RPC \
+        --private-key $PRIVATE_KEY \
+        --etherscan-api-key $ETHERSCAN_API_KEY \
+        --broadcast

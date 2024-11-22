@@ -15,14 +15,7 @@ If your OP Stack chain's admin is a multi-sig or contract, you will need to use 
 To update the `L2OutputOracle` implementation with an EOA `ADMIN` key, run the following command in `/contracts`.
 
 ```bash
-forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
-    --rpc-url $L1_RPC \
-    --private-key $PRIVATE_KEY \
-    --verify \
-    --verifier etherscan \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --broadcast \
-    --ffi
+just upgrade-oracle
 ```
 
 ### `ADMIN` key is not an EOA
@@ -30,14 +23,8 @@ forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
 If the owner of the `L2OutputOracle` is not an EOA (e.g. multisig, contract), set `EXECUTE_UPGRADE_CALL` to `false`. This will output the raw calldata for the upgrade call, which can be executed by the owner.
 
 ```bash
-EXECUTE_UPGRADE_CALL=false forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
-    --rpc-url $L1_RPC \
-    --private-key $PRIVATE_KEY \
-    --verify \
-    --verifier etherscan \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --broadcast \
-    --ffi
+EXECUTE_UPGRADE_CALL=false just upgrade-oracle
+```
 
 ...
 == Logs ==
