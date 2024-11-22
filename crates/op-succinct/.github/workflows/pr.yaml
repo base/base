@@ -10,6 +10,7 @@ on:
       - "crates/**"
       - "programs/**"
       - "scripts/**"
+      - "utils/**"
       - "proposer/succinct/**"
       - "Cargo.toml"
   merge_group:

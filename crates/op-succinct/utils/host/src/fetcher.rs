@@ -84,12 +84,6 @@ fn get_rpcs() -> RPCConfig {
     let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
     let l2_node_rpc = env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set");
 
-    println!(
-        "l1_rpc: {}",
-        Url::parse(&l1_rpc)
-            .expect("L1_RPC must be a valid URL")
-            .to_string()
-    );
     RPCConfig {
         l1_rpc: Url::parse(&l1_rpc).expect("L1_RPC must be a valid URL"),
         l1_beacon_rpc: Url::parse(&l1_beacon_rpc).expect("L1_BEACON_RPC must be a valid URL"),
@@ -488,7 +482,7 @@ impl OPSuccinctDataFetcher {
     {
         let client = reqwest::Client::new();
         let response = client
-            .post(url.as_str())
+            .post(url.clone())
             .json(&json!({
                 "jsonrpc": "2.0",
                 "method": method,
@@ -520,7 +514,7 @@ impl OPSuccinctDataFetcher {
         T: serde::de::DeserializeOwned,
     {
         let url = self.get_rpc_url(rpc_mode);
-        Self::fetch_rpc_data(&url, method, params).await
+        Self::fetch_rpc_data(url, method, params).await
     }
 
     /// Get the earliest L1 header in a batch of boot infos.
