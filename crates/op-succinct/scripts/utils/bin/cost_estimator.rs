@@ -17,12 +17,10 @@ use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
     fs::{self, OpenOptions},
-    future::Future,
     io::Seek,
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tokio::task::block_in_place;
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
@@ -107,26 +105,16 @@ async fn run_native_data_generation(host_clis: &[HostCli]) {
         let mut witnessgen_executor = WitnessGenExecutor::default();
 
         for host_cli in chunk {
-            block_on(witnessgen_executor.spawn_witnessgen(host_cli))
+            witnessgen_executor
+                .spawn_witnessgen(host_cli)
+                .await
                 .expect("Failed to spawn witness generation process");
         }
 
-        block_on(witnessgen_executor.flush()).expect("Failed to generate witnesses");
-    }
-}
-
-/// Utility method for blocking on an async function.
-///
-/// If we're already in a tokio runtime, we'll block in place. Otherwise, we'll create a new
-/// runtime.
-pub fn block_on<T>(fut: impl Future<Output = T>) -> T {
-    // Handle case if we're already in an tokio runtime.
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        block_in_place(|| handle.block_on(fut))
-    } else {
-        // Otherwise create a new runtime.
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create a new runtime");
-        rt.block_on(fut)
+        witnessgen_executor
+            .flush()
+            .await
+            .expect("Failed to generate witnesses");
     }
 }
 

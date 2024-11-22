@@ -41,6 +41,7 @@ In the root directory, create a file called `.env` (mirroring `.env.example`) an
 | `SP1_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/generating-proofs/prover-network). |
 | `SP1_PROVER` | Default: `network`. Set to `network` to use the Succinct Prover Network. |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract and posting output roots to L1. |
+| `ETHERSCAN_API_KEY` | Etherscan API key used for verifying the contract (optional). |
 
 ### 3) Navigate to the contracts directory:
 
@@ -50,7 +51,7 @@ cd contracts
 
 ### 4) Set Deployment Parameters
 
-Inside the `contracts` folder there is a file called `opsuccinctl2ooconfig.json` that contains the parameters for the deployment. The parameters are automatically set based on your RPC's and the owner of your contract is determined by the private key you set in the `.env` file.
+Inside the `contracts` folder there is a file called `opsuccinctl2ooconfig.json` that contains the parameters for the deployment. The parameters are automatically set based on your RPC's and the owner of your contract is determined by default from the private key you set in the `.env` file.
 
 #### Optional Advanced Parameters
 
@@ -65,17 +66,13 @@ Advanced users can set parameters manually in `opsuccinctl2ooconfig.json`, but t
 
 ### 5) Deploy the `OPSuccinctL2OutputOracle` contract:
 
-Run the following command to deploy the `OPSuccinctL2OutputOracle` contract to the L1 chain:
+Run the following command to deploy the `OPSuccinctL2OutputOracle` contract to the L1 chain, which will use the variables in your `.env` file to configure and deploy the contract.
+
+Under the hood, this command will fetch the rollup config and update the `opsuccinctl2ooconfig.json` file with the rollup config hash and initialization data. Afterward, it will deploy the contract and verify it using Etherscan (if you included your Etherscan API key in the `.env` file).
+
 
 ```bash
-forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
-    --rpc-url $L1_RPC \
-    --private-key $PRIVATE_KEY \
-    --ffi \
-    --verify \
-    --verifier etherscan \
-    --etherscan-api-key $ETHERSCAN_API_KEY \
-    --broadcast
+just deploy-oracle
 ```
 
 If successful, you should see the following output:
@@ -100,10 +97,10 @@ In these deployment logs, `0x9b520F7d8031d45Eb8A1D9fE911038576931ab95` is the ad
 
 #### Configure Environment
 
-To use a configurable environment, pass the `ENV_FILE` flag with the path to your `.env` file. By default this is the `.env` in your root directory.
+To use a configurable environment, pass the environment file as an argument to the `deploy-oracle` command. This will use the variables in the environment file to fetch the rollup config and initialize the contract.
 
 ```bash
-ENV_FILE=.env.new forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer ...
+just deploy-oracle <env_file>
 ```
 
 ### 6) Add Proxy Address to `.env`
