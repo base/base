@@ -1,13 +1,13 @@
 use anyhow::Result;
 use common::post_to_github_pr;
 use op_succinct_host_utils::{
-    block_range::get_validated_block_range,
+    block_range::get_rolling_block_range,
     fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin,
     stats::{ExecutionStats, MarkdownExecutionStats},
     ProgramType,
 };
-use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE};
+use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, TWO_WEEKS};
 use sp1_sdk::ProverClient;
 
 mod common;
@@ -20,7 +20,7 @@ async fn execute_batch() -> Result<()> {
 
     // Take the latest blocks
     let (l2_start_block, l2_end_block) =
-        get_validated_block_range(&data_fetcher, None, None, DEFAULT_RANGE).await?;
+        get_rolling_block_range(&data_fetcher, TWO_WEEKS, DEFAULT_RANGE).await?;
 
     let host_cli = data_fetcher
         .get_host_cli_args(
