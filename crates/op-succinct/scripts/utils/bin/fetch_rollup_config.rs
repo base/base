@@ -1,6 +1,6 @@
 use alloy::{eips::BlockId, hex, signers::local::PrivateKeySigner};
-use alloy_primitives::B256;
-use anyhow::{bail, Result};
+use alloy_primitives::Address;
+use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use serde::{Deserialize, Serialize};
@@ -45,32 +45,31 @@ struct L2OOConfig {
 /// - vkey: Get the vkey from the aggregation program ELF.
 /// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
-    // Get the workspace root with cargo metadata to make the paths.
-    let workspace_root = PathBuf::from(
-        cargo_metadata::MetadataCommand::new()
-            .exec()?
-            .workspace_root,
-    );
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    // Read the L2OO config from the contracts directory.
-    let mut l2oo_config = get_existing_l2oo_config(&workspace_root)?;
+    let workspace_root = cargo_metadata::MetadataCommand::new()
+        .exec()?
+        .workspace_root;
 
-    // Set the verifier gateway to the address of the Groth16 VerifierGateway contract.
-    // Source: https://docs.succinct.xyz/verification/onchain/contract-addresses
-    l2oo_config.verifier_gateway = "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string();
+    // Set the verifier address
+    let verifier_gateway = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
+        // Default to Groth16 VerifierGateway contract address
+        // Source: https://docs.succinct.xyz/verification/onchain/contract-addresses
+        "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string()
+    });
 
-    // If we are not using a cached starting block number, set it to 10 blocks before the latest block on L2.
-    if env::var("USE_CACHED_STARTING_BLOCK").unwrap_or("false".to_string()) != "true" {
-        // Set the starting block number to 10 blocks before the latest block on L2.
-        let latest_block = data_fetcher.get_l2_header(BlockId::latest()).await?;
-        l2oo_config.starting_block_number = latest_block.number - 20;
-    }
+    let starting_block_number = match env::var("STARTING_BLOCK_NUMBER") {
+        Ok(n) => n.parse().unwrap(),
+        Err(_) => {
+            data_fetcher
+                .get_l2_header(BlockId::finalized())
+                .await
+                .unwrap()
+                .number
+        }
+    };
 
-    // Convert the starting block number to a hex string for the optimism_outputAtBlock RPC call.
-    let starting_block_number_hex = format!("0x{:x}", l2oo_config.starting_block_number);
+    let starting_block_number_hex = format!("0x{:x}", starting_block_number);
     let optimism_output_data: Value = data_fetcher
         .fetch_rpc_data_with_mode(
             RPCMode::L2Node,
@@ -79,69 +78,59 @@ async fn update_l2oo_config() -> Result<()> {
         )
         .await?;
 
-    // Hash the rollup config.
-    let hash: B256 = hash_rollup_config(data_fetcher.rollup_config.as_ref().unwrap());
-    // Set the rollup config hash.
-    let hash_str = format!("0x{:x}", hash);
-    l2oo_config.rollup_config_hash = hash_str;
-
-    // Set the L2 block time from the rollup config.
-    l2oo_config.l2_block_time = data_fetcher.rollup_config.as_ref().unwrap().block_time;
-
-    // Set the starting output root and starting timestamp.
-    l2oo_config.starting_output_root = optimism_output_data["outputRoot"]
+    let starting_output_root = optimism_output_data["outputRoot"]
         .as_str()
         .unwrap()
         .to_string();
-    l2oo_config.starting_timestamp = optimism_output_data["blockRef"]["timestamp"]
+    let starting_timestamp = optimism_output_data["blockRef"]["timestamp"]
         .as_u64()
         .unwrap();
 
-    // Set the submission interval.
-    // The order of precedence is:
-    // 1. SUBMISSION_INTERVAL environment variable
-    // 2. 1000 (default)
-    let submission_interval: u64 = env::var("SUBMISSION_INTERVAL")
-        .unwrap_or("1000".to_string())
-        .parse()?;
-    l2oo_config.submission_interval = submission_interval;
+    let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();
+    let rollup_config_hash = format!("0x{:x}", hash_rollup_config(rollup_config));
+    let l2_block_time = rollup_config.block_time;
 
-    // Get the account associated with the private key.
-    let private_key = env::var("PRIVATE_KEY").unwrap();
-    let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
-    let address = signer.address();
+    let submission_interval = env::var("SUBMISSION_INTERVAL")
+        .map(|p| p.parse().unwrap())
+        .unwrap_or(1000);
 
-    // Set the owner and proposer to the account associated with the private key.
-    l2oo_config.proposer = address.to_string();
+    let finalization_period = env::var("FINALIZATION_PERIOD")
+        .map(|p| p.parse().unwrap())
+        .unwrap_or(0);
 
-    // Set the vkey.
+    let proposer = env::var("PROPOSER").unwrap_or_else(|_| {
+        let private_key = env::var("PRIVATE_KEY").unwrap();
+        let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
+        signer.address().to_string()
+    });
+
+    let challenger = env::var("CHALLENGER").unwrap_or_else(|_| Address::ZERO.to_string());
+
     let prover = ProverClient::new();
-    let (_, vkey) = prover.setup(AGG_ELF);
-    l2oo_config.aggregation_vkey = vkey.vk.bytes32();
+    let (_, agg_vkey) = prover.setup(AGG_ELF);
+    let aggregation_vkey = agg_vkey.vk.bytes32();
 
     let (_, range_vkey) = prover.setup(RANGE_ELF);
-    l2oo_config.range_vkey_commitment =
-        format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
+    let range_vkey_commitment = format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
-    // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file.
-    write_l2oo_config(l2oo_config, &workspace_root)?;
+    let l2oo_config = L2OOConfig {
+        challenger,
+        finalization_period,
+        l2_block_time,
+        proposer,
+        rollup_config_hash,
+        starting_block_number,
+        starting_output_root,
+        starting_timestamp,
+        submission_interval,
+        verifier_gateway,
+        aggregation_vkey,
+        range_vkey_commitment,
+    };
+
+    write_l2oo_config(l2oo_config, workspace_root.as_std_path())?;
 
     Ok(())
-}
-
-/// Get the L2OO rollup config from the contracts directory.
-///
-/// Note: The L2OO config is stored in `contracts/opsuccinctl2ooconfig.json`.
-fn get_existing_l2oo_config(workspace_root: &Path) -> Result<L2OOConfig> {
-    let opsuccinct_config_path = workspace_root
-        .join("contracts/opsuccinctl2ooconfig.json")
-        .canonicalize()?;
-    if fs::metadata(&opsuccinct_config_path).is_ok() {
-        let opsuccinct_config_str = fs::read_to_string(opsuccinct_config_path)?;
-        Ok(serde_json::from_str(&opsuccinct_config_str)?)
-    } else {
-        bail!("Missing opsuccinctl2ooconfig.json");
-    }
 }
 
 /// Write the L2OO rollup config to `contracts/opsuccinctl2ooconfig.json`.
