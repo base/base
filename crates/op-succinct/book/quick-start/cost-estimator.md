@@ -1,8 +1,8 @@
 # Cost Estimator
 
-The cost estimator is a convenient CLI tool to fetch the RISC-V instruction counts for generating ZKPs for a range of blocks for a given rollup. 
+The cost estimator is a convenient CLI tool to determine the costs of running OP Succinct. The tool simulates proving the validity of a range of blocks and returns the "costs" in terms of RISC-V cycles.
 
-> The cost estimator requires fast network connectivity (500+ Mbps) because witness generation is bandwidth-intensive. Remote machines empirically perform better.
+> Machines with fast network connectivity (500+ Mbps) are recommended because witness generation is bandwidth-intensive.
 
 ## Overview
 
@@ -15,45 +15,64 @@ In the root directory, add the following RPCs to your `.env` file for your rollu
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 
-More details on the RPC requirements can be found in the [prerequisites](../getting-started/prerequisites.md) section.
+More details on the RPC requirements can be found in the [prerequisites](../quick-start/prerequisites.md) section.
+
+By running the cost estimator, you can validate that your endpoints are configured correctly.
 
 ## Running the Cost Estimator
 
-> You can run the cost estimator with unfinalized blocks as long as they're included in a batch posted to L1.
+### Overview
 
-To run the cost estimator over a block range, run the following command:
+The cost estimator:
+1. Splits large block ranges into smaller batches
+2. Simulates proving each batch (similar to `op-succinct`)
+3. Outputs aggregate statistics to a CSV.
 
+> ⚠️ First run with a small block range - execution can be slow for large ranges.
+
+### Basic Usage
+
+Run for the last 5 finalized blocks:
+```shell
+RUST_LOG=info just cost-estimator
+```
+
+Run for a specific block range:
 ```shell
 RUST_LOG=info just cost-estimator <start_l2_block> <end_l2_block>
 ```
 
-### Overview
+### Configuration Options
 
-This command will split the block range into smaller ranges to model the workload run by `op-succinct`. It will then fetch the required data for generating the ZKP for each of these ranges, and execute the SP1 `range` program. Once each program finishes, it will collect the statistics and output the aggregate statistics.
-
-Once the execution of the range is complete, the cost estimator will output the aggregate statistics and write them to a CSV file at `execution-reports/{chain_id}/{start_block}-{end_block}.csv`.
-
-> The execution of the cost estimator can be quite slow, especially for large block ranges. We recommend first running the cost estimator over a small block range to get a sense of how long it takes.
-
-### Useful Commands
-
-- `cast block finalized -f number --rpc-url <L2_RPC>`: Get the latest finalized block number on the L2.
-- `cast bn --rpc-url <L2_RPC>`: Get the latest block number on the L2.
+| Flag | Default | Description |
+|-----------|-------------|-------------|
+| `batch-size` | 300 | Blocks per batch. Chain-specific defaults:<br>- Base: 5<br>- OP Mainnet: 10<br>- OP Sepolia: 30 |
+| `env-file` | `.env` | Custom env file path (e.g. `.env.opmainnet`) |
+| `use-cache` | false | Reuse previously generated witness data |
 
 ### Advanced Usage
 
-There are a few optional flags that can be used with the cost estimator:
+Full command with all options:
+```shell
+RUST_LOG=info cargo run --bin cost-estimator --release \
+    --start <start_l2_block> \
+    --end <end_l2_block> \
+    --env-file <path_to_env_file> \
+    --batch-size <batch_size> \
+    --use-cache
+```
 
-| Flag | Description |
-|-----------|-------------|
-| `batch-size` | The number of blocks to execute in a single batch. For chains with higher throughput, you may want to decrease this value to avoid SP1 programs running out of memory. By default, the cost estimator will use a batch size of 300. For higher throughput chains, we've set the following defaults: Base (5), OP Mainnet (10), OP Sepolia (30). |
-| `env-file` | The path to the environment file to use. (Ex. `.env.opmainnet`) |
-| `use-cache` | Use cached witness generation. Use this if you're running the cost estimator multiple times for the same block range and want to avoid re-fetching the witness. |
+### Block Number Helpers
 
-To run the cost estimator with a custom batch size, environment file, and using cached witness generation:
+`cast` is a CLI tool installed with Foundry that can be used to fetch the latest/finalized block number of an OP Stack chain.
+
 
 ```shell
-RUST_LOG=info cargo run --bin cost-estimator --release <start_l2_block> <end_l2_block> --env-file <path_to_env_file> --batch-size <batch_size> --use-cache
+# Get latest finalized block
+cast block finalized -f number --rpc-url <L2_RPC>
+
+# Get latest block
+cast bn --rpc-url <L2_RPC>
 ```
 
 ### Sample Output

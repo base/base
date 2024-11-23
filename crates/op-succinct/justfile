@@ -177,8 +177,15 @@ upgrade-oracle env_file=".env":
     cd contracts
     
     # Run the forge upgrade script
-    EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
-        --rpc-url $L1_RPC \
-        --private-key $PRIVATE_KEY \
-        --etherscan-api-key $ETHERSCAN_API_KEY \
-        --broadcast
+    if [ "$EXECUTE_UPGRADE_CALL" = "false" ]; then
+        forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+            --rpc-url $L1_RPC \
+            --private-key $PRIVATE_KEY \
+            --etherscan-api-key $ETHERSCAN_API_KEY
+    else
+        forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+            --rpc-url $L1_RPC \
+            --private-key $PRIVATE_KEY \
+            --etherscan-api-key $ETHERSCAN_API_KEY \
+            --broadcast
+    fi

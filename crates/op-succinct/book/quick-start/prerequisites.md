@@ -6,6 +6,7 @@ You must have the following installed:
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 - [Docker](https://docs.docker.com/get-started/)
+- [Rust](https://www.rust-lang.org/tools/install)
 
 You must have the following RPCs available:
 - L1 Archive Node
