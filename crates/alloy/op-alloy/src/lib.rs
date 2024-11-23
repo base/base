@@ -23,6 +23,10 @@ pub use op_alloy_network as network;
 #[doc(inline)]
 pub use op_alloy_protocol as protocol;
 
+#[cfg(feature = "registry")]
+#[doc(inline)]
+pub use op_alloy_registry as registry;
+
 #[cfg(feature = "provider")]
 #[doc(inline)]
 pub use op_alloy_provider as provider;
