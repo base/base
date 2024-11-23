@@ -16,61 +16,43 @@ pub const FRAME_OVERHEAD: usize = 200;
 pub const MAX_FRAME_LEN: usize = 1_000_000;
 
 /// A frame decoding error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameDecodingError {
     /// The frame data is too large.
+    #[error("Frame data too large: {0} bytes")]
     DataTooLarge(usize),
     /// The frame data is too short.
+    #[error("Frame data too short: {0} bytes")]
     DataTooShort(usize),
     /// Error decoding the frame id.
+    #[error("Invalid frame id")]
     InvalidId,
     /// Error decoding the frame number.
+    #[error("Invalid frame number")]
     InvalidNumber,
     /// Error decoding the frame data length.
+    #[error("Invalid frame data length")]
     InvalidDataLength,
 }
 
-impl core::fmt::Display for FrameDecodingError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::DataTooLarge(size) => {
-                write!(f, "Frame data too large: {} bytes", size)
-            }
-            Self::DataTooShort(size) => {
-                write!(f, "Frame data too short: {} bytes", size)
-            }
-            Self::InvalidId => write!(f, "Invalid frame id"),
-            Self::InvalidNumber => write!(f, "Invalid frame number"),
-            Self::InvalidDataLength => write!(f, "Invalid frame data length"),
-        }
-    }
-}
-
 /// Frame parsing error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameParseError {
     /// Error parsing the frame data.
+    #[error("Frame decoding error: {0}")]
     FrameDecodingError(FrameDecodingError),
     /// No frames to parse.
+    #[error("No frames to parse")]
     NoFrames,
     /// Unsupported derivation version.
+    #[error("Unsupported derivation version")]
     UnsupportedVersion,
     /// Frame data length mismatch.
+    #[error("Frame data length mismatch")]
     DataLengthMismatch,
     /// No frames decoded.
+    #[error("No frames decoded")]
     NoFramesDecoded,
-}
-
-impl core::fmt::Display for FrameParseError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::FrameDecodingError(e) => write!(f, "Frame decoding error: {}", e),
-            Self::NoFrames => write!(f, "No frames to parse"),
-            Self::UnsupportedVersion => write!(f, "Unsupported derivation version"),
-            Self::DataLengthMismatch => write!(f, "Frame data length mismatch"),
-            Self::NoFramesDecoded => write!(f, "No frames decoded"),
-        }
-    }
 }
 
 /// A channel frame is a segment of a channel's data.

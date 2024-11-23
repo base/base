@@ -6,49 +6,29 @@ use alloc::string::String;
 #[derive(Debug, thiserror::Error, Copy, Clone)]
 pub enum BlockInfoError {
     /// Failed to parse the L1 blob base fee scalar.
+    #[error("Failed to parse the L1 blob base fee scalar")]
     L1BlobBaseFeeScalar,
     /// Failed to parse the base fee scalar.
+    #[error("Failed to parse the base fee scalar")]
     BaseFeeScalar,
     /// Failed to parse the EIP-1559 denominator.
+    #[error("Failed to parse the EIP-1559 denominator")]
     Eip1559Denominator,
     /// Failed to parse the EIP-1559 elasticity parameter.
+    #[error("Failed to parse the EIP-1559 elasticity parameter")]
     Eip1559Elasticity,
-}
-
-impl core::fmt::Display for BlockInfoError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::L1BlobBaseFeeScalar => {
-                write!(f, "Failed to parse the L1 blob base fee scalar")
-            }
-            Self::BaseFeeScalar => write!(f, "Failed to parse the base fee scalar"),
-            Self::Eip1559Denominator => {
-                write!(f, "Failed to parse the EIP-1559 denominator")
-            }
-            Self::Eip1559Elasticity => {
-                write!(f, "Failed to parse the EIP-1559 elasticity parameter")
-            }
-        }
-    }
 }
 
 /// An error decoding an L1 block info transaction.
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
-    /// Invalid selector for the L1 info transaction
+    /// Invalid selector for the L1 info transaction.
+    #[error("Invalid L1 info transaction selector")]
     InvalidSelector,
-    /// Parse error for the L1 info transaction
+    /// Parse error for the L1 info transaction.
+    #[error("Parse error: {0}")]
     ParseError(String),
-    /// Invalid length for the L1 info transaction
+    /// Invalid length for the L1 info transaction.
+    #[error("Invalid data length: {0}")]
     InvalidLength(String),
-}
-
-impl core::fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidSelector => write!(f, "Invalid L1 info transaction selector"),
-            Self::ParseError(msg) => write!(f, "Parse error: {}", msg),
-            Self::InvalidLength(msg) => write!(f, "Invalid data length: {}", msg), /* Handle display for length errors */
-        }
-    }
 }

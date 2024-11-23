@@ -143,29 +143,20 @@ pub const MAX_RLP_BYTES_PER_CHANNEL: u64 = 10_000_000;
 pub const FJORD_MAX_RLP_BYTES_PER_CHANNEL: u64 = 100_000_000;
 
 /// An error returned when adding a frame to a channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChannelError {
     /// The frame id does not match the channel id.
+    #[error("Frame id does not match channel id")]
     FrameIdMismatch,
     /// The channel is closed.
+    #[error("Channel is closed")]
     ChannelClosed,
     /// The frame number is already in the channel.
+    #[error("Frame number {0} already exists")]
     FrameNumberExists(usize),
     /// The frame number is beyond the end frame.
+    #[error("Frame number {0} is beyond end frame")]
     FrameBeyondEndFrame(usize),
-}
-
-impl core::fmt::Display for ChannelError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::FrameIdMismatch => write!(f, "Frame id does not match channel id"),
-            Self::ChannelClosed => write!(f, "Channel is closed"),
-            Self::FrameNumberExists(n) => write!(f, "Frame number {} already exists", n),
-            Self::FrameBeyondEndFrame(n) => {
-                write!(f, "Frame number {} is beyond end frame", n)
-            }
-        }
-    }
 }
 
 /// A Channel is a set of batches that are split into at least one, but possibly multiple frames.

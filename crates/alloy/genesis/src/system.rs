@@ -329,27 +329,20 @@ impl SystemConfig {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SystemConfigUpdateError {
     /// An error occurred while processing the update log.
+    #[error("Log processing error: {0}")]
     LogProcessing(LogProcessingError),
     /// A batcher update error.
+    #[error("Batcher update error: {0}")]
     Batcher(BatcherUpdateError),
     /// A gas config update error.
+    #[error("Gas config update error: {0}")]
     GasConfig(GasConfigUpdateError),
     /// A gas limit update error.
+    #[error("Gas limit update error: {0}")]
     GasLimit(GasLimitUpdateError),
     /// An EIP-1559 parameter update error.
+    #[error("EIP-1559 parameter update error: {0}")]
     Eip1559(EIP1559UpdateError),
-}
-
-impl core::fmt::Display for SystemConfigUpdateError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::LogProcessing(err) => write!(f, "Log processing error: {}", err),
-            Self::Batcher(err) => write!(f, "Batcher update error: {}", err),
-            Self::GasConfig(err) => write!(f, "Gas config update error: {}", err),
-            Self::GasLimit(err) => write!(f, "Gas limit update error: {}", err),
-            Self::Eip1559(err) => write!(f, "EIP-1559 parameter update error: {}", err),
-        }
-    }
 }
 
 /// An error occurred while processing the update log.
@@ -357,35 +350,20 @@ impl core::fmt::Display for SystemConfigUpdateError {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum LogProcessingError {
     /// Received an incorrect number of log topics.
+    #[error("Invalid config update log: invalid topic length: {0}")]
     InvalidTopicLen(usize),
     /// The log topic is invalid.
+    #[error("Invalid config update log: invalid topic")]
     InvalidTopic,
     /// The config update log version is unsupported.
+    #[error("Invalid config update log: unsupported version: {0}")]
     UnsupportedVersion(B256),
     /// Failed to decode the update type from the config update log.
+    #[error("Failed to decode config update log: update type")]
     UpdateTypeDecodingError,
     /// An invalid system config update type.
+    #[error("Invalid system config update type: {0}")]
     InvalidSystemConfigUpdateType(u64),
-}
-
-impl core::fmt::Display for LogProcessingError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidTopicLen(len) => {
-                write!(f, "Invalid config update log: invalid topic length: {}", len)
-            }
-            Self::InvalidTopic => write!(f, "Invalid config update log: invalid topic"),
-            Self::UnsupportedVersion(version) => {
-                write!(f, "Invalid config update log: unsupported version: {}", version)
-            }
-            Self::UpdateTypeDecodingError => {
-                write!(f, "Failed to decode config update log: update type")
-            }
-            Self::InvalidSystemConfigUpdateType(value) => {
-                write!(f, "Invalid system config update type: {}", value)
-            }
-        }
-    }
 }
 
 /// An error for updating the batcher address on the [SystemConfig].
@@ -393,42 +371,23 @@ impl core::fmt::Display for LogProcessingError {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum BatcherUpdateError {
     /// Invalid data length.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLen(usize),
     /// Failed to decode the data pointer argument from the batcher update log.
+    #[error("Failed to decode batcher update log: data pointer")]
     PointerDecodingError,
     /// The data pointer is invalid.
+    #[error("Invalid config update log: invalid data pointer: {0}")]
     InvalidDataPointer(u64),
     /// Failed to decode the data length argument from the batcher update log.
+    #[error("Failed to decode batcher update log: data length")]
     LengthDecodingError,
     /// The data length is invalid.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLength(u64),
     /// Failed to decode the batcher address argument from the batcher update log.
+    #[error("Failed to decode batcher update log: batcher address")]
     BatcherAddressDecodingError,
-}
-
-impl core::fmt::Display for BatcherUpdateError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidDataLen(len) => {
-                write!(f, "Invalid config update log: invalid data length: {}", len)
-            }
-            Self::PointerDecodingError => {
-                write!(f, "Failed to decode batcher update log: data pointer")
-            }
-            Self::InvalidDataPointer(pointer) => {
-                write!(f, "Invalid config update log: invalid data pointer: {}", pointer)
-            }
-            Self::LengthDecodingError => {
-                write!(f, "Failed to decode batcher update log: data length")
-            }
-            Self::InvalidDataLength(length) => {
-                write!(f, "Invalid config update log: invalid data length: {}", length)
-            }
-            Self::BatcherAddressDecodingError => {
-                write!(f, "Failed to decode batcher update log: batcher address")
-            }
-        }
-    }
 }
 
 /// An error for updating the gas config on the [SystemConfig].
@@ -436,47 +395,26 @@ impl core::fmt::Display for BatcherUpdateError {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasConfigUpdateError {
     /// Invalid data length.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLen(usize),
     /// Failed to decode the data pointer argument from the gas config update log.
+    #[error("Failed to decode gas config update log: data pointer")]
     PointerDecodingError,
     /// The data pointer is invalid.
+    #[error("Invalid config update log: invalid data pointer: {0}")]
     InvalidDataPointer(u64),
     /// Failed to decode the data length argument from the gas config update log.
+    #[error("Failed to decode gas config update log: data length")]
     LengthDecodingError,
     /// The data length is invalid.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLength(u64),
     /// Failed to decode the overhead argument from the gas config update log.
+    #[error("Failed to decode gas config update log: overhead")]
     OverheadDecodingError,
     /// Failed to decode the scalar argument from the gas config update log.
+    #[error("Failed to decode gas config update log: scalar")]
     ScalarDecodingError,
-}
-
-impl core::fmt::Display for GasConfigUpdateError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidDataLen(len) => {
-                write!(f, "Invalid config update log: invalid data length: {}", len)
-            }
-            Self::PointerDecodingError => {
-                write!(f, "Failed to decode gas config update log: data pointer")
-            }
-            Self::InvalidDataPointer(pointer) => {
-                write!(f, "Invalid config update log: invalid data pointer: {}", pointer)
-            }
-            Self::LengthDecodingError => {
-                write!(f, "Failed to decode gas config update log: data length")
-            }
-            Self::InvalidDataLength(length) => {
-                write!(f, "Invalid config update log: invalid data length: {}", length)
-            }
-            Self::OverheadDecodingError => {
-                write!(f, "Failed to decode gas config update log: overhead")
-            }
-            Self::ScalarDecodingError => {
-                write!(f, "Failed to decode gas config update log: scalar")
-            }
-        }
-    }
 }
 
 /// An error for updating the gas limit on the [SystemConfig].
@@ -484,42 +422,23 @@ impl core::fmt::Display for GasConfigUpdateError {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum GasLimitUpdateError {
     /// Invalid data length.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLen(usize),
     /// Failed to decode the data pointer argument from the gas limit update log.
+    #[error("Failed to decode gas limit update log: data pointer")]
     PointerDecodingError,
     /// The data pointer is invalid.
+    #[error("Invalid config update log: invalid data pointer: {0}")]
     InvalidDataPointer(u64),
     /// Failed to decode the data length argument from the gas limit update log.
+    #[error("Failed to decode gas limit update log: data length")]
     LengthDecodingError,
     /// The data length is invalid.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLength(u64),
     /// Failed to decode the gas limit argument from the gas limit update log.
+    #[error("Failed to decode gas limit update log: gas limit")]
     GasLimitDecodingError,
-}
-
-impl core::fmt::Display for GasLimitUpdateError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidDataLen(len) => {
-                write!(f, "Invalid config update log: invalid data length: {}", len)
-            }
-            Self::PointerDecodingError => {
-                write!(f, "Failed to decode gas limit update log: data pointer")
-            }
-            Self::InvalidDataPointer(pointer) => {
-                write!(f, "Invalid config update log: invalid data pointer: {}", pointer)
-            }
-            Self::LengthDecodingError => {
-                write!(f, "Failed to decode gas limit update log: data length")
-            }
-            Self::InvalidDataLength(length) => {
-                write!(f, "Invalid config update log: invalid data length: {}", length)
-            }
-            Self::GasLimitDecodingError => {
-                write!(f, "Failed to decode gas limit update log: gas limit")
-            }
-        }
-    }
 }
 
 /// An error for updating the EIP-1559 parameters on the [SystemConfig].
@@ -527,45 +446,23 @@ impl core::fmt::Display for GasLimitUpdateError {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum EIP1559UpdateError {
     /// Invalid data length.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLen(usize),
     /// Failed to decode the data pointer argument from the eip 1559 update log.
+    #[error("Failed to decode eip1559 parameter update log: data pointer")]
     PointerDecodingError,
     /// The data pointer is invalid.
+    #[error("Invalid config update log: invalid data pointer: {0}")]
     InvalidDataPointer(u64),
     /// Failed to decode the data length argument from the eip 1559 update log.
+    #[error("Failed to decode eip1559 parameter update log: data length")]
     LengthDecodingError,
     /// The data length is invalid.
+    #[error("Invalid config update log: invalid data length: {0}")]
     InvalidDataLength(u64),
     /// Failed to decode the eip1559 params argument from the eip 1559 update log.
+    #[error("Failed to decode eip1559 parameter update log: eip1559 parameters")]
     EIP1559DecodingError,
-}
-
-impl core::fmt::Display for EIP1559UpdateError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::InvalidDataLen(len) => {
-                write!(f, "Invalid config update log: invalid data length: {}", len)
-            }
-            Self::PointerDecodingError => {
-                write!(f, "Failed to decode eip1559 parameter update log: data pointer")
-            }
-            Self::InvalidDataPointer(pointer) => {
-                write!(f, "Invalid config update log: invalid data pointer: {}", pointer)
-            }
-            Self::LengthDecodingError => {
-                write!(f, "Failed to decode eip1559 parameter update log: data length")
-            }
-            Self::InvalidDataLength(length) => {
-                write!(f, "Invalid config update log: invalid data length: {}", length)
-            }
-            Self::EIP1559DecodingError => {
-                write!(
-                    f,
-                    "Failed to decode eip1559 parameter update log: eip1559 parameters invalid"
-                )
-            }
-        }
-    }
 }
 
 /// System accounts

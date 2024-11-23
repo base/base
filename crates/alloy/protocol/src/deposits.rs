@@ -3,7 +3,6 @@
 use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{b256, keccak256, Address, Bytes, Log, TxKind, B256, U256, U64};
-use core::fmt::Display;
 use op_alloy_consensus::TxDeposit;
 
 /// Deposit log event abi signature.
@@ -23,92 +22,50 @@ pub const DEPOSIT_EVENT_VERSION_0: B256 = B256::ZERO;
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum DepositError {
     /// Unexpected number of deposit event log topics.
+    #[error("Unexpected number of deposit event log topics: {0}")]
     UnexpectedTopicsLen(usize),
     /// Invalid deposit event selector.
     /// Expected: [B256] (deposit event selector), Actual: [B256] (event log topic).
+    #[error("Invalid deposit event selector: {1}, expected {0}")]
     InvalidSelector(B256, B256),
     /// Incomplete opaqueData slice header (incomplete length).
+    #[error("Incomplete opaqueData slice header (incomplete length): {0}")]
     IncompleteOpaqueData(usize),
     /// The log data is not aligned to 32 bytes.
+    #[error("Unaligned log data, expected multiple of 32 bytes, got: {0}")]
     UnalignedData(usize),
     /// Failed to decode the `from` field of the deposit event (the second topic).
+    #[error("Failed to decode the `from` address of the deposit log topic: {0}")]
     FromDecode(B256),
     /// Failed to decode the `to` field of the deposit event (the third topic).
+    #[error("Failed to decode the `to` address of the deposit log topic: {0}")]
     ToDecode(B256),
     /// Invalid opaque data content offset.
+    #[error("Invalid u64 opaque data content offset: {0}")]
     InvalidOpaqueDataOffset(Bytes),
     /// Invalid opaque data content length.
+    #[error("Invalid u64 opaque data content length: {0}")]
     InvalidOpaqueDataLength(Bytes),
     /// Opaque data length exceeds the deposit log event data length.
     /// Specified: [usize] (data length), Actual: [usize] (opaque data length).
+    #[error("Specified opaque data length {1} exceeds the deposit log event data length {0}")]
     OpaqueDataOverflow(usize, usize),
     /// Opaque data with padding exceeds the specified data length.
+    /// Specified: [usize] (data length), Actual: [usize] (opaque data length).
+    #[error("Opaque data with padding exceeds the specified data length: {1} > {0}")]
     PaddedOpaqueDataOverflow(usize, usize),
     /// An invalid deposit version.
+    #[error("Invalid deposit version: {0}")]
     InvalidVersion(B256),
-    /// Unexpected opaque data length
+    /// Unexpected opaque data length.
+    #[error("Unexpected opaque data length: {0}")]
     UnexpectedOpaqueDataLen(usize),
     /// Failed to decode the deposit mint value.
+    #[error("Failed to decode the u128 deposit mint value: {0}")]
     MintDecode(Bytes),
     /// Failed to decode the deposit gas value.
+    #[error("Failed to decode the u64 deposit gas value: {0}")]
     GasDecode(Bytes),
-}
-
-impl Display for DepositError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::UnexpectedTopicsLen(len) => {
-                write!(f, "Unexpected number of deposit event log topics: {}", len)
-            }
-            Self::InvalidSelector(expected, actual) => {
-                write!(f, "Invalid deposit event selector: {}, expected {}", actual, expected)
-            }
-            Self::IncompleteOpaqueData(len) => {
-                write!(f, "Incomplete opaqueData slice header (incomplete length): {}", len)
-            }
-            Self::UnalignedData(data) => {
-                write!(f, "Unaligned log data, expected multiple of 32 bytes, got: {}", data)
-            }
-            Self::FromDecode(topic) => {
-                write!(f, "Failed to decode the `from` address of the deposit log topic: {}", topic)
-            }
-            Self::ToDecode(topic) => {
-                write!(f, "Failed to decode the `to` address of the deposit log topic: {}", topic)
-            }
-            Self::InvalidOpaqueDataOffset(offset) => {
-                write!(f, "Invalid u64 opaque data content offset: {:?}", offset)
-            }
-            Self::InvalidOpaqueDataLength(length) => {
-                write!(f, "Invalid u64 opaque data content length: {:?}", length)
-            }
-            Self::OpaqueDataOverflow(data_len, opaque_len) => {
-                write!(
-                    f,
-                    "Specified opaque data length {} exceeds the deposit log event data length {}",
-                    opaque_len, data_len
-                )
-            }
-            Self::PaddedOpaqueDataOverflow(data_len, opaque_len) => {
-                write!(
-                    f,
-                    "Opaque data with padding exceeds the specified data length: {} > {}",
-                    opaque_len, data_len
-                )
-            }
-            Self::InvalidVersion(version) => {
-                write!(f, "Invalid deposit version: {}", version)
-            }
-            Self::UnexpectedOpaqueDataLen(len) => {
-                write!(f, "Unexpected opaque data length: {}", len)
-            }
-            Self::MintDecode(data) => {
-                write!(f, "Failed to decode the u128 deposit mint value: {:?}", data)
-            }
-            Self::GasDecode(data) => {
-                write!(f, "Failed to decode the u64 deposit gas value: {:?}", data)
-            }
-        }
-    }
 }
 
 /// Source domain identifiers for deposit transactions.

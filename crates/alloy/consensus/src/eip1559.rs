@@ -47,26 +47,15 @@ pub fn decode_holocene_extra_data(
 /// Error type for EIP-1559 parameters
 #[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
 pub enum EIP1559ParamError {
-    /// No EIP-1559 parameters provided
+    /// No EIP-1559 parameters provided.
+    #[error("No EIP1559 parameters provided")]
     NoEIP1559Params,
-    /// Denominator overflow
+    /// Denominator overflow.
+    #[error("Denominator overflow")]
     DenominatorOverflow,
-    /// Elasticity overflow
+    /// Elasticity overflow.
+    #[error("Elasticity overflow")]
     ElasticityOverflow,
-}
-
-impl core::fmt::Display for EIP1559ParamError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::NoEIP1559Params => {
-                write!(f, "No EIP1559 parameters provided")
-            }
-            Self::DenominatorOverflow => write!(f, "Denominator overflow"),
-            Self::ElasticityOverflow => {
-                write!(f, "Elasticity overflow")
-            }
-        }
-    }
 }
 
 #[cfg(test)]
