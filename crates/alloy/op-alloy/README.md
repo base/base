@@ -1,14 +1,16 @@
-# `op-alloy`
+## `op-alloy`
 
 <a href="https://github.com/alloy-rs/op-alloy/actions/workflows/ci.yml"><img src="https://github.com/alloy-rs/op-alloy/actions/workflows/ci.yml/badge.svg?label=ci" alt="CI"></a>
+<a href="https://crates.io/crates/op-alloy"><img src="https://img.shields.io/crates/v/op-alloy.svg" alt="op-alloy crate"></a>
 <a href="https://github.com/alloy-rs/op-alloy/blob/main/LICENSE-APACHE"><img src="https://img.shields.io/badge/License-APACHE-d1d1f6.svg?label=license&labelColor=2a2f35" alt="License"></a>
 <a href="https://github.com/alloy-rs/op-alloy/blob/main/LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="License"></a>
 <a href="https://alloy-rs.github.io/op-alloy"><img src="https://img.shields.io/badge/Book-854a15?logo=mdBook&labelColor=2a2f35" alt="Book"></a>
 
+
 Built on [Alloy][alloy], `op-alloy` connects applications to the OP Stack.
 
 
-## Usage
+### Usage
 
 To use `op-alloy`, add the crate as a dependency to a `Cargo.toml`.
 
@@ -16,12 +18,12 @@ To use `op-alloy`, add the crate as a dependency to a `Cargo.toml`.
 op-alloy = "0.6"
 ```
 
-## Development Status
+### Development Status
 
 `op-alloy` is currently in active development, and is not yet ready for use in production.
 
 
-## Supported Rust Versions (MSRV)
+### Supported Rust Versions (MSRV)
 
 The current MSRV (minimum supported rust version) is 1.81.
 
@@ -32,7 +34,7 @@ The MSRV is not increased automatically, and will be updated
 only as part of a patch (pre-1.0) or minor (post-1.0) release.
 
 
-## Contributing
+### Contributing
 
 op-alloy is built by open source contributors like you, thank you for improving the project!
 
@@ -42,7 +44,7 @@ Pull requests will not be merged unless CI passes, so please ensure that your co
 linting rules and passes clippy.
 
 
-## `no_std`
+### `no_std`
 
 op-alloy is intended to be `no_std` compatible, initially for use in [kona][kona].
 
@@ -59,14 +61,14 @@ If you would like to add no_std support to a crate,
 please make sure to update [scripts/check_no_std.sh][check-no-std].
 
 
-## Credits
+### Credits
 
 op-alloy is inspired by the work of several teams and projects, most notably [the Alloy project][alloy].
 
 This would not be possible without the hard work from open source contributors. Thank you.
 
 
-## License
+### License
 
 Licensed under either of <a href="LICENSE-APACHE">Apache License, Version
 2.0</a> or <a href="LICENSE-MIT">MIT license</a> at your option.

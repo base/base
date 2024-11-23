@@ -4,6 +4,7 @@
 <a href="https://crates.io/crates/op-alloy-registry"><img src="https://img.shields.io/crates/v/op-alloy-registry.svg?label=op-alloy-registry&labelColor=2a2f35" alt="op-alloy-registry"></a>
 <a href="https://github.com/alloy-rs/op-alloy/blob/main/LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-d1d1f6.svg?label=license&labelColor=2a2f35" alt="MIT License"></a>
 <a href="https://github.com/alloy-rs/op-alloy/blob/main/LICENSE-APACHE"><img src="https://img.shields.io/badge/License-APACHE-d1d1f6.svg?label=license&labelColor=2a2f35" alt="Apache License"></a>
+<a href="https://alloy-rs.github.io/op-alloy"><img src="https://img.shields.io/badge/Book-854a15?logo=mdBook&labelColor=2a2f35" alt="Book"></a>
 
 
 [`op-alloy-registry`][sc] is a `no_std` crate that exports rust type definitions for chains
@@ -18,19 +19,20 @@ op-alloy-registry = "0.6.7"
 
 [`op-alloy-registry`][sc] declares lazy evaluated statics that expose `ChainConfig`s, `RollupConfig`s,
 and `Chain` objects for all chains with static definitions in the superchain registry. The way this works
-is the the golang side of the superchain registry contains an "internal code generation" script that has
+is the golang side of the superchain registry contains an "internal code generation" script that has
 been modified to output configuration files to the [`crates/registry`][s] directory in the
 `etc` folder that are read by the [`op-alloy-registry`][sc] rust crate. These static config files
-contain an up-to-date list of all superchain configurations with their chain configs.
+contain an up-to-date list of all superchain configurations with their chain configs. It is expected
+that if the commit hash of the [`superchain-registry`][osr] pulled in as a git submodule has breaking
+changes, the tests in this crate (`op-alloy-registry`) will break and updates will need to be made.
 
 There are three core statics exposed by the [`op-alloy-registry`][sc].
 - `CHAINS`: A list of chain objects containing the superchain metadata for this chain.
 - `OPCHAINS`: A map from chain id to `ChainConfig`.
 - `ROLLUP_CONFIGS`: A map from chain id to `RollupConfig`.
 
-While the [`op-alloy-genesis`][oag] crate contains a few hardcoded `RollupConfig` objects, the
-[`op-alloy-registry`][sc] exports the _complete_ list of superchains and their chain's `RollupConfig`s
-and `ChainConfig`s.
+[`op-alloy-registry`][sc] exports the _complete_ list of chains within the superchain, as well as each
+chain's `RollupConfig`s and `ChainConfig`s.
 
 
 ### Usage
