@@ -51,7 +51,7 @@ fn main() {
         use tracing::Level;
 
         let subscriber = tracing_subscriber::fmt()
-            .with_max_level(Level::DEBUG)
+            .with_max_level(Level::INFO)
             .finish();
         tracing::subscriber::set_global_default(subscriber)
             .map_err(|e| anyhow!(e))
