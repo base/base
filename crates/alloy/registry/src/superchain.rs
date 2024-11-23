@@ -212,7 +212,7 @@ mod tests {
         let superchains = Registry::from_chain_list();
         assert_eq!(
             *superchains.rollup_configs.get(&10).unwrap(),
-            crate::configs::OP_MAINNET_CONFIG
+            crate::test_utils::OP_MAINNET_CONFIG
         );
     }
 }

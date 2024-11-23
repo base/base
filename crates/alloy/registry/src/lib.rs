@@ -19,7 +19,7 @@ pub mod superchain;
 pub use superchain::Registry;
 
 #[cfg(test)]
-pub mod configs;
+pub mod test_utils;
 
 lazy_static::lazy_static! {
     /// Private initializer that loads the superchain configurations.
@@ -37,13 +37,15 @@ lazy_static::lazy_static! {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_hardcoded_rollup_configs() {
         let test_cases = vec![
-            (10, crate::configs::OP_MAINNET_CONFIG),
-            (8453, crate::configs::BASE_MAINNET_CONFIG),
-            (11155420, crate::configs::OP_SEPOLIA_CONFIG),
-            (84532, crate::configs::BASE_SEPOLIA_CONFIG),
+            (10, test_utils::OP_MAINNET_CONFIG),
+            (8453, test_utils::BASE_MAINNET_CONFIG),
+            (11155420, test_utils::OP_SEPOLIA_CONFIG),
+            (84532, test_utils::BASE_SEPOLIA_CONFIG),
         ];
 
         for (chain_id, expected) in test_cases {
