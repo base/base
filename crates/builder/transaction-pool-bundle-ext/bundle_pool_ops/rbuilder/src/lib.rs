@@ -7,6 +7,7 @@ use core::fmt;
 use std::{fmt::Formatter, path::Path, sync::Arc, time::Duration};
 
 use derive_more::From;
+use rbuilder::live_builder::cli::LiveBuilderConfig;
 use rbuilder::{
     building::{
         builders::{
@@ -23,6 +24,7 @@ use rbuilder::{
         SlotSource,
     },
     primitives::{Bundle, BundleReplacementKey, Order},
+    telemetry,
 };
 use reth_db_api::Database;
 use reth_primitives::{TransactionSigned, U256};
@@ -146,6 +148,22 @@ impl BundlePoolOps {
         let _handle = task::spawn(async move {
             // Wait for 5 seconds for reth to init
             sleep(Duration::from_secs(5)).await;
+
+            // Spawn redacted server that is safe for tdx builders to expose
+            telemetry::servers::redacted::spawn(
+                config.base_config().redacted_telemetry_server_address(),
+            )
+            .await
+            .expect("Failed to start redacted telemetry server");
+
+            // Spawn debug server that exposes detailed operational information
+            telemetry::servers::full::spawn(
+                config.base_config().full_telemetry_server_address(),
+                config.version_for_telemetry(),
+                config.base_config().log_enable_dynamic,
+            )
+            .await
+            .expect("Failed to start full telemetry server");
 
             builder.run().await.unwrap();
 
