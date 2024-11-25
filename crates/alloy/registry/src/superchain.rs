@@ -114,12 +114,8 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_eips::BlockNumHash;
-    use alloy_primitives::{address, b256, uint};
-    use op_alloy_genesis::{
-        AddressList, ChainGenesis, HardForkConfiguration, SuperchainLevel, SystemConfig,
-        OP_MAINNET_BASE_FEE_PARAMS,
-    };
+    use alloy_primitives::address;
+    use op_alloy_genesis::{AddressList, SuperchainLevel, OP_MAINNET_BASE_FEE_PARAMS};
 
     #[test]
     fn test_read_chain_configs() {
@@ -138,38 +134,14 @@ mod tests {
             batch_inbox_addr: address!("ff00000000000000000000000000000000008453"),
             superchain: String::from("mainnet"),
             chain: String::new(),
-            hardfork_configuration: HardForkConfiguration {
-                canyon_time: Some(1704992401),
-                delta_time: Some(1708560000),
-                ecotone_time: Some(1710374401),
-                fjord_time: Some(1720627201),
-                granite_time: Some(1726070401),
-                holocene_time: None,
-            },
+            hardfork_configuration: crate::test_utils::BASE_MAINNET_CONFIG.hardfork_config(),
             block_time: 2,
             seq_window_size: 3600,
             max_sequencer_drift: 600,
             data_availability_type: "eth-da".to_string(),
             optimism: Some(OP_MAINNET_BASE_FEE_PARAMS),
             alt_da: None,
-            genesis: ChainGenesis {
-                l1: BlockNumHash {
-                    number: 17481768,
-                    hash: b256!("5c13d307623a926cd31415036c8b7fa14572f9dac64528e857a470511fc30771"),
-                },
-                l2: BlockNumHash {
-                    number: 0,
-                    hash: b256!("f712aa9241cc24369b143cf6dce85f0902a9731e70d66818a3a5845b296c73dd"),
-                },
-                l2_time: 1686789347,
-                system_config: Some(SystemConfig {
-                    batcher_address: address!("5050F69a9786F081509234F1a7F4684b5E5b76C9"),
-                    overhead: uint!(0xbc_U256),
-                    scalar: uint!(0xa6fe0_U256),
-                    gas_limit: 30000000_u64,
-                    ..Default::default()
-                }),
-            },
+            genesis: crate::test_utils::BASE_MAINNET_CONFIG.genesis,
             addresses: Some(AddressList {
                 address_manager: address!("8EfB6B5c4767B09Dc9AA6Af4eAA89F749522BaE2"),
                 l1_cross_domain_messenger_proxy: address!(

@@ -1,6 +1,6 @@
 //! Rollup Config Types
 
-use crate::{base_fee_params, ChainGenesis};
+use crate::{base_fee_params, ChainGenesis, HardForkConfiguration};
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::Address;
 
@@ -260,6 +260,18 @@ impl RollupConfig {
             self.granite_channel_timeout
         } else {
             self.channel_timeout
+        }
+    }
+
+    /// Returns the [HardForkConfiguration] using [RollupConfig] timestamps.
+    pub const fn hardfork_config(&self) -> HardForkConfiguration {
+        HardForkConfiguration {
+            canyon_time: self.canyon_time,
+            delta_time: self.delta_time,
+            ecotone_time: self.ecotone_time,
+            fjord_time: self.fjord_time,
+            granite_time: self.granite_time,
+            holocene_time: self.holocene_time,
         }
     }
 
