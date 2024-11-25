@@ -40,7 +40,6 @@ use crate::{
 /// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
 /// given block number. It is used to generate the boot info for the native host program.
 /// TODO: Add retries for all requests (3 retries).
-/// TODO: We can generify some of these methods based on the Network (Ethereum, Optimism, etc.) types.
 pub struct OPSuccinctDataFetcher {
     pub rpc_config: RPCConfig,
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
