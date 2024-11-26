@@ -186,6 +186,8 @@ upgrade-oracle env_file=".env":
         forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
+            --verify \
+            --verifier etherscan \
             --etherscan-api-key $ETHERSCAN_API_KEY \
             --broadcast
     fi
