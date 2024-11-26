@@ -1,5 +1,5 @@
 use alloy::{eips::BlockId, hex, signers::local::PrivateKeySigner};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
@@ -22,13 +22,14 @@ struct L2OOConfig {
     challenger: String,
     finalization_period: u64,
     l2_block_time: u64,
+    owner: String,
     proposer: String,
     rollup_config_hash: String,
     starting_block_number: u64,
     starting_output_root: String,
     starting_timestamp: u64,
     submission_interval: u64,
-    verifier_gateway: String,
+    verifier: String,
     aggregation_vkey: String,
     range_vkey_commitment: String,
 }
@@ -52,7 +53,7 @@ async fn update_l2oo_config() -> Result<()> {
         .workspace_root;
 
     // Set the verifier address
-    let verifier_gateway = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
+    let verifier = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
         // Default to Groth16 VerifierGateway contract address
         // Source: https://docs.succinct.xyz/verification/onchain/contract-addresses
         "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string()
@@ -98,13 +99,13 @@ async fn update_l2oo_config() -> Result<()> {
         .map(|p| p.parse().unwrap())
         .unwrap_or(0);
 
-    let proposer = env::var("PROPOSER").unwrap_or_else(|_| {
-        let private_key = env::var("PRIVATE_KEY").unwrap();
-        let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
-        signer.address().to_string()
-    });
+    let private_key = env::var("PRIVATE_KEY").unwrap_or_else(|_| B256::ZERO.to_string());
+    let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
+    let signer_address = signer.address().to_string();
 
-    let challenger = env::var("CHALLENGER").unwrap_or_else(|_| Address::ZERO.to_string());
+    let proposer = env::var("PROPOSER").unwrap_or(signer_address.clone());
+    let owner = env::var("OWNER").unwrap_or(signer_address);
+    let challenger = env::var("CHALLENGER").unwrap_or(Address::ZERO.to_string());
 
     let prover = ProverClient::new();
     let (_, agg_vkey) = prover.setup(AGG_ELF);
@@ -117,13 +118,14 @@ async fn update_l2oo_config() -> Result<()> {
         challenger,
         finalization_period,
         l2_block_time,
+        owner,
         proposer,
         rollup_config_hash,
         starting_block_number,
         starting_output_root,
         starting_timestamp,
         submission_interval,
-        verifier_gateway,
+        verifier,
         aggregation_vkey,
         range_vkey_commitment,
     };

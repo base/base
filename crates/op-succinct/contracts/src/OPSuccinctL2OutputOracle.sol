@@ -5,7 +5,7 @@ import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.s
 import {ISemver} from "@optimism/src/universal/ISemver.sol";
 import {Types} from "@optimism/src/libraries/Types.sol";
 import {Constants} from "@optimism/src/libraries/Constants.sol";
-import {ISP1VerifierGateway} from "@sp1-contracts/src/ISP1VerifierGateway.sol";
+import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
 
 /// @custom:proxied
 /// @title OPSuccinctL2OutputOracle
@@ -14,13 +14,21 @@ import {ISP1VerifierGateway} from "@sp1-contracts/src/ISP1VerifierGateway.sol";
 ///         these outputs to verify information about the state of L2. The outputs posted to this contract
 ///         are proved to be valid with `op-succinct`.
 contract OPSuccinctL2OutputOracle is Initializable, ISemver {
-    /// @notice Parameters to initialize the contract.
+    /// @notice Parameters to initialize the OPSuccinctL2OutputOracle contract.
     struct InitParams {
+        address challenger;
+        address proposer;
+        address owner;
+        uint256 finalizationPeriodSeconds;
+        uint256 l2BlockTime;
         bytes32 aggregationVkey;
         bytes32 rangeVkeyCommitment;
-        address verifierGateway;
-        bytes32 startingOutputRoot;
         bytes32 rollupConfigHash;
+        bytes32 startingOutputRoot;
+        uint256 startingBlockNumber;
+        uint256 startingTimestamp;
+        uint256 submissionInterval;
+        address verifier;
     }
 
     /// @notice The public values committed to for an OP Succinct aggregation program.
@@ -69,11 +77,14 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// this verification is the output of converting the [u32; 8] range BabyBear verification key to a [u8; 32] array.
     bytes32 public rangeVkeyCommitment;
 
-    /// @notice The deployed SP1VerifierGateway contract to request proofs from.
-    address public verifierGateway;
+    /// @notice The deployed SP1Verifier contract to verify proofs.
+    address public verifier;
 
     /// @notice The hash of the chain's rollup config, which ensures the proofs submitted are for the correct chain.
     bytes32 public rollupConfigHash;
+
+    /// @notice The owner of the contract, who has admin permissions.
+    address public owner;
 
     /// @notice A trusted mapping of block numbers to block hashes.
     mapping(uint256 => bytes32) public historicBlockHashes;
@@ -96,6 +107,31 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param newNextOutputIndex  Next L2 output index after the deletion.
     event OutputsDeleted(uint256 indexed prevNextOutputIndex, uint256 indexed newNextOutputIndex);
 
+    /// @notice Emitted when the aggregation verification key is updated.
+    /// @param oldAggregationVkey The old aggregation verification key.
+    /// @param newAggregationVkey The new aggregation verification key.
+    event AggregationVkeyUpdated(bytes32 indexed oldAggregationVkey, bytes32 indexed newAggregationVkey);
+
+    /// @notice Emitted when the range verification key commitment is updated.
+    /// @param oldRangeVkeyCommitment The old range verification key commitment.
+    /// @param newRangeVkeyCommitment The new range verification key commitment.
+    event RangeVkeyCommitmentUpdated(bytes32 indexed oldRangeVkeyCommitment, bytes32 indexed newRangeVkeyCommitment);
+
+    /// @notice Emitted when the verifier address is updated.
+    /// @param oldVerifier The old verifier address.
+    /// @param newVerifier The new verifier address.
+    event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
+
+    /// @notice Emitted when the rollup config hash is updated.
+    /// @param oldRollupConfigHash The old rollup config hash.
+    /// @param newRollupConfigHash The new rollup config hash.
+    event RollupConfigHashUpdated(bytes32 indexed oldRollupConfigHash, bytes32 indexed newRollupConfigHash);
+
+    /// @notice Emitted when the owner address is updated.
+    /// @param previousOwner The previous owner address.
+    /// @param newOwner The new owner address.
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
     ////////////////////////////////////////////////////////////
     //                         Errors                         //
     ////////////////////////////////////////////////////////////
@@ -112,6 +148,15 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     string public constant version = "0.1.0";
 
     ////////////////////////////////////////////////////////////
+    //                        Modifiers                       //
+    ////////////////////////////////////////////////////////////
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "L2OutputOracle: caller is not the owner");
+        _;
+    }
+
+    ////////////////////////////////////////////////////////////
     //                        Functions                       //
     ////////////////////////////////////////////////////////////
 
@@ -121,35 +166,17 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     }
 
     /// @notice Initializer.
-    /// @param _submissionInterval  Interval in blocks at which checkpoints must be submitted.
-    /// @param _l2BlockTime         The time per L2 block, in seconds.
-    /// @param _startingBlockNumber The number of the first L2 block.
-    /// @param _startingTimestamp   The timestamp of the first L2 block.
-    /// @param _proposer            The address of the proposer.
-    /// @param _challenger          The address of the challenger.
-    /// @param _finalizationPeriodSeconds The minimum time (in seconds) that must elapse before a withdrawal
-    ///                                   can be finalized.
-    /// @param _initParams          The aggregation vkey, range vkey commitment, verifier gateway, rollup config hash, and starting output root for the contract.
-    /// @dev Starting block number, timestamp and output root are ignored for upgrades, because these values already exist.
-    function initialize(
-        uint256 _submissionInterval,
-        uint256 _l2BlockTime,
-        uint256 _startingBlockNumber,
-        uint256 _startingTimestamp,
-        address _proposer,
-        address _challenger,
-        uint256 _finalizationPeriodSeconds,
-        InitParams memory _initParams
-    ) public initializer {
-        require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
-        require(_l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
+    /// @param _initParams The initialization parameters for the contract.
+    function initialize(InitParams memory _initParams) public initializer {
+        require(_initParams.submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
+        require(_initParams.l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(
-            _startingTimestamp <= block.timestamp,
+            _initParams.startingTimestamp <= block.timestamp,
             "L2OutputOracle: starting L2 timestamp must be less than current time"
         );
 
-        submissionInterval = _submissionInterval;
-        l2BlockTime = _l2BlockTime;
+        submissionInterval = _initParams.submissionInterval;
+        l2BlockTime = _initParams.l2BlockTime;
 
         // For proof verification to work, there must be an initial output.
         // Disregard the _startingBlockNumber and _startingTimestamp parameters during upgrades, as they're already set.
@@ -157,24 +184,25 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             l2Outputs.push(
                 Types.OutputProposal({
                     outputRoot: _initParams.startingOutputRoot,
-                    timestamp: uint128(_startingTimestamp),
-                    l2BlockNumber: uint128(_startingBlockNumber)
+                    timestamp: uint128(_initParams.startingTimestamp),
+                    l2BlockNumber: uint128(_initParams.startingBlockNumber)
                 })
             );
 
-            startingBlockNumber = _startingBlockNumber;
-            startingTimestamp = _startingTimestamp;
+            startingBlockNumber = _initParams.startingBlockNumber;
+            startingTimestamp = _initParams.startingTimestamp;
         }
 
-        proposer = _proposer;
-        challenger = _challenger;
-        finalizationPeriodSeconds = _finalizationPeriodSeconds;
+        proposer = _initParams.proposer;
+        challenger = _initParams.challenger;
+        finalizationPeriodSeconds = _initParams.finalizationPeriodSeconds;
 
         // OP Succinct initialization parameters.
         aggregationVkey = _initParams.aggregationVkey;
         rangeVkeyCommitment = _initParams.rangeVkeyCommitment;
-        verifierGateway = _initParams.verifierGateway;
+        verifier = _initParams.verifier;
         rollupConfigHash = _initParams.rollupConfigHash;
+        owner = _initParams.owner;
     }
 
     /// @notice Getter for the submissionInterval.
@@ -288,7 +316,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             rangeVkeyCommitment: rangeVkeyCommitment
         });
 
-        ISP1VerifierGateway(verifierGateway).verifyProof(aggregationVkey, abi.encode(publicValues), _proof);
+        ISP1Verifier(verifier).verifyProof(aggregationVkey, abi.encode(publicValues), _proof);
 
         emit OutputProposed(_outputRoot, nextOutputIndex(), _l2BlockNumber, block.timestamp);
 
@@ -390,5 +418,46 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @return L2 timestamp of the given block.
     function computeL2Timestamp(uint256 _l2BlockNumber) public view returns (uint256) {
         return startingTimestamp + ((_l2BlockNumber - startingBlockNumber) * l2BlockTime);
+    }
+
+    /// @notice Update the submission interval.
+    /// @param _submissionInterval The new submission interval.
+    function updateSubmissionInterval(uint256 _submissionInterval) external onlyOwner {
+        submissionInterval = _submissionInterval;
+    }
+
+    /// @notice Updates the aggregation verification key.
+    /// @param _aggregationVkey The new aggregation verification key.
+    function updateAggregationVkey(bytes32 _aggregationVkey) external onlyOwner {
+        emit AggregationVkeyUpdated(aggregationVkey, _aggregationVkey);
+        aggregationVkey = _aggregationVkey;
+    }
+
+    /// @notice Updates the range verification key commitment.
+    /// @param _rangeVkeyCommitment The new range verification key commitment.
+    function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) external onlyOwner {
+        emit RangeVkeyCommitmentUpdated(rangeVkeyCommitment, _rangeVkeyCommitment);
+        rangeVkeyCommitment = _rangeVkeyCommitment;
+    }
+
+    /// @notice Updates the verifier address.
+    /// @param _verifier The new verifier address.
+    function updateVerifier(address _verifier) external onlyOwner {
+        emit VerifierUpdated(verifier, _verifier);
+        verifier = _verifier;
+    }
+
+    /// @notice Updates the rollup config hash.
+    /// @param _rollupConfigHash The new rollup config hash.
+    function updateRollupConfigHash(bytes32 _rollupConfigHash) external onlyOwner {
+        emit RollupConfigHashUpdated(rollupConfigHash, _rollupConfigHash);
+        rollupConfigHash = _rollupConfigHash;
+    }
+
+    /// Updates the owner address.
+    /// @param _owner The new owner address.
+    function transferOwnership(address _owner) external onlyOwner {
+        emit OwnershipTransferred(owner, _owner);
+        owner = _owner;
     }
 }
