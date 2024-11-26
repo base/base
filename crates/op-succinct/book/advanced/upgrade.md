@@ -1,0 +1,43 @@
+# Upgrade OP Succinct
+
+When upgrading OP Succinct, you need to check two things:
+
+1. The `OPSuccinctL2OutputOracle` smart contract
+2. The `op-succinct` Docker images
+
+## What needs upgrading?
+
+Each release will specify if it includes:
+
+- New verification keys
+- Contract changes 
+- New `op-succinct` binary version
+
+Based on what's included:
+
+- Contract changes → Upgrade the `OPSuccinctL2OutputOracle` contract
+- New verification keys → Update `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` parameters
+- New binary → Upgrade Docker images
+
+### Upgrade Docker Containers
+
+If you're using Docker, upgrade your containers to use the latest version of `op-succinct` by checking out the [latest release](https://github.com/succinctlabs/op-succinct/releases). 
+
+Docker images are not built for releases, but we support a `docker compose` setup for the latest version of `op-succinct`.
+
+### Upgrade Contract
+
+1. Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases).
+2. Follow the instructions [here](./l2-output-oracle.md#upgrading-opsuccinctl2outputoracle) to upgrade the `OPSuccinctL2OutputOracle` contract.
+
+
+Note: As of release `beta-v0.2.0`, the `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` are upgradeable without re-initializing the contract.
+
+To upgrade the contracts, check out the latest release of `op-succinct` and follow the instructions [here](../advanced/l2-output-oracle.md#upgrading-opsuccinctl2outputoracle). The version of the `OPSuccinctL2OutputOracle` contract will be bumped, along with the version in the initializer tag.
+
+### Update Contract Parameters
+
+If you just need to update the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters and not upgrade the contract itself, follow these steps:
+
+1. Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases).
+2. Follow the instructions [here](./l2-output-oracle.md#upgrading-opsuccinctl2outputoracle) to update the parameters of the `OPSuccinctL2OutputOracle` contract.

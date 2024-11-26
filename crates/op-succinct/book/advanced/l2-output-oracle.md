@@ -49,10 +49,6 @@ You can configure additional parameters when deploying or upgrading the `OPSucci
 
 ## Upgrading `OPSuccinctL2OutputOracle`
 
-The last step is to update your OP Stack configuration to use the new `OPSuccinctL2OutputOracle` contract managed by the `op-succinct` service.
-
-> ⚠️ **Caution**: When upgrading to the `OPSuccinctL2OutputOracle` contract, maintain the existing `finalizationPeriod` for a duration equal to at least one `finalizationPeriod`. Failure to do so will result in immediate finalization of all pending output roots upon upgrade, which is unsafe. Only after this waiting period has elapsed should you set the `finalizationPeriod` to 0.
-
 ### Upgrading with an EOA `ADMIN` key
 
 To update the `L2OutputOracle` implementation with an EOA `ADMIN` key, run the following command in `/contracts`.
@@ -90,4 +86,50 @@ Script ran successfully.
   0x4f1ef2860000000000000000000000007f5d6a5b55ee82090aedc859b40808103b30e46900000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000184c0e8e2a100000000000000000000000000000000000000000000000000000000000004b00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000135161100000000000000000000000000000000000000000000000000000000674107ce000000000000000000000000ded0000e32f8f40414d3ab3a830f735a3553e18e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001346d7ea10cc78c48e3da6f1890bb16cf27e962202f0f9b2c5c57f3cfb0c559ec1dca031e9fc246ec47246109ebb324a357302110de5d447af13a07f527620000000000000000000000004cb20fa9e6fdfe8fdb6ce0942c5f40d49c8986469ad6f24abc0df5e4cab37c1efae21643938ed5393389ce9e747524a59546a8785e32d5f9f902c6a46cb75cbdb083ea67b9475d7026542a009dc9d99072f4bdf100000000000000000000000000000000000000000000000000000000
 
 ## Setting up 1 EVM.
+```
+
+## Updating `OPSuccinctL2OutputOracle` Parameters
+
+If you just need to update the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters and not upgrade the contract itself, you can use the `just update-parameters` command.
+
+The command will only update the parameters in the contract if they don't match the verification keys or the rollup config hash locally.
+
+
+### Updating Parameters with an EOA `ADMIN` key
+
+To update the parameters of the `OPSuccinctL2OutputOracle` contract with an EOA `ADMIN` key, run the following command in `/contracts`.
+
+```bash
+just update-parameters
+```
+
+### Updating Parameters with a non-EOA `ADMIN` key
+
+If the owner of the `OPSuccinctL2OutputOracle` is not an EOA (e.g. multisig, contract), set `EXECUTE_UPGRADE_CALL` to `false` in your `.env` file. This will output the raw calldata for the parameter update calls, which can be executed by the owner in a separate context.
+
+| Parameter | Description |
+|-----------|-------------|
+| `EXECUTE_UPGRADE_CALL` | Set to `false` to output the raw calldata for the parameter update calls. |
+
+Then, run the following command in `/contracts`.
+
+```bash
+just update-parameters
+```
+
+```shell
+% just update-parameters
+warning: op-succinct-scripts@0.1.0: fault-proof built with release-client-lto profile
+warning: op-succinct-scripts@0.1.0: range built with release-client-lto profile
+warning: op-succinct-scripts@0.1.0: native_host_runner built with release profile
+    Finished `release` profile [optimized] target(s) in 0.35s
+     Running `target/release/fetch-rollup-config --env-file .env`
+[⠊] Compiling...
+Script ran successfully.
+
+== Logs ==
+  The calldata for upgrading the aggregationVkey is:
+  0xc4cb03ec005e5786785a9c61015fa1f0543831fb0e0602684473de8758496556010b1d08
+  The calldata for upgrading the rangeVkeyCommitment is:
+  0xbc91ce33472e8f9b2f650ae74c7997a3272ef5b50be834145b44cf7f1d52b58235bd6018
 ```
