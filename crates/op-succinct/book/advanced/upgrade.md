@@ -33,8 +33,6 @@ Docker images are not built for releases, but we support a `docker compose` setu
 
 Note: As of release `beta-v0.2.0`, the `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` are upgradeable without re-initializing the contract.
 
-To upgrade the contracts, check out the latest release of `op-succinct` and follow the instructions [here](../advanced/l2-output-oracle.md#upgrading-opsuccinctl2outputoracle). The version of the `OPSuccinctL2OutputOracle` contract will be bumped, along with the version in the initializer tag.
-
 ### Update Contract Parameters
 
 If you just need to update the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters and not upgrade the contract itself, follow these steps:
