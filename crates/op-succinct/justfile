@@ -177,13 +177,41 @@ upgrade-oracle env_file=".env":
     cd contracts
     
     # Run the forge upgrade script
-    if [ "$EXECUTE_UPGRADE_CALL" = "false" ]; then
+    if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
         forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --etherscan-api-key $ETHERSCAN_API_KEY
     else
         forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+            --rpc-url $L1_RPC \
+            --private-key $PRIVATE_KEY \
+            --etherscan-api-key $ETHERSCAN_API_KEY \
+            --broadcast
+    fi
+
+# Update the parameters of the OPSuccinct L2 Output Oracle
+update-parameters env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # First fetch rollup config using the env file
+    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+    
+    # Run the forge upgrade script
+    if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
+        forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+            --rpc-url $L1_RPC \
+            --private-key $PRIVATE_KEY \
+            --etherscan-api-key $ETHERSCAN_API_KEY
+    else
+        forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --etherscan-api-key $ETHERSCAN_API_KEY \
