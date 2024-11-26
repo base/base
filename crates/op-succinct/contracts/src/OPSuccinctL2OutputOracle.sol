@@ -62,8 +62,9 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @custom:network-specific
     address public challenger;
 
-    /// @notice The address of the proposer. Can be updated via upgrade.
+    /// @notice The address of the proposer. Can be updated via upgrade. DEPRECATED: Use approvedProposers mapping instead.
     /// @custom:network-specific
+    /// @custom:deprecated
     address public proposer;
 
     /// @notice The minimum time (in seconds) that must elapse before a withdrawal can be finalized.
@@ -85,6 +86,9 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
 
     /// @notice The owner of the contract, who has admin permissions.
     address public owner;
+
+    /// @notice The proposers that can propose new proofs.
+    mapping(address => bool) public approvedProposers;
 
     /// @notice A trusted mapping of block numbers to block hashes.
     mapping(uint256 => bytes32) public historicBlockHashes;
@@ -131,6 +135,16 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param previousOwner The previous owner address.
     /// @param newOwner The new owner address.
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @notice Emitted when a proposer address is added.
+    /// @param proposer The proposer address.
+    /// @param added Whether the proposer was added or removed.
+    event ProposerUpdated(address indexed proposer, bool added);
+
+    /// @notice Emitted when the submission interval is updated.
+    /// @param oldSubmissionInterval The old submission interval.
+    /// @param newSubmissionInterval The new submission interval.
+    event SubmissionIntervalUpdated(uint256 oldSubmissionInterval, uint256 newSubmissionInterval);
 
     ////////////////////////////////////////////////////////////
     //                         Errors                         //
@@ -193,9 +207,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             startingTimestamp = _initParams.startingTimestamp;
         }
 
-        proposer = _initParams.proposer;
         challenger = _initParams.challenger;
         finalizationPeriodSeconds = _initParams.finalizationPeriodSeconds;
+
+        // Add the initial proposer.
+        approvedProposers[_initParams.proposer] = true;
 
         // OP Succinct initialization parameters.
         aggregationVkey = _initParams.aggregationVkey;
@@ -285,9 +301,10 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         external
         payable
     {
+        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
         require(
-            msg.sender == proposer || proposer == address(0),
-            "L2OutputOracle: only the proposer address can propose new outputs"
+            approvedProposers[msg.sender] || approvedProposers[address(0)],
+            "L2OutputOracle: only approved proposers can propose new outputs"
         );
 
         require(
@@ -423,6 +440,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice Update the submission interval.
     /// @param _submissionInterval The new submission interval.
     function updateSubmissionInterval(uint256 _submissionInterval) external onlyOwner {
+        emit SubmissionIntervalUpdated(submissionInterval, _submissionInterval);
         submissionInterval = _submissionInterval;
     }
 
@@ -459,5 +477,19 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     function transferOwnership(address _owner) external onlyOwner {
         emit OwnershipTransferred(owner, _owner);
         owner = _owner;
+    }
+
+    /// @notice Adds a new proposer address.
+    /// @param _proposer The new proposer address.
+    function addProposer(address _proposer) external onlyOwner {
+        approvedProposers[_proposer] = true;
+        emit ProposerUpdated(_proposer, true);
+    }
+
+    /// @notice Removes a proposer address.
+    /// @param _proposer The proposer address to remove.
+    function removeProposer(address _proposer) external onlyOwner {
+        approvedProposers[_proposer] = false;
+        emit ProposerUpdated(_proposer, false);
     }
 }
