@@ -1,5 +1,3 @@
-set dotenv-load
-
 default:
   @just --list
 
@@ -178,12 +176,12 @@ upgrade-oracle env_file=".env":
     
     # Run the forge upgrade script
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --etherscan-api-key $ETHERSCAN_API_KEY
     else
-        forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --verify \
@@ -208,14 +206,12 @@ update-parameters env_file=".env":
     
     # Run the forge upgrade script
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY \
-            --etherscan-api-key $ETHERSCAN_API_KEY
+            --private-key $PRIVATE_KEY
     else
-        forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
-            --etherscan-api-key $ETHERSCAN_API_KEY \
             --broadcast
     fi
