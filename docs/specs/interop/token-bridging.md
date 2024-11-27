@@ -36,15 +36,20 @@ The standard will build on top of ERC20, implement the
 [`IERC7802`](https://github.com/ethereum/ERCs/pull/692)
 interface and include the following properties:
 
-1. Only allow `SuperchainERC20Bridge` to call
-[`crosschainMint`](#crosschainmint) and [`crosschainBurn`](#crosschainburn).
-2. Be deployed at the same address on every chain in the Superchain.
+1. Implement the [ERC20](https://eips.ethereum.org/EIPS/eip-20) interface
+2. Implement the [`ERC7802`](https://github.com/ethereum/ERCs/pull/692) interface
+3. Allow [`SuperchainERC20Bridge`](./predeploys.md#superchainerc20bridge) to call
+   [`crosschainMint`](#crosschainmint) and [`crosschainBurn`](#crosschainburn).
+4. Be deployed at the same address on every chain in the Superchain.
 
-The first property will allow the `SuperchainERC20Bridge` to have a liquidity guarantee,
+The third property will allow the `SuperchainERC20Bridge` to have a liquidity guarantee,
 which would not be possible in a model based on lock/unlock.
 Liquidity availability is fundamental to achieving fungibility.
 
-The second property removes the need for cross-chain access control lists.
+SuperchainERC20Bridge does not have to be the exclusive caller of `crosschainMint` and `crosschainBurn`,
+other addresses may also be permitted to call these functions.
+
+The fourth property removes the need for cross-chain access control lists.
 Otherwise, the `SuperchainERC20Bridge` would need a way to verify if the tokens they mint on
 destination correspond to the tokens that were burned on source.
 Same address abstracts away cross-chain validation.
@@ -58,6 +63,8 @@ predeploy that facilitates this process for L1 native tokens.
 Notice that ERC20s that do not implement the standard can still be fungible
 using interop message passing
 using a custom bridge or implementing `sendERC20` and `relayERC20` on their own contracts.
+
+An example implementation of the standard is available at [SuperchainERC20.sol](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/SuperchainERC20.sol)
 
 ### `IERC7802`
 
@@ -107,11 +114,11 @@ domain binding and access to additional message information.
 The `SuperchainERC20Bridge` includes two functions for bridging:
 
 - `sendERC20`: initializes a cross-chain transfer of a `SuperchainERC20`
-by burning the tokens locally and sending a message to the `SuperchainERC20Bridge`
-on the target chain using the `L2toL2CrossDomainMessenger`.
-Additionaly, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
+  by burning the tokens locally and sending a message to the `SuperchainERC20Bridge`
+  on the target chain using the `L2toL2CrossDomainMessenger`.
+  Additionaly, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
 - `relayERC20`: process incoming messages from the `L2toL2CrossDomainMessenger`
-and mints the corresponding amount of the `SuperchainERC20`
+  and mints the corresponding amount of the `SuperchainERC20`
 
 The full specifications and invariants are detailed
 in the [predeploys spec](./predeploys.md#superchainerc20bridge).
@@ -137,9 +144,9 @@ sequenceDiagram
   L2SBA->>SuperERC20_A: crosschainBurn(from, amount)
   SuperERC20_A-->SuperERC20_A: emit CrosschainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
-  Messenger_A->>L2SBA: return msgHash_ 
+  Messenger_A->>L2SBA: return msgHash_
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
-  L2SBA->>from: return msgHash_ 
+  L2SBA->>from: return msgHash_
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: crosschainMint(to, amount)
@@ -158,14 +165,14 @@ function sendERC20(SuperchainERC20 _token, address _to, uint256 _amount, uint256
   bytes memory _message = abi.encodeCall(this.relayERC20, (_token, msg.sender, _to, _amount));
 
   msgHash_ = L2ToL2CrossDomainMessenger.sendMessage(_chainId, address(this), _message);
-  
+
   emit SentERC20(address(_token), msg.sender, _to, _amount, _chainId);
 }
 
 function relayERC20(SuperchainERC20 _token, address _from, address _to, uint256 _amount) external {
   require(msg.sender == address(L2ToL2CrossChainMessenger));
   require(L2ToL2CrossChainMessenger.crossDomainMessageSender() == address(this));
-  
+
   uint256 _source = L2ToL2CrossChainMessenger.crossDomainMessageSource();
 
   _token.crosschainMint(_to, _amount);
