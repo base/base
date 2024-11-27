@@ -34,7 +34,7 @@
     - [`l2-code <codehash>`](#l2-code-codehash)
     - [`l2-state-node <nodehash>`](#l2-state-node-nodehash)
     - [`l2-output <outputroot>`](#l2-output-outputroot)
-    - [`l2-execution-witness <blocknumber>`](#l2-execution-witness-blocknumber)
+    - [`l2-payload-witness <payload_attributes>`](#l2-payload-witness-payload_attributes)
     - [`l2-account-proof <blockhash_and_address>`](#l2-account-proof-blockhash_and_address)
   - [Precompile Accelerators](#precompile-accelerators)
 - [Fault Proof VM](#fault-proof-vm)
@@ -440,16 +440,17 @@ Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
 [computed output root](../protocol/proposals.md#l2-output-commitment-construction).
 
-#### `l2-execution-witness <blocknumber>`
+#### `l2-payload-witness <payload_attributes>`
 
-Requests the host to prepare all preimages used in the execution of the block at `<blocknumber>` height.
+Requests the host to prepare all preimages used in the building of the payload specified by `<payload_attributes>`.
+`<payload_attributes>` is a JSON object with the fields `parentBlockHash` and `payloadAttributes`.
 
 #### `l2-account-proof <blockhash_and_address>`
 
 Requests the host send account proof for a certain block hash and address. `<blockhash_and_address>` is hex
 encoded: 32-byte block hash + 20-byte address.
 
-`l2-execution-witness` and `l2-account-proof` hints are preferred over the more granular `l2-code` and `l2-state-node`,
+`l2-payload-witness` and `l2-account-proof` hints are preferred over the more granular `l2-code` and `l2-state-node`,
 and they should be sent before the more granular hints to ensure proper handling.
 
 ### Precompile Accelerators
