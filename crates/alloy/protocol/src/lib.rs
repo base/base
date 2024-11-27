@@ -30,10 +30,12 @@ pub use frame::{
     Frame, FrameDecodingError, FrameParseError, DERIVATION_VERSION_0, FRAME_OVERHEAD, MAX_FRAME_LEN,
 };
 
-mod brotli;
-#[cfg(feature = "std")]
-pub use brotli::compress_brotli;
-pub use brotli::{decompress_brotli, BatchDecompressionError, BrotliLevel};
+mod compression;
+pub use compression::{
+    compress_brotli, compress_zlib, decompress_brotli, decompress_zlib, BatchDecompressionError,
+    BrotliCompressionError, BrotliCompressor, BrotliLevel, CompressionAlgo, Compressor,
+    CompressorType, RatioCompressor, ShadowCompressor, VariantCompressor, ZlibCompressor,
+};
 
 mod iter;
 pub use iter::FrameIter;
@@ -41,10 +43,13 @@ pub use iter::FrameIter;
 mod utils;
 pub use utils::{read_tx_data, starts_with_2718_deposit, to_system_config};
 
+mod channel_out;
+pub use channel_out::{ChannelOut, ChannelOutError};
+
 mod channel;
 pub use channel::{
-    Channel, ChannelError, ChannelId, ChannelOut, ChannelOutError, CHANNEL_ID_LENGTH,
-    FJORD_MAX_RLP_BYTES_PER_CHANNEL, MAX_RLP_BYTES_PER_CHANNEL,
+    Channel, ChannelError, ChannelId, CHANNEL_ID_LENGTH, FJORD_MAX_RLP_BYTES_PER_CHANNEL,
+    MAX_RLP_BYTES_PER_CHANNEL,
 };
 
 mod deposits;

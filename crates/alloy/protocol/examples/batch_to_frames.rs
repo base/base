@@ -16,7 +16,9 @@
 fn main() {
     use alloy_primitives::BlockHash;
     use op_alloy_genesis::RollupConfig;
-    use op_alloy_protocol::{Batch, ChannelId, ChannelOut, SingleBatch};
+    use op_alloy_protocol::{
+        Batch, ChannelId, ChannelOut, CompressionAlgo, SingleBatch, VariantCompressor,
+    };
 
     // Use the example transaction
     let transactions = example_transactions();
@@ -32,7 +34,8 @@ fn main() {
     // Create a new channel.
     let id = ChannelId::default();
     let config = RollupConfig::default();
-    let mut channel_out = ChannelOut::new(id, &config);
+    let compressor: VariantCompressor = CompressionAlgo::Brotli10.into();
+    let mut channel_out = ChannelOut::new(id, &config, compressor);
 
     // Add the compressed batch to the `ChannelOut`.
     channel_out.add_batch(batch).unwrap();

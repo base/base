@@ -1,138 +1,15 @@
 //! Channel Types
 
-use alloc::{vec, vec::Vec};
+use alloc::vec::Vec;
 use alloy_primitives::{map::HashMap, Bytes};
-use op_alloy_genesis::RollupConfig;
 
-use crate::{block::BlockInfo, frame::Frame};
-
-/// The best compression.
-const BEST_COMPRESSION: u8 = 9;
-
-/// The frame overhead.
-const FRAME_V0_OVERHEAD: usize = 23;
+use crate::{BlockInfo, Frame};
 
 /// [CHANNEL_ID_LENGTH] is the length of the channel ID.
 pub const CHANNEL_ID_LENGTH: usize = 16;
 
 /// [ChannelId] is an opaque identifier for a channel.
 pub type ChannelId = [u8; CHANNEL_ID_LENGTH];
-
-/// An error returned by the [ChannelOut] when adding single batches.
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ChannelOutError {
-    /// The channel is closed.
-    #[error("The channel is already closed")]
-    ChannelClosed,
-    /// The max frame size is too small.
-    #[error("The max frame size is too small")]
-    MaxFrameSizeTooSmall,
-    /// Missing compressed batch data.
-    #[error("Missing compressed batch data")]
-    MissingData,
-    /// An error from brotli compression.
-    #[error("Error from Brotli compression")]
-    BrotliCompression,
-    /// An error encoding the `Batch`.
-    #[error("Error encoding the batch")]
-    BatchEncoding,
-}
-
-/// [ChannelOut] constructs a channel from compressed, encoded batch data.
-#[derive(Debug, Clone)]
-pub struct ChannelOut<'a> {
-    /// The unique identifier for the channel.
-    pub id: ChannelId,
-    /// A reference to the [RollupConfig] used to
-    /// check the max RLP bytes per channel when
-    /// encoding and accepting the
-    pub config: &'a RollupConfig,
-    /// The rlp length of the channel.
-    pub rlp_length: u64,
-    /// Whether the channel is closed.
-    pub closed: bool,
-    /// The frame number.
-    pub frame_number: u16,
-    /// Compressed batch data.
-    pub compressed: Option<Bytes>,
-}
-
-impl<'a> ChannelOut<'a> {
-    /// Creates a new [ChannelOut] with the given [ChannelId].
-    pub const fn new(id: ChannelId, config: &'a RollupConfig) -> Self {
-        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressed: None }
-    }
-
-    /// Accepts the given [crate::Batch] data into the [ChannelOut], compressing it
-    /// into frames.
-    #[cfg(feature = "std")]
-    pub fn add_batch(&mut self, batch: crate::Batch) -> Result<(), ChannelOutError> {
-        if self.closed {
-            return Err(ChannelOutError::ChannelClosed);
-        }
-
-        // Encode the batch.
-        let mut buf = vec![];
-        batch.encode(&mut buf).map_err(|_| ChannelOutError::BatchEncoding)?;
-
-        // Validate that the RLP length is within the channel's limits.
-        let max_rlp_bytes_per_channel = self.config.max_rlp_bytes_per_channel(batch.timestamp());
-        if self.rlp_length + buf.len() as u64 > max_rlp_bytes_per_channel {
-            return Err(ChannelOutError::ChannelClosed);
-        }
-
-        if self.config.is_fjord_active(batch.timestamp()) {
-            let level = crate::BrotliLevel::Brotli10;
-            let compressed = crate::compress_brotli(&buf, level)
-                .map_err(|_| ChannelOutError::BrotliCompression)?;
-            self.compressed = Some(compressed.into());
-        } else {
-            self.compressed =
-                Some(miniz_oxide::deflate::compress_to_vec(&buf, BEST_COMPRESSION).into());
-        }
-
-        Ok(())
-    }
-
-    /// Returns the number of bytes ready to be output to a frame.
-    pub fn ready_bytes(&self) -> usize {
-        self.compressed.as_ref().map_or(0, |c| c.len())
-    }
-
-    /// Closes the channel if not already closed.
-    pub fn close(&mut self) {
-        self.closed = true;
-    }
-
-    /// Outputs a [Frame] from the [ChannelOut].
-    pub fn output_frame(&mut self, max_size: usize) -> Result<Frame, ChannelOutError> {
-        if max_size < FRAME_V0_OVERHEAD {
-            return Err(ChannelOutError::MaxFrameSizeTooSmall);
-        }
-
-        // Construct an empty frame.
-        let mut frame =
-            Frame { id: self.id, number: self.frame_number, is_last: self.closed, data: vec![] };
-
-        let mut max_size = max_size - FRAME_V0_OVERHEAD;
-        if max_size > self.ready_bytes() {
-            max_size = self.ready_bytes();
-        }
-
-        // Read `max_size` bytes from the compressed data.
-        let data = if let Some(data) = &self.compressed {
-            &data[..max_size]
-        } else {
-            return Err(ChannelOutError::MissingData);
-        };
-        frame.data.extend_from_slice(data);
-
-        // Update the compressed data.
-        self.compressed = self.compressed.as_mut().map(|b| b.split_off(max_size));
-        self.frame_number += 1;
-        Ok(frame)
-    }
-}
 
 /// [MAX_RLP_BYTES_PER_CHANNEL] is the maximum amount of bytes that will be read from
 /// a channel. This limit is set when decoding the RLP.

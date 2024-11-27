@@ -7,6 +7,32 @@ use core::ops;
 
 use crate::MAX_SPAN_BATCH_ELEMENTS;
 
+/// The brotli compressor.
+#[derive(Debug, Clone)]
+pub struct BrotliCompressor {
+    /// The compression level.
+    pub level: BrotliLevel,
+}
+
+impl BrotliCompressor {
+    /// Creates a new brotli compressor with the given compression level.
+    pub fn new(level: impl Into<BrotliLevel>) -> Self {
+        Self { level: level.into() }
+    }
+}
+
+impl From<BrotliLevel> for BrotliCompressor {
+    fn from(level: BrotliLevel) -> Self {
+        Self::new(level)
+    }
+}
+
+impl crate::Compressor for BrotliCompressor {
+    fn compress(&self, data: &[u8]) -> Vec<u8> {
+        compress_brotli(data, self.level).unwrap()
+    }
+}
+
 /// The brotli encoding level used in Optimism.
 ///
 /// See: <https://github.com/ethereum-optimism/optimism/blob/develop/op-node/rollup/derive/types.go#L50>
@@ -28,21 +54,43 @@ pub enum BatchDecompressionError {
     BatchTooLarge,
 }
 
+/// A Brotli Compression Error.
+#[derive(thiserror::Error, Debug)]
+pub enum BrotliCompressionError {
+    /// Unimplemented in no_std environments.
+    #[error("brotli compression is not supported in no_std environments")]
+    NoStd,
+    /// An error returned by the `std` brotli compression method.
+    #[cfg(feature = "std")]
+    #[error("Error from Brotli compression: {0}")]
+    CompressionError(#[from] std::io::Error),
+}
+
 /// Compresses the given bytes data using the Brotli compressor implemented
 /// in the [`brotli`](https://crates.io/crates/brotli) crate.
 ///
 /// Note: The level must be between 0 and 11. In Optimism, the levels 9, 10, and 11 are used.
 ///       By default, [BrotliLevel::Brotli10] is used.
-#[cfg(feature = "std")]
-pub fn compress_brotli(mut input: &[u8], level: BrotliLevel) -> Result<Vec<u8>, std::io::Error> {
-    use brotli::enc::{BrotliCompress, BrotliEncoderParams};
-    let mut output = alloc::vec![];
-    BrotliCompress(
-        &mut input,
-        &mut output,
-        &BrotliEncoderParams { quality: level as i32, ..Default::default() },
-    )?;
-    Ok(output)
+#[allow(unused_variables)]
+#[allow(unused_mut)]
+pub fn compress_brotli(
+    mut input: &[u8],
+    level: BrotliLevel,
+) -> Result<Vec<u8>, BrotliCompressionError> {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "std")] {
+            use brotli::enc::{BrotliCompress, BrotliEncoderParams};
+            let mut output = alloc::vec![];
+            BrotliCompress(
+                &mut input,
+                &mut output,
+                &BrotliEncoderParams { quality: level as i32, ..Default::default() },
+            )?;
+            Ok(output)
+        } else {
+            unimplemented!("brotli compression is not supported in no_std environments")
+        }
+    }
 }
 
 /// Decompresses the given bytes data using the Brotli decompressor implemented
