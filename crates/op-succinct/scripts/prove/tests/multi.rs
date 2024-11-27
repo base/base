@@ -7,7 +7,7 @@ use op_succinct_host_utils::{
     stats::{ExecutionStats, MarkdownExecutionStats},
     ProgramType,
 };
-use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, TWO_WEEKS};
+use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, ONE_HOUR};
 use sp1_sdk::ProverClient;
 
 mod common;
@@ -20,7 +20,7 @@ async fn execute_batch() -> Result<()> {
 
     // Take the latest blocks
     let (l2_start_block, l2_end_block) =
-        get_rolling_block_range(&data_fetcher, TWO_WEEKS, DEFAULT_RANGE).await?;
+        get_rolling_block_range(&data_fetcher, ONE_HOUR, DEFAULT_RANGE).await?;
 
     let host_cli = data_fetcher
         .get_host_cli_args(
