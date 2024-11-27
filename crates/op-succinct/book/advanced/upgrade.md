@@ -1,13 +1,6 @@
-# Upgrade OP Succinct
+# Upgrading to new `op-succinct` version
 
-When upgrading OP Succinct, you need to check two things:
-
-1. The `OPSuccinctL2OutputOracle` smart contract
-2. The `op-succinct` Docker images
-
-## What needs upgrading?
-
-Each release will specify if it includes:
+Each new release of `op-succinct` will specify if it includes:
 
 - New verification keys
 - Contract changes 
@@ -38,4 +31,4 @@ Note: As of release `beta-v0.2.0`, the `aggregationVkey`, `rangeVkeyCommitment` 
 If you just need to update the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters and not upgrade the contract itself, follow these steps:
 
 1. Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases).
-2. Follow the instructions [here](./l2-output-oracle.md#upgrading-opsuccinctl2outputoracle) to update the parameters of the `OPSuccinctL2OutputOracle` contract.
+2. Follow the instructions [here](./l2-output-oracle.md#updating-opsuccinctl2outputoracle-parameters) to update the parameters of the `OPSuccinctL2OutputOracle` contract.
