@@ -31,7 +31,7 @@ pub async fn get_validated_block_range(
     // If start block not provided, use end block - default_range
     let l2_start_block = match start {
         Some(start) => start,
-        None => l2_end_block.saturating_sub(default_range),
+        None => l2_end_block - default_range,
     };
 
     if l2_start_block >= l2_end_block {
