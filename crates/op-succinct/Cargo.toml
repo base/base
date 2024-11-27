@@ -90,10 +90,9 @@ op-alloy-network = { version = "0.6.8", default-features = false }
 # sp1
 sp1-lib = { version = "3.0.0", features = ["verify"] }
 sp1-zkvm = { version = "3.0.0", features = ["verify"] }
-# Note: This rev is on a branch which includes skipping deferred verification + SP1 mock groth16 bytes fix. Once 4.0.0 is released, update this.
-# TODO: Add back in the executor opts for the cost estimator.
+# Note: This rev is on a branch which includes skipping deferred verification + SP1 mock groth16 bytes fix + executor opts. Once 4.0.0 is released, update this.
 # ratan/op-succinct-sp1
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", rev = "e6c8e31a61d9e16974e05576bcf37cb5382e8025" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", rev = "884948a30c9b125950b9ddf7a344fb69548cd9df" }
 sp1-build = { version = "3.0.0" }
 
 [profile.release-client-lto]
