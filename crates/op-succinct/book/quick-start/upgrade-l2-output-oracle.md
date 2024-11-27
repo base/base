@@ -1,4 +1,4 @@
-# Upgrade `L2OutputOracle` to `OPSuccinctL2OutputOracle`
+# Migrate `L2OutputOracle` to `OPSuccinctL2OutputOracle`
 
 The last step is to update your OP Stack configuration to use the new `OPSuccinctL2OutputOracle` contract managed by the `op-succinct` service.
 
