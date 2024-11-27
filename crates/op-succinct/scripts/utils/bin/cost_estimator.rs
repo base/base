@@ -24,7 +24,6 @@ use std::{
 
 pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
-const _: Duration = Duration::from_secs(14 * 24 * 60 * 60);
 const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
 
 /// The arguments for the host executable.
