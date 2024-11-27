@@ -9,7 +9,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, MULTI_BLOCK_ELF};
 use sp1_sdk::{utils, ProverClient};
-use std::{fs, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -36,7 +36,7 @@ struct Args {
 
     /// Env file.
     #[arg(long, default_value = ".env")]
-    env_file: Option<String>,
+    env_file: PathBuf,
 }
 
 /// Execute the OP Succinct program for multiple blocks.
@@ -44,9 +44,7 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    if let Some(env_file) = args.env_file {
-        dotenv::from_filename(env_file).ok();
-    }
+    dotenv::from_path(&args.env_file)?;
     utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
