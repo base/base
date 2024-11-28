@@ -91,7 +91,6 @@ fn main() {
         //                   DERIVATION & EXECUTION                   //
         ////////////////////////////////////////////////////////////////
 
-        println!("cycle-tracker-start: derivation-instantiation");
         let cursor = new_pipeline_cursor(
             oracle.clone(),
             &boot,
@@ -117,8 +116,6 @@ fn main() {
             zkvm_handle_register,
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
-
-        println!("cycle-tracker-end: derivation-instantiation");
 
         println!("cycle-tracker-start: produce-output");
         let (number, output_root) = driver

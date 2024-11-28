@@ -109,7 +109,7 @@ impl WitnessGenExecutor {
     /// Wait for all ongoing witness generation processes to complete. If any process fails,
     /// kill all ongoing processes and return an error.
     pub async fn flush(&mut self) -> Result<()> {
-        // TODO: If any process fails or a Ctrl+C is received, kill all ongoing processes. This is
+        // FIXME: If any process fails or a Ctrl+C is received, kill all ongoing processes. This is
         // quite involved, as the behavior differs between Unix and Windows. When using
         // Ctrl+C handler, you also need to be careful to restore the original behavior
         // after your custom behavior, otherwise you won't be able to terminate "normally".

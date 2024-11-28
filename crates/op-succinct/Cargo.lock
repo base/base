@@ -1599,8 +1599,10 @@ checksum = "a21f936df1771bf62b77f047b726c4625ff2e8aa607c01ec06e5a05bd8463401"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
 
@@ -4505,6 +4507,7 @@ name = "op-succinct-build-utils"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",
+ "chrono",
  "sp1-build",
 ]
 
@@ -4523,6 +4526,7 @@ dependencies = [
  "kona-client",
  "kona-common",
  "kona-derive",
+ "kona-driver",
  "kona-executor",
  "kona-mpt",
  "kona-preimage",
@@ -4540,6 +4544,7 @@ dependencies = [
  "sha2",
  "spin 0.9.8",
  "thiserror 2.0.3",
+ "tracing",
 ]
 
 [[package]]
@@ -5579,14 +5584,20 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
+ "alloy-primitives 0.8.12",
+ "alloy-rlp",
  "anyhow",
  "cfg-if",
  "kona-derive",
+ "kona-driver",
  "kona-executor",
+ "kona-preimage",
  "kona-proof",
  "log",
  "op-alloy-consensus",
  "op-alloy-genesis",
+ "op-alloy-protocol",
+ "op-alloy-rpc-types-engine",
  "op-succinct-client-utils",
  "serde_json",
  "sp1-zkvm",
