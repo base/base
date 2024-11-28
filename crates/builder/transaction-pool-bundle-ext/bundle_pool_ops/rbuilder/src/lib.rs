@@ -6,6 +6,8 @@
 use core::fmt;
 use std::{fmt::Formatter, path::Path, sync::Arc, time::Duration};
 
+use alloy_primitives::U256;
+use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use derive_more::From;
 use rbuilder::live_builder::cli::LiveBuilderConfig;
 use rbuilder::{
@@ -27,9 +29,8 @@ use rbuilder::{
     telemetry,
 };
 use reth_db_api::Database;
-use reth_primitives::{TransactionSigned, U256};
-use reth_provider::{DatabaseProviderFactory, HeaderProvider, StateProviderFactory};
-use reth_rpc_types::beacon::events::PayloadAttributesEvent;
+use reth_primitives::TransactionSigned;
+use reth_provider::{BlockReader, DatabaseProviderFactory, HeaderProvider, StateProviderFactory};
 use tokio::{
     sync::{
         mpsc::{self, error::SendError},
@@ -94,7 +95,11 @@ impl BundlePoolOps {
     ) -> Result<Self, Error>
     where
         DB: Database + Clone + 'static,
-        P: DatabaseProviderFactory<DB> + StateProviderFactory + HeaderProvider + Clone + 'static,
+        P: DatabaseProviderFactory<DB = DB, Provider: BlockReader>
+            + StateProviderFactory
+            + HeaderProvider
+            + Clone
+            + 'static,
     {
         // Create the payload source to trigger new block building
         let cancellation_token = CancellationToken::new();
@@ -126,7 +131,6 @@ impl BundlePoolOps {
         let builders = create_builders(
             vec![builder_strategy],
             config.base_config.live_root_hash_config().unwrap(),
-            config.base_config.root_hash_task_pool().unwrap(),
             config.base_config.sbundle_mergeabe_signers(),
         );
 

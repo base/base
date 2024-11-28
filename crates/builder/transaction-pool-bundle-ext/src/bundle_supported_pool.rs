@@ -1,16 +1,18 @@
 //! Houses [`BundleSupportedPool`].
 
+use alloy_eips::eip4844::{BlobAndProofV1, BlobTransactionSidecar};
+use alloy_primitives::{Address, TxHash, B256, U256};
+use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use reth::providers::ChangedAccount;
 use reth_eth_wire_types::HandleMempoolData;
-use reth_primitives::{Address, PooledTransactionsElement, TxHash, U256};
-use reth_rpc_types::{beacon::events::PayloadAttributesEvent, BlobTransactionSidecar};
+use reth_primitives::PooledTransactionsElement;
 use reth_transaction_pool::{
     AllPoolTransactions, AllTransactionsEvents, BestTransactions, BestTransactionsAttributes,
-    BlobStore, BlobStoreError, BlockInfo, CanonicalStateUpdate, GetPooledTransactionLimit,
-    NewBlobSidecar, NewTransactionEvent, Pool, PoolConfig, PoolResult, PoolSize,
-    PropagatedTransactions, TransactionEvents, TransactionListenerKind, TransactionOrdering,
-    TransactionOrigin, TransactionPool, TransactionPoolExt as TransactionPoolBlockInfoExt,
-    TransactionValidator, ValidPoolTransaction,
+    BlobStore, BlobStoreError, BlockInfo, CanonicalStateUpdate, EthPoolTransaction,
+    GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolConfig, PoolResult,
+    PoolSize, PropagatedTransactions, TransactionEvents, TransactionListenerKind,
+    TransactionOrdering, TransactionOrigin, TransactionPool,
+    TransactionPoolExt as TransactionPoolBlockInfoExt, TransactionValidator, ValidPoolTransaction,
 };
 use std::{collections::HashSet, future::Future, sync::Arc};
 use tokio::sync::mpsc::Receiver;
@@ -110,7 +112,7 @@ impl<V, T: TransactionOrdering, S, B> Clone for BundleSupportedPool<V, T, S, B> 
 /// TODO: Use a crate like `delegate!` or `ambassador` to automate this.
 impl<V, T, S, B> TransactionPool for BundleSupportedPool<V, T, S, B>
 where
-    V: TransactionValidator,
+    V: TransactionValidator<Transaction: EthPoolTransaction>,
     T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
     S: BlobStore,
     B: BundlePoolOperations,
@@ -219,14 +221,6 @@ where
         self.tx_pool.best_transactions()
     }
 
-    #[allow(deprecated)]
-    fn best_transactions_with_base_fee(
-        &self,
-        base_fee: u64,
-    ) -> Box<dyn BestTransactions<Item = Arc<ValidPoolTransaction<Self::Transaction>>>> {
-        self.tx_pool.best_transactions_with_base_fee(base_fee)
-    }
-
     fn best_transactions_with_attributes(
         &self,
         best_transactions_attributes: BestTransactionsAttributes,
@@ -300,22 +294,85 @@ where
         self.tx_pool.unique_senders()
     }
 
-    fn get_blob(&self, tx_hash: TxHash) -> Result<Option<BlobTransactionSidecar>, BlobStoreError> {
+    fn get_blob(
+        &self,
+        tx_hash: TxHash,
+    ) -> Result<Option<Arc<BlobTransactionSidecar>>, BlobStoreError> {
         self.tx_pool.get_blob(tx_hash)
     }
 
     fn get_all_blobs(
         &self,
         tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<(TxHash, BlobTransactionSidecar)>, BlobStoreError> {
+    ) -> Result<Vec<(TxHash, Arc<BlobTransactionSidecar>)>, BlobStoreError> {
         self.tx_pool.get_all_blobs(tx_hashes)
     }
 
     fn get_all_blobs_exact(
         &self,
         tx_hashes: Vec<TxHash>,
-    ) -> Result<Vec<BlobTransactionSidecar>, BlobStoreError> {
+    ) -> Result<Vec<Arc<BlobTransactionSidecar>>, BlobStoreError> {
         self.tx_pool.get_all_blobs_exact(tx_hashes)
+    }
+
+    fn remove_transactions_and_descendants(
+        &self,
+        hashes: Vec<TxHash>,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool.remove_transactions_and_descendants(hashes)
+    }
+
+    fn remove_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool.remove_transactions_by_sender(sender)
+    }
+
+    fn get_pending_transactions_with_predicate(
+        &self,
+        predicate: impl FnMut(&ValidPoolTransaction<Self::Transaction>) -> bool,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool
+            .get_pending_transactions_with_predicate(predicate)
+    }
+
+    fn get_pending_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool.get_pending_transactions_by_sender(sender)
+    }
+
+    fn get_queued_transactions_by_sender(
+        &self,
+        sender: Address,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool.get_queued_transactions_by_sender(sender)
+    }
+
+    fn get_highest_transaction_by_sender(
+        &self,
+        sender: Address,
+    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool.get_highest_transaction_by_sender(sender)
+    }
+
+    fn get_highest_consecutive_transaction_by_sender(
+        &self,
+        sender: Address,
+        on_chain_nonce: u64,
+    ) -> Option<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        self.tx_pool
+            .get_highest_consecutive_transaction_by_sender(sender, on_chain_nonce)
+    }
+
+    fn get_blobs_for_versioned_hashes(
+        &self,
+        versioned_hashes: &[B256],
+    ) -> Result<Vec<Option<BlobAndProofV1>>, BlobStoreError> {
+        self.tx_pool
+            .get_blobs_for_versioned_hashes(versioned_hashes)
     }
 }
 
@@ -369,7 +426,7 @@ where
 // [`BundlePoolOperations`] implemented, it can implement [`TransactionPoolBundleExt`].
 impl<V, T, S, B> TransactionPoolBundleExt for BundleSupportedPool<V, T, S, B>
 where
-    V: TransactionValidator,
+    V: TransactionValidator<Transaction: EthPoolTransaction>,
     T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
     S: BlobStore,
     B: BundlePoolOperations,
@@ -379,7 +436,7 @@ where
 /// [`TransactionPool`] often requires implementing the block info extension.
 impl<V, T, S, B> TransactionPoolBlockInfoExt for BundleSupportedPool<V, T, S, B>
 where
-    V: TransactionValidator,
+    V: TransactionValidator<Transaction: EthPoolTransaction>,
     T: TransactionOrdering<Transaction = <V as TransactionValidator>::Transaction>,
     S: BlobStore,
     B: BundlePoolOperations,

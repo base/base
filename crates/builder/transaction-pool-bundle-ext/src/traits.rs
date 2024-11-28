@@ -1,7 +1,7 @@
 //! [`TransactionPoolBundleExt`] implementation generic over any bundle and network type.
 
-use reth_primitives::U256;
-use reth_rpc_types::beacon::events::PayloadAttributesEvent;
+use alloy_primitives::U256;
+use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use reth_transaction_pool::TransactionPool;
 use std::{fmt::Debug, future::Future};
 

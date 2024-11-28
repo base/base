@@ -5,37 +5,46 @@
 
 use rbuilder_bundle_pool_operations::BundlePoolOps;
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
-use reth_chainspec::ChainSpec;
 use reth_evm::ConfigureEvm;
-use reth_evm_optimism::OptimismEvmConfig;
+use reth_node_api::NodePrimitives;
 use reth_node_builder::{
     components::{ComponentsBuilder, PayloadServiceBuilder, PoolBuilder},
     node::{FullNodeTypes, NodeTypes},
-    BuilderContext, Node, PayloadBuilderConfig,
+    BuilderContext, Node, NodeAdapter, NodeComponentsBuilder, NodeTypesWithEngine,
+    PayloadBuilderConfig,
 };
-use reth_node_optimism::{
-    node::{
-        OptimismAddOns, OptimismConsensusBuilder, OptimismExecutorBuilder, OptimismNetworkBuilder,
-    },
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::OpEvmConfig;
+use reth_optimism_node::{
+    node::{OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpPrimitives, OptimismAddOns},
     txpool::OpTransactionValidator,
-    OptimismEngineTypes,
+    OpEngineTypes,
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
-use reth_primitives::TransactionSigned;
-use reth_provider::CanonStateSubscriptions;
+use reth_primitives::{Header, TransactionSigned};
+use reth_provider::{BlockReader, CanonStateSubscriptions, DatabaseProviderFactory};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore, CoinbaseTipOrdering, EthPooledTransaction,
     TransactionValidationTaskExecutor,
 };
-use std::path::PathBuf;
+use reth_trie_db::MerklePatriciaTrie;
+use std::{path::PathBuf, sync::Arc};
 use transaction_pool_bundle_ext::{
     BundlePoolOperations, BundleSupportedPool, TransactionPoolBundleExt,
 };
 
 use crate::args::OpRbuilderArgs;
 
-/// Type configuration for an OP rbuilder node.
+/// Optimism primitive types.
+#[derive(Debug)]
+pub struct OpRbuilderPrimitives;
+
+impl NodePrimitives for OpRbuilderPrimitives {
+    type Block = reth_primitives::Block;
+}
+
+/// Type configuration for an Optimism rbuilder.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct OpRbuilderNode {
@@ -56,12 +65,15 @@ impl OpRbuilderNode {
         Node,
         OpRbuilderPoolBuilder,
         OpRbuilderPayloadServiceBuilder,
-        OptimismNetworkBuilder,
-        OptimismExecutorBuilder,
-        OptimismConsensusBuilder,
+        OpNetworkBuilder,
+        OpExecutorBuilder,
+        OpConsensusBuilder,
     >
     where
-        Node: FullNodeTypes<Engine = OptimismEngineTypes, ChainSpec = ChainSpec>,
+        Node: FullNodeTypes<
+            Types: NodeTypesWithEngine<Engine = OpEngineTypes, ChainSpec = OpChainSpec>,
+        >,
+        <<Node as FullNodeTypes>::Provider as DatabaseProviderFactory>::Provider: BlockReader,
     {
         let OpRbuilderArgs {
             disable_txpool_gossip,
@@ -73,44 +85,52 @@ impl OpRbuilderNode {
         ComponentsBuilder::default()
             .node_types::<Node>()
             .pool(OpRbuilderPoolBuilder::new(rbuilder_config_path))
-            .payload(OpRbuilderPayloadServiceBuilder::new(
-                compute_pending_block,
-                OptimismEvmConfig::default(),
-            ))
-            .network(OptimismNetworkBuilder {
+            .payload(OpRbuilderPayloadServiceBuilder::new(compute_pending_block))
+            .network(OpNetworkBuilder {
                 disable_txpool_gossip,
                 disable_discovery_v4: !discovery_v4,
             })
-            .executor(OptimismExecutorBuilder::default())
-            .consensus(OptimismConsensusBuilder::default())
+            .executor(OpExecutorBuilder::default())
+            .consensus(OpConsensusBuilder::default())
     }
 }
 
 impl<N> Node<N> for OpRbuilderNode
 where
-    N: FullNodeTypes<Engine = OptimismEngineTypes, ChainSpec = ChainSpec>,
+    N: FullNodeTypes<Types: NodeTypesWithEngine<Engine = OpEngineTypes, ChainSpec = OpChainSpec>>,
+    <<N as FullNodeTypes>::Provider as DatabaseProviderFactory>::Provider: BlockReader,
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
         OpRbuilderPoolBuilder,
         OpRbuilderPayloadServiceBuilder,
-        OptimismNetworkBuilder,
-        OptimismExecutorBuilder,
-        OptimismConsensusBuilder,
+        OpNetworkBuilder,
+        OpExecutorBuilder,
+        OpConsensusBuilder,
     >;
 
-    type AddOns = OptimismAddOns;
+    type AddOns = OptimismAddOns<
+        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
+    >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         let Self { args } = self;
         Self::components(args.clone())
     }
+
+    fn add_ons(&self) -> Self::AddOns {
+        OptimismAddOns::new(self.args.sequencer_http.clone())
+    }
 }
 
 impl NodeTypes for OpRbuilderNode {
-    type Primitives = ();
-    type Engine = OptimismEngineTypes;
-    type ChainSpec = ChainSpec;
+    type Primitives = OpPrimitives;
+    type ChainSpec = OpChainSpec;
+    type StateCommitment = MerklePatriciaTrie;
+}
+
+impl NodeTypesWithEngine for OpRbuilderNode {
+    type Engine = OpEngineTypes;
 }
 
 /// An extended optimism transaction pool with bundle support.
@@ -138,7 +158,8 @@ pub type OpRbuilderTransactionPool<Client, S> = BundleSupportedPool<
 
 impl<Node> PoolBuilder<Node> for OpRbuilderPoolBuilder
 where
-    Node: FullNodeTypes,
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = OpChainSpec>>,
+    <<Node as FullNodeTypes>::Provider as DatabaseProviderFactory>::Provider: BlockReader,
 {
     type Pool = OpRbuilderTransactionPool<Node::Provider, DiskFileBlobStore>;
 
@@ -146,21 +167,23 @@ where
         let data_dir = ctx.config().datadir();
         let blob_store = DiskFileBlobStore::open(data_dir.blobstore(), Default::default())?;
 
-        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.chain_spec())
-            .with_head_timestamp(ctx.head().timestamp)
-            .kzg_settings(ctx.kzg_settings()?)
-            .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
-            .build_with_tasks(
-                ctx.provider().clone(),
-                ctx.task_executor().clone(),
-                blob_store.clone(),
-            )
-            .map(|validator| {
-                OpTransactionValidator::new(validator)
-                    // In --dev mode we can't require gas fees because we're unable to decode the L1
-                    // block info
-                    .require_l1_data_gas_fee(!ctx.config().dev.dev)
-            });
+        let validator = TransactionValidationTaskExecutor::eth_builder(Arc::new(
+            ctx.chain_spec().inner.clone(),
+        ))
+        .with_head_timestamp(ctx.head().timestamp)
+        .kzg_settings(ctx.kzg_settings()?)
+        .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
+        .build_with_tasks(
+            ctx.provider().clone(),
+            ctx.task_executor().clone(),
+            blob_store.clone(),
+        )
+        .map(|validator| {
+            OpTransactionValidator::new(validator)
+                // In --dev mode we can't require gas fees because we're unable to decode the L1
+                // block info
+                .require_l1_data_gas_fee(!ctx.config().dev.dev)
+        });
 
         let bundle_ops = BundlePoolOps::new(ctx.provider().clone(), self.rbuilder_config_path)
             .await
@@ -214,9 +237,9 @@ where
     }
 }
 
-/// A op-rbuilder payload service builder
+/// An OP rbuilder payload service builder.
 #[derive(Debug, Default, Clone)]
-pub struct OpRbuilderPayloadServiceBuilder<EVM = OptimismEvmConfig> {
+pub struct OpRbuilderPayloadServiceBuilder {
     /// By default the pending block equals the latest block
     /// to save resources and not leak txs from the tx-pool,
     /// this flag enables computing of the pending block
@@ -226,38 +249,38 @@ pub struct OpRbuilderPayloadServiceBuilder<EVM = OptimismEvmConfig> {
     /// will use the payload attributes from the latest block. Note
     /// that this flag is not yet functional.
     pub compute_pending_block: bool,
-    /// The EVM configuration to use for the payload builder.
-    pub evm_config: EVM,
 }
 
-impl<EVM> OpRbuilderPayloadServiceBuilder<EVM> {
-    /// Create a new instance with the given `compute_pending_block` flag and evm config.
-    pub const fn new(compute_pending_block: bool, evm_config: EVM) -> Self {
+impl OpRbuilderPayloadServiceBuilder {
+    /// Create a new instance with the given `compute_pending_block` flag.
+    pub const fn new(compute_pending_block: bool) -> Self {
         Self {
             compute_pending_block,
-            evm_config,
         }
     }
-}
 
-impl<Node, EVM, Pool> PayloadServiceBuilder<Node, Pool> for OpRbuilderPayloadServiceBuilder<EVM>
-where
-    Node: FullNodeTypes<Engine = OptimismEngineTypes, ChainSpec = ChainSpec>,
-    Pool: TransactionPoolBundleExt
-        + BundlePoolOperations<Transaction = TransactionSigned>
-        + Unpin
-        + 'static,
-    EVM: ConfigureEvm,
-{
-    async fn spawn_payload_service(
+    /// A helper method to initialize [`PayloadBuilderService`] with the given EVM config.
+    pub fn spawn<Node, Evm, Pool>(
         self,
+        evm_config: Evm,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-    ) -> eyre::Result<PayloadBuilderHandle<Node::Engine>> {
-        let payload_builder = op_rbuilder_payload_builder::OpRbuilderPayloadBuilder::new(
-            OptimismEvmConfig::default(),
-        )
-        .set_compute_pending_block(self.compute_pending_block);
+    ) -> eyre::Result<PayloadBuilderHandle<OpEngineTypes>>
+    where
+        Node: FullNodeTypes<
+            Types: NodeTypesWithEngine<Engine = OpEngineTypes, ChainSpec = OpChainSpec>,
+        >,
+        <<Node as FullNodeTypes>::Provider as DatabaseProviderFactory>::Provider: BlockReader,
+        Pool: TransactionPoolBundleExt
+            + BundlePoolOperations<Transaction = TransactionSigned>
+            + Unpin
+            + 'static,
+
+        Evm: ConfigureEvm<Header = Header>,
+    {
+        let payload_builder =
+            op_rbuilder_payload_builder::OpRbuilderPayloadBuilder::new(evm_config)
+                .set_compute_pending_block(self.compute_pending_block);
         let conf = ctx.payload_builder_config();
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()
@@ -272,7 +295,6 @@ where
             pool,
             ctx.task_executor().clone(),
             payload_job_config,
-            ctx.chain_spec(),
             payload_builder,
         );
         let (payload_service, payload_builder) =
@@ -282,5 +304,24 @@ where
             .spawn_critical("payload builder service", Box::pin(payload_service));
 
         Ok(payload_builder)
+    }
+}
+
+impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for OpRbuilderPayloadServiceBuilder
+where
+    Node:
+        FullNodeTypes<Types: NodeTypesWithEngine<Engine = OpEngineTypes, ChainSpec = OpChainSpec>>,
+    <<Node as FullNodeTypes>::Provider as DatabaseProviderFactory>::Provider: BlockReader,
+    Pool: TransactionPoolBundleExt
+        + BundlePoolOperations<Transaction = TransactionSigned>
+        + Unpin
+        + 'static,
+{
+    async fn spawn_payload_service(
+        self,
+        ctx: &BuilderContext<Node>,
+        pool: Pool,
+    ) -> eyre::Result<PayloadBuilderHandle<OpEngineTypes>> {
+        self.spawn(OpEvmConfig::new(ctx.chain_spec()), ctx, pool)
     }
 }
