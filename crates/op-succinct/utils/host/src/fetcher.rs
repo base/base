@@ -39,7 +39,7 @@ use crate::{
 #[derive(Clone)]
 /// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
 /// given block number. It is used to generate the boot info for the native host program.
-/// TODO: Add retries for all requests (3 retries).
+/// FIXME: Add retries for all requests (3 retries).
 pub struct OPSuccinctDataFetcher {
     pub rpc_config: RPCConfig,
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
@@ -663,7 +663,12 @@ impl OPSuccinctDataFetcher {
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
-        let (l1_head_hash, _l1_head_number) = self.get_l1_head(l2_end_block).await?;
+        let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
+
+        // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block
+        let l1_head_number = l1_head_number + 7;
+        let header = self.get_l1_header(l1_head_number.into()).await?;
+        let l1_head_hash = header.hash_slow();
 
         // Get the workspace root, which is where the data directory is.
         let metadata = MetadataCommand::new().exec().unwrap();
@@ -869,7 +874,7 @@ impl OPSuccinctDataFetcher {
         Ok(L2BlockInfo::from_block_and_genesis(&block, &genesis)?)
     }
 
-    /// Get the L2 safe head corresponding to the L1 block number using optimism_safeHeadAtBlock.
+    /// Get the L2 safe head corresponding to the L1 block number using optimism_safeHeadAtL1Block.
     pub async fn get_l2_safe_head_from_l1_block_number(&self, l1_block_number: u64) -> Result<u64> {
         let l1_block_number_hex = format!("0x{:x}", l1_block_number);
         let result: SafeHeadResponse = self
@@ -896,7 +901,6 @@ impl OPSuccinctDataFetcher {
             .get_l2_safe_head_from_l1_block_number(l2_end_block_info.l1_origin.number)
             .await?;
 
-        // TODO: This code will need to be replicated in the proposer to fetch the block range.
         // If blocks are in same batch or if derivable end is past ideal end, use ideal end block, as it will just pull in one batch.
         if l2_derivable_block_end < l2_start_block || l2_derivable_block_end > ideal_l2_block_end {
             Ok(ideal_l2_block_end)

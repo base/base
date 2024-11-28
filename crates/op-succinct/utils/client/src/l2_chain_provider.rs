@@ -1,23 +1,30 @@
 //! Contains the concrete implementation of the [L2ChainProvider] trait for the client program.
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use alloy_consensus::{BlockBody, Header};
+use alloy_consensus::{BlockBody, Header, Sealed};
 use alloy_eips::{eip2718::Decodable2718, eip4895::Withdrawals};
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rlp::Decodable;
 use anyhow::Result;
 use async_trait::async_trait;
+use core::fmt::Debug;
+use kona_derive::prelude::ChainProvider;
 use kona_derive::traits::L2ChainProvider;
+use kona_driver::{PipelineCursor, TipCursor};
 use kona_executor::TrieDBProvider;
 use kona_mpt::{OrderedListWalker, TrieHinter, TrieNode, TrieProvider};
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
-use kona_proof::{errors::OracleProviderError, BootInfo, HintType};
+use kona_proof::{
+    errors::OracleProviderError, l1::OracleL1ChainProvider, BootInfo, FlushableCache, HintType,
+};
 use op_alloy_consensus::{OpBlock, OpTxEnvelope};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
 use op_alloy_protocol::{to_system_config, BatchValidationProvider, L2BlockInfo};
 use std::{collections::HashMap, sync::Mutex};
 
 use crate::block_on;
+
+// FIXME: The correct way to implement this is as a wrapper around the [OracleL2ChainProvider] struct from kona.
 
 /// The oracle-backed L2 chain provider for the client program.
 #[derive(Debug, Clone)]
@@ -56,7 +63,7 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
     pub fn update_cache(
         &mut self,
         header: &Header,
-        block: OpBlock,
+        block: &OpBlock,
         config: &RollupConfig,
     ) -> Result<L2BlockInfo> {
         self.header_by_number
@@ -70,9 +77,9 @@ impl<T: CommsClient> MultiblockOracleL2ChainProvider<T> {
         self.system_config_by_number
             .lock()
             .unwrap()
-            .insert(header.number, to_system_config(&block, config)?);
+            .insert(header.number, to_system_config(block, config)?);
 
-        let l2_block_info = L2BlockInfo::from_block_and_genesis(&block, &config.genesis)?;
+        let l2_block_info = L2BlockInfo::from_block_and_genesis(block, &config.genesis)?;
         self.l2_block_info_by_number
             .lock()
             .unwrap()
@@ -322,4 +329,62 @@ impl<T: CommsClient> TrieHinter for MultiblockOracleL2ChainProvider<T> {
                 .await?)
         })
     }
+}
+
+/// Constructs a [`PipelineCursor`] from the caching oracle, boot info, and providers.
+/// Sourced from kona/crates/proof/src/sync.rs with a slight modification to use the MultiblockOracleL2ChainProvider's caching system.
+/// FIXME: Modify upstream new_pipeline_cursor to use the generic ChainProvider trait with a mutable reference.
+pub async fn new_pipeline_cursor<O>(
+    caching_oracle: Arc<O>,
+    boot_info: &BootInfo,
+    chain_provider: &mut OracleL1ChainProvider<O>,
+    l2_chain_provider: &mut MultiblockOracleL2ChainProvider<O>,
+) -> Result<PipelineCursor, OracleProviderError>
+where
+    O: CommsClient + FlushableCache + FlushableCache + Send + Sync + Debug,
+{
+    // Find the initial safe head, based off of the starting L2 block number in the boot info.
+    caching_oracle
+        .write(&HintType::StartingL2Output.encode_with(&[boot_info.agreed_l2_output_root.as_ref()]))
+        .await
+        .map_err(OracleProviderError::Preimage)?;
+    let mut output_preimage = [0u8; 128];
+    caching_oracle
+        .get_exact(
+            PreimageKey::new(*boot_info.agreed_l2_output_root, PreimageKeyType::Keccak256),
+            &mut output_preimage,
+        )
+        .await
+        .map_err(OracleProviderError::Preimage)?;
+
+    let safe_hash = output_preimage[96..128]
+        .try_into()
+        .map_err(OracleProviderError::SliceConversion)?;
+    let safe_header = l2_chain_provider.header_by_hash(safe_hash)?;
+    let safe_head_info = l2_chain_provider
+        .l2_block_info_by_number(safe_header.number)
+        .await?;
+    let l1_origin = chain_provider
+        .block_info_by_number(safe_head_info.l1_origin.number)
+        .await?;
+
+    // Walk back the starting L1 block by `channel_timeout` to ensure that the full channel is
+    // captured.
+    let channel_timeout = boot_info
+        .rollup_config
+        .channel_timeout(safe_head_info.block_info.timestamp);
+    let mut l1_origin_number = l1_origin.number.saturating_sub(channel_timeout);
+    if l1_origin_number < boot_info.rollup_config.genesis.l1.number {
+        l1_origin_number = boot_info.rollup_config.genesis.l1.number;
+    }
+    let origin = chain_provider
+        .block_info_by_number(l1_origin_number)
+        .await?;
+
+    // Construct the cursor.
+    let safe_header = Sealed::new_unchecked(safe_header, safe_hash);
+    let mut cursor = PipelineCursor::new(channel_timeout, origin);
+    let tip = TipCursor::new(safe_head_info, safe_header, boot_info.agreed_l2_output_root);
+    cursor.advance(origin, tip);
+    Ok(cursor)
 }

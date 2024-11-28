@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use chrono::Local;
 use sp1_build::{build_program_with_args, BuildArgs};
 
 /// Build a native program.
@@ -24,8 +25,9 @@ fn build_native_program(program: &str) {
     }
 
     println!(
-        "cargo:warning={} built with release-client-lto profile",
-        program
+        "cargo:warning={} built with release-client-lto profile at {}",
+        program,
+        current_datetime()
     );
 }
 
@@ -52,7 +54,15 @@ fn build_native_host_runner() {
         panic!("Failed to build native_host_runner");
     }
 
-    println!("cargo:warning=native_host_runner built with release profile",);
+    println!(
+        "cargo:warning=native_host_runner built with release profile at {}",
+        current_datetime()
+    );
+}
+
+pub(crate) fn current_datetime() -> String {
+    let now = Local::now();
+    now.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 /// Build a program for the zkVM.

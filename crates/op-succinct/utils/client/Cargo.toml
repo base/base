@@ -33,12 +33,14 @@ kona-mpt.workspace = true
 kona-derive.workspace = true
 kona-proof.workspace = true
 kona-executor.workspace = true
+kona-driver.workspace = true
 
 # general
 serde.workspace = true
 rkyv.workspace = true
 sha2.workspace = true
 log.workspace = true
+tracing.workspace = true
 itertools.workspace = true
 spin.workspace = true
 
