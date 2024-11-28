@@ -24,27 +24,27 @@ use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 pub enum OpReceiptEnvelope<T = Log> {
     /// Receipt envelope with no type flag.
     #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
-    Legacy(ReceiptWithBloom<T>),
+    Legacy(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 1, containing a [EIP-2930] receipt.
     ///
     /// [EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
     #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
-    Eip2930(ReceiptWithBloom<T>),
+    Eip2930(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 2, containing a [EIP-1559] receipt.
     ///
     /// [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
     #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
-    Eip1559(ReceiptWithBloom<T>),
+    Eip1559(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 4, containing a [EIP-7702] receipt.
     ///
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     #[cfg_attr(feature = "serde", serde(rename = "0x4", alias = "0x04"))]
-    Eip7702(ReceiptWithBloom<T>),
+    Eip7702(ReceiptWithBloom<Receipt<T>>),
     /// Receipt envelope with type flag 126, containing a [deposit] receipt.
     ///
     /// [deposit]: https://specs.optimism.io/protocol/deposits.html
     #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
-    Deposit(OpDepositReceiptWithBloom<T>),
+    Deposit(ReceiptWithBloom<OpDepositReceipt<T>>),
 }
 
 impl OpReceiptEnvelope<Log> {
@@ -192,10 +192,12 @@ impl OpReceiptEnvelope {
     }
 }
 
-impl<T> TxReceipt<T> for OpReceiptEnvelope<T>
+impl<T> TxReceipt for OpReceiptEnvelope<T>
 where
     T: Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
 {
+    type Log = T;
+
     fn status_or_post_state(&self) -> Eip658Value {
         self.as_receipt().unwrap().status
     }
@@ -300,10 +302,10 @@ where
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
         match u.int_in_range(0..=4)? {
-            0 => Ok(Self::Legacy(ReceiptWithBloom::<T>::arbitrary(u)?)),
-            1 => Ok(Self::Eip2930(ReceiptWithBloom::<T>::arbitrary(u)?)),
-            2 => Ok(Self::Eip1559(ReceiptWithBloom::<T>::arbitrary(u)?)),
-            _ => Ok(Self::Deposit(OpDepositReceiptWithBloom::<T>::arbitrary(u)?)),
+            0 => Ok(Self::Legacy(ReceiptWithBloom::arbitrary(u)?)),
+            1 => Ok(Self::Eip2930(ReceiptWithBloom::arbitrary(u)?)),
+            2 => Ok(Self::Eip1559(ReceiptWithBloom::arbitrary(u)?)),
+            _ => Ok(Self::Deposit(OpDepositReceiptWithBloom::arbitrary(u)?)),
         }
     }
 }

@@ -230,6 +230,10 @@ impl Transaction for TxDeposit {
         None
     }
 
+    fn is_create(&self) -> bool {
+        self.to.is_create()
+    }
+
     fn nonce(&self) -> u64 {
         0u64
     }

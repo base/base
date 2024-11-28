@@ -193,8 +193,8 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
         /// consensus types.
         #[inline(always)]
         fn convert_standard_receipt(
-            receipt: ReceiptWithBloom<alloy_rpc_types_eth::Log>,
-        ) -> ReceiptWithBloom<alloy_primitives::Log> {
+            receipt: ReceiptWithBloom<Receipt<alloy_rpc_types_eth::Log>>,
+        ) -> ReceiptWithBloom<Receipt<alloy_primitives::Log>> {
             let ReceiptWithBloom { logs_bloom, receipt } = receipt;
 
             let consensus_logs = receipt.logs.into_iter().map(|log| log.inner).collect();

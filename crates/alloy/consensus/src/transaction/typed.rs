@@ -126,6 +126,16 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
+    fn is_create(&self) -> bool {
+        match self {
+            Self::Legacy(tx) => tx.is_create(),
+            Self::Eip2930(tx) => tx.is_create(),
+            Self::Eip1559(tx) => tx.is_create(),
+            Self::Eip7702(tx) => tx.is_create(),
+            Self::Deposit(tx) => tx.is_create(),
+        }
+    }
+
     fn nonce(&self) -> u64 {
         match self {
             Self::Legacy(tx) => tx.nonce(),
