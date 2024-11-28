@@ -21,12 +21,6 @@ const fn default_granite_channel_timeout() -> u64 {
     GRANITE_CHANNEL_TIMEOUT
 }
 
-/// Returns the rollup config for the given chain ID.
-#[deprecated(since = "0.6.7", note = "Use the `op-alloy-registry` crate instead")]
-pub const fn rollup_config_from_chain_id(_: u64) -> Result<RollupConfig, &'static str> {
-    Err("Use the `op-alloy-registry` crate instead")
-}
-
 /// The Rollup configuration.
 #[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -296,12 +290,6 @@ impl RollupConfig {
                 Err("Unrecognized scalar version")
             }
         }
-    }
-
-    /// Returns the [RollupConfig] for the given L2 chain ID.
-    #[deprecated(since = "0.6.7", note = "Use the `op-alloy-registry` crate instead")]
-    pub const fn from_l2_chain_id(_: u64) -> Option<Self> {
-        None
     }
 }
 

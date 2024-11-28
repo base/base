@@ -1,7 +1,6 @@
-//! Contains all hardforks represented in the [Hardfork] type.
+//! Contains all hardforks represented in the [crate::Hardfork] type.
 
-use crate::{Ecotone, Fjord, Hardfork};
-use alloc::vec::Vec;
+use crate::{Ecotone, Fjord};
 
 /// Optimism Hardforks
 ///
@@ -34,23 +33,13 @@ impl Hardforks {
 
     /// The fjord hardfork upgrade transactions.
     pub const FJORD: Fjord = Fjord;
-
-    /// Returns the ecotone hardfork upgrade transactions.
-    #[deprecated]
-    pub fn ecotone_txs() -> Vec<alloy_primitives::Bytes> {
-        Ecotone.txs().collect()
-    }
-
-    /// Returns the fjord hardfork upgrade transactions.
-    #[deprecated]
-    pub fn fjord_txs() -> Vec<alloy_primitives::Bytes> {
-        Fjord.txs().collect()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Hardfork;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_hardforks() {
