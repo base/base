@@ -10,6 +10,8 @@ homepage.workspace = true
 [dependencies]
 cfg-if.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
 
 # workspace (ethereum)
 alloy-consensus.workspace = true
@@ -28,3 +30,9 @@ op-succinct-client-utils.workspace = true
 # op-alloy
 op-alloy-genesis.workspace = true
 op-alloy-rpc-types-engine.workspace = true
+
+# `tracing-subscriber` feature dependencies
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+tracing-subscriber = ["dep:tracing-subscriber"]

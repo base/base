@@ -87,7 +87,7 @@ fn split_range(
             start: current_start,
             end: current_end,
         });
-        current_start = current_end + 1;
+        current_start = current_end;
     }
 
     ranges

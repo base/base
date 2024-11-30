@@ -2621,6 +2621,7 @@ name = "fault-proof"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "anyhow",
  "cfg-if",
  "kona-driver",
  "kona-executor",
@@ -2630,6 +2631,8 @@ dependencies = [
  "op-succinct-client-utils",
  "serde_json",
  "sp1-zkvm",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
