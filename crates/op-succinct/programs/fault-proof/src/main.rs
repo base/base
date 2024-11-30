@@ -37,6 +37,19 @@ cfg_if! {
 }
 
 fn main() {
+    #[cfg(feature = "tracing-subscriber")]
+    {
+        use anyhow::anyhow;
+        use tracing::Level;
+
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(Level::INFO)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)
+            .map_err(|e| anyhow!(e))
+            .unwrap();
+    }
+
     op_succinct_client_utils::block_on(async move {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
@@ -117,12 +130,12 @@ fn main() {
         );
         let mut driver = Driver::new(cursor, executor, pipeline);
 
-        println!("cycle-tracker-start: produce-output");
+        println!("cycle-tracker-start: advance-to-target");
         let (number, output_root) = driver
             .advance_to_target(&boot.rollup_config, boot.claimed_l2_block_number)
             .await
             .unwrap();
-        println!("cycle-tracker-end: produce-output");
+        println!("cycle-tracker-end: advance-to-target");
 
         ////////////////////////////////////////////////////////////////
         //                          EPILOGUE                          //

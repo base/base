@@ -665,8 +665,8 @@ impl OPSuccinctDataFetcher {
 
         let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
 
-        // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block
-        let l1_head_number = l1_head_number + 7;
+        // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
+        let l1_head_number = l1_head_number + 20;
         let header = self.get_l1_header(l1_head_number.into()).await?;
         let l1_head_hash = header.hash_slow();
 
