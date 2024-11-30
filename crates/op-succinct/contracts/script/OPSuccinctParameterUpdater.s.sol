@@ -56,6 +56,18 @@ contract OPSuccinctParameterUpdater is Script, Utils {
             }
         }
 
+        if (cfg.submissionInterval != oracleImpl.submissionInterval()) {
+            if (executeUpgradeCall) {
+                oracleImpl.updateSubmissionInterval(cfg.submissionInterval);
+            } else {
+                bytes memory submissionIntervalCalldata = abi.encodeWithSelector(
+                    OPSuccinctL2OutputOracle.updateSubmissionInterval.selector, cfg.submissionInterval
+                );
+                console.log("The calldata for upgrading the submissionInterval is:");
+                console.logBytes(submissionIntervalCalldata);
+            }
+        }
+
         vm.stopBroadcast();
     }
 }
