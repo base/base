@@ -274,11 +274,17 @@ async fn main() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-    const DEFAULT_RANGE: u64 = 5;
+    const COST_ESTIMATOR_ROLLING_RANGE: u64 = 100;
     let (l2_start_block, l2_end_block) = if args.rolling {
-        get_rolling_block_range(&data_fetcher, TWELVE_HOURS, DEFAULT_RANGE).await?
+        get_rolling_block_range(&data_fetcher, TWELVE_HOURS, COST_ESTIMATOR_ROLLING_RANGE).await?
     } else {
-        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?
+        get_validated_block_range(
+            &data_fetcher,
+            args.start,
+            args.end,
+            COST_ESTIMATOR_ROLLING_RANGE,
+        )
+        .await?
     };
 
     let split_ranges = split_range(l2_start_block, l2_end_block, l2_chain_id, args.batch_size);
