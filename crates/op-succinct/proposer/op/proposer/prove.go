@@ -50,17 +50,10 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 			continue
 		}
 
-		// TODO: Is this proof timeout logic necessary? Users should be able to count on the proof being fulfilled or unclaimed.
-		timeout := uint64(time.Now().Unix()) > req.ProofRequestTime+l.DriverSetup.Cfg.ProofTimeout
-		if timeout || proofStatus.Status == SP1ProofStatusUnclaimed {
+		if proofStatus.Status == SP1ProofStatusUnclaimed {
 			// Record the failure reason.
-			if timeout {
-				l.Log.Info("Proof timed out", "id", req.ProverRequestID)
-				l.Metr.RecordProveFailure("Timeout")
-			} else {
-				l.Log.Info("Proof unclaimed", "id", req.ProverRequestID, "reason", proofStatus.UnclaimDescription.String())
-				l.Metr.RecordProveFailure(proofStatus.UnclaimDescription.String())
-			}
+			l.Log.Info("Proof unclaimed", "id", req.ProverRequestID, "reason", proofStatus.UnclaimDescription.String())
+			l.Metr.RecordProveFailure(proofStatus.UnclaimDescription.String())
 
 			err = l.RetryRequest(req, proofStatus)
 			if err != nil {
