@@ -94,6 +94,7 @@ var (
 	ProofTimeoutFlag = &cli.Uint64Flag{
 		Name:    "proof-timeout",
 		Usage:   "Maximum time in seconds to spend generating a proof before giving up",
+		// If a proof takes more than 4 hours, assume the cluster failed to set it to failed state.
 		Value:   14400,
 		EnvVars: prefixEnvVars("MAX_PROOF_TIME"),
 	}
