@@ -24,7 +24,7 @@ Docker images are not built for releases, but we support a `docker compose` setu
 2. Follow the instructions [here](./l2-output-oracle.md#upgrading-opsuccinctl2outputoracle) to upgrade the `OPSuccinctL2OutputOracle` contract.
 
 
-Note: As of release `beta-v0.2.0`, the `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` are upgradeable without re-initializing the contract.
+Note: As of release `beta-v0.3.0`, the `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` are upgradeable without re-initializing the contract.
 
 ### Update Contract Parameters
 
