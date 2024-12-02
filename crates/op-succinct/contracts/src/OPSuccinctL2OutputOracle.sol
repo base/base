@@ -158,8 +158,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     error L1BlockHashNotCheckpointed();
 
     /// @notice Semantic version.
-    /// @custom:semver beta-v0.2.0
-    string public constant version = "beta-v0.2.0";
+    /// @custom:semver beta-v0.4.0
+    string public constant version = "beta-v0.4.0";
 
     ////////////////////////////////////////////////////////////
     //                        Modifiers                       //
