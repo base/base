@@ -439,6 +439,11 @@ The Delta upgrade introduced an additional batch type, [span batches][span-batch
 
 Unknown versions make the batch invalid (it must be ignored by the rollup node), as do malformed contents.
 
+> **Note** if the batch version and contents can be RLP decoded correctly but extra content exists beyond the batch,
+> the additional data may be ignored during parsing. Data _between_ RLP encoded batches may not be ignored
+> (as they are seen as malformed batches), but if a batch can be fully described by the RLP decoding,
+> extra content does not invalidate the decoded batch.
+
 The `epoch_number` and the `timestamp` must also respect the constraints listed in the [Batch Queue][batch-queue]
 section, otherwise the batch is considered invalid and will be ignored.
 
