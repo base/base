@@ -9,6 +9,9 @@
 
 extern crate alloc;
 
+mod versions;
+pub use versions::ForkchoiceUpdateVersion;
+
 mod attributes;
 pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
 

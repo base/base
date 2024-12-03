@@ -18,6 +18,7 @@ workspace = true
 # Workspace
 op-alloy-consensus.workspace = true
 op-alloy-protocol.workspace = true
+op-alloy-genesis.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
