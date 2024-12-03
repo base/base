@@ -43,6 +43,7 @@ pub const OP_SEPOLIA_CONFIG: RollupConfig = RollupConfig {
     fjord_time: Some(1716998400),
     granite_time: Some(1723478400),
     holocene_time: Some(1732633200),
+    isthmus_time: None,
     batch_inbox_address: address!("ff00000000000000000000000000000011155420"),
     deposit_contract_address: address!("16fc5058f25648194471939df75cf27a2fdc48bc"),
     l1_system_config_address: address!("034edd2a225f7f429a63e0f1d2084b9e0a93b538"),

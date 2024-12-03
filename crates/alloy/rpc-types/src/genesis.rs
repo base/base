@@ -50,6 +50,8 @@ pub struct OpGenesisInfo {
     pub granite_time: Option<u64>,
     /// holocene hardfork timestamp
     pub holocene_time: Option<u64>,
+    /// isthmus hardfork timestamp
+    pub isthmus_time: Option<u64>,
 }
 
 impl OpGenesisInfo {
@@ -127,6 +129,7 @@ mod tests {
                 fjord_time: None,
                 granite_time: None,
                 holocene_time: None,
+                isthmus_time: None,
             }
         );
     }
@@ -185,6 +188,7 @@ mod tests {
                     fjord_time: None,
                     granite_time: None,
                     holocene_time: None,
+                    isthmus_time: None,
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -207,6 +211,7 @@ mod tests {
                     fjord_time: None,
                     granite_time: None,
                     holocene_time: None,
+                    isthmus_time: None,
                 }),
                 base_fee_info: Some(OpBaseFeeInfo {
                     eip1559_elasticity: None,
@@ -245,6 +250,7 @@ mod tests {
                     fjord_time: Some(0),
                     granite_time: Some(0),
                     holocene_time: Some(0),
+                    isthmus_time: None,
                 }),
                 base_fee_info: None,
             }

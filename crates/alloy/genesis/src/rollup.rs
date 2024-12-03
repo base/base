@@ -91,6 +91,11 @@ pub struct RollupConfig {
     /// otherwise.
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     pub holocene_time: Option<u64>,
+    /// `isthmus_time` sets the activation time for the Isthmus network upgrade.
+    /// Active if `isthmus_time` != None && L2 block timestamp >= Some(isthmus_time), inactive
+    /// otherwise.
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    pub isthmus_time: Option<u64>,
     /// `batch_inbox_address` is the L1 address that batches are sent to.
     pub batch_inbox_address: Address,
     /// `deposit_contract_address` is the L1 address that deposits are sent to.
@@ -144,6 +149,7 @@ impl<'a> arbitrary::Arbitrary<'a> for RollupConfig {
             fjord_time: Option::<u64>::arbitrary(u)?,
             granite_time: Option::<u64>::arbitrary(u)?,
             holocene_time: Option::<u64>::arbitrary(u)?,
+            isthmus_time: Option::<u64>::arbitrary(u)?,
             batch_inbox_address: Address::arbitrary(u)?,
             deposit_contract_address: Address::arbitrary(u)?,
             l1_system_config_address: Address::arbitrary(u)?,
@@ -177,6 +183,7 @@ impl Default for RollupConfig {
             fjord_time: None,
             granite_time: None,
             holocene_time: None,
+            isthmus_time: None,
             batch_inbox_address: Address::ZERO,
             deposit_contract_address: Address::ZERO,
             l1_system_config_address: Address::ZERO,
@@ -221,7 +228,12 @@ impl RollupConfig {
 
     /// Returns true if Holocene is active at the given timestamp.
     pub fn is_holocene_active(&self, timestamp: u64) -> bool {
-        self.holocene_time.map_or(false, |t| timestamp >= t)
+        self.holocene_time.map_or(false, |t| timestamp >= t) || self.is_isthmus_active(timestamp)
+    }
+
+    /// Returns true if Isthmus is active at the given timestamp.
+    pub fn is_isthmus_active(&self, timestamp: u64) -> bool {
+        self.isthmus_time.map_or(false, |t| timestamp >= t)
     }
 
     /// Returns true if a DA Challenge proxy Address is provided in the rollup config and the
@@ -266,6 +278,7 @@ impl RollupConfig {
             fjord_time: self.fjord_time,
             granite_time: self.granite_time,
             holocene_time: self.holocene_time,
+            isthmus_time: self.isthmus_time,
         }
     }
 
@@ -393,6 +406,22 @@ mod tests {
         assert!(config.is_granite_active(10));
         assert!(config.is_holocene_active(10));
         assert!(!config.is_holocene_active(9));
+    }
+
+    #[test]
+    fn test_isthmus_active() {
+        let mut config = RollupConfig::default();
+        assert!(!config.is_isthmus_active(0));
+        config.isthmus_time = Some(10);
+        assert!(config.is_regolith_active(10));
+        assert!(config.is_canyon_active(10));
+        assert!(config.is_delta_active(10));
+        assert!(config.is_ecotone_active(10));
+        assert!(config.is_fjord_active(10));
+        assert!(config.is_granite_active(10));
+        assert!(config.is_holocene_active(10));
+        assert!(config.is_isthmus_active(10));
+        assert!(!config.is_isthmus_active(9));
     }
 
     #[test]
