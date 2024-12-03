@@ -349,6 +349,17 @@ impl OpTxEnvelope {
         }
     }
 
+    /// Returns the inner transaction hash.
+    pub fn tx_hash(&self) -> B256 {
+        match self {
+            Self::Legacy(tx) => *tx.hash(),
+            Self::Eip1559(tx) => *tx.hash(),
+            Self::Eip2930(tx) => *tx.hash(),
+            Self::Eip7702(tx) => *tx.hash(),
+            Self::Deposit(tx) => tx.tx_hash(),
+        }
+    }
+
     /// Return the length of the inner txn, including type byte length
     pub fn eip2718_encoded_length(&self) -> usize {
         match self {
