@@ -61,4 +61,9 @@ serde = [
   "op-alloy-protocol/serde",
   "alloy-rpc-types-engine/serde",
 ]
-arbitrary = ["std", "dep:arbitrary", "alloy-primitives/arbitrary", "alloy-primitives/rand"]
+arbitrary = [
+  "std",
+  "dep:arbitrary",
+  "alloy-primitives/arbitrary",
+  "alloy-primitives/rand",
+]
