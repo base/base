@@ -40,7 +40,7 @@ serde_json.workspace = true
 alloy-signer.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 arbitrary = { workspace = true, features = ["derive"] }
-alloy-primitives = { workspace = true, features = ["rand"] }
+alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = ["std"]
