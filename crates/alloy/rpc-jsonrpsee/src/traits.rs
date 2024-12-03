@@ -3,7 +3,7 @@
 //! Rollup Node
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U64};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use op_alloy_rpc_types::{
     OutputResponse, PeerDump, PeerInfo, PeerStats, RollupConfig, SafeHeadResponse, SyncStatus,
@@ -134,4 +134,14 @@ pub trait EngineApiExt {
     /// See: <https://specs.optimism.io/protocol/exec-engine.html#engine_signalsuperchainv1>
     #[method(name = "signalSuperchainV1")]
     async fn signal_superchain_v1(&self, signal: SuperchainSignal) -> RpcResult<ProtocolVersion>;
+}
+
+/// Op API extension for controlling the miner.
+#[cfg_attr(not(feature = "client"), rpc(server, namespace = "miner"))]
+#[cfg_attr(feature = "client", rpc(server, client, namespace = "miner"))]
+pub trait MinerApiExt {
+    /// Sets the maximum data availability size of any tx allowed in a block, and the total max l1
+    /// data size of the block. 0 means no maximum.
+    #[method(name = "setMaxDASize")]
+    async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<()>;
 }
