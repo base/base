@@ -39,10 +39,8 @@ ethereum_package:
 Run the testnet using the following command:
 
 ```bash
-kurtosis run --enclave my-testnet github.com/ethpandaops/optimism-package@bbusa/add-miner --args-file op-network.yaml --image-download always
+kurtosis run --enclave my-testnet github.com/ethpandaops/optimism-package --args-file op-network.yaml --image-download always
 ```
-
-Note: We're currently using the `bbusa/add-miner` branch of the `optimism-package` repo because it has a fix for the `op-batcher` container.
 
 ## How to get the relevant RPC's from Kurtosis?
 
