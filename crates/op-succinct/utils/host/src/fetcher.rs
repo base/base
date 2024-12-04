@@ -10,8 +10,8 @@ use alloy::{
 use alloy_consensus::{BlockHeader, Header};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::{anyhow, bail};
 use cargo_metadata::MetadataCommand;
 use futures::{stream, StreamExt};
 use kona_host::HostCli;
@@ -147,24 +147,28 @@ impl OPSuccinctDataFetcher {
         Ok(self.l2_provider.get_chain_id().await?)
     }
 
-    pub async fn get_l2_head(&self) -> Header {
-        self.l2_provider
+    pub async fn get_l2_head(&self) -> Result<Header> {
+        let block = self
+            .l2_provider
             .get_block_by_number(BlockNumberOrTag::Latest, BlockTransactionsKind::Hashes)
-            .await
-            .unwrap()
-            .unwrap()
-            .header
-            .inner
+            .await?;
+        if let Some(block) = block {
+            Ok(block.header.inner)
+        } else {
+            bail!("Failed to get L2 head");
+        }
     }
 
-    pub async fn get_l2_header_by_number(&self, block_number: u64) -> Header {
-        self.l2_provider
+    pub async fn get_l2_header_by_number(&self, block_number: u64) -> Result<Header> {
+        let block = self
+            .l2_provider
             .get_block_by_number(block_number.into(), BlockTransactionsKind::Hashes)
-            .await
-            .unwrap()
-            .unwrap()
-            .header
-            .inner
+            .await?;
+        if let Some(block) = block {
+            Ok(block.header.inner)
+        } else {
+            bail!("Failed to get L2 header for block {block_number}");
+        }
     }
 
     /// Manually calculate the L1 fee data for a range of blocks. Allows for modifying the L1 fee scalar.
@@ -183,11 +187,14 @@ impl OPSuccinctDataFetcher {
                 let block = self
                     .l2_provider
                     .get_block(block_number.into(), BlockTransactionsKind::Hashes)
-                    .await?
-                    .unwrap();
-                match block.transactions {
-                    BlockTransactions::Hashes(txs) => Ok((block_number, txs)),
-                    _ => Err(anyhow::anyhow!("Unsupported transaction type")),
+                    .await?;
+                if let Some(block) = block {
+                    match block.transactions {
+                        BlockTransactions::Hashes(txs) => Ok((block_number, txs)),
+                        _ => Err(anyhow::anyhow!("Unsupported transaction type")),
+                    }
+                } else {
+                    bail!("Failed to get L2 block for block {block_number}");
                 }
             })
             .buffered(100)
@@ -204,18 +211,22 @@ impl OPSuccinctDataFetcher {
         // Fetch all of the L1 block receipts in parallel.
         let block_receipts: Vec<(u64, Vec<OpTransactionReceipt>)> = stream::iter(start..=end)
             .map(|block_number| async move {
-                (
-                    block_number,
-                    self.l2_provider
-                        .get_block_receipts(block_number.into())
-                        .await
-                        .unwrap()
-                        .unwrap(),
-                )
+                let receipts = self
+                    .l2_provider
+                    .get_block_receipts(block_number.into())
+                    .await?;
+                if let Some(receipts) = receipts {
+                    Ok((block_number, receipts))
+                } else {
+                    bail!("Failed to get L2 receipts for block {block_number}");
+                }
             })
             .buffered(100)
-            .collect::<Vec<(u64, Vec<OpTransactionReceipt>)>>()
-            .await;
+            .collect::<Vec<Result<(u64, Vec<OpTransactionReceipt>), anyhow::Error>>>()
+            .await
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect();
 
         // Get all the encoded transactions for each block number in parallel.
         let block_number_to_encoded_transactions = stream::iter(block_number_to_transactions)
@@ -365,23 +376,29 @@ impl OPSuccinctDataFetcher {
     }
 
     pub async fn get_l1_header(&self, block_number: BlockId) -> Result<Header> {
-        Ok(self
+        let block = self
             .l1_provider
             .get_block(block_number, alloy::rpc::types::BlockTransactionsKind::Full)
-            .await?
-            .unwrap()
-            .header
-            .inner)
+            .await?;
+
+        if let Some(block) = block {
+            Ok(block.header.inner)
+        } else {
+            bail!("Failed to get L1 header for block {block_number}");
+        }
     }
 
     pub async fn get_l2_header(&self, block_number: BlockId) -> Result<Header> {
-        Ok(self
+        let block = self
             .l2_provider
-            .get_block(block_number, BlockTransactionsKind::Full)
-            .await?
-            .unwrap()
-            .header
-            .inner)
+            .get_block(block_number, alloy::rpc::types::BlockTransactionsKind::Full)
+            .await?;
+
+        if let Some(block) = block {
+            Ok(block.header.inner)
+        } else {
+            bail!("Failed to get L1 header for block {block_number}");
+        }
     }
 
     /// Finds the L1 block at the provided timestamp.
@@ -409,34 +426,43 @@ impl OPSuccinctDataFetcher {
     {
         let latest_block = provider
             .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
-            .await?
-            .unwrap();
+            .await?;
         let mut low = 0;
-        let mut high = latest_block.header().number();
+        let mut high = if let Some(block) = latest_block {
+            block.header().number()
+        } else {
+            bail!("Failed to get latest block");
+        };
 
         while low <= high {
             let mid = (low + high) / 2;
             let block = provider
                 .get_block(mid.into(), BlockTransactionsKind::Hashes)
-                .await?
-                .unwrap();
-            let block_timestamp = block.header().timestamp();
+                .await?;
+            if let Some(block) = block {
+                let block_timestamp = block.header().timestamp();
 
-            match block_timestamp.cmp(&target_timestamp) {
-                Ordering::Equal => {
-                    return Ok((block.header().hash().0.into(), block.header().number()));
+                match block_timestamp.cmp(&target_timestamp) {
+                    Ordering::Equal => {
+                        return Ok((block.header().hash().0.into(), block.header().number()));
+                    }
+                    Ordering::Less => low = mid + 1,
+                    Ordering::Greater => high = mid - 1,
                 }
-                Ordering::Less => low = mid + 1,
-                Ordering::Greater => high = mid - 1,
+            } else {
+                bail!("Failed to get block for block {mid}");
             }
         }
 
         // Return the block hash of the closest block after the target timestamp
         let block = provider
             .get_block((low - 10).into(), BlockTransactionsKind::Hashes)
-            .await?
-            .unwrap();
-        Ok((block.header().hash().0.into(), block.header().number()))
+            .await?;
+        if let Some(block) = block {
+            Ok((block.header().hash().0.into(), block.header().number()))
+        } else {
+            bail!("Failed to get block for block {low}");
+        }
     }
 
     /// Get the RPC URL for the given RPC mode.
@@ -549,19 +575,22 @@ impl OPSuccinctDataFetcher {
                 latest_l1_header = Some(l1_block_header);
             }
         }
-        Ok(latest_l1_header.unwrap())
+        if let Some(header) = latest_l1_header {
+            Ok(header)
+        } else {
+            bail!("Failed to get latest L1 header");
+        }
     }
 
     /// Fetch headers for a range of blocks inclusive.
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
-        let headers =
-            stream::iter(start..=end)
-                .map(|block_number| async move {
-                    self.get_l1_header(block_number.into()).await.unwrap()
-                })
-                .buffered(100)
-                .collect()
-                .await;
+        let headers = stream::iter(start..=end)
+            .map(|block_number| async move { self.get_l1_header(block_number.into()).await })
+            .buffered(100)
+            .collect::<Vec<Result<Header>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(headers)
     }
