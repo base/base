@@ -4658,6 +4658,7 @@ dependencies = [
  "log",
  "op-alloy-consensus",
  "op-alloy-network",
+ "op-alloy-rpc-types",
  "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",

@@ -785,6 +785,7 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the L1 block time in seconds.
+    #[allow(dead_code)]
     async fn get_l1_block_time(&self) -> Result<u64> {
         let l1_head = self.get_l1_header(BlockId::latest()).await?;
 
@@ -803,9 +804,7 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
-    async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
-        let l1_block_time_secs = self.get_l1_block_time().await?;
-
+    pub async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
         let latest_l1_header = self.get_l1_header(BlockId::latest()).await?;
 
         // Get the l1 origin of the l2 end block.
@@ -820,7 +819,7 @@ impl OPSuccinctDataFetcher {
 
         let l1_origin = optimism_output_data.block_ref.l1_origin;
 
-        // Search forward from the l1Origin, skipping forward in 5 minute increments until an L1 block with an L2 safe head greater than the l2_end_block is found.
+        // Search forward from the l1Origin, checking each L1 block until we find one with an L2 safe head greater than l2_end_block
         let mut current_l1_block_number = l1_origin.number;
         loop {
             // If the current L1 block number is greater than the latest L1 header number, then return an error.
@@ -839,13 +838,12 @@ impl OPSuccinctDataFetcher {
                 )
                 .await?;
             let l2_safe_head = result.safe_head.number;
-            if l2_safe_head > l2_end_block {
+            // If the safe head is greater than or equal to the L2 end block at this L1 block, then we can derive the L2 end block from this L1 block.
+            if l2_safe_head >= l2_end_block {
                 return Ok((result.l1_block.hash, result.l1_block.number));
             }
 
-            // Move forward in 5 minute increments.
-            const SKIP_MINS: u64 = 5;
-            current_l1_block_number += SKIP_MINS * (60 / l1_block_time_secs);
+            current_l1_block_number += 1;
         }
     }
 
@@ -914,6 +912,20 @@ impl OPSuccinctDataFetcher {
             )
             .await?;
         Ok(result.safe_head.number)
+    }
+
+    /// Check if the safeDB is activated on the L2 node.
+    pub async fn is_safe_db_activated(&self) -> Result<bool> {
+        let l1_block = self.get_l1_header(BlockId::latest()).await?;
+        let l1_block_number_hex = format!("0x{:x}", l1_block.number);
+        let result: Result<SafeHeadResponse, _> = self
+            .fetch_rpc_data_with_mode(
+                RPCMode::L2Node,
+                "optimism_safeHeadAtL1Block",
+                vec![l1_block_number_hex.into()],
+            )
+            .await;
+        Ok(result.is_ok())
     }
 
     /// Get the l2_end_block number given the l2_start_block number and the ideal block interval.

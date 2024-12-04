@@ -3,9 +3,10 @@ use clap::Parser;
 use futures::StreamExt;
 use kona_host::HostCli;
 use log::info;
+use op_alloy_rpc_types::{OutputResponse, SafeHeadResponse};
 use op_succinct_host_utils::{
     block_range::{get_rolling_block_range, get_validated_block_range},
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
     get_proof_stdin,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
+    collections::HashSet,
     fs::{self, OpenOptions},
     io::Seek,
     path::PathBuf,
@@ -74,7 +76,9 @@ fn get_max_span_batch_range_size(l2_chain_id: u64, supplied_range_size: Option<u
 }
 
 /// Split a range of blocks into a list of span batch ranges.
-fn split_range(
+///
+/// This is a simple implementation used when the safeDB is not activated on the L2 Node.
+fn split_range_basic(
     start: u64,
     end: u64,
     l2_chain_id: u64,
@@ -94,6 +98,83 @@ fn split_range(
     }
 
     ranges
+}
+
+/// Split a range of blocks into a list of span batch ranges based on L2 safeHeads.
+///
+/// 1. Get the L1 block range [L1 origin of l2_start, L1Head] where L1Head is the block from which l2_end can be derived
+/// 2. Loop over L1 blocks to get safeHead increases (batch posts) which form a step function
+/// 3. Split ranges based on safeHead increases and max batch size
+///
+/// Example: If safeHeads are [27,49,90] and max_size=30, ranges will be [(0,27), (27,49), (49,69), (69,90)]
+async fn split_range_based_on_safe_heads(
+    l2_start: u64,
+    l2_end: u64,
+    l2_chain_id: u64,
+    supplied_range_size: Option<u64>,
+) -> Result<Vec<SpanBatchRange>> {
+    let data_fetcher = OPSuccinctDataFetcher::default();
+    let max_size = get_max_span_batch_range_size(l2_chain_id, supplied_range_size);
+
+    // Get the L1 origin of l2_start
+    let l2_start_hex = format!("0x{:x}", l2_start);
+    let start_output: OutputResponse = data_fetcher
+        .fetch_rpc_data_with_mode(
+            RPCMode::L2Node,
+            "optimism_outputAtBlock",
+            vec![l2_start_hex.into()],
+        )
+        .await?;
+    let l1_start = start_output.block_ref.l1_origin.number;
+
+    // Get the L1Head from which l2_end can be derived
+    let (_, l1_head_number) = data_fetcher.get_l1_head_with_safe_head(l2_end).await?;
+
+    // Get all the unique safeHeads between l1_start and l1_head
+    let mut ranges = Vec::new();
+    let mut current_l2_start = l2_start;
+    let safe_heads = futures::stream::iter(l1_start..=l1_head_number)
+        .map(|block| async move {
+            let l1_block_hex = format!("0x{:x}", block);
+            let data_fetcher = OPSuccinctDataFetcher::default();
+            let result: SafeHeadResponse = data_fetcher
+                .fetch_rpc_data_with_mode(
+                    RPCMode::L2Node,
+                    "optimism_safeHeadAtL1Block",
+                    vec![l1_block_hex.into()],
+                )
+                .await
+                .expect("Failed to fetch safe head");
+            result.safe_head.number
+        })
+        .buffered(15)
+        .collect::<HashSet<_>>()
+        .await;
+
+    // Collect and sort the safe heads.
+    let mut safe_heads: Vec<_> = safe_heads.into_iter().collect();
+    safe_heads.sort();
+
+    // Loop over all of the safe heads and create ranges.
+    for safe_head in safe_heads {
+        if safe_head > current_l2_start {
+            let mut range_start = current_l2_start;
+            while range_start + max_size < min(l2_end, safe_head) {
+                ranges.push(SpanBatchRange {
+                    start: range_start,
+                    end: range_start + max_size,
+                });
+                range_start += max_size;
+            }
+            ranges.push(SpanBatchRange {
+                start: range_start,
+                end: min(l2_end, safe_head),
+            });
+            current_l2_start = safe_head;
+        }
+    }
+
+    Ok(ranges)
 }
 
 /// Concurrently run the native data generation process for each split range.
@@ -283,7 +364,16 @@ async fn main() -> Result<()> {
         get_validated_block_range(&data_fetcher, args.start, args.end, args.default_range).await?
     };
 
-    let split_ranges = split_range(l2_start_block, l2_end_block, l2_chain_id, args.batch_size);
+    // Check if the safeDB is activated on the L2 node. If it is, we use the safeHead based range
+    // splitting algorithm. Otherwise, we use the simple range splitting algorithm.
+    let safe_db_activated = data_fetcher.is_safe_db_activated().await?;
+
+    let split_ranges = if safe_db_activated {
+        split_range_based_on_safe_heads(l2_start_block, l2_end_block, l2_chain_id, args.batch_size)
+            .await?
+    } else {
+        split_range_basic(l2_start_block, l2_end_block, l2_chain_id, args.batch_size)
+    };
 
     info!(
         "The span batch ranges which will be executed: {:?}",
