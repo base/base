@@ -100,11 +100,16 @@ async fn update_l2oo_config() -> Result<()> {
         .unwrap_or(0);
 
     let private_key = env::var("PRIVATE_KEY").unwrap_or_else(|_| B256::ZERO.to_string());
-    let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
-    let signer_address = signer.address().to_string();
-
-    let proposer = env::var("PROPOSER").unwrap_or(signer_address.clone());
-    let owner = env::var("OWNER").unwrap_or(signer_address);
+    let (proposer, owner) = if private_key == B256::ZERO.to_string() {
+        (Address::ZERO.to_string(), Address::ZERO.to_string())
+    } else {
+        let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
+        let signer_address = signer.address().to_string();
+        (
+            env::var("PROPOSER").unwrap_or(signer_address.clone()),
+            env::var("OWNER").unwrap_or(signer_address),
+        )
+    };
     let challenger = env::var("CHALLENGER").unwrap_or(Address::ZERO.to_string());
 
     let prover = ProverClient::new();

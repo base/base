@@ -1,15 +1,15 @@
 {
   "challenger": "0x0000000000000000000000000000000000000000",
   "finalizationPeriod": 0,
-  "l2BlockTime": 10,
-  "owner": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
-  "proposer": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
-  "rollupConfigHash": "0x71241d0f92749d7365aaaf6a015de550816632a4e4e84e273f865f582e8190aa",
-  "startingBlockNumber": 82060,
-  "startingOutputRoot": "0x714cca0f5f97496a9278b9e24bd6b716173ed6b87882a2b352483df343d8aaaa",
-  "startingTimestamp": 1732939204,
-  "submissionInterval": 300,
+  "l2BlockTime": 2,
+  "owner": "0x0000000000000000000000000000000000000000",
+  "proposer": "0x0000000000000000000000000000000000000000",
+  "rollupConfigHash": "0xcd5ef28cf0d8967b06ff660cfded314956e6f8378f80cab092a61ad380a15324",
+  "startingBlockNumber": 10156418,
+  "startingOutputRoot": "0x9a5b0b3dde63aeff87b9ecf8e3fb37d33ac47563b091d728f13c2ebc7d820a20",
+  "startingTimestamp": 1733174823,
+  "submissionInterval": 1000,
   "verifier": "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B",
   "aggregationVkey": "0x00ea4171dbd0027768055bee7f6d64e17e9cec99b29aad5d18e5d804b967775b",
-  "rangeVkeyCommitment": "0x28fd6a001de229d4520a62825ba78c0d57f083fc608851b94a71a29a52080056"
+  "rangeVkeyCommitment": "0x1a4ebe5c47d55436319c425951eb1a7e04f560945e29eb454215d30b30987bbb"
 }
