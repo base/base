@@ -1,0 +1,52 @@
+name: Cost Estimator (1000 blocks)
+
+on:
+  workflow_dispatch:
+    inputs: {}
+  schedule:
+    - cron: '0 0 * * *' # Run the workflow every day at midnight UTC.
+
+jobs:
+  daily-cost-estimator:
+    runs-on:
+      - runs-on
+      - cpu=32
+      - ram=128
+      - family=m7a+m7i-flex
+      - image=ubuntu22-full-x64
+      - run-id=${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: rust-cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          restore-keys: rust-1.81.0-
+          key: rust-1.81.0-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run cost estimator
+        run: |
+          RUST_LOG=info cargo run --bin cost-estimator --release -- --batch-size 30 --default-range 1000
+        env:
+          L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+          L1_RPC: ${{ secrets.L1_RPC }}
+          L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+          L2_RPC: ${{ secrets.L2_RPC }}
+
+      - name: Upload execution reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: execution-reports
+          path: execution-reports/ 
