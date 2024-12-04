@@ -56,6 +56,7 @@ type ProposerConfig struct {
 	UseCachedDb                bool
 	SlackToken                 string
 	BeaconRpc                  string
+	RollupRpc                  string
 	TxCacheOutDir              string
 	MaxBlockRangePerSpanProof  uint64
 	L2ChainID                  uint64
@@ -118,6 +119,7 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.UseCachedDb = cfg.UseCachedDb
 	ps.SlackToken = cfg.SlackToken
 	ps.BeaconRpc = cfg.BeaconRpc
+	ps.RollupRpc = cfg.RollupRpc
 	ps.TxCacheOutDir = cfg.TxCacheOutDir
 	ps.MaxBlockRangePerSpanProof = cfg.MaxBlockRangePerSpanProof
 	ps.OPSuccinctServerUrl = cfg.OPSuccinctServerUrl

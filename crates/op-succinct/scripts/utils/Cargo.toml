@@ -45,7 +45,6 @@ futures.workspace = true
 rayon = "1.10.0"
 serde_json.workspace = true
 
-
 # kona
 kona-host = { workspace = true }
 
@@ -56,6 +55,7 @@ op-succinct-client-utils.workspace = true
 # op-alloy
 op-alloy-consensus.workspace = true
 op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
 
 # sp1
 sp1-sdk = { workspace = true }

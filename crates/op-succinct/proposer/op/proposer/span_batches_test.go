@@ -59,7 +59,7 @@ func TestCreateSpans(t *testing.T) {
 			l := &L2OutputSubmitter{}
 			l.Cfg = ProposerConfig{MaxBlockRangePerSpanProof: tt.maxBlockRange}
 
-			spans := l.CreateSpans(tt.start, tt.end)
+			spans := l.SplitRangeBasic(tt.start, tt.end)
 
 			assert.Equal(t, tt.expectedSpansCount, len(spans), "Unexpected number of spans")
 
