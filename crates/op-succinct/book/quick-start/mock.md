@@ -17,6 +17,7 @@ In the root directory, create a file called `.env` and set the following environ
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
 
+There are additional optional parameters that you can set in the `.env` file. See the [Advanced Parameters](../advanced/l2-output-oracle.md#optional-advanced-parameters) section for more information.
 
 ### 2) Deploy an `SP1MockVerifier` for verifying mock proofs
 
