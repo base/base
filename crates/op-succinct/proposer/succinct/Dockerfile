@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+
 # Final stage
 FROM ubuntu:22.04
 
@@ -34,11 +36,15 @@ COPY utils ./utils
 COPY programs ./programs
 
 # Build the server
-RUN cargo build --bin server --release
+RUN --mount=type=ssh \
+    --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --bin server --release && \
+    cp target/release/server /usr/local/bin/server
 
 # Expose port based on environment variable or default to 3000
 ENV PORT=${PORT:-3000}
 EXPOSE $PORT
 
-# Run the server
-CMD ["/app/target/release/server"]
+# Run the server from its permanent location
+CMD ["/usr/local/bin/server"]

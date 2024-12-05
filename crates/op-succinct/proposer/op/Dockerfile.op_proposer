@@ -4,9 +4,17 @@ FROM golang:1.22 AS go-builder
 # Set up Go environment
 FROM go-builder AS optimism-builder
 WORKDIR /optimism
+
+# Cache go modules
+COPY ./proposer/op/go.mod ./proposer/op/go.sum /optimism/op-proposer/
+WORKDIR /optimism/op-proposer
+RUN go mod download
+
+# Build the application
 COPY ./proposer/op /optimism/op-proposer
 WORKDIR /optimism/op-proposer/proposer
-RUN make op-proposer
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    make op-proposer
 RUN ls -l /optimism/op-proposer/proposer
 RUN ls -l /optimism/op-proposer/proposer/bin
 RUN pwd
@@ -15,7 +23,8 @@ RUN pwd
 FROM ubuntu:22.04
 
 # Install necessary dependencies
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt \
+    apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
