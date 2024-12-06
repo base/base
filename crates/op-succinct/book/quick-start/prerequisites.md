@@ -19,7 +19,7 @@ The following RPC endpoints must be accessible:
 - L1 Archive Node.
   - `debug_getRawHeader`, `debug_getRawReceipts`, `debug_getRawBlock`
 - L2 Execution Node (`op-geth`): Archive node with hash state scheme.
-  - `debug_getRawHeader`, `debug_getRawTransaction`, `debug_getRawBlock`, `debug_getExecutionWitness`, `debug_dbGet`
+  - `debug_getRawHeader`, `debug_getRawTransaction`, `debug_getRawBlock`, `debug_dbGet`
 - L2 Optimism Node (`op-node`)
   - `optimism_outputAtBlock`, `optimism_rollupConfig`, `optimism_syncStatus`, `optimism_safeHeadAtL1Block`.
 
