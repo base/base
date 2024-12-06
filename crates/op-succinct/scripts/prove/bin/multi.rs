@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
     block_range::get_validated_block_range,
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_proof_stdin,
     stats::ExecutionStats,
     ProgramType,
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     dotenv::from_path(&args.env_file)?;
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache

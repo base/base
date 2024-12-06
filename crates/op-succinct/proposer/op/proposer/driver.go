@@ -613,12 +613,12 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 			}
 			l.Log.Info("Proposer status", "metrics", metrics)
 
-			// 1) Queue up the span proofs that are ready to prove. Determine these range proofs based on the latest L2 finalized block,
+			// 1) Queue up the range proofs that are ready to prove. Determine these range proofs based on the latest L2 finalized block,
 			// and the current L2 unsafe head.
-			l.Log.Info("Stage 1: Deriving Span Batches...")
-			err = l.DeriveNewSpanBatches(ctx)
+			l.Log.Info("Stage 1: Getting Range Proof Boundaries...")
+			err = l.GetRangeProofBoundaries(ctx)
 			if err != nil {
-				l.Log.Error("failed to add next span batches to db", "err", err)
+				l.Log.Error("failed to get range proof boundaries", "err", err)
 				continue
 			}
 

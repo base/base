@@ -3,7 +3,10 @@ use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
-use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin};
+use op_succinct_host_utils::{
+    fetcher::{OPSuccinctDataFetcher, RunContext},
+    get_agg_proof_stdin,
+};
 use sp1_sdk::{
     utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
 };
@@ -71,7 +74,7 @@ async fn main() -> Result<()> {
     dotenv::from_filename(args.env_file).ok();
 
     let prover = ProverClient::new();
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
     let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
 
