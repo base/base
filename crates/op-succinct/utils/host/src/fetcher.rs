@@ -45,11 +45,12 @@ pub struct OPSuccinctDataFetcher {
     pub l1_provider: Arc<RootProvider<Http<Client>>>,
     pub l2_provider: Arc<RootProvider<Http<Client>, Optimism>>,
     pub rollup_config: Option<RollupConfig>,
+    pub run_context: RunContext,
 }
 
 impl Default for OPSuccinctDataFetcher {
     fn default() -> Self {
-        OPSuccinctDataFetcher::new()
+        OPSuccinctDataFetcher::new(RunContext::Dev)
     }
 }
 
@@ -75,6 +76,13 @@ pub enum RPCMode {
 pub enum CacheMode {
     KeepCache,
     DeleteCache,
+}
+
+/// Dev or Docker context.
+#[derive(Clone, Copy)]
+pub enum RunContext {
+    Dev,
+    Docker,
 }
 
 fn get_rpcs() -> RPCConfig {
@@ -112,7 +120,7 @@ pub struct FeeData {
 
 impl OPSuccinctDataFetcher {
     /// Gets the RPC URL's and saves the rollup config for the chain to the rollup config file.
-    pub fn new() -> Self {
+    pub fn new(run_context: RunContext) -> Self {
         let rpc_config = get_rpcs();
 
         let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
@@ -123,23 +131,25 @@ impl OPSuccinctDataFetcher {
             l1_provider,
             l2_provider,
             rollup_config: None,
+            run_context,
         }
     }
 
     /// Initialize the fetcher with a rollup config.
-    pub async fn new_with_rollup_config() -> Result<Self> {
+    pub async fn new_with_rollup_config(run_context: RunContext) -> Result<Self> {
         let rpc_config = get_rpcs();
 
         let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
         let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
 
-        let rollup_config = Self::fetch_and_save_rollup_config(&rpc_config).await?;
+        let rollup_config = Self::fetch_and_save_rollup_config(&rpc_config, run_context).await?;
 
         Ok(OPSuccinctDataFetcher {
             rpc_config,
             l1_provider,
             l2_provider,
             rollup_config: Some(rollup_config),
+            run_context,
         })
     }
 
@@ -478,7 +488,10 @@ impl OPSuccinctDataFetcher {
     /// Fetch the rollup config. Combines the rollup config from `optimism_rollupConfig` and the
     /// chain config from `debug_chainConfig`. Saves the rollup config to the rollup config file and
     /// in memory.
-    async fn fetch_and_save_rollup_config(rpc_config: &RPCConfig) -> Result<RollupConfig> {
+    async fn fetch_and_save_rollup_config(
+        rpc_config: &RPCConfig,
+        run_context: RunContext,
+    ) -> Result<RollupConfig> {
         let rollup_config =
             Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
         let chain_config =
@@ -486,7 +499,7 @@ impl OPSuccinctDataFetcher {
         let rollup_config = merge_rollup_config(&rollup_config, &chain_config)?;
 
         // Save rollup config to the rollup config file.
-        let rollup_config_path = get_rollup_config_path(rollup_config.l2_chain_id)?;
+        let rollup_config_path = get_rollup_config_path(rollup_config.l2_chain_id, run_context)?;
 
         // Create the directory for the rollup config if it doesn't exist.
         let rollup_configs_dir = rollup_config_path.parent().unwrap();
@@ -616,6 +629,61 @@ impl OPSuccinctDataFetcher {
         Ok(headers)
     }
 
+    /// Get the data directory for the given program type and run context.
+    ///
+    /// If the RunContext is Dev, prepend the workspace root.
+    fn get_data_directory(
+        &self,
+        l2_chain_id: u64,
+        l2_start_block: u64,
+        l2_end_block: u64,
+        multi_block: ProgramType,
+    ) -> Result<String> {
+        let mut data_directory = match multi_block {
+            ProgramType::Single => {
+                format!("data/{}/{}", l2_chain_id, l2_end_block)
+            }
+            ProgramType::Multi => {
+                format!("data/{}/{}-{}", l2_chain_id, l2_start_block, l2_end_block)
+            }
+        };
+
+        // If the run context is Dev, prepend the workspace root.
+        match self.run_context {
+            RunContext::Dev => {
+                let metadata = MetadataCommand::new().exec().unwrap();
+                let workspace_root = metadata.workspace_root;
+                data_directory = format!("{}/{}", workspace_root, data_directory);
+                Ok(data_directory)
+            }
+            RunContext::Docker => {
+                data_directory = format!("/usr/local/{}", data_directory);
+                Ok(data_directory)
+            }
+        }
+    }
+
+    /// Get the exec directory for the given program type and run context.
+    fn get_exec_directory(&self, multi_block: ProgramType) -> Result<String> {
+        let exec_directory = match multi_block {
+            ProgramType::Single => "fault-proof",
+            ProgramType::Multi => "range",
+        };
+
+        // If the run context is Dev, prepend the workspace root.
+        match self.run_context {
+            RunContext::Dev => {
+                let metadata = MetadataCommand::new().exec().unwrap();
+                let workspace_root = metadata.workspace_root;
+                Ok(format!(
+                    "{}/target/release-client-lto/{}",
+                    workspace_root, exec_directory
+                ))
+            }
+            RunContext::Docker => Ok(format!("/usr/local/bin/{}", exec_directory)),
+        }
+    }
+
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
     /// directory with block_number. Return the arguments to be passed to the native host for
     /// datagen.
@@ -700,32 +768,11 @@ impl OPSuccinctDataFetcher {
         let l1_head_hash = header.hash_slow();
 
         // Get the workspace root, which is where the data directory is.
-        let metadata = MetadataCommand::new().exec().unwrap();
-        let workspace_root = metadata.workspace_root;
-        let data_directory = match multi_block {
-            ProgramType::Single => {
-                let proof_dir = format!(
-                    "{}/data/{}/single/{}",
-                    workspace_root, l2_chain_id, l2_end_block
-                );
-                proof_dir
-            }
-            ProgramType::Multi => {
-                let proof_dir = format!(
-                    "{}/data/{}/multi/{}-{}",
-                    workspace_root, l2_chain_id, l2_start_block, l2_end_block
-                );
-                proof_dir
-            }
-        };
+        let data_directory =
+            self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block, multi_block)?;
 
         // The native programs are built with profile release-client-lto in build.rs
-        let exec_directory = match multi_block {
-            ProgramType::Single => {
-                format!("{}/target/release-client-lto/fault-proof", workspace_root)
-            }
-            ProgramType::Multi => format!("{}/target/release-client-lto/range", workspace_root),
-        };
+        let exec_directory = self.get_exec_directory(multi_block)?;
 
         // Delete the data directory if the cache mode is DeleteCache.
         match cache_mode {
@@ -738,7 +785,7 @@ impl OPSuccinctDataFetcher {
         }
 
         // Create the path to the rollup config file.
-        let rollup_config_path = get_rollup_config_path(l2_chain_id)?;
+        let rollup_config_path = get_rollup_config_path(l2_chain_id, self.run_context)?;
 
         // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
         // witness data.
@@ -955,6 +1002,7 @@ impl OPSuccinctDataFetcher {
 #[cfg(test)]
 mod tests {
     use crate::fetcher::OPSuccinctDataFetcher;
+    use crate::fetcher::RunContext;
 
     #[tokio::test]
     #[cfg(test)]
@@ -962,7 +1010,7 @@ mod tests {
         use alloy::eips::BlockId;
 
         dotenv::dotenv().ok();
-        let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
+        let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev)
             .await
             .unwrap();
         let latest_l2_block = fetcher.get_l2_header(BlockId::latest()).await.unwrap();
@@ -984,7 +1032,7 @@ mod tests {
         use crate::fetcher::RPCMode;
 
         dotenv::dotenv().ok();
-        let fetcher = OPSuccinctDataFetcher::new();
+        let fetcher = OPSuccinctDataFetcher::new(RunContext::Dev);
         let mut l2_safe_heads = Vec::new();
 
         let latest_l1_block = fetcher.get_l1_header(BlockId::latest()).await.unwrap();

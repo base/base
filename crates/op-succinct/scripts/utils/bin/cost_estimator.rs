@@ -6,7 +6,7 @@ use log::info;
 use op_alloy_rpc_types::{OutputResponse, SafeHeadResponse};
 use op_succinct_host_utils::{
     block_range::{get_rolling_block_range, get_validated_block_range},
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode, RunContext},
     get_proof_stdin,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
@@ -212,7 +212,7 @@ async fn execute_blocks_parallel(
     start: u64,
     end: u64,
 ) {
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev)
         .await
         .unwrap();
 
@@ -355,7 +355,7 @@ async fn main() -> Result<()> {
     dotenv::from_path(&args.env_file).ok();
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
     let (l2_start_block, l2_end_block) = if args.rolling {

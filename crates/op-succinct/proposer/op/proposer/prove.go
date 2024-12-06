@@ -311,6 +311,7 @@ func (l *L2OutputSubmitter) makeProofRequest(proofType proofrequest.Type, jsonBo
 	resp, err := client.Do(req)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			l.Log.Error("Witness generation request timed out", "err", err)
 			l.Metr.RecordWitnessGenFailure("Timeout")
 			return nil, fmt.Errorf("request timed out after %s: %w", WITNESS_GEN_TIMEOUT, err)
 		}
@@ -319,6 +320,7 @@ func (l *L2OutputSubmitter) makeProofRequest(proofType proofrequest.Type, jsonBo
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		l.Log.Error("Witness generation request failed", "status", resp.StatusCode, "body", resp.Body)
 		l.Metr.RecordWitnessGenFailure("Failed")
 		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}

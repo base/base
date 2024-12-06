@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_proof_stdin,
     stats::ExecutionStats,
     witnessgen::WitnessGenExecutor,
@@ -39,9 +39,7 @@ async fn main() -> Result<()> {
     dotenv::from_path(&args.env_file)?;
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 

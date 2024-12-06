@@ -2,7 +2,7 @@ use alloy::{eips::BlockId, hex, signers::local::PrivateKeySigner};
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
-use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
+use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode, RunContext};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sp1_sdk::{HashableKey, ProverClient};
@@ -46,7 +46,7 @@ struct L2OOConfig {
 /// - vkey: Get the vkey from the aggregation program ELF.
 /// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
     let workspace_root = cargo_metadata::MetadataCommand::new()
         .exec()?

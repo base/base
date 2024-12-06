@@ -1,8 +1,10 @@
 use anyhow::Result;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 use sysinfo::System;
 
 use kona_host::HostCli;
+
+use crate::fetcher::RunContext;
 
 /// Convert the HostCli to a vector of arguments that can be passed to a command.
 pub fn convert_host_cli_to_args(host_cli: &HostCli) -> Vec<String> {
@@ -67,31 +69,39 @@ struct WitnessGenProcess {
 pub struct WitnessGenExecutor {
     ongoing_processes: Vec<WitnessGenProcess>,
     timeout: Duration,
+    run_context: RunContext,
 }
 
 impl Default for WitnessGenExecutor {
     fn default() -> Self {
-        Self::new(WITNESSGEN_TIMEOUT)
+        Self::new(WITNESSGEN_TIMEOUT, RunContext::Dev)
     }
 }
 
 impl WitnessGenExecutor {
-    pub fn new(timeout: Duration) -> Self {
+    pub fn new(timeout: Duration, run_context: RunContext) -> Self {
         Self {
             ongoing_processes: Vec::new(),
             timeout,
+            run_context,
         }
     }
 
     /// Spawn a witness generation process for the given host CLI, and adds it to the list of
     /// ongoing processes.
     pub async fn spawn_witnessgen(&mut self, host_cli: &HostCli) -> Result<()> {
-        let metadata = cargo_metadata::MetadataCommand::new()
-            .exec()
-            .expect("Failed to get cargo metadata");
-        let target_dir = metadata
-            .target_directory
-            .join("native_host_runner/release/native_host_runner");
+        let target_dir = match self.run_context {
+            RunContext::Dev => {
+                let metadata = cargo_metadata::MetadataCommand::new()
+                    .exec()
+                    .expect("Failed to get cargo metadata");
+                metadata
+                    .target_directory
+                    .join("native_host_runner/release/native_host_runner")
+                    .into()
+            }
+            RunContext::Docker => PathBuf::from("/usr/local/bin/native_host_runner"),
+        };
         let args = convert_host_cli_to_args(host_cli);
 
         // Run the native host runner.

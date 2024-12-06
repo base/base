@@ -1,4 +1,5 @@
 use alloy_primitives::{hex, Address, B256};
+use anyhow::Result;
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
@@ -12,9 +13,9 @@ use op_succinct_client_utils::{
     types::u32_to_u8,
 };
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_agg_proof_stdin, get_proof_stdin,
-    witnessgen::WitnessGenExecutor,
+    witnessgen::{WitnessGenExecutor, WITNESSGEN_TIMEOUT},
     L2OutputOracle, ProgramType,
 };
 use op_succinct_proposer::{
@@ -35,7 +36,7 @@ pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     utils::setup_logger();
 
     dotenv::dotenv().ok();
@@ -47,9 +48,7 @@ async fn main() {
     let range_vkey_commitment = B256::from(multi_block_vkey_u8);
     let agg_vkey_hash = B256::from_str(&agg_vk.bytes32()).unwrap();
 
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await?;
     // Note: The rollup config hash never changes for a given chain, so we can just hash it once at
     // server start-up. The only time a rollup config changes is typically when a new version of the
     // [`RollupConfig`] is released from `op-alloy`.
@@ -82,7 +81,8 @@ async fn main() {
         .unwrap();
 
     info!("Server listening on {}", listener.local_addr().unwrap());
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await?;
+    Ok(())
 }
 
 /// Validate the configuration of the L2 Output Oracle.
@@ -119,24 +119,39 @@ async fn request_span_proof(
     Json(payload): Json<SpanProofRequest>,
 ) -> Result<(StatusCode, Json<ProofResponse>), AppError> {
     info!("Received span proof request: {:?}", payload);
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await?;
 
-    let host_cli = fetcher
+    let host_cli = match fetcher
         .get_host_cli_args(
             payload.start,
             payload.end,
             ProgramType::Multi,
             CacheMode::DeleteCache,
         )
-        .await?;
+        .await
+    {
+        Ok(cli) => cli,
+        Err(e) => {
+            log::error!("Failed to get host CLI args: {}", e);
+            return Err(AppError(anyhow::anyhow!(
+                "Failed to get host CLI args: {}",
+                e
+            )));
+        }
+    };
 
     // Start the server and native client with a timeout.
     // Note: Ideally, the server should call out to a separate process that executes the native
     // host, and return an ID that the client can poll on to check if the proof was submitted.
-    let mut witnessgen_executor = WitnessGenExecutor::default();
-    witnessgen_executor.spawn_witnessgen(&host_cli).await?;
+    let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
+    let res = witnessgen_executor.spawn_witnessgen(&host_cli).await;
+    if let Err(e) = res {
+        log::error!("Failed to spawn witness generation: {}", e);
+        return Err(AppError(anyhow::anyhow!(
+            "Failed to spawn witness generation: {}",
+            e
+        )));
+    }
     // Log any errors from running the witness generation process.
     let res = witnessgen_executor.flush().await;
     if let Err(e) = res {
@@ -200,9 +215,7 @@ async fn request_agg_proof(
     )?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await?;
     let headers = fetcher
         .get_header_preimages(&boot_infos, l1_head.into())
         .await?;
@@ -225,9 +238,7 @@ async fn request_mock_span_proof(
     Json(payload): Json<SpanProofRequest>,
 ) -> Result<(StatusCode, Json<ProofStatus>), AppError> {
     info!("Received mock span proof request: {:?}", payload);
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await?;
 
     let host_cli = fetcher
         .get_host_cli_args(
@@ -305,9 +316,7 @@ async fn request_mock_agg_proof(
     )?;
     let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
 
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config()
-        .await
-        .unwrap();
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await?;
     let headers = fetcher
         .get_header_preimages(&boot_infos, l1_head.into())
         .await?;

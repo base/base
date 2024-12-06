@@ -2,7 +2,7 @@ use anyhow::Result;
 use common::post_to_github_pr;
 use op_succinct_host_utils::{
     block_range::get_rolling_block_range,
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_proof_stdin,
     stats::{ExecutionStats, MarkdownExecutionStats},
     ProgramType,
@@ -16,7 +16,7 @@ mod common;
 async fn execute_batch() -> Result<()> {
     dotenv::dotenv()?;
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
     // Take the latest blocks
     let (l2_start_block, l2_end_block) =

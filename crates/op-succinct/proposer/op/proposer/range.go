@@ -134,7 +134,7 @@ func (l *L2OutputSubmitter) SplitRangeBasic(start, end uint64) []Span {
 	return spans
 }
 
-func (l *L2OutputSubmitter) DeriveNewSpanBatches(ctx context.Context) error {
+func (l *L2OutputSubmitter) GetRangeProofBoundaries(ctx context.Context) error {
 	// nextBlock is equal to the highest value in the `EndBlock` column of the DB, plus 1.
 	latestL2EndBlock, err := l.db.GetLatestEndBlock()
 	if err != nil {
