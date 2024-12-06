@@ -27,11 +27,16 @@ path = "bin/block_data.rs"
 name = "fetch-rollup-config"
 path = "bin/fetch_rollup_config.rs"
 
+[[bin]]
+name = "gen-sp1-test-artifacts"
+path = "bin/gen_sp1_test_artifacts.rs"
+
 [dependencies]
 
 # workspace
 alloy-primitives = { workspace = true }
 alloy = { workspace = true }
+bincode = { workspace = true }
 tokio = { workspace = true }
 clap = { workspace = true }
 cargo_metadata = { workspace = true }

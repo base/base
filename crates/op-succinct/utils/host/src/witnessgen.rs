@@ -198,3 +198,28 @@ impl WitnessGenExecutor {
         Ok(())
     }
 }
+
+/// Concurrently run the native data generation process for each split range.
+pub async fn run_native_data_generation(host_clis: &[HostCli]) {
+    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
+
+    // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
+    // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
+    // being overloaded with too many concurrent requests, while also improving witness generation
+    // throughput.
+    for chunk in host_clis.chunks(CONCURRENT_NATIVE_HOST_RUNNERS) {
+        let mut witnessgen_executor = WitnessGenExecutor::default();
+
+        for host_cli in chunk {
+            witnessgen_executor
+                .spawn_witnessgen(host_cli)
+                .await
+                .expect("Failed to spawn witness generation process");
+        }
+
+        witnessgen_executor
+            .flush()
+            .await
+            .expect("Failed to generate witnesses");
+    }
+}
