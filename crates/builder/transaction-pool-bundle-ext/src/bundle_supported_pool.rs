@@ -55,7 +55,7 @@ use crate::{traits::BundlePoolOperations, TransactionPoolBundleExt};
 #[derive(Debug)]
 pub struct BundleSupportedPool<V, T: TransactionOrdering, S, B> {
     /// Arc'ed instance of [`Pool`] internals
-    tx_pool: Arc<Pool<V, T, S>>,
+    tx_pool: Pool<V, T, S>,
     /// Arc'ed instance of the [`BundlePool`] internals
     bundle_pool: Arc<BundlePool<B>>,
 }
@@ -75,12 +75,7 @@ where
         tx_pool_config: PoolConfig,
     ) -> Self {
         Self {
-            tx_pool: Arc::new(Pool::<V, T, S>::new(
-                validator,
-                ordering,
-                blob_store,
-                tx_pool_config,
-            )),
+            tx_pool: Pool::<V, T, S>::new(validator, ordering, blob_store, tx_pool_config),
             bundle_pool: Arc::new(BundlePool::<B>::new(bundle_ops)),
         }
     }
@@ -102,7 +97,7 @@ impl<B> BundlePool<B> {
 impl<V, T: TransactionOrdering, S, B> Clone for BundleSupportedPool<V, T, S, B> {
     fn clone(&self) -> Self {
         Self {
-            tx_pool: Arc::clone(&self.tx_pool),
+            tx_pool: self.tx_pool.clone(),
             bundle_pool: Arc::clone(&self.bundle_pool),
         }
     }
