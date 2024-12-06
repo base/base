@@ -39,3 +39,5 @@ stdins
 artifact_*
 
 *.egg-info/
+
+sp1-testing-suite-artifacts/

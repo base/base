@@ -3,21 +3,22 @@ use clap::Parser;
 use futures::StreamExt;
 use kona_host::HostCli;
 use log::info;
-use op_alloy_rpc_types::{OutputResponse, SafeHeadResponse};
 use op_succinct_host_utils::{
-    block_range::{get_rolling_block_range, get_validated_block_range},
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RPCMode, RunContext},
+    block_range::{
+        get_rolling_block_range, get_validated_block_range, split_range_based_on_safe_heads,
+        split_range_basic, SpanBatchRange,
+    },
+    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_proof_stdin,
     stats::ExecutionStats,
-    witnessgen::WitnessGenExecutor,
+    witnessgen::run_native_data_generation,
     ProgramType,
 };
+use op_succinct_scripts::HostExecutorArgs;
 use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use serde::{Deserialize, Serialize};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
-    collections::HashSet,
     fs::{self, OpenOptions},
     io::Seek,
     path::PathBuf,
@@ -28,183 +29,9 @@ pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 const TWELVE_HOURS: Duration = Duration::from_secs(60 * 60 * 12);
 
-/// The arguments for the host executable.
-#[derive(Debug, Clone, Parser)]
-struct CostEstimatorArgs {
-    /// The start block of the range to execute.
-    #[clap(long)]
-    start: Option<u64>,
-    /// The end block of the range to execute.
-    #[clap(long)]
-    end: Option<u64>,
-    /// The number of blocks to execute in a single batch.
-    #[clap(long)]
-    batch_size: Option<u64>,
-    /// Use cached witness generation.
-    #[clap(long)]
-    use_cache: bool,
-    /// Use a fixed recent range.
-    #[clap(long)]
-    rolling: bool,
-    /// The number of blocks to use for the default range.
-    #[clap(long, default_value = "100")]
-    default_range: u64,
-    /// The environment file to use.
-    #[clap(long, default_value = ".env")]
-    env_file: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SpanBatchRange {
-    start: u64,
-    end: u64,
-}
-
-fn get_max_span_batch_range_size(l2_chain_id: u64, supplied_range_size: Option<u64>) -> u64 {
-    // FIXME: The default size/batch size should be dynamic based on the L2 chain. Specifically, look at the gas used across the block range (should be fast to compute) and then set the batch size accordingly.
-    if let Some(supplied_range_size) = supplied_range_size {
-        return supplied_range_size;
-    }
-
-    const DEFAULT_SIZE: u64 = 300;
-    match l2_chain_id {
-        8453 => 5,      // Base
-        11155420 => 30, // OP Sepolia
-        10 => 10,       // OP Mainnet
-        _ => DEFAULT_SIZE,
-    }
-}
-
-/// Split a range of blocks into a list of span batch ranges.
-///
-/// This is a simple implementation used when the safeDB is not activated on the L2 Node.
-fn split_range_basic(
-    start: u64,
-    end: u64,
-    l2_chain_id: u64,
-    supplied_range_size: Option<u64>,
-) -> Vec<SpanBatchRange> {
-    let mut ranges = Vec::new();
-    let mut current_start = start;
-    let max_size = get_max_span_batch_range_size(l2_chain_id, supplied_range_size);
-
-    while current_start < end {
-        let current_end = min(current_start + max_size, end);
-        ranges.push(SpanBatchRange {
-            start: current_start,
-            end: current_end,
-        });
-        current_start = current_end;
-    }
-
-    ranges
-}
-
-/// Split a range of blocks into a list of span batch ranges based on L2 safeHeads.
-///
-/// 1. Get the L1 block range [L1 origin of l2_start, L1Head] where L1Head is the block from which l2_end can be derived
-/// 2. Loop over L1 blocks to get safeHead increases (batch posts) which form a step function
-/// 3. Split ranges based on safeHead increases and max batch size
-///
-/// Example: If safeHeads are [27,49,90] and max_size=30, ranges will be [(0,27), (27,49), (49,69), (69,90)]
-async fn split_range_based_on_safe_heads(
-    l2_start: u64,
-    l2_end: u64,
-    l2_chain_id: u64,
-    supplied_range_size: Option<u64>,
-) -> Result<Vec<SpanBatchRange>> {
-    let data_fetcher = OPSuccinctDataFetcher::default();
-    let max_size = get_max_span_batch_range_size(l2_chain_id, supplied_range_size);
-
-    // Get the L1 origin of l2_start
-    let l2_start_hex = format!("0x{:x}", l2_start);
-    let start_output: OutputResponse = data_fetcher
-        .fetch_rpc_data_with_mode(
-            RPCMode::L2Node,
-            "optimism_outputAtBlock",
-            vec![l2_start_hex.into()],
-        )
-        .await?;
-    let l1_start = start_output.block_ref.l1_origin.number;
-
-    // Get the L1Head from which l2_end can be derived
-    let (_, l1_head_number) = data_fetcher.get_l1_head_with_safe_head(l2_end).await?;
-
-    // Get all the unique safeHeads between l1_start and l1_head
-    let mut ranges = Vec::new();
-    let mut current_l2_start = l2_start;
-    let safe_heads = futures::stream::iter(l1_start..=l1_head_number)
-        .map(|block| async move {
-            let l1_block_hex = format!("0x{:x}", block);
-            let data_fetcher = OPSuccinctDataFetcher::default();
-            let result: SafeHeadResponse = data_fetcher
-                .fetch_rpc_data_with_mode(
-                    RPCMode::L2Node,
-                    "optimism_safeHeadAtL1Block",
-                    vec![l1_block_hex.into()],
-                )
-                .await
-                .expect("Failed to fetch safe head");
-            result.safe_head.number
-        })
-        .buffered(15)
-        .collect::<HashSet<_>>()
-        .await;
-
-    // Collect and sort the safe heads.
-    let mut safe_heads: Vec<_> = safe_heads.into_iter().collect();
-    safe_heads.sort();
-
-    // Loop over all of the safe heads and create ranges.
-    for safe_head in safe_heads {
-        if safe_head > current_l2_start {
-            let mut range_start = current_l2_start;
-            while range_start + max_size < min(l2_end, safe_head) {
-                ranges.push(SpanBatchRange {
-                    start: range_start,
-                    end: range_start + max_size,
-                });
-                range_start += max_size;
-            }
-            ranges.push(SpanBatchRange {
-                start: range_start,
-                end: min(l2_end, safe_head),
-            });
-            current_l2_start = safe_head;
-        }
-    }
-
-    Ok(ranges)
-}
-
-/// Concurrently run the native data generation process for each split range.
-async fn run_native_data_generation(host_clis: &[HostCli]) {
-    const CONCURRENT_NATIVE_HOST_RUNNERS: usize = 5;
-
-    // Split the entire range into chunks of size CONCURRENT_NATIVE_HOST_RUNNERS and process chunks
-    // serially. Generate witnesses within each chunk in parallel. This prevents the RPC from
-    // being overloaded with too many concurrent requests, while also improving witness generation
-    // throughput.
-    for chunk in host_clis.chunks(CONCURRENT_NATIVE_HOST_RUNNERS) {
-        let mut witnessgen_executor = WitnessGenExecutor::default();
-
-        for host_cli in chunk {
-            witnessgen_executor
-                .spawn_witnessgen(host_cli)
-                .await
-                .expect("Failed to spawn witness generation process");
-        }
-
-        witnessgen_executor
-            .flush()
-            .await
-            .expect("Failed to generate witnesses");
-    }
-}
-
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
-/// each block range to a CSV file (not guaranteed to be in order).
-async fn execute_blocks_parallel(
+/// each block range to a CSV file after each execution completes (not guaranteed to be in order).
+async fn execute_blocks_and_write_stats_csv(
     host_clis: &[HostCli],
     ranges: Vec<SpanBatchRange>,
     prover: &ProverClient,
@@ -350,7 +177,7 @@ fn aggregate_execution_stats(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = CostEstimatorArgs::parse();
+    let args = HostExecutorArgs::parse();
 
     dotenv::from_path(&args.env_file).ok();
     utils::setup_logger();
@@ -369,10 +196,9 @@ async fn main() -> Result<()> {
     let safe_db_activated = data_fetcher.is_safe_db_activated().await?;
 
     let split_ranges = if safe_db_activated {
-        split_range_based_on_safe_heads(l2_start_block, l2_end_block, l2_chain_id, args.batch_size)
-            .await?
+        split_range_based_on_safe_heads(l2_start_block, l2_end_block, args.batch_size).await?
     } else {
-        split_range_basic(l2_start_block, l2_end_block, l2_chain_id, args.batch_size)
+        split_range_basic(l2_start_block, l2_end_block, args.batch_size)
     };
 
     info!(
@@ -408,7 +234,7 @@ async fn main() -> Result<()> {
     let total_witness_generation_time_sec = start_time.elapsed().as_secs();
 
     let start_time = Instant::now();
-    execute_blocks_parallel(
+    execute_blocks_and_write_stats_csv(
         &host_clis,
         split_ranges,
         &prover,
