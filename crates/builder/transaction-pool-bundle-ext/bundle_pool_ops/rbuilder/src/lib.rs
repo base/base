@@ -9,7 +9,6 @@ use std::{fmt::Formatter, path::Path, sync::Arc, time::Duration};
 use alloy_primitives::U256;
 use alloy_rpc_types_beacon::events::PayloadAttributesEvent;
 use derive_more::From;
-use rbuilder::live_builder::cli::LiveBuilderConfig;
 use rbuilder::{
     building::{
         builders::{
@@ -20,6 +19,7 @@ use rbuilder::{
     },
     live_builder::{
         base_config::load_config_toml_and_env,
+        cli::LiveBuilderConfig,
         config::{create_builders, BuilderConfig, Config, SpecificBuilderConfig},
         order_input::{rpc_server::RawCancelBundle, ReplaceableOrderPoolCommand},
         payload_events::MevBoostSlotData,
