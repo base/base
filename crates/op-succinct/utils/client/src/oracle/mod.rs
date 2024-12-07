@@ -185,6 +185,7 @@ impl InMemoryOracle {
             .values()
             .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
             .collect_vec();
+        println!("Verifying {} blobs", blob_datas.len());
         // Verify reconstructed blobs.
         kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
             blob_datas,

@@ -44,18 +44,18 @@ tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
 # kona
 # Note: Switch to latest version of kona once the std::process::Command issue is resolved.
 # Branch: patch-kona-proof-v0.1.0
-kona-common = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-common-proc = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-preimage = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b", features = [
+kona-common = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-common-proc = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-preimage = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425", features = [
     "rkyv",
 ] }
-kona-mpt = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-driver = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-derive = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b", default-features = false }
-kona-executor = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-client = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-host = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
-kona-proof = { git = "https://github.com/succinctlabs/kona", rev = "94bfb0e7eeee25ee76e19d584cf12bc57c1c281b" }
+kona-mpt = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-driver = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-derive = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425", default-features = false }
+kona-executor = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-client = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-host = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
+kona-proof = { git = "https://github.com/succinctlabs/kona", rev = "8ec836eae1cfe2ebad4624ae4f29839011382425" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -105,5 +105,5 @@ lto = "fat"
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "sha2-v0.10.8-patch-v1" }
 ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "ecdsa-v0.16.8-patch-v1" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "substrate_bn-v0.6.0-patch-v1" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "substrate_bn-v0.6.0-patch-v2" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "sha3-v0.10.8-patch-v1" }

@@ -3695,7 +3695,7 @@ dependencies = [
 [[package]]
 name = "kona-client"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3728,7 +3728,7 @@ dependencies = [
 [[package]]
 name = "kona-common"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "cfg-if",
  "linked_list_allocator",
@@ -3738,7 +3738,7 @@ dependencies = [
 [[package]]
 name = "kona-common-proc"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -3764,7 +3764,7 @@ dependencies = [
 [[package]]
 name = "kona-derive"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3783,7 +3783,7 @@ dependencies = [
 [[package]]
 name = "kona-driver"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives 0.8.12",
@@ -3801,7 +3801,7 @@ dependencies = [
 [[package]]
 name = "kona-executor"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3819,7 +3819,7 @@ dependencies = [
 [[package]]
 name = "kona-host"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -3858,7 +3858,7 @@ dependencies = [
 [[package]]
 name = "kona-mpt"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-primitives 0.8.12",
  "alloy-rlp",
@@ -3870,7 +3870,7 @@ dependencies = [
 [[package]]
 name = "kona-preimage"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-primitives 0.8.12",
  "async-trait",
@@ -3882,7 +3882,7 @@ dependencies = [
 [[package]]
 name = "kona-proof"
 version = "0.1.0"
-source = "git+https://github.com/succinctlabs/kona?rev=94bfb0e7eeee25ee76e19d584cf12bc57c1c281b#94bfb0e7eeee25ee76e19d584cf12bc57c1c281b"
+source = "git+https://github.com/succinctlabs/kona?rev=8ec836eae1cfe2ebad4624ae4f29839011382425#8ec836eae1cfe2ebad4624ae4f29839011382425"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -7226,13 +7226,14 @@ dependencies = [
 [[package]]
 name = "substrate-bn"
 version = "0.6.0"
-source = "git+https://github.com/sp1-patches/bn?tag=substrate_bn-v0.6.0-patch-v1#9b0e986d32ea128a08cebfe90767072beccdb45f"
+source = "git+https://github.com/sp1-patches/bn?tag=substrate_bn-v0.6.0-patch-v2#8ef05d3969312eca34fa9f1f566a469022badda6"
 dependencies = [
  "bytemuck",
  "byteorder",
  "cfg-if",
  "crunchy",
  "lazy_static",
+ "num-bigint 0.4.6",
  "rand",
  "rustc-hex",
  "sp1-lib 3.3.0",
