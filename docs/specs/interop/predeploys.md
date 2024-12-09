@@ -96,7 +96,7 @@ To ensure safety of the protocol, the [Message Invariants](./messaging.md#messag
 
 Executes a cross chain message and performs a `CALL` with the payload to the provided target address, allowing
 introspection of the data.
-Signals the transaction has a cross chain message to validate by emitting the `ExecuteMessage` event.
+Signals the transaction has a cross chain message to validate by emitting the `ExecutingMessage` event.
 
 The following fields are required for executing a cross chain message:
 
