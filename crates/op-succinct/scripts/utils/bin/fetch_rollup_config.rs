@@ -142,12 +142,14 @@ async fn update_l2oo_config() -> Result<()> {
 
 /// Write the L2OO rollup config to `contracts/opsuccinctl2ooconfig.json`.
 fn write_l2oo_config(config: L2OOConfig, workspace_root: &Path) -> Result<()> {
-    let opsuccinct_config_path = workspace_root
-        .join("contracts/opsuccinctl2ooconfig.json")
-        .canonicalize()?;
-    // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file.
+    let opsuccinct_config_path = workspace_root.join("contracts/opsuccinctl2ooconfig.json");
+    // Create parent directories if they don't exist
+    if let Some(parent) = opsuccinct_config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file
     fs::write(
-        opsuccinct_config_path,
+        &opsuccinct_config_path,
         serde_json::to_string_pretty(&config)?,
     )?;
     Ok(())

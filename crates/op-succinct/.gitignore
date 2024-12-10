@@ -41,3 +41,6 @@ artifact_*
 *.egg-info/
 
 sp1-testing-suite-artifacts/
+
+# Contracts
+contracts/opsuccinctl2ooconfig.json

@@ -21,7 +21,7 @@ Docker images are not built for releases, but we support a `docker compose` setu
 ### Upgrade Contract
 
 1. Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases).
-2. Follow the instructions [here](./l2-output-oracle.md#upgrading-opsuccinctl2outputoracle) to upgrade the `OPSuccinctL2OutputOracle` contract.
+2. Follow the instructions [here](../contracts/upgrade.md) to upgrade the `OPSuccinctL2OutputOracle` contract.
 
 
 Note: As of release `beta-v0.3.0`, the `aggregationVkey`, `rangeVkeyCommitment` and `rollupConfigHash` are upgradeable without re-initializing the contract.
@@ -31,4 +31,4 @@ Note: As of release `beta-v0.3.0`, the `aggregationVkey`, `rangeVkeyCommitment` 
 If you just need to update the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters and not upgrade the contract itself, follow these steps:
 
 1. Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases).
-2. Follow the instructions [here](./l2-output-oracle.md#updating-opsuccinctl2outputoracle-parameters) to update the parameters of the `OPSuccinctL2OutputOracle` contract.
+2. Follow the instructions [here](../contracts/update-parameters.md) to update the parameters of the `OPSuccinctL2OutputOracle` contract.
