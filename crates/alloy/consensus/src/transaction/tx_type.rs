@@ -19,6 +19,8 @@ pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 /// [deposit-spec]: https://specs.optimism.io/protocol/deposits.html
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, Default, PartialEq, PartialOrd, Ord, Hash, Display)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(into = "U8", try_from = "U64"))]
 pub enum OpTxType {
     /// Legacy transaction type.
     #[default]
