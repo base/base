@@ -27,7 +27,14 @@ use op_alloy_rpc_types::{OpTransactionReceipt, OutputResponse, SafeHeadResponse}
 use op_succinct_client_utils::boot::BootInfoStruct;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{cmp::Ordering, collections::HashMap, env, fs, path::Path, str::FromStr, sync::Arc};
+use std::{
+    cmp::{min, Ordering},
+    collections::HashMap,
+    env, fs,
+    path::Path,
+    str::FromStr,
+    sync::Arc,
+};
 
 use alloy_primitives::{keccak256, Bytes, U256, U64};
 
@@ -466,7 +473,7 @@ impl OPSuccinctDataFetcher {
 
         // Return the block hash of the closest block after the target timestamp
         let block = provider
-            .get_block((low - 10).into(), BlockTransactionsKind::Hashes)
+            .get_block(low.into(), BlockTransactionsKind::Hashes)
             .await?;
         if let Some(block) = block {
             Ok((block.header().hash().0.into(), block.header().number()))
@@ -760,12 +767,7 @@ impl OPSuccinctDataFetcher {
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
-        let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
-
-        // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
-        let l1_head_number = l1_head_number + 20;
-        let header = self.get_l1_header(l1_head_number.into()).await?;
-        let l1_head_hash = header.hash_slow();
+        let (l1_head_hash, _) = self.get_l1_head(l2_end_block).await?;
 
         // Get the workspace root, which is where the data directory is.
         let data_directory =
@@ -922,8 +924,13 @@ impl OPSuccinctDataFetcher {
 
             // Get L1 head.
             let l2_block_timestamp = self.get_l2_header(l2_end_block.into()).await?.timestamp;
+            let latest_l1_timestamp = self.get_l1_header(BlockId::latest()).await?.timestamp;
 
-            let target_timestamp = l2_block_timestamp + (max_batch_post_delay_minutes * 60);
+            // Ensure that the target timestamp is not greater than the latest L1 timestamp.
+            let target_timestamp = min(
+                l2_block_timestamp + (max_batch_post_delay_minutes * 60),
+                latest_l1_timestamp,
+            );
             Ok(self.find_l1_block_by_timestamp(target_timestamp).await?)
         }
     }
