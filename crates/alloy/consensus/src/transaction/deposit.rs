@@ -3,7 +3,7 @@
 use super::OpTxType;
 use crate::DepositTransaction;
 use alloc::vec::Vec;
-use alloy_consensus::{Sealable, Transaction};
+use alloy_consensus::{Sealable, Transaction, Typed2718};
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
@@ -225,6 +225,12 @@ impl TxDeposit {
     }
 }
 
+impl Typed2718 for TxDeposit {
+    fn ty(&self) -> u8 {
+        OpTxType::Deposit as u8
+    }
+}
+
 impl Transaction for TxDeposit {
     fn chain_id(&self) -> Option<ChainId> {
         None
@@ -280,10 +286,6 @@ impl Transaction for TxDeposit {
 
     fn input(&self) -> &Bytes {
         &self.input
-    }
-
-    fn ty(&self) -> u8 {
-        OpTxType::Deposit as u8
     }
 
     fn access_list(&self) -> Option<&AccessList> {

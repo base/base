@@ -3,7 +3,7 @@
 //! This module uses the `snappy` compression algorithm to decompress the payload.
 //! The license for snappy can be found in the `SNAPPY-LICENSE` at the root of the repository.
 
-use alloy_primitives::{keccak256, Signature, B256};
+use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
 use alloy_rpc_types_engine::ExecutionPayload;
 
 /// Optimism execution payload envelope in network format.

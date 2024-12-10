@@ -7,8 +7,6 @@ use alloy_consensus::{
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
-use core::borrow::Borrow;
-
 /// Receipt containing result of transaction execution.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -116,7 +114,7 @@ impl<T> AsRef<Receipt<T>> for OpDepositReceipt<T> {
 
 impl<T> TxReceipt for OpDepositReceipt<T>
 where
-    T: Borrow<Log> + Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
+    T: AsRef<Log> + Clone + core::fmt::Debug + PartialEq + Eq + Send + Sync,
 {
     type Log = T;
 

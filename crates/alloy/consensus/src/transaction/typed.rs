@@ -1,5 +1,5 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
-use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy};
+use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, TxKind};
 
@@ -111,6 +111,18 @@ impl OpTypedTransaction {
         match self {
             Self::Deposit(tx) => Some(tx),
             _ => None,
+        }
+    }
+}
+
+impl Typed2718 for OpTypedTransaction {
+    fn ty(&self) -> u8 {
+        match self {
+            Self::Legacy(_) => OpTxType::Legacy as u8,
+            Self::Eip2930(_) => OpTxType::Eip2930 as u8,
+            Self::Eip1559(_) => OpTxType::Eip1559 as u8,
+            Self::Eip7702(_) => OpTxType::Eip7702 as u8,
+            Self::Deposit(_) => OpTxType::Deposit as u8,
         }
     }
 }
@@ -243,16 +255,6 @@ impl Transaction for OpTypedTransaction {
             Self::Eip1559(tx) => tx.input(),
             Self::Eip7702(tx) => tx.input(),
             Self::Deposit(tx) => tx.input(),
-        }
-    }
-
-    fn ty(&self) -> u8 {
-        match self {
-            Self::Legacy(_) => OpTxType::Legacy as u8,
-            Self::Eip2930(_) => OpTxType::Eip2930 as u8,
-            Self::Eip1559(_) => OpTxType::Eip1559 as u8,
-            Self::Eip7702(_) => OpTxType::Eip7702 as u8,
-            Self::Deposit(_) => OpTxType::Deposit as u8,
         }
     }
 
