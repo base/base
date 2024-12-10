@@ -31,7 +31,7 @@ For advanced configurations, depending on the number of concurrent requests you 
 
 ### Required Environment Variables
 
-Before starting the proposer, the following environment variables should be in your `.env` file. You should have already set up your environment when you deployed the L2 Output Oracle. If you have not done so, follow the steps in the [L2 Output Oracle](./l2-output-oracle.md) section.
+Before starting the proposer, the following environment variables should be in your `.env` file. You should have already set up your environment when you deployed the L2 Output Oracle. If you have not done so, follow the steps in the [Contract Configuration](../contracts/configuration.md) section.
 
 | Parameter | Description |
 |-----------|-------------|
