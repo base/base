@@ -47,9 +47,10 @@ type OPSuccinctMetrics struct {
 	L2FinalizedBlock               prometheus.Gauge
 	LatestContractL2Block          prometheus.Gauge
 	HighestProvenContiguousL2Block prometheus.Gauge
+	MinBlockToProveToAgg           prometheus.Gauge
 
-	ErrorCount *prometheus.CounterVec
-	ProveFailures *prometheus.CounterVec
+	ErrorCount         *prometheus.CounterVec
+	ProveFailures      *prometheus.CounterVec
 	WitnessGenFailures *prometheus.CounterVec
 }
 
@@ -66,70 +67,75 @@ func NewMetrics(procName string) *OPSuccinctMetrics {
 
 	return &OPSuccinctMetrics{
 		ns:       ns,
-			registry: registry,
-			factory:  factory,
+		registry: registry,
+		factory:  factory,
 
-			RefMetrics: opmetrics.MakeRefMetrics(ns, factory),
-			TxMetrics:  txmetrics.MakeTxMetrics(ns, factory),
-			RPCMetrics: opmetrics.MakeRPCMetrics(ns, factory),
+		RefMetrics: opmetrics.MakeRefMetrics(ns, factory),
+		TxMetrics:  txmetrics.MakeTxMetrics(ns, factory),
+		RPCMetrics: opmetrics.MakeRPCMetrics(ns, factory),
 
-			info: *factory.NewGaugeVec(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "info",
-				Help:      "Pseudo-metric tracking version and config info",
-			}, []string{
-				"version",
-			}),
-			up: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "up",
-				Help:      "1 if the op-proposer has finished starting up",
-			}),
-			NumProving: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "num_proving",
-				Help:      "Number of proofs currently being proven",
-			}),
-			NumWitnessGen: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "num_witness_gen",
-				Help:      "Number of witnesses currently being generated",
-			}),
-			NumUnrequested: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "num_unrequested",
-				Help:      "Number of unrequested proofs",
-			}),
-			L2FinalizedBlock: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "l2_finalized_block",
-				Help:      "Latest finalized L2 block number",
-			}),
-			LatestContractL2Block: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "latest_contract_l2_block",
-				Help:      "Latest L2 block number on the L2OO contract",
-			}),
-			HighestProvenContiguousL2Block: factory.NewGauge(prometheus.GaugeOpts{
-				Namespace: ns,
-				Name:      "highest_proven_contiguous_l2_block",
-				Help:      "Highest proven L2 block contiguous with contract's latest block",
-			}),
-			ErrorCount: factory.NewCounterVec(prometheus.CounterOpts{
-				Namespace: ns,
-				Name:      "error_count",
-				Help:      "Number of errors encountered",
-			}, []string{"type"}),
-			ProveFailures: factory.NewCounterVec(prometheus.CounterOpts{
-				Namespace: ns,
-				Name:      "prove_failures",
-				Help:      "Number of prove failures by type",
-			}, []string{"reason"}),
-			WitnessGenFailures: factory.NewCounterVec(prometheus.CounterOpts{
-				Namespace: ns,
-				Name:      "witness_gen_failures",
-				Help:      "Number of witness generation failures by type",
-			}, []string{"reason"}),
+		info: *factory.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "info",
+			Help:      "Pseudo-metric tracking version and config info",
+		}, []string{
+			"version",
+		}),
+		up: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "up",
+			Help:      "1 if the op-proposer has finished starting up",
+		}),
+		NumProving: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "num_proving",
+			Help:      "Number of proofs currently being proven",
+		}),
+		NumWitnessGen: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "num_witness_gen",
+			Help:      "Number of witnesses currently being generated",
+		}),
+		NumUnrequested: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "num_unrequested",
+			Help:      "Number of unrequested proofs",
+		}),
+		L2FinalizedBlock: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "l2_finalized_block",
+			Help:      "Latest finalized L2 block number",
+		}),
+		LatestContractL2Block: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "latest_contract_l2_block",
+			Help:      "Latest L2 block number on the L2OO contract",
+		}),
+		HighestProvenContiguousL2Block: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "highest_proven_contiguous_l2_block",
+			Help:      "Highest proven L2 block contiguous with contract's latest block",
+		}),
+		MinBlockToProveToAgg: factory.NewGauge(prometheus.GaugeOpts{
+			Namespace: ns,
+			Name:      "min_block_to_prove_to_agg",
+			Help:      "Minimum L2 block number to prove to generate an AGG proof",
+		}),
+		ErrorCount: factory.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "error_count",
+			Help:      "Number of errors encountered",
+		}, []string{"type"}),
+		ProveFailures: factory.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "prove_failures",
+			Help:      "Number of prove failures by type",
+		}, []string{"reason"}),
+		WitnessGenFailures: factory.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns,
+			Name:      "witness_gen_failures",
+			Help:      "Number of witness generation failures by type",
+		}, []string{"reason"}),
 	}
 }
 
@@ -189,6 +195,7 @@ func (m *OPSuccinctMetrics) RecordProposerStatus(metrics ProposerMetrics) {
 	m.L2FinalizedBlock.Set(float64(metrics.L2FinalizedBlock))
 	m.LatestContractL2Block.Set(float64(metrics.LatestContractL2Block))
 	m.HighestProvenContiguousL2Block.Set(float64(metrics.HighestProvenContiguousL2Block))
+	m.MinBlockToProveToAgg.Set(float64(metrics.MinBlockToProveToAgg))
 }
 
 type ProposerMetrics struct {
@@ -196,6 +203,7 @@ type ProposerMetrics struct {
 	L2FinalizedBlock               uint64
 	LatestContractL2Block          uint64
 	HighestProvenContiguousL2Block uint64
+	MinBlockToProveToAgg           uint64
 	NumProving                     uint64
 	NumWitnessgen                  uint64
 	NumUnrequested                 uint64

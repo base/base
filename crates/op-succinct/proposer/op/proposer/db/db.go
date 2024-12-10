@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,10 +118,13 @@ func (db *ProofDB) UpdateProofStatus(id int, proofStatus proofrequest.Status) er
 }
 
 // SetProverRequestID sets the prover request ID for a proof request in the database.
-func (db *ProofDB) SetProverRequestID(id int, proverRequestID string) error {
+func (db *ProofDB) SetProverRequestID(id int, proverRequestID []byte) error {
+	// Convert the []byte to a hex string.
+	proverRequestIDHex := hex.EncodeToString(proverRequestID)
+
 	_, err := db.writeClient.ProofRequest.Update().
 		Where(proofrequest.ID(id)).
-		SetProverRequestID(proverRequestID).
+		SetProverRequestID(proverRequestIDHex).
 		SetProofRequestTime(uint64(time.Now().Unix())).
 		SetLastUpdatedTime(uint64(time.Now().Unix())).
 		Save(context.Background())
@@ -437,7 +441,8 @@ func (db *ProofDB) GetMaxContiguousSpanProofRange(start uint64) (uint64, error) 
 		currentBlock = span.EndBlock
 	}
 
-	return max(start, currentBlock), nil
+	// The current block is at minimum the start block, and at maximum the end block of the last span proof.
+	return currentBlock, nil
 }
 
 // GetConsecutiveSpanProofs returns the span proofs that cover the range [start, end].
