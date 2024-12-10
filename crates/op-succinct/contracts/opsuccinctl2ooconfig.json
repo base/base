@@ -1,0 +1,15 @@
+{
+  "challenger": "0x0000000000000000000000000000000000000000",
+  "finalizationPeriod": 0,
+  "l2BlockTime": 2,
+  "owner": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
+  "proposer": "0xDEd0000E32f8F40414d3ab3a830f735a3553E18e",
+  "rollupConfigHash": "0x0d7101e2acc7eae1fb42cfce5c604d14da561726e4e01b509315e5a9f97a9816",
+  "startingBlockNumber": 5591859,
+  "startingOutputRoot": "0xd2c903c40513a87898b2830196d53e0bedabe5dfba09c002b9cc39cb0ba5fe46",
+  "startingTimestamp": 1733536206,
+  "submissionInterval": 1200,
+  "verifier": "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B",
+  "aggregationVkey": "0x00ea4171dbd0027768055bee7f6d64e17e9cec99b29aad5d18e5d804b967775b",
+  "rangeVkeyCommitment": "0x51decb4a49105f2a1403423f560bc55d6d02e5eb57f21d0c5bd6a661555a8e53"
+}

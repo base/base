@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 
 	"github.com/ethereum-optimism/optimism/op-service/dial"
 	"github.com/ethereum-optimism/optimism/op-service/sources"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent"
 	"github.com/succinctlabs/op-succinct-go/proposer/db/ent/proofrequest"
+	"golang.org/x/sync/errgroup"
 )
 
 type Span struct {
@@ -85,15 +87,32 @@ func (l *L2OutputSubmitter) SplitRangeBasedOnSafeHeads(ctx context.Context, l2St
 	}
 	L2StartL1Origin := l2StartOutput.BlockRef.L1Origin.Number
 
-	// Get all the unique safe heads between l1_start and l1_head
 	safeHeads := make(map[uint64]struct{})
+	mu := sync.Mutex{}
+	g := errgroup.Group{}
+	g.SetLimit(10)
+
+	// Get all of the safe heads between the L2 start block and the L1 head. Use parallel requests to speed up the process.
+	// This is useful for when a chain is behind.
 	for currentL1Block := L2StartL1Origin; currentL1Block <= L1Head; currentL1Block++ {
-		safeHead, err := rollupClient.SafeHeadAtL1Block(ctx, currentL1Block)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get safe head: %w", err)
-		}
-		safeHeads[safeHead.SafeHead.Number] = struct{}{}
+		l1Block := currentL1Block
+		g.Go(func() error {
+			safeHead, err := rollupClient.SafeHeadAtL1Block(ctx, l1Block)
+			if err != nil {
+				return fmt.Errorf("failed to get safe head at block %d: %w", l1Block, err)
+			}
+
+			mu.Lock()
+			safeHeads[safeHead.SafeHead.Number] = struct{}{}
+			mu.Unlock()
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("failed while getting safe heads: %w", err)
+	}
+
 	uniqueSafeHeads := make([]uint64, 0, len(safeHeads))
 	for safeHead := range safeHeads {
 		uniqueSafeHeads = append(uniqueSafeHeads, safeHead)
@@ -184,6 +203,7 @@ func (l *L2OutputSubmitter) GetRangeProofBoundaries(ctx context.Context) error {
 	} else {
 		spans = l.SplitRangeBasic(newL2StartBlock, newL2EndBlock)
 	}
+
 
 	// Add each span to the DB. If there are no spans, we will not create any proofs.
 	for _, span := range spans {

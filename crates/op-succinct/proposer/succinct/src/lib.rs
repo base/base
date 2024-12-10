@@ -36,7 +36,7 @@ pub struct MockProofResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProofResponse {
-    pub proof_id: String,
+    pub proof_id: Vec<u8>,
 }
 
 #[derive(Debug, Serialize_repr, Deserialize_repr)]
@@ -66,11 +66,10 @@ impl From<String> for UnclaimDescription {
 #[derive(Serialize, Deserialize)]
 /// The status of a proof request.
 pub struct ProofStatus {
-    // Note: Can't use `SP1ProofStatus` directly because `Serialize_repr` and `Deserialize_repr` aren't derived on it.
-    // serde_repr::Serialize_repr and Deserialize_repr are necessary to use `SP1ProofStatus` in this struct.
+    // Note: Can't use `SP1FulfillmentStatus` directly because `Serialize_repr` and `Deserialize_repr` aren't derived on it.
+    // serde_repr::Serialize_repr and Deserialize_repr are necessary to use `SP1FulfillmentStatus` in this struct.
     pub status: i32,
     pub proof: Vec<u8>,
-    pub unclaim_description: Option<UnclaimDescription>,
 }
 
 /// Configuration of the L2 Output Oracle contract. Created once at server start-up, monitors if there are any changes
@@ -80,6 +79,7 @@ pub struct ContractConfig {
     pub range_vk: SP1VerifyingKey,
     pub range_pk: SP1ProvingKey,
     pub agg_pk: SP1ProvingKey,
+    pub agg_vk: SP1VerifyingKey,
     pub agg_vkey_hash: B256,
     pub range_vkey_commitment: B256,
     pub rollup_config_hash: B256,

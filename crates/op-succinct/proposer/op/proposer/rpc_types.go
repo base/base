@@ -23,7 +23,7 @@ type ValidateConfigResponse struct {
 // WitnessGenerationResponse is the response type for the `request_span_proof` and `request_agg_proof`
 // RPCs from the op-succinct-server.
 type WitnessGenerationResponse struct {
-	ProofID string `json:"proof_id"`
+	ProofID []byte `json:"proof_id"`
 }
 
 // UnclaimDescription is the description of why a proof was unclaimed.
@@ -54,20 +54,18 @@ func (d UnclaimDescription) String() string {
 }
 
 // SP1ProofStatus represents the status of a proof in the SP1 network.
-type SP1ProofStatus int
+type SP1FulfillmentStatus int
 
 const (
-	SP1ProofStatusUnspecified SP1ProofStatus = iota
-	SP1ProofStatusPreparing
-	SP1ProofStatusRequested
-	SP1ProofStatusClaimed
-	SP1ProofStatusUnclaimed
-	SP1ProofStatusFulfilled
+	SP1FulfillmentStatusUnspecified SP1FulfillmentStatus = iota
+	SP1FulfillmentStatusRequested
+	SP1FulfillmentStatusAssigned
+	SP1FulfillmentStatusFulfilled
+	SP1FulfillmentStatusUnfulfillable
 )
 
 // ProofStatusResponse is the response type for the `/status/:proof_id` RPC from the op-succinct-server.
 type ProofStatusResponse struct {
-	Status             SP1ProofStatus     `json:"status"`
-	Proof              []byte             `json:"proof"`
-	UnclaimDescription UnclaimDescription `json:"unclaim_description,omitempty"`
+	Status             SP1FulfillmentStatus `json:"status"`
+	Proof              []byte               `json:"proof"`
 }

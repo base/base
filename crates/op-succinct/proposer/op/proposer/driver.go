@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	_ "net/http/pprof"
+	"sort"
 	"sync"
 	"time"
 
@@ -251,6 +252,12 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (opsuccinctm
 		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get max contiguous span proof range: %w", err)
 	}
 
+	// This fetches the next block number, which is the currentBlock + submissionInterval.
+	minBlockToProveToAgg, err := l.l2ooContract.NextBlockNumber(&bind.CallOpts{Context: ctx})
+	if err != nil {
+		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get next L2OO output: %w", err)
+	}
+
 	numProving, err := l.db.GetNumberOfRequestsWithStatuses(proofrequest.StatusPROVING)
 	if err != nil {
 		return opsuccinctmetrics.ProposerMetrics{}, fmt.Errorf("failed to get number of proofs proving: %w", err)
@@ -271,6 +278,7 @@ func (l *L2OutputSubmitter) GetProposerMetrics(ctx context.Context) (opsuccinctm
 		L2FinalizedBlock:               l2FinalizedBlock,
 		LatestContractL2Block:          latestContractL2Block.Uint64(),
 		HighestProvenContiguousL2Block: highestProvenContiguousL2Block,
+		MinBlockToProveToAgg:           minBlockToProveToAgg.Uint64(),
 		NumProving:                     uint64(numProving),
 		NumWitnessgen:                  uint64(numWitnessgen),
 		NumUnrequested:                 uint64(numUnrequested),
@@ -312,8 +320,8 @@ func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics opsuccinctmetr
 
 	message := fmt.Sprintf("*Chain %d Proposer Metrics*:\n"+
 		"Contract is %d minutes behind L2 Finalized\n"+
-		"| L2 Unsafe | L2 Finalized | Contract L2 | Proven L2 |\n"+
-		"| %-9d | %-12d | %-11d | %-9d |\n"+
+		"| L2 Unsafe | L2 Finalized | Contract L2 | Proven L2 | Min to Agg |\n"+
+		"| %-9d | %-12d | %-11d | %-9d | %-9d |\n"+
 		"| Proving   | Witness Gen | Unrequested |\n"+
 		"| %-9d | %-11d | %-11d |",
 		l.Cfg.L2ChainID,
@@ -322,6 +330,7 @@ func (l *L2OutputSubmitter) SendSlackNotification(proposerMetrics opsuccinctmetr
 		proposerMetrics.L2FinalizedBlock,
 		proposerMetrics.LatestContractL2Block,
 		proposerMetrics.HighestProvenContiguousL2Block,
+		proposerMetrics.MinBlockToProveToAgg,
 		proposerMetrics.NumProving,
 		proposerMetrics.NumWitnessgen,
 		proposerMetrics.NumUnrequested)
@@ -354,12 +363,20 @@ func (l *L2OutputSubmitter) SubmitAggProofs(ctx context.Context) error {
 		return nil
 	}
 
-	for _, aggProof := range completedAggProofs {
-		output, err := l.FetchOutput(ctx, aggProof.EndBlock)
-		if err != nil {
-			return fmt.Errorf("failed to fetch output at block %d: %w", aggProof.EndBlock, err)
-		}
-		l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber)
+	// Select the agg proof with the highest L2 block number.
+	sort.Slice(completedAggProofs, func(i, j int) bool {
+		return completedAggProofs[i].EndBlock > completedAggProofs[j].EndBlock
+	})
+
+	// Submit the agg proof with the highest L2 block number.
+	aggProof := completedAggProofs[0]
+	output, err := l.FetchOutput(ctx, aggProof.EndBlock)
+	if err != nil {
+		return fmt.Errorf("failed to fetch output at block %d: %w", aggProof.EndBlock, err)
+	}
+	err = l.proposeOutput(ctx, output, aggProof.Proof, aggProof.L1BlockNumber)
+	if err != nil {
+		return fmt.Errorf("failed to propose output: %w", err)
 	}
 
 	return nil
@@ -675,20 +692,30 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 	}
 }
 
-func (l *L2OutputSubmitter) proposeOutput(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64) {
+func (l *L2OutputSubmitter) proposeOutput(ctx context.Context, output *eth.OutputResponse, proof []byte, l1BlockNum uint64) error {
 	cCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
+
+	// Get the current nextBlockNumber from the L2OO contract.
+	nextBlockNumber, err := l.l2ooContract.NextBlockNumber(&bind.CallOpts{Context: cCtx})
+	if err != nil {
+		l.Log.Error("Failed to get nextBlockNumber", "err", err)
+		return err
+	}
 
 	if err := l.sendTransaction(cCtx, output, proof, l1BlockNum); err != nil {
 		l.Log.Error("Failed to send proposal transaction",
 			"err", err,
+			"expected_next_blocknum", nextBlockNumber.Uint64(),
+			"l2blocknum", output.BlockRef.Number,
 			"l1blocknum", l1BlockNum,
 			"l1head", output.Status.HeadL1.Number,
 			"proof", proof)
-		return
+		return err
 	}
 	l.Log.Info("AGG proof submitted on-chain", "end", output.BlockRef.Number)
 	l.Metr.RecordL2BlocksProposed(output.BlockRef)
+	return nil
 }
 
 // checkpointBlockHash gets the current L1 head, and then sends a transaction to checkpoint the blockhash on
