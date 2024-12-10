@@ -161,6 +161,9 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @custom:semver beta-v0.4.0
     string public constant version = "beta-v0.4.0";
 
+    /// @notice The version of the initializer on the contract. Used for managing upgrades.
+    uint8 public constant initializerVersion = 1;
+
     ////////////////////////////////////////////////////////////
     //                        Modifiers                       //
     ////////////////////////////////////////////////////////////
@@ -181,7 +184,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
 
     /// @notice Initializer.
     /// @param _initParams The initialization parameters for the contract.
-    function initialize(InitParams memory _initParams) public initializer {
+    function initialize(InitParams memory _initParams) public reinitializer(initializerVersion) {
         require(_initParams.submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
         require(_initParams.l2BlockTime > 0, "L2OutputOracle: L2 block time must be greater than 0");
         require(
