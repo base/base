@@ -162,7 +162,7 @@ pub async fn split_range_based_on_safe_heads(
 
     // Loop over all of the safe heads and create ranges.
     for safe_head in safe_heads {
-        if safe_head > current_l2_start {
+        if safe_head > current_l2_start && current_l2_start < l2_end {
             let mut range_start = current_l2_start;
             while range_start + max_range_size < min(l2_end, safe_head) {
                 ranges.push(SpanBatchRange {
