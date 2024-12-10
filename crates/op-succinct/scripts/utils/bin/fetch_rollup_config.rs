@@ -95,9 +95,12 @@ async fn update_l2oo_config() -> Result<()> {
         .map(|p| p.parse().unwrap())
         .unwrap_or(1000);
 
-    let finalization_period = env::var("FINALIZATION_PERIOD")
+    // Default finalization period of 1 hour. Gives the challenger enough time to dispute the output.
+    // Docs: https://docs.optimism.io/builders/chain-operators/configuration/rollup#finalizationperiodseconds
+    const DEFAULT_FINALIZATION_PERIOD_SECS: u64 = 60 * 60;
+    let finalization_period = env::var("FINALIZATION_PERIOD_SECS")
         .map(|p| p.parse().unwrap())
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_FINALIZATION_PERIOD_SECS);
 
     let private_key = env::var("PRIVATE_KEY").unwrap_or_else(|_| B256::ZERO.to_string());
     let (proposer, owner) = if private_key == B256::ZERO.to_string() {
