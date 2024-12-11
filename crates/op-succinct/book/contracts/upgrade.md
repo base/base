@@ -4,7 +4,7 @@ Similar to the `L2OutputOracle` contract, the `OPSuccinctL2OutputOracle` is mana
 
 ## 1. Decide on the target `OPSuccinctL2OutputOracle` contract code
 
-### (Recommanded) Using `OPSuccinctL2OutputOracle` from a release
+### (Recommended) Using `OPSuccinctL2OutputOracle` from a release
 
 Check out the latest release of `op-succinct` from [here](https://github.com/succinctlabs/op-succinct/releases). You can always find the latest version of the `OPSuccinctL2OutputOracle` on the latest release.
 
