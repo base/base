@@ -189,7 +189,7 @@ func (l *L2OutputSubmitter) GetRangeProofBoundaries(ctx context.Context) error {
 	// splitting algorithm. Otherwise, we use the simple range splitting algorithm.
 	safeDBActivated, err := l.isSafeDBActivated(ctx, rollupClient)
 	if err != nil {
-		return fmt.Errorf("failed to check if safeDB is activated: %w", err)
+		l.Log.Warn("safeDB is not activated. Using simple range splitting algorithm.", "err", err)
 	}
 
 	var spans []Span
