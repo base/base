@@ -13,6 +13,7 @@
   - [L2 Node Setup](./advanced/node-setup.md)
   - [Block Data CLI Tool](./advanced/block-data.md)
   - [Proposer](./advanced/proposer.md)
+  - [Kurtosis](./advanced/kurtosis.md)
   - [Upgrade to a new `op-succinct` version](./advanced/upgrade.md)
 - [`OPSuccinctL2OutputOracle`](./contracts/intro.md)
   - [Configuration](./contracts/configuration.md)
