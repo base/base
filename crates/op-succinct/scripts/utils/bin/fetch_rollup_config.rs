@@ -38,17 +38,14 @@ struct L2OOConfig {
 fn get_address(env_var: &str) -> String {
     let private_key = env::var("PRIVATE_KEY").unwrap_or_else(|_| B256::ZERO.to_string());
 
-    env::var(env_var).map_or_else(
-        |_| {
-            if private_key == B256::ZERO.to_string() {
-                Address::ZERO.to_string()
-            } else {
-                let signer: PrivateKeySigner = private_key.parse().unwrap();
-                signer.address().to_string()
-            }
-        },
-        |addr| addr,
-    )
+    env::var(env_var).unwrap_or_else(|_| {
+        if private_key == B256::ZERO.to_string() {
+            Address::ZERO.to_string()
+        } else {
+            let signer: PrivateKeySigner = private_key.parse().unwrap();
+            signer.address().to_string()
+        }
+    })
 }
 
 /// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.

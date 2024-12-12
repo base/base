@@ -316,7 +316,7 @@ async fn request_mock_span_proof(
     // Start the server and native client with a timeout.
     // Note: Ideally, the server should call out to a separate process that executes the native
     // host, and return an ID that the client can poll on to check if the proof was submitted.
-    let mut witnessgen_executor = WitnessGenExecutor::default();
+    let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
     witnessgen_executor.spawn_witnessgen(&host_cli).await?;
     // Log any errors from running the witness generation process.
     let res = witnessgen_executor.flush().await;
