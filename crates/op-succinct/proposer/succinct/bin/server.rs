@@ -146,8 +146,7 @@ async fn request_span_proof(
     // Note: Ideally, the server should call out to a separate process that executes the native
     // host, and return an ID that the client can poll on to check if the proof was submitted.
     let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
-    let res = witnessgen_executor.spawn_witnessgen(&host_cli).await;
-    if let Err(e) = res {
+    if let Err(e) = witnessgen_executor.spawn_witnessgen(&host_cli).await {
         log::error!("Failed to spawn witness generation: {}", e);
         return Err(AppError(anyhow::anyhow!(
             "Failed to spawn witness generation: {}",
@@ -155,8 +154,7 @@ async fn request_span_proof(
         )));
     }
     // Log any errors from running the witness generation process.
-    let res = witnessgen_executor.flush().await;
-    if let Err(e) = res {
+    if let Err(e) = witnessgen_executor.flush().await {
         log::error!("Failed to generate witness: {}", e);
         return Err(AppError(anyhow::anyhow!(
             "Failed to generate witness: {}",
@@ -164,20 +162,57 @@ async fn request_span_proof(
         )));
     }
 
-    let sp1_stdin = get_proof_stdin(&host_cli)?;
+    let sp1_stdin = match get_proof_stdin(&host_cli) {
+        Ok(stdin) => stdin,
+        Err(e) => {
+            log::error!("Failed to get proof stdin: {}", e);
+            return Err(AppError(anyhow::anyhow!(
+                "Failed to get proof stdin: {}",
+                e
+            )));
+        }
+    };
 
-    let private_key = env::var("SP1_PRIVATE_KEY")?;
-    let rpc_url = env::var("PROVER_NETWORK_RPC")?;
+    let private_key = match env::var("SP1_PRIVATE_KEY") {
+        Ok(private_key) => private_key,
+        Err(e) => {
+            log::error!("Failed to get SP1 private key: {}", e);
+            return Err(AppError(anyhow::anyhow!(
+                "Failed to get SP1 private key: {}",
+                e
+            )));
+        }
+    };
+    let rpc_url = match env::var("PROVER_NETWORK_RPC") {
+        Ok(rpc_url) => rpc_url,
+        Err(e) => {
+            log::error!("Failed to get PROVER_NETWORK_RPC: {}", e);
+            return Err(AppError(anyhow::anyhow!(
+                "Failed to get PROVER_NETWORK_RPC: {}",
+                e
+            )));
+        }
+    };
     let mut prover = NetworkProverV2::new(&private_key, Some(rpc_url.to_string()), false);
     // Use the reserved strategy to route to a specific cluster.
     prover.with_strategy(FulfillmentStrategy::Reserved);
 
     // Set simulation to false on range proofs as they're large.
     env::set_var("SKIP_SIMULATION", "true");
-    let vk_hash = prover
+    let vk_hash = match prover
         .register_program(&state.range_vk, MULTI_BLOCK_ELF)
-        .await?;
-    let res = prover
+        .await
+    {
+        Ok(vk_hash) => vk_hash,
+        Err(e) => {
+            log::error!("Failed to register program: {}", e);
+            return Err(AppError(anyhow::anyhow!(
+                "Failed to register program: {}",
+                e
+            )));
+        }
+    };
+    let proof_id = match prover
         .request_proof(
             &vk_hash,
             &sp1_stdin,
@@ -185,17 +220,15 @@ async fn request_span_proof(
             1_000_000_000_000,
             None,
         )
-        .await;
-    env::set_var("SKIP_SIMULATION", "false");
-
-    // Check if error, otherwise get proof ID.
-    let proof_id = match res {
+        .await
+    {
         Ok(proof_id) => proof_id,
         Err(e) => {
             log::error!("Failed to request proof: {}", e);
             return Err(AppError(anyhow::anyhow!("Failed to request proof: {}", e)));
         }
     };
+    env::set_var("SKIP_SIMULATION", "false");
 
     Ok((StatusCode::OK, Json(ProofResponse { proof_id })))
 }
