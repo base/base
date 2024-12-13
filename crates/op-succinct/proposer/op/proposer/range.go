@@ -195,13 +195,14 @@ func (l *L2OutputSubmitter) GetRangeProofBoundaries(ctx context.Context) error {
 	var spans []Span
 	// If the safeDB is activated, we use the safeHead based range splitting algorithm.
 	// Otherwise, we use the simple range splitting algorithm.
+	spans = l.SplitRangeBasic(newL2StartBlock, newL2EndBlock)
 	if safeDBActivated {
-		spans, err = l.SplitRangeBasedOnSafeHeads(ctx, newL2StartBlock, newL2EndBlock)
-		if err != nil {
-			return fmt.Errorf("failed to split range based on safe heads: %w", err)
+		safeHeadSpans, err := l.SplitRangeBasedOnSafeHeads(ctx, newL2StartBlock, newL2EndBlock)
+		if err == nil {
+			spans = safeHeadSpans
+		} else {
+			l.Log.Warn("failed to split range based on safe heads, using basic range splitting", "err", err)
 		}
-	} else {
-		spans = l.SplitRangeBasic(newL2StartBlock, newL2EndBlock)
 	}
 
 
