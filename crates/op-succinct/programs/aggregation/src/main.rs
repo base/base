@@ -44,9 +44,7 @@ pub fn main() {
         let serialized_boot_info = bincode::serialize(&boot_info).unwrap();
         let pv_digest = Sha256::digest(serialized_boot_info);
 
-        if cfg!(target_os = "zkvm") {
-            sp1_lib::verify::verify_sp1_proof(&agg_inputs.multi_block_vkey, &pv_digest.into());
-        }
+        sp1_lib::verify::verify_sp1_proof(&agg_inputs.multi_block_vkey, &pv_digest.into());
     });
 
     // Create a map of each l1 head in the [`BootInfoStruct`]'s to booleans
