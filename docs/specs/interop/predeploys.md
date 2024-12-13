@@ -380,7 +380,7 @@ A message is relayed by providing the [identifier](./messaging.md#message-identi
 event and its corresponding [message payload](./messaging.md#message-payload).
 
 ```solidity
-function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sentMessage) external payable {
+function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sentMessage) external payable returns (bytes memory returnData_) {
     require(_id.origin == Predeploys.L2_TO_L2_CROSS_DOMAIN_MESSENGER);
     CrossL2Inbox(Predeploys.CROSS_L2_INBOX).validateMessage(_id, keccak256(_sentMessage));
 
@@ -394,7 +394,8 @@ function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sen
     // log data
     (address _sender, bytes memory _message) = abi.decode(_sentMessage[128:], (address,bytes));
 
-    bool success = SafeCall.call(_target, msg.value, _message);
+    bool success;
+    (success, returnData_) = _target.call(_target, msg.value, _message);
     require(success);
     successfulMessages[messageHash] = true;
     emit RelayedMessage(_source, _nonce, messageHash);
