@@ -38,7 +38,7 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 	}
 
 	// Use the TL;DR SQLite settings from https://kerkour.com/sqlite-for-servers.
-	connectionUrl := fmt.Sprintf("file:%s?_fk=1&journal_mode=WAL&synchronous=normal&cache_size=100000000&busy_timeout=15000&_txlock=immediate", dbPath)
+	connectionUrl := fmt.Sprintf("file:%s?_fk=1&journal_mode=WAL&synchronous=normal&cache_size=100000000&busy_timeout=30000&_txlock=immediate", dbPath)
 
 	writeDrv, err := sql.Open("sqlite3", connectionUrl)
 	if err != nil {
@@ -48,7 +48,7 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 
 	// The write lock only allows one connection to the DB at a time.
 	writeDb.SetMaxOpenConns(1)
-	writeDb.SetConnMaxLifetime(time.Hour)
+	writeDb.SetConnMaxLifetime(10 * time.Minute)
 
 	readDrv, err := sql.Open("sqlite3", connectionUrl)
 	if err != nil {
@@ -56,7 +56,7 @@ func InitDB(dbPath string, useCachedDb bool) (*ProofDB, error) {
 	}
 	readDb := readDrv.DB()
 	readDb.SetMaxOpenConns(max(4, runtime.NumCPU()/4))
-	readDb.SetConnMaxLifetime(time.Hour)
+	readDb.SetConnMaxLifetime(10 * time.Minute)
 
 	readClient := ent.NewClient(ent.Driver(readDrv))
 	writeClient := ent.NewClient(ent.Driver(writeDrv))
@@ -254,47 +254,6 @@ func (db *ProofDB) GetLatestEndBlock() (uint64, error) {
 		return 0, fmt.Errorf("failed to get latest end requested: %w", err)
 	}
 	return uint64(maxEnd.EndBlock), nil
-}
-
-// When restarting the L2OutputSubmitter, some proofs may have been left in a "requested" state without a prover request ID on the server. Until we
-// implement a mechanism for querying the status of the witness generation, we need to time out these proofs after a period of time so they can be requested.
-func (db *ProofDB) GetWitnessGenerationTimeoutProofsOnServer() ([]*ent.ProofRequest, error) {
-	currentTime := time.Now().Unix()
-	twentyMinutesAgo := currentTime - 20*60
-
-	proofs, err := db.readClient.ProofRequest.Query().
-		Where(
-			proofrequest.StatusEQ(proofrequest.StatusWITNESSGEN),
-			proofrequest.ProverRequestIDIsNil(),
-			proofrequest.LastUpdatedTimeLT(uint64(twentyMinutesAgo)),
-		).
-		All(context.Background())
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to query witness generation timeout proofs: %w", err)
-	}
-
-	return proofs, nil
-}
-
-// If a proof failed to be sent to the prover network, it's status will be set to FAILED, but the prover request ID will be empty.
-// This function returns all such proofs.
-func (db *ProofDB) GetProofsFailedOnServer() ([]*ent.ProofRequest, error) {
-	proofs, err := db.readClient.ProofRequest.Query().
-		Where(
-			proofrequest.StatusEQ(proofrequest.StatusFAILED),
-			proofrequest.ProverRequestIDEQ(""),
-		).
-		All(context.Background())
-
-	if err != nil {
-		if ent.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to query failed proof: %w", err)
-	}
-
-	return proofs, nil
 }
 
 // GetAllProofsWithStatus returns all proofs with the given status.

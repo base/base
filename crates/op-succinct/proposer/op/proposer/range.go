@@ -187,21 +187,6 @@ func (l *L2OutputSubmitter) GetRangeProofBoundaries(ctx context.Context) error {
 
 	spans := l.SplitRangeBasic(newL2StartBlock, newL2EndBlock)
 
-	// // Check if the safeDB is activated on the L2 node. If it is, we use the safeHead based range
-	// // splitting algorithm. Otherwise, we use the simple range splitting algorithm.
-	// safeDBActivated, err := l.isSafeDBActivated(ctx, rollupClient)
-	// if err != nil {
-	// 	l.Log.Warn("safeDB is not activated. Using simple range splitting algorithm.", "err", err)
-	// }
-	// if safeDBActivated {
-	// 	safeHeadSpans, err := l.SplitRangeBasedOnSafeHeads(ctx, newL2StartBlock, newL2EndBlock)
-	// 	if err == nil {
-	// 		spans = safeHeadSpans
-	// 	} else {
-	// 		l.Log.Warn("failed to split range based on safe heads, using basic range splitting", "err", err)
-	// 	}
-	// }
-
 	// Add each span to the DB. If there are no spans, we will not create any proofs.
 	for _, span := range spans {
 		err := l.db.NewEntry(proofrequest.TypeSPAN, span.Start, span.End)
