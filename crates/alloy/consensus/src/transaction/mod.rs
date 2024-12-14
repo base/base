@@ -12,6 +12,9 @@ pub use envelope::OpTxEnvelope;
 mod typed;
 pub use typed::OpTypedTransaction;
 
+mod pooled;
+pub use pooled::OpPooledTransaction;
+
 mod source;
 pub use source::{
     DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
