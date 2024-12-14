@@ -21,8 +21,8 @@ use core::hash::{Hash, Hasher};
 /// A response to `GetPooledTransactions`. This can include a typed signed transaction, but cannot
 /// include a deposit transaction or EIP-4844 transaction.
 ///
-/// The difference between this and the [`OpTxEnvelope`](crate::OpTxEnvelope) is that this type
-/// does not have the deposit transaction variant, which is not expected to be pooled.
+/// The difference between this and the [`OpTxEnvelope`] is that this type does not have the deposit
+/// transaction variant, which is not expected to be pooled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(all(any(test, feature = "arbitrary"), feature = "k256"), derive(arbitrary::Arbitrary))]
