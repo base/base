@@ -17,14 +17,14 @@ import (
 )
 
 const PROOF_STATUS_TIMEOUT = 30 * time.Second
-const WITNESS_GEN_TIMEOUT = 20 * time.Minute
+const WITNESSGEN_TIMEOUT = 20 * time.Minute
 
 // This limit is set to prevent overloading the witness generation server. Until Kona improves their native I/O API (https://github.com/anton-rs/kona/issues/553)
 // the maximum number of concurrent witness generation requests is roughly num_cpu / 2. Set it to 5 for now to be safe.
 const MAX_CONCURRENT_WITNESS_GEN = 5
 
-// Process all of the pending proofs.
-func (l *L2OutputSubmitter) ProcessPendingProofs() error {
+// Process all of requests in PROVING state.
+func (l *L2OutputSubmitter) ProcessProvingRequests() error {
 	// Get all proof requests that are currently in the PROVING state.
 	reqs, err := l.db.GetAllProofsWithStatus(proofrequest.StatusPROVING)
 	if err != nil {
@@ -59,6 +59,25 @@ func (l *L2OutputSubmitter) ProcessPendingProofs() error {
 			if err != nil {
 				return fmt.Errorf("failed to retry request: %w", err)
 			}
+		}
+	}
+
+	return nil
+}
+
+// Process all of requests in WITNESSGEN state.
+func (l *L2OutputSubmitter) ProcessWitnessgenRequests() error {
+	// Get all proof requests that are currently in the WITNESSGEN state.
+	reqs, err := l.db.GetAllProofsWithStatus(proofrequest.StatusWITNESSGEN)
+	if err != nil {
+		return err
+	}
+	for _, req := range reqs {
+		// If the request has been in the WITNESSGEN state for longer than the timeout, set status to FAILED.
+		// This is a catch-all in case the witness generation state update failed.
+		if req.LastUpdatedTime+uint64(WITNESSGEN_TIMEOUT.Seconds()) < uint64(time.Now().Unix()) {
+			// Retry the request if it timed out.
+			l.RetryRequest(req, ProofStatusResponse{})
 		}
 	}
 
@@ -297,13 +316,13 @@ func (l *L2OutputSubmitter) makeProofRequest(proofType proofrequest.Type, jsonBo
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: WITNESS_GEN_TIMEOUT}
+	client := &http.Client{Timeout: WITNESSGEN_TIMEOUT}
 	resp, err := client.Do(req)
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			l.Log.Error("Witness generation request timed out", "err", err)
 			l.Metr.RecordWitnessGenFailure("Timeout")
-			return nil, fmt.Errorf("request timed out after %s: %w", WITNESS_GEN_TIMEOUT, err)
+			return nil, fmt.Errorf("request timed out after %s: %w", WITNESSGEN_TIMEOUT, err)
 		}
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}

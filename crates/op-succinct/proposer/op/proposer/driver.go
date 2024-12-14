@@ -639,13 +639,22 @@ func (l *L2OutputSubmitter) loopL2OO(ctx context.Context) {
 				continue
 			}
 
-			// 2) Check the statuses of all requested proofs.
+			// 2) Check the statuses of PROVING requests.
 			// If it's successfully returned, we validate that we have it on disk and set status = "COMPLETE".
 			// If it fails or times out, we set status = "FAILED" (and, if it's a span proof, split the request in half to try again).
-			l.Log.Info("Stage 2: Processing Pending Proofs...")
-			err = l.ProcessPendingProofs()
+			l.Log.Info("Stage 2: Processing PROVING requests...")
+			err = l.ProcessProvingRequests()
 			if err != nil {
-				l.Log.Error("failed to update requested proofs", "err", err)
+				l.Log.Error("failed to update PROVING requests", "err", err)
+				continue
+			}
+
+			// 3) Check the statuses of WITNESSGEN requests.
+			// If the witness generation request has been in the WITNESSGEN state for longer than the timeout, set status to FAILED and retry.
+			l.Log.Info("Stage 3: Processing WITNESSGEN requests...")
+			err = l.ProcessWitnessgenRequests()
+			if err != nil {
+				l.Log.Error("failed to update WITNESSGEN requests", "err", err)
 				continue
 			}
 
