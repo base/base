@@ -40,10 +40,6 @@ impl alloy_consensus::Transaction for Transaction {
         self.inner.chain_id()
     }
 
-    fn is_create(&self) -> bool {
-        self.inner.is_create()
-    }
-
     fn nonce(&self) -> u64 {
         self.inner.nonce()
     }
@@ -82,6 +78,10 @@ impl alloy_consensus::Transaction for Transaction {
 
     fn kind(&self) -> TxKind {
         self.inner.kind()
+    }
+
+    fn is_create(&self) -> bool {
+        self.inner.is_create()
     }
 
     fn to(&self) -> Option<Address> {

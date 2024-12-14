@@ -236,10 +236,6 @@ impl Transaction for TxDeposit {
         None
     }
 
-    fn is_create(&self) -> bool {
-        self.to.is_create()
-    }
-
     fn nonce(&self) -> u64 {
         0u64
     }
@@ -278,6 +274,10 @@ impl Transaction for TxDeposit {
 
     fn kind(&self) -> TxKind {
         self.to
+    }
+
+    fn is_create(&self) -> bool {
+        self.to.is_create()
     }
 
     fn value(&self) -> U256 {
