@@ -7,13 +7,11 @@ use op_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RunContext},
     get_agg_proof_stdin,
 };
+use op_succinct_prove::{AGG_ELF, RANGE_ELF};
 use sp1_sdk::{
     utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
 };
 use std::fs;
-
-pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -76,7 +74,7 @@ async fn main() -> Result<()> {
     let prover = ProverClient::new();
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
 
-    let (_, vkey) = prover.setup(MULTI_BLOCK_ELF);
+    let (_, vkey) = prover.setup(RANGE_ELF);
 
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey, &prover);
 

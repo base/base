@@ -8,10 +8,6 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "single"
-path = "bin/single.rs"
-
-[[bin]]
 name = "multi"
 path = "bin/multi.rs"
 
