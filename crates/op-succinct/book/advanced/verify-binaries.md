@@ -37,11 +37,11 @@ Then build the binaries:
 ```bash
 cd programs/range
 # Build the range-elf
-cargo prove build --elf-name range-elf --docker
+cargo prove build --elf-name range-elf --docker --tag "v3.0.0"
 
 cd ../aggregation
 # Build the aggregation-elf
-cargo prove build --elf-name aggregation-elf --docker
+cargo prove build --elf-name aggregation-elf --docker --tag "v3.0.0"
 ```
 
 Now, verify the binaries by confirming the output of `vkey` matches the vkeys on the contract. The `vkey` program outputs the verification keys
