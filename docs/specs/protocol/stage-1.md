@@ -89,7 +89,8 @@ achieve Stage 1.
 
 1. **The Foundation Operations Safe:** This Safe acts as the Deputy Guardian, meaning that (via the
    Guardian Safe's `DeputyGuardianModule`) it can call any functions in the system which impacts
-   liveness.
+   liveness. It is extended with the `DeputyPauseModule` to allow a signing key to execute the
+   Superchain-wide pause function quickly.
 
 ## Ownership model diagram
 
@@ -122,10 +123,13 @@ flowchart LR
    end
 
    subgraph GuardianSystem[Guardian System]
-      FndOps[Foundation Ops Safe]
       subgraph GuardianSafe[Guardian Safe]
          GS[Guardian Safe]
          DGM[Deputy Guardian Module]
+      end
+      subgraph FndOpsSafe[Foundation Ops Safe]
+         FndOps[Foundation Ops Safe]
+         DPM[Deputy Pause Module]
       end
    end
 
@@ -134,6 +138,7 @@ flowchart LR
     Council --> POA
     Council --> GS
     FndOps -->|pause\nunpause\nsetRespectedGameType\nblackListDisputeGame| DGM
+    DPM -->|execTransactionFromModule| FndOps
     FndUp -->|set versions|PV
     LM -->|execTransactionFromModule| Council
     DGM -->|execTransactionFromModule| GS
