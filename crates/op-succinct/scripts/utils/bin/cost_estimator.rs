@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const MULTI_BLOCK_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
+pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 const TWELVE_HOURS: Duration = Duration::from_secs(60 * 60 * 12);
 
@@ -81,7 +81,7 @@ async fn execute_blocks_and_write_stats_csv(
             let sp1_stdin = get_proof_stdin(host_cli).unwrap();
 
             // FIXME: Implement retries with a smaller block range if this fails.
-            let result = prover.execute(MULTI_BLOCK_ELF, sp1_stdin).run();
+            let result = prover.execute(RANGE_ELF, sp1_stdin).run();
 
             // If the execution fails, skip this block range and log the error.
             if let Some(err) = result.as_ref().err() {
