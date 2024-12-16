@@ -3,20 +3,32 @@ use std::process::Command;
 use chrono::Local;
 use sp1_build::{build_program_with_args, BuildArgs};
 
+#[derive(Clone, Copy)]
+pub enum ProgramBuildArgs {
+    Default,
+    WithTracing,
+}
+
 /// Build a native program.
-fn build_native_program(program: &str) {
-    // Build with tracing-subscriber feature enabled for `kona-client` logging.
+fn build_native_program(program: &str, program_args: ProgramBuildArgs) {
+    let mut args = vec![
+        "build",
+        "--workspace",
+        "--bin",
+        program,
+        "--profile",
+        "release-client-lto",
+    ];
+
+    match program_args {
+        ProgramBuildArgs::Default => {}
+        ProgramBuildArgs::WithTracing => {
+            args.extend(&["--features", "tracing-subscriber"]);
+        }
+    }
+
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "--workspace",
-            "--bin",
-            program,
-            "--profile",
-            "release-client-lto",
-            "--features",
-            "tracing-subscriber",
-        ])
+        .args(&args)
         .status()
         .expect("Failed to execute cargo build command");
 
@@ -84,9 +96,10 @@ fn build_zkvm_program(program: &str) {
 
 /// Build all the native programs and the native host runner. Optional flag to build the zkVM
 /// programs.
-pub fn build_all() {
-    // Build range program.
-    build_native_program("range");
+pub fn build_all(program_args: ProgramBuildArgs) {
+    // Note: Don't comment this out, because the Docker program depends on the native program
+    // for range being built.
+    build_native_program("range", program_args);
     // build_zkvm_program("range");
 
     // Build aggregation program.
