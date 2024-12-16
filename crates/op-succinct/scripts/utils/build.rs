@@ -1,5 +1,5 @@
-use op_succinct_build_utils::build_all;
+use op_succinct_build_utils::{build_all, ProgramBuildArgs};
 
 fn main() {
-    build_all();
+    build_all(ProgramBuildArgs::Default);
 }
