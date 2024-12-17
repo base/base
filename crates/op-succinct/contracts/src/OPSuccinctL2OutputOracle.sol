@@ -158,8 +158,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     error L1BlockHashNotCheckpointed();
 
     /// @notice Semantic version.
-    /// @custom:semver beta-v1.0.0
-    string public constant version = "beta-v1.0.0";
+    /// @custom:semver v1.0.0-rc1
+    string public constant version = "v1.0.0-rc1";
 
     /// @notice The version of the initializer on the contract. Used for managing upgrades.
     uint8 public constant initializerVersion = 1;
@@ -358,6 +358,18 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             revert L1BlockHashNotAvailable();
         }
         historicBlockHashes[_blockNumber] = blockHash;
+    }
+
+    /// @notice Forces an output root proposal.
+    /// @dev This function is only intended to be used when the L2OutputOracle is in a state where it's not possible to propose outputs.
+    function forceOutputRootProposal(bytes32 _outputRoot, uint256 _l2BlockNumber) external onlyOwner {
+        l2Outputs.push(
+            Types.OutputProposal({
+                outputRoot: _outputRoot,
+                timestamp: uint128(block.timestamp),
+                l2BlockNumber: uint128(_l2BlockNumber)
+            })
+        );
     }
 
     /// @notice Returns an output by index. Needed to return a struct instead of a tuple.

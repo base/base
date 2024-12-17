@@ -10,6 +10,6 @@
   "startingTimestamp": 1734404604,
   "submissionInterval": 2,
   "verifier": "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B",
-  "aggregationVkey": "0x00447343f9cd7df4b54b951589f45a53a352f8eb96902e2bec4282c69d1342ca",
-  "rangeVkeyCommitment": "0x39697ff360c8327522356072263e1d622ed16daf439ee6e82bc3e000456c1992"
+  "aggregationVkey": "0x000fd40837604d14c32f0a0c6cb7f011274195f8029cec268be80aea22c561e1",
+  "rangeVkeyCommitment": "0x38a92ced5bf5edbf6b1affb013c9f75c4ecec3223743088b734e6dd34d7f046c"
 }
