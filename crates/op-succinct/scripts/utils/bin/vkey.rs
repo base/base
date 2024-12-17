@@ -5,6 +5,7 @@ use sp1_sdk::{utils, HashableKey, ProverClient};
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
+pub const DUMMY_RANGE_ELF: &[u8] = include_bytes!("../../../elf/dummy-range-elf");
 
 // Get the verification keys for the ELFs and check them against the contract.
 #[tokio::main]
@@ -14,6 +15,7 @@ async fn main() -> Result<()> {
 
     let prover = ProverClient::new();
 
+    let (_, dummy_range_vk) = prover.setup(DUMMY_RANGE_ELF);
     let (_, range_vk) = prover.setup(RANGE_ELF);
 
     // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
@@ -22,6 +24,13 @@ async fn main() -> Result<()> {
     println!(
         "Range ELF Verification Key Commitment: {}",
         multi_block_vkey_b256
+    );
+
+    let dummy_range_vkey_u8 = u32_to_u8(dummy_range_vk.vk.hash_u32());
+    let dummy_range_vkey_b256 = B256::from(dummy_range_vkey_u8);
+    println!(
+        "Dummy Range ELF Verification Key Commitment: {}",
+        dummy_range_vkey_b256
     );
 
     let (_, agg_vk) = prover.setup(AGG_ELF);
