@@ -18,23 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: rust-cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          restore-keys: rust-1.81.0-
-          key: rust-1.81.0-${{ hashFiles('**/Cargo.toml') }}
-
-      - name: Install Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - name: Setup CI
+      uses: ./.github/actions/setup
 
       - name: Run cost estimator
         run: |
