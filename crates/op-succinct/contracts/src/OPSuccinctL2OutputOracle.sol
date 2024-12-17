@@ -93,6 +93,9 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice A trusted mapping of block numbers to block hashes.
     mapping(uint256 => bytes32) public historicBlockHashes;
 
+    /// @notice Activate optimistic mode. When true, the contract will accept outputs without verification.
+    bool public optimisticMode;
+
     ////////////////////////////////////////////////////////////
     //                         Events                         //
     ////////////////////////////////////////////////////////////
@@ -146,6 +149,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param newSubmissionInterval The new submission interval.
     event SubmissionIntervalUpdated(uint256 oldSubmissionInterval, uint256 newSubmissionInterval);
 
+    /// @notice Emitted when the optimistic mode is toggled.
+    /// @param enabled Indicates whether optimistic mode is enabled or disabled.
+    /// @param finalizationPeriodSeconds The new finalization period in seconds.
+    event OptimisticModeToggled(bool indexed enabled, uint256 finalizationPeriodSeconds);
+
     ////////////////////////////////////////////////////////////
     //                         Errors                         //
     ////////////////////////////////////////////////////////////
@@ -158,8 +166,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     error L1BlockHashNotCheckpointed();
 
     /// @notice Semantic version.
-    /// @custom:semver v1.0.0-rc1
-    string public constant version = "v1.0.0-rc1";
+    /// @custom:semver v1.0.0-rc2
+    string public constant version = "v1.0.0-rc2";
 
     /// @notice The version of the initializer on the contract. Used for managing upgrades.
     uint8 public constant initializerVersion = 1;
@@ -170,6 +178,16 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
 
     modifier onlyOwner() {
         require(msg.sender == owner, "L2OutputOracle: caller is not the owner");
+        _;
+    }
+
+    modifier whenOptimistic() {
+        require(optimisticMode, "L2OutputOracle: optimistic mode is not enabled");
+        _;
+    }
+
+    modifier whenNotOptimistic() {
+        require(!optimisticMode, "L2OutputOracle: optimistic mode is enabled");
         _;
     }
 
@@ -303,6 +321,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes memory _proof)
         external
         payable
+        whenNotOptimistic
     {
         // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
         require(
@@ -349,6 +368,63 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         );
     }
 
+    /// @notice Accepts an outputRoot and the timestamp of the corresponding L2 block.
+    ///         The timestamp must be equal to the current value returned by `nextTimestamp()` in
+    ///         order to be accepted. This function may only be called by the Proposer.
+    /// @param _outputRoot    The L2 output of the checkpoint block.
+    /// @param _l2BlockNumber The L2 block number that resulted in _outputRoot.
+    /// @param _l1BlockHash   A block hash which must be included in the current chain.
+    /// @param _l1BlockNumber The block number with the specified block hash.
+    /// @dev This function is sourced from the original L2OutputOracle contract. The only modification is that the proposer address must be in the approvedProposers mapping, or permissionless proposing is enabled.
+    function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1BlockHash, uint256 _l1BlockNumber)
+        external
+        payable
+        whenOptimistic
+    {
+        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
+        require(
+            approvedProposers[msg.sender] || approvedProposers[address(0)],
+            "L2OutputOracle: only approved proposers can propose new outputs"
+        );
+
+        require(
+            _l2BlockNumber == nextBlockNumber(),
+            "L2OutputOracle: block number must be equal to next expected block number"
+        );
+
+        require(
+            computeL2Timestamp(_l2BlockNumber) < block.timestamp,
+            "L2OutputOracle: cannot propose L2 output in the future"
+        );
+
+        require(_outputRoot != bytes32(0), "L2OutputOracle: L2 output proposal cannot be the zero hash");
+
+        if (_l1BlockHash != bytes32(0)) {
+            // This check allows the proposer to propose an output based on a given L1 block,
+            // without fear that it will be reorged out.
+            // It will also revert if the blockheight provided is more than 256 blocks behind the
+            // chain tip (as the hash will return as zero). This does open the door to a griefing
+            // attack in which the proposer's submission is censored until the block is no longer
+            // retrievable, if the proposer is experiencing this attack it can simply leave out the
+            // blockhash value, and delay submission until it is confident that the L1 block is
+            // finalized.
+            require(
+                blockhash(_l1BlockNumber) == _l1BlockHash,
+                "L2OutputOracle: block hash does not match the hash at the expected height"
+            );
+        }
+
+        emit OutputProposed(_outputRoot, nextOutputIndex(), _l2BlockNumber, block.timestamp);
+
+        l2Outputs.push(
+            Types.OutputProposal({
+                outputRoot: _outputRoot,
+                timestamp: uint128(block.timestamp),
+                l2BlockNumber: uint128(_l2BlockNumber)
+            })
+        );
+    }
+
     /// @notice Checkpoints a block hash at a given block number.
     /// @param _blockNumber Block number to checkpoint the hash at.
     /// @dev If the block hash is not available, this will revert.
@@ -358,18 +434,6 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             revert L1BlockHashNotAvailable();
         }
         historicBlockHashes[_blockNumber] = blockHash;
-    }
-
-    /// @notice Forces an output root proposal.
-    /// @dev This function is only intended to be used when the L2OutputOracle is in a state where it's not possible to propose outputs.
-    function forceOutputRootProposal(bytes32 _outputRoot, uint256 _l2BlockNumber) external onlyOwner {
-        l2Outputs.push(
-            Types.OutputProposal({
-                outputRoot: _outputRoot,
-                timestamp: uint128(block.timestamp),
-                l2BlockNumber: uint128(_l2BlockNumber)
-            })
-        );
     }
 
     /// @notice Returns an output by index. Needed to return a struct instead of a tuple.
@@ -506,5 +570,21 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     function removeProposer(address _proposer) external onlyOwner {
         approvedProposers[_proposer] = false;
         emit ProposerUpdated(_proposer, false);
+    }
+
+    /// @notice Enables optimistic mode.
+    /// @param _finalizationPeriodSeconds The new finalization window.
+    function enableOptimisticMode(uint256 _finalizationPeriodSeconds) external onlyOwner whenNotOptimistic {
+        finalizationPeriodSeconds = _finalizationPeriodSeconds;
+        optimisticMode = true;
+        emit OptimisticModeToggled(true, _finalizationPeriodSeconds);
+    }
+
+    /// @notice Disables optimistic mode.
+    /// @param _finalizationPeriodSeconds The new finalization window.
+    function disableOptimisticMode(uint256 _finalizationPeriodSeconds) external onlyOwner whenOptimistic {
+        finalizationPeriodSeconds = _finalizationPeriodSeconds;
+        optimisticMode = false;
+        emit OptimisticModeToggled(false, _finalizationPeriodSeconds);
     }
 }
