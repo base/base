@@ -143,5 +143,5 @@ pub trait MinerApiExt {
     /// Sets the maximum data availability size of any tx allowed in a block, and the total max l1
     /// data size of the block. 0 means no maximum.
     #[method(name = "setMaxDASize")]
-    async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<()>;
+    async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool>;
 }
