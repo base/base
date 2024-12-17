@@ -39,7 +39,7 @@ func (l *L2OutputSubmitter) ProcessProvingRequests() error {
 			l.Metr.RecordError("get_proof_status", 1)
 			return err
 		}
-		if proofStatus.Status == SP1FulfillmentStatusFulfilled {
+		if proofStatus.FulfillmentStatus == SP1FulfillmentStatusFulfilled {
 			// Update the proof in the DB and update status to COMPLETE.
 			l.Log.Info("Fulfilled Proof", "id", req.ProverRequestID)
 			err = l.db.AddFulfilledProof(req.ID, proofStatus.Proof)
@@ -50,7 +50,7 @@ func (l *L2OutputSubmitter) ProcessProvingRequests() error {
 			continue
 		}
 
-		if proofStatus.Status == SP1FulfillmentStatusUnfulfillable {
+		if proofStatus.FulfillmentStatus == SP1FulfillmentStatusUnfulfillable {
 			// Record the failure reason.
 			l.Log.Info("Proof is unfulfillable", "id", req.ProverRequestID)
 			l.Metr.RecordProveFailure("unfulfillable")
@@ -88,8 +88,6 @@ func (l *L2OutputSubmitter) ProcessWitnessgenRequests() error {
 // If an error response is received:
 // - Range Proof: Split in two if the block range is > 1. Retry the same request if range is 1 block.
 // - Agg Proof: Retry the same request.
-// TODO: Once the reserved strategy adds an execution error, update this to retry only when there's an execution error returned.
-// TODO: With a new allocator, there will not be OOM issues.
 func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStatusResponse) error {
 	err := l.db.UpdateProofStatus(req.ID, proofrequest.StatusFAILED)
 	if err != nil {
@@ -97,13 +95,30 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStat
 		return err
 	}
 
-	// TODO: Once execution errors are added, update this to split the range only when there's an execution error returned on
-	// a SPAN proof.
-	// Retry same request.
-	err = l.db.NewEntry(req.Type, req.StartBlock, req.EndBlock)
-	if err != nil {
-		l.Log.Error("failed to retry proof request", "err", err)
-		return err
+	// If there's an execution error AND the request is a SPAN proof AND the block range is > 1, split the request into two requests.
+	// This is likely caused by an SP1 OOM due to a large block range with many transactions.
+	// TODO: This solution can be removed once the embedded allocator is used, because then the programs
+	// will never OOM.
+	if req.Type == proofrequest.TypeSPAN && status.ExecutionStatus == SP1ExecutionStatusUnexecutable && req.EndBlock-req.StartBlock > 1 {
+		// Split the request into two requests.
+		midBlock := (req.StartBlock + req.EndBlock) / 2
+		err = l.db.NewEntry(req.Type, req.StartBlock, midBlock)
+		if err != nil {
+			l.Log.Error("failed to retry first half of proof request", "err", err)
+			return err
+		}
+		err = l.db.NewEntry(req.Type, midBlock+1, req.EndBlock)
+		if err != nil {
+			l.Log.Error("failed to retry second half of proof request", "err", err)
+			return err
+		}
+	} else {
+		// Retry the same request.
+		err = l.db.NewEntry(req.Type, req.StartBlock, req.EndBlock)
+		if err != nil {
+			l.Log.Error("failed to retry proof request", "err", err)
+			return err
+		}
 	}
 
 	return nil

@@ -53,7 +53,7 @@ func (d UnclaimDescription) String() string {
 	}
 }
 
-// SP1ProofStatus represents the status of a proof in the SP1 network.
+// SP1FulfillmentStatus represents the fulfillment status of a proof in the SP1 network.
 type SP1FulfillmentStatus int
 
 const (
@@ -64,8 +64,20 @@ const (
 	SP1FulfillmentStatusUnfulfillable
 )
 
+// SP1ExecutionStatus represents the execution status of a proof in the SP1 network.
+type SP1ExecutionStatus int
+
+const (
+	SP1ExecutionStatusUnspecified SP1ExecutionStatus = iota
+	SP1ExecutionStatusUnexecuted
+	SP1ExecutionStatusExecuted
+	SP1ExecutionStatusUnexecutable
+)
+
 // ProofStatusResponse is the response type for the `/status/:proof_id` RPC from the op-succinct-server.
 type ProofStatusResponse struct {
-	Status             SP1FulfillmentStatus `json:"status"`
-	Proof              []byte               `json:"proof"`
+	FulfillmentStatus SP1FulfillmentStatus `json:"fulfillment_status"`
+	ExecutionStatus   SP1ExecutionStatus   `json:"execution_status"`
+	Proof             []byte               `json:"proof"`
 }
+
