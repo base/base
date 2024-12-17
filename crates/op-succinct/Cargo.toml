@@ -30,7 +30,7 @@ reqwest = { version = "0.12", features = ["json"] }
 csv = "1.3.0"
 serde = { version = "1.0.198", features = ["derive"] }
 serde_json = { version = "1.0.117", default-features = false }
-rkyv = "0.7.44"
+rkyv = {version = "0.7"}
 hex = "0.4.3"
 bincode = "1.3.3"
 base64 = "0.22.1"
@@ -89,12 +89,13 @@ op-alloy-network = { version = "0.6.8", default-features = false }
 
 # sp1
 sp1-lib = { version = "3.0.0", features = ["verify"] }
-sp1-zkvm = { version = "3.0.0", features = ["verify"] }
 # Note: This rev includes the SP1 mock groth16 bytes fix, skipping deferred verification, executor opts and network-v2 changes.
-# ratan/v3.0.0-w-network-v2 branch includes the network-v2 changes from `19ae3e1`.
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", rev = "447fda5f759908bbc3091979bd933ee9d126873b", features = [
+# ratan/v3.0.0-w-network-v2 branch includes the network-v2 changes from `19ae3e1`. Has the latest FD's for ECDSA patch.
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", rev = "3ef33280f638d080a1ceda6de597867e720df660", features = [
     "network-v2",
 ] }
+# From branch ratan/alloc. Adds support for a custom allocator.
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", rev = "16431e6b979a617fa08994ccdaf866b22ba4b7a1", features = ["embedded", "libm", "lib", "verify"], default-features = false }
 sp1-build = { version = "3.0.0" }
 
 [profile.release-client-lto]
@@ -106,6 +107,10 @@ lto = "fat"
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "tiny_keccak-v2.0.2-patch-v1" }
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "sha2-v0.10.8-patch-v1" }
-ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "ecdsa-v0.16.8-patch-v1" }
+ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "ecdsa-v0.16.9-patch-v3.3.0" }
 substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "substrate_bn-v0.6.0-patch-v2" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "sha3-v0.10.8-patch-v1" }
+sp1-lib = { git = "https://github.com/succinctlabs/sp1.git", branch = "ratan/alloc" }
+
+# Note: Renamed this package to sp1_bls12_381 because it was published with that crate name to kzg_rs.
+sp1_bls12_381 = { git = "https://github.com/sp1-patches/bls12_381.git", branch = "ratan/rename-package" }

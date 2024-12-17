@@ -17,6 +17,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+    - name: Setup CI
+      uses: ./.github/actions/setup
     - name: Compile the range program
       run: cargo build --profile release-client-lto
       working-directory: programs/range

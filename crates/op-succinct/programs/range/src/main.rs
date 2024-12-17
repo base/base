@@ -203,6 +203,16 @@ fn main() {
             number = number,
             output_root = output_root
         );
+
+        // Manually forget large objects to avoid allocator overhead
+        std::mem::forget(pipeline);
+        std::mem::forget(executor);
+        std::mem::forget(l2_provider);
+        std::mem::forget(l1_provider);
+        std::mem::forget(oracle);
+        std::mem::forget(cfg);
+        std::mem::forget(cursor);
+        std::mem::forget(boot);
     });
 }
 
@@ -260,12 +270,17 @@ where
 
         println!("cycle-tracker-report-start: block-execution");
         let mut block_executor = executor.new_executor(cursor.l2_safe_head_header().clone());
-        let header = match block_executor.execute_payload(attributes.clone()) {
+
+        println!("cycle-tracker-report-start: block-execution");
+        let res = block_executor.execute_payload(attributes.clone());
+        println!("cycle-tracker-report-end: block-execution");
+        let header = match res {
             Ok(header) => header,
             Err(e) => {
                 error!(target: "client", "Failed to execute L2 block: {}", e);
 
                 if cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
+                    println!("cycle-tracker-report-start: block-execution");
                     // Retry with a deposit-only block.
                     warn!(target: "client", "Flushing current channel and retrying deposit only block");
 
@@ -284,7 +299,9 @@ where
 
                     // Retry the execution.
                     block_executor = executor.new_executor(cursor.l2_safe_head_header().clone());
-                    match block_executor.execute_payload(attributes.clone()) {
+                    let res = block_executor.execute_payload(attributes.clone());
+                    println!("cycle-tracker-report-end: block-execution");
+                    match res {
                         Ok(header) => header,
                         Err(e) => {
                             error!(
@@ -300,7 +317,6 @@ where
                 }
             }
         };
-        println!("cycle-tracker-report-end: block-execution");
 
         // Construct the block.
         let block = OpBlock {

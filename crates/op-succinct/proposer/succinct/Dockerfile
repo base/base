@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH=/root/.cargo/bin:$PATH
+RUN rustup install nightly
+RUN rustup default nightly
 
 # Verify Rust installation
 RUN rustc --version && cargo --version
@@ -60,6 +62,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 ENV PATH=/root/.cargo/bin:$PATH
+RUN rustup install nightly
+RUN rustup default nightly
 
 # Verify Rust installation
 RUN rustc --version && cargo --version
