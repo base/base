@@ -39,10 +39,6 @@ cd programs/range
 # Build the range-elf
 cargo prove build --elf-name range-elf --docker --tag "v3.0.0"
 
-cd programs/dummy-range
-# Build the dummy-range-elf
-cargo prove build --elf-name dummy-range-elf --docker --tag "v3.0.0"
-
 cd ../aggregation
 # Build the aggregation-elf
 cargo prove build --elf-name aggregation-elf --docker --tag "v3.0.0"

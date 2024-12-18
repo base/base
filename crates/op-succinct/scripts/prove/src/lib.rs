@@ -14,7 +14,6 @@ pub const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
-pub const DUMMY_RANGE_ELF: &[u8] = include_bytes!("../../../elf/dummy-range-elf");
 
 pub async fn generate_witness(host_cli: &HostCli) -> Result<Duration> {
     let start_time = Instant::now();
