@@ -41,7 +41,7 @@ use reth::{
     providers::providers::BlockchainProvider2,
 };
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::node::OptimismAddOns;
+use reth_optimism_node::node::OpAddOns;
 use tracing as _;
 
 // jemalloc provides better performance
@@ -71,7 +71,7 @@ fn main() {
                     let handle = builder
                         .with_types_and_provider::<OpRbuilderNode, BlockchainProvider2<_>>()
                         .with_components(OpRbuilderNode::components(op_rbuilder_args))
-                        .with_add_ons(OptimismAddOns::new(sequencer_http_arg))
+                        .with_add_ons(OpAddOns::new(sequencer_http_arg))
                         .extend_rpc_modules(move |ctx| {
                             // register eth bundle api
                             let ext = EthBundleMinimalApi::new(ctx.registry.pool().clone());

@@ -3,6 +3,7 @@
 //! Inherits Network, Executor, and Consensus Builders from the optimism node,
 //! and overrides the Pool and Payload Builders.
 
+use alloy_consensus::Header;
 use rbuilder_bundle_pool_operations::BundlePoolOps;
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_evm::ConfigureEvm;
@@ -16,12 +17,12 @@ use reth_node_builder::{
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::OpEvmConfig;
 use reth_optimism_node::{
-    node::{OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpPrimitives, OptimismAddOns},
+    node::{OpAddOns, OpConsensusBuilder, OpExecutorBuilder, OpNetworkBuilder, OpPrimitives},
     txpool::OpTransactionValidator,
     OpEngineTypes,
 };
 use reth_payload_builder::{PayloadBuilderHandle, PayloadBuilderService};
-use reth_primitives::{Header, TransactionSigned};
+use reth_primitives::TransactionSigned;
 use reth_provider::{BlockReader, CanonStateSubscriptions, DatabaseProviderFactory};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
@@ -37,11 +38,14 @@ use transaction_pool_bundle_ext::{
 use crate::args::OpRbuilderArgs;
 
 /// Optimism primitive types.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OpRbuilderPrimitives;
 
 impl NodePrimitives for OpRbuilderPrimitives {
     type Block = reth_primitives::Block;
+    type SignedTx = reth_primitives::TransactionSigned;
+    type TxType = reth_primitives::TxType;
+    type Receipt = reth_primitives::Receipt;
 }
 
 /// Type configuration for an Optimism rbuilder.
@@ -109,9 +113,8 @@ where
         OpConsensusBuilder,
     >;
 
-    type AddOns = OptimismAddOns<
-        NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>,
-    >;
+    type AddOns =
+        OpAddOns<NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         let Self { args } = self;
@@ -119,7 +122,7 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        OptimismAddOns::new(self.args.sequencer_http.clone())
+        OpAddOns::new(self.args.sequencer_http.clone())
     }
 }
 

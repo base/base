@@ -43,9 +43,8 @@ optimism = [
 	"reth-execution-types/optimism",
 	"reth-optimism-evm/optimism",
 	"reth-optimism-node/optimism",
-	"reth-optimism-payload-builder/optimism",
 	"reth-primitives/optimism",
 	"reth-provider/optimism",
 	"revm/optimism",
-	"reth-optimism-consensus/optimism"
+	"reth-optimism-consensus/optimism",
 ]
