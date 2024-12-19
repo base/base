@@ -39,7 +39,7 @@ dependencies = [
  "op-succinct-client-utils",
  "serde_cbor",
  "sha2",
- "sp1-lib 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sp1-lib",
  "sp1-zkvm",
 ]
 
@@ -2147,7 +2147,7 @@ dependencies = [
  "hex-literal",
  "rfc6979",
  "signature",
- "sp1-lib 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sp1-lib",
  "spki",
 ]
 
@@ -6253,18 +6253,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "sp1-lib"
-version = "3.4.0"
-source = "git+https://github.com/succinctlabs/sp1.git?rev=16431e6b979a617fa08994ccdaf866b22ba4b7a1#16431e6b979a617fa08994ccdaf866b22ba4b7a1"
-dependencies = [
- "bincode",
- "serde",
-]
-
-[[package]]
 name = "sp1-primitives"
 version = "3.4.0"
-source = "git+https://github.com/succinctlabs/sp1.git?rev=16431e6b979a617fa08994ccdaf866b22ba4b7a1#16431e6b979a617fa08994ccdaf866b22ba4b7a1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d10c2078a5dfc5c3a632da1bc59b57a19dadc9c03968047d8ffb06c0f83b476"
 dependencies = [
  "bincode",
  "hex",
@@ -6543,7 +6535,8 @@ dependencies = [
 [[package]]
 name = "sp1-zkvm"
 version = "3.4.0"
-source = "git+https://github.com/succinctlabs/sp1.git?rev=16431e6b979a617fa08994ccdaf866b22ba4b7a1#16431e6b979a617fa08994ccdaf866b22ba4b7a1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ea02449a9dcaab67219f7b3442ab51b45ae40e7b04f205382295936087fe1d5"
 dependencies = [
  "cfg-if",
  "getrandom",
@@ -6553,8 +6546,8 @@ dependencies = [
  "p3-field",
  "rand",
  "sha2",
- "sp1-lib 3.4.0 (git+https://github.com/succinctlabs/sp1.git?rev=16431e6b979a617fa08994ccdaf866b22ba4b7a1)",
- "sp1-primitives 3.4.0 (git+https://github.com/succinctlabs/sp1.git?rev=16431e6b979a617fa08994ccdaf866b22ba4b7a1)",
+ "sp1-lib",
+ "sp1-primitives 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -6567,7 +6560,7 @@ dependencies = [
  "group 0.13.0",
  "pairing 0.23.0",
  "rand_core",
- "sp1-lib 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sp1-lib",
  "subtle",
 ]
 
@@ -6652,7 +6645,7 @@ dependencies = [
  "num-bigint 0.4.6",
  "rand",
  "rustc-hex",
- "sp1-lib 3.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sp1-lib",
 ]
 
 [[package]]
