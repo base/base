@@ -94,8 +94,7 @@ sp1-lib = { version = "3.4.0", features = ["verify"] }
 sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", rev = "f0b61cf262388c1be7edfcf984c8e070064e980f", features = [
     "network-v2",
 ] }
-# From branch ratan/alloc. Adds support for a custom allocator.
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", rev = "16431e6b979a617fa08994ccdaf866b22ba4b7a1", features = ["verify"] }
+sp1-zkvm = { version = "3.4.0", features = ["verify"] }
 sp1-build = { version = "3.4.0" }
 
 [profile.release-client-lto]

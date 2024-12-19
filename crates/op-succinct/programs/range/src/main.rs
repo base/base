@@ -270,6 +270,7 @@ where
 
         println!("cycle-tracker-report-start: block-execution");
         let mut block_executor = executor.new_executor(cursor.l2_safe_head_header().clone());
+        println!("cycle-tracker-report-end: block-execution");
 
         println!("cycle-tracker-report-start: block-execution");
         let res = block_executor.execute_payload(attributes.clone());
@@ -280,7 +281,6 @@ where
                 error!(target: "client", "Failed to execute L2 block: {}", e);
 
                 if cfg.is_holocene_active(attributes.payload_attributes.timestamp) {
-                    println!("cycle-tracker-report-start: block-execution");
                     // Retry with a deposit-only block.
                     warn!(target: "client", "Flushing current channel and retrying deposit only block");
 
@@ -298,6 +298,7 @@ where
                     });
 
                     // Retry the execution.
+                    println!("cycle-tracker-report-start: block-execution");
                     block_executor = executor.new_executor(cursor.l2_safe_head_header().clone());
                     let res = block_executor.execute_payload(attributes.clone());
                     println!("cycle-tracker-report-end: block-execution");
