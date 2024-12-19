@@ -52,6 +52,12 @@ impl From<TxEip1559> for OpTypedTransaction {
     }
 }
 
+impl From<TxEip7702> for OpTypedTransaction {
+    fn from(tx: TxEip7702) -> Self {
+        Self::Eip7702(tx)
+    }
+}
+
 impl From<TxDeposit> for OpTypedTransaction {
     fn from(tx: TxDeposit) -> Self {
         Self::Deposit(tx)
