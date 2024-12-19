@@ -6,6 +6,8 @@ When optimistic mode is enabled, the `OPSuccinctL2OutputOracle`'s `proposeL2Outp
 
 ## Enable Optimistic Mode
 
+> **Warning**: If you had permissionless proving enabled in non-optimistic (OP Succinct) mode, ensure that `address(0)` is set to false in the `approvedProposers` mapping before enabling optimistic mode. If `address(0)` remains approved, any account will be able to submit outputs without verification in optimistic mode.
+
 To enable optimistic mode, call the `enableOptimisticMode` function on the `OPSuccinctL2OutputOracle` contract.
 
 ```solidity
