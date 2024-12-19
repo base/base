@@ -9,8 +9,7 @@
 
 extern crate alloc;
 
-mod versions;
-pub use versions::ForkchoiceUpdateVersion;
+pub use alloy_rpc_types_engine::ForkchoiceUpdateVersion;
 
 mod attributes;
 pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
