@@ -28,6 +28,7 @@ use sp1_sdk::{
         proto::network::{ExecutionStatus, FulfillmentStatus, FulfillmentStrategy, ProofMode},
     },
     utils, HashableKey, NetworkProverV2, ProverClient, SP1Proof, SP1ProofWithPublicValues,
+    SP1Stdin,
 };
 use std::{env, str::FromStr, time::Duration};
 use tower_http::limit::RequestBodyLimitLayer;
@@ -540,7 +541,10 @@ async fn get_proof_status(
     let fulfillment_status = status.fulfillment_status;
     let execution_status = status.execution_status;
     if fulfillment_status == FulfillmentStatus::Fulfilled as i32 {
-        let proof: SP1ProofWithPublicValues = maybe_proof.unwrap();
+        let mut proof: SP1ProofWithPublicValues = maybe_proof.unwrap();
+        // Remove the stdin from the proof, as it's unnecessary for verification. Note: In v4, there is no stdin.
+        // Previously, this caused the memory usage of the proposer to be high.
+        proof.stdin = SP1Stdin::default();
 
         match proof.proof {
             SP1Proof::Compressed(_) => {
