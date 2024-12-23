@@ -55,6 +55,8 @@ The following environment variables are optional.
 | Parameter | Description |
 |-----------|-------------|
 | `MAX_CONCURRENT_PROOF_REQUESTS` | Default: `10`. The maximum number of concurrent proof requests to send to the `op-succinct-server`. |
+| `MAX_CONCURRENT_WITNESS_GEN` | Default: `5`. The maximum number of concurrent witness generation processes to run on the `op-succinct-server`. |
+| `WITNESS_GEN_TIMEOUT` | Default: `1200`. The maximum time in seconds to spend generating a witness for `op-succinct-server`. |
 | `MAX_BLOCK_RANGE_PER_SPAN_PROOF` | Default: `300`. The maximum number of blocks to include in each span proof. For chains with high throughput, you need to decrease this value. |
 | `OP_SUCCINCT_MOCK` | Default: `false`. Set to `true` to run in mock proof mode. The `OPSuccinctL2OutputOracle` contract must be configured to use an `SP1MockVerifier`. |
 | `OP_SUCCINCT_SERVER_URL` | Default: `http://op-succinct-server:3000`. The URL of the `op-succinct-server` service which the `op-succinct-proposer` will send proof requests to. |
