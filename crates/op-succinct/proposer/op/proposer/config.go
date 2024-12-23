@@ -80,6 +80,10 @@ type CLIConfig struct {
 	TxCacheOutDir string
 	// The max size (in blocks) of a proof we will attempt to generate. If span batches are larger, we break them up.
 	MaxBlockRangePerSpanProof uint64
+	// The max number of concurrent witness generation processes.
+	MaxConcurrentWitnessGen uint64
+	// The max time we will wait for a witness to be generated before giving up.
+	WitnessGenTimeout uint64
 	// The Chain ID of the L2 chain.
 	L2ChainID uint64
 	// The maximum amount of time we will spend waiting for a proof before giving up and trying again.
@@ -155,6 +159,8 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		UseCachedDb:                  ctx.Bool(flags.UseCachedDbFlag.Name),
 		SlackToken:                   ctx.String(flags.SlackTokenFlag.Name),
 		MaxBlockRangePerSpanProof:    ctx.Uint64(flags.MaxBlockRangePerSpanProofFlag.Name),
+		MaxConcurrentWitnessGen:      ctx.Uint64(flags.MaxConcurrentWitnessGenFlag.Name),
+		WitnessGenTimeout:            ctx.Uint64(flags.WitnessGenTimeoutFlag.Name),
 		ProofTimeout:                 ctx.Uint64(flags.ProofTimeoutFlag.Name),
 		TxCacheOutDir:                ctx.String(flags.TxCacheOutDirFlag.Name),
 		OPSuccinctServerUrl:          ctx.String(flags.OPSuccinctServerUrlFlag.Name),

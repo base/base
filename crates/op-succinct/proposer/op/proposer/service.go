@@ -59,6 +59,8 @@ type ProposerConfig struct {
 	RollupRpc                  string
 	TxCacheOutDir              string
 	MaxBlockRangePerSpanProof  uint64
+	MaxConcurrentWitnessGen    uint64
+	WitnessGenTimeout          uint64
 	L2ChainID                  uint64
 	ProofTimeout               uint64
 	OPSuccinctServerUrl        string
@@ -122,6 +124,8 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.RollupRpc = cfg.RollupRpc
 	ps.TxCacheOutDir = cfg.TxCacheOutDir
 	ps.MaxBlockRangePerSpanProof = cfg.MaxBlockRangePerSpanProof
+	ps.MaxConcurrentWitnessGen = cfg.MaxConcurrentWitnessGen
+	ps.WitnessGenTimeout = cfg.WitnessGenTimeout
 	ps.OPSuccinctServerUrl = cfg.OPSuccinctServerUrl
 	ps.ProofTimeout = cfg.ProofTimeout
 	ps.L2ChainID = cfg.L2ChainID
