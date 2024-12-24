@@ -176,6 +176,7 @@ var optionalFlags = []cli.Flag{
 	BatchInboxFlag,
 	BatcherAddressFlag,
 	MockFlag,
+	WitnessGenTimeoutFlag,
 }
 
 func init() {
