@@ -198,48 +198,48 @@ impl Default for RollupConfig {
 impl RollupConfig {
     /// Returns true if Regolith is active at the given timestamp.
     pub fn is_regolith_active(&self, timestamp: u64) -> bool {
-        self.regolith_time.map_or(false, |t| timestamp >= t) || self.is_canyon_active(timestamp)
+        self.regolith_time.is_some_and(|t| timestamp >= t) || self.is_canyon_active(timestamp)
     }
 
     /// Returns true if Canyon is active at the given timestamp.
     pub fn is_canyon_active(&self, timestamp: u64) -> bool {
-        self.canyon_time.map_or(false, |t| timestamp >= t) || self.is_delta_active(timestamp)
+        self.canyon_time.is_some_and(|t| timestamp >= t) || self.is_delta_active(timestamp)
     }
 
     /// Returns true if Delta is active at the given timestamp.
     pub fn is_delta_active(&self, timestamp: u64) -> bool {
-        self.delta_time.map_or(false, |t| timestamp >= t) || self.is_ecotone_active(timestamp)
+        self.delta_time.is_some_and(|t| timestamp >= t) || self.is_ecotone_active(timestamp)
     }
 
     /// Returns true if Ecotone is active at the given timestamp.
     pub fn is_ecotone_active(&self, timestamp: u64) -> bool {
-        self.ecotone_time.map_or(false, |t| timestamp >= t) || self.is_fjord_active(timestamp)
+        self.ecotone_time.is_some_and(|t| timestamp >= t) || self.is_fjord_active(timestamp)
     }
 
     /// Returns true if Fjord is active at the given timestamp.
     pub fn is_fjord_active(&self, timestamp: u64) -> bool {
-        self.fjord_time.map_or(false, |t| timestamp >= t) || self.is_granite_active(timestamp)
+        self.fjord_time.is_some_and(|t| timestamp >= t) || self.is_granite_active(timestamp)
     }
 
     /// Returns true if Granite is active at the given timestamp.
     pub fn is_granite_active(&self, timestamp: u64) -> bool {
-        self.granite_time.map_or(false, |t| timestamp >= t) || self.is_holocene_active(timestamp)
+        self.granite_time.is_some_and(|t| timestamp >= t) || self.is_holocene_active(timestamp)
     }
 
     /// Returns true if Holocene is active at the given timestamp.
     pub fn is_holocene_active(&self, timestamp: u64) -> bool {
-        self.holocene_time.map_or(false, |t| timestamp >= t) || self.is_isthmus_active(timestamp)
+        self.holocene_time.is_some_and(|t| timestamp >= t) || self.is_isthmus_active(timestamp)
     }
 
     /// Returns true if Isthmus is active at the given timestamp.
     pub fn is_isthmus_active(&self, timestamp: u64) -> bool {
-        self.isthmus_time.map_or(false, |t| timestamp >= t)
+        self.isthmus_time.is_some_and(|t| timestamp >= t)
     }
 
     /// Returns true if a DA Challenge proxy Address is provided in the rollup config and the
     /// address is not zero.
     pub fn is_alt_da_enabled(&self) -> bool {
-        self.da_challenge_address.map_or(false, |addr| !addr.is_zero())
+        self.da_challenge_address.is_some_and(|addr| !addr.is_zero())
     }
 
     /// Returns the max sequencer drift for the given timestamp.
