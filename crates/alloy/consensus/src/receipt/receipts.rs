@@ -126,7 +126,7 @@ where
         self.inner.bloom_slow()
     }
 
-    fn cumulative_gas_used(&self) -> u128 {
+    fn cumulative_gas_used(&self) -> u64 {
         self.inner.cumulative_gas_used()
     }
 
@@ -204,7 +204,7 @@ where
         Ok(Self {
             inner: Receipt {
                 status: Eip658Value::arbitrary(u)?,
-                cumulative_gas_used: u128::arbitrary(u)?,
+                cumulative_gas_used: u64::arbitrary(u)?,
                 logs: Vec::<T>::arbitrary(u)?,
             },
             deposit_nonce,
@@ -234,7 +234,7 @@ mod tests {
                 receipt: OpDepositReceipt {
                     inner: Receipt {
                         status: false.into(),
-                        cumulative_gas_used: 0x1u128,
+                        cumulative_gas_used: 0x1,
                         logs: vec![Log {
                             address: address!("0000000000000000000000000000000000000011"),
                             data: LogData::new_unchecked(

@@ -3,7 +3,7 @@
 
 use alloc::{format, string::ToString};
 use alloy_consensus::Header;
-use alloy_eips::BlockNumHash;
+use alloy_eips::{eip7840::BlobParams, BlockNumHash};
 use alloy_primitives::{address, Address, Bytes, Sealable, TxKind, B256, U256};
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
 use op_alloy_genesis::{RollupConfig, SystemConfig};
@@ -72,7 +72,7 @@ impl L1BlockInfoTx {
                 block_hash: l1_header.hash_slow(),
                 sequence_number,
                 batcher_address: system_config.batcher_address,
-                blob_base_fee: l1_header.blob_fee().unwrap_or(1),
+                blob_base_fee: l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1),
                 blob_base_fee_scalar,
                 base_fee_scalar,
             }))
@@ -358,7 +358,7 @@ mod test {
         assert_eq!(l1_info.block_hash, l1_header.hash_slow());
         assert_eq!(l1_info.sequence_number, sequence_number);
         assert_eq!(l1_info.batcher_address, system_config.batcher_address);
-        assert_eq!(l1_info.blob_base_fee, l1_header.blob_fee().unwrap_or(1));
+        assert_eq!(l1_info.blob_base_fee, l1_header.blob_fee(BlobParams::cancun()).unwrap_or(1));
 
         let scalar = system_config.scalar.to_be_bytes::<32>();
         let blob_base_fee_scalar = (scalar[0] == L1BlockInfoEcotone::L1_SCALAR)
