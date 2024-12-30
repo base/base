@@ -102,7 +102,7 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStat
 			l.Log.Error("failed to retry first half of proof request", "err", err)
 			return err
 		}
-		err = l.db.NewEntry(req.Type, midBlock+1, req.EndBlock)
+		err = l.db.NewEntry(req.Type, midBlock, req.EndBlock)
 		if err != nil {
 			l.Log.Error("failed to retry second half of proof request", "err", err)
 			return err
