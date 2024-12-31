@@ -49,7 +49,7 @@ func (l *L2OutputSubmitter) GetL1HeadForL2Block(ctx context.Context, rollupClien
 	return 0, fmt.Errorf("could not find an L1 block with an L2 safe head greater than the L2 end block")
 }
 
-func (l *L2OutputSubmitter) isSafeDBActivated(ctx context.Context, rollupClient *sources.RollupClient) (bool, error) {
+func (l *L2OutputSubmitter) IsSafeDBActivated(ctx context.Context, rollupClient *sources.RollupClient) (bool, error) {
 	// Get the sync status of the rollup node.
 	status, err := rollupClient.SyncStatus(ctx)
 	if err != nil {

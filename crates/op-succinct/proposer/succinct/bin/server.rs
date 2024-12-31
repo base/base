@@ -38,7 +38,11 @@ pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Set up the SP1 SDK logger.
     utils::setup_logger();
+
+    // Enable logging.
+    env::set_var("RUST_LOG", "info");
 
     dotenv::dotenv().ok();
 
@@ -259,13 +263,38 @@ async fn request_agg_proof(
         .map(|proof| proof.proof.clone())
         .collect();
 
-    let l1_head_bytes = hex::decode(
-        payload
-            .head
-            .strip_prefix("0x")
-            .expect("Invalid L1 head, no 0x prefix."),
-    )?;
-    let l1_head: [u8; 32] = l1_head_bytes.try_into().unwrap();
+    let l1_head_bytes = match payload.head.strip_prefix("0x") {
+        Some(hex_str) => match hex::decode(hex_str) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!("Failed to decode L1 head hex string: {}", e);
+                return Err(AppError(anyhow::anyhow!(
+                    "Failed to decode L1 head hex string: {}",
+                    e
+                )));
+            }
+        },
+        None => {
+            error!("Invalid L1 head format: missing 0x prefix");
+            return Err(AppError(anyhow::anyhow!(
+                "Invalid L1 head format: missing 0x prefix"
+            )));
+        }
+    };
+
+    let l1_head: [u8; 32] = match l1_head_bytes.clone().try_into() {
+        Ok(array) => array,
+        Err(_) => {
+            error!(
+                "Invalid L1 head length: expected 32 bytes, got {}",
+                l1_head_bytes.len()
+            );
+            return Err(AppError(anyhow::anyhow!(
+                "Invalid L1 head length: expected 32 bytes, got {}",
+                l1_head_bytes.len()
+            )));
+        }
+    };
 
     let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await {
         Ok(f) => f,

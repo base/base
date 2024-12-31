@@ -606,7 +606,7 @@ impl OPSuccinctDataFetcher {
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
         let headers = stream::iter(start..=end)
             .map(|block_number| async move { self.get_l1_header(block_number.into()).await })
-            .buffered(100)
+            .buffered(10)
             .collect::<Vec<Result<Header>>>()
             .await
             .into_iter()
