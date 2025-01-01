@@ -97,6 +97,50 @@ The `deploy` method is used to deploy the full set of L1 contracts required to s
 chain that complies with the [standard configuration]. It has the following interface:
 
 ```solidity
+struct Roles {
+    address opChainProxyAdminOwner;
+    address systemConfigOwner;
+    address batcher;
+    address unsafeBlockSigner;
+    address proposer;
+    address challenger;
+}
+
+struct DeployInput {
+    Roles roles;
+    uint32 basefeeScalar;
+    uint32 blobBasefeeScalar;
+    uint256 l2ChainId;
+    bytes startingAnchorRoots;
+    string saltMixer;
+    uint64 gasLimit;
+    uint32 disputeGameType;
+    bytes32 disputeAbsolutePrestate;
+    uint256 disputeMaxGameDepth;
+    uint256 disputeSplitDepth;
+    uint64 disputeClockExtension;
+    uint64 disputeMaxClockDuration;
+}
+
+struct DeployOutput {
+      IProxyAdmin opChainProxyAdmin;
+      IAddressManager addressManager;
+      IL1ERC721Bridge l1ERC721BridgeProxy;
+      ISystemConfig systemConfigProxy;
+      IOptimismMintableERC20Factory optimismMintableERC20FactoryProxy;
+      IL1StandardBridge l1StandardBridgeProxy;
+      IL1CrossDomainMessenger l1CrossDomainMessengerProxy;
+      // Fault proof contracts below.
+      IOptimismPortal2 optimismPortalProxy;
+      IDisputeGameFactory disputeGameFactoryProxy;
+      IAnchorStateRegistry anchorStateRegistryProxy;
+      IAnchorStateRegistry anchorStateRegistryImpl;
+      IFaultDisputeGame faultDisputeGame;
+      IPermissionedDisputeGame permissionedDisputeGame;
+      IDelayedWETH delayedWETHPermissionedGameProxy;
+      IDelayedWETH delayedWETHPermissionlessGameProxy;
+  }
+
 /// @notice Deploys a new OP Chain
 /// @param _input DeployInput containing chain specific config information.
 /// @return DeployOutput containing the new addresses.
@@ -155,6 +199,9 @@ This provides the following benefits:
 
 ## Upgrading
 
+This section is written specifically for the Isthmus upgrade path, which is the first upgrade which will
+be performed by the OP Contracts Manager.
+
 ### Interface
 
 #### `upgrade`
@@ -165,38 +212,18 @@ all chains that it controls.
 It has the following interface:
 
 ```solidity
-struct Roles {
-    address opChainProxyAdminOwner;
-    address systemConfigOwner;
-    address batcher;
-    address unsafeBlockSigner;
-    address proposer;
-    address challenger;
+struct IsthmusConfig {
+    uint32 public operatorFeeScalar;
+    uint64 public operatorFeeConstant;
 }
 
-struct DeployInput {
-    Roles roles;
-    uint32 basefeeScalar;
-    uint32 blobBasefeeScalar;
-    uint256 l2ChainId;
-    bytes startingAnchorRoots;
-    string saltMixer;
-    uint64 gasLimit;
-    uint32 disputeGameType;
-    bytes32 disputeAbsolutePrestate;
-    uint256 disputeMaxGameDepth;
-    uint256 disputeSplitDepth;
-    uint64 disputeClockExtension;
-    uint64 disputeMaxClockDuration;
-}
-
-function upgrade(ISystemConfig[] _systemConfigs, IProxyAdmin[] _proxyAdmins, NewChainConfig[] _newConfigs) public;
+function upgrade(ISystemConfig[] _systemConfigs, IProxyAdmin[] _proxyAdmins, IsthmusConfig[] _isthmusConfigs) public;
 ```
 
 For each chain successfully upgraded, the following event is emitted:
 
 ```solidity
-event Upgraded(uint256 indexed l2ChainId, SystemConfig indexed systemConfig, address indexed upgrader);
+event Upgraded(uint256 indexed l2ChainId, ISystemConfig indexed systemConfig, address indexed upgrader);
 ```
 
 This method reverts if the upgrade is not successful for any of the chains.
@@ -217,21 +244,9 @@ variable added to that contract since the last upgrade.
 
 #### `IsthmusConfig` struct
 
-This struct is used to pass the new chain configuration to the `upgrade` method, and so it will
-vary for each release of the OP Contracts Manager, based on what (if any) new parameters are added.
-
-In practice, this struct is likely to be have a unique name for each release of the OP Contracts
-Manager.
-
-By way of example, if an upgrade is adding a new variable `address foo` to the `SystemConfig` contract, for
-an upgrade named `Example`, the struct could have the following definition:
-
-```solidity
-struct IsthmusConfig {
-    uint32 public operatorFeeScalar;
-    uint64 public operatorFeeConstant;
-}
-```
+This struct is used to pass the new chain configuration to the `upgrade` method. It's name and
+field will vary for each release of the OP Contracts Manager, based on what (if any) new parameters
+are being added.
 
 #### Requirements on the OP Chain contracts
 
