@@ -234,13 +234,22 @@ The high level logic of the upgrade method is as follows:
 
 1. The Upgrade Controller Safe will `DELEGATECALL` to the `OPCM.upgrade()` method.
 2. For each `_systemConfig`, the list of addresses in the chain is retrieved.
-3. For each address, a two step upgrade is used where:
-   1. the first upgrade is to an `InitializerResetter` which resets the `initialized` value.
-   1. the implementation is updated to the final address and `upgrade()` is called on that address.
+3. For each address:
+   1. If it is receiving new state variables (only the SystemConfig for Isthmus), a call is made to:
+      `ProxyAdmin.upgradeAndCall()` with data corresponding to the new value being set.
+   2. Otherwise, `ProxyAdmin.upgrade()` is called on that address.
 
-This approach requires that all contracts have an `upgrade()` function which sets the `initialized`
-value to `true`. The `upgrade` function body should be empty unless it is used to set a new state
-variable added to that contract since the last upgrade.
+This approach requires that any contracts which are receiving new state variables
+have an upgrade function which:
+
+1. Writes the new state variables
+2. MUST only be callable once
+
+Thus for Isthmus, the System config will receive the following new function.
+
+```solidity
+function upgradeIsthmus(IsthmusConfig _isthmusConfig) external;
+```
 
 #### `IsthmusConfig` struct
 
