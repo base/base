@@ -9,6 +9,9 @@
 
 extern crate alloc;
 
+mod messages;
+pub use messages::{MessageIdentifier, MessagePayload, SafetyLevel};
+
 mod batch;
 pub use batch::{
     Batch, BatchDecodingError, BatchEncodingError, BatchReader, BatchTransaction, BatchType,

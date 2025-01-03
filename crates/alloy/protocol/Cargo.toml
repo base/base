@@ -21,12 +21,14 @@ op-alloy-consensus.workspace = true
 
 # Alloy
 alloy-primitives = { workspace = true, features = ["map"] }
+alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
 # Misc
 cfg-if.workspace = true
+derive_more.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
