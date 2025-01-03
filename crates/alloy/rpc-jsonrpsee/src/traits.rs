@@ -2,6 +2,9 @@
 
 //! Rollup Node
 
+use alloc::{boxed::Box, string::String, vec::Vec};
+use core::net::IpAddr;
+
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U64};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
@@ -9,7 +12,6 @@ use op_alloy_rpc_types::{
     OutputResponse, PeerDump, PeerInfo, PeerStats, RollupConfig, SafeHeadResponse, SyncStatus,
 };
 use op_alloy_rpc_types_engine::{ProtocolVersion, SuperchainSignal};
-use std::net::IpAddr;
 
 /// Optimism specified rpc interface.
 ///

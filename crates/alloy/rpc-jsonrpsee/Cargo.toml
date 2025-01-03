@@ -25,6 +25,13 @@ alloy-primitives.workspace = true
 jsonrpsee.workspace = true
 
 [features]
+default = ["std"]
+std = [
+    "op-alloy-rpc-types/std",
+    "op-alloy-rpc-types-engine/std",
+    "alloy-eips/std",
+    "alloy-primitives/std",
+]
 client = [
     "jsonrpsee/client",
     "jsonrpsee/async-client",
