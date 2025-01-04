@@ -27,7 +27,6 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
 # Misc
-cfg-if.workspace = true
 derive_more.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

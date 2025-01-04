@@ -1,8 +1,7 @@
 //! Contains the `ChannelOut` primitive for Optimism.
 
-use crate::{Batch, ChannelId, Compressor, Frame};
-use alloc::vec;
-use alloy_primitives::Bytes;
+use crate::{Batch, ChannelCompressor, ChannelId, CompressorError, Frame};
+use alloc::{vec, vec::Vec};
 use op_alloy_genesis::RollupConfig;
 
 /// The frame overhead.
@@ -20,9 +19,9 @@ pub enum ChannelOutError {
     /// Missing compressed batch data.
     #[error("Missing compressed batch data")]
     MissingData,
-    /// An error from brotli compression.
-    #[error("Error from Brotli compression")]
-    BrotliCompression,
+    /// An error from compression.
+    #[error("Error from compression")]
+    Compression(#[from] CompressorError),
     /// An error encoding the `Batch`.
     #[error("Error encoding the batch")]
     BatchEncoding,
@@ -32,10 +31,10 @@ pub enum ChannelOutError {
 }
 
 /// [ChannelOut] constructs a channel from compressed, encoded batch data.
-#[derive(Debug, Clone)]
+#[allow(missing_debug_implementations)]
 pub struct ChannelOut<'a, C>
 where
-    C: Compressor + Clone + core::fmt::Debug,
+    C: ChannelCompressor,
 {
     /// The unique identifier for the channel.
     pub id: ChannelId,
@@ -49,27 +48,26 @@ where
     pub closed: bool,
     /// The frame number.
     pub frame_number: u16,
-    /// Compressed batch data.
-    pub compressed: Option<Bytes>,
     /// The compressor.
     pub compressor: C,
 }
 
 impl<'a, C> ChannelOut<'a, C>
 where
-    C: Compressor + Clone + core::fmt::Debug,
+    C: ChannelCompressor,
 {
     /// Creates a new [ChannelOut] with the given [ChannelId].
     pub const fn new(id: ChannelId, config: &'a RollupConfig, compressor: C) -> Self {
-        Self {
-            id,
-            config,
-            rlp_length: 0,
-            frame_number: 0,
-            closed: false,
-            compressed: None,
-            compressor,
-        }
+        Self { id, config, rlp_length: 0, frame_number: 0, closed: false, compressor }
+    }
+
+    /// Resets the [ChannelOut] to its initial state.
+    pub fn reset(&mut self) {
+        self.rlp_length = 0;
+        self.frame_number = 0;
+        self.closed = false;
+        self.compressor.reset();
+        // TODO: read random bytes into the channel id.
     }
 
     /// Accepts the given [crate::Batch] data into the [ChannelOut], compressing it
@@ -89,14 +87,25 @@ where
             return Err(ChannelOutError::ExceedsMaxRlpBytesPerChannel);
         }
 
-        self.compressed = Some(self.compressor.compress(&buf).into());
+        self.compressor.write(&buf)?;
 
         Ok(())
     }
 
+    /// Returns the total amount of rlp-encoded input bytes.
+    pub const fn input_bytes(&self) -> u64 {
+        self.rlp_length
+    }
+
     /// Returns the number of bytes ready to be output to a frame.
     pub fn ready_bytes(&self) -> usize {
-        self.compressed.as_ref().map_or(0, |c| c.len())
+        self.compressor.len()
+    }
+
+    /// Flush the internal compressor.
+    pub fn flush(&mut self) -> Result<(), ChannelOutError> {
+        self.compressor.flush()?;
+        Ok(())
     }
 
     /// Closes the channel if not already closed.
@@ -120,15 +129,11 @@ where
         }
 
         // Read `max_size` bytes from the compressed data.
-        let data = if let Some(data) = &self.compressed {
-            &data[..max_size]
-        } else {
-            return Err(ChannelOutError::MissingData);
-        };
-        frame.data.extend_from_slice(data);
+        let mut data = Vec::with_capacity(max_size);
+        self.compressor.read(&mut data).map_err(ChannelOutError::Compression)?;
+        frame.data.extend_from_slice(data.as_slice());
 
         // Update the compressed data.
-        self.compressed = self.compressed.as_mut().map(|b| b.split_off(max_size));
         self.frame_number += 1;
         Ok(frame)
     }
@@ -137,36 +142,70 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SingleBatch, SpanBatch};
+    use crate::{CompressorResult, CompressorWriter, SingleBatch, SpanBatch};
+    use alloy_primitives::Bytes;
 
-    #[derive(Debug, Clone)]
-    struct MockCompressor;
+    #[derive(Debug, Clone, Default)]
+    struct MockCompressor {
+        pub compressed: Option<Bytes>,
+    }
 
-    impl Compressor for MockCompressor {
-        fn compress(&self, data: &[u8]) -> Vec<u8> {
-            data.to_vec()
+    impl CompressorWriter for MockCompressor {
+        fn write(&mut self, data: &[u8]) -> CompressorResult<usize> {
+            let data = data.to_vec();
+            let written = data.len();
+            self.compressed = Some(Bytes::from(data));
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> CompressorResult<()> {
+            Ok(())
+        }
+
+        fn close(&mut self) -> CompressorResult<()> {
+            Ok(())
+        }
+
+        fn reset(&mut self) {
+            self.compressed = None;
+        }
+
+        fn len(&self) -> usize {
+            self.compressed.as_ref().map(|b| b.len()).unwrap_or(0)
+        }
+
+        fn read(&mut self, buf: &mut [u8]) -> CompressorResult<usize> {
+            let len = self.compressed.as_ref().map(|b| b.len()).unwrap_or(0);
+            buf[..len].copy_from_slice(self.compressed.as_ref().unwrap());
+            Ok(len)
+        }
+    }
+
+    impl ChannelCompressor for MockCompressor {
+        fn get_compressed(&self) -> Vec<u8> {
+            self.compressed.as_ref().unwrap().to_vec()
         }
     }
 
     #[test]
     fn test_channel_out_ready_bytes_empty() {
         let config = RollupConfig::default();
-        let channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
         assert_eq!(channel.ready_bytes(), 0);
     }
 
     #[test]
     fn test_channel_out_ready_bytes_some() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
-        channel.compressed = Some(Bytes::from(vec![1, 2, 3]));
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
+        channel.compressor.write(&[1, 2, 3]).unwrap();
         assert_eq!(channel.ready_bytes(), 3);
     }
 
     #[test]
     fn test_channel_out_close() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
         assert!(!channel.closed);
 
         channel.close();
@@ -176,7 +215,7 @@ mod tests {
     #[test]
     fn test_channel_out_add_batch_closed() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
         channel.close();
 
         let batch = Batch::Single(SingleBatch::default());
@@ -186,7 +225,7 @@ mod tests {
     #[test]
     fn test_channel_out_empty_span_batch_decode_error() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
 
         let batch = Batch::Span(SpanBatch::default());
         assert_eq!(channel.add_batch(batch), Err(ChannelOutError::BatchEncoding));
@@ -195,7 +234,7 @@ mod tests {
     #[test]
     fn test_channel_out_max_rlp_bytes_per_channel() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
 
         let batch = Batch::Single(SingleBatch::default());
         channel.rlp_length = config.max_rlp_bytes_per_channel(batch.timestamp());
@@ -206,7 +245,7 @@ mod tests {
     #[test]
     fn test_channel_out_add_batch() {
         let config = RollupConfig::default();
-        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor);
+        let mut channel = ChannelOut::new(ChannelId::default(), &config, MockCompressor::default());
 
         let batch = Batch::Single(SingleBatch::default());
         assert_eq!(channel.add_batch(batch), Ok(()));

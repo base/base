@@ -3,6 +3,20 @@
 use crate::BrotliLevel;
 use alloc::borrow::Borrow;
 
+/// The result from compressing data.
+pub type CompressorResult<T> = Result<T, CompressorError>;
+
+/// An error returned by the compressor.
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+pub enum CompressorError {
+    /// Thrown when the compressor is full.
+    #[error("compressor is full")]
+    Full,
+    /// Brotli compression failed.
+    #[error("brotli compression failed")]
+    Brotli,
+}
+
 /// The type of compressor to use.
 ///
 /// See: <https://github.com/ethereum-optimism/optimism/blob/042433b89ce38ccc15456e9673829f6783bb97ac/op-batcher/compressor/compressors.go#L20>

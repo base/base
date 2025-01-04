@@ -35,9 +35,13 @@ pub use frame::{
 
 mod compression;
 pub use compression::{
-    compress_brotli, compress_zlib, decompress_brotli, decompress_zlib, BatchDecompressionError,
-    BrotliCompressionError, BrotliCompressor, BrotliLevel, CompressionAlgo, Compressor,
-    CompressorType, RatioCompressor, ShadowCompressor, VariantCompressor, ZlibCompressor,
+    compress_zlib, decompress_brotli, decompress_zlib, BrotliDecompressionError, BrotliLevel,
+    ChannelCompressor, CompressionAlgo, CompressorError, CompressorResult, CompressorType,
+    CompressorWriter, Config, ZlibCompressor,
+};
+#[cfg(feature = "std")]
+pub use compression::{
+    BrotliCompressionError, BrotliCompressor, RatioCompressor, ShadowCompressor, VariantCompressor,
 };
 
 mod iter;
