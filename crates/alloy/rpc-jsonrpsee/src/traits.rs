@@ -8,6 +8,7 @@ use core::net::IpAddr;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U64};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+use op_alloy_protocol::{ExecutingMessage, SafetyLevel};
 use op_alloy_rpc_types::{
     OutputResponse, PeerDump, PeerInfo, PeerStats, RollupConfig, SafeHeadResponse, SyncStatus,
 };
@@ -146,4 +147,16 @@ pub trait MinerApiExt {
     /// data size of the block. 0 means no maximum.
     #[method(name = "setMaxDASize")]
     async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool>;
+}
+
+/// Supervisor API for interop.
+#[rpc(client, namespace = "supervisor")]
+pub trait SupervisorApi {
+    /// Checks if the given messages meet the given minimum safety level.
+    #[method(name = "checkMessages")]
+    async fn check_messages(
+        &self,
+        messages: Vec<ExecutingMessage>,
+        min_safety: SafetyLevel,
+    ) -> RpcResult<()>;
 }

@@ -18,6 +18,7 @@ workspace = true
 # Alloy
 op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
+op-alloy-protocol.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 
