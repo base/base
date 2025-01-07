@@ -3,8 +3,8 @@
 //! <https://specs.optimism.io/interop/messaging.html#messaging>
 //! <https://github.com/ethereum-optimism/optimism/blob/34d5f66ade24bd1f3ce4ce7c0a6cfc1a6540eca1/packages/contracts-bedrock/src/L2/CrossL2Inbox.sol>
 use alloc::vec;
-use alloy_primitives::{keccak256, Address, Bytes, Log, U256};
-use alloy_sol_types::{sol, SolType};
+use alloy_primitives::{keccak256, Address, Bytes, Log, B256, U256};
+use alloy_sol_types::{sol, SolEvent, SolType};
 use derive_more::{AsRef, From};
 
 sol! {
@@ -22,7 +22,7 @@ sol! {
     /// @param msgHash Hash of message payload being executed.
     /// @param id Encoded Identifier of the message.
     #[derive(Default, Debug, PartialEq, Eq)]
-    event ExecutingMessage(bytes32 indexed msgHash, MessageIdentifierAbi id);
+    event ExecutingMessageAbi(bytes32 msgHash, MessageIdentifierAbi id);
 
     /// @notice Executes a cross chain message on the destination chain.
     /// @param _id      Identifier of the message.
@@ -53,7 +53,7 @@ impl From<Log> for MessagePayload {
 /// A [`MessageIdentifier`] uniquely represents a log that is emitted from a chain within
 /// the broader dependency set. It is included in the calldata of a transaction sent to the
 /// CrossL2Inbox contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct MessageIdentifier {
@@ -101,9 +101,39 @@ impl From<MessageIdentifier> for MessageIdentifierAbi {
     }
 }
 
-impl From<executeMessageCall> for ExecutingMessage {
+impl From<executeMessageCall> for ExecutingMessageAbi {
     fn from(call: executeMessageCall) -> Self {
         Self { id: call._id, msgHash: keccak256(call._message.as_ref()) }
+    }
+}
+
+/// Solidity event, emitted when a cross chain message is being executed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct ExecutingMessage {
+    /// Unique [`MessageIdentifier`].
+    pub id: MessageIdentifier,
+    /// `Keccak256` hash of message payload being executed.
+    pub msg_hash: B256,
+}
+
+impl ExecutingMessage {
+    /// Decodes an `ExecutingMessage` from ABI-encoded data.
+    pub fn abi_decode(data: &[u8], validate: bool) -> Result<Self, alloy_sol_types::Error> {
+        ExecutingMessageAbi::abi_decode_data(data, validate).map(|abi| abi.into())
+    }
+}
+
+impl From<(B256, MessageIdentifierAbi)> for ExecutingMessage {
+    fn from((msg_hash, id): (B256, MessageIdentifierAbi)) -> Self {
+        Self { id: id.into(), msg_hash }
+    }
+}
+
+impl From<ExecutingMessageAbi> for ExecutingMessage {
+    fn from(event: ExecutingMessageAbi) -> Self {
+        Self { id: event.id.into(), msg_hash: event.msgHash }
     }
 }
 
@@ -131,5 +161,37 @@ mod tests {
             chain_id: 420,
         };
         assert_eq!(id, expected);
+    }
+
+    #[test]
+    fn test_executing_message_serde() {
+        let raw_msg = r#"
+        {
+            "id": {
+                "origin": "0x6887246668a3b87F54DeB3b94Ba47a6f63F32985",
+                "blockNumber": 123456,
+                "logIndex": 789,
+                "timestamp": 1618932000,
+                "chainID": 420
+            },
+            "msgHash": "0xef8cc21bdbab8d2b60b054460768b1db67c8906b6a2bdf9bc287b3654326fc76"
+        }
+    "#;
+
+        let msg: ExecutingMessage = serde_json::from_str(raw_msg).unwrap();
+        let expected = ExecutingMessage {
+            id: MessageIdentifier {
+                origin: "0x6887246668a3b87F54DeB3b94Ba47a6f63F32985".parse().unwrap(),
+                block_number: 123456,
+                log_index: 789,
+                timestamp: 1618932000,
+                chain_id: 420,
+            },
+            msg_hash: "0xef8cc21bdbab8d2b60b054460768b1db67c8906b6a2bdf9bc287b3654326fc76"
+                .parse()
+                .unwrap(),
+        };
+
+        assert_eq!(msg, expected);
     }
 }

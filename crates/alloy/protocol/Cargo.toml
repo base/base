@@ -27,7 +27,7 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 
 # Misc
-derive_more.workspace = true
+derive_more = { workspace = true, default-features = false, features = ["from", "as_ref"] }
 tracing.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true

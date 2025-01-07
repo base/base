@@ -10,7 +10,7 @@
 extern crate alloc;
 
 mod messages;
-pub use messages::{MessageIdentifier, MessagePayload, SafetyLevel};
+pub use messages::{ExecutingMessage, MessageIdentifier, MessagePayload, SafetyLevel};
 
 mod batch;
 pub use batch::{
