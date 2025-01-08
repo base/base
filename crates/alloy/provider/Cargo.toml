@@ -1,6 +1,6 @@
 [package]
 name = "op-alloy-provider"
-description = "Interface with an OP Stack blockchain"
+description = "Re-export of op-rs/maili-provider"
 
 version.workspace = true
 edition.workspace = true
@@ -15,15 +15,5 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-op-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
-
-# Alloy
-alloy-network.workspace = true
-alloy-provider.workspace = true
-alloy-transport.workspace = true
-alloy-primitives = { workspace = true, features = ["rlp", "serde"] }
-alloy-rpc-types-engine = { workspace = true, features = ["serde"] }
-
-# misc
-async-trait.workspace = true
+# Maili
+maili-provider.workspace = true

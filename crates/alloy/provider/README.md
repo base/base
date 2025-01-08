@@ -7,4 +7,6 @@
 <a href="https://alloy-rs.github.io/op-alloy"><img src="https://img.shields.io/badge/Book-854a15?logo=mdBook&labelColor=2a2f35" alt="Book"></a>
 
 
-Optimism providers to interface with APIs, namely the engine API.
+See [maili-provider]
+
+[maili-provider]: https://github.com/op-rs/maili/blob/main/crates/provider/README.md
