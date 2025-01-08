@@ -7,12 +7,6 @@
 <a href="https://alloy-rs.github.io/op-alloy"><img src="https://img.shields.io/badge/Book-854a15?logo=mdBook&labelColor=2a2f35" alt="Book"></a>
 
 
-Core protocol types for Optimism.
+See [maili-protocol]
 
-These include types, constants, and methods for derivation as well as batch-submission.
-
-### Provenance
-
-This code was initially ported from [kona-primitives] as part of ongoing op-alloy migrations.
-
-[kona-primitives]: https://github.com/ethereum-optimism/kona/tree/main/crates/kona-primitives
+[maili-protocol]: https://github.com/op-rs/maili/blob/main/crates/protocol/README.md

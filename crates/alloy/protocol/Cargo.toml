@@ -1,6 +1,6 @@
 [package]
 name = "op-alloy-protocol"
-description = "Optimism protocol-specific types"
+description = "Re-export of op-rs/maili-protocol"
 
 version.workspace = true
 edition.workspace = true
@@ -15,67 +15,12 @@ exclude.workspace = true
 workspace = true
 
 [dependencies]
-# Workspace
-op-alloy-genesis.workspace = true
-op-alloy-consensus.workspace = true
-
-# Alloy
-alloy-primitives = { workspace = true, features = ["map"] }
-alloy-sol-types.workspace = true
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-
-# Misc
-derive_more = { workspace = true, default-features = false, features = ["from", "as_ref"] }
-tracing.workspace = true
-thiserror.workspace = true
-async-trait.workspace = true
-unsigned-varint.workspace = true
-
-# Compression
-brotli.workspace = true
-miniz_oxide.workspace = true
-alloc-no-stdlib.workspace = true
-
-# `arbitrary` feature
-arbitrary = { workspace = true, features = ["derive"], optional = true }
-
-# `serde` feature
-serde = { workspace = true, optional = true }
-alloy-serde = { workspace = true, optional = true }
-
-# `test-utils` feature
-spin = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, features = ["fmt"], optional = true }
-
-[dev-dependencies]
-brotli = { workspace = true, features = ["std"] }
-revm.workspace = true
-spin.workspace = true
-rand.workspace = true
-rstest.workspace = true
-proptest.workspace = true
-serde_json.workspace = true
-alloy-sol-types.workspace = true
-tokio = { workspace = true, features = ["full"] }
-arbitrary = { workspace = true, features = ["derive"] }
-tracing-subscriber = { workspace = true, features = ["fmt"] }
-alloy-primitives = { workspace = true, features = ["arbitrary"] }
+# Maili
+maili-protocol = { workspace = true, default-features = false }
 
 [features]
 default = ["serde", "std"]
-test-utils = [
-  "dep:spin",
-  "dep:tracing-subscriber",
-]
-arbitrary = [
-  "std",
-  "dep:arbitrary",
-  "alloy-consensus/arbitrary",
-  "alloy-eips/arbitrary",
-  "alloy-primitives/rand",
-  "alloy-primitives/arbitrary",
-]
-std = ["op-alloy-consensus/std", "op-alloy-genesis/std", "brotli/std"]
-serde = ["dep:serde", "dep:alloy-serde", "op-alloy-consensus/serde", "op-alloy-genesis/serde"]
+test-utils = ["maili-protocol/test-utils"]
+arbitrary = ["maili-protocol/arbitrary"]
+std = ["maili-protocol/std"]
+serde = ["maili-protocol/serde"]
