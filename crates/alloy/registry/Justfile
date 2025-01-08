@@ -1,9 +1,0 @@
-set positional-arguments
-
-# default recipe to display help information
-default:
-  @just --list
-
-# Generate file bindings
-bind:
-  ./etc/bind.sh
