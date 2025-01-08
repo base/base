@@ -24,6 +24,9 @@ alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types-engine.workspace = true
 
+# Maili
+maili-rpc-types-engine = { workspace = true, default-features = false }
+
 # Encoding
 snap = { workspace = true, optional = true }
 ethereum_ssz = { workspace = true, optional = true }
@@ -34,7 +37,6 @@ alloy-serde = { workspace = true, optional = true }
 
 # misc
 thiserror.workspace = true
-derive_more = { workspace = true, features = ["display"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
@@ -53,12 +55,14 @@ std = [
   "alloy-rpc-types-engine/std",
   "op-alloy-consensus/std",
   "op-alloy-protocol/std",
+  "maili-rpc-types-engine/std",
 ]
 serde = [
   "dep:serde",
   "dep:alloy-serde",
   "op-alloy-protocol/serde",
   "alloy-rpc-types-engine/serde",
+  "maili-rpc-types-engine/serde",
 ]
 arbitrary = [
   "std",

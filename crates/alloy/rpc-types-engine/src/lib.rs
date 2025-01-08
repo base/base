@@ -10,6 +10,7 @@
 extern crate alloc;
 
 pub use alloy_rpc_types_engine::ForkchoiceUpdateVersion;
+pub use maili_rpc_types_engine::*;
 
 mod attributes;
 pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
@@ -22,8 +23,3 @@ pub use payload_v3::OpExecutionPayloadEnvelopeV3;
 
 mod payload_v4;
 pub use payload_v4::OpExecutionPayloadEnvelopeV4;
-
-mod superchain;
-pub use superchain::{
-    ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
-};
