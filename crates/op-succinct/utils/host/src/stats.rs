@@ -3,7 +3,7 @@ use std::fmt;
 use crate::fetcher::BlockInfo;
 use num_format::{Locale, ToFormattedString};
 use serde::{Deserialize, Serialize};
-use sp1_sdk::{CostEstimator, ExecutionReport};
+use sp1_sdk::ExecutionReport;
 
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -130,7 +130,7 @@ impl ExecutionStats {
             batch_start: block_data[0].block_number,
             batch_end: block_data[block_data.len() - 1].block_number,
             total_instruction_count: report.total_instruction_count(),
-            total_sp1_gas: report.estimate_gas(),
+            total_sp1_gas: 0,
             block_execution_instruction_count: get_cycles("block-execution"),
             oracle_verify_instruction_count: get_cycles("oracle-verify"),
             derivation_instruction_count: get_cycles("payload-derivation"),
