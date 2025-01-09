@@ -23,10 +23,6 @@ pub use op_alloy_network as network;
 #[doc(inline)]
 pub use op_alloy_protocol as protocol;
 
-#[cfg(feature = "registry")]
-#[doc(inline)]
-pub use op_alloy_registry as registry;
-
 #[cfg(feature = "rpc-types")]
 #[doc(inline)]
 pub use op_alloy_rpc_types as rpc_types;

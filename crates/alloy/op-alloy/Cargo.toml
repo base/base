@@ -23,7 +23,6 @@ op-alloy-consensus = { workspace = true, optional = true }
 op-alloy-genesis = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-protocol = { workspace = true, optional = true }
-op-alloy-registry = { workspace = true, optional = true }
 op-alloy-rpc-jsonrpsee = { workspace = true, optional = true }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
@@ -35,7 +34,6 @@ std = [
   "op-alloy-consensus?/std",
   "op-alloy-genesis?/std",
   "op-alloy-protocol?/std",
-  "op-alloy-registry?/std",
   "op-alloy-rpc-types?/std",
   "op-alloy-rpc-types-engine?/std",
 ]
@@ -43,7 +41,6 @@ std = [
 full = [
   "consensus",
   "genesis",
-  "registry",
   "network",
   "protocol",
   "rpc-types",
@@ -73,7 +70,6 @@ serde = [
 # `no_std` support
 consensus = ["dep:op-alloy-consensus"]
 genesis = ["dep:op-alloy-genesis"]
-registry = ["dep:op-alloy-registry"]
 protocol = ["dep:op-alloy-protocol"]
 rpc-types = ["dep:op-alloy-rpc-types"]
 rpc-types-engine = ["dep:op-alloy-rpc-types-engine"]
