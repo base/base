@@ -24,7 +24,6 @@ op-alloy-genesis = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-protocol = { workspace = true, optional = true }
 op-alloy-registry = { workspace = true, optional = true }
-op-alloy-provider = { workspace = true, optional = true }
 op-alloy-rpc-jsonrpsee = { workspace = true, optional = true }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
@@ -44,7 +43,6 @@ std = [
 full = [
   "consensus",
   "genesis",
-  "provider",
   "registry",
   "network",
   "protocol",
@@ -81,7 +79,6 @@ rpc-types = ["dep:op-alloy-rpc-types"]
 rpc-types-engine = ["dep:op-alloy-rpc-types-engine"]
 
 # std features
-provider = ["dep:op-alloy-provider"]
 network = ["dep:op-alloy-network"]
 rpc-jsonrpsee = ["dep:op-alloy-rpc-jsonrpsee"]
 

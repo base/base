@@ -27,10 +27,6 @@ pub use op_alloy_protocol as protocol;
 #[doc(inline)]
 pub use op_alloy_registry as registry;
 
-#[cfg(feature = "provider")]
-#[doc(inline)]
-pub use op_alloy_provider as provider;
-
 #[cfg(feature = "rpc-types")]
 #[doc(inline)]
 pub use op_alloy_rpc_types as rpc_types;
