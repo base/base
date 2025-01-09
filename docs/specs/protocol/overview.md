@@ -66,7 +66,7 @@ graph LR
         L1ERC721Bridge(<a href="./bridges.html">L1ERC721Bridge</a>)
         L1CrossDomainMessenger(<a href="./messengers.html">L1CrossDomainMessenger</a>)
         OptimismPortal(<a href="./withdrawals.html#the-optimism-portal-contract">OptimismPortal</a>)
-        SuperchainConfig(<a href="./superchain-configuration.html">SuperchainConfig</a>)
+        SuperchainConfig(<a href="./superchain-config.html">SuperchainConfig</a>)
         SystemConfig(<a href="./system-config.html">SystemConfig</a>)
         DisputeGameFactory(<a href="../fault-proof/stage-one/dispute-game-interface.html#disputegamefactory-interface">DisputeGameFactory</a>)
         FaultDisputeGame(<a href="../fault-proof/stage-one/fault-dispute-game.html">FaultDisputeGame</a>)
@@ -142,12 +142,12 @@ graph LR
 
 #### Notes for Core L1 Smart Contracts
 
-- The `Batch Inbox Address` described above (**highlighted in GREY**) is *not* a smart contract and is instead an arbitrarily
+- The `Batch Inbox Address` described above (**highlighted in GREY**) is _not_ a smart contract and is instead an arbitrarily
   selected account that is assumed to have no known private key. The convention for deriving this account's address is
   provided on the [Configurability](./configurability.md#consensus-parameters) page.
   - Historically, it was often derived as
-  `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
-  This is why many chains, such as OP Mainnet, have a batch inbox address of this form.
+    `0xFF0000....<L2 chain ID>` where `<L2 chain ID>` is chain ID of the Layer 2 network for which the data is being posted.
+    This is why many chains, such as OP Mainnet, have a batch inbox address of this form.
 - Smart contracts that sit behind `Proxy` contracts are **highlighted in BLUE**. Refer to the
   [Smart Contract Proxies](#smart-contract-proxies) section below to understand how these proxies are designed.
   - The `L1CrossDomainMessenger` contract sits behind the [`ResolvedDelegateProxy`](https://github.com/ethereum-optimism/optimism/tree/develop/packages/contracts-bedrock/src/legacy/ResolvedDelegateProxy.sol)
@@ -356,7 +356,7 @@ Both deposit types are represented by a single custom EIP-2718 transaction type 
 #### Overview
 
 The rollup chain can be deterministically derived given an L1 Ethereum chain. The fact that the entire rollup chain can
-be derived based on L1 blocks is *what makes Optimism a rollup*. This process can be represented as:
+be derived based on L1 blocks is _what makes Optimism a rollup_. This process can be represented as:
 
 ```text
 derive_rollup_chain(l1_blockchain) -> rollup_blockchain
@@ -372,21 +372,21 @@ Optimism's block derivation function is designed such that it:
 
 The rollup chain is subdivided into epochs. There is a 1:1 correspondence between L1 block numbers and epoch numbers.
 
-For L1 block number `n`, there is a corresponding rollup epoch `n` which can only be derived after a *sequencing window*
+For L1 block number `n`, there is a corresponding rollup epoch `n` which can only be derived after a _sequencing window_
 worth of blocks has passed, i.e. after L1 block number `n + SEQUENCING_WINDOW_SIZE` is added to the L1 chain.
 
 Each epoch contains at least one block. Every block in the epoch contains an L1 info transaction which contains
 contextual information about L1 such as the block hash and timestamp. The first block in the epoch also contains all
-deposits initiated via the `OptimismPortal` contract on L1. All L2 blocks can also contain *sequenced transactions*,
+deposits initiated via the `OptimismPortal` contract on L1. All L2 blocks can also contain _sequenced transactions_,
 i.e. transactions submitted directly to the sequencer.
 
-Whenever the sequencer creates a new L2 block for a given epoch, it must submit it to L1 as part of a *batch*, within
+Whenever the sequencer creates a new L2 block for a given epoch, it must submit it to L1 as part of a _batch_, within
 the epoch's sequencing window (i.e. the batch must land before L1 block `n + SEQUENCING_WINDOW_SIZE`). These batches are
 (along with the `TransactionDeposited` L1 events) what allows the derivation of the L2 chain from the L1 chain.
 
 The sequencer does not need for a L2 block to be batch-submitted to L1 in order to build on top of it. In fact, batches
 typically contain multiple L2 blocks worth of sequenced transactions. This is what enables
-*fast transaction confirmations* on the sequencer.
+_fast transaction confirmations_ on the sequencer.
 
 Since transaction batches for a given epoch can be submitted anywhere within the sequencing window, verifiers must
 search all blocks within the window for transaction batches. This protects against the uncertainty of transaction
@@ -403,7 +403,7 @@ have been elided):
 
 #### Block Derivation Loop
 
-A sub-component of the rollup node called the *rollup driver* is actually responsible for performing block derivation.
+A sub-component of the rollup node called the _rollup driver_ is actually responsible for performing block derivation.
 The rollup driver is essentially an infinite loop that runs the block derivation function. For each epoch, the block
 derivation function performs the following steps:
 
@@ -417,7 +417,7 @@ This process is then repeated with incrementing epochs until the tip of L1 is re
 ### Engine API
 
 The rollup driver doesn't actually create blocks. Instead, it directs the execution engine to do so via the Engine API.
-For each iteration of the block derivation loop described above, the rollup driver will craft a *payload attributes*
+For each iteration of the block derivation loop described above, the rollup driver will craft a _payload attributes_
 object and send it to the execution engine. The execution engine will then convert the payload attributes object into a
 block, and add it to the chain. The basic sequence of the rollup driver is as follows:
 

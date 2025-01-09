@@ -29,7 +29,7 @@
   - [Predeploys](./protocol/predeploys.md)
   - [Preinstalls](./protocol/preinstalls.md)
   - [Superchain]()
-    - [Superchain Configuration](./protocol/superchain-configuration.md)
+    - [Superchain Configuration](./protocol/superchain-config.md)
     - [Superchain Upgrades](./protocol/superchain-upgrades.md)
   - [System Config](./protocol/system-config.md)
   - [Configurability](./protocol/configurability.md)
