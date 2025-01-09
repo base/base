@@ -5,7 +5,7 @@ use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode, RunContext};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sp1_sdk::{HashableKey, ProverClient};
+use sp1_sdk::{HashableKey, Prover, ProverClient};
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -121,7 +121,7 @@ async fn update_l2oo_config() -> Result<()> {
     let owner = get_address("OWNER");
     let challenger = get_address("CHALLENGER");
 
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().cpu().build();
     let (_, agg_vkey) = prover.setup(AGG_ELF);
     let aggregation_vkey = agg_vkey.vk.bytes32();
 

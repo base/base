@@ -39,7 +39,7 @@ pub async fn execute_multi(
     l2_end_block: u64,
 ) -> Result<(Vec<BlockInfo>, ExecutionReport, Duration)> {
     let start_time = Instant::now();
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().mock().build();
     let (_, report) = prover.execute(RANGE_ELF, &sp1_stdin).run().unwrap();
     let execution_duration = start_time.elapsed();
 

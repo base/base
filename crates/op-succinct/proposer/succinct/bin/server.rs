@@ -15,6 +15,7 @@ use op_succinct_client_utils::{
 use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_agg_proof_stdin, get_proof_stdin,
+    stats::ExecutionStats,
     witnessgen::{WitnessGenExecutor, WITNESSGEN_TIMEOUT},
     L2OutputOracle, ProgramType,
 };
@@ -27,9 +28,14 @@ use sp1_sdk::{
         proto::network::{ExecutionStatus, FulfillmentStatus},
         FulfillmentStrategy,
     },
-    utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues,
+    utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofMode, SP1ProofWithPublicValues,
+    SP1_CIRCUIT_VERSION,
 };
-use std::{env, str::FromStr, time::Duration};
+use std::{
+    env, fs,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -45,7 +51,7 @@ async fn main() -> Result<()> {
 
     dotenv::dotenv().ok();
 
-    let prover = ProverClient::builder().mock().build();
+    let prover = ProverClient::builder().cpu().build();
     let (range_pk, range_vk) = prover.setup(RANGE_ELF);
     let (agg_pk, agg_vk) = prover.setup(AGG_ELF);
     let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
@@ -348,6 +354,7 @@ async fn request_mock_span_proof(
     // Start the server and native client with a timeout.
     // Note: Ideally, the server should call out to a separate process that executes the native
     // host, and return an ID that the client can poll on to check if the proof was submitted.
+    let start_time = Instant::now();
     let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
     if let Err(e) = witnessgen_executor.spawn_witnessgen(&host_cli).await {
         error!("Failed to spawn witness generator: {}", e);
@@ -361,6 +368,7 @@ async fn request_mock_span_proof(
             e
         )));
     }
+    let witness_generation_time_sec = start_time.elapsed();
 
     let sp1_stdin = match get_proof_stdin(&host_cli) {
         Ok(stdin) => stdin,
@@ -370,11 +378,41 @@ async fn request_mock_span_proof(
         }
     };
 
-    let prover = ProverClient::builder().mock().build();
-    let proof = prover
-        .prove(&state.range_pk, &sp1_stdin)
-        .compressed()
-        .run()?;
+    let start_time = Instant::now();
+    let prover = ProverClient::builder().cpu().build();
+    let (pv, report) = prover.execute(RANGE_ELF, &sp1_stdin).run().unwrap();
+    let execution_duration = start_time.elapsed();
+
+    let block_data = fetcher
+        .get_l2_block_data_range(payload.start, payload.end)
+        .await?;
+
+    let stats = ExecutionStats::new(
+        &block_data,
+        &report,
+        witness_generation_time_sec.as_secs(),
+        execution_duration.as_secs(),
+    );
+
+    let l2_chain_id = fetcher.get_l2_chain_id().await?;
+    // Save the report to disk.
+    let report_dir = format!("execution-reports/{}", l2_chain_id);
+    if !std::path::Path::new(&report_dir).exists() {
+        fs::create_dir_all(&report_dir)?;
+    }
+
+    let report_path = format!("{}/{}-{}.json", report_dir, payload.start, payload.end);
+    // Write to CSV.
+    let mut csv_writer = csv::Writer::from_path(report_path)?;
+    csv_writer.serialize(&stats)?;
+    csv_writer.flush()?;
+
+    let proof = SP1ProofWithPublicValues::create_mock_proof(
+        &state.range_pk,
+        pv.clone(),
+        SP1ProofMode::Compressed,
+        SP1_CIRCUIT_VERSION,
+    );
 
     let proof_bytes = bincode::serialize(&proof).unwrap();
 

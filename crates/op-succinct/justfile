@@ -72,11 +72,6 @@ deploy-mock-verifier env_file=".env":
         echo "PRIVATE_KEY not set in {{env_file}}"
         exit 1
     fi
-    
-    VERIFY_FLAGS=""
-    if [ ! -z "$ETHERSCAN_API_KEY" ]; then
-        VERIFY_FLAGS="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
-    fi
 
     cd contracts
     
@@ -84,7 +79,10 @@ deploy-mock-verifier env_file=".env":
     --rpc-url $L1_RPC \
     --private-key $PRIVATE_KEY \
     --broadcast \
-    $VERIFY_FLAGS
+    --verify \
+    --verifier etherscan \
+    --etherscan-api-key $ETHERSCAN_API_KEY
+  
 # Deploy the OPSuccinct L2 Output Oracle
 deploy-oracle env_file=".env":
     #!/usr/bin/env bash

@@ -86,7 +86,7 @@ fn build_zkvm_program(program: &str) {
     build_program_with_args(
         &format!("{}/{}", metadata.workspace_root.join("programs"), program),
         BuildArgs {
-            elf_name: format!("{}-elf", program),
+            elf_name: Some(format!("{}-elf", program)),
             docker: true,
             tag: "v4.0.0-rc.3".to_string(),
             ..Default::default()
