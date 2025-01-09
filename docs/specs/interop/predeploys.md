@@ -7,7 +7,6 @@
 - [Overview](#overview)
 - [CrossL2Inbox](#crossl2inbox)
   - [Functions](#functions)
-    - [executeMessage](#executemessage)
     - [validateMessage](#validatemessage)
   - [Interop Start Timestamp](#interop-start-timestamp)
   - [`ExecutingMessage` Event](#executingmessage-event)
@@ -87,36 +86,9 @@ of cross chain messages, on behalf of any user.
 
 To ensure safety of the protocol, the [Message Invariants](./messaging.md#messaging-invariants) must be enforced.
 
-[message payload]: ./messaging.md#message-payload
 [`Identifier`]: ./messaging.md#message-identifier
 
 ### Functions
-
-#### executeMessage
-
-Executes a cross chain message and performs a `CALL` with the payload to the provided target address, allowing
-introspection of the data.
-Signals the transaction has a cross chain message to validate by emitting the `ExecutingMessage` event.
-
-The following fields are required for executing a cross chain message:
-
-| Name      | Type         | Description                                             |
-| --------- | ------------ | ------------------------------------------------------- |
-| `_msg`    | `bytes`      | The [message payload], matching the initiating message. |
-| `_id`     | `Identifier` | A [`Identifier`] pointing to the initiating message.    |
-| `_target` | `address`    | Account that is called with `_msg`.                     |
-
-Messages are broadcast, not directed. Upon execution the caller can specify which `address` to target:
-there is no protocol enforcement on what this value is.
-
-The `_target` is called with the `_msg` as input.
-In practice, the `_target` will be a contract that needs to know the schema of the `_msg` so that it can be decoded.
-It MAY call back to the `CrossL2Inbox` to authenticate
-properties about the `_msg` using the information in the `Identifier`.
-
-```solidity
-function executeMessage(Identifier calldata _id, address _target, bytes memory _message)
-```
 
 #### validateMessage
 
@@ -148,7 +120,7 @@ that timestamp into the pre-determined storage slot.
 ### `ExecutingMessage` Event
 
 The `ExecutingMessage` event represents an executing message. It MUST be emitted on every call
-to `executeMessage` and `validateMessage`.
+to `validateMessage`.
 
 ```solidity
 event ExecutingMessage(bytes32 indexed msgHash, Identifier identifier);
@@ -168,54 +140,14 @@ hash comparison.
 
 ### Reference implementation
 
-A simple implementation of the `executeMessage` function is included below.
+A simple implementation of the `validateMessage` function is included below.
 
 ```solidity
-function executeMessage(Identifier calldata _id, address _target, bytes calldata _msg) public payable {
-    require(_id.timestamp <= block.timestamp);
-    require(L1Block.isInDependencySet(_id.chainid));
-    require(_id.timestamp > interopStart());
+    function validateMessage(Identifier calldata _id, bytes32 _msgHash) external {
+        // We need to know if this is being called on a depositTx
+        if (IL1BlockInterop(Predeploys.L1_BLOCK_ATTRIBUTES).isDeposit()) revert NoExecutingDeposits();
 
-    assembly {
-      tstore(ORIGIN_SLOT, _id.origin)
-      tstore(BLOCKNUMBER_SLOT, _id.blocknumber)
-      tstore(LOG_INDEX_SLOT, _id.logIndex)
-      tstore(TIMESTAMP_SLOT, _id.timestamp)
-      tstore(CHAINID_SLOT, _id.chainid)
-    }
-
-    bool success = SafeCall.call({
-      _target: _target,
-      _value: msg.value,
-      _calldata: _msg
-    });
-
-    require(success);
-
-    emit ExecutingMessage(keccak256(_msg), _id);
-}
-```
-
-Note that the `executeMessage` function is `payable` to enable relayers to earn in the gas paying asset.
-
-An example of encoding a cross chain call directly in an event. However realize the
-[L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger) predeploy provides a cleaner and user
-friendly abstraction for cross chain calls.
-
-```solidity
-contract MyCrossChainApp {
-    function sendMessage() external {
-        bytes memory data = abi.encodeCall(MyCrossChainApp.relayMessage, (1, address(0x20)));
-
-        // Encoded payload matches the required calldata by omission of an event topic
-        assembly {
-          log0(add(data, 0x20), mload(data))
-        }
-    }
-
-    function relayMessage(uint256 value, address recipient) external {
-        // Assert that this is only executed directly from the inbox
-        require(msg.sender == Predeploys.CrossL2Inbox);
+        emit ExecutingMessage(_msgHash, _id);
     }
 }
 ```

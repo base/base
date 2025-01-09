@@ -101,10 +101,11 @@ An initiating message may be executed many times: no replay-protection is enshri
 ### Executing Messages
 
 An executing message is represented by the [ExecutingMessage event][event] that is emitted by
-the `CrossL2Inbox` predeploy. If the cross chain message is directly executed via [executeMessage](./predeploys.md#executemessage),
-the event is coupled to a `CALL` with the payload that is emitted within the event to the target
-address, allowing introspection of the data. Contracts can also introduce their own public
+the `CrossL2Inbox` predeploy. Contracts can introduce their own public
 entrypoints and solely trigger validation of the cross chain message with [validateMessage](./predeploys.md#validatemessage).
+
+We highly encourage the use of the [`L2toL2CrossDomainMessenger`](./predeploys.md#l2tol2crossdomainmessenger)
+over a custom messsage-executor contract.
 
 All of the information required to satisfy the invariants MUST be included in this event.
 
