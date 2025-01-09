@@ -10,9 +10,7 @@ rbuilder = { path = "../../../rbuilder" }
 alloy-primitives.workspace = true
 alloy-rpc-types-beacon.workspace = true
 reth-primitives = { workspace = true }
-reth-provider = { workspace = true }
-reth-db-api = { workspace = true }
-
+reth-provider = {workspace = true}
 derive_more = { workspace = true }
 eyre = { workspace = true }
 tokio = { workspace = true }
@@ -22,7 +20,5 @@ tracing = { workspace = true }
 [features]
 optimism = [
 	"rbuilder/optimism",
-	"reth-db-api/optimism",
 	"reth-primitives/optimism",
-	"reth-provider/optimism"
 ]
