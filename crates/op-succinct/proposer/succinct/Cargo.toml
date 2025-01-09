@@ -29,7 +29,7 @@ dotenv.workspace = true
 op-succinct-client-utils.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true
-
+csv.workspace = true
 # server
 axum = "0.7.4"
 bincode.workspace = true

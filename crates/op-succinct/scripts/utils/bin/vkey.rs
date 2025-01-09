@@ -1,7 +1,7 @@
 use alloy_primitives::B256;
 use anyhow::Result;
 use op_succinct_client_utils::types::u32_to_u8;
-use sp1_sdk::{utils, HashableKey, ProverClient};
+use sp1_sdk::{utils, HashableKey, Prover, ProverClient};
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     utils::setup_logger();
 
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().cpu().build();
 
     let (_, range_vk) = prover.setup(RANGE_ELF);
 

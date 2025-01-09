@@ -72,7 +72,7 @@ async fn execute_blocks_and_write_stats_csv(
     fs::File::create(&report_path).unwrap();
     let report_path = report_path.canonicalize().unwrap();
 
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().cpu().build();
 
     // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
     host_clis

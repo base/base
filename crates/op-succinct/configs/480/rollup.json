@@ -44,5 +44,5 @@
   "batch_inbox_address": "0xff00000000000000000000000000000000000480",
   "deposit_contract_address": "0xd5ec14a83b7d95be1e2ac12523e2dee12cbeea6c",
   "l1_system_config_address": "0x6ab0777fd0e609ce58f939a7f70fe41f5aa6300a",
-  "protocol_versions_address": "0x0000000000000000000000000000000000000000"
+  "protocol_versions_address": "0x8062abc286f5e7d9428a0ccb9abd71e50d93b935"
 }

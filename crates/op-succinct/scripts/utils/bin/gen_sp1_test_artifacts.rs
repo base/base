@@ -26,7 +26,7 @@ async fn execute_blocks_parallel(
     host_clis: &[HostCli],
     ranges: Vec<SpanBatchRange>,
 ) -> Vec<(SP1Stdin, SpanBatchRange)> {
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().cpu().build();
     // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
     let successful_ranges = host_clis
         .par_iter()

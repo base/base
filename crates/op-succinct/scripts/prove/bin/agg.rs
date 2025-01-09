@@ -9,7 +9,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_prove::{AGG_ELF, RANGE_ELF};
 use sp1_sdk::{
-    utils, HashableKey, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
+    utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
 };
 use std::fs;
 
@@ -41,7 +41,7 @@ fn load_aggregation_proof_data(
     let mut proofs = Vec::with_capacity(proof_names.len());
     let mut boot_infos = Vec::with_capacity(proof_names.len());
 
-    let prover = ProverClient::from_env();
+    let prover = ProverClient::builder().cpu().build();
 
     for proof_name in proof_names.iter() {
         let proof_path = format!("{}/{}.bin", proof_directory, proof_name);
