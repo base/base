@@ -32,6 +32,7 @@ kona-host = { workspace = true }
 # local
 op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
+op-succinct-scripts = { path = "../utils" }
 
 # op-alloy
 op-alloy-genesis.workspace = true

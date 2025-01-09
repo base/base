@@ -34,7 +34,6 @@ const TWELVE_HOURS: Duration = Duration::from_secs(60 * 60 * 12);
 async fn execute_blocks_and_write_stats_csv(
     host_clis: &[HostCli],
     ranges: Vec<SpanBatchRange>,
-    prover: &ProverClient,
     l2_chain_id: u64,
     start: u64,
     end: u64,
@@ -73,6 +72,8 @@ async fn execute_blocks_and_write_stats_csv(
     fs::File::create(&report_path).unwrap();
     let report_path = report_path.canonicalize().unwrap();
 
+    let prover = ProverClient::from_env();
+
     // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
     host_clis
         .par_iter()
@@ -81,7 +82,7 @@ async fn execute_blocks_and_write_stats_csv(
             let sp1_stdin = get_proof_stdin(host_cli).unwrap();
 
             // FIXME: Implement retries with a smaller block range if this fails.
-            let result = prover.execute(RANGE_ELF, sp1_stdin).run();
+            let result = prover.execute(RANGE_ELF, &sp1_stdin).run();
 
             // If the execution fails, skip this block range and log the error.
             if let Some(err) = result.as_ref().err() {
@@ -206,8 +207,6 @@ async fn main() -> Result<()> {
         split_ranges
     );
 
-    let prover = ProverClient::new();
-
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache
     } else {
@@ -237,7 +236,6 @@ async fn main() -> Result<()> {
     execute_blocks_and_write_stats_csv(
         &host_clis,
         split_ranges,
-        &prover,
         l2_chain_id,
         l2_start_block,
         l2_end_block,

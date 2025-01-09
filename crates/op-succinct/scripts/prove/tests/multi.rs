@@ -8,7 +8,6 @@ use op_succinct_host_utils::{
     ProgramType,
 };
 use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, ONE_HOUR};
-use sp1_sdk::ProverClient;
 
 mod common;
 
@@ -36,16 +35,8 @@ async fn execute_batch() -> Result<()> {
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
-    let prover = ProverClient::new();
-
-    let (block_data, report, execution_duration) = execute_multi(
-        &prover,
-        &data_fetcher,
-        sp1_stdin,
-        l2_start_block,
-        l2_end_block,
-    )
-    .await?;
+    let (block_data, report, execution_duration) =
+        execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
     let stats = ExecutionStats::new(
         &block_data,

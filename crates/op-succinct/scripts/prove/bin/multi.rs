@@ -8,41 +8,14 @@ use op_succinct_host_utils::{
     ProgramType,
 };
 use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, RANGE_ELF};
-use sp1_sdk::{utils, ProverClient};
-use std::{fs, path::PathBuf, time::Duration};
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Start L2 block number.
-    #[arg(short, long)]
-    start: Option<u64>,
-
-    /// End L2 block number.
-    #[arg(short, long)]
-    end: Option<u64>,
-
-    /// Verbosity level.
-    #[arg(short, long, default_value = "0")]
-    verbosity: u8,
-
-    /// Skip running native execution.
-    #[arg(short, long)]
-    use_cache: bool,
-
-    /// Generate proof.
-    #[arg(short, long)]
-    prove: bool,
-
-    /// Env file.
-    #[arg(long, default_value = ".env")]
-    env_file: PathBuf,
-}
+use op_succinct_scripts::HostExecutorArgs;
+use sp1_sdk::{network::FulfillmentStrategy, utils, Prover, ProverClient};
+use std::{fs, time::Duration};
 
 /// Execute the OP Succinct program for multiple blocks.
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = HostExecutorArgs::parse();
 
     dotenv::from_path(&args.env_file)?;
     utils::setup_logger();
@@ -73,14 +46,19 @@ async fn main() -> Result<()> {
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(&host_cli)?;
 
-    let prover = ProverClient::new();
+    let prover = ProverClient::builder().network().build();
 
     if args.prove {
         // If the prove flag is set, generate a proof.
         let (pk, _) = prover.setup(RANGE_ELF);
 
         // Generate proofs in compressed mode for aggregation verification.
-        let proof = prover.prove(&pk, sp1_stdin).compressed().run().unwrap();
+        let proof = prover
+            .prove(&pk, &sp1_stdin)
+            .compressed()
+            .strategy(FulfillmentStrategy::Reserved)
+            .run()
+            .unwrap();
 
         // Create a proof directory for the chain ID if it doesn't exist.
         let proof_dir = format!(
@@ -100,14 +78,8 @@ async fn main() -> Result<()> {
     } else {
         let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-        let (block_data, report, execution_duration) = execute_multi(
-            &prover,
-            &data_fetcher,
-            sp1_stdin,
-            l2_start_block,
-            l2_end_block,
-        )
-        .await?;
+        let (block_data, report, execution_duration) =
+            execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
         let stats = ExecutionStats::new(
             &block_data,

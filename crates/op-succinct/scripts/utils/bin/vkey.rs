@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
     dotenv::dotenv().ok();
     utils::setup_logger();
 
-    let prover = ProverClient::new();
+    let prover = ProverClient::from_env();
 
     let (_, range_vk) = prover.setup(RANGE_ELF);
 

@@ -121,7 +121,7 @@ async fn update_l2oo_config() -> Result<()> {
     let owner = get_address("OWNER");
     let challenger = get_address("CHALLENGER");
 
-    let prover = ProverClient::new();
+    let prover = ProverClient::from_env();
     let (_, agg_vkey) = prover.setup(AGG_ELF);
     let aggregation_vkey = agg_vkey.vk.bytes32();
 
