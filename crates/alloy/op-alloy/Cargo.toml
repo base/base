@@ -22,7 +22,6 @@ workspace = true
 op-alloy-consensus = { workspace = true, optional = true }
 op-alloy-genesis = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
-op-alloy-rpc-jsonrpsee = { workspace = true, optional = true }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 
@@ -42,7 +41,6 @@ full = [
   "network",
   "rpc-types",
   "rpc-types-engine",
-  "rpc-jsonrpsee",
 ]
 
 k256 = [
@@ -70,5 +68,3 @@ rpc-types-engine = ["dep:op-alloy-rpc-types-engine"]
 
 # std features
 network = ["dep:op-alloy-network"]
-rpc-jsonrpsee = ["dep:op-alloy-rpc-jsonrpsee"]
-
