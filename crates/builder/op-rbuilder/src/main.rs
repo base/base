@@ -36,6 +36,7 @@ use crate::eth_bundle_api::EthCallBundleMinimalApiServer;
 use clap_builder::Parser;
 use eth_bundle_api::EthBundleMinimalApi;
 use op_rbuilder_node_optimism::{args::OpRbuilderArgs, OpRbuilderNode};
+use rbuilder::live_builder::base_config::load_config_toml_and_env;
 use reth::{
     builder::{engine_tree_config::TreeConfig, EngineNodeLauncher},
     providers::providers::BlockchainProvider2,
@@ -63,6 +64,7 @@ fn main() {
             }
             let use_legacy_engine = op_rbuilder_args.legacy;
             let sequencer_http_arg = op_rbuilder_args.sequencer_http.clone();
+            let config = load_config_toml_and_env(op_rbuilder_args.rbuilder_config_path.clone())?;
             match use_legacy_engine {
                 false => {
                     let engine_tree_config = TreeConfig::default()
@@ -70,7 +72,7 @@ fn main() {
                         .with_memory_block_buffer_target(op_rbuilder_args.memory_block_buffer_target);
                     let handle = builder
                         .with_types_and_provider::<OpRbuilderNode, BlockchainProvider2<_>>()
-                        .with_components(OpRbuilderNode::components(op_rbuilder_args))
+                        .with_components(OpRbuilderNode::components(op_rbuilder_args, config))
                         .with_add_ons(OpAddOns::new(sequencer_http_arg))
                         .extend_rpc_modules(move |ctx| {
                             // register eth bundle api
@@ -94,7 +96,7 @@ fn main() {
                 true => {
                     let handle =
                         builder
-                            .node(OpRbuilderNode::new(op_rbuilder_args.clone())).extend_rpc_modules(move |ctx| {
+                            .node(OpRbuilderNode::new(op_rbuilder_args.clone(), config)).extend_rpc_modules(move |ctx| {
                             // register eth bundle api
                             let ext = EthBundleMinimalApi::new(ctx.registry.pool().clone());
                             ctx.modules.merge_configured(ext.into_rpc())?;

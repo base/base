@@ -4,6 +4,7 @@
 //! and overrides the Pool and Payload Builders.
 
 use alloy_consensus::Header;
+use rbuilder::live_builder::config::Config;
 use rbuilder_bundle_pool_operations::BundlePoolOps;
 use reth_basic_payload_builder::{BasicPayloadJobGenerator, BasicPayloadJobGeneratorConfig};
 use reth_evm::ConfigureEvm;
@@ -30,7 +31,7 @@ use reth_transaction_pool::{
     TransactionValidationTaskExecutor,
 };
 use reth_trie_db::MerklePatriciaTrie;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use transaction_pool_bundle_ext::{
     BundlePoolOperations, BundleSupportedPool, TransactionPoolBundleExt,
 };
@@ -54,17 +55,20 @@ impl NodePrimitives for OpRbuilderPrimitives {
 pub struct OpRbuilderNode {
     /// Additional args
     pub args: OpRbuilderArgs,
+    /// rbuilder config
+    pub config: Config,
 }
 
 impl OpRbuilderNode {
     /// Creates a new instance of the OP rbuilder node type.
-    pub const fn new(args: OpRbuilderArgs) -> Self {
-        Self { args }
+    pub const fn new(args: OpRbuilderArgs, config: Config) -> Self {
+        Self { args, config }
     }
 
     /// Returns the components for the given [`OpRbuilderArgs`].
     pub fn components<Node>(
         args: OpRbuilderArgs,
+        config: Config,
     ) -> ComponentsBuilder<
         Node,
         OpRbuilderPoolBuilder,
@@ -83,13 +87,17 @@ impl OpRbuilderNode {
             disable_txpool_gossip,
             compute_pending_block,
             discovery_v4,
-            rbuilder_config_path,
+            add_builder_tx,
             ..
         } = args;
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(OpRbuilderPoolBuilder::new(rbuilder_config_path))
-            .payload(OpRbuilderPayloadServiceBuilder::new(compute_pending_block))
+            .pool(OpRbuilderPoolBuilder::new(config.clone()))
+            .payload(OpRbuilderPayloadServiceBuilder::new(
+                compute_pending_block,
+                add_builder_tx,
+                config.clone(),
+            ))
             .network(OpNetworkBuilder {
                 disable_txpool_gossip,
                 disable_discovery_v4: !discovery_v4,
@@ -117,8 +125,8 @@ where
         OpAddOns<NodeAdapter<N, <Self::ComponentsBuilder as NodeComponentsBuilder<N>>::Components>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
-        let Self { args } = self;
-        Self::components(args.clone())
+        let Self { args, config } = self;
+        Self::components(args.clone(), config.clone())
     }
 
     fn add_ons(&self) -> Self::AddOns {
@@ -140,15 +148,13 @@ impl NodeTypesWithEngine for OpRbuilderNode {
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct OpRbuilderPoolBuilder {
-    rbuilder_config_path: PathBuf,
+    config: Config,
 }
 
 impl OpRbuilderPoolBuilder {
     /// Creates a new instance of the OP rbuilder pool builder.
-    pub fn new(rbuilder_config_path: PathBuf) -> Self {
-        Self {
-            rbuilder_config_path,
-        }
+    pub fn new(config: Config) -> Self {
+        Self { config }
     }
 }
 
@@ -188,7 +194,7 @@ where
                 .require_l1_data_gas_fee(!ctx.config().dev.dev)
         });
 
-        let bundle_ops = BundlePoolOps::new(ctx.provider().clone(), self.rbuilder_config_path)
+        let bundle_ops = BundlePoolOps::new(ctx.provider().clone(), self.config)
             .await
             .expect("Failed to instantiate RbuilderBundlePoolOps");
         let transaction_pool = OpRbuilderTransactionPool::new(
@@ -252,13 +258,21 @@ pub struct OpRbuilderPayloadServiceBuilder {
     /// will use the payload attributes from the latest block. Note
     /// that this flag is not yet functional.
     pub compute_pending_block: bool,
+    /// Whether to add a builder tx to the end of block.
+    /// This is used to verify blocks landed onchain was
+    /// built by the builder
+    pub add_builder_tx: bool,
+    /// rbuilder config to get coinbase signer
+    pub config: Config,
 }
 
 impl OpRbuilderPayloadServiceBuilder {
     /// Create a new instance with the given `compute_pending_block` flag.
-    pub const fn new(compute_pending_block: bool) -> Self {
+    pub const fn new(compute_pending_block: bool, add_builder_tx: bool, config: Config) -> Self {
         Self {
             compute_pending_block,
+            add_builder_tx,
+            config,
         }
     }
 
@@ -281,9 +295,15 @@ impl OpRbuilderPayloadServiceBuilder {
 
         Evm: ConfigureEvm<Header = Header>,
     {
+        let builder_signer = if self.add_builder_tx {
+            Some(self.config.base_config.coinbase_signer()?)
+        } else {
+            None
+        };
         let payload_builder =
             op_rbuilder_payload_builder::OpRbuilderPayloadBuilder::new(evm_config)
-                .set_compute_pending_block(self.compute_pending_block);
+                .set_compute_pending_block(self.compute_pending_block)
+                .set_builder_signer(builder_signer);
         let conf = ctx.payload_builder_config();
 
         let payload_job_config = BasicPayloadJobGeneratorConfig::default()

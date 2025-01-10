@@ -42,6 +42,10 @@ pub struct OpRbuilderArgs {
     #[arg(long = "rollup.discovery.v4", default_value = "false")]
     pub discovery_v4: bool,
 
+    /// adds builder tx to the end of the block to denote a builder block
+    #[arg(long = "rollup.add-builder-tx")]
+    pub add_builder_tx: bool,
+
     /// Enable the experimental engine features on reth binary
     ///
     /// DEPRECATED: experimental engine is default now, use --engine.legacy to enable the legacy

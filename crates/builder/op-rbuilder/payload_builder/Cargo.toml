@@ -6,6 +6,7 @@ description = "A payload builder for op-rbuilder with bundle support."
 
 [dependencies]
 # workspace
+rbuilder = { path = "../../rbuilder" }
 transaction-pool-bundle-ext = { path = "../../transaction-pool-bundle-ext" }
 
 # reth

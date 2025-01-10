@@ -1,10 +1,11 @@
 //! Optimism payload builder implementation with Flashbots bundle support.
 
-use alloy_consensus::{BlockHeader, Header, Transaction, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{BlockHeader, Header, Transaction, TxEip1559, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_rpc_types_beacon::events::{PayloadAttributesData, PayloadAttributesEvent};
 use alloy_rpc_types_engine::payload::PayloadAttributes;
 use op_alloy_consensus::DepositTransaction;
+use rbuilder::utils::Signer;
 use reth_basic_payload_builder::*;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::ChainSpecProvider;
@@ -17,15 +18,17 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_payload_builder::error::OpPayloadBuilderError;
 use reth_payload_builder::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
-use reth_primitives::{proofs, Block, BlockBody, Receipt, TransactionSigned, TxType};
+use reth_primitives::{
+    proofs, Block, BlockBody, Receipt, Transaction as RethTransaction, TransactionSigned, TxType,
+};
 use reth_provider::StateProviderFactory;
 use reth_revm::database::StateProviderDatabase;
 use reth_trie::HashedPostState;
 use revm::{
     db::states::bundle_state::BundleRetention,
     primitives::{
-        BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, InvalidTransaction,
-        ResultAndState, U256,
+        Address, BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, InvalidTransaction,
+        ResultAndState, TxKind, U256,
     },
     DatabaseCommit, State,
 };
@@ -38,6 +41,8 @@ use transaction_pool_bundle_ext::{BundlePoolOperations, TransactionPoolBundleExt
 pub struct OpRbuilderPayloadBuilder<EvmConfig> {
     /// The rollup's compute pending block configuration option.
     compute_pending_block: bool,
+    /// The builder's signer key to use for an end of block tx
+    builder_signer: Option<Signer>,
     /// The type responsible for creating the evm.
     evm_config: EvmConfig,
 }
@@ -46,6 +51,7 @@ impl<EvmConfig> OpRbuilderPayloadBuilder<EvmConfig> {
     pub const fn new(evm_config: EvmConfig) -> Self {
         Self {
             compute_pending_block: true,
+            builder_signer: None,
             evm_config,
         }
     }
@@ -53,6 +59,12 @@ impl<EvmConfig> OpRbuilderPayloadBuilder<EvmConfig> {
     /// Sets the rollup's compute pending block configuration option.
     pub const fn set_compute_pending_block(mut self, compute_pending_block: bool) -> Self {
         self.compute_pending_block = compute_pending_block;
+        self
+    }
+
+    /// Sets the builder's signer key to use for an end of block tx
+    pub const fn set_builder_signer(mut self, builder_signer: Option<Signer>) -> Self {
+        self.builder_signer = builder_signer;
         self
     }
 
@@ -64,6 +76,11 @@ impl<EvmConfig> OpRbuilderPayloadBuilder<EvmConfig> {
     /// Returns the rollup's compute pending block configuration option.
     pub const fn is_compute_pending_block(&self) -> bool {
         self.compute_pending_block
+    }
+
+    /// Returns the builder's signer key to use for an end of block tx
+    pub fn builder_signer(&self) -> Option<Signer> {
+        self.builder_signer.clone()
     }
 }
 
@@ -126,21 +143,32 @@ where
             data: payload_attributes_data,
         };
 
+        let (cfg_env, block_env) = self
+            .cfg_and_block_env(&args.config, &args.config.parent_header)
+            .map_err(PayloadBuilderError::other)?;
+
+        // gas reserved for builder tx
+        let builder_tx_gas = self.builder_signer().map_or(0, |_| {
+            let message = format!("Block Number: {}", block_env.number);
+            estimate_gas_for_builder_tx(message.as_bytes().to_vec())
+        });
+
         if let Err(e) = args.pool.notify_payload_attributes_event(
             payload_attributes_event,
-            args.config.attributes.gas_limit,
+            args.config
+                .attributes
+                .gas_limit
+                .map(|gas_limit| gas_limit - builder_tx_gas),
         ) {
             error!(?e, "Failed to notify payload attributes event!");
         };
 
-        let (cfg_env, block_env) = self
-            .cfg_and_block_env(&args.config, &args.config.parent_header)
-            .map_err(PayloadBuilderError::other)?;
         try_build_inner(
             &self.evm_config,
             args,
             cfg_env,
             block_env,
+            self.builder_signer(),
             self.compute_pending_block,
         )
     }
@@ -177,6 +205,7 @@ pub(crate) fn try_build_inner<EvmConfig, Pool, Client>(
     args: BuildArguments<Pool, Client, OpPayloadBuilderAttributes, OpBuiltPayload>,
     initialized_cfg: CfgEnvWithHandlerCfg,
     initialized_block_env: BlockEnv,
+    builder_signer: Option<Signer>,
     _compute_pending_block: bool,
 ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
 where
@@ -357,6 +386,16 @@ where
         executed_txs.push(sequencer_tx.into_signed());
     }
 
+    // reserved gas for builder tx
+    let message = format!("Block Number: {}", block_number)
+        .as_bytes()
+        .to_vec();
+    let builder_tx_gas = if builder_signer.is_some() {
+        estimate_gas_for_builder_tx(message.clone())
+    } else {
+        0
+    };
+
     // Apply rbuilder block
     let mut count = 0;
     let iter = pool
@@ -365,7 +404,7 @@ where
         .into_iter();
     for pool_tx in iter {
         // Ensure we still have capacity for this transaction
-        if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit {
+        if cumulative_gas_used + pool_tx.gas_limit() > block_gas_limit - builder_tx_gas {
             let inner =
                 EVMError::Custom("rbuilder suggested transaction over gas limit!".to_string());
             return Err(PayloadBuilderError::EvmExecutionError(inner));
@@ -466,6 +505,78 @@ where
             cached_reads,
         });
     }
+
+    // Add builder tx to the block
+    builder_signer
+        .map(|signer| {
+            // Create message with block number for the builder to sign
+            let nonce = db
+                .load_cache_account(signer.address)
+                .map(|acc| acc.account_info().unwrap_or_default().nonce)
+                .map_err(|_| {
+                    PayloadBuilderError::other(OpPayloadBuilderError::AccountLoadFailed(
+                        signer.address,
+                    ))
+                })?;
+
+            // Create the EIP-1559 transaction
+            let tx = RethTransaction::Eip1559(TxEip1559 {
+                chain_id: chain_spec.chain.id(),
+                nonce,
+                gas_limit: builder_tx_gas,
+                max_fee_per_gas: base_fee.into(),
+                max_priority_fee_per_gas: 0,
+                to: TxKind::Call(Address::ZERO),
+                // Include the message as part of the transaction data
+                input: message.into(),
+                ..Default::default()
+            });
+
+            // Sign the transaction
+            let builder_tx = signer.sign_tx(tx).map_err(PayloadBuilderError::other)?;
+
+            let env = EnvWithHandlerCfg::new_with_cfg_env(
+                initialized_cfg.clone(),
+                initialized_block_env.clone(),
+                evm_config.tx_env(builder_tx.as_signed(), builder_tx.signer()),
+            );
+
+            let mut evm = evm_config.evm_with_env(&mut db, env);
+
+            let ResultAndState { result, state } = evm
+                .transact()
+                .map_err(PayloadBuilderError::EvmExecutionError)?;
+
+            // Release the db reference by dropping evm
+            drop(evm);
+            // Commit changes
+            db.commit(state);
+
+            let gas_used = result.gas_used();
+
+            // Add gas used by the transaction to cumulative gas used, before creating the receipt
+            cumulative_gas_used += gas_used;
+
+            // Push transaction changeset and calculate header bloom filter for receipt
+            receipts.push(Some(Receipt {
+                tx_type: builder_tx.tx_type(),
+                success: result.is_success(),
+                cumulative_gas_used,
+                logs: result.into_logs().into_iter().map(Into::into).collect(),
+                deposit_nonce: None,
+                deposit_receipt_version: None,
+            }));
+
+            // Append sender and transaction to the respective lists
+            executed_senders.push(builder_tx.signer());
+            executed_txs.push(builder_tx.into_signed());
+            Ok(())
+        })
+        .transpose()
+        .unwrap_or_else(|err: PayloadBuilderError| {
+            warn!(target: "payload_builder", %err, "Failed to add builder transaction");
+            None
+        });
 
     let WithdrawalsOutcome {
         withdrawals_root,
@@ -594,4 +705,21 @@ where
         payload,
         cached_reads,
     })
+}
+
+fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
+    // Count zero and non-zero bytes
+    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
+        if byte == 0 {
+            (zeros + 1, nonzeros)
+        } else {
+            (zeros, nonzeros + 1)
+        }
+    });
+
+    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
+    let zero_cost = zero_bytes * 4;
+    let nonzero_cost = nonzero_bytes * 16;
+
+    zero_cost + nonzero_cost + 21_000
 }
