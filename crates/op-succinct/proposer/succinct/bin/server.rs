@@ -43,11 +43,11 @@ pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Set up the SP1 SDK logger.
-    utils::setup_logger();
-
     // Enable logging.
     env::set_var("RUST_LOG", "info");
+
+    // Set up the SP1 SDK logger.
+    utils::setup_logger();
 
     dotenv::dotenv().ok();
 
