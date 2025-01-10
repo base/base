@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_primitives::{Bytes, B64};
 use alloy_rpc_types_engine::PayloadAttributes;
+use maili_protocol::L2BlockInfo;
 use op_alloy_consensus::{decode_eip_1559_params, encode_holocene_extra_data, EIP1559ParamError};
-use op_alloy_protocol::L2BlockInfo;
 
 /// Optimism Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

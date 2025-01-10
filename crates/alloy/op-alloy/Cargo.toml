@@ -22,7 +22,6 @@ workspace = true
 op-alloy-consensus = { workspace = true, optional = true }
 op-alloy-genesis = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
-op-alloy-protocol = { workspace = true, optional = true }
 op-alloy-rpc-jsonrpsee = { workspace = true, optional = true }
 op-alloy-rpc-types-engine = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
@@ -33,7 +32,6 @@ default = ["std", "k256", "serde"]
 std = [
   "op-alloy-consensus?/std",
   "op-alloy-genesis?/std",
-  "op-alloy-protocol?/std",
   "op-alloy-rpc-types?/std",
   "op-alloy-rpc-types-engine?/std",
 ]
@@ -42,7 +40,6 @@ full = [
   "consensus",
   "genesis",
   "network",
-  "protocol",
   "rpc-types",
   "rpc-types-engine",
   "rpc-jsonrpsee",
@@ -55,7 +52,6 @@ k256 = [
 arbitrary = [
   "op-alloy-consensus?/arbitrary",
   "op-alloy-genesis?/arbitrary",
-  "op-alloy-protocol?/arbitrary",
   "op-alloy-rpc-types?/arbitrary",
   "op-alloy-rpc-types-engine?/arbitrary",
 ]
@@ -63,14 +59,12 @@ arbitrary = [
 serde = [
   "op-alloy-consensus?/serde",
   "op-alloy-genesis?/serde",
-  "op-alloy-protocol?/serde",
   "op-alloy-rpc-types-engine?/serde",
 ]
 
 # `no_std` support
 consensus = ["dep:op-alloy-consensus"]
 genesis = ["dep:op-alloy-genesis"]
-protocol = ["dep:op-alloy-protocol"]
 rpc-types = ["dep:op-alloy-rpc-types"]
 rpc-types-engine = ["dep:op-alloy-rpc-types-engine"]
 

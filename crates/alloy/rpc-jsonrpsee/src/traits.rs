@@ -8,7 +8,7 @@ use core::net::IpAddr;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, U64};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
-use op_alloy_protocol::{ExecutingMessage, SafetyLevel};
+use maili_protocol::{ExecutingMessage, SafetyLevel};
 use op_alloy_rpc_types::{
     OutputResponse, PeerDump, PeerInfo, PeerStats, RollupConfig, SafeHeadResponse, SyncStatus,
 };

@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 # Workspace
 op-alloy-consensus.workspace = true
-op-alloy-protocol.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
@@ -25,6 +24,7 @@ alloy-eips.workspace = true
 alloy-rpc-types-engine.workspace = true
 
 # Maili
+maili-protocol.workspace = true
 maili-rpc-types-engine = { workspace = true, default-features = false }
 
 # Encoding
@@ -54,13 +54,13 @@ std = [
   "alloy-primitives/std",
   "alloy-rpc-types-engine/std",
   "op-alloy-consensus/std",
-  "op-alloy-protocol/std",
+  "maili-protocol/std",
   "maili-rpc-types-engine/std",
 ]
 serde = [
   "dep:serde",
   "dep:alloy-serde",
-  "op-alloy-protocol/serde",
+  "maili-protocol/serde",
   "alloy-rpc-types-engine/serde",
   "maili-rpc-types-engine/serde",
 ]
