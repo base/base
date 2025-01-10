@@ -42,8 +42,8 @@ Before starting the proposer, the following environment variables should be in y
 | `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
-| `PROVER_NETWORK_RPC` | Default: `rpc.succinct.xyz`. |
-| `SP1_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/generating-proofs/prover-network). |
+| `NETWORK_RPC_URL` | RPC URL for the Succinct Prover Network. |
+| `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/generating-proofs/prover-network). |
 | `SP1_PROVER` | Default: `network`. Set to `network` to use the Succinct Prover Network. |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract and posting output roots to L1. |
 | `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract. |

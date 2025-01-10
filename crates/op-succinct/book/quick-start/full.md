@@ -77,8 +77,8 @@ To start the `op-succinct` service, add the following parameters to the `.env` f
 | Parameter | Description |
 |-----------|-------------|
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
-| `SP1_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
-| `PROVER_NETWORK_RPC` | The RPC endpoint for the Succinct Prover Network. The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. Reach out to the Succinct team to get access with OP Succinct. |
+| `NETWORK_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
+| `NETWORK_RPC_URL` | The RPC endpoint for the Succinct Prover Network. The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. Reach out to the Succinct team to get access with OP Succinct. |
 
 Now, you should have the following in your `.env` file:
 
@@ -91,8 +91,8 @@ Now, you should have the following in your `.env` file:
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract and relaying proofs on-chain. |
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
-| `SP1_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
-| `PROVER_NETWORK_RPC` | Reach out to the Succinct team to get access [here](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. |
+| `NETWORK_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
+| `NETWORK_RPC_URL` | Reach out to the Succinct team to get access [here](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. |
 
 ### 4) Start the `op-succinct` service.
 
