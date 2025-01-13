@@ -15,12 +15,6 @@ pub use typed::OpTypedTransaction;
 mod pooled;
 pub use pooled::OpPooledTransaction;
 
-mod source;
-pub use source::{
-    DepositSourceDomain, DepositSourceDomainIdentifier, L1InfoDepositSource, UpgradeDepositSource,
-    UserDepositSource,
-};
-
 #[cfg(feature = "serde")]
 pub use deposit::serde_deposit_tx_rpc;
 

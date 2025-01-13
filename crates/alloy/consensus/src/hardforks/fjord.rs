@@ -5,8 +5,9 @@
 use alloc::{string::String, vec::Vec};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
+use maili_common::UpgradeDepositSource;
 
-use crate::{Hardfork, TxDeposit, UpgradeDepositSource};
+use crate::{Hardfork, TxDeposit};
 
 /// The Fjord network upgrade transactions.
 #[derive(Debug, Default, Clone, Copy)]

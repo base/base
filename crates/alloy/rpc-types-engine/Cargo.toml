@@ -25,7 +25,6 @@ alloy-rpc-types-engine.workspace = true
 
 # Maili
 maili-protocol.workspace = true
-maili-rpc-types-engine = { workspace = true, default-features = false }
 
 # Encoding
 snap = { workspace = true, optional = true }
@@ -55,14 +54,12 @@ std = [
   "alloy-rpc-types-engine/std",
   "op-alloy-consensus/std",
   "maili-protocol/std",
-  "maili-rpc-types-engine/std",
 ]
 serde = [
   "dep:serde",
   "dep:alloy-serde",
   "maili-protocol/serde",
   "alloy-rpc-types-engine/serde",
-  "maili-rpc-types-engine/serde",
 ]
 arbitrary = [
   "std",

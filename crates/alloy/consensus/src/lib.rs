@@ -14,9 +14,8 @@ pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope
 
 mod transaction;
 pub use transaction::{
-    DepositSourceDomain, DepositSourceDomainIdentifier, DepositTransaction, L1InfoDepositSource,
-    OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
-    UpgradeDepositSource, UserDepositSource, DEPOSIT_TX_TYPE_ID,
+    DepositTransaction, OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
+    DEPOSIT_TX_TYPE_ID,
 };
 
 pub mod eip1559;
