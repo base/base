@@ -81,7 +81,7 @@ shall be dual licensed as above, without any additional terms or conditions.
 
 [check-no-std]: https://github.com/alloy-rs/op-alloy/blob/main/scripts/check_no_std.sh
 
-[kona]: https://github.com/anton-rs/kona
+[kona]: https://github.com/op-rs/kona
 [alloy]: https://github.com/alloy-rs/alloy
 [contributing]: https://alloy-rs.github.io/op-alloy
 

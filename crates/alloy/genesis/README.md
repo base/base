@@ -34,4 +34,4 @@ This is based off of [alloy-genesis].
 <!-- Links -->
 
 [alloy-genesis]: https://github.com/alloy-rs
-[kona]: https://github.com/anton-rs/kona/blob/main/Cargo.toml#L137
+[kona]: https://github.com/op-rs/kona/blob/main/Cargo.toml#L137
