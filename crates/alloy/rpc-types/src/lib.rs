@@ -9,29 +9,11 @@
 
 extern crate alloc;
 
-mod config;
-pub use config::{Genesis, RollupConfig, SystemConfig};
-
 mod genesis;
 pub use genesis::{OpBaseFeeInfo, OpChainInfo, OpGenesisInfo};
 
-mod net;
-pub use net::{
-    Connectedness, Direction, GossipScores, PeerDump, PeerInfo, PeerScores, PeerStats,
-    ReqRespScores, TopicScores,
-};
-
-mod output;
-pub use output::OutputResponse;
-
 mod receipt;
 pub use receipt::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields};
-
-mod safe_head;
-pub use safe_head::SafeHeadResponse;
-
-mod sync;
-pub use sync::{L1BlockRef, L2BlockRef, SyncStatus};
 
 mod transaction;
 pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
