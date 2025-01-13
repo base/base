@@ -52,7 +52,6 @@ The following crates support `no_std`.
 Notice, provider crates do not support `no_std` compatibility.
 
 - [`op-alloy-consensus`][op-alloy-consensus]
-- [`op-alloy-genesis`][op-alloy-genesis]
 - [`op-alloy-rpc-types-engine`][op-alloy-rpc-types-engine]
 - [`op-alloy-rpc-types`][op-alloy-rpc-types]
 
@@ -81,12 +80,12 @@ shall be dual licensed as above, without any additional terms or conditions.
 
 [check-no-std]: https://github.com/alloy-rs/op-alloy/blob/main/scripts/check_no_std.sh
 
+[maili]: https://github.com/op-rs/maili
 [kona]: https://github.com/op-rs/kona
 [alloy]: https://github.com/alloy-rs/alloy
 [contributing]: https://alloy-rs.github.io/op-alloy
 
 [op-alloy-consensus]: https://crates.io/crates/op-alloy-consensus
-[op-alloy-genesis]: https://crates.io/crates/op-alloy-genesis
 [op-alloy-network]: https://crates.io/crates/op-alloy-network
 [op-alloy-rpc-types-engine]: https://crates.io/crates/op-alloy-rpc-types-engine
 [op-alloy-rpc-types]: https://crates.io/crates/op-alloy-rpc-types

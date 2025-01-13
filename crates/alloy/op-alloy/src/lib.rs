@@ -11,10 +11,6 @@
 #[doc(inline)]
 pub use op_alloy_consensus as consensus;
 
-#[cfg(feature = "genesis")]
-#[doc(inline)]
-pub use op_alloy_genesis as genesis;
-
 #[cfg(feature = "network")]
 #[doc(inline)]
 pub use op_alloy_network as network;
