@@ -66,7 +66,7 @@ The rules around the activation time are deliberately being kept simple, so no o
 be applied other than to change the parameter to a constant. The first Fjord block would in theory
 accept older L1-origin timestamps than its predecessor. However, since the L1 origin timestamp must
 also increase, the only noteworthy scenario that can happen is that the first few Fjord blocks will
-be in the same epoch as the the last pre-Fjord blocks, even if these blocks would not be allowed to
+be in the same epoch as the last pre-Fjord blocks, even if these blocks would not be allowed to
 have these L1-origin timestamps according to pre-Fjord rules. So the same L1 timestamp would be
 shared within a pre- and post-Fjord mixed epoch. This is considered a feature and is not considered
 a security issue.
