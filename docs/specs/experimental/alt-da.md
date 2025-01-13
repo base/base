@@ -6,6 +6,7 @@
 
 - [Overview](#overview)
 - [Input Commitment Submission](#input-commitment-submission)
+  - [Example Commitments](#example-commitments)
 - [DA Server](#da-server)
 - [Data Availability Challenge Contract](#data-availability-challenge-contract)
   - [Parameters](#parameters)
@@ -77,6 +78,17 @@ In addition, a DA provider storage service SHOULD return an error response if it
 store the request payload so as to signal to the batcher to retry.
 Input commitments submitted onchain without proper storage on the DA provider service are subject to
 challenges if the input cannot be retrieved during the challenge window, as detailed in the following section.
+
+### Example Commitments
+
+| `version_byte` | `commitment_type` | `da_layer_byte` | `payload`           |
+| -------------- | ----------------- | --------------- | ------------------- |
+| 0              |                   |                 | frames              |
+| 1              | 0                 |                 | keccak_commitment   |
+| 1              | 1                 | 0               | eigenda_commitment  |
+| 1              | 1                 | 0x0a            | avail_commitment    |
+| 1              | 1                 | 0x0c            | celestia_commitment |
+| 1              | 1                 | ...             | altda_commitment    |
 
 [batcher]: ../protocol/derivation.md#batch-submission
 [batchertx]: ../protocol/derivation.md#batcher-transaction-format
