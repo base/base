@@ -9,6 +9,7 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable};
+use maili_common::DepositTxEnvelope;
 
 use crate::{OpTxType, TxDeposit};
 
@@ -293,12 +294,6 @@ impl OpTxEnvelope {
         matches!(self, Self::Eip1559(_))
     }
 
-    /// Returns true if the transaction is a deposit transaction.
-    #[inline]
-    pub const fn is_deposit(&self) -> bool {
-        matches!(self, Self::Deposit(_))
-    }
-
     /// Returns true if the transaction is a system transaction.
     #[inline]
     pub const fn is_system_transaction(&self) -> bool {
@@ -328,14 +323,6 @@ impl OpTxEnvelope {
     pub const fn as_eip1559(&self) -> Option<&Signed<TxEip1559>> {
         match self {
             Self::Eip1559(tx) => Some(tx),
-            _ => None,
-        }
-    }
-
-    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
-    pub const fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
-        match self {
-            Self::Deposit(tx) => Some(tx),
             _ => None,
         }
     }
@@ -450,6 +437,24 @@ impl Encodable2718 for OpTxEnvelope {
             Self::Eip2930(tx) => *tx.hash(),
             Self::Eip7702(tx) => *tx.hash(),
             Self::Deposit(tx) => tx.seal(),
+        }
+    }
+}
+
+impl DepositTxEnvelope for OpTxEnvelope {
+    type DepositTx = TxDeposit;
+
+    /// Returns true if the transaction is a deposit transaction.
+    #[inline]
+    fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
+    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
+            _ => None,
         }
     }
 }

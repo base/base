@@ -1,7 +1,6 @@
 //! Deposit Transaction type.
 
 use super::OpTxType;
-use crate::DepositTransaction;
 use alloc::vec::Vec;
 use alloy_consensus::{Sealable, Transaction, Typed2718};
 use alloy_eips::{
@@ -15,6 +14,7 @@ use alloy_rlp::{
     Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
 };
 use core::mem;
+use maili_common::DepositTransaction;
 
 /// Deposit transactions, also known as deposits are initiated on L1, and executed on L2.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -55,20 +55,19 @@ pub struct TxDeposit {
 }
 
 impl DepositTransaction for TxDeposit {
+    #[inline]
     fn source_hash(&self) -> Option<B256> {
         Some(self.source_hash)
     }
 
+    #[inline]
     fn mint(&self) -> Option<u128> {
         self.mint
     }
 
+    #[inline]
     fn is_system_transaction(&self) -> bool {
         self.is_system_transaction
-    }
-
-    fn is_deposit(&self) -> bool {
-        true
     }
 }
 

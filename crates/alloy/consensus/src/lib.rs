@@ -9,13 +9,14 @@
 
 extern crate alloc;
 
+pub use maili_common::{DepositTransaction, DepositTxEnvelope};
+
 mod receipt;
 pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope, OpTxReceipt};
 
 mod transaction;
 pub use transaction::{
-    DepositTransaction, OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
-    DEPOSIT_TX_TYPE_ID,
+    OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit, DEPOSIT_TX_TYPE_ID,
 };
 
 pub mod eip1559;
