@@ -55,6 +55,8 @@ pub struct HardForkConfiguration {
     pub holocene_time: Option<u64>,
     /// Isthmus hardfork activation time
     pub isthmus_time: Option<u64>,
+    /// Interop hardfork activation time
+    pub interop_time: Option<u64>,
 }
 
 /// Defines core blockchain settings per block.
@@ -184,6 +186,9 @@ impl ChainConfig {
         if cfg.isthmus_time.is_none() && defaults.isthmus_time.is_some_and(|t| t > super_time) {
             cfg.isthmus_time = defaults.isthmus_time;
         }
+        if cfg.interop_time.is_none() && defaults.interop_time.is_some_and(|t| t > super_time) {
+            cfg.interop_time = defaults.interop_time;
+        }
     }
 
     /// Returns the base fee params for the chain.
@@ -221,6 +226,7 @@ impl ChainConfig {
             granite_time: self.hardfork_configuration.granite_time,
             holocene_time: self.hardfork_configuration.holocene_time,
             isthmus_time: self.hardfork_configuration.isthmus_time,
+            interop_time: self.hardfork_configuration.interop_time,
             batch_inbox_address: self.batch_inbox_addr,
             deposit_contract_address: self
                 .addresses
