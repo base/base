@@ -9,10 +9,10 @@ use reth_primitives::PooledTransactionsElement;
 use reth_transaction_pool::{
     AllPoolTransactions, AllTransactionsEvents, BestTransactions, BestTransactionsAttributes,
     BlobStore, BlobStoreError, BlockInfo, CanonicalStateUpdate, EthPoolTransaction,
-    GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolConfig, PoolResult,
-    PoolSize, PropagatedTransactions, TransactionEvents, TransactionListenerKind,
-    TransactionOrdering, TransactionOrigin, TransactionPool,
-    TransactionPoolExt as TransactionPoolBlockInfoExt, TransactionValidator, ValidPoolTransaction,
+    GetPooledTransactionLimit, NewBlobSidecar, NewTransactionEvent, Pool, PoolResult, PoolSize,
+    PropagatedTransactions, TransactionEvents, TransactionListenerKind, TransactionOrdering,
+    TransactionOrigin, TransactionPool, TransactionPoolExt as TransactionPoolBlockInfoExt,
+    TransactionValidator, ValidPoolTransaction,
 };
 use std::{collections::HashSet, future::Future, sync::Arc};
 use tokio::sync::mpsc::Receiver;
@@ -67,15 +67,9 @@ where
     S: BlobStore,
     B: BundlePoolOperations,
 {
-    pub fn new(
-        validator: V,
-        ordering: T,
-        blob_store: S,
-        bundle_ops: B,
-        tx_pool_config: PoolConfig,
-    ) -> Self {
+    pub fn new(pool: Pool<V, T, S>, bundle_ops: B) -> Self {
         Self {
-            tx_pool: Pool::<V, T, S>::new(validator, ordering, blob_store, tx_pool_config),
+            tx_pool: pool,
             bundle_pool: Arc::new(BundlePool::<B>::new(bundle_ops)),
         }
     }

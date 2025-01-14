@@ -27,7 +27,7 @@ use reth_primitives::TransactionSigned;
 use reth_provider::{BlockReader, CanonStateSubscriptions, DatabaseProviderFactory};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{
-    blobstore::DiskFileBlobStore, CoinbaseTipOrdering, EthPooledTransaction,
+    blobstore::DiskFileBlobStore, CoinbaseTipOrdering, EthPooledTransaction, Pool,
     TransactionValidationTaskExecutor,
 };
 use reth_trie_db::MerklePatriciaTrie;
@@ -194,16 +194,16 @@ where
                 .require_l1_data_gas_fee(!ctx.config().dev.dev)
         });
 
-        let bundle_ops = BundlePoolOps::new(ctx.provider().clone(), self.config)
-            .await
-            .expect("Failed to instantiate RbuilderBundlePoolOps");
-        let transaction_pool = OpRbuilderTransactionPool::new(
+        let tx_pool = Pool::new(
             validator,
             CoinbaseTipOrdering::default(),
             blob_store,
-            bundle_ops,
             ctx.pool_config(),
         );
+        let bundle_ops = BundlePoolOps::new(ctx.provider().clone(), tx_pool.clone(), self.config)
+            .await
+            .expect("Failed to instantiate RbuilderBundlePoolOps");
+        let transaction_pool = OpRbuilderTransactionPool::new(tx_pool, bundle_ops);
 
         info!(target: "reth::cli", "Transaction pool initialized");
         let transactions_path = data_dir.txpool_transactions();
