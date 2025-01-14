@@ -151,6 +151,7 @@ fn aggregate_execution_stats(
         aggregate_stats.bn_mul_cycles += stats.bn_mul_cycles;
         aggregate_stats.kzg_eval_cycles += stats.kzg_eval_cycles;
         aggregate_stats.ec_recover_cycles += stats.ec_recover_cycles;
+        aggregate_stats.p256_verify_cycles += stats.p256_verify_cycles;
     }
 
     // For statistics that are per-block or per-transaction, we take the average over the entire
