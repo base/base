@@ -22,7 +22,7 @@ alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
 # Maili
-maili-common.workspace = true
+maili-consensus.workspace = true
 
 # misc
 thiserror.workspace = true
@@ -32,7 +32,6 @@ derive_more = { workspace = true, features = ["display"] }
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
 # serde
-serde_with = { workspace = true, optional = true }
 alloy-serde = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
@@ -50,7 +49,7 @@ default = ["std"]
 std = [
     "alloy-eips/std",
     "alloy-consensus/std",
-    "maili-common/std",
+    "maili-consensus/std",
     "derive_more/std",
 ]
 k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
@@ -62,6 +61,7 @@ arbitrary = [
     "alloy-eips/arbitrary",
     "alloy-primitives/rand",
     "alloy-primitives/arbitrary",
+    "maili-consensus/arbitrary",
 ]
 serde = [
     "dep:serde",
@@ -69,6 +69,5 @@ serde = [
     "alloy-primitives/serde",
     "alloy-consensus/serde",
     "alloy-eips/serde",
-    "maili-common/serde",
+    "maili-consensus/serde",
 ]
-serde-bincode-compat = ["serde_with"]

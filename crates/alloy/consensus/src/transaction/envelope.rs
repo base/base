@@ -9,9 +9,9 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable};
-use maili_common::DepositTxEnvelope;
+use maili_consensus::{DepositTxEnvelope, TxDeposit};
 
-use crate::{OpTxType, TxDeposit};
+use crate::OpTxType;
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
 ///
@@ -442,8 +442,6 @@ impl Encodable2718 for OpTxEnvelope {
 }
 
 impl DepositTxEnvelope for OpTxEnvelope {
-    type DepositTx = TxDeposit;
-
     /// Returns true if the transaction is a deposit transaction.
     #[inline]
     fn is_deposit(&self) -> bool {
@@ -495,7 +493,11 @@ mod serde_from {
         Eip1559(Signed<TxEip1559>),
         #[serde(rename = "0x4", alias = "0x04")]
         Eip7702(Signed<TxEip7702>),
-        #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
+        #[serde(
+            rename = "0x7e",
+            alias = "0x7E",
+            serialize_with = "maili_consensus::serde_deposit_tx_rpc"
+        )]
         Deposit(Sealed<TxDeposit>),
     }
 

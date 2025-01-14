@@ -1,7 +1,8 @@
-use crate::{OpTxEnvelope, OpTxType, TxDeposit};
+use crate::{OpTxEnvelope, OpTxType};
 use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Bytes, TxKind};
+use maili_consensus::TxDeposit;
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
 /// Stack.
@@ -353,7 +354,11 @@ mod serde_from {
         #[serde(rename = "0x04", alias = "0x4")]
         Eip7702(TxEip7702),
         /// Deposit transaction
-        #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
+        #[serde(
+            rename = "0x7e",
+            alias = "0x7E",
+            serialize_with = "maili_consensus::serde_deposit_tx_rpc"
+        )]
         Deposit(TxDeposit),
     }
 

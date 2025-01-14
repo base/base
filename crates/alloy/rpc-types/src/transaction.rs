@@ -4,7 +4,8 @@ use alloy_consensus::{Transaction as _, Typed2718};
 use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, BlockHash, Bytes, ChainId, TxKind, B256, U256};
 use alloy_serde::OtherFields;
-use op_alloy_consensus::{DepositTxEnvelope, OpTxEnvelope};
+use maili_consensus::DepositTxEnvelope;
+use op_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
 
 mod request;
@@ -167,7 +168,7 @@ mod tx_serde {
     //! Helper module for serializing and deserializing OP [`Transaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
-    //! [`alloy_rpc_types_eth::Transaction::from`] and [`op_alloy_consensus::TxDeposit::from`].
+    //! [`alloy_rpc_types_eth::Transaction::from`] and [`maili_consensus::TxDeposit::from`].
     //!
     //! Additionaly, we need similar logic for the `gasPrice` field
     use super::*;

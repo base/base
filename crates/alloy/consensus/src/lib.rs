@@ -9,15 +9,11 @@
 
 extern crate alloc;
 
-pub use maili_common::{DepositTransaction, DepositTxEnvelope};
-
 mod receipt;
 pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope, OpTxReceipt};
 
 mod transaction;
-pub use transaction::{
-    OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit, DEPOSIT_TX_TYPE_ID,
-};
+pub use transaction::{OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction};
 
 pub mod eip1559;
 pub use eip1559::{
@@ -30,18 +26,3 @@ pub use hardforks::{Ecotone, Fjord, Hardfork, Hardforks};
 
 mod block;
 pub use block::OpBlock;
-
-#[cfg(feature = "serde")]
-pub use transaction::serde_deposit_tx_rpc;
-
-/// Bincode-compatible serde implementations for consensus types.
-///
-/// `bincode` crate doesn't work well with optionally serializable serde fields, but some of the
-/// consensus types require optional serialization for RPC compatibility. This module makes so that
-/// all fields are serialized.
-///
-/// Read more: <https://github.com/bincode-org/bincode/issues/326>
-#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub mod serde_bincode_compat {
-    pub use super::transaction::serde_bincode_compat::TxDeposit;
-}

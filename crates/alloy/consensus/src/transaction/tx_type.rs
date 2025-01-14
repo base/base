@@ -6,9 +6,6 @@ use alloy_primitives::{U64, U8};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use derive_more::Display;
 
-/// Identifier for an Optimism deposit transaction
-pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
-
 /// Optimism `TransactionType` flags as specified in EIPs [2718], [1559], and
 /// [2930], as well as the [deposit transaction spec][deposit-spec]
 ///
