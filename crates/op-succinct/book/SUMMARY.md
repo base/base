@@ -23,3 +23,4 @@
   - [Update Contract Parameters](./contracts/update-parameters.md)
   - [Modifications to Original `L2OutputOracle`](./contracts/modifications.md)
 - [FAQ](./faq.md)
+- [Troubleshooting](./troubleshooting.md)
