@@ -7,6 +7,7 @@ remappings = [
     "@openzeppelin/=lib/openzeppelin-contracts/",
     "@optimism/=lib/optimism/packages/contracts-bedrock/",
     "@forge-std/=lib/forge-std/src/",
+    "@solady/=lib/solady/src",
     # Note: Use zobront/sp1-contracts as the current version for SP1 contracts is not compatible with the hard
     # version for 0.8.15 on some Optimism contracts.
     "@sp1-contracts/=lib/sp1-contracts/contracts/",
@@ -15,9 +16,13 @@ remappings = [
     "src/libraries/=lib/optimism/packages/contracts-bedrock/src/libraries/",
     "src/L1/=lib/optimism/packages/contracts-bedrock/src/L1/",
     "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
+    "src/dispute/=lib/optimism/packages/contracts-bedrock/src/dispute/"
 ]
 
 # Enable read-write access to opsuccinctl2ooconfig.json
-fs_permissions = [{ access = "read-write", path = "./opsuccinctl2ooconfig.json" }]
+fs_permissions = [
+    { access = "read-write", path = "./opsuccinctl2ooconfig.json" },
+    { access = "read-write", path = "./opsuccinctl2ooconfig-test.json" }
+]
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

@@ -65,7 +65,7 @@ If you have multiple environments, you can pass the environment file to the `dep
 just deploy-mock-verifier <env_file>
 ```
 
-### 3) Deploy the `OPSuccinctL2OutputOracle` contract.
+### 3) Deploy the `OPSuccinctL2OutputOracle` contract
 
 This contract is a modification of the `L2OutputOracle` contract which verifies a proof along with the proposed state root.
 

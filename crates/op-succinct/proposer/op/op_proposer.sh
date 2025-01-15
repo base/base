@@ -9,6 +9,7 @@
     --poll-interval=${POLL_INTERVAL:-20s} \
     --rollup-rpc=${L2_NODE_RPC} \
     --l2oo-address=${L2OO_ADDRESS} \
+    --dgf-address=${DGF_ADDRESS} \
     --private-key=${PRIVATE_KEY} \
     --l1-eth-rpc=${L1_RPC} \
     --beacon-rpc=${L1_BEACON_RPC} \

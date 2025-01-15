@@ -33,6 +33,9 @@ type CLIConfig struct {
 	// L2OOAddress is the L2OutputOracle contract address.
 	L2OOAddress string
 
+	// DGFAddress is the DisputeGameFactory contract address.
+	DGFAddress string
+
 	// PollInterval is the delay between querying L2 for more transaction
 	// and creating a new batch.
 	PollInterval time.Duration
@@ -114,8 +117,8 @@ func (c *CLIConfig) Check() error {
 		return err
 	}
 
-	if c.L2OOAddress == "" {
-		return errors.New("the `L2OutputOracle` address was not provided")
+	if c.L2OOAddress == "" && c.DGFAddress == "" {
+		return errors.New("one of the `DisputeGameFactory` or `L2OutputOracle` address must be provided")
 	}
 
 	return nil
@@ -142,6 +145,7 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		L1EthRpc:     ctx.String(flags.L1EthRpcFlag.Name),
 		RollupRpc:    ctx.String(flags.RollupRpcFlag.Name),
 		L2OOAddress:  ctx.String(flags.L2OOAddressFlag.Name),
+		DGFAddress:   ctx.String(flags.DGFAddressFlag.Name),
 		PollInterval: ctx.Duration(flags.PollIntervalFlag.Name),
 		TxMgrConfig:  txmgr.ReadCLIConfig(ctx),
 		BeaconRpc:    ctx.String(flags.BeaconRpcFlag.Name),

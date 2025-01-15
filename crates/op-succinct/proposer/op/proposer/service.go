@@ -135,6 +135,7 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	ps.Mock = cfg.Mock
 
 	ps.initL2ooAddress(cfg)
+	ps.initDGF(cfg)
 
 	if err := ps.initRPCClients(ctx, cfg); err != nil {
 		return err
@@ -250,6 +251,15 @@ func (ps *ProposerService) initL2ooAddress(cfg *CLIConfig) {
 		return
 	}
 	ps.L2OutputOracleAddr = &l2ooAddress
+}
+
+func (ps *ProposerService) initDGF(cfg *CLIConfig) {
+	dgfAddress, err := opservice.ParseAddress(cfg.DGFAddress)
+	if err != nil {
+		// Return no error & set no DGF related configuration fields.
+		return
+	}
+	ps.DisputeGameFactoryAddr = &dgfAddress
 }
 
 func (ps *ProposerService) initDriver() error {
