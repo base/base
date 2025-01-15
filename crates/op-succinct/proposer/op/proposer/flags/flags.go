@@ -44,6 +44,11 @@ var (
 		Usage:   "Address of the L2OutputOracle contract",
 		EnvVars: prefixEnvVars("L2OO_ADDRESS"),
 	}
+	DGFAddressFlag = &cli.StringFlag{
+		Name:    "dgf-address",
+		Usage:   "Address of the DisputeGameFactory contract",
+		EnvVars: prefixEnvVars("DGF_ADDRESS"),
+	}
 	PollIntervalFlag = &cli.DurationFlag{
 		Name:    "poll-interval",
 		Usage:   "How frequently to poll L2 for new blocks (legacy L2OO)",
@@ -159,6 +164,7 @@ var requiredFlags = []cli.Flag{
 
 var optionalFlags = []cli.Flag{
 	L2OOAddressFlag,
+	DGFAddressFlag,
 	PollIntervalFlag,
 	AllowNonFinalizedFlag,
 	L2OutputHDPathFlag,

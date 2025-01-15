@@ -74,15 +74,18 @@ deploy-mock-verifier env_file=".env":
     fi
 
     cd contracts
+
+    VERIFY=""
+    if [ $ETHERSCAN_API_KEY != "" ]; then
+      VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+    fi
     
     forge script script/DeployMockVerifier.s.sol:DeployMockVerifier \
     --rpc-url $L1_RPC \
     --private-key $PRIVATE_KEY \
     --broadcast \
-    --verify \
-    --verifier etherscan \
-    --etherscan-api-key $ETHERSCAN_API_KEY
-  
+    $VERIFY
+
 # Deploy the OPSuccinct L2 Output Oracle
 deploy-oracle env_file=".env":
     #!/usr/bin/env bash
@@ -99,16 +102,18 @@ deploy-oracle env_file=".env":
 
     # forge install
     forge install
+
+    VERIFY=""
+    if [ $ETHERSCAN_API_KEY != "" ]; then
+      VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+    fi
     
     # Run the forge deployment script
     forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
         --rpc-url $L1_RPC \
         --private-key $PRIVATE_KEY \
         --broadcast \
-        --verify \
-        --verifier etherscan \
-        --etherscan-api-key $ETHERSCAN_API_KEY
-
+        $VERIFY
 
 # Upgrade the OPSuccinct L2 Output Oracle
 upgrade-oracle env_file=".env":
@@ -171,3 +176,28 @@ update-parameters env_file=".env":
             --private-key $PRIVATE_KEY \
             --broadcast
     fi
+
+deploy-dispute-game-factory env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+
+    # forge install
+    forge install
+
+    VERIFY=""
+    if [ $ETHERSCAN_API_KEY != "" ]; then
+      VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+    fi
+    
+    # Run the forge deployment script
+    L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctDGFDeployer.s.sol:OPSuccinctDFGDeployer \
+        --rpc-url $L1_RPC \
+        --private-key $PRIVATE_KEY \
+        --broadcast \
+        $VERIFY

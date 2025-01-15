@@ -25,7 +25,7 @@ In the root directory, create a file called `.env` and set the following environ
 
 There are additional optional parameters that you can set in the `.env` file. See the [Advanced Parameters](../contracts/configuration.md#optional-advanced-parameters) section for more information.
 
-### 2) Deploy the `OPSuccinctL2OutputOracle` contract.
+### 2) Deploy the `OPSuccinctL2OutputOracle` contract
 
 This contract is a modification of the `L2OutputOracle` contract which verifies a proof along with the proposed state root.
 

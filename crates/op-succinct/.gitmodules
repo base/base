@@ -10,3 +10,6 @@
 [submodule "contracts/lib/sp1-contracts"]
 	path = contracts/lib/sp1-contracts
 	url = https://github.com/succinctlabs/sp1-contracts
+[submodule "contracts/lib/solady"]
+	path = contracts/lib/solady
+	url = https://github.com/vectorized/solady

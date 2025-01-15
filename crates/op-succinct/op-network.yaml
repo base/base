@@ -20,10 +20,6 @@ optimism_package:
 
         # A list of optional extra params that will be passed to the batcher container for modifying its behaviour
         extra_params: ["--batch-type=1"]
-  op_contract_deployer_params:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-deployer:v0.0.6
-    l1_artifacts_locator: tag://op-contracts/v1.6.0
-    l2_artifacts_locator: tag://op-contracts/v1.7.0-beta.1+l2-contracts
   global_log_level: "info"
   global_node_selectors: {}
   global_tolerations: []
