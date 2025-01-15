@@ -4,50 +4,40 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Message validation](#message-validation)
+- [Overview](#overview)
+- [Transaction validation](#transaction-validation)
 - [System deposits transaction margin](#system-deposits-transaction-margin)
 - [Security Considerations](#security-considerations)
   - [Mempool Denial of Service](#mempool-denial-of-service)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-The transaction-pool is part of the execution-engine,
-and generally replicated by the sequencer and its surrounding infrastructure.
+## Overview
 
-Not all messages may be included by the sequencer during [block building](./sequencer.md#block-building),
-additional transaction-pool validation is thus required to prevent non-includable
-transactions from overwhelming the network.
+The transaction pool (also known as the mempool) is where pending user transactions accumulate
+before being included in a block. When a user submits a transaction to a node, it is validated
+and inserted into the node's transaction pool before being broadcasted via p2p network to other nodes.
 
-Transactions with cross-chain messages are subject to the same transaction-pool
-validation rules as regular transactions:
-nonce, balance and fee changes need to be applied to validation so the cross-chain transaction
-is possible to include in a block in the first place.
+Since there is little cost to sending invalid transactions over the p2p network maliciously,
+Ethereum opts to ensure that the transactions can be validated as cheaply as possible. This validation
+consists of a nonce and balance (fee payment) check which can be done with solely state lookups and
+the chain tips block header. Features that make this validation more costly have been rejected from L1
+Ethereum due to the desire to ensure [commodity hardware](https://hackmd.io/@kevaundray/S1hUQuV4Jx) can
+easily participate in consensus.
 
-However, additional validation rules are applied to demote messages that cannot be included in a block.
+Layer twos can make more aggressive tradeoffs and raise the minimum hardware requirements of the network.
+With interop, it requires full EVM execution of the transaction to fully validate it.
 
-## Message validation
+## Transaction validation
 
-Through [static-analysis](./sequencer.md#static-analysis) as performed in block building,
-the `Identifier` of the message is read, and used for further validation. Static analysis is
-not always possible, therefore the mempool SHOULD delegate execution to another service that can
-horizontally scale validation of executing messages.
+In addition to the nonce and balance checks, the [messaging invariants](./messaging.md#messaging-invariants)
+SHOULD be enforced before entry into the transaction pool.
 
-The [messaging invariants](./messaging.md#messaging-invariants) should be enforced in the transaction pool,
-with dependency validation adapted for guarantees of the in-flight transactions:
-the executing message is not included in the chain yet,
-but the validity of the message and its initiating source is tracked.
+After each new block, each transaction in the transaction pool is checked for validity again.
+A transaction with a definitively invalid message-dependency SHOULD be "demoted" from the transaction pool.
 
-A Message with a definitively invalid message-dependency SHOULD be "demoted" from the transaction pool.
-
-Irreversible invalidation conditions:
-
-- The block at the initiating message source is finalized and does not pass the initiating-message checks.
-- The message is expired.
-
-The sequencer MAY choose to demote messages which are invalid but can still technically become valid:
-
-- The block at the initiating message source is known, but another conflicting unsafe block is canonical.
-- The block at the initiating message has invalidated message dependencies.
+It is possible that a transaction that was valid becomes invalid or vice versa. The sequencer MAY choose
+to demote messages which are invalid but can still technically become valid.
 
 Transactions with invalid message-dependencies MUST NOT be included in block-building,
 and should thus be dropped from the transaction-pool.
