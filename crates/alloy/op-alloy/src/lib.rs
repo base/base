@@ -11,6 +11,10 @@
 #[doc(inline)]
 pub use op_alloy_consensus as consensus;
 
+#[cfg(feature = "provider")]
+#[doc(inline)]
+pub use op_alloy_provider as provider;
+
 #[cfg(feature = "network")]
 #[doc(inline)]
 pub use op_alloy_network as network;
