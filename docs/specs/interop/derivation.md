@@ -5,16 +5,35 @@
 **Table of Contents**
 
 - [Overview](#overview)
+  - [Invariants](#invariants)
   - [Deposit Context](#deposit-context)
     - [Opening the deposit context](#opening-the-deposit-context)
     - [Closing the deposit context](#closing-the-deposit-context)
       - [Deposits-complete Source-hash](#deposits-complete-source-hash)
 - [Security Considerations](#security-considerations)
   - [Gas Considerations](#gas-considerations)
+  - [Depositing an Executing Message](#depositing-an-executing-message)
+  - [Reliance on History](#reliance-on-history)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
+
+New derivation rules are added to guaranteee integrity of cross chain messages.
+The fork choice rule is updated to fork out unsafe blocks that contain invalid
+executing messages.
+
+### Invariants
+
+- An executing message MUST have a corresponding initiating message
+- The initiating message referenced in an executing message MUST come from a chain in its dependency set
+- A block MUST be considered invalid if it is built with any invalid executing messages
+
+L2 blocks that produce invalid executing messages MUST not be allowed to be considered safe.
+They MAY optimistically exist as unsafe blocks for some period of time. An L2 block that is invalidated
+because it includes invalid executing messages MUST be replaced by a deposits only block at the same
+block height. This guarantees progression of the chain, ensuring that an infinite loop of processing
+the same block in the proof system is not possible.
 
 ### Deposit Context
 
@@ -88,8 +107,22 @@ and `l2EpochStartBlockNum` is the L2 block number of the first L2 block in the e
 
 ### Gas Considerations
 
-There must be sufficient gas available in the block to destroy deposit context.
-There's no guarantee on the minimum gas available for the second L1 attributes transaction as the block
-may be filled by the other deposit transactions. As a consequence, a deposit context may spill into multiple blocks.
+There must be sufficient gas available in the block to destroy deposit context. Depending on the
+chain configuration, there is no guarantee that the amount of guaranteed gas plus the amount used
+by the system transactions is less than the L2 block gas limit. It is important that the chain operator
+maintains a ~9 million gas buffer between the guaranteed gas limit and the L2 gas limit.
 
-This will be fixed in the future.
+### Depositing an Executing Message
+
+Deposit transactions (force inclusion transactions) give censorship resistance to layer two networks.
+It is possible to deposit an invalid executing message, forcing the sequencer to reorg. It would
+be fairly cheap to continuously deposit invalid executing messages through L1 and cause L2 liveness
+instability. A future upgrade will enable deposits to trigger executing messages.
+
+### Reliance on History
+
+When fully executing historical blocks, a dependency on historical receipts from remote chains is present.
+[EIP-4444][eip-4444] will eventually provide a solution for making historical receipts available without
+needing to execute increasingly long chain histories.
+
+[eip-4444]: https://eips.ethereum.org/EIPS/eip-4444
