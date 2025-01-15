@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 import time
 import sys
+import datetime
 
 # Types of proofs
 class ProofType(Enum):
@@ -92,18 +93,12 @@ if __name__ == "__main__":
     # Load environment variables from .env file
     load_dotenv()
 
-    # Get L2OO_ADDRESS from environment variables
-    L2OO_ADDRESS = os.getenv('L2OO_ADDRESS')
-    if L2OO_ADDRESS is None:
-        raise ValueError("L2OO_ADDRESS not found in .env file")
-
     # Get chain ID from command line args
     if len(sys.argv) != 2:
         print("Usage: python query_proofs.py <chain_id>")
         sys.exit(1)
     chain_id = sys.argv[1]
 
-    print(f"L2OO_ADDRESS: {L2OO_ADDRESS}")
     db_path = f"../../db/{chain_id}/proofs.db"
 
     print(f"DB Path: {db_path}")
@@ -113,8 +108,18 @@ if __name__ == "__main__":
     print("-" * 50)
     span_proofs = query_span_proofs(db_path)
     for proof in span_proofs:
-        if proof.status is not ProofStatus.UNREQ:
-            print(f"Request ID: {proof.id}, Type: {proof.type}, Start Block: {proof.start_block}, End Block: {proof.end_block}, Status: {proof.status}, Prover Request ID: {proof.prover_request_id}, Request Added Time: {proof.request_added_time}, Proof Request Time: {proof.proof_request_time}")
+        if proof.status == ProofStatus.FAILED:
+            print(f"Request ID: {proof.id}, Date: {datetime.datetime.fromtimestamp(proof.request_added_time).strftime('%Y-%m-%d %H:%M:%S')}, Start Block: {proof.start_block}, End Block: {proof.end_block}")
+
+    # Print unique failed blocks
+    failed_blocks = set()
+    for proof in span_proofs:
+        if proof.status == ProofStatus.FAILED:
+            failed_blocks.add((proof.start_block, proof.end_block))
+    
+    print("\nUnique Failed Block Ranges:")
+    for start, end in sorted(failed_blocks):
+        print(f"Start Block: {start}, End Block: {end}")
     print("-" * 50)
 
     # Query for aggregation proofs

@@ -68,6 +68,17 @@ contract OPSuccinctParameterUpdater is Script, Utils {
             }
         }
 
+        if (cfg.verifier != oracleImpl.verifier()) {
+            if (executeUpgradeCall) {
+                oracleImpl.updateVerifier(cfg.verifier);
+            } else {
+                bytes memory verifierCalldata =
+                    abi.encodeWithSelector(OPSuccinctL2OutputOracle.updateVerifier.selector, cfg.verifier);
+                console.log("The calldata for upgrading the verifier is:");
+                console.logBytes(verifierCalldata);
+            }
+        }
+
         vm.stopBroadcast();
     }
 }

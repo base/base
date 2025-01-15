@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 # Build stage
-FROM ubuntu:22.04 AS builder
+FROM ubuntu:24.04 AS builder
 
 WORKDIR /build
 
@@ -46,7 +46,7 @@ RUN --mount=type=ssh \
     cp target/native_host_runner/release/native_host_runner /build/native_host_runner
 
 # Final stage
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 WORKDIR /app
 
