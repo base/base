@@ -57,14 +57,8 @@ kona-host = { workspace = true }
 op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
 
-# op-alloy
-op-alloy-consensus.workspace = true
-op-alloy-network.workspace = true
-op-alloy-rpc-types.workspace = true
-
 # sp1
 sp1-sdk = { workspace = true }
-dashmap = { version = "6.1.0", features = ["rayon"] }
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true
