@@ -104,11 +104,11 @@ We provide a Docker Compose file for running the `op-succinct` service.
 docker compose build
 ```
 
-#### Run the Proposer
+#### Run OP Succinct
 
-This command launches the [op-succinct service](../advanced/proposer.md) in the background. It launches two containers: one container that manages proof generation and another container that is a small fork of the original op-proposer service.
+This command launches [OP Succinct](../advanced/proposer.md) in the background. It launches two containers: one container that manages proof generation and another container that is a small fork of the original op-proposer service.
 
-After a few minutes, you should see the op-succinct-proposer service start to request proofs from the Succinct Prover Network. Once enough proofs have been generated, an aggregate proof will be requested and submitted to the L1.
+After a few minutes, you should see the OP Succinct service start to request proofs from the Succinct Prover Network. Once enough proofs have been generated, an aggregate proof will be requested and submitted to the L1.
 
 ```shell
 docker compose up

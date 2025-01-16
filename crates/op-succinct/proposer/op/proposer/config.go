@@ -79,8 +79,6 @@ type CLIConfig struct {
 
 	// L1 Beacon RPC URL used to determine span batch boundaries.
 	BeaconRpc string
-	// Directory to store the transaction cache when determining span batch boundaries.
-	TxCacheOutDir string
 	// The max size (in blocks) of a proof we will attempt to generate. If span batches are larger, we break them up.
 	MaxBlockRangePerSpanProof uint64
 	// The max number of concurrent witness generation processes.
@@ -95,10 +93,6 @@ type CLIConfig struct {
 	OPSuccinctServerUrl string
 	// The maximum proofs that can be requested from the server concurrently.
 	MaxConcurrentProofRequests uint64
-	// The batch inbox on L1 to read batches from. Note that this is ignored if L2 Chain ID is in rollup config.
-	BatchInbox string
-	// The batcher address to include transactions from. Note that this is ignored if L2 Chain ID is in rollup config.
-	BatcherAddress string
 	// Mock is a flag to use the mock OP Succinct server.
 	Mock bool
 }
@@ -166,11 +160,8 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		MaxConcurrentWitnessGen:      ctx.Uint64(flags.MaxConcurrentWitnessGenFlag.Name),
 		WitnessGenTimeout:            ctx.Uint64(flags.WitnessGenTimeoutFlag.Name),
 		ProofTimeout:                 ctx.Uint64(flags.ProofTimeoutFlag.Name),
-		TxCacheOutDir:                ctx.String(flags.TxCacheOutDirFlag.Name),
 		OPSuccinctServerUrl:          ctx.String(flags.OPSuccinctServerUrlFlag.Name),
 		MaxConcurrentProofRequests:   ctx.Uint64(flags.MaxConcurrentProofRequestsFlag.Name),
-		BatchInbox:                   ctx.String(flags.BatchInboxFlag.Name),
-		BatcherAddress:               ctx.String(flags.BatcherAddressFlag.Name),
 		Mock:                         ctx.Bool(flags.MockFlag.Name),
 	}
 }

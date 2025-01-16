@@ -6,7 +6,7 @@ OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour 
 
 ## Getting Started
 
-Today, you can already use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book](https://succinctlabs.github.io/op-succinct/) to deploy the `OPSuccinctL2OutputOracle` contract and start the `op-succinct-proposer` service.
+Today, you can already use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book](https://succinctlabs.github.io/op-succinct/) to deploy the `OPSuccinctL2OutputOracle` contract and start the OP Succinct service.
 
 ## Repository Overview
 
@@ -19,7 +19,7 @@ The repository is organized into the following directories:
 - `book`: The documentation for OP Succinct users and developers.
 - `contracts`: The solidity contracts for posting state roots to L1.
 - `programs`: The programs for proving the execution and derivation of the L2 state transitions and proof aggregation.
-- `proposer`: The implementation of the `op-succinct-proposer` service.
+- `proposer`: The implementation of the `op-succinct/op-proposer` and `op-succinct/succinct-proposer` services.
 - `scripts`: The scripts for proving and generating witnesses.
 
 ## Acknowledgments
