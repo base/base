@@ -183,7 +183,7 @@ func convertBaseFeeParams(rawConfig map[string]interface{}, key string) {
 	}
 }
 
-// GetAllSpanBatchesInBlockRange fetches span batches within a range of L2 blocks.
+// GetAllSpanBatchesInL2BlockRange fetches span batches within a range of L2 blocks.
 func GetAllSpanBatchesInL2BlockRange(config BatchDecoderConfig) ([]SpanBatchRange, error) {
 	rollupCfg, err := setupBatchDecoderConfig(&config)
 	if err != nil {
