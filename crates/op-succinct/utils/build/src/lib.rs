@@ -88,7 +88,7 @@ fn build_zkvm_program(program: &str) {
         BuildArgs {
             elf_name: Some(format!("{}-elf", program)),
             docker: true,
-            tag: "v4.0.0-rc.3".to_string(),
+            tag: "v4.0.0-rc.10".to_string(),
             ..Default::default()
         },
     );
