@@ -29,9 +29,9 @@ jobs:
         run: |
           # Build the binaries
           cd programs/range
-          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf --docker --tag v4.0.0-rc.3
+          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf --docker --tag v4.0.0-rc.10 --output-directory ../../elf
           cd ../aggregation
-          ~/.sp1/bin/cargo-prove prove build --elf-name aggregation-elf --docker --tag v4.0.0-rc.3
+          ~/.sp1/bin/cargo-prove prove build --elf-name aggregation-elf --docker --tag v4.0.0-rc.10 --output-directory ../../elf
           cd ../../
 
           # Check for any changes in the elf directory

@@ -88,10 +88,10 @@ op-alloy-rpc-types-engine = { version = "0.6.8", default-features = false }
 op-alloy-network = { version = "0.6.8", default-features = false }
 
 # sp1
-sp1-lib = { version = "4.0.0-rc.11", features = ["verify"] }
-sp1-sdk = { version = "4.0.0-rc.11" }
-sp1-zkvm = {version = "4.0.0-rc.11", features = ["verify", "embedded"] }
-sp1-build = { version = "4.0.0-rc.11" }
+sp1-lib = { version = "4.0.0", features = ["verify"] }
+sp1-sdk = { version = "4.0.0" }
+sp1-zkvm = {version = "4.0.0", features = ["verify", "embedded"] }
+sp1-build = { version = "4.0.0" }
 
 [profile.release-client-lto]
 inherits = "release"
@@ -100,11 +100,10 @@ codegen-units = 1
 lto = "fat"
 
 [patch.crates-io]
-tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0-rc.3" }
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
-ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "patch-0.16.9-sp1-4.0.0-rc.3-v2" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-4.0.0-rc.3-v1" }
-sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0-rc.3" }
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
+ecdsa = { git = "https://github.com/sp1-patches/signatures", tag = "patch-0.16.9-sp1-4.0.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-4.0.0" }
+sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
 
-# Note: Renamed this package to sp1_bls12_381 because it was published with that crate name to kzg_rs.
-sp1_bls12_381 = { git = "https://github.com/sp1-patches/bls12_381.git", branch = "ratan/patch-0.8.0-sp1-4.0.0-rc.3-v1-rename-package" }
+# Note: kzg-rs must be on version 0.2.4, https://github.com/bluealloy/revm/pull/2002.
