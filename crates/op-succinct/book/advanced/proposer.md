@@ -1,7 +1,7 @@
 # Proposer
 
 The `op-succinct` service consists of two containers:
-- `op-succinct-server`: Receives proof requests from the `op-succinct-proposer`, generates the witness for the proof, and submits the proof to the Succinct Prover Network. Handles the communication with the [Succinct's Prover Network](https://docs.succinct.xyz/generating-proofs/prover-network) to fetch the proof status and completed proof data.
+- `op-succinct-server`: Receives proof requests from the `op-succinct-proposer`, generates the witness for the proof, and submits the proof to the Succinct Prover Network. Handles the communication with the [Succinct's Prover Network](https://docs.succinct.xyz/docs/generating-proofs/prover-network) to fetch the proof status and completed proof data.
 - `op-succinct-proposer`: Monitors L1 state to determine when to request a proof. Sends proof requests to the `op-succinct-server`. Once proofs have been generated for a sufficiently large range, aggregates range proofs into an aggregation proof. Submits the aggregation proof to the `OPSuccinctL2OutputOracle` contract which includes the L2 state outputs.
 
 We've packaged the `op-succinct` service in a docker compose file to make it easier to run.
@@ -43,7 +43,7 @@ Before starting the proposer, the following environment variables should be in y
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 | `NETWORK_RPC_URL` | RPC URL for the Succinct Prover Network. |
-| `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/generating-proofs/prover-network). |
+| `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/docs/generating-proofs/prover-network). |
 | `SP1_PROVER` | Default: `network`. Set to `network` to use the Succinct Prover Network. |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract and posting output roots to L1. |
 | `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract. |
