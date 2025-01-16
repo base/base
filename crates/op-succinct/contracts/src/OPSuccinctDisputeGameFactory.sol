@@ -15,8 +15,8 @@ contract OPSuccinctDisputeGameFactory is ISemver {
     address public gameImpl;
 
     /// @notice Semantic version.
-    /// @custom:semver v1.0.0-rc2
-    string public constant version = "v1.0.0-rc2";
+    /// @custom:semver v1.0.0-beta
+    string public constant version = "v1.0.0-beta";
 
     ////////////////////////////////////////////////////////////
     //                        Modifiers                       //

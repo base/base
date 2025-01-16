@@ -25,8 +25,8 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     GameStatus public status;
 
     /// @notice Semantic version.
-    /// @custom:semver v1.0.0-rc2
-    string public constant version = "v1.0.0-rc2";
+    /// @custom:semver v1.0.0-beta
+    string public constant version = "v1.0.0-beta";
 
     constructor(address _l2OutpoutOracle) {
         l2OutpoutOracle = _l2OutpoutOracle;
