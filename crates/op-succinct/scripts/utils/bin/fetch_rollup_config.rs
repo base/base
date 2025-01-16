@@ -69,7 +69,7 @@ async fn update_l2oo_config() -> Result<()> {
     // Set the verifier address
     let verifier = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
         // Default to Groth16 VerifierGateway contract address
-        // Source: https://docs.succinct.xyz/verification/onchain/contract-addresses
+        // Source: https://docs.succinct.xyz/docs/verification/onchain/contract-addresses
         "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B".to_string()
     });
 

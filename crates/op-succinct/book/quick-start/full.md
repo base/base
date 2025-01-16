@@ -4,7 +4,7 @@ Running OP Succinct in full mode will generate proofs of valid OP Stack L2 outpu
 
 ## Prerequisites
 
-You will need a whitelisted key on the Succinct Prover Network. Follow the instructions [here](https://docs.succinct.xyz/generating-proofs/prover-network) to get your key whitelisted.
+You will need a whitelisted key on the Succinct Prover Network. Follow the instructions [here](https://docs.succinct.xyz/docs/generating-proofs/prover-network) to get your key whitelisted.
 
 To get access to the Succinct Prover Network for OP Succinct, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The Succinct team will reach out to you with an RPC endpoint you can use.
 
