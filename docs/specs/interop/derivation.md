@@ -10,6 +10,8 @@
     - [Opening the deposit context](#opening-the-deposit-context)
     - [Closing the deposit context](#closing-the-deposit-context)
       - [Deposits-complete Source-hash](#deposits-complete-source-hash)
+- [Replacing Invalid Blocks](#replacing-invalid-blocks)
+  - [Optimistic Block Deposited Transaction](#optimistic-block-deposited-transaction)
 - [Security Considerations](#security-considerations)
   - [Gas Considerations](#gas-considerations)
   - [Depositing an Executing Message](#depositing-an-executing-message)
@@ -102,6 +104,37 @@ Where `l1BlockHash` refers to the L1 block hash of which the info attributes are
 And `seqNumber = l2BlockNum - l2EpochStartBlockNum`,
 where `l2BlockNum` is the L2 block number of the inclusion of the deposit tx in L2,
 and `l2EpochStartBlockNum` is the L2 block number of the first L2 block in the epoch.
+
+## Replacing Invalid Blocks
+
+When the [cross chain dependency resolution](./messaging.md#resolving-cross-chain-safety) determines
+that a block contains an [invalid message](./messaging.md#invalid-messages), the block is replaced
+by a block with the same inputs, except for the transactions included. The transactions from the
+original block are trimmed to include only deposit transactions plus an
+[optimistic block info deposit transaction](#optimistic-block-deposited-transaction) which is appended
+to the trimmed transaction list.
+
+### Optimistic Block Deposited Transaction
+
+[l1-attr-deposit]: #l1-attributes-deposited-transaction
+[l2-output-root-proposals]: ../protocol/proposals.md#l2-output-commitment-construction
+
+An [L1 attributes deposited transaction][g-l1-attr-deposit] is a deposit transaction sent to the zero address.
+
+This transaction MUST have the following values:
+
+1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0002` (the address of the
+   [L1 Attributes depositor account][depositor-account])
+2. `to` is `0x0000000000000000000000000000000000000000` (the zero address as no EVM code execution is expected).
+3. `mint` is `0`
+4. `value` is `0`
+5. `gasLimit` is set `36000` gas, to cover intrinsic costs, processing costs, and margin for change.
+6. `isSystemTx` is set to `false`.
+7. `data` is the preimage of the [L2 output root](../glossary.md#l2-output-root-proposals)
+   of the replaced block. i.e. `version_byte || payload` without applying the `keccak256` hashing.
+
+This system-initiated transaction for L1 attributes is not charged any ETH for its allocated
+`gasLimit`, as it is considered part of state-transition processing.
 
 ## Security Considerations
 
