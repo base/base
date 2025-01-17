@@ -144,6 +144,9 @@ A rollup node initializes its derivation process by finding a starting point bas
 After preparing the initial system configuration for the given L1 starting input,
 the system configuration is updated by processing all receipts from each new L1 block.
 
+Logs are derived from transactions following the future-proof best-effort process described in
+[On Future-Proof Transaction Log Derivation][derivation.md#on-future-proof-transaction-log-derivation]
+
 The contained log events are filtered and processed as follows:
 
 - the log event contract address must match the rollup `SystemConfig` deployment
