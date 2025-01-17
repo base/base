@@ -5,7 +5,8 @@
 **Table of Contents**
 
 - [Overview](#overview)
-  - [Invariants](#invariants)
+- [Invariants](#invariants)
+- [L1 Attributes Transaction](#l1-attributes-transaction)
   - [Deposit Context](#deposit-context)
     - [Opening the deposit context](#opening-the-deposit-context)
     - [Closing the deposit context](#closing-the-deposit-context)
@@ -25,7 +26,7 @@ New derivation rules are added to guaranteee integrity of cross chain messages.
 The fork choice rule is updated to fork out unsafe blocks that contain invalid
 executing messages.
 
-### Invariants
+## Invariants
 
 - An executing message MUST have a corresponding initiating message
 - The initiating message referenced in an executing message MUST come from a chain in its dependency set
@@ -37,12 +38,17 @@ because it includes invalid executing messages MUST be replaced by a deposits on
 block height. This guarantees progression of the chain, ensuring that an infinite loop of processing
 the same block in the proof system is not possible.
 
+## L1 Attributes Transaction
+
+The L1 attributes transaction is updated to a new entrypoint on the `L1Block` contract.
+
 ### Deposit Context
 
-Derivation is extended to create **deposit contexts**, which signifies the execution of a depositing transaction.
-A deposit context is scoped to a single block, commencing with the execution of the first deposited transaction
-and concluding immediately after the execution of the final deposited transaction within that block.
-As such, there is exactly one deposit context per block.
+Derivation is extended to create **deposit contexts**, which signify the execution of a depositing transaction.
+A deposit context is scoped to a single block, opening with the first deposited transaction and closing after
+the execution of the final deposited transaction. As such, there is exactly one deposit context per block.
+The deposit context exists to give legibility within the EVM that execution is happening in the context of
+a deposit transaction. See [`isDeposit()`](./predeploys.md#isdeposit) for more information.
 
 The order of deposit transactions occurs as follows:
 

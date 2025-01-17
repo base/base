@@ -35,8 +35,7 @@
 - [OptimismSuperchainERC20Beacon](#optimismsuperchainerc20beacon)
   - [Overview](#overview-2)
 - [L1Block](#l1block)
-  - [Static Configuration](#static-configuration)
-  - [Dependency Set](#dependency-set)
+  - [L1 Atributes Transaction](#l1-atributes-transaction)
   - [Deposit Context](#deposit-context)
   - [`isDeposit()`](#isdeposit)
     - [`depositsComplete()`](#depositscomplete)
@@ -466,60 +465,28 @@ The implementation address gets deduced similarly to the `GasPriceOracle` addres
 | Address             | `0x4200000000000000000000000000000000000015` |
 | `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
 
-### Static Configuration
+### L1 Atributes Transaction
 
-The `L1Block` contract MUST include method `setConfig(ConfigType, bytes)` for setting the system's static values, which
-are defined as values that only change based on the chain operator's input. This function serves to reduce the size of
-the L1 Attributes transaction, as well as to reduce the need to add specific one off functions. It can only be called by
-`DEPOSITOR_ACCOUNT`.
-
-The `ConfigType` enum is defined as follows:
+A new entrypoint on the `L1Block` contract is added that is used to open the [deposit context](./derivation.md#deposit-context).
 
 ```solidity
-enum ConfigType {
-    SET_GAS_PAYING_TOKEN,
-    ADD_DEPENDENCY,
-    REMOVE_DEPENDENCY
-}
+function setL1AttributesInterop() external;
 ```
 
-The second argument to `setConfig` is a `bytes` value that is ABI encoded with the necessary values for the `ConfigType`.
+WARNING: the function name is subject to change depending on the name of the network upgrade.
 
-| ConfigType             | Value                                       |
-| ---------------------- | ------------------------------------------- |
-| `SET_GAS_PAYING_TOKEN` | `abi.encode(token, decimals, name, symbol)` |
-| `ADD_DEPENDENCY`       | `abi.encode(chainId)`                       |
-| `REMOVE_DEPENDENCY`    | `abi.encode(chainId)`                       |
-
-where
-
-- `token` is the gas paying token's address (type `address`)
-
-- `decimals` is the gas paying token's decimals (type `uint8`)
-
-- `name` is the gas paying token's name (type `bytes32`)
-
-- `symbol` is the gas paying token's symbol (type `bytes32`)
-
-- `chainId` is the chain id intended to be added or removed from the dependency set (type `uint256`)
-
-Calls to `setConfig` MUST originate from `SystemConfig` and are forwarded to `L1Block` by `OptimismPortal`.
-
-### Dependency Set
-
-`L1Block` is updated to include the set of allowed chains. These chains are added and removed through `setConfig` calls
-with `ADD_DEPENDENCY` or `REMOVE_DEPENDENCY`, respectively. The maximum size of the dependency set is `type(uint8).max`,
-and adding a chain id when the dependency set size is at its maximum MUST revert. If a chain id already in the
-dependency set, such as the chain's chain id, is attempted to be added, the call MUST revert. If a chain id that is not
-in the dependency set is attempted to be removed, the call MUST revert. If the chain's chain id is attempted to be
-removed, the call also MUST revert.
-
-`L1Block` MUST provide a public getter to check if a particular chain is in the dependency set called
-`isInDependencySet(uint256)`. This function MUST return true when a chain id in the dependency set, or the chain's chain
-id, is passed in as an argument, and false otherwise. Additionally, `L1Block` MUST provide a public getter to return the
-dependency set called `dependencySet()`. This function MUST return the array of chain ids that are in the dependency set.
-`L1Block` MUST also provide a public getter to get the dependency set size called `dependencySetSize()`. This function
-MUST return the length of the dependency set array.
+| Input arg         | Type    | Calldata bytes | Segment |
+| ----------------- | ------- | -------------- | ------- |
+| {0xfe8f4eaf}      |         | 0-3            | n/a     |
+| baseFeeScalar     | uint32  | 4-7            | 1       |
+| blobBaseFeeScalar | uint32  | 8-11           |         |
+| sequenceNumber    | uint64  | 12-19          |         |
+| l1BlockTimestamp  | uint64  | 20-27          |         |
+| l1BlockNumber     | uint64  | 28-35          |         |
+| basefee           | uint256 | 36-67          | 2       |
+| blobBaseFee       | uint256 | 68-99          | 3       |
+| l1BlockHash       | bytes32 | 100-131        | 4       |
+| batcherHash       | bytes32 | 132-163        | 5       |
 
 ### Deposit Context
 
