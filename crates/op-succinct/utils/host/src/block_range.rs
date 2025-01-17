@@ -18,22 +18,16 @@ pub async fn get_validated_block_range(
     end: Option<u64>,
     default_range: u64,
 ) -> Result<(u64, u64)> {
-    // If safeDB is activated, get the L2 safe head. If not, use the finalized block.
-    let safe_db_activated = data_fetcher.is_safe_db_activated().await?;
-    let end_number = if safe_db_activated {
-        let header = data_fetcher.get_l1_header(BlockId::latest()).await?;
-        let safe_head_response: SafeHeadResponse = data_fetcher
-            .fetch_rpc_data_with_mode(
-                RPCMode::L2Node,
-                "optimism_safeHeadAtL1Block",
-                vec![format!("0x{:x}", header.number).into()],
-            )
-            .await?;
-        safe_head_response.safe_head.number
-    } else {
-        let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
-        header.number
-    };
+    // Get the latest finalized block number when end block is not provided.
+    // Even though the safeDB is activated, we use the finalized block number as the
+    // end block by default to ensure the program doesn't run into L2 Block Validation
+    // Failure error.
+    // L2 Block Validation Failure error might still occur. See
+    // [Troubleshooting](../troubleshooting.md#l2-block-validation-failure) for more details.
+    let end_number = data_fetcher
+        .get_l2_header(BlockId::finalized())
+        .await?
+        .number;
 
     // If end block not provided, use latest finalized block
     let l2_end_block = match end {
