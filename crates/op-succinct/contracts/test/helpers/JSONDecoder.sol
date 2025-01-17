@@ -7,8 +7,10 @@ contract JSONDecoder {
         address challenger;
         uint256 finalizationPeriod;
         uint256 l2BlockTime;
+        address opSuccinctL2OutputOracleImpl;
         address owner;
         address proposer;
+        address proxyAdmin;
         bytes32 rangeVkeyCommitment;
         bytes32 rollupConfigHash;
         uint256 startingBlockNumber;
