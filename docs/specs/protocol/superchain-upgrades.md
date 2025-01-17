@@ -258,6 +258,8 @@ but the matching L1-origin information may not be present at the time of activat
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-9-fjord-network-upgrade/8236).
 - `v8.0.0`: 2024 Sep 11th - Granite network upgrade (Limit ecpairing input size + Reduce Channel Timeout).
   [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-10-granite-network-upgrade/8733).
+- `v9.0.0`: 2025 Jan 9th - Holocene network upgrade (Stricter Holocene derivation + EIP-1559 configurability).
+  [Governance Proposal](https://gov.optimism.io/t/upgrade-proposal-11-holocene-network-upgrade/9313).
 
 ## Post-Bedrock Network upgrades
 
@@ -273,3 +275,4 @@ proposal is the canonical document for the timestamp; however, the timestamps ar
 |Ecotone        |               1710374401|               1708534800|              1707238800|
 |Fjord          |               1720627201|               1716998400|                     n/a|
 |Granite        |               1726070401|               1723478400|                     n/a|
+|Holocene       |               1736445601|               1732633200|                     n/a|
