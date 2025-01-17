@@ -129,7 +129,7 @@ impl ExecutionStats {
         let total_gas_used: u64 = block_data.iter().map(|b| b.gas_used).sum();
 
         Self {
-            // The "block data" does not include the first block (as it's not executed), so we need to subtract 1 to give the user back the 
+            // The "block data" does not include the first block (as it's not executed), so we need to subtract 1 to give the user back the
             // block corresponding to the blockhash they're proving from.
             batch_start: block_data[0].block_number - 1,
             batch_end: block_data[block_data.len() - 1].block_number,

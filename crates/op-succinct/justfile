@@ -29,9 +29,14 @@ run-multi start end use-cache="false" prove="false":
   cargo run --bin multi --release -- --start {{start}} --end {{end}} $CACHE_FLAG $PROVE_FLAG
 
 # Runs the cost estimator for a given block range.
-cost-estimator start end:
+# If no range is provided, runs for the last 5 finalized blocks.
+cost-estimator *args='':
   #!/usr/bin/env bash
-  cargo run --bin cost-estimator --release -- --start {{start}} --end {{end}}
+  if [ -z "{{args}}" ]; then
+    cargo run --bin cost-estimator --release
+  else
+    cargo run --bin cost-estimator --release -- {{args}}
+  fi
 
   # Output the data required for the ZKVM execution.
   echo "$L1_HEAD $L2_OUTPUT_ROOT $L2_CLAIM $L2_BLOCK_NUMBER $L2_CHAIN_ID"
