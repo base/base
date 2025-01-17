@@ -9,15 +9,37 @@ import {console} from "forge-std/console.sol";
 
 contract OPSuccinctDeployer is Script, Utils {
     function run() public returns (address) {
-        vm.startBroadcast();
+        uint256 deployPk = vm.envOr("DEPLOY_PK", uint256(0));
+        uint256 adminPk = vm.envOr("ADMIN_PK", uint256(0));
+        // If deployPk is not set, use the default key.
+        if (deployPk != uint256(0)) {
+            vm.startBroadcast(deployPk);
+        } else {
+            vm.startBroadcast();
+        }
 
         Config memory config = readJson("opsuccinctl2ooconfig.json");
 
-        // This initializes the proxy
-        OPSuccinctL2OutputOracle oracleImpl = new OPSuccinctL2OutputOracle();
-        Proxy proxy = new Proxy(msg.sender);
+        // Set the implementation address if it is not already set.
+        if (config.opSuccinctL2OutputOracleImpl == address(0)) {
+            console.log("Deploying new OPSuccinctL2OutputOracle impl");
+            config.opSuccinctL2OutputOracleImpl = address(new OPSuccinctL2OutputOracle());
+        }
 
-        upgradeAndInitialize(address(oracleImpl), config, address(proxy), true);
+        // If the Admin PK is set, use it as the owner of the proxy.
+        address proxyOwner = adminPk != uint256(0) ? vm.addr(adminPk) : msg.sender;
+
+        Proxy proxy = new Proxy(proxyOwner);
+
+        vm.stopBroadcast();
+
+        if (adminPk != uint256(0)) {
+            vm.startBroadcast(adminPk);
+        } else {
+            vm.startBroadcast();
+        }
+
+        upgradeAndInitialize(config, address(proxy), true);
 
         vm.stopBroadcast();
 

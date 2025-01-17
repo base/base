@@ -2,14 +2,16 @@
   "challenger": "0x788c45CafaB3ea427b9079889BE43D7d3cd7500C",
   "finalizationPeriod": 3600,
   "l2BlockTime": 2,
+  "opSuccinctL2OutputOracleImpl": "0xe2314c6d41f0b73d8998e3bd3174c3b149c394d5",
   "owner": "0x788c45CafaB3ea427b9079889BE43D7d3cd7500C",
   "proposer": "0x788c45CafaB3ea427b9079889BE43D7d3cd7500C",
   "rollupConfigHash": "0x78e77d3560e6cfb84e49b62ce66ccce1a8c347b1f3e7c6353a590dcb373a6a4e",
-  "startingBlockNumber": 8740000,
-  "startingOutputRoot": "0x7046a9509eb163d33a906daf1564c33854432ea4fdd37371623df75878c71dbe",
-  "startingTimestamp": 1736815639,
-  "submissionInterval": 2500,
+  "startingBlockNumber": 8909351,
+  "startingOutputRoot": "0x6c8fc616e3d706041663887f26d1f7cf1ae4ee2930f32dce37b14920cb1ebfda",
+  "startingTimestamp": 1737154341,
+  "submissionInterval": 3600,
   "verifier": "0x397A5f7f3dBd538f23DE225B51f532c34448dA9B",
-  "aggregationVkey": "0x002a9b63d01f9e55e791671ff8c42008da75b0804983f2aeb501d5652ea4b03b",
-  "rangeVkeyCommitment": "0x17f2876a475131400204ac2d0a4b046d4a116d2f1b38acfd74b39acf1b27b97b"
+  "aggregationVkey": "0x00613438cec0bce6dba4091a5e2d831dd9531605f0b85fe2762c664b35288c1a",
+  "rangeVkeyCommitment": "0x5f1667fd22a4ac5c016edf3f583e20c6250d9eb776dfaac902a25a14426b7dc9",
+  "proxyAdmin": "0x0000000000000000000000000000000000000000"
 }

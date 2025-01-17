@@ -1,5 +1,5 @@
 use alloy::{eips::BlockId, hex, signers::local::PrivateKeySigner};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode, RunContext};
@@ -22,6 +22,7 @@ struct L2OOConfig {
     challenger: String,
     finalization_period: u64,
     l2_block_time: u64,
+    op_succinct_l2_output_oracle_impl: String,
     owner: String,
     proposer: String,
     rollup_config_hash: String,
@@ -32,20 +33,29 @@ struct L2OOConfig {
     verifier: String,
     aggregation_vkey: String,
     range_vkey_commitment: String,
+    proxy_admin: String,
 }
 
-/// If the environment variable is set for the address, return it. Otherwise, return the address associated with the private key. If the private key is not set, return the zero address.
-fn get_address(env_var: &str) -> String {
-    let private_key = env::var("PRIVATE_KEY").unwrap_or_else(|_| B256::ZERO.to_string());
+/// Returns an address based on environment variables and private key settings:
+/// - If env_var exists, returns that address
+/// - Otherwise if private_key_by_default=true and PRIVATE_KEY exists, returns address derived from private key
+/// - Otherwise returns zero address
+fn get_address(env_var: &str, private_key_by_default: bool) -> String {
+    // First try to get address directly from env var
+    if let Ok(addr) = env::var(env_var) {
+        return addr;
+    }
 
-    env::var(env_var).unwrap_or_else(|_| {
-        if private_key == B256::ZERO.to_string() {
-            Address::ZERO.to_string()
-        } else {
-            let signer: PrivateKeySigner = private_key.parse().unwrap();
-            signer.address().to_string()
+    // Next try to derive address from private key if enabled
+    if private_key_by_default {
+        if let Ok(pk) = env::var("PRIVATE_KEY") {
+            let signer: PrivateKeySigner = pk.parse().unwrap();
+            return signer.address().to_string();
         }
-    })
+    }
+
+    // Fallback to zero address
+    Address::ZERO.to_string()
 }
 
 /// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.
@@ -117,9 +127,12 @@ async fn update_l2oo_config() -> Result<()> {
         .unwrap_or(DEFAULT_FINALIZATION_PERIOD_SECS);
 
     // Default to the address associated with the private key if the environment variable is not set. If private key is not set, default to zero address.
-    let proposer = get_address("PROPOSER");
-    let owner = get_address("OWNER");
-    let challenger = get_address("CHALLENGER");
+    let proposer = get_address("PROPOSER", true);
+    let owner = get_address("OWNER", true);
+    let challenger = get_address("CHALLENGER", true);
+
+    let proxy_admin = get_address("PROXY_ADMIN", false);
+    let op_succinct_l2_output_oracle_impl = get_address("OP_SUCCINCT_L2_OUTPUT_ORACLE_IMPL", false);
 
     let prover = ProverClient::builder().cpu().build();
     let (_, agg_vkey) = prover.setup(AGG_ELF);
@@ -142,6 +155,8 @@ async fn update_l2oo_config() -> Result<()> {
         verifier,
         aggregation_vkey,
         range_vkey_commitment,
+        proxy_admin,
+        op_succinct_l2_output_oracle_impl,
     };
 
     write_l2oo_config(l2oo_config, workspace_root.as_std_path())?;

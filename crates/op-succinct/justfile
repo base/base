@@ -113,8 +113,12 @@ deploy-oracle env_file=".env":
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     
+    ENV_VARS=""
+    if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
+    if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
+    
     # Run the forge deployment script
-    forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
+    $ENV_VARS forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
         --rpc-url $L1_RPC \
         --private-key $PRIVATE_KEY \
         --broadcast \
@@ -138,13 +142,19 @@ upgrade-oracle env_file=".env":
     forge install
     
     # Run the forge upgrade script
+    
+    ENV_VARS="L2OO_ADDRESS=$L2OO_ADDRESS"
+    if [ -n "${EXECUTE_UPGRADE_CALL:-}" ]; then ENV_VARS="$ENV_VARS EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL"; fi
+    if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
+    if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
+    
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        $ENV_VARS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --etherscan-api-key $ETHERSCAN_API_KEY
     else
-        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        $ENV_VARS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --verify \
@@ -171,12 +181,19 @@ update-parameters env_file=".env":
     forge install
     
     # Run the forge upgrade script
+    ENV_VARS="L2OO_ADDRESS=$L2OO_ADDRESS"
+    if [ -n "${EXECUTE_UPGRADE_CALL:-}" ]; then ENV_VARS="$ENV_VARS EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL"; fi
+    if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
+    if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
+
+
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        $ENV_VARS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY
+            --private-key $PRIVATE_KEY \
+            --broadcast
     else
-        L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        $ENV_VARS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --broadcast
@@ -206,3 +223,4 @@ deploy-dispute-game-factory env_file=".env":
         --private-key $PRIVATE_KEY \
         --broadcast \
         $VERIFY
+    fi
