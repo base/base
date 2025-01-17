@@ -13,7 +13,7 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     using LibBytes for bytes;
 
     /// @notice The address of the L2 output oracle proxy contract.
-    address internal immutable l2OutpoutOracle;
+    address internal immutable l2OutputOracle;
 
     /// @notice The timestamp of the game's global creation.
     Timestamp public createdAt;
@@ -28,8 +28,8 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     /// @custom:semver v1.0.0-beta
     string public constant version = "v1.0.0-beta";
 
-    constructor(address _l2OutpoutOracle) {
-        l2OutpoutOracle = _l2OutpoutOracle;
+    constructor(address _l2OutputOracle) {
+        l2OutputOracle = _l2OutputOracle;
     }
 
     ////////////////////////////////////////////////////////////
@@ -43,9 +43,7 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
         (uint256 l2BlockNumber, uint256 l1BlockNumber, bytes memory proof) =
             abi.decode(extraData(), (uint256, uint256, bytes));
 
-        OPSuccinctL2OutputOracle(l2OutpoutOracle).proposeL2Output(
-            rootClaim().raw(), l2BlockNumber, l1BlockNumber, proof
-        );
+        OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(rootClaim().raw(), l2BlockNumber, l1BlockNumber, proof);
 
         this.resolve();
     }
