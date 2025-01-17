@@ -347,11 +347,16 @@ impl OPSuccinctDataFetcher {
         Ok(fee_data)
     }
 
-    /// Get the aggregate block statistics for a range of blocks.
+    /// Get the aggregate block statistics for a range of blocks exclusive of the start block.
+    ///
+    /// When proving a range in OP Succinct, we are proving the transition from the block hash
+    /// of the start block to the block hash of the end block. This means that we don't expend resources
+    /// to "prove" the start block. This is why the start block is not included in the range for which
+    /// we fetch block data.
     pub async fn get_l2_block_data_range(&self, start: u64, end: u64) -> Result<Vec<BlockInfo>> {
         use futures::stream::{self, StreamExt};
 
-        let block_data = stream::iter(start..=end)
+        let block_data = stream::iter(start + 1..=end)
             .map(|block_number| async move {
                 let block = self
                     .l2_provider
