@@ -303,6 +303,12 @@ impl OpTxEnvelope {
         }
     }
 
+    /// Returns true if the transaction is a deposit transaction.
+    #[inline]
+    pub const fn is_deposit(&self) -> bool {
+        matches!(self, Self::Deposit(_))
+    }
+
     /// Returns the [`TxLegacy`] variant if the transaction is a legacy transaction.
     pub const fn as_legacy(&self) -> Option<&Signed<TxLegacy>> {
         match self {
@@ -539,13 +545,26 @@ mod serde_from {
 mod tests {
     use super::*;
     use alloc::vec;
-    use alloy_primitives::{hex, Address, Bytes, TxKind, B256, U256};
+    use alloy_consensus::SignableTransaction;
+    use alloy_primitives::{hex, Address, Bytes, PrimitiveSignature, TxKind, B256, U256};
 
     #[test]
     fn test_tx_gas_limit() {
         let tx = TxDeposit { gas_limit: 1, ..Default::default() };
         let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
         assert_eq!(tx_envelope.gas_limit(), 1);
+    }
+
+    #[test]
+    fn test_deposit() {
+        let tx = TxDeposit { is_system_transaction: true, ..Default::default() };
+        let tx_envelope = OpTxEnvelope::Deposit(tx.seal_slow());
+        assert!(tx_envelope.is_deposit());
+
+        let tx = TxEip1559::default();
+        let sig = PrimitiveSignature::test_signature();
+        let tx_envelope = OpTxEnvelope::Eip1559(tx.into_signed(sig));
+        assert!(!tx_envelope.is_system_transaction());
     }
 
     #[test]
@@ -611,8 +630,6 @@ mod tests {
 
     #[test]
     fn eip1559_decode() {
-        use alloy_consensus::SignableTransaction;
-        use alloy_primitives::PrimitiveSignature;
         let tx = TxEip1559 {
             chain_id: 1u64,
             nonce: 2,
