@@ -16,7 +16,7 @@
   - [Toggle Optimistic Mode](./advanced/toggle-optimistic.md)
   - [Kurtosis](./advanced/kurtosis.md)
   - [Upgrade to a new `op-succinct` version](./advanced/upgrade.md)
-- [`OPSuccinctL2OutputOracle`](./contracts/intro.md)
+- [Contracts](./contracts/intro.md)
   - [Configuration](./contracts/configuration.md)
   - [Deploy](./contracts/deploy.md)
   - [Upgrade Contract](./contracts/upgrade.md)
