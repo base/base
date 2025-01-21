@@ -34,11 +34,11 @@ OP Succinct enables OP Stack blocks to be proven with SP1 through a lightweight 
 
 ### Core Components
 
-1. <!-- mdbook-link-ignore --> **[Range Program](/programs/range/src/main.rs)**
+1. **[Range Program](../programs/range/src/main.rs)**
    - Derives and executes batches of blocks
    - Generates proofs of correct execution
 
-2. <!-- mdbook-link-ignore -->**[Aggregation Program](/programs/aggregation/src/main.rs)**
+2. **[Aggregation Program](../programs/aggregation/src/main.rs)**
    - Aggregates multiple range program proofs
    - Reduces on-chain verification costs
 
