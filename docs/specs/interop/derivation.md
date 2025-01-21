@@ -117,20 +117,18 @@ When the [cross chain dependency resolution](./messaging.md#resolving-cross-chai
 that a block contains an [invalid message](./messaging.md#invalid-messages), the block is replaced
 by a block with the same inputs, except for the transactions included. The transactions from the
 original block are trimmed to include only deposit transactions plus an
-[optimistic block info deposit transaction](#optimistic-block-deposited-transaction) which is appended
+[optimistic block info deposit transaction](#optimistic-block-deposited-transaction), which is appended
 to the trimmed transaction list.
 
 ### Optimistic Block Deposited Transaction
 
-[l1-attr-deposit]: #l1-attributes-deposited-transaction
-[l2-output-root-proposals]: ../protocol/proposals.md#l2-output-commitment-construction
-
-An [L1 attributes deposited transaction][g-l1-attr-deposit] is a deposit transaction sent to the zero address.
+An [L1 attributes deposited transaction](../protocol/deposits.md#l1-attributes-deposited-transaction)
+is a deposit transaction sent to the zero address.
 
 This transaction MUST have the following values:
 
 1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0002` (the address of the
-   [L1 Attributes depositor account][depositor-account])
+   [L1 Attributes depositor account](../protocol/deposits.md#l1-attributes-depositor-account))
 2. `to` is `0x0000000000000000000000000000000000000000` (the zero address as no EVM code execution is expected).
 3. `mint` is `0`
 4. `value` is `0`

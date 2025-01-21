@@ -203,7 +203,7 @@ properties about the `_msg`.
 The `L2ToL2CrossDomainMessenger` is a higher level abstraction on top of the `CrossL2Inbox` that
 provides general message passing, utilized for secure transfers ERC20 tokens between L2 chains.
 Messages sent through the `L2ToL2CrossDomainMessenger` on the source chain receive both replay protection
-as well as domain binding, ie the executing transaction can only be valid on a single chain.
+as well as domain binding, i.e. the executing transaction can only be valid on a single chain.
 
 ### `relayMessage` Invariants
 
@@ -235,7 +235,7 @@ See [SuperchainWETH](./superchain-weth.md) for more information.
 
 ### Interfaces
 
-The `L2ToL2CrossDomainMessenger` uses a similar interface to the `L2CrossDomainMessenger` but
+The `L2ToL2CrossDomainMessenger` uses a similar interface to the `L2CrossDomainMessenger`, but
 the `_minGasLimit` is removed to prevent complexity around EVM gas introspection and the `_destination`
 chain is included instead.
 
@@ -248,8 +248,8 @@ function sendMessage(uint256 _destination, address _target, bytes calldata _mess
 ```
 
 It returns the hash of the message being sent,
-used to track whether the message has successfully been relayed.
-It emits a `SentMessage` event with the necessary metadata to execute when relayed on the destination chain.
+which is used to track whether the message has successfully been relayed.
+It also emits a `SentMessage` event with the necessary metadata to execute when relayed on the destination chain.
 
 ```solidity
 event SentMessage(uint256 indexed destination, address indexed target, uint256 indexed messageNonce, address sender, bytes message);
@@ -301,14 +301,14 @@ flowchart LR
 ```
 
 When relaying a message through the `L2ToL2CrossDomainMessenger`, it is important to require that
-the `_destination` equal to `block.chainid` to ensure that the message is only valid on a single
+the `_destination` be equal to `block.chainid` to ensure that the message is only valid on a single
 chain. The hash of the message is used for replay protection.
 
 It is important to ensure that the source chain is in the dependency set of the destination chain, otherwise
 it is possible to send a message that is not playable.
 
-A message is relayed by providing the [identifier](./messaging.md#message-identifier) to a `SentMessage`
-event and its corresponding [message payload](./messaging.md#message-payload).
+A message is relayed by providing the [identifier](./messaging.md#message-identifier) of a `SentMessage`
+event along with its corresponding [message payload](./messaging.md#message-payload).
 
 ```solidity
 function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sentMessage) external payable returns (bytes memory returnData_) {
@@ -348,7 +348,7 @@ getters.
 
 The `OptimismSuperchainERC20Factory` creates ERC20 contracts that implements the `SuperchainERC20` [standard](token-bridging.md),
 grants mint-burn rights to the `L2StandardBridge` (`OptimismSuperchainERC20`)
-and include a `remoteToken` variable.
+and includes a `remoteToken` variable.
 These ERC20s are called `OptimismSuperchainERC20` and can be converted back and forth with `OptimismMintableERC20` tokens.
 The goal of the `OptimismSuperchainERC20` is to extend functionalities
 of the `OptimismMintableERC20` so that they are interop compatible.
@@ -580,7 +580,7 @@ This function exists for backwards compatibility with the legacy version.
 #### `OptimismMintableERC20Created`
 
 It MUST trigger when `createOptimismMintableERC20WithDecimals`,
-`createOptimismMintableERC20` or `createStandardL2Token` are called.
+`createOptimismMintableERC20` or `createStandardL2Token` is called.
 
 ```solidity
 event OptimismMintableERC20Created(address indexed localToken, address indexed remoteToken, address deployer);
@@ -589,7 +589,7 @@ event OptimismMintableERC20Created(address indexed localToken, address indexed r
 #### `StandardL2TokenCreated`
 
 It MUST trigger when `createOptimismMintableERC20WithDecimals`,
-`createOptimismMintableERC20` or `createStandardL2Token` are called.
+`createOptimismMintableERC20` or `createStandardL2Token` is called.
 This event exists for backward compatibility with legacy version.
 
 ```solidity
@@ -662,6 +662,11 @@ The `convert` function conserves the following invariants:
 ### Conversion Flow
 
 ```mermaid
+---
+config:
+  theme: dark
+  fontSize: 28
+---
 sequenceDiagram
   participant Alice
   participant L2StandardBridge
@@ -756,6 +761,11 @@ event RelayedERC20(address indexed tokenAddress, address indexed from, address i
 The following diagram depicts a cross-chain transfer.
 
 ```mermaid
+---
+config:
+  theme: dark
+  fontSize: 48
+---
 sequenceDiagram
   participant from
   participant L2SBA as SuperchainTokenBridge (Chain A)
@@ -813,7 +823,7 @@ The bridging of `SuperchainERC20` using the `SuperchainTokenBridge` will require
   - A way to allow for remotely initiated bridging is to include remote approval,
     i.e. approve a certain address in a certain chainId to spend local funds.
 - Bridge Events:
-  - `sendERC20()` should emit a `SentERC20` event. `
+  - `sendERC20()` should emit a `SentERC20` event.
   - `relayERC20()` should emit a `RelayedERC20` event.
 
 ## Security Considerations

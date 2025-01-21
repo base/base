@@ -17,7 +17,7 @@ The fault proof design is not complete, but the following docs show high level o
 ## Cascading dependencies
 
 Deposits are a special case, synchronous with derivation, at enforced cross-L2 delay.
-Thus deposits cannot reference each others events intra-block.
+Thus deposits cannot reference each other's events intra-block.
 
 No changes to the dispute game bisection are required. The only changes required are to the fault proof program itself.
 The insight is that the fault proof program can be a superset of the state transition function.

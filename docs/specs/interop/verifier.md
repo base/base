@@ -24,7 +24,7 @@ to safe. A series of invariants are enforced before promotion.
 
 Safety is an abstraction that is useful for reasoning about the security of L2 blocks.
 It is a spectrum from `unsafe` to `finalized`. Users can choose to operate on L2 data
-based on its level of safety taking into account their risk profile and personal preferences.
+based on its level of safety, taking into account their risk profile and personal preferences.
 
 The following labels are used to describe both inputs and outputs:
 
@@ -33,7 +33,7 @@ The following labels are used to describe both inputs and outputs:
 - `safe`
 - `finalized`
 
-Inputs correspond to the inputs to the state transition function while outputs correspond to the side
+Inputs correspond to the inputs to the state transition function while, outputs correspond to the side
 effects of the state transition function.
 
 Anything before `safe` technically uses a "preconfirmation" based security model which is not part
@@ -69,12 +69,12 @@ particular software when building the block.
 
 - MUST have valid cross chain messages
 
-`cross-unsafe` represents the `unsafe` blocks that had their cross chain messages fully verified.
-The network can be represented as a graph where each block across all chains are represented as
-a node and then a directed edge between two blocks represents the source block of the initiating
-message and the block that included the executing message.
+`cross-unsafe` represents the `unsafe` blocks that have had their cross chain messages fully verified.
+The network can be represented as a graph, where each block across all chains is represented as a node.
+A directed edge between two blocks indicates the source block of the initiating message
+and the block that includes the executing message."
 
-An input can be promoted from `unsafe` to `cross-unsafe` when the full dependency graph is resolved
+An input can be promoted from `unsafe` to `cross-unsafe` when the full dependency graph is resolved,
 such that all cross chain messages are verified to be valid and at least one message in the dependency
 graph is still `unsafe`.
 
@@ -100,10 +100,10 @@ if the data is reorganized, then validators will be slashed.
 
 ### Honest Verifier
 
-The honest verifier follows a naive verification algorithm. That is similar
+The honest verifier follows a naive verification algorithm that is similar
 to the block building code that the [sequencer](./sequencer.md#direct-dependency-confirmation)
 follows. The main difference is that the validity of included executing
-messages is verified instead of verifying possible executing messages before
+messages is verified, instead of verifying possible executing messages before
 inclusion.
 
 ## Security Considerations

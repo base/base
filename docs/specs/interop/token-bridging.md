@@ -34,7 +34,7 @@ The `SuperchainERC20Bridge` is a predeploy that builds on the messaging protocol
 
 The standard will build on top of ERC20, implement the
 [`IERC7802`](https://github.com/ethereum/ERCs/pull/692)
-interface and include the following properties:
+interface, and include the following properties:
 
 1. Implement the [ERC20](https://eips.ethereum.org/EIPS/eip-20) interface
 2. Implement the [`ERC7802`](https://github.com/ethereum/ERCs/pull/692) interface
@@ -46,16 +46,16 @@ The third property will allow the `SuperchainERC20Bridge` to have a liquidity gu
 which would not be possible in a model based on lock/unlock.
 Liquidity availability is fundamental to achieving fungibility.
 
-SuperchainERC20Bridge does not have to be the exclusive caller of `crosschainMint` and `crosschainBurn`,
+SuperchainERC20Bridge does not have to be the exclusive caller of `crosschainMint` and `crosschainBurn`;
 other addresses may also be permitted to call these functions.
 
 The fourth property removes the need for cross-chain access control lists.
-Otherwise, the `SuperchainERC20Bridge` would need a way to verify if the tokens they mint on
+Otherwise, the `SuperchainERC20Bridge` would need a way to verify if the tokens it mints on
 destination correspond to the tokens that were burned on source.
 Same address abstracts away cross-chain validation.
 
-One way to guarantee the same address across the Superchain, and also bind it to the same `init_code`
-and constructor arguments is to use the
+One way to guarantee the same address across the Superchain (and also bind it to the same `init_code`
+and constructor arguments) is to use the
 [`Create2Deployer` preinstall](../protocol/preinstalls.md#create2deployer).
 There is also the [`OptimismSuperchainERC20Factory`](predeploys.md#optimismmintableerc20factory)
 predeploy that facilitates this process for L1 native tokens.
@@ -116,9 +116,9 @@ The `SuperchainERC20Bridge` includes two functions for bridging:
 - `sendERC20`: initializes a cross-chain transfer of a `SuperchainERC20`
   by burning the tokens locally and sending a message to the `SuperchainERC20Bridge`
   on the target chain using the `L2toL2CrossDomainMessenger`.
-  Additionaly, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
-- `relayERC20`: process incoming messages from the `L2toL2CrossDomainMessenger`
-  and mints the corresponding amount of the `SuperchainERC20`
+  Additionally, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
+- `relayERC20`: processes incoming messages from the `L2toL2CrossDomainMessenger`
+  and mints the corresponding amount of the `SuperchainERC20`.
 
 The full specifications and invariants are detailed
 in the [predeploys spec](./predeploys.md#superchainerc20bridge).
@@ -130,6 +130,11 @@ in the [predeploys spec](./predeploys.md#superchainerc20bridge).
 The following diagram depicts a cross-chain transfer.
 
 ```mermaid
+---
+config:
+  theme: dark
+  fontSize: 48 
+---
 sequenceDiagram
   participant from
   participant L2SBA as SuperchainERC20Bridge (Chain A)
@@ -194,6 +199,11 @@ For the moment, the standard will not include any specific functionality
 to facilitate such an action and rely on the usage of `Permit2` like this:
 
 ```mermaid
+---
+config:
+  theme: dark
+  fontSize: 48 
+---
 sequenceDiagram
   participant from
   participant Intermediate_A as Initiator
@@ -222,9 +232,14 @@ additional call to the `_to` address.
 This feature could be used for cross-chain concatenated actions,
 i.e. bridge funds and then do X.
 
-This vertical has much potential but can also be achieved outside the standard in the following way:
+This approach has great potential but can also be achieved outside the standard in the following way:
 
 ```mermaid
+---
+config:
+  theme: dark
+  fontSize: 48 
+---
 sequenceDiagram
   participant from
   participant Intermediate_A as intermediate A
@@ -252,7 +267,8 @@ sequenceDiagram
   Messenger_B->>to: call(data)
 ```
 
-Adding the call to the standard would remove the dependence on the sequencer regarding the proper tx ordering
-at the sequencer level, but would also introduce more risk for cross-chain fund transferring,
-as an incorrectly formatted call would burn funds in the initiating chain but would revert
-in destination and could never be successfully replayed.
+Adding the call to the standard would remove the dependence on the sequencer for
+proper transaction ordering at the sequencer level.
+However, it would also introduce additional risks for cross-chain fund transfers.
+Specifically, an incorrectly formatted call could burn funds on the initiating chain,
+but revert on the destination chain, and could never be successfully replayed.

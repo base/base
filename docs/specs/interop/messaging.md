@@ -88,8 +88,8 @@ exact state of the block templates between multiple chains together.
 
 [log]: https://github.com/ethereum/go-ethereum/blob/5c67066a050e3924e1c663317fd8051bc8d34f43/core/types/log.go#L29
 
-Each [Log][log] (also known as `event` in solidity) forms an initiating message.
-The raw log data from the [Message Payload](#message-payload).
+Each [Log][log] (also known as `event` in solidity) forms an initiating message,
+with the raw log data coming from the [Message Payload](#message-payload).
 
 Messages are *broadcast*: the protocol does not enshrine address-targeting within messages.
 
@@ -129,7 +129,7 @@ do not count as executing messages.
 
 ### Timestamp Invariant
 
-The timestamp invariant ensures that initiating messages is at least the same timestamp as the Interop upgrade timestamp
+The timestamp invariant ensures that initiating messages have at least the same timestamp as the Interop upgrade timestamp
 and cannot come from a future block than the block of its executing message. Note that since
 all transactions in a block have the same timestamp, it is possible for an executing transaction to be
 ordered before the initiating message in the same block.
@@ -209,8 +209,7 @@ may have dependencies on one another.
 
 To determine cross-chain safety, the graph is inspected for valid graph components that have no invalid dependencies,
 while applying the respective safety-view on the blocks in the graph.
-
-I.e. the graph must not have any inward edges towards invalid blocks within the safety-view.
+I.e., the graph must not have any inward edges towards invalid blocks within the safety-view.
 
 A safety-view is the subset of canonical blocks of all chains with the specified safety label or a higher safety label.
 Dependencies on blocks outside of the safety-view are invalid,

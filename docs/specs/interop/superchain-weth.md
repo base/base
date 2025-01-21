@@ -123,11 +123,14 @@ but does not preclude a protocol-layer solution as long as we minimize implement
 
 #### Global Invariants
 
-- Initial balance must be set to `type(uint248).max` (wei). Purpose for using `type(uint248).max` is to guarantees that
-the balance will be sufficient to credit all use within the `SuperchainWETH` contract but will never overflow on calls
-to `burn` because there is not ETH in the total ETH supply to cause such an overflow. Invariant that avoids overflow is
-maintained by  `SuperchainWETH` but could theoretically be broken by some future contract that is allowed to integrate
-with `ETHLiquidity`. Maintainers should be careful to ensure that such future contracts do not break this invariant.
+- Initial balance must be set to `type(uint248).max` (wei).
+The purpose for using `type(uint248).max` is to guarantee that
+the balance will be sufficient to credit all use within the `SuperchainWETH` contract,
+but will never overflow on calls to `burn` because there is not enough ETH
+in the total ETH supply to cause such an overflow.
+The invariant that avoids overflow is maintained by  `SuperchainWETH`, but could theoretically
+be broken by some future contract that is allowed to integrate with `ETHLiquidity`. Maintainers should be careful to
+ensure that such future contracts do not break this invariant.
 
 #### `burn`
 
