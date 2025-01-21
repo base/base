@@ -71,3 +71,6 @@ serde = [
     "alloy-eips/serde",
     "maili-consensus/serde",
 ]
+serde-bincode-compat = [
+    "maili-consensus/serde-bincode-compat",
+]
