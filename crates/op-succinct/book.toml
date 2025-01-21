@@ -1,13 +1,16 @@
 [book]
-authors = ["Uma Roy"]
+authors = ["Uma Roy", "ratankaliani"]
 language = "en"
 multilingual = false
 src = "book"
-title = "OP Succinct"
+title = "OP Succinct book"
 description = "A book on all things SP1"
 
 [build]
 build-dir = "target/book"
+
+[output.html]
+git-repository-url = "https://github.com/succinctlabs/op-succinct"
 
 [preprocessor.template]
 before = ["links"]
@@ -15,6 +18,3 @@ before = ["links"]
 [preprocessor.index]
 
 [preprocessor.links]
-
-[output.linkcheck]
-traverse-parent-directories = true
