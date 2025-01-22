@@ -300,7 +300,7 @@ async fn main() {
             .payload_inner
             .timestamp;
 
-        // send an FCU wihtout payload attributes to lock in the block for the builder
+        // send an FCU without payload attributes to lock in the block for the builder
         let _result = engine_api
             .update_forkchoice(latest, new_block_hash, None)
             .await
