@@ -20,7 +20,7 @@
 - [Block Body Withdrawals List](#block-body-withdrawals-list)
 - [Engine API Updates](#engine-api-updates)
   - [Update to `ExecutableData`](#update-to-executabledata)
-  - [`engine_newPayloadV3` API](#engine_newpayloadv3-api)
+  - [`engine_newPayloadV4` API](#engine_newpayloadv4-api)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -137,7 +137,7 @@ Withdrawals list in the block body is encoded as an empty RLP list.
 
 `ExecutableData` will contain an extra field for `withdrawalsRoot` after Isthmus hard fork.
 
-### `engine_newPayloadV3` API
+### `engine_newPayloadV4` API
 
-Post Isthmus, `engine_newPayloadV3` will be used with the additional `ExecutionPayload` attribute. This attribute
+Post Isthmus, `engine_newPayloadV4` will be used with the additional `ExecutionPayload` attribute. This attribute
 is omitted prior to Isthmus.

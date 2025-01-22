@@ -748,12 +748,14 @@ To interact with the engine, the [execution engine API][exec-engine] is used, wi
 - `engine_newPayload`
   - [`engine_newPayloadV2`] — executes a Bedrock/Canyon/Delta execution payload to create a block.
   - [`engine_newPayloadV3`] — executes an Ecotone execution payload to create a block.
+  - [`engine_newPayloadV4`] - executes an Isthmus execution payload to create a block.
 
-The current version of `op-node` uses the `v3` Engine API RPC methods as well as `engine_newPayloadV2`, due to
-`engine_newPayloadV3` only supporting Ecotone execution payloads. Both `engine_forkchoiceUpdatedV3` and
-`engine_getPayloadV3` are backwards compatible with Bedrock, Canyon & Delta payloads.
+The current version of `op-node` uses the `v4` Engine API RPC methods as well as `engine_newPayloadV3` and
+`engine_newPayloadV2`, due to `engine_newPayloadV4` only supporting Isthmus execution payloads. Both
+`engine_forkchoiceUpdatedV4` and `engine_getPayloadV4` are backwards compatible with Ecotone, Bedrock,
+Canyon & Delta payloads.
 
-Prior versions of `op-node` used `v2` and `v1` methods.
+Prior versions of `op-node` used `v3`, `v2` and `v1` methods.
 
 [`engine_forkchoiceUpdatedV2`]: exec-engine.md#engine_forkchoiceupdatedv2
 [`engine_forkchoiceUpdatedV3`]: exec-engine.md#engine_forkchoiceupdatedv3
@@ -761,6 +763,7 @@ Prior versions of `op-node` used `v2` and `v1` methods.
 [`engine_getPayloadV3`]: exec-engine.md#engine_getpayloadv3
 [`engine_newPayloadV2`]: exec-engine.md#engine_newpayloadv2
 [`engine_newPayloadV3`]: exec-engine.md#engine_newpayloadv3
+[`engine_newPayloadV4`]: exec-engine.md#engine_newpayloadv4
 
 The execution payload is an object of type [`ExecutionPayloadV3`][eth-payload].
 
@@ -887,6 +890,8 @@ The payload is then processed with a sequence of:
 - Ecotone Payloads
   - `engine_newPayloadV3`: process the payload. It does not become canonical yet.
   - `engine_forkchoiceUpdatedV3`: make the payload the canonical unsafe L2 head, and keep the safe/finalized L2 heads.
+- Isthmus Payloads
+  - `engine_newPayloadV4`: process the payload. It does not become canonical yet.
 
 Engine API Error handling:
 
