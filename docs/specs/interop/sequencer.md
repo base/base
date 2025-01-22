@@ -4,149 +4,127 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Sequencer Policy](#sequencer-policy)
+- [Overview](#overview)
 - [Block Building](#block-building)
-  - [Static analysis](#static-analysis)
-  - [Dependency confirmations](#dependency-confirmations)
-    - [Pre-confirmations](#pre-confirmations)
-      - [Streaming pre-confirmations: "shreds"](#streaming-pre-confirmations-shreds)
-    - [Direct-dependency confirmation](#direct-dependency-confirmation)
-    - [Transitive-dependency confirmation](#transitive-dependency-confirmation)
-- [Sponsorship](#sponsorship)
+- [Sequencer Policy](#sequencer-policy)
+  - [Safety Levels](#safety-levels)
+    - [Executing Message Validation](#executing-message-validation)
+    - [Transitive Dependencies](#transitive-dependencies)
+- [Shared Sequencing](#shared-sequencing)
 - [Security Considerations](#security-considerations)
-  - [Cross Chain Message Latency](#cross-chain-message-latency)
+  - [Depending on Preconfirmations](#depending-on-preconfirmations)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## Sequencer Policy
+## Overview
 
-Sequencer Policy is the process of optimistically enacting rules outside of consensus
-(the state-transition function in this context), and the choices can then be asynchronously validated
-by [verifiers](./verifier.md) and [the fault-proof](./fault-proof.md).
+New validity rules are added to blocks that the sequencer must follow. If the
+new rules are not followed, then the sequencer risks producing empty blocks
+and reorg'ing the chain.
 
-In the context of superchain interoperability, sequencer policy is utilized to enable cross-chain message relay
-without adding additional state-transition complexity or cross-chain synchronicity to the protocol.
+The term "block builder" is used interchangeably with the term "sequencer" for the purposes of this document but
+they need not be the same entity in practice.
 
 ## Block Building
 
-The goal is to present information in a way where it is as efficient as possible for the block builder to only include
-executing messages that have a corresponding initiating message. It is not possible to enforce the ability to
-statically analyze a transaction, so execution MAY be required to determine the information required to include
-executing messages.
+It is now required that a block builder fully executes a transaction and validates any executing messages
+that it may produce before knowing that the transaction is valid. This adds a denial of service possibility
+for the block builder. It is generally accepted that block builders can be sophisticated actors that can
+build solutions for this sort of problem.
 
-### Static analysis
+## Sequencer Policy
 
-Note that static analysis is never reliable because even if the top level `transaction.to`
-is equal to the `CrossL2Inbox`, it is possible that there is a reentrant `CALL`. The block
-builder SHOULD NOT rely on static analysis for building blocks.
+Sequencer policy represents the set of ways that a sequencer may act that are not constrained by consensus.
+The ordering of transactions in a block is considered policy, consensus dictates that all of the transactions
+in a block are valid.
 
-### Dependency confirmations
+OP Stack interop leverages sequencer policy to reduce synchrony assumptions between chains.
+If the sequencer's view of a remote chain lags from the tip, it will not impact the overall liveness of
+the network, it will only impact the liveness of inbound cross chain messages from that remote chain.
+If there was a strict synchrony assumption, it could result in liveness or safety failures when any sequencer
+in the cluster falls behind the tip of any remote chain.
 
-The sequencer MAY include an executing message in a block with any desired level
-of confirmation safety around the dependency of the message.
+### Safety Levels
 
-Confirmation levels:
+The sequencer MAY include an executing message with any level of confirmation safety.
+Including cross chain messages based on preconfirmation levels of security results
+in lower latency messaging at a higher risk or an invalid block being produced.
 
-- pre-confirmation: through direct signaling by the block builder of the initiating message.
-- direct-dependency confirmation: verify the inclusion of the initiating message, but not the transitive dependencies.
-- transitive-dependency confirmation: verify the message and all transitive dependencies
-  are included in canonical blocks within the specified safety-view (unsafe/safe/finalized).
+The sequencer MAY require different levels of security depending on the source chain.
+If the block containing the initiating message is considered safe, no additional trust
+assumptions are assumed. The only time that additional trust assumptions are added is
+when an initiating message from an unsafe block is consumed.
 
-When operating at lower-safety confirmation levels, the block builder SHOULD re-validate included
-executing messages at an increased safety level, before the block is published.
+#### Executing Message Validation
 
-#### Pre-confirmations
-
-The block builder can include executing messages that have corresponding initiating messages
-that only have pre-confirmation levels of security if they trust the block builder that initiates.
-
-Using an allowlist and identity turns sequencing into an integrated game which increases the ability for
-block builders to trust each other. Better pre-confirmation technology will help to scale the block builder
-set to untrusted actors.
-
-Without pre-confirmations, the block builder cannot include messages of other concurrent block building work.
-
-Pre-confirmations MAY be invalidated, and assumptions around message-validity SHOULD be treated with care.
-
-##### Streaming pre-confirmations: "shreds"
-
-In the context of low-latency block building, each pre-confirmation may be communicated in the form of a "shred":
-the most minimal atomic state-change that can be communicated between actors in the system.
-
-In the context of cross-chain block-building, shreds may be used to communicate initiated cross-chain messages,
-to validate executing messages against.
-
-Shreds may be streamed, and potentially signal rewinds in case of invalidated dependencies.
-
-This block builder feature is in ongoing research,
-and may be developed and experimented with between block builders without further protocol rules changes.
-
-#### Direct-dependency confirmation
-
-By verifying the direct dependency the block-builder does not have to implement pre-confirmations,
-and can rely on its direct view of the remote chain.
+The block builder SHOULD validate executing messages directly before including the transaction
+that produced the executing message in a block. Given the async nature of many independent chains
+operating in parallel, it is possible that the block builder does not have the most up to date
+view of all remote chains at any given moment.
 
 The block builder MAY require cryptographic proof of the existence of the log
 that the identifier points to, if it trusts the remote canonical chain but not its RPC server.
 
-The block builder MAY also trust a remote RPC and use the following algorithm
-to verify the existence of the log.
-
-The following pseudocode represents how to check existence of a log based on an `Identifier`.
-If the value `True` is returned, then it is safe to include the transaction.
+The block builder MAY also trust a remote RPC and use the following algorithm to verify the
+existence of the log. This algorithm does not check for a particular finality level of the
+block that includes the initiating message.
 
 ```python
 success, receipt = evm.apply_transaction(tx)
 
+# no logs are produced for reverting transactions
 if not success:
   return True
 
+# iterate over all of the logs
 for log in receipt.logs:
   if is_executing_message(log):
       id = abi.decode(log.data)
-      messageHash = log.topics[1]
+      message_hash = log.topics[1]
 
-      # assumes there is a client for each chain in the dependency set
+      # maintain a RPC client for each remote node by chainid
       eth = clients[id.chainid]
 
+      # cannot verify messages without a client, do not include it
       if eth is None:
         return False
 
-      logs = eth.getLogs(id.origin, from=id.blocknumber, to=id.blocknumber)
-      log = filter(lambda x: x.index == id.logIndex && x.address == id.origin)
-      if len(log) == 0:
+      # use the identifier to fetch logs
+      logs = eth.get_logs(id.origin, from=id.block_number, to=id.block_number)
+      filtered = filter(lambda x: x.index == id.log_index && x.address == id.origin)
+      # log does not exist, do not include it
+      if len(filtered) != 1:
         return False
 
-      if messageHash != hash(encode(log[0])):
+      # ensure the contents of the log are correct
+      log = encode(filtered[0])
+      if message_hash != keccack256(log):
         return False
 
-      block = eth.getBlockByNumber(id.blocknumber)
+      block = eth.get_block_by_number(id.blocknumber)
 
+      # ensure that the timestamp is correct
       if id.timestamp != block.timestamp:
         return False
 
 return True
 ```
 
-#### Transitive-dependency confirmation
+#### Transitive Dependencies
 
-When operating pessimistically, the direct-dependency validation may be applied recursively,
-to harden against unstable message guarantees at the cost of increased cross-chain latency.
+The safety of a block is inherently tied to the safety of the blocks that include initiating messages
+consumed. This applies recursively, so a block builder that wants to only include safe cross chain
+messages will need to recursively check that all dependencies are safe.
 
-The transitive dependencies may also be enforced with `safe` or even `finalized` safety-views
-over the blocks of the chains in the dependency set, to further ensure increased cross-chain safety.
+## Shared Sequencing
 
-## Sponsorship
-
-If a user does not have ether to pay for the gas of an executing message, application layer sponsorship
-solutions can be created. It is possible to create an MEV incentive by paying `tx.origin` in the executing
-message. This can be done by wrapping the `L2ToL2CrossDomainMessenger` with a pair of relaying contracts.
+A shared sequencer can be built if the block builder is able to build the next canonical block
+for multiple chains. This can enable synchronous composability where transactions are able
+to execute across multiple chains at the same timestamp.
 
 ## Security Considerations
 
-### Cross Chain Message Latency
+### Depending on Preconfirmations
 
-The latency at which a cross chain message is relayed from the moment at which it was initiated is bottlenecked by
-the security of the preconfirmations. An initiating transaction and a executing transaction MAY have the same timestamp,
-meaning that a secure preconfirmation scheme enables atomic cross chain composability. Any sort of equivocation on
-behalf of the sequencer will result in the production of invalid blocks.
+If a local sequencer is accepting inbound cross chain transactions where the initiating message only has preconfirmation
+levels of security, this means that the remote sequencer can trigger a reorg on the local chain.
