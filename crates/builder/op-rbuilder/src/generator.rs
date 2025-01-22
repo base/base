@@ -1,8 +1,6 @@
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::Bytes;
 use futures_util::Future;
 use futures_util::FutureExt;
-use reth::providers::{BlockReaderIdExt, BlockSource};
+use reth::providers::BlockReaderIdExt;
 use reth::{
     providers::StateProviderFactory, tasks::TaskSpawner, transaction_pool::TransactionPool,
 };
@@ -13,7 +11,6 @@ use reth_node_api::PayloadKind;
 use reth_payload_builder::PayloadJobGenerator;
 use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadJob};
 use reth_payload_primitives::BuiltPayload;
-use reth_primitives::SealedHeader;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tokio::sync::Notify;
@@ -96,7 +93,11 @@ impl<Client, Pool, Tasks, Builder> EmptyBlockPayloadJobGenerator<Client, Pool, T
 impl<Client, Pool, Tasks, Builder> PayloadJobGenerator
     for EmptyBlockPayloadJobGenerator<Client, Pool, Tasks, Builder>
 where
-    Client: StateProviderFactory + BlockReaderIdExt + Clone + Unpin + 'static,
+    Client: StateProviderFactory
+        + BlockReaderIdExt<Header = alloy_consensus::Header>
+        + Clone
+        + Unpin
+        + 'static,
     Pool: TransactionPool + Unpin + 'static,
     Tasks: TaskSpawner + Clone + Unpin + 'static,
     Builder: PayloadBuilder<Pool, Client> + Unpin + 'static,
@@ -111,28 +112,21 @@ where
         &self,
         attributes: <Builder as PayloadBuilder<Pool, Client>>::Attributes,
     ) -> Result<Self::Job, PayloadBuilderError> {
-        let parent_block = if attributes.parent().is_zero() {
+        let parent_header = if attributes.parent().is_zero() {
             // use latest block if parent is zero: genesis block
             self.client
-                .block_by_number_or_tag(BlockNumberOrTag::Latest)?
+                .latest_header()?
                 .ok_or_else(|| PayloadBuilderError::MissingParentBlock(attributes.parent()))?
-                .seal_slow()
         } else {
-            let block = self
-                .client
-                .find_block_by_hash(attributes.parent(), BlockSource::Any)?
-                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(attributes.parent()))?;
-
-            // we already know the hash, so we can seal it
-            block.seal(attributes.parent())
+            self.client
+                .sealed_header_by_hash(attributes.parent())?
+                .ok_or_else(|| PayloadBuilderError::MissingParentBlock(attributes.parent()))?
         };
-        let hash = parent_block.hash();
-        let header = SealedHeader::new(parent_block.header().clone(), hash);
 
         info!("Spawn block building job");
 
         let deadline = Box::pin(tokio::time::sleep(Duration::from_secs(2))); // Or another appropriate timeout
-        let config = PayloadConfig::new(Arc::new(header), Bytes::default(), attributes);
+        let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
         let mut job = EmptyBlockPayloadJob {
             client: self.client.clone(),

@@ -6,9 +6,10 @@ use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_payload_builder::payload::{OpBuiltPayload, OpPayloadBuilderAttributes};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_provider::StateProviderFactory;
-use reth_transaction_pool::TransactionPool;
+use reth_transaction_pool::{PoolTransaction, TransactionPool};
 
 #[derive(Clone)]
 pub struct VanillaOpPayloadBuilder<EvmConfig> {
@@ -17,7 +18,7 @@ pub struct VanillaOpPayloadBuilder<EvmConfig> {
 
 impl<EvmConfig> VanillaOpPayloadBuilder<EvmConfig> {
     /// `OpPayloadBuilder` constructor.
-    pub const fn new(evm_config: EvmConfig) -> Self {
+    pub fn new(evm_config: EvmConfig) -> Self {
         Self {
             inner: reth_optimism_payload_builder::OpPayloadBuilder::new(evm_config),
         }
@@ -27,8 +28,8 @@ impl<EvmConfig> VanillaOpPayloadBuilder<EvmConfig> {
 impl<EvmConfig, Pool, Client> PayloadBuilder<Pool, Client> for VanillaOpPayloadBuilder<EvmConfig>
 where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec>,
-    Pool: TransactionPool,
-    EvmConfig: ConfigureEvm<Header = Header>,
+    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = EvmConfig::Transaction>>,
+    EvmConfig: ConfigureEvm<Header = Header, Transaction = OpTransactionSigned>,
 {
     type Attributes = OpPayloadBuilderAttributes;
     type BuiltPayload = OpBuiltPayload;
