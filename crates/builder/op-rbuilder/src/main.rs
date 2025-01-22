@@ -1,7 +1,7 @@
 use clap::Parser;
 use generator::EmptyBlockPayloadJobGenerator;
 use payload_builder::OpPayloadBuilder as FBPayloadBuilder;
-use payload_builder_vanilla::VanillaOpPayloadBuilder;
+use payload_builder_vanilla::OpPayloadBuilderVanilla;
 use reth::builder::Node;
 use reth::{
     builder::{components::PayloadServiceBuilder, node::FullNodeTypes, BuilderContext},
@@ -19,20 +19,32 @@ use reth_node_api::TxTy;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_evm::OpEvmConfig;
-use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_node::OpNode;
-use reth_optimism_primitives::OpPrimitives;
 use reth_payload_builder::PayloadBuilderService;
+use tx_signer::Signer;
+
+/// CLI argument parsing.
+pub mod args;
+
+use reth_optimism_primitives::OpPrimitives;
 use reth_transaction_pool::PoolTransaction;
 
 pub mod generator;
 pub mod payload_builder;
 mod payload_builder_vanilla;
-
+mod tx_signer;
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
-pub struct CustomPayloadBuilder;
+pub struct CustomPayloadBuilder {
+    builder_secret_key: Option<Signer>,
+}
+
+impl CustomPayloadBuilder {
+    pub fn new(builder_secret_key: Option<Signer>) -> Self {
+        Self { builder_secret_key }
+    }
+}
 
 impl<Node, Pool> PayloadServiceBuilder<Node, Pool> for CustomPayloadBuilder
 where
@@ -54,7 +66,10 @@ where
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypesWithEngine>::Engine>> {
         tracing::info!("Spawning a custom payload builder");
         let _fb_builder = FBPayloadBuilder::new(OpEvmConfig::new(ctx.chain_spec()));
-        let vanilla_builder = VanillaOpPayloadBuilder::new(OpEvmConfig::new(ctx.chain_spec()));
+        let vanilla_builder = OpPayloadBuilderVanilla::new(
+            OpEvmConfig::new(ctx.chain_spec()),
+            self.builder_secret_key,
+        );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
         let payload_generator = EmptyBlockPayloadJobGenerator::with_builder(
@@ -77,8 +92,10 @@ where
 }
 
 fn main() {
-    Cli::<OpChainSpecParser, RollupArgs>::parse()
-        .run(|builder, rollup_args| async move {
+    Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
+        .run(|builder, builder_args| async move {
+            let rollup_args = builder_args.rollup_args;
+
             let engine_tree_config = TreeConfig::default()
                 .with_persistence_threshold(rollup_args.persistence_threshold)
                 .with_memory_block_buffer_target(rollup_args.memory_block_buffer_target);
@@ -89,7 +106,7 @@ fn main() {
                 .with_components(
                     op_node
                         .components()
-                        .payload(CustomPayloadBuilder::default()),
+                        .payload(CustomPayloadBuilder::new(builder_args.builder_signer)),
                 )
                 .with_add_ons(op_node.add_ons())
                 .launch_with_fn(|builder| {

@@ -52,12 +52,15 @@ futures-util = "0.3.31"
 eyre.workspace = true
 alloy-provider.workspace = true
 tower = "0.4"
-
+serde_with.workspace = true
+serde.workspace = true
+secp256k1.workspace = true
 tokio.workspace = true
 jsonrpsee = { workspace = true }
 async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
+derive_more.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
