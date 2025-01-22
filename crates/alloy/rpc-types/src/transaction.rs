@@ -167,7 +167,7 @@ mod tx_serde {
     //! Helper module for serializing and deserializing OP [`Transaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
-    //! [`alloy_rpc_types_eth::Transaction::from`] and [`maili_consensus::TxDeposit::from`].
+    //! [`alloy_rpc_types_eth::Transaction::from`] and [`op_alloy_consensus::TxDeposit::from`].
     //!
     //! Additionaly, we need similar logic for the `gasPrice` field
     use super::*;

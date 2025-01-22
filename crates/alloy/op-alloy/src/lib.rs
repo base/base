@@ -26,3 +26,7 @@ pub use op_alloy_rpc_types as rpc_types;
 #[cfg(feature = "rpc-types-engine")]
 #[doc(inline)]
 pub use op_alloy_rpc_types_engine as rpc_types_engine;
+
+#[cfg(feature = "rpc-jsonrpsee")]
+#[doc(inline)]
+pub use op_alloy_rpc_jsonrpsee as rpc_jsonrpsee;

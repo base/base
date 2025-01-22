@@ -12,7 +12,7 @@ extern crate alloc;
 pub use alloy_rpc_types_engine::ForkchoiceUpdateVersion;
 
 mod attributes;
-pub use attributes::{OpAttributesWithParent, OpPayloadAttributes};
+pub use attributes::OpPayloadAttributes;
 
 mod envelope;
 pub use envelope::{OpNetworkPayloadEnvelope, PayloadEnvelopeError, PayloadHash};

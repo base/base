@@ -1,3 +1,4 @@
+use crate::{OpTxType, TxDeposit};
 use alloy_consensus::{
     transaction::RlpEcdsaTx, Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930,
     TxEip7702, TxLegacy, Typed2718,
@@ -9,9 +10,6 @@ use alloy_eips::{
 };
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable};
-use maili_consensus::{DepositTxEnvelope, TxDeposit};
-
-use crate::OpTxType;
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
 ///
@@ -333,6 +331,14 @@ impl OpTxEnvelope {
         }
     }
 
+    /// Returns the [`TxEip1559`] variant if the transaction is an EIP-1559 transaction.
+    pub const fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        match self {
+            Self::Deposit(tx) => Some(tx),
+            _ => None,
+        }
+    }
+
     /// Return the [`OpTxType`] of the inner txn.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
@@ -447,22 +453,6 @@ impl Encodable2718 for OpTxEnvelope {
     }
 }
 
-impl DepositTxEnvelope for OpTxEnvelope {
-    /// Returns true if the transaction is a deposit transaction.
-    #[inline]
-    fn is_deposit(&self) -> bool {
-        matches!(self, Self::Deposit(_))
-    }
-
-    /// Returns the [`TxDeposit`] variant if the transaction is a deposit transaction.
-    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
-        match self {
-            Self::Deposit(tx) => Some(tx),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(feature = "serde")]
 mod serde_from {
     //! NB: Why do we need this?
@@ -499,11 +489,7 @@ mod serde_from {
         Eip1559(Signed<TxEip1559>),
         #[serde(rename = "0x4", alias = "0x04")]
         Eip7702(Signed<TxEip7702>),
-        #[serde(
-            rename = "0x7e",
-            alias = "0x7E",
-            serialize_with = "maili_consensus::serde_deposit_tx_rpc"
-        )]
+        #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
         Deposit(Sealed<TxDeposit>),
     }
 
