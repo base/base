@@ -15,6 +15,7 @@ reth-optimism-primitives.workspace = true
 reth-cli-util.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
+reth-exex.workspace = true
 reth-chainspec.workspace = true
 reth-primitives.workspace = true
 reth-node-api.workspace = true
@@ -24,6 +25,7 @@ reth-node-ethereum.workspace = true
 reth-chain-state.workspace = true
 reth-execution-types.workspace = true
 reth-ethereum-payload-builder.workspace = true
+reth-metrics.workspace = true
 reth-provider.workspace = true
 reth-revm.workspace = true
 reth-trie.workspace = true
@@ -61,6 +63,7 @@ async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
 derive_more.workspace = true
+metrics.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }

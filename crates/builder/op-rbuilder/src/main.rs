@@ -1,5 +1,6 @@
 use clap::Parser;
 use generator::EmptyBlockPayloadJobGenerator;
+use monitoring::Monitoring;
 use payload_builder::OpPayloadBuilder as FBPayloadBuilder;
 use payload_builder_vanilla::OpPayloadBuilderVanilla;
 use reth::builder::Node;
@@ -31,6 +32,8 @@ use reth_optimism_primitives::OpPrimitives;
 use reth_transaction_pool::PoolTransaction;
 
 pub mod generator;
+mod metrics;
+mod monitoring;
 pub mod payload_builder;
 mod payload_builder_vanilla;
 mod tx_signer;
@@ -109,6 +112,10 @@ fn main() {
                         .payload(CustomPayloadBuilder::new(builder_args.builder_signer)),
                 )
                 .with_add_ons(op_node.add_ons())
+                .install_exex("monitoring", move |ctx| {
+                    let builder_signer = builder_args.builder_signer;
+                    async move { Ok(Monitoring::new(ctx, builder_signer).start()) }
+                })
                 .launch_with_fn(|builder| {
                     let launcher = EngineNodeLauncher::new(
                         builder.task_executor().clone(),
