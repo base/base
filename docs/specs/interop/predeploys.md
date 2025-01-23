@@ -8,7 +8,6 @@
 - [CrossL2Inbox](#crossl2inbox)
   - [Functions](#functions)
     - [validateMessage](#validatemessage)
-  - [Interop Start Timestamp](#interop-start-timestamp)
   - [`ExecutingMessage` Event](#executingmessage-event)
   - [Reference implementation](#reference-implementation)
   - [Deposit Handling](#deposit-handling)
@@ -104,17 +103,6 @@ The following fields are required for validating a cross chain message:
 ```solidity
 function validateMessage(Identifier calldata _id, bytes32 _msgHash)
 ```
-
-### Interop Start Timestamp
-
-The Interop Start Timestamp represents the earliest timestamp which an initiating message (identifier) can have to be
-considered valid. This is important because OP Mainnet migrated from a legacy system that is not provable. We cannot
-allow for interop messages to come from unproven parts of the chain history, since interop is secured by fault proofs.
-
-Interop Start Timestamp is stored in the storage of the CrossL2Inbox predeploy. During the Interop Network Upgrade,
-each chain sets variable via a call to `setInteropStart()` by the `DEPOSITOR_ACCOUNT` which sets Interop Start Timestamp
-to be the block.timestamp of the network upgrade block. Chains deployed after the network upgrade will have to enshrine
-that timestamp into the pre-determined storage slot.
 
 ### `ExecutingMessage` Event
 
