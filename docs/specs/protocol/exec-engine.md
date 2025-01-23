@@ -495,8 +495,10 @@ For the Ecotone upgrade, this entails that:
 [engine_forkchoiceUpdatedV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_forkchoiceupdatedv2
 [engine_newPayloadV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_newpayloadv2
 [engine_newPayloadV3]: https://github.com/ethereum/execution-apis/blob/cea7eeb642052f4c2e03449dc48296def4aafc24/src/engine/cancun.md#engine_newpayloadv3
+[engine_newPayloadV4]: https://github.com/ethereum/execution-apis/blob/869b7f062830ba51a7fd8a51dfa4678c6d36b6ec/src/engine/prague.md#engine_newpayloadv4
 [engine_getPayloadV2]: https://github.com/ethereum/execution-apis/blob/584905270d8ad665718058060267061ecfd79ca5/src/engine/shanghai.md#engine_getpayloadv2
 [engine_getPayloadV3]: https://github.com/ethereum/execution-apis/blob/a0d03086564ab1838b462befbc083f873dcf0c0f/src/engine/cancun.md#engine_getpayloadv3
+[engine_getPayloadV4]: https://github.com/ethereum/execution-apis/blob/869b7f062830ba51a7fd8a51dfa4678c6d36b6ec/src/engine/prague.md#engine_getpayloadv4
 [HEX value encoding]: https://eth.wiki/json-rpc/API#hex-value-encoding
 [JSON-RPC-API]: https://github.com/ethereum/execution-apis
 
