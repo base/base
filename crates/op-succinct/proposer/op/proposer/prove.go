@@ -81,7 +81,7 @@ func (l *L2OutputSubmitter) ProcessWitnessgenRequests() error {
 
 // Retry a proof request. Sets the status of a proof to FAILED and retries the proof based on the optional proof status response.
 // If an error response is received:
-// - Range Proof: Split in two if the block range is > 1. Retry the same request if range is 1 block.
+// - Range Proof: Split in two if the block range is > 1 AND the proof is unexecutable OR has failed before. Retry the same request if range is 1 block.
 // - Agg Proof: Retry the same request.
 func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStatusResponse) error {
 	err := l.db.UpdateProofStatus(req.ID, proofrequest.StatusFAILED)
@@ -90,11 +90,30 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStat
 		return err
 	}
 
-	// If there's an execution error AND the request is a SPAN proof AND the block range is > 1, split the request into two requests.
-	// This is likely caused by an SP1 OOM due to a large block range with many transactions.
-	// TODO: This solution can be removed once the embedded allocator is used, because then the programs
-	// will never OOM.
-	if req.Type == proofrequest.TypeSPAN && status.ExecutionStatus == SP1ExecutionStatusUnexecutable && req.EndBlock-req.StartBlock > 1 {
+	unexecutable := status.ExecutionStatus == SP1ExecutionStatusUnexecutable
+	spanProof := req.Type == proofrequest.TypeSPAN
+	multiBlockRange := req.EndBlock-req.StartBlock > 1
+
+	// Get the number of failed requests with the same block range and status.
+	prevFailedReq, err := l.db.GetProofRequestsWithBlockRangeAndStatus(req.Type, req.StartBlock, req.EndBlock, proofrequest.StatusFAILED)
+	if err != nil {
+		l.Log.Error("failed to check for previous failures", "err", err)
+		return err
+	}
+
+	// Check if there is another proof (besides the one marked as failed above) with the same block range that also failed.
+	severalFailedRequests := len(prevFailedReq) > 1
+
+	// If there's an execution error OR several failed requests AND the request is a SPAN proof AND the block range is > 1,
+	// split the request into two requests.
+	//
+	// If the embedded allocator is enabled, the proof will never be unexecutable. Instead, the issue is because there's a limit on the number
+	// of shards in V4. This will be fixed in V5 when the cycle limit is removed.
+	// 
+	// If the embedded allocator is not enabled, the trigger for unexecutable is the SP1 OOM.
+	//
+	// The reason why we only split with multiple failed requests is to avoid transient errors causing unnecessary splits.
+	if spanProof && (unexecutable || severalFailedRequests) && multiBlockRange {
 		// Split the request into two requests.
 		midBlock := (req.StartBlock + req.EndBlock) / 2
 		err = l.db.NewEntry(req.Type, req.StartBlock, midBlock)

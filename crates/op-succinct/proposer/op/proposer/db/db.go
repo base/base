@@ -443,3 +443,19 @@ func (db *ProofDB) GetConsecutiveSpanProofs(start, end uint64) ([][]byte, error)
 
 	return result, nil
 }
+
+// Get the proofs with start block and end block of a specific status.
+func (db *ProofDB) GetProofRequestsWithBlockRangeAndStatus(proofType proofrequest.Type, startBlock, endBlock uint64, status proofrequest.Status) ([]*ent.ProofRequest, error) {
+	proofs, err := db.readClient.ProofRequest.Query().
+		Where(
+			proofrequest.TypeEQ(proofType),
+			proofrequest.StartBlockEQ(startBlock), 
+			proofrequest.EndBlockEQ(endBlock),
+			proofrequest.StatusEQ(status),
+		).
+		All(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to query proofs with block range and status: %w", err)
+	}
+	return proofs, nil
+}
