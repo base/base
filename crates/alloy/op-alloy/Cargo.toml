@@ -30,9 +30,11 @@ op-alloy-rpc-types = { workspace = true, optional = true }
 default = ["std", "k256", "serde"]
 
 std = [
-  "op-alloy-consensus?/std",
-  "op-alloy-rpc-types?/std",
-  "op-alloy-rpc-types-engine?/std",
+	"op-alloy-consensus?/std",
+	"op-alloy-rpc-types?/std",
+	"op-alloy-rpc-types-engine?/std",
+	"op-alloy-network?/std",
+	"op-alloy-provider?/std"
 ]
 
 full = [
@@ -54,8 +56,11 @@ arbitrary = [
 ]
 
 serde = [
-  "op-alloy-consensus?/serde",
-  "op-alloy-rpc-types-engine?/serde",
+	"op-alloy-consensus?/serde",
+	"op-alloy-rpc-types-engine?/serde",
+	"op-alloy-network?/serde",
+	"op-alloy-provider?/serde",
+	"op-alloy-rpc-types?/serde"
 ]
 
 # `no_std` support

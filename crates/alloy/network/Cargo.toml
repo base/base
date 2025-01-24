@@ -25,3 +25,13 @@ alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
+
+[features]
+std = [
+	"op-alloy-consensus/std",
+	"op-alloy-rpc-types/std"
+]
+serde = [
+	"op-alloy-consensus/serde",
+	"op-alloy-rpc-types/serde"
+]
