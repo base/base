@@ -31,7 +31,11 @@ use sp1_sdk::{
     utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofMode, SP1ProofWithPublicValues,
     SP1_CIRCUIT_VERSION,
 };
-use std::{env, fs, str::FromStr, time::Instant};
+use std::{
+    env, fs,
+    str::FromStr,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 use tower_http::limit::RequestBodyLimitLayer;
 
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -546,7 +550,12 @@ async fn get_proof_status(
     };
 
     // Check the deadline.
-    if status.deadline < Instant::now().elapsed().as_secs() {
+    if status.deadline
+        < SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    {
         error!(
             "Proof request timed out on the server. Default timeout is set to 4 hours. Returning status as Unfulfillable."
         );
