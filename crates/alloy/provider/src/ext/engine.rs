@@ -54,7 +54,6 @@ pub trait OpEngineApi<N, T> {
         &self,
         payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
-        execution_requests: Vec<Bytes>,
     ) -> TransportResult<PayloadStatus>;
 
     /// Updates the execution layer client with the given fork choice, as specified for the Shanghai
@@ -211,10 +210,11 @@ where
         &self,
         payload: ExecutionPayloadV3,
         parent_beacon_block_root: B256,
-        execution_requests: Vec<Bytes>,
     ) -> TransportResult<PayloadStatus> {
-        // Note: The `versioned_hashes` parameter is always an empty array for OP chains.
+        // Note: The `versioned_hashes`, `execution_requests` parameters are always an empty array
+        // for OP chains.
         let versioned_hashes: Vec<B256> = vec![];
+        let execution_requests: Vec<Bytes> = vec![];
 
         self.client()
             .request(
