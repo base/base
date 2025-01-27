@@ -1,9 +1,11 @@
 use alloy_rpc_types_eth::Withdrawals;
+use reth::core::primitives::InMemorySize;
 use reth_transaction_pool::PoolTransaction;
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, sync::Arc, time::Instant};
 
 use crate::{
     generator::{BlockCell, PayloadBuilder},
+    metrics::OpRBuilderMetrics,
     tx_signer::Signer,
 };
 use alloy_consensus::{
@@ -41,7 +43,7 @@ use revm::{
     },
     Database, DatabaseCommit,
 };
-use tracing::{debug, trace, warn};
+use tracing::{info, trace, warn};
 
 use op_alloy_consensus::{OpDepositReceipt, OpTxType, OpTypedTransaction};
 use reth_optimism_payload_builder::{
@@ -51,11 +53,11 @@ use reth_optimism_payload_builder::{
 use reth_transaction_pool::pool::BestPayloadTransactions;
 
 /// Optimism's payload builder
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct OpPayloadBuilderVanilla<EvmConfig, Txs = ()> {
-    /// The rollup's compute pending block configuration option.
-    // TODO(clabby): Implement this feature.
-    pub compute_pending_block: bool,
+    // /// The rollup's compute pending block configuration option.
+    // // TODO(clabby): Implement this feature.
+    // pub compute_pending_block: bool,
     /// The type responsible for creating the evm.
     pub evm_config: EvmConfig,
     /// The builder's signer key to use for an end of block tx
@@ -63,16 +65,19 @@ pub struct OpPayloadBuilderVanilla<EvmConfig, Txs = ()> {
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
+    /// The metrics for the builder
+    pub metrics: OpRBuilderMetrics,
 }
 
 impl<EvmConfig> OpPayloadBuilderVanilla<EvmConfig> {
     /// `OpPayloadBuilder` constructor.
-    pub const fn new(evm_config: EvmConfig, builder_signer: Option<Signer>) -> Self {
+    pub fn new(evm_config: EvmConfig, builder_signer: Option<Signer>) -> Self {
         Self {
-            compute_pending_block: true,
+            // compute_pending_block: true,
             evm_config,
             builder_signer,
             best_transactions: (),
+            metrics: Default::default(),
         }
     }
 }
@@ -92,14 +97,25 @@ where
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let pool = args.pool.clone();
+        let block_build_start_time = Instant::now();
 
-        match self.build_payload(args, |attrs| ().best_transactions(pool, attrs))? {
+        match self.build_payload(args, |attrs| {
+            #[allow(clippy::unit_arg)]
+            self.best_transactions.best_transactions(pool, attrs)
+        })? {
             BuildOutcome::Better { payload, .. } => {
                 best_payload.set(payload);
+                self.metrics
+                    .total_block_built_duration
+                    .record(block_build_start_time.elapsed());
+                self.metrics.block_built_success.increment(1);
                 Ok(())
             }
             BuildOutcome::Freeze(payload) => {
                 best_payload.set(payload);
+                self.metrics
+                    .total_block_built_duration
+                    .record(block_build_start_time.elapsed());
                 Ok(())
             }
             BuildOutcome::Cancelled => {
@@ -162,6 +178,7 @@ where
             cancel,
             best_payload,
             builder_signer: self.builder_signer,
+            metrics: Default::default(),
         };
 
         let builder = OpBuilder::new(best);
@@ -253,7 +270,7 @@ where
         DB: Database<Error = ProviderError>,
     {
         let Self { best } = self;
-        debug!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
+        info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
         // 1. apply eip-4788 pre block contract call
         ctx.apply_pre_beacon_root_contract_call(state)?;
@@ -261,8 +278,14 @@ where
         // 2. ensure create2deployer is force deployed
         ctx.ensure_create2_deployer(state)?;
 
+        let sequencer_tx_start_time = Instant::now();
+
         // 3. execute sequencer transactions
         let mut info = ctx.execute_sequencer_transactions(state)?;
+
+        ctx.metrics
+            .sequencer_tx_duration
+            .record(sequencer_tx_start_time.elapsed());
 
         // 4. if mem pool transactions are requested we execute them
 
@@ -275,7 +298,11 @@ where
         });
         let block_gas_limit = ctx.block_gas_limit() - builder_tx_gas;
         if !ctx.attributes().no_tx_pool {
+            let best_txs_start_time = Instant::now();
             let best_txs = best(ctx.best_transaction_attributes());
+            ctx.metrics
+                .transaction_pool_fetch_duration
+                .record(best_txs_start_time.elapsed());
             if ctx
                 .execute_best_transactions(&mut info, state, best_txs, block_gas_limit)?
                 .is_some()
@@ -297,9 +324,18 @@ where
 
         let withdrawals_root = ctx.commit_withdrawals(state)?;
 
+        let state_merge_start_time = Instant::now();
+
         // merge all transitions into bundle state, this would apply the withdrawal balance changes
         // and 4788 contract call
         state.merge_transitions(BundleRetention::Reverts);
+
+        ctx.metrics
+            .state_transition_merge_duration
+            .record(state_merge_start_time.elapsed());
+        ctx.metrics
+            .payload_num_tx
+            .record(info.executed_transactions.len() as f64);
 
         Ok(BuildOutcomeKind::Better {
             payload: ExecutedPayload {
@@ -349,7 +385,9 @@ where
             .block_logs_bloom(block_number)
             .expect("Number is in range");
 
-        // // calculate the state root
+        // calculate the state root
+        let state_root_start_time = Instant::now();
+
         let state_provider = state.database.as_ref();
         let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
         let (state_root, trie_output) = {
@@ -365,6 +403,10 @@ where
                     );
                 })?
         };
+
+        ctx.metrics
+            .state_root_calculation_duration
+            .record(state_root_start_time.elapsed());
 
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
@@ -410,7 +452,7 @@ where
         };
 
         let sealed_block = Arc::new(block.seal_slow());
-        debug!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header, "sealed built block");
+        info!(target: "payload_builder", id=%ctx.attributes().payload_id(), sealed_block_header = ?sealed_block.header, "sealed built block");
 
         // create the executed block data
         let executed: ExecutedBlock<OpPrimitives> = ExecutedBlock {
@@ -431,6 +473,10 @@ where
             ctx.config.attributes,
             Some(executed),
         );
+
+        ctx.metrics
+            .payload_byte_size
+            .record(payload.block().size() as f64);
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included
@@ -524,6 +570,8 @@ pub struct OpPayloadBuilderCtx<EvmConfig> {
     pub best_payload: Option<OpBuiltPayload>,
     /// The builder signer
     pub builder_signer: Option<Signer>,
+    /// The metrics for the builder
+    pub metrics: OpRBuilderMetrics,
 }
 
 impl<EvmConfig> OpPayloadBuilderCtx<EvmConfig> {
@@ -843,6 +891,11 @@ where
     where
         DB: Database<Error = ProviderError>,
     {
+        let execute_txs_start_time = Instant::now();
+        let mut num_txs_considered = 0;
+        let mut num_txs_simulated = 0;
+        let mut num_txs_simulated_success = 0;
+        let mut num_txs_simulated_fail = 0;
         let base_fee = self.base_fee();
 
         let env = EnvWithHandlerCfg::new_with_cfg_env(
@@ -853,6 +906,7 @@ where
         let mut evm = self.evm_config.evm_with_env(&mut *db, env);
 
         while let Some(tx) = best_txs.next(()) {
+            num_txs_considered += 1;
             // ensure we still have capacity for this transaction
             if info.cumulative_gas_used + tx.gas_limit() > block_gas_limit {
                 // we can't fit this transaction into the block, so we need to mark it as
@@ -875,6 +929,8 @@ where
 
             // Configure the environment for the tx.
             *evm.tx_mut() = self.evm_config.tx_env(tx.tx(), tx.signer());
+
+            let tx_simulation_start_time = Instant::now();
 
             let ResultAndState { result, state } = match evm.transact() {
                 Ok(res) => res,
@@ -900,6 +956,26 @@ where
                     }
                 }
             };
+
+            self.metrics
+                .tx_simulation_duration
+                .record(tx_simulation_start_time.elapsed());
+            self.metrics.tx_byte_size.record(tx.tx().size() as f64);
+            num_txs_simulated += 1;
+            if result.is_success() {
+                num_txs_simulated_success += 1;
+            } else {
+                num_txs_simulated_fail += 1;
+            }
+            self.metrics
+                .payload_num_tx_simulated
+                .record(num_txs_simulated as f64);
+            self.metrics
+                .payload_num_tx_simulated_success
+                .record(num_txs_simulated_success as f64);
+            self.metrics
+                .payload_num_tx_simulated_fail
+                .record(num_txs_simulated_fail as f64);
 
             // commit changes
             evm.db_mut().commit(state);
@@ -939,6 +1015,13 @@ where
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_tx());
         }
+
+        self.metrics
+            .payload_tx_simulation_duration
+            .record(execute_txs_start_time.elapsed());
+        self.metrics
+            .payload_num_tx_considered
+            .record(num_txs_considered as f64);
 
         Ok(None)
     }

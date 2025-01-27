@@ -31,6 +31,7 @@ where
     }
 
     pub async fn start(mut self) -> eyre::Result<()> {
+        // TODO: add builder balance monitoring
         // Process all new chain state notifications
         while let Some(notification) = self.ctx.notifications.try_next().await? {
             if let Some(reverted_chain) = notification.reverted_chain() {
@@ -52,15 +53,19 @@ where
     /// This function decodes the builder tx and then emits metrics
     async fn commit(&mut self, chain: &Chain<OpPrimitives>) -> eyre::Result<()> {
         info!("Processing new chain commit");
-        let txs = decode_chain_into_builder_txs(chain, self.builder_signer);
+        let blocks = decode_chain_into_builder_txs(chain, self.builder_signer);
 
-        for (block, _) in txs {
-            self.metrics.inc_builder_built_blocks();
-            self.metrics.set_last_built_block_height(block.number);
-            info!(
-                block_number = block.number,
-                "Committed block built by builder"
-            );
+        for (block, has_builder_tx) in blocks {
+            if has_builder_tx {
+                self.metrics.inc_builder_landed_blocks();
+                self.metrics.set_last_landed_block_height(block.number);
+                info!(
+                    block_number = block.number,
+                    "Committed block built by builder"
+                );
+            } else {
+                self.metrics.inc_builder_landed_blocks_missed();
+            }
         }
 
         Ok(())
@@ -71,20 +76,22 @@ where
     /// This function decodes all transactions in the block, updates the metrics for builder built blocks
     async fn revert(&mut self, chain: &Chain<OpPrimitives>) -> eyre::Result<()> {
         info!("Processing new chain revert");
-        let mut txs = decode_chain_into_builder_txs(chain, self.builder_signer);
+        let mut blocks = decode_chain_into_builder_txs(chain, self.builder_signer);
         // Reverse the order of txs to start reverting from the tip
-        txs.reverse();
+        blocks.reverse();
 
-        if let Some((block, _)) = txs.last() {
-            self.metrics.set_last_built_block_height(block.number - 1);
+        if let Some((block, _)) = blocks.last() {
+            self.metrics.set_last_landed_block_height(block.number - 1);
         }
 
-        for (block, _) in txs {
-            self.metrics.dec_builder_built_blocks();
-            info!(
-                block_number = block.number,
-                "Reverted block built by builder"
-            );
+        for (block, has_builder_tx) in blocks {
+            if has_builder_tx {
+                self.metrics.dec_builder_landed_blocks();
+                info!(
+                    block_number = block.number,
+                    "Reverted block built by builder"
+                );
+            }
         }
 
         Ok(())
@@ -95,35 +102,25 @@ where
 fn decode_chain_into_builder_txs(
     chain: &Chain<OpPrimitives>,
     builder_signer: Option<Signer>,
-) -> Vec<(
-    SealedBlockWithSenders<Block<OpTransactionSigned>>,
-    OpTransactionSigned,
-)> {
+) -> Vec<(&SealedBlockWithSenders<Block<OpTransactionSigned>>, bool)> {
     chain
         // Get all blocks and receipts
         .blocks_and_receipts()
         // Get all receipts
-        .flat_map(|(block, receipts)| {
-            let block_clone = block.clone();
-            block
+        .map(|(block, receipts)| {
+            let has_builder_tx = block
                 .body()
                 .transactions
                 .iter()
                 .zip(receipts.iter().flatten())
-                .filter_map(move |(tx, receipt)| {
-                    let is_builder_tx = receipt.status()
+                .any(move |(tx, receipt)| {
+                    receipt.status()
                         && tx.input().starts_with(OP_BUILDER_TX_PREFIX)
                         && tx.recover_signer().is_some_and(|signer| {
                             builder_signer.is_some_and(|bs| signer == bs.address)
-                        });
-
-                    if is_builder_tx {
-                        // Clone the entire block and the transaction
-                        Some((block_clone.clone(), tx.clone()))
-                    } else {
-                        None
-                    }
-                })
+                        })
+                });
+            (block, has_builder_tx)
         })
         .collect()
 }

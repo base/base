@@ -90,6 +90,8 @@ where
         ctx.task_executor()
             .spawn_critical("custom payload builder service", Box::pin(payload_service));
 
+        tracing::info!("Custom payload service started");
+
         Ok(payload_builder)
     }
 }
@@ -114,6 +116,11 @@ fn main() {
                 .with_add_ons(op_node.add_ons())
                 .install_exex("monitoring", move |ctx| {
                     let builder_signer = builder_args.builder_signer;
+                    if let Some(signer) = &builder_signer {
+                        tracing::info!("Builder signer address is set to: {:?}", signer.address);
+                    } else {
+                        tracing::info!("Builder signer is not set");
+                    }
                     async move { Ok(Monitoring::new(ctx, builder_signer).start()) }
                 })
                 .launch_with_fn(|builder| {
