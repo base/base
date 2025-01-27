@@ -344,7 +344,7 @@ function getVotes(uint256 _account) external view returns (uint256);
 
 #### `getVotesWithParams`
 
-Returns the voting power of an account at a specific block nubmer given additional encoded parameters.
+Returns the voting power of an account at a specific block number given additional encoded parameters.
 
 ```solidity
 function getVotesWithParams(address _account, uint256 _blockNumber) external view returns (uint256);
