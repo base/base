@@ -251,7 +251,7 @@ This has advantages for Fault Proof program implementations.
 Partial Span Batch Validity guarantees that a valid singular batch derived from a span batch can
 immediately be processed as valid and advance the safe chain, instead of being in an undecided state
 until the full span batch is converted into singular batches. This leads to swifter derivation and
-gives strong worst-case guarantees for Fault Proofs because the vailidty of a block doesn't depend
+gives strong worst-case guarantees for Fault Proofs because the validity of a block doesn't depend
 on the validity of any future blocks any more. Note that before Holocene, to verify the first block
 of a span batch required validating the full span batch.
 
