@@ -115,7 +115,7 @@ directly fits with the OP Stack, and makes use of the existing field in the L1 h
 
 #### Client Implementation Considerations
 
-Varous EL clients store historical state of accounts differently. If, as a contrived case, an OP Stack chain did not have
+Various EL clients store historical state of accounts differently. If, as a contrived case, an OP Stack chain did not have
 an outbound withdrawal for a long period of time, the node may not have access to the account storage root of the
 [`L2ToL1MessagePasser`][l2-to-l1-mp]. In this case, the client would be unable to keep consensus. However, most modern
 clients are able to at the very least reconstruct the account storage root at a given block on the fly if it does not
