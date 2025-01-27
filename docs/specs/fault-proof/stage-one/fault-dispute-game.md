@@ -418,7 +418,7 @@ grandchild's clock, the max possible extension for the game is bounded, and scal
 
 If the potential grandchild is an execution trace bisection root claim and their clock has less than `CLOCK_EXTENSION`
 seconds remaining, exactly `CLOCK_EXTENSION * 2` seconds are allocated for the potential grandchild. This extra time
-is alloted to allow for completion of the off-chain FPVM run to generate the initial instruction trace.
+is allotted to allow for completion of the off-chain FPVM run to generate the initial instruction trace.
 
 A move against a particular claim is no longer possible once the parent of the disputed claim's Clock
 has accumulated `MAX_CLOCK_DURATION` seconds. By which point, the claim's clock has _expired_.
