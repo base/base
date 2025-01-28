@@ -1,5 +1,5 @@
 use clap::Parser;
-use generator::EmptyBlockPayloadJobGenerator;
+use generator::BlockPayloadJobGenerator;
 use monitoring::Monitoring;
 use payload_builder::OpPayloadBuilder as FBPayloadBuilder;
 use payload_builder_vanilla::OpPayloadBuilderVanilla;
@@ -75,7 +75,7 @@ where
         );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
-        let payload_generator = EmptyBlockPayloadJobGenerator::with_builder(
+        let payload_generator = BlockPayloadJobGenerator::with_builder(
             ctx.provider().clone(),
             pool,
             ctx.task_executor().clone(),

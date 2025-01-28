@@ -53,7 +53,7 @@ pub trait PayloadBuilder<Pool, Client>: Send + Sync + Clone {
 
 /// The generator type that creates new jobs that builds empty blocks.
 #[derive(Debug)]
-pub struct EmptyBlockPayloadJobGenerator<Client, Pool, Tasks, Builder> {
+pub struct BlockPayloadJobGenerator<Client, Pool, Tasks, Builder> {
     /// The client that can interact with the chain.
     client: Client,
     /// txpool
@@ -70,7 +70,7 @@ pub struct EmptyBlockPayloadJobGenerator<Client, Pool, Tasks, Builder> {
 
 // === impl EmptyBlockPayloadJobGenerator ===
 
-impl<Client, Pool, Tasks, Builder> EmptyBlockPayloadJobGenerator<Client, Pool, Tasks, Builder> {
+impl<Client, Pool, Tasks, Builder> BlockPayloadJobGenerator<Client, Pool, Tasks, Builder> {
     /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
     /// [PayloadBuilder]
     pub fn with_builder(
@@ -91,7 +91,7 @@ impl<Client, Pool, Tasks, Builder> EmptyBlockPayloadJobGenerator<Client, Pool, T
 }
 
 impl<Client, Pool, Tasks, Builder> PayloadJobGenerator
-    for EmptyBlockPayloadJobGenerator<Client, Pool, Tasks, Builder>
+    for BlockPayloadJobGenerator<Client, Pool, Tasks, Builder>
 where
     Client: StateProviderFactory
         + BlockReaderIdExt<Header = alloy_consensus::Header>
