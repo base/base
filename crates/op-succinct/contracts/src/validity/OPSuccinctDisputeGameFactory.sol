@@ -2,8 +2,8 @@
 pragma solidity ^0.8.15;
 
 import {IDisputeGame} from "@optimism/src/dispute/interfaces/IDisputeGame.sol";
-import {LibCWIA} from "@solady/utils/legacy/LibCWIA.sol";
-import {ISemver} from "@optimism/src/universal/ISemver.sol";
+import {LibCWIA} from "@solady-v0.0.281/utils/legacy/LibCWIA.sol";
+import {ISemver} from "@optimism/src/universal/interfaces/ISemver.sol";
 
 contract OPSuccinctDisputeGameFactory is ISemver {
     using LibCWIA for address;

@@ -2,10 +2,10 @@
 pragma solidity ^0.8.15;
 
 import {Test, console} from "forge-std/Test.sol";
-import {OPSuccinctUpgrader} from "../script/OPSuccinctUpgrader.s.sol";
-import {OPSuccinctL2OutputOracle} from "../src/OPSuccinctL2OutputOracle.sol";
+import {OPSuccinctUpgrader} from "../../script/OPSuccinctUpgrader.s.sol";
+import {OPSuccinctL2OutputOracle} from "../../src/validity/OPSuccinctL2OutputOracle.sol";
 import {Proxy} from "@optimism/src/universal/Proxy.sol";
-import {Utils} from "./helpers/Utils.sol";
+import {Utils} from "../helpers/Utils.sol";
 
 contract UpgradeTest is Test, Utils {
     function testFreshDeployment() public {

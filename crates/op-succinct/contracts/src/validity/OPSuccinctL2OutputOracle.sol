@@ -2,8 +2,9 @@
 pragma solidity ^0.8.15;
 
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {ISemver} from "@optimism/src/universal/ISemver.sol";
+import {ISemver} from "@optimism/src/universal/interfaces/ISemver.sol";
 import {Types} from "@optimism/src/libraries/Types.sol";
+import {AggregationOutputs} from "src/lib/Types.sol";
 import {Constants} from "@optimism/src/libraries/Constants.sol";
 import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
 
@@ -31,17 +32,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         address verifier;
     }
 
-    /// @notice The public values committed to for an OP Succinct aggregation program.
-    struct AggregationOutputs {
-        bytes32 l1Head;
-        bytes32 l2PreRoot;
-        bytes32 claimRoot;
-        uint256 claimBlockNum;
-        bytes32 rollupConfigHash;
-        bytes32 rangeVkeyCommitment;
-    }
-
     /// @notice The number of the first L2 block recorded in this contract.
+
     uint256 public startingBlockNumber;
 
     /// @notice The timestamp of the first L2 block recorded in this contract.
