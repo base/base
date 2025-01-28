@@ -39,13 +39,15 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types-engine.workspace = true
 alloy-transport-http.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-client.workspace = true
 alloy-transport.workspace = true
 alloy-network.workspace = true
+
+# op
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
 
 revm.workspace = true
 
@@ -64,6 +66,11 @@ clap_builder = { workspace = true }
 clap.workspace = true
 derive_more.workspace = true
 metrics.workspace = true
+serde_json.workspace = true
+
+time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
+chrono = "0.4"
+uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -97,10 +104,12 @@ optimism = [
 	"reth-optimism-cli/optimism"
 ]
 
+integration = []
+
 [[bin]]
 name = "op-rbuilder"
 path = "src/main.rs"
 
 [[bin]]
 name = "tester"
-path = "src/tester/tester.rs"
+path = "src/tester/main.rs"

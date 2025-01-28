@@ -32,11 +32,16 @@ use reth_optimism_primitives::OpPrimitives;
 use reth_transaction_pool::PoolTransaction;
 
 pub mod generator;
+#[cfg(test)]
+mod integration;
 mod metrics;
 mod monitoring;
 pub mod payload_builder;
 mod payload_builder_vanilla;
+#[cfg(test)]
+mod tester;
 mod tx_signer;
+
 #[derive(Debug, Clone, Copy, Default)]
 #[non_exhaustive]
 pub struct CustomPayloadBuilder {
