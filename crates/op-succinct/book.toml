@@ -11,6 +11,7 @@ build-dir = "target/book"
 
 [output.html]
 git-repository-url = "https://github.com/succinctlabs/op-succinct"
+additional-js = ["book/mermaid/mermaid.min.js", "book/mermaid/mermaid-init.js"]
 
 [preprocessor.template]
 before = ["links"]
@@ -18,3 +19,6 @@ before = ["links"]
 [preprocessor.index]
 
 [preprocessor.links]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

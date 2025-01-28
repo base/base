@@ -2,9 +2,9 @@
 pragma solidity ^0.8.15;
 
 import {OPSuccinctL2OutputOracle} from "./OPSuccinctL2OutputOracle.sol";
-import {CWIA} from "@solady/utils/legacy/CWIA.sol";
-import {LibBytes} from "@solady/utils/LibBytes.sol";
-import {ISemver} from "@optimism/src/universal/ISemver.sol";
+import {CWIA} from "@solady-v0.0.281/utils/legacy/CWIA.sol";
+import {LibBytes} from "@solady-v0.0.281/utils/LibBytes.sol";
+import {ISemver} from "@optimism/src/universal/interfaces/ISemver.sol";
 import {IDisputeGame} from "@optimism/src/dispute/interfaces/IDisputeGame.sol";
 import {Claim, GameStatus, GameType, GameTypes, Hash, Timestamp} from "@optimism/src/dispute/lib/Types.sol";
 import {GameNotInProgress, OutOfOrderResolution} from "@optimism/src/dispute/lib/Errors.sol";

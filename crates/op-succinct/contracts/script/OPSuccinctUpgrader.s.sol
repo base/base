@@ -2,7 +2,7 @@
 pragma solidity ^0.8.15;
 
 import {Script} from "forge-std/Script.sol";
-import {OPSuccinctL2OutputOracle} from "../src/OPSuccinctL2OutputOracle.sol";
+import {OPSuccinctL2OutputOracle} from "../src/validity/OPSuccinctL2OutputOracle.sol";
 import {Utils} from "../test/helpers/Utils.sol";
 import {Proxy} from "@optimism/src/universal/Proxy.sol";
 import {console} from "forge-std/console.sol";
@@ -16,7 +16,6 @@ contract OPSuccinctUpgrader is Script, Utils {
 
         // Use implementation address from config
         address OPSuccinctL2OutputOracleImpl = cfg.opSuccinctL2OutputOracleImpl;
-        address proxyAdmin = cfg.proxyAdmin;
 
         // optionally use a different key for deployment
         uint256 deployPk = vm.envOr("DEPLOY_PK", uint256(0));
