@@ -117,6 +117,9 @@ Without a `sourceHash` in a deposit, two different deposited transactions could 
 The outer `keccak256` hashes the actual uniquely identifying information with a domain,
 to avoid collisions between different types of sources.
 
+The [Interop derivation spec](./derivation.md) introduces two additional kinds of system deposits,
+with domains `3` and `4`.
+
 We do not use the sender's nonce to ensure uniqueness because this would require an extra L2 EVM state read from the
 [execution engine][g-exec-engine] during block-derivation.
 

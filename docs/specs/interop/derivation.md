@@ -13,6 +13,7 @@
       - [Deposits-complete Source-hash](#deposits-complete-source-hash)
 - [Replacing Invalid Blocks](#replacing-invalid-blocks)
   - [Optimistic Block Deposited Transaction](#optimistic-block-deposited-transaction)
+    - [Optimistic Block Source-hash](#optimistic-block-source-hash)
 - [Expiry Window](#expiry-window)
 - [Security Considerations](#security-considerations)
   - [Gas Considerations](#gas-considerations)
@@ -127,23 +128,36 @@ to the trimmed transaction list.
 
 ### Optimistic Block Deposited Transaction
 
-An [L1 attributes deposited transaction](../protocol/deposits.md#l1-attributes-deposited-transaction)
-is a deposit transaction sent to the zero address.
+An Optimistic Block Deposited Transaction is a system deposited transaction,
+inserted into the replacement block,
+to signal when a previously derived local-safe block (the "optimistic" block) was invalidated.
 
 This transaction MUST have the following values:
 
-1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0002` (the address of the
-   [L1 Attributes depositor account](../protocol/deposits.md#l1-attributes-depositor-account))
+1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0002`, like the address of the
+   [L1 Attributes depositor account](../protocol/deposits.md#l1-attributes-depositor-account), but incremented by 1
 2. `to` is `0x0000000000000000000000000000000000000000` (the zero address as no EVM code execution is expected).
 3. `mint` is `0`
 4. `value` is `0`
 5. `gasLimit` is set `36000` gas, to cover intrinsic costs, processing costs, and margin for change.
 6. `isSystemTx` is set to `false`.
-7. `data` is the preimage of the [L2 output root](../glossary.md#l2-output-root-proposals)
+7. `data` is the preimage of the [L2 output root]
    of the replaced block. i.e. `version_byte || payload` without applying the `keccak256` hashing.
+8. `sourceHash` is computed with a new deposit source-hash domain, see below.
 
 This system-initiated transaction for L1 attributes is not charged any ETH for its allocated
 `gasLimit`, as it is considered part of state-transition processing.
+
+[L2 output root]: ../glossary.md#l2-output-root-proposals
+
+#### Optimistic Block Source-hash
+
+The source hash is [computed](../protocol/deposits.md#source-hash-computation)
+with a source-hash domain: `4` (instead of `1`),
+combined with the [L2 output root] of the optimistic block that was invalidated.
+
+The source-hash is thus computed as:
+`keccak256(bytes32(uint256(4)), outputRoot))`.
 
 ## Expiry Window
 
