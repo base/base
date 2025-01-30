@@ -8,9 +8,13 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 // Libraries
 import {Claim, Duration, GameStatus, GameType, Hash, Timestamp} from "src/dispute/lib/Types.sol";
 import {
-    ClockNotExpired, IncorrectBondAmount, AlreadyInitialized, UnexpectedRootClaim
+    ClockNotExpired,
+    IncorrectBondAmount,
+    AlreadyInitialized,
+    UnexpectedRootClaim,
+    NoCreditToClaim
 } from "src/dispute/lib/Errors.sol";
-import {ParentGameNotResolved, InvalidParentGame, ClaimAlreadyChallenged} from "src/fp/lib/Errors.sol";
+import {ParentGameNotResolved, InvalidParentGame, ClaimAlreadyChallenged, AlreadyProven} from "src/fp/lib/Errors.sol";
 import {AggregationOutputs} from "src/lib/Types.sol";
 
 // Contracts
@@ -116,6 +120,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         (,,,,, Timestamp parentGameDeadline) = parentGame.claimData();
         vm.warp(parentGameDeadline.raw() + 1 seconds);
         parentGame.resolve();
+        parentGame.claimCredit(proposer);
 
         // Create the child game referencing parent index = 0
         // The child game is at index 1
@@ -204,6 +209,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Now we can resolve successfully
         game.resolve();
 
+        // Proposer gets the bond back
+        game.claimCredit(proposer);
+
         // Check final state
         assertEq(uint8(game.status()), uint8(GameStatus.DEFENDER_WINS));
         // The contract should have paid back the proposer
@@ -230,6 +238,13 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         // Now the proposal is UnchallengedAndValidProofProvided; we can resolve immediately
         game.resolve();
+
+        // Prover does not get any credit
+        vm.expectRevert(NoCreditToClaim.selector);
+        game.claimCredit(prover);
+
+        // Proposer gets the bond back
+        game.claimCredit(proposer);
 
         // Final status: DEFENDER_WINS
         assertEq(uint8(game.status()), uint8(GameStatus.DEFENDER_WINS));
@@ -285,6 +300,13 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         // Resolve
         game.resolve();
+
+        // Prover gets the proof reward
+        game.claimCredit(prover);
+
+        // Proposer gets the bond back
+        game.claimCredit(proposer);
+
         assertEq(uint8(game.status()), uint8(GameStatus.DEFENDER_WINS));
         assertEq(address(game).balance, 0);
 
@@ -316,6 +338,10 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         // Now we can resolve, resulting in CHALLENGER_WINS
         game.resolve();
+
+        // Challenger gets the bond back and wins proposer's bond
+        game.claimCredit(challenger);
+
         assertEq(uint8(game.status()), uint8(GameStatus.CHALLENGER_WINS));
 
         // The challenger receives the entire 3 ether
@@ -448,16 +474,36 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         // 4) The game resolves as CHALLENGER_WINS
         game.resolve();
+
+        // Challenger gets the bond back and wins proposer's bond
+        game.claimCredit(challenger);
+
         assertEq(uint8(game.status()), uint8(GameStatus.CHALLENGER_WINS));
 
         // 5) If we try to resolve the child game, it should be resolved as CHALLENGER_WINS
         // because parent's claim is invalid.
         // The child's bond is lost since there is no challenger for the child game.
         childGame.resolve();
+
+        // Challenger hasn't challenged the child game, so it gets nothing
+        vm.expectRevert(NoCreditToClaim.selector);
+        childGame.claimCredit(challenger);
+
         assertEq(uint8(childGame.status()), uint8(GameStatus.CHALLENGER_WINS));
 
-        assertEq(address(childGame).balance, 0);
+        assertEq(address(childGame).balance, 1 ether);
         assertEq(address(challenger).balance, 3 ether);
         assertEq(address(proposer).balance, 0 ether);
+    }
+
+    // =========================================
+    // Test: Attempting multiple `prove()` calls
+    // =========================================
+    function testCannotProveMultipleTimes() public {
+        vm.startPrank(prover);
+        game.prove(bytes(""));
+        vm.expectRevert(AlreadyProven.selector);
+        game.prove(bytes(""));
+        vm.stopPrank();
     }
 }
