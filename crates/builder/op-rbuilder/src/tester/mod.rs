@@ -1,4 +1,10 @@
+use crate::tx_signer::Signer;
+use alloy_eips::eip2718::Encodable2718;
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::address;
+use alloy_primitives::Address;
+use alloy_primitives::Bytes;
+use alloy_primitives::TxKind;
 use alloy_primitives::B256;
 use alloy_primitives::U256;
 use alloy_rpc_types_engine::ExecutionPayloadV1;
@@ -9,6 +15,8 @@ use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatu
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::http_client::{transport::HttpBackend, HttpClient};
 use jsonrpsee::proc_macros::rpc;
+use op_alloy_consensus::OpTypedTransaction;
+use op_alloy_consensus::TxDeposit;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::rpc::{api::EngineApiClient, types::engine::ForkchoiceState};
 use reth_node_api::{EngineTypes, PayloadTypes};
@@ -290,9 +298,8 @@ impl<'a> BlockGenerator<'a> {
         Ok(())
     }
 
-    /// Generate a single new block and return its hash
-    pub async fn generate_block(&mut self) -> eyre::Result<B256> {
-        // Request new block generation
+    /// Helper function to submit a payload and update chain state
+    async fn submit_payload(&mut self, transactions: Option<Vec<Bytes>>) -> eyre::Result<B256> {
         let result = self
             .engine_api
             .update_forkchoice(
@@ -306,7 +313,7 @@ impl<'a> BlockGenerator<'a> {
                         prev_randao: B256::ZERO,
                         suggested_fee_recipient: Default::default(),
                     },
-                    transactions: None,
+                    transactions,
                     no_tx_pool: Some(self.no_tx_pool),
                     gas_limit: Some(10000000000),
                     eip_1559_params: None,
@@ -374,6 +381,34 @@ impl<'a> BlockGenerator<'a> {
             .timestamp;
 
         Ok(new_block_hash)
+    }
+
+    /// Generate a single new block and return its hash
+    pub async fn generate_block(&mut self) -> eyre::Result<B256> {
+        self.submit_payload(None).await
+    }
+
+    /// Submit a deposit transaction to seed an account with ETH
+    #[allow(dead_code)]
+    pub async fn deposit(&mut self, to: Address, value: u128) -> eyre::Result<B256> {
+        // Create deposit transaction
+        let deposit_tx = TxDeposit {
+            source_hash: B256::default(),
+            from: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92200"), // Standard deposit source
+            to: TxKind::Call(to),                                       // Recipient address
+            mint: Some(value),                                          // Amount to deposit
+            value: U256::default(),
+            gas_limit: 210000,
+            is_system_transaction: true,
+            input: Bytes::default(),
+        };
+
+        // Create a temporary signer for the deposit
+        let signer = Signer::random();
+        let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
+        let signed_tx_rlp = signed_tx.encoded_2718();
+
+        self.submit_payload(Some(vec![signed_tx_rlp.into()])).await
     }
 }
 
