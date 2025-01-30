@@ -6,6 +6,7 @@
 
 - [Network upgrade automation transactions](#network-upgrade-automation-transactions)
   - [EIP-2935 Contract Deployment](#eip-2935-contract-deployment)
+- [Span Batch Updates](#span-batch-updates)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -51,3 +52,34 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 
 This transaction MUST deploy a contract with the following code hash
 `0x6e49e66782037c0555897870e29fa5e552daf4719552131a0abce779daec0a5d`.
+
+# Span Batch Updates
+
+[Span batches](../delta/span-batches.md) are a span of consecutive L2 blocks than are batched submitted.
+
+Span batches contain the L1 transactions and transaction types that are posted containing the span of L2 blocks.
+Since [EIP-7702] introduces a new transaction type, the Span Batch must be updated to support the [EIP-7702]
+transaction.
+
+This corresponds with a new RLP-encoding of the `tx_datas` list as specified in
+[the Delta span batch spec](../delta/span-batches.md), adding a new transaction type:
+
+Transaction type `4` ([EIP-7702]):
+`0x04 ++ rlp_encode(value, max_priority_fee_per_gas, max_fee_per_gas, data, access_list, authorization_list)`
+
+The [EIP-7702] transaction extends [EIP-1559] to include a new `authorization_list` field.
+`authorization_list` is an RLP-encoded list of authorization tuples.
+The [EIP-7702] transaction format is as follows.
+
+- `value`: The transaction value as a `u256`.
+- `max_priority_fee_per_gas`: The maximum priority fee per gas allowed as a `u256`.
+- `max_fee_per_gas`: The maximum fee per gas as a `u256`.
+- `data`: The transaction data bytes.
+- `access_list`: The [EIP-2930] access list.
+- `authorization_list`: The [EIP-7702] signed authorization list.
+
+Span batches with transaction type `4` should only be accepted after Isthmus is enabled.
+
+[EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
+[EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
+[EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
