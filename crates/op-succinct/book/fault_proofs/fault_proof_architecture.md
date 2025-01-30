@@ -231,6 +231,11 @@ Validates a proof for a proposal:
     - If challenged: prover receives the challenger's bond
     - If unchallenged: no reward but can have fast finality
 
+Attempting to submit a proof will revert if:
+- Proof is not submitted before the proof deadline
+- Proof is not valid
+- If a prover tries to prove a game that has already been proven
+
 ### Resolution
 
 ```solidity
@@ -244,6 +249,8 @@ Resolves the game by:
 - Ensure that the deadline has passed, and if the proposal is `Unchallenged`, then set `DEFENDER_WON`.
 - Ensure that the deadline has passed, and if the proposal is `Challenged`, then set `CHALLENGER_WON`
 - Distributing bonds based on outcome
+    - Distribution result is stored in `mapping(address => uint256) public credit;`.
+    - Actual distribution is done when appropriate recipient calls `claimCredit()`.
     - If parent game is `CHALLENGER_WON`, then the proposer's bond is distributed to the challenger.
       But if there was no challenge for the current game, then the proposer's bond is burned.
 

@@ -23,6 +23,7 @@ import {
     ClockTimeExceeded,
     GameNotInProgress,
     IncorrectBondAmount,
+    NoCreditToClaim,
     UnexpectedRootClaim
 } from "src/dispute/lib/Errors.sol";
 import "src/fp/lib/Errors.sol";
@@ -142,6 +143,9 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
     /// @notice The claim made by the proposer.
     ClaimData public claimData;
 
+    /// @notice Credited balances for participants.
+    mapping(address => uint256) public credit;
+
     /// @notice The starting output root of the game that is proven from in case of a challenge.
     /// @dev This should match the claim root of the parent game.
     OutputRoot public startingOutputRoot;
@@ -257,9 +261,6 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             deadline: Timestamp.wrap(uint64(block.timestamp + MAX_CHALLENGE_DURATION.raw()))
         });
 
-        // Hold the bond in the contract.
-        payable(address(this)).transfer(msg.value);
-
         // Set the game as initialized.
         initialized = true;
 
@@ -311,9 +312,6 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
         // Update the clock to the current block timestamp, which marks the start of the challenge.
         claimData.deadline = Timestamp.wrap(uint64(block.timestamp + MAX_PROVE_DURATION.raw()));
 
-        // Hold the bond in the contract.
-        payable(address(this)).transfer(msg.value);
-
         emit Challenged(claimData.counteredBy);
 
         return claimData.status;
@@ -324,6 +322,9 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
     function prove(bytes calldata proofBytes) external returns (ProposalStatus) {
         // INVARIANT: Cannot prove a game if the clock has timed out.
         if (uint64(block.timestamp) > claimData.deadline.raw()) revert ClockTimeExceeded();
+
+        // INVARIANT: Cannot prove a claim that has already been proven
+        if (claimData.prover != address(0)) revert AlreadyProven();
 
         // Decode the public values to check the claim root
         AggregationOutputs memory publicValues = AggregationOutputs({
@@ -381,8 +382,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             status = GameStatus.CHALLENGER_WINS;
             resolvedAt = Timestamp.wrap(uint64(block.timestamp));
 
-            // Distribute the bond to the challenger
-            payable(claimData.counteredBy).transfer(address(this).balance);
+            // Record the challenger's reward
+            credit[claimData.counteredBy] += address(this).balance;
 
             emit Resolved(status);
 
@@ -396,8 +397,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             status = GameStatus.DEFENDER_WINS;
             resolvedAt = Timestamp.wrap(uint64(block.timestamp));
 
-            // Distribute the bond back to the proposer
-            payable(gameCreator()).transfer(address(this).balance);
+            // Record the proposer's reward
+            credit[gameCreator()] += address(this).balance;
 
             emit Resolved(status);
         } else if (claimData.status == ProposalStatus.Challenged) {
@@ -406,8 +407,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             status = GameStatus.CHALLENGER_WINS;
             resolvedAt = Timestamp.wrap(uint64(block.timestamp));
 
-            // Distribute the bond to the challenger
-            payable(claimData.counteredBy).transfer(address(this).balance);
+            // Record the challenger's reward
+            credit[claimData.counteredBy] += address(this).balance;
 
             emit Resolved(status);
         } else if (claimData.status == ProposalStatus.UnchallengedAndValidProofProvided) {
@@ -415,8 +416,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             status = GameStatus.DEFENDER_WINS;
             resolvedAt = Timestamp.wrap(uint64(block.timestamp));
 
-            // Return the initial bond to the proposer
-            payable(gameCreator()).transfer(address(this).balance);
+            // Record the proposer's reward
+            credit[gameCreator()] += address(this).balance;
 
             emit Resolved(status);
         } else if (claimData.status == ProposalStatus.ChallengedAndValidProofProvided) {
@@ -424,16 +425,31 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver {
             status = GameStatus.DEFENDER_WINS;
             resolvedAt = Timestamp.wrap(uint64(block.timestamp));
 
-            // Distribute the proof reward to the prover
-            payable(claimData.prover).transfer(PROOF_REWARD);
+            // Record the proof reward for the prover
+            credit[claimData.prover] += PROOF_REWARD;
 
-            // Return the initial bond to the proposer
-            payable(gameCreator()).transfer(address(this).balance);
+            // Record the remaining balance (proposer's bond) for the proposer
+            credit[gameCreator()] += address(this).balance - PROOF_REWARD;
 
             emit Resolved(status);
         }
 
         return status;
+    }
+
+    /// @notice Claim the credit belonging to the recipient address.
+    /// @param _recipient The owner and recipient of the credit.
+    function claimCredit(address _recipient) external {
+        // Remove the credit from the recipient prior to performing the external call.
+        uint256 recipientCredit = credit[_recipient];
+        credit[_recipient] = 0;
+
+        // Revert if the recipient has no credit to claim.
+        if (recipientCredit == 0) revert NoCreditToClaim();
+
+        // Transfer the credit to the recipient.
+        (bool success,) = _recipient.call{value: recipientCredit}(hex"");
+        if (!success) revert BondTransferFailed();
     }
 
     /// @notice Getter for the game type.
