@@ -17,6 +17,7 @@
     - [Forwards Compatibility Considerations](#forwards-compatibility-considerations)
     - [Client Implementation Considerations](#client-implementation-considerations)
       - [Transaction Simulation](#transaction-simulation)
+- [Deposit Requests](#deposit-requests)
 - [Block Body Withdrawals List](#block-body-withdrawals-list)
 - [Block Sealing](#block-sealing)
 - [Engine API Updates](#engine-api-updates)
@@ -127,6 +128,17 @@ directly store this information.
 In response to RPC methods like `eth_simulateV1` that allow simulation of arbitrary transactions within one or more blocks,
 an empty withdrawals root should be included in the header of a block that consists of such simulated transactions. The same
 is applicable for scenarios where the actual withdrawals root value is not readily available.
+
+## Deposit Requests
+
+[EIP-6110] shifts deposit to the execution layer, introducing a new [EIP-7685] deposit request of type
+`DEPOSIT_REQUEST_TYPE`. Deposit requests then appear in the [EIP-7685] requests list. The OP Stack needs to ignore these
+requests. Requests generation must be modified to exclude [EIP-6110] deposit requests. Note that since the [EIP-6110]
+request type did _not_ exist prior to Pectra on L1 and the Isthmus hardfork on L2, no activation time is needed since these
+deposit type requests may always be excluded.
+
+[EIP-6110]: https://eips.ethereum.org/EIPS/eip-6110
+[EIP-7685]: https://eips.ethereum.org/EIPS/eip-7685
 
 ## Block Body Withdrawals List
 
