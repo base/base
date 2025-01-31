@@ -67,10 +67,6 @@ impl alloy_network_primitives::ReceiptResponse for OpTransactionReceipt {
         self.inner.to()
     }
 
-    fn authorization_list(&self) -> Option<&[alloy_eips::eip7702::SignedAuthorization]> {
-        self.inner.authorization_list()
-    }
-
     fn cumulative_gas_used(&self) -> u64 {
         self.inner.cumulative_gas_used()
     }

@@ -3,7 +3,10 @@
 use crate::{OpDepositReceipt, OpDepositReceiptWithBloom, OpTxType};
 use alloc::vec::Vec;
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom, TxReceipt};
-use alloy_eips::eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718};
+use alloy_eips::{
+    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
+    Typed2718,
+};
 use alloy_primitives::{logs_bloom, Bloom, Log};
 use alloy_rlp::{length_of_length, BufMut, Decodable, Encodable};
 
@@ -247,17 +250,20 @@ impl Decodable for OpReceiptEnvelope {
     }
 }
 
-impl Encodable2718 for OpReceiptEnvelope {
-    fn type_flag(&self) -> Option<u8> {
-        match self {
-            Self::Legacy(_) => None,
-            Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
-            Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
-            Self::Eip7702(_) => Some(OpTxType::Eip7702 as u8),
-            Self::Deposit(_) => Some(OpTxType::Deposit as u8),
-        }
+impl Typed2718 for OpReceiptEnvelope {
+    fn ty(&self) -> u8 {
+        let ty = match self {
+            Self::Legacy(_) => OpTxType::Legacy,
+            Self::Eip2930(_) => OpTxType::Eip2930,
+            Self::Eip1559(_) => OpTxType::Eip1559,
+            Self::Eip7702(_) => OpTxType::Eip7702,
+            Self::Deposit(_) => OpTxType::Deposit,
+        };
+        ty as u8
     }
+}
 
+impl Encodable2718 for OpReceiptEnvelope {
     fn encode_2718_len(&self) -> usize {
         self.inner_length() + !self.is_legacy() as usize
     }
@@ -327,24 +333,27 @@ mod tests {
         let expected = hex!("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff");
 
         let mut data = vec![];
-        let receipt =
-            OpReceiptEnvelope::Legacy(ReceiptWithBloom {
-                receipt: Receipt {
-                    status: false.into(),
-                    cumulative_gas_used: 0x1,
-                    logs: vec![Log {
-                        address: address!("0000000000000000000000000000000000000011"),
-                        data: LogData::new_unchecked(
-                            vec![
-                        b256!("000000000000000000000000000000000000000000000000000000000000dead"),
-                        b256!("000000000000000000000000000000000000000000000000000000000000beef"),
-                    ],
-                            bytes!("0100ff"),
-                        ),
-                    }],
-                },
-                logs_bloom: [0; 256].into(),
-            });
+        let receipt = OpReceiptEnvelope::Legacy(ReceiptWithBloom {
+            receipt: Receipt {
+                status: false.into(),
+                cumulative_gas_used: 0x1,
+                logs: vec![Log {
+                    address: address!("0000000000000000000000000000000000000011"),
+                    data: LogData::new_unchecked(
+                        vec![
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000dead"
+                            ),
+                            b256!(
+                                "000000000000000000000000000000000000000000000000000000000000beef"
+                            ),
+                        ],
+                        bytes!("0100ff"),
+                    ),
+                }],
+            },
+            logs_bloom: [0; 256].into(),
+        });
 
         receipt.network_encode(&mut data);
 

@@ -184,7 +184,7 @@ impl<N, T, P> OpEngineApi<N, T> for P
 where
     N: Network,
     T: Transport + Clone,
-    P: Provider<T, N>,
+    P: Provider<N>,
 {
     async fn new_payload_v2(
         &self,

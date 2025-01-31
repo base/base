@@ -73,7 +73,7 @@ impl OpPooledTransaction {
     /// length of the header + the length of the type flag and inner encoding.
     fn network_len(&self) -> usize {
         let mut payload_length = self.encode_2718_len();
-        if !Encodable2718::is_legacy(self) {
+        if !self.is_legacy() {
             payload_length += Header { list: false, payload_length }.length();
         }
 
