@@ -29,7 +29,6 @@ use alloy_rlp::{Decodable, Encodable};
     serde(into = "serde_from::TaggedTxEnvelope", from = "serde_from::MaybeTaggedTxEnvelope")
 )]
 #[cfg_attr(all(any(test, feature = "arbitrary"), feature = "k256"), derive(arbitrary::Arbitrary))]
-#[non_exhaustive]
 pub enum OpTxEnvelope {
     /// An untagged [`TxLegacy`].
     Legacy(Signed<TxLegacy>),

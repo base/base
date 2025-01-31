@@ -225,7 +225,6 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
                 };
                 Self::Deposit(consensus_receipt)
             }
-            _ => unreachable!("Unsupported OpReceiptEnvelope variant"),
         }
     }
 }
