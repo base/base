@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
-use kona_host::HostCli;
+use kona_host::single::SingleChainHostCli;
 use log::info;
 use op_succinct_host_utils::{
     block_range::{
@@ -9,20 +9,19 @@ use op_succinct_host_utils::{
         split_range_basic, SpanBatchRange,
     },
     fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
-    get_proof_stdin,
+    get_proof_stdin, start_server_and_native_client,
     stats::ExecutionStats,
-    witnessgen::run_native_data_generation,
     ProgramType,
 };
 use op_succinct_scripts::HostExecutorArgs;
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sp1_sdk::{utils, ProverClient};
 use std::{
     cmp::{max, min},
     fs::{self, OpenOptions},
     io::Seek,
     path::PathBuf,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
@@ -32,7 +31,7 @@ const TWELVE_HOURS: Duration = Duration::from_secs(60 * 60 * 12);
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
 async fn execute_blocks_and_write_stats_csv(
-    host_clis: &[HostCli],
+    host_clis: &[SingleChainHostCli],
     ranges: Vec<SpanBatchRange>,
     l2_chain_id: u64,
     start: u64,
@@ -74,50 +73,58 @@ async fn execute_blocks_and_write_stats_csv(
 
     let prover = ProverClient::builder().cpu().build();
 
-    // Run the zkVM execution process for each split range in parallel and fill in the execution stats.
-    host_clis
-        .par_iter()
-        .zip(block_data.par_iter())
-        .for_each(|(host_cli, (range, block_data))| {
-            let sp1_stdin = get_proof_stdin(host_cli).unwrap();
+    // Use futures::future::join_all to run the server and client in parallel. Note: stream::iter did not work here, possibly
+    // because the server and client are long-lived tasks.
+    let handles = host_clis.iter().cloned().map(|host_cli| {
+        tokio::spawn(async move {
+            let oracle = start_server_and_native_client(&host_cli).await.unwrap();
+            get_proof_stdin(oracle).unwrap()
+        })
+    });
+    let stdins = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect::<Vec<_>>();
 
-            // FIXME: Implement retries with a smaller block range if this fails.
-            let result = prover.execute(RANGE_ELF, &sp1_stdin).run();
+    let execution_inputs = stdins.iter().zip(block_data.iter()).collect::<Vec<_>>();
 
-            // If the execution fails, skip this block range and log the error.
-            if let Some(err) = result.as_ref().err() {
-                log::warn!(
-                    "Failed to execute blocks {:?} - {:?} because of {:?}. Reduce your `batch-size` if you're running into OOM issues on SP1.",
-                    range.start,
-                    range.end,
-                    err
-                );
-                return;
-            }
+    // Execute the program for each block range in parallel.
+    execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
+        let result = prover.execute(RANGE_ELF, sp1_stdin).run();
 
-            let (_, report) = result.unwrap();
+        if let Some(err) = result.as_ref().err() {
+            log::warn!(
+                "Failed to execute blocks {:?} - {:?} because of {:?}. Reduce your `batch-size` if you're running into OOM issues on SP1.",
+                range.start,
+                range.end,
+                err
+            );
+            return;
+        }
 
-            // Get the existing execution stats and modify it in place.
-            let execution_stats = ExecutionStats::new(block_data, &report, 0, 0);
+        let (_, report) = result.unwrap();
 
-            let mut file = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .open(&report_path)
-                .unwrap();
+        let execution_stats = ExecutionStats::new(0, block_data, &report, 0, 0);
 
-            // Writes the headers only if the file is empty.
-            let needs_header = file.seek(std::io::SeekFrom::End(0)).unwrap() == 0;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&report_path)
+            .unwrap();
 
-            let mut csv_writer = csv::WriterBuilder::new()
-                .has_headers(needs_header)
-                .from_writer(file);
+        // Writes the headers only if the file is empty.
+        let needs_header = file.seek(std::io::SeekFrom::End(0)).unwrap() == 0;
 
-            csv_writer
-                .serialize(execution_stats.clone())
-                .expect("Failed to write execution stats to CSV.");
-            csv_writer.flush().expect("Failed to flush CSV writer.");
-        });
+        let mut csv_writer = csv::WriterBuilder::new()
+            .has_headers(needs_header)
+            .from_writer(file);
+
+        csv_writer
+            .serialize(execution_stats.clone())
+            .expect("Failed to write execution stats to CSV.");
+        csv_writer.flush().expect("Failed to flush CSV writer.");
+    });
 
     info!("Execution is complete.");
 }
@@ -226,14 +233,6 @@ async fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .await;
 
-    let start_time = Instant::now();
-    if !args.use_cache {
-        // Get the host CLI args
-        run_native_data_generation(&host_clis).await;
-    }
-    let total_witness_generation_time_sec = start_time.elapsed().as_secs();
-
-    let start_time = Instant::now();
     execute_blocks_and_write_stats_csv(
         &host_clis,
         split_ranges,
@@ -242,7 +241,6 @@ async fn main() -> Result<()> {
         l2_end_block,
     )
     .await;
-    let total_execution_time_sec = start_time.elapsed().as_secs();
 
     // Get the path to the execution report CSV file.
     let cargo_metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
@@ -266,11 +264,7 @@ async fn main() -> Result<()> {
     println!(
         "Aggregate Execution Stats for Chain {}: \n {}",
         l2_chain_id,
-        aggregate_execution_stats(
-            &final_execution_stats,
-            total_execution_time_sec,
-            total_witness_generation_time_sec
-        )
+        aggregate_execution_stats(&final_execution_stats, 0, 0)
     );
 
     Ok(())

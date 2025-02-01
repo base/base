@@ -1,5 +1,5 @@
-use alloy::{hex, sol_types::SolValue};
-use alloy_primitives::B256;
+use alloy_primitives::{hex, B256};
+use alloy_sol_types::SolValue;
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, AGGREGATION_OUTPUTS_SIZE};

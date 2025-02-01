@@ -54,25 +54,18 @@ jobs:
             type=sha
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pre-build debug
-        run: |
-          echo "Meta tags: ${{ steps.meta-op-proposer.outputs.tags }}"
-          echo "Push condition: ${{ github.event_name != 'pull_request' }}"
-          echo "Event name: ${{ github.event_name }}"
-
       - name: Build and push op-proposer
         uses: docker/build-push-action@v6
         with:
           context: .
           file: proposer/op/Dockerfile.op_proposer
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-op-proposer.outputs.tags }}
           labels: ${{ steps.meta-op-proposer.outputs.labels }}
           cache-from: type=gha
@@ -89,7 +82,7 @@ jobs:
         with:
           context: .
           file: proposer/succinct/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-succinct.outputs.tags }}
           labels: ${{ steps.meta-succinct.outputs.labels }}
           cache-from: type=gha

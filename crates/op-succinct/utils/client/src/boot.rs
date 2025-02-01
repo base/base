@@ -3,7 +3,8 @@
 
 use alloy_primitives::B256;
 use alloy_sol_types::sol;
-use op_alloy_genesis::RollupConfig;
+use kona_proof::BootInfo;
+use maili_genesis::RollupConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -38,26 +39,14 @@ sol! {
     }
 }
 
-impl From<BootInfoWithBytesConfig> for BootInfoStruct {
-    /// Convert a `BootInfoWithBytesConfig` to a `BootInfoStruct`.
-    fn from(boot_info: BootInfoWithBytesConfig) -> Self {
-        let rollup_config = serde_json::from_slice(&boot_info.rollup_config_bytes).unwrap();
+impl From<BootInfo> for BootInfoStruct {
+    fn from(boot_info: BootInfo) -> Self {
         BootInfoStruct {
             l1Head: boot_info.l1_head,
-            l2PreRoot: boot_info.l2_output_root,
-            l2PostRoot: boot_info.l2_claim,
-            l2BlockNumber: boot_info.l2_claim_block,
-            rollupConfigHash: hash_rollup_config(&rollup_config),
+            l2PreRoot: boot_info.agreed_l2_output_root,
+            l2PostRoot: boot_info.claimed_l2_output_root,
+            l2BlockNumber: boot_info.claimed_l2_block_number,
+            rollupConfigHash: hash_rollup_config(&boot_info.rollup_config),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BootInfoWithBytesConfig {
-    pub l1_head: B256,
-    pub l2_output_root: B256,
-    pub l2_claim: B256,
-    pub l2_claim_block: u64,
-    pub chain_id: u64,
-    pub rollup_config_bytes: Vec<u8>,
 }

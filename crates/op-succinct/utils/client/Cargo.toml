@@ -21,13 +21,14 @@ alloy-sol-types.workspace = true
 revm.workspace = true
 
 # workspace (op-alloy)
-op-alloy-genesis.workspace = true
-op-alloy-protocol.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 
+# workspace (maili)
+maili-genesis.workspace = true
+maili-rpc.workspace = true
+maili-protocol.workspace = true
+
 # workspace (kona)
-kona-common.workspace = true
-kona-client.workspace = true
 kona-preimage.workspace = true
 kona-mpt.workspace = true
 kona-derive.workspace = true

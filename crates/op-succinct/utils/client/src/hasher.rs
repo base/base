@@ -4,10 +4,12 @@ use std::hash::{BuildHasher, Hasher};
 /// Instead, it uses the first 8 bytes of a byte array.
 /// SAFETY: This is intended to be used only with keys that are certain
 /// to have unique first 8 bytes, which are ~uniformly distributed.
+#[derive(Debug, Clone, Default)]
 pub struct BytesHasher {
     hash: u64,
 }
 
+/// In the zkVM, we can save cycles by looking up smaller keys.
 impl Hasher for BytesHasher {
     /// Takes the first 8 bytes of the PreimageKey (which includes the type)
     /// and then converts them in little-endian order to a u64.

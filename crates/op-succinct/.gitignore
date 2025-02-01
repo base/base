@@ -44,3 +44,6 @@ sp1-testing-suite-artifacts/
 
 # Contracts
 contracts/opsuccinctl2ooconfig.json
+
+# Rollup Configs
+configs/

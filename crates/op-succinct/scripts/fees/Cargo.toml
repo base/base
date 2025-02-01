@@ -12,9 +12,9 @@ name = "l1-fee-scalar"
 path = "bin/l1_fee_scalar.rs"
 
 [dependencies]
-op-succinct-host-utils = { workspace = true }
-clap = { workspace = true }
-anyhow = { workspace = true }
-tokio = { workspace = true }
-dotenv = { workspace = true }
-alloy-primitives = { workspace = true }
+op-succinct-host-utils.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+dotenv.workspace = true
+alloy-primitives.workspace = true

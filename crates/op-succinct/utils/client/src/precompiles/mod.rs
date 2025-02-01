@@ -18,13 +18,14 @@ macro_rules! create_annotated_precompile {
                 let precompile = $precompile.precompile();
                 match precompile {
                     Precompile::Standard(precompile) => {
-                        if cfg!(target_os = "zkvm") {
-                            println!(concat!("cycle-tracker-report-start: precompile-", $name));
-                        }
+                        #[cfg(target_os = "zkvm")]
+                        println!(concat!("cycle-tracker-report-start: precompile-", $name));
+
                         let result = precompile(input, gas_limit);
-                        if cfg!(target_os = "zkvm") {
-                            println!(concat!("cycle-tracker-report-end: precompile-", $name));
-                        }
+
+                        #[cfg(target_os = "zkvm")]
+                        println!(concat!("cycle-tracker-report-end: precompile-", $name));
+
                         result
                     }
                     _ => panic!("Annotated precompile must be a standard precompile."),
