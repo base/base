@@ -3,15 +3,15 @@ use common::post_to_github_pr;
 use op_succinct_host_utils::{
     block_range::get_rolling_block_range,
     fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
-    get_proof_stdin,
+    get_proof_stdin, start_server_and_native_client,
     stats::{ExecutionStats, MarkdownExecutionStats},
     ProgramType,
 };
-use op_succinct_prove::{execute_multi, generate_witness, DEFAULT_RANGE, ONE_HOUR};
+use op_succinct_prove::{execute_multi, DEFAULT_RANGE, ONE_HOUR};
 
 mod common;
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn execute_batch() -> Result<()> {
     dotenv::dotenv()?;
 
@@ -30,18 +30,24 @@ async fn execute_batch() -> Result<()> {
         )
         .await?;
 
-    let witness_generation_time_sec = generate_witness(&host_cli).await?;
+    let oracle = start_server_and_native_client(&host_cli).await?;
 
     // Get the stdin for the block.
-    let sp1_stdin = get_proof_stdin(&host_cli)?;
+    let sp1_stdin = get_proof_stdin(oracle)?;
 
     let (block_data, report, execution_duration) =
         execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
+    let l1_block_number = data_fetcher
+        .get_l1_header(host_cli.l1_head.into())
+        .await
+        .unwrap()
+        .number;
     let stats = ExecutionStats::new(
+        l1_block_number,
         &block_data,
         &report,
-        witness_generation_time_sec.as_secs(),
+        0,
         execution_duration.as_secs(),
     );
 

@@ -13,23 +13,40 @@ sp1-sdk.workspace = true
 op-succinct-client-utils.workspace = true
 
 # op-alloy
-op-alloy-genesis.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
-op-alloy-protocol.workspace = true
 op-alloy-consensus.workspace = true
+op-alloy-rpc-types-engine.workspace = true
+
+# maili
+maili-genesis.workspace = true
+maili-protocol.workspace = true
+maili-rpc.workspace = true
+
+# revm
+revm.workspace = true
 
 # alloy
-alloy = { workspace = true }
+alloy-rpc-client.workspace = true
+alloy-rpc-types.workspace = true
+alloy-signer-local.workspace = true
+alloy-provider.workspace = true
+alloy-transport = { workspace = true, default-features = true }
+alloy-transport-http = { workspace = true, default-features = true }
 alloy-rlp.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-eips.workspace = true
+alloy-contract.workspace = true
 
 # kona
 kona-host.workspace = true
-
+kona-preimage.workspace = true
+kona-providers-alloy.workspace = true
+kona-client.workspace = true
+kona-proof.workspace = true
+kona-mpt.workspace = true
 # general
 rkyv.workspace = true
 serde_json.workspace = true
@@ -43,5 +60,7 @@ num-format.workspace = true
 serde.workspace = true
 reqwest.workspace = true
 log.workspace = true
+clap.workspace = true
 sysinfo = "0.32.0"
-
+async-trait.workspace = true
+tracing.workspace = true

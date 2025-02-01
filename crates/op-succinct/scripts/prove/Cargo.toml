@@ -18,30 +18,32 @@ path = "bin/agg.rs"
 [dependencies]
 
 # workspace
-tokio = { workspace = true }
-clap = { workspace = true }
-cargo_metadata = { workspace = true }
+tokio.workspace = true
+clap.workspace = true
+cargo_metadata.workspace = true
 anyhow.workspace = true
 dotenv.workspace = true
 csv.workspace = true
 
 # kona
-kona-host = { workspace = true }
+kona-host.workspace = true
+kona-preimage.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
 op-succinct-scripts = { path = "../utils" }
+async-trait.workspace = true
 
 # alloy
-alloy-primitives = { workspace = true }
+alloy-primitives.workspace = true
 
 # sp1
-sp1-sdk = { workspace = true }
+sp1-sdk.workspace = true
 
 [dev-dependencies]
 reqwest = { version = "0.12.4", features = ["json"] }
-serde_json = { workspace = true }
+serde_json.workspace = true
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true

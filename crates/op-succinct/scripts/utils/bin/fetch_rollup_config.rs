@@ -1,5 +1,6 @@
-use alloy::{eips::BlockId, hex, signers::local::PrivateKeySigner};
-use alloy_primitives::Address;
+use alloy_eips::BlockId;
+use alloy_primitives::{hex, Address};
+use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode, RunContext};

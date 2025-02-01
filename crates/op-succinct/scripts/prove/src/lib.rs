@@ -1,11 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Ok, Result};
-use kona_host::HostCli;
-use op_succinct_host_utils::{
-    fetcher::{BlockInfo, OPSuccinctDataFetcher},
-    witnessgen::WitnessGenExecutor,
-};
+use op_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
 use sp1_sdk::{ExecutionReport, ProverClient, SP1Stdin};
 
 pub const DEFAULT_RANGE: u64 = 5;
@@ -14,23 +10,6 @@ pub const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
 
 pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
-
-pub async fn generate_witness(host_cli: &HostCli) -> Result<Duration> {
-    let start_time = Instant::now();
-
-    // Start the server and native client.
-    let mut witnessgen_executor = WitnessGenExecutor::default();
-    witnessgen_executor.spawn_witnessgen(host_cli).await?;
-    witnessgen_executor.flush().await?;
-
-    let witness_generation_time_sec = start_time.elapsed();
-    println!(
-        "Witness Generation Duration: {:?}",
-        witness_generation_time_sec.as_secs()
-    );
-
-    Ok(witness_generation_time_sec)
-}
 
 pub async fn execute_multi(
     data_fetcher: &OPSuccinctDataFetcher,

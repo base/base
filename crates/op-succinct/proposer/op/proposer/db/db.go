@@ -374,6 +374,8 @@ func (db *ProofDB) TryCreateAggProofFromSpanProofs(from, minTo uint64) (bool, ui
 }
 
 // GetMaxContiguousSpanProofRange returns the start and end of the contiguous span proof chain.
+// TODO: The logic here is not resilient to manually inserted requests where two completed proof requests overlap in a
+// non-contiguous way.
 func (db *ProofDB) GetMaxContiguousSpanProofRange(start uint64) (uint64, error) {
 	ctx := context.Background()
 

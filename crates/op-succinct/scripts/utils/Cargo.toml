@@ -34,31 +34,33 @@ path = "bin/gen_sp1_test_artifacts.rs"
 [dependencies]
 
 # workspace
-alloy-primitives = { workspace = true }
-alloy = { workspace = true }
-bincode = { workspace = true }
-tokio = { workspace = true }
-clap = { workspace = true }
-cargo_metadata = { workspace = true }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-signer-local.workspace = true
+alloy-eips.workspace = true
+bincode.workspace = true
+tokio.workspace = true
+clap.workspace = true
+cargo_metadata.workspace = true
 anyhow.workspace = true
 dotenv.workspace = true
 log.workspace = true
 csv.workspace = true
-serde = { workspace = true }
-reqwest = { workspace = true }
+serde.workspace = true
+reqwest.workspace = true
 futures.workspace = true
 rayon = "1.10.0"
 serde_json.workspace = true
 
 # kona
-kona-host = { workspace = true }
+kona-host.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
 
 # sp1
-sp1-sdk = { workspace = true }
+sp1-sdk.workspace = true
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true

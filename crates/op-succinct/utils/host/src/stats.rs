@@ -8,6 +8,7 @@ use sp1_sdk::ExecutionReport;
 /// Statistics for the range execution.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecutionStats {
+    pub l1_head: u64,
     pub batch_start: u64,
     pub batch_end: u64,
     /// The wall clock time to generate the witness.
@@ -113,6 +114,7 @@ impl fmt::Display for ExecutionStats {
 impl ExecutionStats {
     /// Create a new execution stats.
     pub fn new(
+        l1_head: u64,
         block_data: &[BlockInfo],
         report: &ExecutionReport,
         witness_generation_time_sec: u64,
@@ -129,6 +131,7 @@ impl ExecutionStats {
         let total_gas_used: u64 = block_data.iter().map(|b| b.gas_used).sum();
 
         Self {
+            l1_head,
             // The "block data" does not include the first block (as it's not executed), so we need to subtract 1 to give the user back the
             // block corresponding to the blockhash they're proving from.
             batch_start: block_data[0].block_number - 1,

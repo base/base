@@ -14,20 +14,19 @@ path = "bin/server.rs"
 [dependencies]
 
 # workspace
-tokio = { workspace = true }
-alloy-primitives = { workspace = true }
-alloy = { workspace = true }
+tokio.workspace = true
+alloy-primitives.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
 
 # sp1
-sp1-sdk = { workspace = true }
+sp1-sdk.workspace = true
 
 anyhow.workspace = true
 dotenv.workspace = true
 op-succinct-client-utils.workspace = true
-serde = { workspace = true }
+serde.workspace = true
 serde_json.workspace = true
 csv.workspace = true
 # server

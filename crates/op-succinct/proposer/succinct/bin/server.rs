@@ -14,9 +14,8 @@ use op_succinct_client_utils::{
 };
 use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
-    get_agg_proof_stdin, get_proof_stdin,
+    get_agg_proof_stdin, get_proof_stdin, start_server_and_native_client,
     stats::ExecutionStats,
-    witnessgen::{WitnessGenExecutor, WITNESSGEN_TIMEOUT},
     L2OutputOracle, ProgramType,
 };
 use op_succinct_proposer::{
@@ -170,27 +169,9 @@ async fn request_span_proof(
         }
     };
 
-    // Start the server and native client with a timeout.
-    // Note: Ideally, the server should call out to a separate process that executes the native
-    // host, and return an ID that the client can poll on to check if the proof was submitted.
-    let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
-    if let Err(e) = witnessgen_executor.spawn_witnessgen(&host_cli).await {
-        error!("Failed to spawn witness generation: {}", e);
-        return Err(AppError(anyhow::anyhow!(
-            "Failed to spawn witness generation: {}",
-            e
-        )));
-    }
-    // Log any errors from running the witness generation process.
-    if let Err(e) = witnessgen_executor.flush().await {
-        error!("Failed to generate witness: {}", e);
-        return Err(AppError(anyhow::anyhow!(
-            "Failed to generate witness: {}",
-            e
-        )));
-    }
+    let mem_kv_store = start_server_and_native_client(&host_cli).await?;
 
-    let sp1_stdin = match get_proof_stdin(&host_cli) {
+    let sp1_stdin = match get_proof_stdin(mem_kv_store) {
         Ok(stdin) => stdin,
         Err(e) => {
             error!("Failed to get proof stdin: {}", e);
@@ -363,26 +344,11 @@ async fn request_mock_span_proof(
         }
     };
 
-    // Start the server and native client with a timeout.
-    // Note: Ideally, the server should call out to a separate process that executes the native
-    // host, and return an ID that the client can poll on to check if the proof was submitted.
     let start_time = Instant::now();
-    let mut witnessgen_executor = WitnessGenExecutor::new(WITNESSGEN_TIMEOUT, RunContext::Docker);
-    if let Err(e) = witnessgen_executor.spawn_witnessgen(&host_cli).await {
-        error!("Failed to spawn witness generator: {}", e);
-        return Err(AppError(e));
-    }
-    // Log any errors from running the witness generation process.
-    if let Err(e) = witnessgen_executor.flush().await {
-        error!("Failed to generate witness: {}", e);
-        return Err(AppError(anyhow::anyhow!(
-            "Failed to generate witness: {}",
-            e
-        )));
-    }
-    let witness_generation_time_sec = start_time.elapsed();
+    let oracle = start_server_and_native_client(&host_cli).await?;
+    let witness_generation_duration = start_time.elapsed();
 
-    let sp1_stdin = match get_proof_stdin(&host_cli) {
+    let sp1_stdin = match get_proof_stdin(oracle) {
         Ok(stdin) => stdin,
         Err(e) => {
             error!("Failed to get proof stdin: {}", e);
@@ -399,10 +365,14 @@ async fn request_mock_span_proof(
         .get_l2_block_data_range(payload.start, payload.end)
         .await?;
 
+    let l1_head = host_cli.l1_head;
+    // Get the L1 block number from the L1 head.
+    let l1_block_number = fetcher.get_l1_header(l1_head.into()).await?.number;
     let stats = ExecutionStats::new(
+        l1_block_number,
         &block_data,
         &report,
-        witness_generation_time_sec.as_secs(),
+        witness_generation_duration.as_secs(),
         execution_duration.as_secs(),
     );
 

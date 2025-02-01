@@ -37,7 +37,7 @@ jobs:
           # Check for any changes in the elf directory
           if [ -n "$(git status --porcelain elf/)" ]; then
             echo "❌ ELF files changed during build!"
-            git diff elf/
+            git diff
             exit 1
           else
             echo "✅ ELF files remained unchanged"

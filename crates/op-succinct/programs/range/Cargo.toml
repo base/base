@@ -8,31 +8,22 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-cfg-if.workspace = true
-serde_json.workspace = true
-log.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
 
-# workspace (ethereum)
+# alloy
+alloy-primitives.workspace = true
+
+# op alloy
 op-alloy-consensus.workspace = true
 op-alloy-rpc-types-engine.workspace = true
-op-alloy-protocol.workspace = true
-op-alloy-genesis.workspace = true
-alloy-consensus.workspace = true
-alloy-eips.workspace = true
-alloy-rlp.workspace = true
-alloy-primitives.workspace = true
+
+# kona
+kona-proof.workspace = true
+kona-preimage.workspace = true
 
 # sp1
 sp1-zkvm.workspace = true
-
-# kona
-kona-executor.workspace = true
-kona-derive.workspace = true
-kona-proof.workspace = true
-kona-driver.workspace = true
-kona-preimage.workspace = true
 
 # op-succinct
 op-succinct-client-utils.workspace = true

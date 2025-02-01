@@ -8,12 +8,12 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-sha2 = { workspace = true }
-sp1-zkvm = { workspace = true }
-sp1-lib = { workspace = true }
-op-succinct-client-utils = { workspace = true }
-alloy-consensus = { workspace = true }
-alloy-primitives = { workspace = true }
-alloy-sol-types = { workspace = true }
+sha2.workspace = true
+sp1-zkvm.workspace = true
+sp1-lib.workspace = true
+op-succinct-client-utils.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 serde_cbor.workspace = true
 bincode.workspace = true
