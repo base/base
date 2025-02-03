@@ -12,5 +12,8 @@ pub use fjord::Fjord;
 mod ecotone;
 pub use ecotone::Ecotone;
 
+mod isthmus;
+pub use isthmus::Isthmus;
+
 mod utils;
 pub(crate) use utils::upgrade_to_calldata;

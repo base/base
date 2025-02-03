@@ -25,7 +25,7 @@ pub use eip1559::{
 };
 
 mod hardforks;
-pub use hardforks::{Ecotone, Fjord, Hardfork, Hardforks};
+pub use hardforks::{Ecotone, Fjord, Hardfork, Hardforks, Isthmus};
 
 mod source;
 pub use source::*;
