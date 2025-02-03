@@ -28,11 +28,9 @@ impl Isthmus {
 
     /// Returns the EIP-2935 creation data.
     pub fn eip2935_creation_data() -> Bytes {
-        let contents = core::str::from_utf8(include_bytes!("./bytecode/eip2935_isthmus.hex"))
-            .expect("eip-2935 creation data is not valid UTF-8");
-        let contents = contents.replace("\n", "");
-        let decoded = hex::decode(contents).expect("eip-2935 creation data is not valid hex");
-        decoded.into()
+        hex::decode(include_str!("./bytecode/eip2935_isthmus.hex").replace("\n", ""))
+            .expect("Expected hex byte string")
+            .into()
     }
 
     /// Returns the list of [TxDeposit]s for the network upgrade.
@@ -72,13 +70,10 @@ mod tests {
         let isthmus_upgrade_tx = Isthmus.txs().collect::<Vec<_>>();
         assert_eq!(isthmus_upgrade_tx.len(), 1);
 
-        let expected_first_tx = include_bytes!("./bytecode/isthmus_tx_1.hex");
-        let expected_first_tx =
-            core::str::from_utf8(expected_first_tx).expect("expected_first_tx is not valid UTF-8");
-        let expected_first_tx = expected_first_tx.replace("\n", "");
-        let expected_first_tx =
-            hex::decode(expected_first_tx).expect("expected_first_tx is not valid hex");
-        let expected_txs: Vec<Bytes> = vec![expected_first_tx.into()];
+        let expected_txs: Vec<Bytes> =
+            vec![hex::decode(include_str!("./bytecode/isthmus_tx_1.hex").replace("\n", ""))
+                .unwrap()
+                .into()];
         for (i, expected) in expected_txs.iter().enumerate() {
             assert_eq!(isthmus_upgrade_tx[i], *expected);
         }

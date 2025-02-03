@@ -76,17 +76,23 @@ impl Ecotone {
 
     /// Returns the EIP-4788 creation data.
     pub fn eip4788_creation_data() -> Bytes {
-        include_bytes!("./bytecode/eip4788_ecotone.hex").into()
+        hex::decode(include_str!("./bytecode/eip4788_ecotone.hex").replace("\n", ""))
+            .expect("Expected hex byte string")
+            .into()
     }
 
     /// Returns the raw bytecode for the L1 Block deployment.
     pub fn l1_block_deployment_bytecode() -> Bytes {
-        include_bytes!("./bytecode/l1_block_ecotone.hex").into()
+        hex::decode(include_str!("./bytecode/l1_block_ecotone.hex").replace("\n", ""))
+            .expect("Expected hex byte string")
+            .into()
     }
 
     /// Returns the gas price oracle deployment bytecode.
     pub fn ecotone_gas_price_oracle_deployment_bytecode() -> Bytes {
-        include_bytes!("./bytecode/gpo_ecotone.hex").into()
+        hex::decode(include_str!("./bytecode/gpo_ecotone.hex").replace("\n", ""))
+            .expect("Expected hex byte string")
+            .into()
     }
 
     /// Returns the list of [TxDeposit]s for the Ecotone network upgrade.
@@ -179,12 +185,24 @@ mod tests {
         assert_eq!(ecotone_upgrade_tx.len(), 6);
 
         let expected_txs: Vec<Bytes> = vec![
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_0.hex")).unwrap().into(),
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_1.hex")).unwrap().into(),
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_2.hex")).unwrap().into(),
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_3.hex")).unwrap().into(),
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_4.hex")).unwrap().into(),
-            hex::decode(include_bytes!("./bytecode/ecotone_tx_5.hex")).unwrap().into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_0.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_1.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_2.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_3.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_4.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
+            hex::decode(include_str!("./bytecode/ecotone_tx_5.hex").replace("\n", ""))
+                .unwrap()
+                .into(),
         ];
         for (i, expected) in expected_txs.iter().enumerate() {
             assert_eq!(ecotone_upgrade_tx[i], *expected);
