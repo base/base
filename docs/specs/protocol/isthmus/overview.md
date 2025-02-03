@@ -17,6 +17,7 @@ This document is not finalized and should be considered experimental.
 - [Pectra](https://eips.ethereum.org/EIPS/eip-7600) (Execution Layer):
   - [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
     - [Span Batch Updates](./derivation.md#span-batch-updates)
+  - [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537)
   - [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935)
   - [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002)
     - The EIP-7002 predeploy contract and syscall are not adopted as part of the OP Stack.

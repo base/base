@@ -19,6 +19,7 @@
       - [Transaction Simulation](#transaction-simulation)
 - [Deposit Requests](#deposit-requests)
 - [Block Body Withdrawals List](#block-body-withdrawals-list)
+- [EVM Changes](#evm-changes)
 - [Block Sealing](#block-sealing)
 - [Engine API Updates](#engine-api-updates)
   - [Update to `ExecutableData`](#update-to-executabledata)
@@ -148,6 +149,23 @@ deposit type requests may always be excluded.
 ## Block Body Withdrawals List
 
 Withdrawals list in the block body is encoded as an empty RLP list.
+
+## EVM Changes
+
+Similar to the `bn256Pairing` precompile in the [granite hardfork](../granite/exec-engine.md),
+[EIP-2537](https://eips.ethereum.org/EIPS/eip-2537) introduces a BLS
+precompile that short-circuits depending on input size in the EVM.
+
+The input size limits of the BLS precompile contracts are listed below:
+
+- G1 multiple-scalar-multiply: `input_size <= 513760 bytes`
+- G2 multiple-scalar-multiply: `input_size <= 488448 bytes`
+- Pairing check: `input_size <= 235008 bytes`
+
+The rest of the BLS precompiles are fixed-size operations which have a fixed gas cost.
+
+All of the BLS precompiles should be [accelerated](../../fault-proof/index.md#precompile-accelerators) in fault proof
+programs so they call out to the L1 instead of calculating the result inside the program.
 
 ## Block Sealing
 
