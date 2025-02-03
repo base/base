@@ -12,7 +12,11 @@ reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
+
 clap = { version = "4.4.3" }
+jsonrpsee = { version = "0.24.8" }
+tracing = { version = "0.1.41" }
 
 # TODO: Pinning dependencies to work around deposit-transaction being removed and Reth 1.1.5 not being updated, see:
 # https://github.com/alloy-rs/op-alloy/pull/383/files. This can be removed in the future
@@ -21,6 +25,10 @@ op-alloy-rpc-types-engine = { version =  "=0.9.0", default-features = false }
 op-alloy-rpc-jsonrpsee = { version =  "=0.9.0", default-features = false }
 op-alloy-network = { version =  "=0.9.0", default-features = false }
 op-alloy-consensus = { version =  "=0.9.0", default-features = false }
+alloy-primitives = { version = "=0.8.20", default-features = false }
+alloy-eips = { version = "=0.9.2", default-features = false }
+alloy-rpc-types = { version = "=0.9.2", default-features = false }
+alloy-rpc-types-eth = { version = "=0.9.2" }
 
 [features]
 default = ["optimism"]
