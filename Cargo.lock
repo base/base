@@ -6488,7 +6488,12 @@ dependencies = [
 name = "reth-flashblocks"
 version = "0.1.0"
 dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rpc-types",
+ "alloy-rpc-types-eth",
  "clap",
+ "jsonrpsee",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-jsonrpsee",
@@ -6498,6 +6503,9 @@ dependencies = [
  "reth-optimism-cli",
  "reth-optimism-node",
  "reth-primitives",
+ "reth-rpc-eth-api",
+ "serde",
+ "tracing",
 ]
 
 [[package]]
