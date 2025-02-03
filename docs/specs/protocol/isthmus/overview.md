@@ -18,7 +18,10 @@ This document is not finalized and should be considered experimental.
   - [EIP-7702](https://eips.ethereum.org/EIPS/eip-7702)
     - [Span Batch Updates](./derivation.md#span-batch-updates)
   - [EIP-2935](https://eips.ethereum.org/EIPS/eip-2935)
+  - [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002)
+    - The EIP-7002 predeploy contract and syscall are not adopted as part of the OP Stack.
   - [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251)
+    - The EIP-7251 predeploy contract and syscall are not adopted as part of the OP Stack.
   - [EIP-7623](https://eips.ethereum.org/EIPS/eip-7623)
   - [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110)
   - [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685)
