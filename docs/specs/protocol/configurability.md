@@ -30,6 +30,8 @@
   - [Start block](#start-block)
   - [Superchain target](#superchain-target)
   - [Governance Token](#governance-token)
+  - [Operator Fee Scalar](#operator-fee-scalar)
+  - [Operator Fee Constant](#operator-fee-constant)
   - [Resource Config](#resource-config)
 - [Policy Parameters](#policy-parameters)
   - [Data Availability Type](#data-availability-type)
@@ -282,6 +284,21 @@ contracts deployed on layer 1.<br/>
 **Administrator:** n/a<br/>
 **Requirement:** Disabled<br/>
 **Notes:** Simple clear restriction.<br/>
+
+### [Operator Fee Scalar](exec-engine.md#operator-fees)
+
+**Description:** Operator fee scalar -- used to calculate the operator fee<br/>
+**Administrator:** [System Config Owner](#admin-roles)<br/>
+**Requirement:** 0 <br/>
+
+### [Operator Fee Constant](exec-engine.md#operator-fees)
+
+**Description:** Operator fee constant -- used to calculate the operator fee<br/>
+**Administrator:** [System Config Owner](#admin-roles)<br/>
+**Requirement:** 0 <br/>
+
+Note that the operator fee scalar and constant are primarily used for non-standard configurations,
+like op-succinct, so their standard values are 0.
 
 [^chain-id-uniqueness]: The chain ID must be globally unique among all EVM chains.
 

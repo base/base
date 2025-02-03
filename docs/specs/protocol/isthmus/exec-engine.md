@@ -24,6 +24,10 @@
 - [Engine API Updates](#engine-api-updates)
   - [Update to `ExecutableData`](#update-to-executabledata)
   - [`engine_newPayloadV4` API](#engine_newpayloadv4-api)
+- [Fees](#fees)
+  - [Operator Fee](#operator-fee)
+    - [Configuring Parameters](#configuring-parameters)
+  - [Fee Vaults](#fee-vaults)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -184,3 +188,42 @@ specific hardfork as this type does not exist pre-Pectra.
 
 Post Isthmus, `engine_newPayloadV4` will be used with the additional `ExecutionPayload` attribute. This attribute
 is omitted prior to Isthmus.
+
+## Fees
+
+New OP stack variants have different resource consumption patterns, and thus require a more flexible
+pricing model. To enable more customizable fee structures, Isthmus adds a new component to the fee
+calculation: the `operatorFee`, which is parameterized by two scalars: the `operatorFeeScalar`
+and the `operatorFeeConstant`.
+
+### Operator Fee
+
+The operator fee, is set as follows:
+
+`operatorFee = (gasUsed * operatorFeeScalar / 1e6) + operatorFeeConstant`
+
+Where:
+
+- `gasUsed` is amount of gas used by the transaction.
+- `operatorFeeScalar` is a `uint32` scalar set by the chain operator, scaled by `1e6`.
+- `operatorFeeConstant` is a `uint64` scalar set by the chain operator.
+
+#### Configuring Parameters
+
+`operatorFeeScalar` and `operatorFeeConstant` are loaded in a similar way to the `baseFeeScalar` and
+`blobBaseFeeScalar` used in the [`L1Fee`](../../protocol/exec-engine.md#ecotone-l1-cost-fee-changes-eip-4844-da).
+calculation. In more detail, these parameters can be accessed in two interchangable ways.
+
+- read from the deposited L1 attributes (`operatorFeeScalar` and `operatorFeeConstant`) of the current L2 block
+- read from the L1 Block Info contract (`0x4200000000000000000000000000000000000015`)
+  - using the respective solidity getter functions (`operatorFeeScalar`, `operatorFeeConstant`)
+  - using direct storage-reads:
+    - Operator fee scalar as big-endian `uint32` in slot `8` at offset `0`.
+    - Operator fee constant as big-endian `uint64` in slot `8` at offset `4`.
+
+### Fee Vaults
+
+These collected fees are sent to a new vault for the `operatorFee`: the [`OperatorFeeVault`](predeploys.md#operatorfeevault).
+
+Like the existing vaults, this is a hardcoded address, pointing at a pre-deployed proxy contract.
+The proxy is backed by a vault contract deployment, based on `FeeVault`, to route vault funds to L1 securely.

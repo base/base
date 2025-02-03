@@ -1,10 +1,17 @@
-# Isthumus L2 Chain Derivation Changes
+# Isthmus L2 Chain Derivation Changes
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
 - [Network upgrade automation transactions](#network-upgrade-automation-transactions)
+  - [L1Block deployment](#l1block-deployment)
+  - [GasPriceOracle deployment](#gaspriceoracle-deployment)
+  - [Operator fee vault deployment](#operator-fee-vault-deployment)
+  - [L1Block Proxy Update](#l1block-proxy-update)
+  - [GasPriceOracle Proxy Update](#gaspriceoracle-proxy-update)
+  - [OperatorFeeVault Proxy Update](#operatorfeevault-proxy-update)
+  - [GasPriceOracle Enable Isthmus](#gaspriceoracle-enable-isthmus)
   - [EIP-2935 Contract Deployment](#eip-2935-contract-deployment)
 - [Span Batch Updates](#span-batch-updates)
 
@@ -17,10 +24,260 @@ The Isthumus hardfork activation block contains the following transactions, in t
 - L1 Attributes Transaction
 - User deposits from L1
 - Network Upgrade Transactions
+  - L1Block deployment
+  - GasPriceOracle deployment
+  - Operator Fee vault deployment
+  - Update L1Block Proxy ERC-1967 Implementation
+  - Update GasPriceOracle Proxy ERC-1967 Implementation
+  - Update Operator Fee vault Proxy ERC-1967 Implementation
+  - GasPriceOracle Enable Isthmus
   - EIP-2935 Contract Deployment
 
 To not modify or interrupt the system behavior around gas computation, this block will not include any sequenced
 transactions by setting `noTxPool: true`.
+
+## L1Block deployment
+
+The `L1Block` contract is upgraded to support the Isthmus operator fee feature.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x4210000000000000000000000000000000000003`
+- `to`: `null`
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `425,000`
+- `data`: `0x60806040523480156100105...` ([full bytecode](../../static/bytecode/isthmus-l1-block-deployment.txt))
+- `sourceHash`: `0x3b2d0821ca2411ad5cd3595804d1213d15737188ae4cbd58aa19c821a6c211bf`,
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: L1 Block Deployment"
+
+This results in the Isthmus L1Block contract being deployed to `0xFf256497D61dcd71a9e9Ff43967C13fdE1F72D12`, to verify:
+
+```bash
+cast compute-address --nonce=0 0x4210000000000000000000000000000000000003
+Computed Address: 0xFf256497D61dcd71a9e9Ff43967C13fdE1F72D12
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: L1 Block Deployment"))
+# 0x3b2d0821ca2411ad5cd3595804d1213d15737188ae4cbd58aa19c821a6c211bf
+```
+
+Verify `data`:
+
+```bash
+git checkout TODO
+make build-contracts
+jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/L1Block.sol/L1Block.json
+```
+
+This transaction MUST deploy a contract with the following code hash
+`TODO`.
+
+## GasPriceOracle deployment
+
+The `GasPriceOracle` contract is also upgraded to support the Isthmus operator fee feature.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x4210000000000000000000000000000000000004`
+- `to`: `null`
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `1,625,000`
+- `data`: `0x60806040523480156100105...` ([full bytecode](../../static/bytecode/isthmus-gas-price-oracle-deployment.txt))
+- `sourceHash`: `0xfc70b48424763fa3fab9844253b4f8d508f91eb1f7cb11a247c9baec0afb8035`,
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Gas Price Oracle Deployment"
+
+This results in the Isthmus GasPriceOracle contract being deployed to `0x93e57A196454CB919193fa9946f14943cf733845`, to verify:
+
+```bash
+cast compute-address --nonce=0 0x4210000000000000000000000000000000000003
+Computed Address: 0xFf256497D61dcd71a9e9Ff43967C13fdE1F72D12
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: Gas Price Oracle Deployment"))
+# 0xfc70b48424763fa3fab9844253b4f8d508f91eb1f7cb11a247c9baec0afb8035
+```
+
+Verify `data`:
+
+```bash
+git checkout TODO
+make build-contracts
+jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json
+```
+
+This transaction MUST deploy a contract with the following code hash
+`TODO`.
+
+## Operator fee vault deployment
+
+A new `OperatorFeeVault` contract has been created to recieve the operator fees. The contract is created with
+the following arguments:
+
+- Recipient address: The base fee vault
+- Min withdrawal amount: 0
+- Withdrawal network: L2
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x4210000000000000000000000000000000000005`
+- `to`: `null`
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `500,000`
+- `data`: `0x60806040523480156100105...` ([full bytecode](../../static/bytecode/isthmus-operator-fee-deployment.txt))
+- `sourceHash`: `0x107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96`,
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Operator Fee Vault Deployment"
+
+This results in the Isthmus GasPriceOracle contract being deployed to `0x4fa2Be8cd41504037F1838BcE3bCC93bC68Ff537`, to verify:
+
+```bash
+cast compute-address --nonce=0 0x4210000000000000000000000000000000000003
+Computed Address: 0x4fa2Be8cd41504037F1838BcE3bCC93bC68Ff537
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: Operator Fee Vault Deployment"))
+# 0x107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96
+```
+
+Verify `data`:
+
+```bash
+git checkout TODO
+make build-contracts
+jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/OperatorFeeVault.sol/OperatorFeeVault.json
+```
+
+This transaction MUST deploy a contract with the following code hash
+`TODO`.
+
+## L1Block Proxy Update
+
+This transaction updates the L1Block Proxy ERC-1967 implementation slot to point to the new L1Block deployment.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x0000000000000000000000000000000000000000`
+- `to`: `0x4200000000000000000000000000000000000015` (L1Block Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `50,000`
+- `data`: `0x3659cfe6000000000000000000000000ff256497d61dcd71a9e9ff43967c13fde1f72d12`
+- `sourceHash`: `0xebe8b5cb10ca47e0d8bda8f5355f2d66711a54ddeb0ef1d30e29418c9bf17a0e`
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: L1 Block Proxy Update"
+
+Verify data:
+
+```bash
+cast concat-hex $(cast sig "upgradeTo(address)") $(cast abi-encode "upgradeTo(address)" 0xff256497d61dcd71a9e9ff43967c13fde1f72d12)
+0x3659cfe6000000000000000000000000ff256497d61dcd71a9e9ff43967c13fde1f72d12
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: L1 Block Proxy Update"))
+# 0xebe8b5cb10ca47e0d8bda8f5355f2d66711a54ddeb0ef1d30e29418c9bf17a0e
+```
+
+## GasPriceOracle Proxy Update
+
+This transaction updates the GasPriceOracle Proxy ERC-1967 implementation slot to point to the new GasPriceOracle
+deployment.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x0000000000000000000000000000000000000000`
+- `to`: `0x420000000000000000000000000000000000000F` (Gas Price Oracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `50,000`
+- `data`: `0x3659cfe600000000000000000000000093e57a196454cb919193fa9946f14943cf733845`
+- `sourceHash`: `0xecf2d9161d26c54eda6b7bfdd9142719b1e1199a6e5641468d1bf705bc531ab0`
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Gas Price Oracle Proxy Update"`
+
+Verify data:
+
+```bash
+cast concat-hex $(cast sig "upgradeTo(address)") $(cast abi-encode "upgradeTo(address)" 0x93e57a196454cb919193fa9946f14943cf733845)
+0x3659cfe600000000000000000000000093e57a196454cb919193fa9946f14943cf733845
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: Gas Price Oracle Proxy Update"))
+# 0xecf2d9161d26c54eda6b7bfdd9142719b1e1199a6e5641468d1bf705bc531ab0
+```
+
+## OperatorFeeVault Proxy Update
+
+This transaction updates the GasPriceOracle Proxy ERC-1967 implementation slot to point to the new GasPriceOracle
+deployment.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x0000000000000000000000000000000000000000`
+- `to`: `0x420000000000000000000000000000000000001B` (Operator Fee Vault Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `50,000`
+- `data`: `0x3659cfe60000000000000000000000004fa2be8cd41504037f1838bce3bcc93bc68ff537`
+- `sourceHash`: `0xad74e1adb877ccbe176b8fa1cc559388a16e090ddbe8b512f5b37d07d887a927`
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Operator Fee Vault Proxy Update"`
+
+Verify data:
+
+```bash
+cast concat-hex $(cast sig "upgradeTo(address)") $(cast abi-encode "upgradeTo(address)" 0x4fa2be8cd41504037f1838bce3bcc93bc68ff537)
+0x3659cfe60000000000000000000000004fa2be8cd41504037f1838bce3bcc93bc68ff537
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: Operator Fee Vault Proxy Update"))
+# 0xad74e1adb877ccbe176b8fa1cc559388a16e090ddbe8b512f5b37d07d887a927
+```
+
+## GasPriceOracle Enable Isthmus
+
+This transaction informs the GasPriceOracle to start using the Isthmus gas calculation formula.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (Depositer Account)
+- `to`: `0x420000000000000000000000000000000000000F` (Gas Price Oracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `90,000`
+- `data`: `0x291b0383`
+- `sourceHash`: `0x3ddf4b1302548dd92939826e970f260ba36167f4c25f18390a5e8b194b295319`,
+  computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Gas Price Oracle Set Isthmus"
+
+Verify data:
+
+```bash
+cast sig "setIsthmus()"
+0x8e98b106
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Isthmus: Gas Price Oracle Set Isthmus"))
+# 0x3ddf4b1302548dd92939826e970f260ba36167f4c25f18390a5e8b194b295319
+```
 
 ## EIP-2935 Contract Deployment
 

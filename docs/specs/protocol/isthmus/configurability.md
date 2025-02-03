@@ -8,13 +8,18 @@
 - [`SystemConfig`](#systemconfig)
   - [`ConfigUpdate`](#configupdate)
   - [Initialization](#initialization)
+  - [Modifying Operator Fee Parameters](#modifying-operator-fee-parameters)
   - [Interface](#interface)
+    - [Operator fee parameters](#operator-fee-parameters)
+      - [`operatorFeeScalar`](#operatorfeescalar)
+      - [`operatorFeeConstant`](#operatorfeeconstant)
+      - [`setOperatorFeeScalars`](#setoperatorfeescalars)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 
-The `SystemConfig` is updated.
+The SystemConfig is updated.
 
 ## `SystemConfig`
 
@@ -29,6 +34,7 @@ The following `ConfigUpdate` event is defined where the `CONFIG_VERSION` is `uin
 | `GAS_LIMIT` | `uint8(2)` | `abi.encode(uint64 _gasLimit)` | Modifies the L2 gas limit |
 | `UNSAFE_BLOCK_SIGNER` | `uint8(3)` | `abi.encode(address)` | Modifies the account that is authorized to progress the unsafe chain |
 | `EIP_1559_PARAMS` | `uint8(4)` | `uint256(uint64(uint32(_denominator))) << 32 \| uint64(uint32(_elasticity))` | Modifies the EIP-1559 denominator and elasticity |
+| `OPERATOR_FEE_PARAMS` | `uint8(5)` | `uint256(_operatorFeeScalar) << 64 \| _operatorFeeConstant` | Modifies the operator fee sclar and constant |
 
 ### Initialization
 
@@ -42,6 +48,39 @@ The following actions should happen during the initialization of the `SystemConf
 
 These actions MAY only be triggered if there is a diff to the value.
 
+The `operatorFeeScalar` and `operatorFeeConstant` are initialized to 0.
+
+### Modifying Operator Fee Parameters
+
+A new `SystemConfig` `UpdateType` is introduced that enables the modification of
+the `operatorFeeScalar` and `operatorFeeConstant` by the `SystemConfig` owner.
+
 ### Interface
 
-TODO: operator fee
+#### Operator fee parameters
+
+##### `operatorFeeScalar`
+
+This function returns the currently configured operator fee scalar.
+
+```solidity
+function operatorFeeScalar()(uint32)
+```
+
+##### `operatorFeeConstant`
+
+This function returns the currently configured operator fee constant.
+
+```solidity
+function operatorFeeConstant()(uint64)
+```
+
+##### `setOperatorFeeScalars`
+
+This function sets the `operatorFeeScalar` and `operatorFeeConstant`.
+
+This function MUST only be callable by the `SystemConfig` owner.
+
+```solidity
+function setOperatorFeeScalar(uint32 _operatorFeeScalar, uint64 _operatorFeeConstant)
+```
