@@ -1,13 +1,11 @@
-use jsonrpsee::{
-    core::{async_trait, RpcResult},
-    proc_macros::rpc,
-};
+use jsonrpsee::{core::{async_trait, RpcResult}, proc_macros::rpc};
 use reth_rpc_eth_api::{
     helpers::{FullEthApi}, RpcBlock
 };
 use tracing::info;
 use alloy_eips::BlockNumberOrTag;
 use op_alloy_network::Optimism;
+use serde::{Deserialize, Serialize};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -43,5 +41,26 @@ where
                 todo!()
             }
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    pub name: String
+}
+
+#[cfg_attr(not(test), rpc(server, namespace = "base"))]
+#[cfg_attr(test, rpc(server, client, namespace = "base"))]
+pub trait BaseApi {
+    #[method(name = "status")]
+    async fn status(&self, name: String) -> RpcResult<Status>;
+}
+
+pub struct BaseApiExt {}
+
+#[async_trait]
+impl BaseApiServer for BaseApiExt {
+    async fn status(&self, name: String) -> RpcResult<Status> {
+        Ok(Status { name: name.into() })
     }
 }
