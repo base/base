@@ -50,16 +50,21 @@ at the given block number.
 
 ### Header Validity Rules
 
-Prior to isthmus activation, the L2 block header's `withdrawalsRoot` field must be:
+Prior to isthmus activation:
 
-- `nil` if Canyon has not been activated.
-- `keccak256(rlp(empty_string_code))` if Canyon has been activated.
+- the L2 block header's `withdrawalsRoot` field must be:
+  - `nil` if Canyon has not been activated.
+  - `keccak256(rlp(empty_string_code))` if Canyon has been activated.
+- the L2 block header's `requestsHash` field must be omitted.
 
-After Isthmus activation, an L2 block header's `withdrawalsRoot` field is valid iff:
+After Isthmus activation, an L2 block header is valid iff:
 
-1. It is exactly 32 bytes in length.
-1. The [`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root, as committed to in the `storageRoot` within the block
-   header, is equal to the header's `withdrawalsRoot` field.
+1. The `withdrawalsRoot` field
+    1. Is 32 bytes in length.
+    1. Matches the [`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root,
+    as committed to in the `storageRoot` within the block header
+1. The `requestsHash` field is equal to `sha256('') = 0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+indicating no requests in the block.
 
 ### Header Withdrawals Root
 
