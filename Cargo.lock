@@ -6504,6 +6504,7 @@ dependencies = [
  "reth-optimism-node",
  "reth-primitives",
  "reth-rpc-eth-api",
+ "serde",
  "tracing",
 ]
 
