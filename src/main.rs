@@ -1,5 +1,6 @@
 mod rpc;
 
+use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
@@ -9,11 +10,9 @@ use reth::{
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
-use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
 use tracing::info;
 
 fn main() {
-
     Cli::<OpChainSpecParser, RollupArgs>::parse()
         .run(|builder, rollup_args| async move {
             info!("Starting custom Base node");
@@ -27,11 +26,9 @@ fn main() {
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
                     let api_ext = EthApiExt::new(ctx.registry.eth_api().clone());
-                    ctx.modules.replace_configured(
-                        api_ext.into_rpc()
-                    )?;
+                    ctx.modules.replace_configured(api_ext.into_rpc())?;
 
-                    let base_ext = BaseApiExt{};
+                    let base_ext = BaseApiExt {};
                     ctx.modules.merge_http(base_ext.into_rpc())?;
 
                     Ok(())
