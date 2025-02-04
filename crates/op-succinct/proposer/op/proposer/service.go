@@ -54,7 +54,6 @@ type ProposerConfig struct {
 	// Additional fields required for OP Succinct Proposer
 	DbPath                     string
 	UseCachedDb                bool
-	SlackToken                 string
 	BeaconRpc                  string
 	RollupRpc                  string
 	MaxBlockRangePerSpanProof  uint64
@@ -116,7 +115,6 @@ func (ps *ProposerService) initFromCLIConfig(ctx context.Context, version string
 	// Additional fields required for OP Succinct Proposer
 	ps.DbPath = cfg.DbPath
 	ps.UseCachedDb = cfg.UseCachedDb
-	ps.SlackToken = cfg.SlackToken
 	ps.BeaconRpc = cfg.BeaconRpc
 	ps.RollupRpc = cfg.RollupRpc
 	ps.MaxBlockRangePerSpanProof = cfg.MaxBlockRangePerSpanProof
