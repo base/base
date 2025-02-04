@@ -19,6 +19,16 @@ impl Ecotone {
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
+    /// The depositor account address.
+    pub const DEPOSITOR_ACCOUNT: Address = address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
+
+    /// The Gas Price Oracle Proxy Address
+    pub const GAS_PRICE_ORACLE_PROXY: Address =
+        address!("420000000000000000000000000000000000000F");
+
+    /// The L1 Block Proxy Address
+    pub const L1_BLOCK_PROXY: Address = address!("4200000000000000000000000000000000000015");
+
     /// The Enable Ecotone Input Method 4Byte Signature
     pub const ENABLE_ECOTONE_INPUT: [u8; 4] = hex!("22b908b3");
 
@@ -98,6 +108,8 @@ impl Ecotone {
     /// Returns the list of [TxDeposit]s for the Ecotone network upgrade.
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
+            // Deploy the L1 Block contract for Ecotone.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-deployment>
             TxDeposit {
                 source_hash: Self::deploy_l1_block_source(),
                 from: Self::L1_BLOCK_DEPLOYER,
@@ -108,6 +120,8 @@ impl Ecotone {
                 is_system_transaction: false,
                 input: Self::l1_block_deployment_bytecode(),
             },
+            // Deploy the Gas Price Oracle contract for Ecotone.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_gas_price_oracle_source(),
                 from: Self::GAS_PRICE_ORACLE_DEPLOYER,
@@ -118,36 +132,44 @@ impl Ecotone {
                 is_system_transaction: false,
                 input: Self::ecotone_gas_price_oracle_deployment_bytecode(),
             },
+            // Updates the l1 block proxy to point to the new L1 Block contract.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#l1block-proxy-update>
             TxDeposit {
                 source_hash: Self::update_l1_block_source(),
-                from: Address::default(),
-                to: TxKind::Call(Self::L1_BLOCK_DEPLOYER),
+                from: Address::ZERO,
+                to: TxKind::Call(Self::L1_BLOCK_PROXY),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
                 input: super::upgrade_to_calldata(Self::NEW_L1_BLOCK),
             },
+            // Updates the gas price oracle proxy to point to the new Gas Price Oracle contract.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_gas_price_oracle_source(),
-                from: Address::default(),
-                to: TxKind::Call(Self::GAS_PRICE_ORACLE_DEPLOYER),
+                from: Address::ZERO,
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE_PROXY),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
                 input: super::upgrade_to_calldata(Self::GAS_PRICE_ORACLE),
             },
+            // Enables the Ecotone Gas Price Oracle.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#gaspriceoracle-enable-ecotone>
             TxDeposit {
                 source_hash: Self::enable_ecotone_source(),
-                from: Self::L1_BLOCK_DEPLOYER,
-                to: TxKind::Call(Self::GAS_PRICE_ORACLE),
+                from: Self::DEPOSITOR_ACCOUNT,
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE_PROXY),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 80_000,
                 is_system_transaction: false,
                 input: Self::ENABLE_ECOTONE_INPUT.into(),
             },
+            // Deploys the beacon block roots contract.
+            // See: <https://specs.optimism.io/protocol/ecotone/derivation.html#beacon-block-roots-contract-deployment-eip-4788>
             TxDeposit {
                 source_hash: Self::beacon_roots_source(),
                 from: Self::EIP4788_FROM,
@@ -178,6 +200,54 @@ impl Hardfork for Ecotone {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test]
+    fn test_deploy_l1_block_source() {
+        assert_eq!(
+            Ecotone::deploy_l1_block_source(),
+            hex!("877a6077205782ea15a6dc8699fa5ebcec5e0f4389f09cb8eda09488231346f8")
+        );
+    }
+
+    #[test]
+    fn test_deploy_gas_price_oracle_source() {
+        assert_eq!(
+            Ecotone::deploy_gas_price_oracle_source(),
+            hex!("a312b4510adf943510f05fcc8f15f86995a5066bd83ce11384688ae20e6ecf42")
+        );
+    }
+
+    #[test]
+    fn test_update_l1_block_source() {
+        assert_eq!(
+            Ecotone::update_l1_block_source(),
+            hex!("18acb38c5ff1c238a7460ebc1b421fa49ec4874bdf1e0a530d234104e5e67dbc")
+        );
+    }
+
+    #[test]
+    fn test_update_gas_price_oracle_source() {
+        assert_eq!(
+            Ecotone::update_gas_price_oracle_source(),
+            hex!("ee4f9385eceef498af0be7ec5862229f426dec41c8d42397c7257a5117d9230a")
+        );
+    }
+
+    #[test]
+    fn test_enable_ecotone_source() {
+        assert_eq!(
+            Ecotone::enable_ecotone_source(),
+            hex!("0c1cb38e99dbc9cbfab3bb80863380b0905290b37eb3d6ab18dc01c1f3e75f93")
+        );
+    }
+
+    #[test]
+    fn test_beacon_block_roots_source() {
+        assert_eq!(
+            Ecotone::beacon_roots_source(),
+            hex!("69b763c48478b9dc2f65ada09b3d92133ec592ea715ec65ad6e7f3dc519dc00c")
+        );
+    }
 
     #[test]
     fn test_ecotone_txs_encoded() {

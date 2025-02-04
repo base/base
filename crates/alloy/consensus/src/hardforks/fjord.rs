@@ -19,6 +19,10 @@ impl Fjord {
     /// with the Gas Price Oracle Deployer Address and nonce 0.
     pub const GAS_PRICE_ORACLE: Address = address!("b528d11cc114e026f138fe568744c6d45ce6da7a");
 
+    /// The gas price oracle proxy address.
+    pub const GAS_PRICE_ORACLE_PROXY: Address =
+        address!("420000000000000000000000000000000000000F");
+
     /// The L1 Info Depositer Address.
     pub const L1_INFO_DEPOSITER: Address = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
 
@@ -61,6 +65,8 @@ impl Fjord {
     /// Returns the list of [TxDeposit]s for the Fjord network upgrade.
     pub fn deposits() -> impl Iterator<Item = TxDeposit> {
         ([
+            // Deploys the Fjord Gas Price Oracle contract.
+            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-deployment>
             TxDeposit {
                 source_hash: Self::deploy_fjord_gas_price_oracle_source(),
                 from: Self::GAS_PRICE_ORACLE_FJORD_DEPLOYER,
@@ -71,21 +77,24 @@ impl Fjord {
                 is_system_transaction: false,
                 input: Self::gas_price_oracle_deployment_bytecode(),
             },
+            // Updates the gas price Oracle proxy to point to the Fjord Gas Price Oracle.
+            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-proxy-update>
             TxDeposit {
                 source_hash: Self::update_fjord_gas_price_oracle_source(),
                 from: Address::ZERO,
-                to: TxKind::Call(Self::GAS_PRICE_ORACLE),
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE_PROXY),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 50_000,
                 is_system_transaction: false,
                 input: super::upgrade_to_calldata(Self::FJORD_GAS_PRICE_ORACLE),
             },
-            // Enable Fjord
+            // Enables the Fjord Gas Price Oracle.
+            // See: <https://specs.optimism.io/protocol/fjord/derivation.html#gaspriceoracle-enable-fjord>
             TxDeposit {
                 source_hash: Self::enable_fjord_source(),
                 from: Self::L1_INFO_DEPOSITER,
-                to: TxKind::Call(Self::GAS_PRICE_ORACLE),
+                to: TxKind::Call(Self::GAS_PRICE_ORACLE_PROXY),
                 mint: 0.into(),
                 value: U256::ZERO,
                 gas_limit: 90_000,
@@ -112,6 +121,30 @@ impl Hardfork for Fjord {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test]
+    fn test_deploy_fjord_gas_price_oracle_source() {
+        assert_eq!(
+            Fjord::deploy_fjord_gas_price_oracle_source(),
+            hex!("86122c533fdcb89b16d8713174625e44578a89751d96c098ec19ab40a51a8ea3")
+        );
+    }
+
+    #[test]
+    fn test_update_fjord_gas_price_oracle_source() {
+        assert_eq!(
+            Fjord::update_fjord_gas_price_oracle_source(),
+            hex!("1e6bb0c28bfab3dc9b36ffb0f721f00d6937f33577606325692db0965a7d58c6")
+        );
+    }
+
+    #[test]
+    fn test_enable_fjord_source() {
+        assert_eq!(
+            Fjord::enable_fjord_source(),
+            hex!("bac7bb0d5961cad209a345408b0280a0d4686b1b20665e1b0f9cdafd73b19b6b")
+        );
+    }
 
     #[test]
     fn test_fjord_txs_encoded() {
