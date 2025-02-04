@@ -74,9 +74,6 @@ type CLIConfig struct {
 	// UseCachedDb is a flag to use a cached database instead of creating a new one.
 	UseCachedDb bool
 
-	// SlackToken is the token for the Slack API.
-	SlackToken string
-
 	// L1 Beacon RPC URL used to determine span batch boundaries.
 	BeaconRpc string
 	// The max size (in blocks) of a proof we will attempt to generate. If span batches are larger, we break them up.
@@ -155,7 +152,6 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		WaitNodeSync:                 ctx.Bool(flags.WaitNodeSyncFlag.Name),
 		DbPath:                       dbPath,
 		UseCachedDb:                  ctx.Bool(flags.UseCachedDbFlag.Name),
-		SlackToken:                   ctx.String(flags.SlackTokenFlag.Name),
 		MaxBlockRangePerSpanProof:    ctx.Uint64(flags.MaxBlockRangePerSpanProofFlag.Name),
 		MaxConcurrentWitnessGen:      ctx.Uint64(flags.MaxConcurrentWitnessGenFlag.Name),
 		WitnessGenTimeout:            ctx.Uint64(flags.WitnessGenTimeoutFlag.Name),

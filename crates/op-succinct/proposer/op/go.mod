@@ -6,11 +6,9 @@ require (
 	entgo.io/ent v0.13.1
 	github.com/ethereum-optimism/optimism v1.9.1
 	github.com/ethereum/go-ethereum v1.14.8
-	github.com/gorilla/mux v1.8.1
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.16
 	github.com/prometheus/client_golang v1.20.2
-	github.com/slack-go/slack v0.14.0
 	github.com/stretchr/testify v1.9.0
 	github.com/urfave/cli/v2 v2.27.4
 	golang.org/x/sync v0.8.0
@@ -58,6 +56,7 @@ require (
 	github.com/getsentry/sentry-go v0.27.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-openapi/inflect v0.19.0 // indirect
+	github.com/go-test/deep v1.0.4 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
