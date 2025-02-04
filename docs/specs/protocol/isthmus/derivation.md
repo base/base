@@ -118,8 +118,8 @@ This transaction MUST deploy a contract with the following code hash
 
 ## Operator fee vault deployment
 
-A new `OperatorFeeVault` contract has been created to recieve the operator fees. The contract is created with
-the following arguments:
+A new `OperatorFeeVault` contract has been created to recieve the operator fees. The contract is created
+with the following arguments:
 
 - Recipient address: The base fee vault
 - Min withdrawal amount: 0
@@ -136,7 +136,8 @@ A deposit transaction is derived with the following attributes:
 - `sourceHash`: `0x107a570d3db75e6110817eb024f09f3172657e920634111ce9875d08a16daa96`,
   computed with the "Upgrade-deposited" type, with `intent = "Isthmus: Operator Fee Vault Deployment"
 
-This results in the Isthmus GasPriceOracle contract being deployed to `0x4fa2Be8cd41504037F1838BcE3bCC93bC68Ff537`, to verify:
+This results in the Isthmus OperatorFeeVault contract being deployed to
+`0x4fa2Be8cd41504037F1838BcE3bCC93bC68Ff537`, to verify:
 
 ```bash
 cast compute-address --nonce=0 0x4210000000000000000000000000000000000003

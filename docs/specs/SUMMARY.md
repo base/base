@@ -56,7 +56,6 @@
       - [System Config](./protocol/holocene/system-config.md)
     - [Isthmus](./protocol/isthmus/overview.md)
       - [Configurability](./protocol/isthmus/configurability.md)
-      - [Derivation](./protocol/isthmus/derivation.md)
       - [Execution Engine](./protocol/isthmus/exec-engine.md)
       - [Derivation](./protocol/isthmus/derivation.md)
       - [L1 Attributes](./protocol/isthmus/l1-attributes.md)
