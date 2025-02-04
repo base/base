@@ -1,0 +1,33 @@
+name: Bug report
+description: File a bug report
+labels: ["T-bug", "T-needs-triage"]
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Please ensure that the bug has not already been filed in the issue tracker.
+
+              Thanks for taking the time to report this bug in OP Succinct!
+    - type: input
+      attributes:
+          label: What version of OP Succinct are you on? Please confirm your issue is reproducible on the latest release.
+          description: Leave empty if not relevant
+          placeholder: "Add the version from the Cargo.toml file here, or the git commit hash if you're using a branch"
+    - type: dropdown
+      attributes:
+          label: Operating System
+          description: What operating system are you on?
+          options:
+              - Windows
+              - macOS (Intel)
+              - macOS (Apple Silicon)
+              - Linux (Arch)
+              - Linux (Debian)
+              - Linux (Ubuntu)
+              - Linux (Other)
+    - type: textarea
+      attributes:
+          label: Describe the bug
+          description: Please include relevant Rust snippets/CLI commands as well if relevant.
+      validations:
+          required: true
