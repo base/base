@@ -109,10 +109,10 @@ revm = { version = "19.4.0", default-features = false, features = ["kzg-rs"] }
 sp1-lib = { version = "4.0.0", features = ["verify"] }
 # sp1-sdk = { version = "4.0.0" }
 # TODO: Switch back to version tag once the alloy bump is merged
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", branch = "ratan/bump-alloy" }
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", branch = "dev" }
 sp1-zkvm = { version = "4.0.0", features = ["verify", "embedded"] }
 # TODO: Switch back to version tag once the Docker workspace directory change is merged.
-sp1-build = { git = "https://github.com/succinctlabs/sp1", branch = "ratan/bump-alloy" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1", branch = "dev" }
 
 [profile.release-client-lto]
 inherits = "release"
