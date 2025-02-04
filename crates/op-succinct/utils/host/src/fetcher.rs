@@ -441,7 +441,7 @@ impl OPSuccinctDataFetcher {
         N: Network,
     {
         let latest_block = provider
-            .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
+            .get_block(BlockId::finalized(), BlockTransactionsKind::Hashes)
             .await?;
         let mut low = 0;
         let mut high = if let Some(block) = latest_block {
@@ -749,10 +749,14 @@ impl OPSuccinctDataFetcher {
 
         // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
         let l1_head_number = l1_head_number + 20;
-        // The new L1 header requested should not be greater than the latest L1 header.
-        let latest_l1_header = self.get_l1_header(BlockId::latest()).await?;
-        let l1_head_hash = match l1_head_number > latest_l1_header.number {
-            true => latest_l1_header.hash_slow(),
+        // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
+        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
+
+        let l1_head_hash = match l1_head_number > finalized_l1_header.number {
+            true => self
+                .get_l1_header(finalized_l1_header.number.into())
+                .await?
+                .hash_slow(),
             false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
         };
 
@@ -816,25 +820,29 @@ impl OPSuccinctDataFetcher {
     /// Get the L1 block time in seconds.
     #[allow(dead_code)]
     async fn get_l1_block_time(&self) -> Result<u64> {
-        let l1_head = self.get_l1_header(BlockId::latest()).await?;
+        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
-        let l1_head_minus_1 = l1_head.number - 1;
-        let l1_block_minus_1 = self.get_l1_header(l1_head_minus_1.into()).await?;
-        Ok(l1_head.timestamp - l1_block_minus_1.timestamp)
+        let finalized_l1_header_minus_1 = finalized_l1_header.number - 1;
+        let l1_block_minus_1 = self
+            .get_l1_header(finalized_l1_header_minus_1.into())
+            .await?;
+        Ok(finalized_l1_header.timestamp - l1_block_minus_1.timestamp)
     }
 
     /// Get the L2 block time in seconds.
     pub async fn get_l2_block_time(&self) -> Result<u64> {
-        let l2_head = self.get_l2_header(BlockId::latest()).await?;
+        let finalized_l2_header = self.get_l2_header(BlockId::finalized()).await?;
 
-        let l2_head_minus_1 = l2_head.number - 1;
-        let l2_block_minus_1 = self.get_l2_header(l2_head_minus_1.into()).await?;
-        Ok(l2_head.timestamp - l2_block_minus_1.timestamp)
+        let finalized_l2_header_minus_1 = finalized_l2_header.number - 1;
+        let l2_block_minus_1 = self
+            .get_l2_header(finalized_l2_header_minus_1.into())
+            .await?;
+        Ok(finalized_l2_header.timestamp - l2_block_minus_1.timestamp)
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
     pub async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
-        let latest_l1_header = self.get_l1_header(BlockId::latest()).await?;
+        let latest_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
         // Get the l1 origin of the l2 end block.
         let l2_end_block_hex = format!("0x{:x}", l2_end_block);
@@ -904,12 +912,12 @@ impl OPSuccinctDataFetcher {
 
             // Get L1 head.
             let l2_block_timestamp = self.get_l2_header(l2_end_block.into()).await?.timestamp;
-            let latest_l1_timestamp = self.get_l1_header(BlockId::latest()).await?.timestamp;
+            let finalized_l1_timestamp = self.get_l1_header(BlockId::finalized()).await?.timestamp;
 
-            // Ensure that the target timestamp is not greater than the latest L1 timestamp.
+            // Ensure that the target timestamp is not greater than the finalized L1 timestamp.
             let target_timestamp = min(
                 l2_block_timestamp + (max_batch_post_delay_minutes * 60),
-                latest_l1_timestamp,
+                finalized_l1_timestamp,
             );
             Ok(self.find_l1_block_by_timestamp(target_timestamp).await?)
         }
@@ -950,8 +958,8 @@ impl OPSuccinctDataFetcher {
 
     /// Check if the safeDB is activated on the L2 node.
     pub async fn is_safe_db_activated(&self) -> Result<bool> {
-        let l1_block = self.get_l1_header(BlockId::latest()).await?;
-        let l1_block_number_hex = format!("0x{:x}", l1_block.number);
+        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
+        let l1_block_number_hex = format!("0x{:x}", finalized_l1_header.number);
         let result: Result<SafeHeadResponse, _> = self
             .fetch_rpc_data_with_mode(
                 RPCMode::L2Node,
