@@ -109,7 +109,7 @@ func (l *L2OutputSubmitter) RetryRequest(req *ent.ProofRequest, status ProofStat
 	//
 	// If the embedded allocator is enabled, the proof will never be unexecutable. Instead, the issue is because there's a limit on the number
 	// of shards in V4. This will be fixed in V5 when the cycle limit is removed.
-	// 
+	//
 	// If the embedded allocator is not enabled, the trigger for unexecutable is the SP1 OOM.
 	//
 	// The reason why we only split with multiple failed requests is to avoid transient errors causing unnecessary splits.
@@ -149,18 +149,37 @@ func (l *L2OutputSubmitter) RequestQueuedProofs(ctx context.Context) error {
 
 	if nextProofToRequest.Type == proofrequest.TypeAGG {
 		if nextProofToRequest.L1BlockHash == "" {
-			blockNumber, blockHash, err := l.checkpointBlockHash(ctx)
+			// Check if there's an existing agg proof with the same block range that's already failed.
+			existingProofs, err := l.db.GetProofRequestsWithBlockRangeAndStatus(proofrequest.TypeAGG, nextProofToRequest.StartBlock, nextProofToRequest.EndBlock, proofrequest.StatusFAILED)
 			if err != nil {
-				l.Log.Error("failed to checkpoint block hash", "err", err)
+				l.Log.Error("failed to check for existing agg proof", "err", err)
 				return err
 			}
-			nextProofToRequest, err = l.db.AddL1BlockInfoToAggRequest(nextProofToRequest.StartBlock, nextProofToRequest.EndBlock, blockNumber, blockHash.Hex())
-			if err != nil {
-				l.Log.Error("failed to add L1 block info to AGG request", "err", err)
+			// Loop over existing proofs and if any of them have a checkpointed L1BlockHash, add it to the next proof to request.
+			for _, proof := range existingProofs {
+				if proof.L1BlockHash != "" {
+					nextProofToRequest, err = l.db.AddL1BlockInfoToAggRequest(nextProofToRequest.StartBlock, nextProofToRequest.EndBlock, proof.L1BlockNumber, proof.L1BlockHash)
+					if err != nil {
+						l.Log.Error("failed to add L1 block info from existing checkpointed proof to AGG request", "err", err)
+						return err
+					}
+					break
+				}
 			}
 
-			// wait for the next loop so that we have the version with the block info added
-			return nil
+			// If the proof still doesn't have a L1BlockHash, checkpoint the block hash and add it to the request.
+			if nextProofToRequest.L1BlockHash == "" {
+				blockNumber, blockHash, err := l.checkpointBlockHash(ctx)
+				if err != nil {
+					l.Log.Error("failed to checkpoint block hash", "err", err)
+					return err
+				}
+				nextProofToRequest, err = l.db.AddL1BlockInfoToAggRequest(nextProofToRequest.StartBlock, nextProofToRequest.EndBlock, blockNumber, blockHash.Hex())
+				if err != nil {
+					l.Log.Error("failed to add L1 block info to AGG request", "err", err)
+					return err
+				}
+			}
 		} else {
 			l.Log.Info("found agg proof with already checkpointed l1 block info")
 		}
@@ -369,7 +388,7 @@ func (l *L2OutputSubmitter) makeProofRequest(proofType proofrequest.Type, jsonBo
 				"status", resp.StatusCode,
 				"error", errResp.Error)
 		} else {
-			l.Log.Error("Witness generation request failed", 
+			l.Log.Error("Witness generation request failed",
 				"status", resp.StatusCode,
 				"body", string(body))
 		}
@@ -423,7 +442,7 @@ func (l *L2OutputSubmitter) GetProofStatus(proofId string) (ProofStatusResponse,
 				"status", resp.StatusCode,
 				"error", errResp.Error)
 		} else {
-			l.Log.Error("Failed to get unmarshal proof status error message", 
+			l.Log.Error("Failed to get unmarshal proof status error message",
 				"status", resp.StatusCode,
 				"body", body)
 		}
