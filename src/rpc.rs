@@ -21,6 +21,7 @@ pub trait EthApiOverride {
 
 #[derive(Debug)]
 pub struct EthApiExt<Eth> {
+    #[allow(dead_code)] // temporary until we implement the flashblocks API
     eth_api: Eth,
 }
 
@@ -70,6 +71,6 @@ pub struct BaseApiExt {}
 #[async_trait]
 impl BaseApiServer for BaseApiExt {
     async fn status(&self, name: String) -> RpcResult<Status> {
-        Ok(Status { name: name.into() })
+        Ok(Status { name })
     }
 }
