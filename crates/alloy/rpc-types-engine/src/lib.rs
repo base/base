@@ -21,7 +21,7 @@ mod payload_v3;
 pub use payload_v3::OpExecutionPayloadEnvelopeV3;
 
 mod payload_v4;
-pub use payload_v4::OpExecutionPayloadEnvelopeV4;
+pub use payload_v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4};
 
 mod sidecar;
 pub use sidecar::{IsthmusPayloadFields, MaybeIsthmusPayloadFields, OpExecutionPayloadSidecar};

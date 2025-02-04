@@ -4,6 +4,21 @@ use alloc::vec::Vec;
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
 
+/// The Opstack execution payload for `newPayloadV4` of the engine API introduced with isthmus.
+/// See also <https://specs.optimism.io/protocol/isthmus/exec-engine.html#engine_newpayloadv4-api>
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OpExecutionPayloadV4 {
+    /// L1 execution payload
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    pub payload_inner: ExecutionPayloadV3,
+    /// OP-Stack Isthmus specific field:
+    /// instead of computing the root from a withdrawals list, set it directly.
+    /// The "withdrawals" list attribute must be non-nil but empty.
+    pub withdrawals_root: B256,
+}
+
 /// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
 /// V4.
 ///
