@@ -24,9 +24,7 @@ fn main() {
                 .with_types_and_provider::<OpNode, BlockchainProvider2<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
-                .on_component_initialized(move |_ctx| {
-                    Ok(())
-                })
+                .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
                     let api_ext = EthApiExt::new(ctx.registry.eth_api().clone());
                     ctx.modules.replace_configured(
