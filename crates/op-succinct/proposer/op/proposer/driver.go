@@ -681,22 +681,6 @@ func (l *L2OutputSubmitter) checkpointBlockHash(ctx context.Context) (uint64, co
 	blockHash := header.Hash()
 	blockNumber := header.Number
 
-	// Check if the block hash has ALREADY been checkpointed on the L2OO contract.
-	// If it has, we can skip the checkpointing step.
-	contract, err := opsuccinctbindings.NewOPSuccinctL2OutputOracleCaller(*l.Cfg.L2OutputOracleAddr, l.L1Client)
-	if err != nil {
-		return 0, common.Hash{}, err
-	}
-	maybeBlockHash, err := contract.HistoricBlockHashes(&bind.CallOpts{Context: cCtx}, blockNumber)
-	if err != nil {
-		return 0, common.Hash{}, err
-	}
-	if maybeBlockHash != (common.Hash{}) {
-		l.Log.Info("Block hash already checkpointed on L2OO contract", "block_number", blockNumber, "block_hash", blockHash)
-		return blockNumber.Uint64(), blockHash, nil
-	}
-
-	// If not, send a transaction to checkpoint the blockhash on the L2OO contract.
 	var receipt *types.Receipt
 	data, err := l.CheckpointBlockHashTxData(blockNumber)
 	if err != nil {
