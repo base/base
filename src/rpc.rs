@@ -72,8 +72,8 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        if let Ok(receipt) = self.cache.get::<RpcReceipt<Optimism>>(&tx_hash.to_string()) {
-            return Ok(receipt);
+        if let Ok(Some(receipt)) = self.cache.get::<RpcReceipt<Optimism>>(&tx_hash.to_string()) {
+            return Ok(Some(receipt));
         }
 
         EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
