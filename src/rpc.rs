@@ -1,10 +1,9 @@
 use jsonrpsee::{core::{async_trait, RpcResult}, proc_macros::rpc};
-use reth_rpc_eth_api::{
-    helpers::{FullEthApi}, RpcBlock
-};
-use tracing::info;
+use reth_rpc_eth_api::{helpers::{EthTransactions, FullEthApi}, RpcBlock, RpcReceipt};
 use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::TxHash;
 use op_alloy_network::Optimism;
+use reth_rpc_eth_api::helpers::EthBlocks;
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -12,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub trait EthApiOverride {
     #[method(name = "getBlockByNumber")]
     async fn block_by_number(&self, number: BlockNumberOrTag, full: bool) -> RpcResult<Option<RpcBlock<Optimism>>>;
+
+    #[method(name = "getTransactionReceipt")]
+    async fn get_transaction_receipt(&self, tx_hash: TxHash) -> RpcResult<Option<RpcReceipt<Optimism>>>;
 }
 
 #[derive(Debug)]
@@ -19,7 +21,8 @@ pub struct EthApiExt<Eth> {
     eth_api: Eth,
 }
 
-impl<E> EthApiExt<E> {
+impl<E> EthApiExt<E>
+{
     pub const fn new(eth_api: E) -> Self {
         Self { eth_api }
     }
@@ -28,19 +31,25 @@ impl<E> EthApiExt<E> {
 #[async_trait]
 impl<Eth> EthApiOverrideServer for EthApiExt<Eth>
 where
-    Eth: FullEthApi + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static
 {
-    async fn block_by_number(&self, number: BlockNumberOrTag, _full: bool) -> RpcResult<Option<RpcBlock<Optimism>>> {
+    async fn block_by_number(&self, number: BlockNumberOrTag, _full: bool) -> RpcResult<Option<RpcBlock<Optimism>>>
+
+    {
         match number {
             BlockNumberOrTag::Pending => {
-                info!("pending block by number, delegating to flashblocks");
+                println!("pending block by number, delegating to flashblocks");
                 todo!()
             }
             _ => {
-                info!("non pending block, using standard flow");
-                todo!()
+                println!("non pending block, using standard flow");
+                EthBlocks::rpc_block(&self.eth_api, number.into(), _full).await.map_err(Into::into)
             }
         }
+    }
+    async fn get_transaction_receipt(&self, tx_hash: TxHash) -> RpcResult<Option<RpcReceipt<Optimism>>>
+    {
+        EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await.map_err(Into::into)
     }
 }
 
