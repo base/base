@@ -1,4 +1,5 @@
 mod rpc;
+mod cache;
 
 use clap::Parser;
 use reth::builder::Node;
@@ -11,8 +12,10 @@ use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
 use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
 use tracing::info;
+use crate::cache::Cache;
 
 fn main() {
+    let cache = Cache::new("redis://localhost:6379").unwrap();
 
     Cli::<OpChainSpecParser, RollupArgs>::parse()
         .run(|builder, rollup_args| async move {
@@ -29,7 +32,7 @@ fn main() {
                 })
                 .extend_rpc_modules(move |ctx| {
                     let op_eth_api = ctx.registry.eth_api().clone();
-                    let api_ext = EthApiExt::new(op_eth_api);
+                    let api_ext = EthApiExt::new(op_eth_api, cache);
                     ctx.modules.replace_configured(
                         api_ext.into_rpc()
                     )?;
