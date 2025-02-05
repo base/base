@@ -6,6 +6,8 @@ use op_alloy_network::Optimism;
 use reth_rpc_eth_api::helpers::EthBlocks;
 use serde::{Deserialize, Serialize};
 
+use crate::cache::Cache;
+
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
 pub trait EthApiOverride {
@@ -19,12 +21,13 @@ pub trait EthApiOverride {
 #[derive(Debug)]
 pub struct EthApiExt<Eth> {
     eth_api: Eth,
+    cache: Cache
 }
 
 impl<E> EthApiExt<E>
 {
-    pub const fn new(eth_api: E) -> Self {
-        Self { eth_api }
+    pub const fn new(eth_api: E, cache: Cache) -> Self {
+        Self { eth_api, cache }
     }
 }
 
@@ -49,6 +52,10 @@ where
     }
     async fn get_transaction_receipt(&self, tx_hash: TxHash) -> RpcResult<Option<RpcReceipt<Optimism>>>
     {
+        if let Ok(receipt) = self.cache.get::<RpcReceipt<Optimism>>(&tx_hash.to_string()) {
+            return Ok(receipt);
+        }
+
         EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await.map_err(Into::into)
     }
 }
