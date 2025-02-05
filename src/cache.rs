@@ -12,7 +12,12 @@ impl Cache {
         Ok(Self { client })
     }
 
-    pub fn set<T: Serialize>(&self, key: &str, value: &T, expiry_secs: Option<u64>) -> RedisResult<()> {
+    pub fn set<T: Serialize>(
+        &self,
+        key: &str,
+        value: &T,
+        expiry_secs: Option<u64>,
+    ) -> RedisResult<()> {
         let mut conn = self.client.get_connection()?;
         let serialized = serde_json::to_string(value).map_err(|e| {
             redis::RedisError::from((
