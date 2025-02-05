@@ -18,7 +18,7 @@ clap = { version = "4.4.3" }
 jsonrpsee = { version = "0.24.8" }
 tracing = { version = "0.1.41" }
 serde = "1"
-redis = { version = "0.28.2", features = ["tokio-comp"] }
+redis = { version = "0.28.2" }
 serde_json = "1.0"
 
 # TODO: Pinning dependencies to work around deposit-transaction being removed and Reth 1.1.5 not being updated, see:
