@@ -28,7 +28,8 @@ fn main() {
                     Ok(())
                 })
                 .extend_rpc_modules(move |ctx| {
-                    let api_ext = EthApiExt::new(ctx.registry.eth_api().clone());
+                    let op_eth_api = ctx.registry.eth_api().clone();
+                    let api_ext = EthApiExt::new(op_eth_api);
                     ctx.modules.replace_configured(
                         api_ext.into_rpc()
                     )?;
