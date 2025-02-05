@@ -12,6 +12,7 @@ impl Cache {
         Ok(Self { client })
     }
 
+    #[allow(dead_code)]
     pub fn set<T: Serialize>(
         &self,
         key: &str,
