@@ -6,6 +6,19 @@
 use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
 use alloy_rpc_types_engine::ExecutionPayload;
 
+use crate::{OpExecutionPayload, OpExecutionPayloadSidecar};
+
+/// Struct aggregating [`OpExecutionPayload`] and [`OpExecutionPayloadSidecar`] and encapsulating
+/// complete payload supplied for execution.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct OpExecutionData {
+    /// Execution payload.
+    pub payload: OpExecutionPayload,
+    /// Additional fork-specific fields.
+    pub sidecar: OpExecutionPayloadSidecar,
+}
+
 /// Optimism execution payload envelope in network format.
 ///
 /// This struct is used to represent payloads that are sent over the Optimism
