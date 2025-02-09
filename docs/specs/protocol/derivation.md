@@ -1054,7 +1054,7 @@ follows:
 
 ## On Future-Proof Transaction Log Derivation
 
-As described in [L1 Retrieval][#l1-retrieval], batcher transactions' types are required to be from a fixed allow-list.
+As described in [L1 Retrieval](#l1-retrieval), batcher transactions' types are required to be from a fixed allow-list.
 
 However, we want to allow deposit transactions and `SystemConfig` update events to get derived even from receipts of
 future transaction types, as long as the receipts can be decoded following a best-effort process:
