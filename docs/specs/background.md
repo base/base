@@ -197,7 +197,7 @@ graph TD
 ### Withdrawing
 
 Users may also want to withdraw ETH or ERC20 tokens from an OP Stack chain back to Ethereum. Withdrawals are initiated
-as standard transactions on L2 but are then completed using transactions on L2. Withdrawals must reference a valid
+as standard transactions on L2 but are then completed using transactions on L1. Withdrawals must reference a valid
 `FaultDisputeGame` contract that proposes the state of the L2 at a given point in time.
 
 ```mermaid
