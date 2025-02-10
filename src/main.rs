@@ -1,5 +1,6 @@
 mod cache;
 mod rpc;
+mod subscriber;
 
 use crate::cache::Cache;
 use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
@@ -14,15 +15,35 @@ use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
 use tracing::info;
 
-fn main() {
-    // Local testing only for now
-    let cache = Cache::new("redis://localhost:6379").unwrap();
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+#[command(next_help_heading = "Rollup")]
+struct FlashblocksRollupArgs {
+    #[command(flatten)]
+    pub rollup_args: RollupArgs,
 
-    Cli::<OpChainSpecParser, RollupArgs>::parse()
-        .run(|builder, rollup_args| async move {
+    #[arg(
+        long = "redis-url",
+        value_name = "REDIS_URL",
+        default_value = "redis://localhost:6379"
+    )]
+    pub redis_url: String,
+
+    #[arg(long = "producer-url", value_name = "PRODUCER_URL")]
+    pub producer_url: String,
+}
+
+fn main() {
+    Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
+        .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
 
-            let op_node = OpNode::new(rollup_args.clone());
+            let cache = Cache::new(flashblocks_rollup_args.redis_url.as_str()).unwrap();
+            let subscriber = subscriber::Subscriber::new(
+                cache.clone(),
+                flashblocks_rollup_args.producer_url.clone(),
+            );
+
+            let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider2<_>>()
@@ -40,13 +61,24 @@ fn main() {
                 })
                 .launch_with_fn(|builder| {
                     let engine_tree_config = TreeConfig::default()
-                        .with_persistence_threshold(rollup_args.persistence_threshold)
-                        .with_memory_block_buffer_target(rollup_args.memory_block_buffer_target);
+                        .with_persistence_threshold(
+                            flashblocks_rollup_args.rollup_args.persistence_threshold,
+                        )
+                        .with_memory_block_buffer_target(
+                            flashblocks_rollup_args
+                                .rollup_args
+                                .memory_block_buffer_target,
+                        );
                     let launcher = EngineNodeLauncher::new(
                         builder.task_executor().clone(),
                         builder.config().datadir(),
                         engine_tree_config,
                     );
+                    builder.task_executor().spawn(async move {
+                        if let Err(e) = subscriber.subscribe_to_sse().await {
+                            eprintln!("Error subscribing to SSE: {}", e);
+                        }
+                    });
                     builder.launch_with(launcher)
                 })
                 .await?;

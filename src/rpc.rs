@@ -1,11 +1,11 @@
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::TxHash;
+use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{Address, TxHash, U256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use op_alloy_network::Optimism;
-use reth_rpc_eth_api::helpers::EthBlocks;
+use reth_rpc_eth_api::helpers::{EthBlocks, EthState};
 use reth_rpc_eth_api::{
     helpers::{EthTransactions, FullEthApi},
     RpcBlock, RpcReceipt,
@@ -30,6 +30,10 @@ pub trait EthApiOverride {
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
+
+    #[method(name = "getBalance")]
+    async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
+        -> RpcResult<U256>;
 }
 
 #[derive(Debug)]
@@ -79,6 +83,23 @@ where
         EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
             .await
             .map_err(Into::into)
+    }
+
+    async fn get_balance(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<U256> {
+        let block_id = block_number.unwrap_or_default();
+        if block_id.is_pending() {
+            info!("pending tag, delegating to flashblocks");
+            todo!()
+        } else {
+            info!("non pending block, using standard flow");
+            EthState::balance(&self.eth_api, address, block_number)
+                .await
+                .map_err(Into::into)
+        }
     }
 }
 
