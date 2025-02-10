@@ -104,7 +104,7 @@ where
     <Builder as PayloadBuilder<Pool, Client>>::Attributes: Unpin + Clone,
     <Builder as PayloadBuilder<Pool, Client>>::BuiltPayload: Unpin + Clone,
 {
-    type Job = EmptyBlockPayloadJob<Client, Pool, Tasks, Builder>;
+    type Job = BlockPayloadJob<Client, Pool, Tasks, Builder>;
 
     /// This is invoked when the node receives payload attributes from the beacon node via
     /// `engine_forkchoiceUpdatedV1`
@@ -128,7 +128,7 @@ where
         let deadline = Box::pin(tokio::time::sleep(Duration::from_secs(2))); // Or another appropriate timeout
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
-        let mut job = EmptyBlockPayloadJob {
+        let mut job = BlockPayloadJob {
             client: self.client.clone(),
             pool: self.pool.clone(),
             executor: self.executor.clone(),
@@ -152,7 +152,7 @@ use std::{
 };
 
 /// A [PayloadJob] that builds empty blocks.
-pub struct EmptyBlockPayloadJob<Client, Pool, Tasks, Builder>
+pub struct BlockPayloadJob<Client, Pool, Tasks, Builder>
 where
     Builder: PayloadBuilder<Pool, Client>,
 {
@@ -176,7 +176,7 @@ where
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
 }
 
-impl<Client, Pool, Tasks, Builder> PayloadJob for EmptyBlockPayloadJob<Client, Pool, Tasks, Builder>
+impl<Client, Pool, Tasks, Builder> PayloadJob for BlockPayloadJob<Client, Pool, Tasks, Builder>
 where
     Client: StateProviderFactory + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
@@ -212,7 +212,7 @@ where
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
-impl<Client, Pool, Tasks, Builder> EmptyBlockPayloadJob<Client, Pool, Tasks, Builder>
+impl<Client, Pool, Tasks, Builder> BlockPayloadJob<Client, Pool, Tasks, Builder>
 where
     Client: StateProviderFactory + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
@@ -251,7 +251,7 @@ where
 }
 
 /// A [PayloadJob] is a a future that's being polled by the `PayloadBuilderService`
-impl<Client, Pool, Tasks, Builder> Future for EmptyBlockPayloadJob<Client, Pool, Tasks, Builder>
+impl<Client, Pool, Tasks, Builder> Future for BlockPayloadJob<Client, Pool, Tasks, Builder>
 where
     Client: StateProviderFactory + Clone + Unpin + 'static,
     Pool: TransactionPool + Unpin + 'static,
@@ -369,6 +369,18 @@ impl<T: Clone> Default for BlockCell<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::eip7685::Requests;
+    use alloy_primitives::U256;
+    use rand::thread_rng;
+    use reth::tasks::TokioTaskExecutor;
+    use reth_chain_state::ExecutedBlock;
+    use reth_node_api::NodePrimitives;
+    use reth_optimism_payload_builder::payload::OpPayloadBuilderAttributes;
+    use reth_optimism_primitives::OpPrimitives;
+    use reth_primitives::SealedBlockFor;
+    use reth_provider::test_utils::MockEthProvider;
+    use reth_testing_utils::generators::{random_block_range, BlockRangeParams};
+    use reth_transaction_pool::noop::NoopTransactionPool;
     use tokio::task;
     use tokio::time::{sleep, Duration};
 
@@ -437,5 +449,143 @@ mod tests {
         // Waiter should get the latest value
         let result = cell.wait_for_value().await;
         assert_eq!(result, 43);
+    }
+
+    #[derive(Debug, Clone)]
+    struct MockBuilder {
+        events: Arc<Mutex<Vec<BlockEvent>>>,
+    }
+
+    impl MockBuilder {
+        fn new() -> Self {
+            Self {
+                events: Arc::new(Mutex::new(vec![])),
+            }
+        }
+
+        fn new_event(&self, event: BlockEvent) {
+            let mut events = self.events.lock().unwrap();
+            events.push(event);
+        }
+
+        fn get_events(&self) -> Vec<BlockEvent> {
+            let mut events = self.events.lock().unwrap();
+            std::mem::take(&mut *events)
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct MockPayload;
+
+    impl BuiltPayload for MockPayload {
+        type Primitives = OpPrimitives;
+
+        fn block(&self) -> &SealedBlockFor<<Self::Primitives as NodePrimitives>::Block> {
+            unimplemented!()
+        }
+
+        /// Returns the fees collected for the built block
+        fn fees(&self) -> U256 {
+            unimplemented!()
+        }
+
+        /// Returns the entire execution data for the built block, if available.
+        fn executed_block(&self) -> Option<ExecutedBlock<Self::Primitives>> {
+            None
+        }
+
+        /// Returns the EIP-7865 requests for the payload if any.
+        fn requests(&self) -> Option<Requests> {
+            unimplemented!()
+        }
+    }
+
+    #[derive(Debug, PartialEq, Clone)]
+    enum BlockEvent {
+        Started,
+        Cancelled,
+    }
+
+    impl<Pool, Client> PayloadBuilder<Pool, Client> for MockBuilder {
+        type Attributes = OpPayloadBuilderAttributes;
+        type BuiltPayload = MockPayload;
+
+        fn try_build(
+            &self,
+            args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+            _best_payload: BlockCell<Self::BuiltPayload>,
+        ) -> Result<(), PayloadBuilderError> {
+            self.new_event(BlockEvent::Started);
+
+            loop {
+                if args.cancel.is_cancelled() {
+                    self.new_event(BlockEvent::Cancelled);
+                    return Ok(());
+                }
+
+                // Small sleep to prevent tight loop
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_payload_generator() -> eyre::Result<()> {
+        let mut rng = thread_rng();
+
+        let pool = NoopTransactionPool::default();
+        let client = MockEthProvider::default();
+        let executor = TokioTaskExecutor::default();
+        let config = BasicPayloadJobGeneratorConfig::default();
+        let builder = MockBuilder::new();
+
+        let (start, count) = (1, 10);
+        let blocks = random_block_range(
+            &mut rng,
+            start..=start + count - 1,
+            BlockRangeParams {
+                tx_count: 0..2,
+                ..Default::default()
+            },
+        );
+
+        client.extend_blocks(blocks.iter().cloned().map(|b| (b.hash(), b.unseal())));
+
+        let generator = BlockPayloadJobGenerator::with_builder(
+            client.clone(),
+            pool,
+            executor,
+            config,
+            builder.clone(),
+        );
+
+        // this is not nice but necessary
+        let mut attr = OpPayloadBuilderAttributes::default();
+        attr.payload_attributes.parent = client.latest_header()?.unwrap().hash();
+
+        {
+            let job = generator.new_payload_job(attr.clone())?;
+            let _ = job.await;
+
+            // you need to give one second for the job to be dropped and cancelled the internal job
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            let events = builder.get_events();
+            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+        }
+
+        {
+            // job resolve triggers cancellations from the build task
+            let mut job = generator.new_payload_job(attr.clone())?;
+            let _ = job.resolve();
+            let _ = job.await;
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
+            let events = builder.get_events();
+            assert_eq!(events, vec![BlockEvent::Started, BlockEvent::Cancelled]);
+        }
+
+        Ok(())
     }
 }
