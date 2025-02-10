@@ -26,6 +26,8 @@ use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
 use serde_json;
 use serde_json::Value;
 use std::str::FromStr;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 /// Helper for engine api operations
 pub struct EngineApi {
@@ -184,8 +186,8 @@ pub struct BlockGenerator<'a> {
     engine_api: &'a EngineApi,
     validation_api: Option<&'a EngineApi>,
     latest_hash: B256,
-    timestamp: u64,
     no_tx_pool: bool,
+    block_time_secs: u64,
 }
 
 impl<'a> BlockGenerator<'a> {
@@ -193,13 +195,14 @@ impl<'a> BlockGenerator<'a> {
         engine_api: &'a EngineApi,
         validation_api: Option<&'a EngineApi>,
         no_tx_pool: bool,
+        block_time_secs: u64,
     ) -> Self {
         Self {
             engine_api,
             validation_api,
             latest_hash: B256::ZERO, // temporary value
-            timestamp: 0,            // temporary value
             no_tx_pool,
+            block_time_secs,
         }
     }
 
@@ -207,7 +210,6 @@ impl<'a> BlockGenerator<'a> {
     pub async fn init(&mut self) -> eyre::Result<()> {
         let latest_block = self.engine_api.latest().await?.expect("block not found");
         self.latest_hash = latest_block.header.hash;
-        self.timestamp = latest_block.header.timestamp;
 
         // Sync validation node if it exists
         if let Some(validation_api) = self.validation_api {
@@ -300,6 +302,15 @@ impl<'a> BlockGenerator<'a> {
 
     /// Helper function to submit a payload and update chain state
     async fn submit_payload(&mut self, transactions: Option<Vec<Bytes>>) -> eyre::Result<B256> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        println!("now: {}", timestamp);
+        let timestamp = timestamp + self.block_time_secs;
+
+        println!("timestamp: {}", timestamp);
+
         let result = self
             .engine_api
             .update_forkchoice(
@@ -309,7 +320,7 @@ impl<'a> BlockGenerator<'a> {
                     payload_attributes: PayloadAttributes {
                         withdrawals: Some(vec![]),
                         parent_beacon_block_root: Some(B256::ZERO),
-                        timestamp: self.timestamp + 1000,
+                        timestamp,
                         prev_randao: B256::ZERO,
                         suggested_fee_recipient: Default::default(),
                     },
@@ -328,7 +339,7 @@ impl<'a> BlockGenerator<'a> {
         let payload_id = result.payload_id.unwrap();
 
         if !self.no_tx_pool {
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(self.block_time_secs)).await;
         }
 
         let payload = self.engine_api.get_payload_v3(payload_id).await?;
@@ -374,12 +385,6 @@ impl<'a> BlockGenerator<'a> {
 
         // Update internal state
         self.latest_hash = new_block_hash;
-        self.timestamp = payload
-            .execution_payload
-            .payload_inner
-            .payload_inner
-            .timestamp;
-
         Ok(new_block_hash)
     }
 
@@ -414,7 +419,11 @@ impl<'a> BlockGenerator<'a> {
 
 // TODO: This is not being recognized as used code by the main function
 #[allow(dead_code)]
-pub async fn run_system(validation: bool, no_tx_pool: bool) -> eyre::Result<()> {
+pub async fn run_system(
+    validation: bool,
+    no_tx_pool: bool,
+    block_time_secs: u64,
+) -> eyre::Result<()> {
     println!("Validation: {}", validation);
 
     let engine_api = EngineApi::new("http://localhost:4444").unwrap();
@@ -424,7 +433,12 @@ pub async fn run_system(validation: bool, no_tx_pool: bool) -> eyre::Result<()> 
         None
     };
 
-    let mut generator = BlockGenerator::new(&engine_api, validation_api.as_ref(), no_tx_pool);
+    let mut generator = BlockGenerator::new(
+        &engine_api,
+        validation_api.as_ref(),
+        no_tx_pool,
+        block_time_secs,
+    );
 
     generator.init().await?;
 

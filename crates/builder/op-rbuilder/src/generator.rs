@@ -12,6 +12,8 @@ use reth_payload_builder::PayloadJobGenerator;
 use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadJob};
 use reth_payload_primitives::BuiltPayload;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tokio::sync::oneshot;
 use tokio::sync::Notify;
 use tokio::time::Duration;
@@ -125,7 +127,16 @@ where
 
         info!("Spawn block building job");
 
-        let deadline = Box::pin(tokio::time::sleep(Duration::from_secs(2))); // Or another appropriate timeout
+        // The deadline is critical for payload availability. If we reach the deadline,
+        // the payload job stops and cannot be queried again. With tight deadlines close
+        // to the block number, we risk reaching the deadline before the node queries the payload.
+        //
+        // Adding 0.5 seconds as wiggle room since block times are shorter here.
+        // TODO: A better long-term solution would be to implement cancellation logic
+        // that cancels existing jobs when receiving new block building requests.
+        let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(500);
+
+        let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
         let mut job = BlockPayloadJob {
@@ -366,6 +377,23 @@ impl<T: Clone> Default for BlockCell<T> {
     }
 }
 
+fn job_deadline(unix_timestamp_secs: u64) -> std::time::Duration {
+    let unix_now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // Safe subtraction that handles the case where timestamp is in the past
+    let duration_until = unix_timestamp_secs.saturating_sub(unix_now);
+
+    if duration_until == 0 {
+        // Enforce a minimum block time of 1 second by rounding up any duration less than 1 second
+        Duration::from_secs(1)
+    } else {
+        Duration::from_secs(duration_until)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,6 +555,28 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_job_deadline() {
+        // Test future deadline
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let future_timestamp = now + Duration::from_secs(2);
+        // 2 seconds from now
+        let deadline = job_deadline(future_timestamp.as_secs());
+        assert!(deadline <= Duration::from_secs(2));
+        assert!(deadline > Duration::from_secs(0));
+
+        // Test past deadline
+        let past_timestamp = now - Duration::from_secs(10);
+        let deadline = job_deadline(past_timestamp.as_secs());
+        // Should default to 1 second when timestamp is in the past
+        assert_eq!(deadline, Duration::from_secs(1));
+
+        // Test current timestamp
+        let deadline = job_deadline(now.as_secs());
+        // Should use 1 second when timestamp is current
+        assert_eq!(deadline, Duration::from_secs(1));
     }
 
     #[tokio::test]

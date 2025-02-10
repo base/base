@@ -29,7 +29,7 @@ mod tests {
         framework.start("op-rbuilder", &reth).await.unwrap();
 
         let engine_api = EngineApi::new("http://localhost:1234").unwrap();
-        let mut generator = BlockGenerator::new(&engine_api, None, false);
+        let mut generator = BlockGenerator::new(&engine_api, None, false, 1);
         generator.init().await.unwrap();
 
         for _ in 0..10 {

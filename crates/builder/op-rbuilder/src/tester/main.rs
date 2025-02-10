@@ -24,6 +24,9 @@ enum Commands {
 
         #[clap(long, short, action, default_value = "false")]
         no_tx_pool: bool,
+
+        #[clap(long, short, action, default_value = "1")]
+        block_time_secs: u64,
     },
     /// Deposit funds to the system
     Deposit {
@@ -43,10 +46,11 @@ async fn main() -> eyre::Result<()> {
         Commands::Run {
             validation,
             no_tx_pool,
-        } => run_system(validation, no_tx_pool).await,
+            block_time_secs,
+        } => run_system(validation, no_tx_pool, block_time_secs).await,
         Commands::Deposit { address, amount } => {
             let engine_api = EngineApi::builder().build().unwrap();
-            let mut generator = BlockGenerator::new(&engine_api, None, false);
+            let mut generator = BlockGenerator::new(&engine_api, None, false, 1);
 
             generator.init().await?;
 
