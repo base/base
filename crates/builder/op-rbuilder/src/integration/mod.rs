@@ -17,6 +17,7 @@ pub const DEFAULT_JWT_TOKEN: &str =
 
 mod integration_test;
 pub mod op_rbuilder;
+pub mod op_reth;
 
 #[derive(Debug)]
 pub enum IntegrationError {
