@@ -169,7 +169,7 @@ async fn request_span_proof(
         }
     };
 
-    let mem_kv_store = start_server_and_native_client(&host_cli).await?;
+    let mem_kv_store = start_server_and_native_client(host_cli).await?;
 
     let sp1_stdin = match get_proof_stdin(mem_kv_store) {
         Ok(stdin) => stdin,
@@ -345,7 +345,7 @@ async fn request_mock_span_proof(
     };
 
     let start_time = Instant::now();
-    let oracle = start_server_and_native_client(&host_cli).await?;
+    let oracle = start_server_and_native_client(host_cli.clone()).await?;
     let witness_generation_duration = start_time.elapsed();
 
     let sp1_stdin = match get_proof_stdin(oracle) {

@@ -45,10 +45,10 @@ impl<T: CommsClient> OPSuccinctOracleBlobProvider<T> {
         blob_req_meta[40..48].copy_from_slice(block_ref.timestamp.to_be_bytes().as_ref());
 
         // Send a hint for the blob commitment and field elements.
-        self.oracle
-            .write(&HintType::L1Blob.encode_with(&[blob_req_meta.as_ref()]))
-            .await
-            .map_err(OracleProviderError::Preimage)?;
+        HintType::L1Blob
+            .with_data(&[blob_req_meta.as_ref()])
+            .send(self.oracle.as_ref())
+            .await?;
 
         // Fetch the blob commitment.
         let mut commitment = [0u8; 48];
