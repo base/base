@@ -40,19 +40,19 @@ tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
 
 # kona
-kona-mpt = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
-kona-derive = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd", default-features = false }
-kona-driver = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
-kona-preimage = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", rev = "485785e" }
+kona-derive = { git = "https://github.com/op-rs/kona", rev = "485785e", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", rev = "485785e" }
+kona-preimage = { git = "https://github.com/op-rs/kona", rev = "485785e", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
-kona-proof = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
+kona-executor = { git = "https://github.com/op-rs/kona", rev = "485785e" }
+kona-proof = { git = "https://github.com/op-rs/kona", rev = "485785e" }
 
-kona-client = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
-kona-host = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
-kona-providers-alloy = { git = "https://github.com/succinctlabs/kona", rev = "2e02cbd" }
+kona-client = { git = "https://github.com/op-rs/kona", rev = "485785e" }
+kona-host = { git = "https://github.com/op-rs/kona", rev = "485785e" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", rev = "485785e" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
