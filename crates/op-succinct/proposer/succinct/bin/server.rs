@@ -73,6 +73,12 @@ async fn main() -> Result<()> {
         _ => FulfillmentStrategy::Reserved,
     };
 
+    // Set the aggregation proof type based on environment variable. Default to groth16.
+    let agg_proof_mode = match env::var("AGG_PROOF_MODE") {
+        Ok(proof_type) if proof_type.to_lowercase() == "plonk" => SP1ProofMode::Plonk,
+        _ => SP1ProofMode::Groth16,
+    };
+
     // Initialize global hashes.
     let global_hashes = SuccinctProposerConfig {
         agg_vkey_hash,
@@ -84,6 +90,7 @@ async fn main() -> Result<()> {
         agg_pk,
         range_proof_strategy,
         agg_proof_strategy,
+        agg_proof_mode,
     };
 
     let app = Router::new()
@@ -294,7 +301,7 @@ async fn request_agg_proof(
 
     let proof_id = match prover
         .prove(&state.agg_pk, &stdin)
-        .groth16()
+        .mode(state.agg_proof_mode)
         .strategy(state.agg_proof_strategy)
         .request_async()
         .await
@@ -476,7 +483,7 @@ async fn request_mock_agg_proof(
 
     let proof = match prover
         .prove(&state.agg_pk, &stdin)
-        .groth16()
+        .mode(state.agg_proof_mode)
         .deferred_proof_verification(false)
         .run()
     {
