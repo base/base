@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let start_time = Instant::now();
-    let oracle = start_server_and_native_client(&host_cli).await?;
+    let oracle = start_server_and_native_client(host_cli.clone()).await?;
     let witness_generation_duration = start_time.elapsed();
 
     // Get the stdin for the block.

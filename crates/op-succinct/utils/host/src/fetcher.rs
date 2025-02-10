@@ -8,7 +8,7 @@ use anyhow::Result;
 use anyhow::{anyhow, bail};
 use cargo_metadata::MetadataCommand;
 use futures::{stream, StreamExt};
-use kona_host::single::SingleChainHostCli;
+use kona_host::single::SingleChainHost;
 use maili_genesis::RollupConfig;
 use maili_protocol::calculate_tx_l1_cost_fjord;
 use maili_protocol::L2BlockInfo;
@@ -678,7 +678,7 @@ impl OPSuccinctDataFetcher {
         l2_end_block: u64,
         multi_block: ProgramType,
         cache_mode: CacheMode,
-    ) -> Result<SingleChainHostCli> {
+    ) -> Result<SingleChainHost> {
         // If the rollup config is not already loaded, fetch and save it.
         if self.rollup_config.is_none() {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -781,7 +781,7 @@ impl OPSuccinctDataFetcher {
         // witness data.
         fs::create_dir_all(&data_directory)?;
 
-        Ok(SingleChainHostCli {
+        Ok(SingleChainHost {
             l1_head: l1_head_hash,
             agreed_l2_output_root,
             agreed_l2_head_hash,
@@ -811,8 +811,8 @@ impl OPSuccinctDataFetcher {
                     .to_string(),
             ),
             data_dir: Some(data_directory.into()),
-            native: true,
-            server: false,
+            native: false,
+            server: true,
             rollup_config_path: Some(rollup_config_path),
         })
     }

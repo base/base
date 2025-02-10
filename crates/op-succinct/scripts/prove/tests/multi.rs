@@ -30,7 +30,7 @@ async fn execute_batch() -> Result<()> {
         )
         .await?;
 
-    let oracle = start_server_and_native_client(&host_cli).await?;
+    let oracle = start_server_and_native_client(host_cli.clone()).await?;
 
     // Get the stdin for the block.
     let sp1_stdin = get_proof_stdin(oracle)?;

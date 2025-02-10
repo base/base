@@ -15,9 +15,7 @@ use kona_driver::DriverResult;
 use kona_driver::Executor;
 use kona_driver::TipCursor;
 use kona_executor::{KonaHandleRegister, TrieDBProvider};
-use kona_preimage::HintWriterClient;
-use kona_preimage::PreimageOracleClient;
-use kona_preimage::{CommsClient, PreimageKeyType};
+use kona_preimage::{CommsClient, PreimageKey};
 use kona_proof::errors::OracleProviderError;
 use kona_proof::executor::KonaExecutor;
 use kona_proof::l1::{OracleL1ChainProvider, OraclePipeline};
@@ -38,22 +36,6 @@ use tracing::info;
 use tracing::warn;
 
 use crate::oracle::OPSuccinctOracleBlobProvider;
-use crate::precompiles::zkvm_handle_register;
-use crate::InMemoryOracle;
-use crate::StoreOracle;
-
-pub async fn run_witnessgen_client<OR, HW>(
-    oracle: Arc<StoreOracle<OR, HW>>,
-) -> Result<InMemoryOracle>
-where
-    OR: PreimageOracleClient + Send + Sync + Debug + Clone,
-    HW: HintWriterClient + Send + Sync + Debug + Clone,
-{
-    let _ = run_opsuccinct_client(oracle.clone(), Some(zkvm_handle_register)).await?;
-    let in_memory_oracle = InMemoryOracle::populate_from_store(oracle.as_ref())?;
-    drop(oracle);
-    Ok(in_memory_oracle)
-}
 
 // Sourced from https://github.com/op-rs/kona/tree/main/bin/client/src/single.rs
 pub async fn run_opsuccinct_client<O>(
@@ -78,7 +60,7 @@ where
 
     let boot_arc = Arc::new(boot.clone());
     let rollup_config = Arc::new(boot.rollup_config);
-    let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot_arc.as_ref()).await?;
+    let safe_head_hash = fetch_safe_head_hash(oracle.as_ref(), boot.agreed_l2_output_root).await?;
 
     let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, oracle.clone());
     let mut l2_provider =
@@ -187,18 +169,20 @@ where
 /// [BootInfo].
 async fn fetch_safe_head_hash<O>(
     caching_oracle: &O,
-    boot_info: &BootInfo,
+    agreed_l2_output_root: B256,
 ) -> Result<B256, OracleProviderError>
 where
     O: CommsClient,
 {
     let mut output_preimage = [0u8; 128];
     HintType::StartingL2Output
-        .get_exact_preimage(
-            caching_oracle,
-            boot_info.agreed_l2_output_root,
-            PreimageKeyType::Keccak256,
-            &mut output_preimage,
+        .with_data(&[agreed_l2_output_root.as_ref()])
+        .send(caching_oracle)
+        .await?;
+    caching_oracle
+        .get_exact(
+            PreimageKey::new_keccak256(*agreed_l2_output_root),
+            output_preimage.as_mut(),
         )
         .await?;
 

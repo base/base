@@ -27,21 +27,16 @@ runs:
       with:
         version: latest
 
-    - name: rust-cache
-      uses: actions/cache@v3
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
       with:
-        path: |
+        toolchain: 1.82
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "stable"
+        cache-directories: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
-          target/
-        key: rust-nightly-${{ hashFiles('**/Cargo.toml') }}
-        restore-keys: rust-nightly-
-
-    - name: Setup toolchain
-      id: rustc-toolchain
-      shell: bash
-      run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain nightly -y
-        source "$HOME/.cargo/env"
-        rustup default nightly

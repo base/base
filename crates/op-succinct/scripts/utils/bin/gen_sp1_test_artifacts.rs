@@ -56,7 +56,9 @@ async fn main() -> Result<()> {
 
     let mut successful_ranges = Vec::new();
     for (range, host_cli) in split_ranges.iter().zip(host_clis.iter()) {
-        let oracle = start_server_and_native_client(host_cli).await.unwrap();
+        let oracle = start_server_and_native_client(host_cli.clone())
+            .await
+            .unwrap();
         let sp1_stdin = get_proof_stdin(oracle).unwrap();
         successful_ranges.push((sp1_stdin, range.clone()));
     }
