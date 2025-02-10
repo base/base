@@ -18,9 +18,10 @@
   - [Thread Management](#thread-management)
   - [Thread Traversal Mechanics](#thread-traversal-mechanics)
     - [Thread Preemption](#thread-preemption)
-  - [Wakeup Traversal](#wakeup-traversal)
   - [Exited Threads](#exited-threads)
-  - [Waiting Threads](#waiting-threads)
+  - [Futex Operations](#futex-operations)
+    - [Wait](#wait)
+    - [Wake](#wake)
   - [Voluntary Preemption](#voluntary-preemption)
   - [Forced Preemption](#forced-preemption)
 - [Stateful Instructions](#stateful-instructions)
@@ -159,69 +160,45 @@ Threads are traversed via "preemption": the currently active thread is popped fr
 inactive stack.  If the active stack is empty, the FPVM state's `traverseRight` field is flipped ensuring that
 there is always an active thread.
 
-### Wakeup Traversal
-
-When a futex wake syscall is made, the FPVM state’s `wakeup` field is set to the memory address specified by this
-syscall.  This causes the FPVM to enter a "wakeup traversal" mode where it iterates
-through the existing threads, looking for a thread that is currently waiting on the `wakeup` address.
-The wakeup traversal will continue until such a thread is found or else all threads have been checked.
-During wakeup traversal, no instructions are processed and no threads are updated, the VM simply steps through threads
-one at a time until wakeup traversal completes.
-
-Wakeup traversal proceeds as follows across multiple steps:
-
-- When a futex wakeup syscall is made:
-  - The state's `wakeup` field is set to an address specified by the syscall.
-  - The currently active thread is preempted.
-  - The FPVM state is set to traverse left, if possible (if the left thread stack is non-empty).
-- On each subsequent step while `wakeup` is set:
-  - The currently active thread's `futexAddr` is checked for a match with `wakeup`.
-  - If a match is found:
-    - The wakeup traversal completes [^traversal-completion], leaving the matching thread as the currently active thread.
-  - If the currently active thread is not a match:
-    - The active thread is preempted.
-    - If the right thread stack is now empty:
-      - This means all threads have been visited (the traversal begins by moving
-        left, then right so this is the end of the traversal).
-      - The wakeup traversal completes [^traversal-completion].
-
-[^traversal-completion]: Wakeup traversal is completed by setting the FPVM state's `wakeup` field to `MaxWord`,
-causing the FPVM to resume normal execution.
-
 ### Exited Threads
 
 When the VM encounters an active thread that has exited, it is popped from the active thread stack, removing it from
 the VM state.
 
-### Waiting Threads
+### Futex Operations
 
-Threads enter a waiting state when a futex wait syscall is successfully executed, setting the thread's
-`futexAddr`, `futexVal`, and `futexTimeoutStep` fields according to the futex syscall arguments.
+The VM supports [futex syscall](https://www.man7.org/linux/man-pages/man2/futex.2.html) operations
+`FUTEX_WAIT_PRIVATE` and `FUTEX_WAKE_PRIVATE`.
 
-During normal execution, when the active thread is in a waiting state (its `futexAddr` is not equal to `MaxWord`), the VM
-checks if it can be woken up.
+Futexes are commonly used to implement locks in user space.
+In this scenario, a shared 32-bit value (the "futex value") represents the state of a lock.
+If a thread cannot acquire the lock, it calls a futex wait, which puts the thread to sleep.
+To release the lock, the owning thread updates the futex value and then calls a futex wake
+to notify any other waiting threads.
 
-A waiting thread will be woken up if:
+Because wake-ups may be spurious or could be triggered by unrelated operations on the same memory,
+waiting threads must always re-check the futex value after waking up to decide if they can proceed.
 
-- The current `step` (after incrementing) is greater than `futexTimeoutStep`
-- The memory value at `futexAddr` is no longer equal to `futexVal`
+#### Wait
 
-The VM will wake such a thread by resetting its futex fields:
+When a futex wait is successfully executed, the current thread is simply [preempted](#thread-preemption).
+This gives other threads a chance to run and potentially change the shared futex value (for example, by releasing a lock).
+When the thread is eventually scheduled again, if the futex value has not changed the wakeup will be considered spurious
+and the thread will simply call futex wait again.
 
-- `futexAddr` = `MaxWord`
-- `futexVal` = 0
-- `futexTimeoutStep` = 0
+#### Wake
 
-If the current thread is waiting and cannot be woken, it is preempted.
+When a futex wake is executed, the current thread is [preempted](#thread-preemption). This allows the scheduler to move
+on to other threads which may potentially be ready to run (for example, because a shared lock was released).
 
 ### Voluntary Preemption
 
-In addition to the futex wait syscall (see ["Waiting Threads"](#waiting-threads)), there are a few other syscalls that
+In addition to the [futex syscall](#futex-operations), there are a few other syscalls that
 will cause a thread to be "voluntarily" preempted: `sched_yield`, `nanosleep`.
 
 ### Forced Preemption
 
-To avoid thread starvation (for example where a thread hogs resources by never executing a sleep, yield, or wait),
+To avoid thread starvation (for example where a thread hogs resources by never executing a sleep, yield, wait, etc.),
 the FPVM will force a context switch if the active thread has been executing too long.
 
 For each step executed on a particular thread, the state field `stepsSinceLastContextSwitch` is incremented.
@@ -308,8 +285,6 @@ The FPVM is a state transition function that operates on a state object consisti
 1. `step` - [`UInt64`] A step counter.
 1. `stepsSinceLastContextSwitch` - [`UInt64`] A step counter that tracks the number of steps executed on the current
    thread since the last [preemption](#thread-preemption).
-1. `wakeup` - [`Word`] The address set via a futex syscall signaling that the VM has entered wakeup traversal or else
-   `MaxWord` if there is no active wakeup signal. For details see ["Wakeup Traversal"](#wakeup-traversal).
 1. `traverseRight` - [`Boolean`] Indicates whether the currently active thread is on the left or right thread
     stack, as well as some details on thread traversal mechanics.
     See ["Thread Traversal Mechanics"](#thread-traversal-mechanics) for details.
@@ -319,11 +294,11 @@ The FPVM is a state transition function that operates on a state object consisti
    For details, see the [“Thread Stack Hashing” section.](#thread-stack-hashing)
 1. `nextThreadID` - [`Word`] The value defining the id to assign to the next thread that is created.
 
-The state is represented by packing the above fields, in order, into a 196-byte buffer.
+The state is represented by packing the above fields, in order, into a 188-byte buffer.
 
 ### State Hash
 
-The state hash is computed by hashing the 196-byte state buffer with the Keccak256 hash function
+The state hash is computed by hashing the 188-byte state buffer with the Keccak256 hash function
 and then setting the high-order byte to the respective VM status.
 
 The VM status can be derived from the state's `exited` and `exitCode` fields.
@@ -356,11 +331,6 @@ The state of a single thread is tracked and represented by a thread state object
 1. `threadID` - [`Word`] A unique thread identifier.
 1. `exitCode` - [`UInt8`] The exit code value.
 1. `exited` - [`Boolean`] Indicates whether the thread has exited.
-1. `futexAddr` - [`Word`] An address set via a futex syscall indicating that this thread is waiting on a value change
-    at this address.
-1. `futexVal` - [`Word`] A value representing the memory contents at `futexAddr` when this thread began waiting.
-1. `futexTimeoutStep` - [`UInt64`] A value representing the future `step` at which the futex wait will time out.
-Set to `MaxWord` if no timeout is active.
 1. `pc` - [`Word`] The program counter.
 1. `nextPC` - [`Word`] The next program counter. Note that this value may not always be $pc+4$
    when executing a branch/jump delay slot.
@@ -368,11 +338,11 @@ Set to `MaxWord` if no timeout is active.
 1. `hi` - [`Word`] The MIPS HI special register.
 1. `registers` - 32 general-purpose MIPS registers numbered 0 - 31. Each register contains a `Word` value.
 
-A thread is represented by packing the above fields, in order, into a 322-byte buffer.
+A thread is represented by packing the above fields, in order, into a 298-byte buffer.
 
 ### Thread Hash
 
-A thread hash is computed by hashing the 322-byte thread state buffer with the Keccak256 hash function.
+A thread hash is computed by hashing the 298-byte thread state buffer with the Keccak256 hash function.
 
 ### Thread Stack Hashing
 
