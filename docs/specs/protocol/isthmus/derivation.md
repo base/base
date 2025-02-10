@@ -14,6 +14,7 @@
   - [GasPriceOracle Enable Isthmus](#gaspriceoracle-enable-isthmus)
   - [EIP-2935 Contract Deployment](#eip-2935-contract-deployment)
 - [Span Batch Updates](#span-batch-updates)
+  - [Activation](#activation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -322,7 +323,7 @@ transaction.
 This corresponds with a new RLP-encoding of the `tx_datas` list as specified in
 [the Delta span batch spec](../delta/span-batches.md), adding a new transaction type:
 
-Transaction type `4` ([EIP-7702]):
+Transaction type `4` ([EIP-7702] `SetCode`):
 `0x04 ++ rlp_encode(value, max_priority_fee_per_gas, max_fee_per_gas, data, access_list, authorization_list)`
 
 The [EIP-7702] transaction extends [EIP-1559] to include a new `authorization_list` field.
@@ -336,7 +337,18 @@ The [EIP-7702] transaction format is as follows.
 - `access_list`: The [EIP-2930] access list.
 - `authorization_list`: The [EIP-7702] signed authorization list.
 
-Span batches with transaction type `4` should only be accepted after Isthmus is enabled.
+## Activation
+
+Singular batches with transactions of type `4` must only be accepted if Isthmus is active at the
+timestamp of the batch. If a singular batch contains a transaction of type `4` before Isthmus is
+active, this batch must be _dropped_. Note that if Holocene is active, this will also
+lead to the remaining span batch, and channel that contained it, to get dropped.
+
+Also note that this check must happen at the level of individual batches that are derived from span
+batches, not to span batches as a whole. In particular, it is allowed for a span batch to span the
+Isthmus activation timestamp and contain SetCode transactions in singular batches that have a
+timestamp at or after the Isthmus activation time, even if the timestamp of the span batch is before
+the Isthmus activation time.
 
 [EIP-1559]: https://eips.ethereum.org/EIPS/eip-1559
 [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702

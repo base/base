@@ -671,6 +671,9 @@ Rules, in validation order:
   that is invalid or derived by other means exclusively:
   - any transaction that is empty (zero length byte string)
   - any [deposited transactions][g-deposit-tx-type] (identified by the transaction type prefix byte)
+  - any transaction of a future type > 2 (note that
+    [Isthmus adds support](isthmus/derivation.md#activation)
+    for `SetCode` transactions of type 4)
 
 If no batch can be `accept`-ed, and the stage has completed buffering of all batches that can fully be read from the L1
 block at height `epoch.number + sequence_window_size`, and the `next_epoch` is available,

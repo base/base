@@ -359,6 +359,9 @@ Span-batch rules, in validation order:
     that is invalid or derived by other means exclusively:
     - any transaction that is empty (zero length `tx_data`)
     - any [deposited transactions][g-deposit-tx-type] (identified by the transaction type prefix byte in `tx_data`)
+    - any transaction of a future type > 2 (note that
+      [Isthmus adds support](../isthmus/derivation.md#activation)
+      for `SetCode` transactions of type 4)
 - Overlapped blocks checks:
   - Note: If the span batch overlaps the current L2 safe chain, we must validate all overlapped blocks.
   - Variables:
