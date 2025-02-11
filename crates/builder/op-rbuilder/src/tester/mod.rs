@@ -6,7 +6,7 @@ use alloy_primitives::Address;
 use alloy_primitives::Bytes;
 use alloy_primitives::TxKind;
 use alloy_primitives::B256;
-use alloy_primitives::U256;
+use alloy_primitives::{hex, U256};
 use alloy_rpc_types_engine::ExecutionPayloadV1;
 use alloy_rpc_types_engine::ExecutionPayloadV2;
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -181,6 +181,11 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     Ok(())
 }
 
+// L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
+//
+// https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
+const FJORD_DATA: &[u8] = &hex!("440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
+
 /// A system that continuously generates blocks using the engine API
 pub struct BlockGenerator<'a> {
     engine_api: &'a EngineApi,
@@ -308,6 +313,40 @@ impl<'a> BlockGenerator<'a> {
             .as_secs();
         let timestamp = timestamp + self.block_time_secs;
 
+        // Add L1 block info as the first transaction in every L2 block
+        // This deposit transaction contains L1 block metadata required by the L2 chain
+        // Currently using hardcoded data from L1 block 124665056
+        // If this info is not provided, Reth cannot decode the receipt for any transaction
+        // in the block since it also includes this info as part of the result.
+        // It does not matter if the to address (4200000000000000000000000000000000000015) is
+        // not deployed on the L2 chain since Reth queries the block to get the info and not the contract.
+        let block_info_tx: Bytes = {
+            let deposit_tx = TxDeposit {
+                source_hash: B256::default(),
+                from: address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001"),
+                to: TxKind::Call(address!("4200000000000000000000000000000000000015")),
+                mint: None,
+                value: U256::default(),
+                gas_limit: 210000,
+                is_system_transaction: true,
+                input: FJORD_DATA.into(),
+            };
+
+            // Create a temporary signer for the deposit
+            let signer = Signer::random();
+            let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
+            signed_tx.encoded_2718().into()
+        };
+
+        let transactions = if let Some(transactions) = transactions {
+            // prepend the block info transaction
+            let mut all_transactions = vec![block_info_tx];
+            all_transactions.extend(transactions.into_iter());
+            all_transactions
+        } else {
+            vec![block_info_tx]
+        };
+
         let result = self
             .engine_api
             .update_forkchoice(
@@ -321,7 +360,7 @@ impl<'a> BlockGenerator<'a> {
                         prev_randao: B256::ZERO,
                         suggested_fee_recipient: Default::default(),
                     },
-                    transactions,
+                    transactions: Some(transactions),
                     no_tx_pool: Some(self.no_tx_pool),
                     gas_limit: Some(10000000000),
                     eip_1559_params: None,

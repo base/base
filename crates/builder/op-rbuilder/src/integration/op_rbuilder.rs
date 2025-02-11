@@ -51,6 +51,11 @@ impl OpRbuilderConfig {
         self
     }
 
+    pub fn http_port(mut self, port: u16) -> Self {
+        self.http_port = Some(port);
+        self
+    }
+
     pub fn with_builder_private_key(mut self, private_key: &str) -> Self {
         self.builder_private_key = Some(private_key.to_string());
         self
