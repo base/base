@@ -60,23 +60,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push op-proposer
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: proposer/op/Dockerfile.op_proposer
-          push: true
-          tags: ${{ steps.meta-op-proposer.outputs.tags }}
-          labels: ${{ steps.meta-op-proposer.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Post-build debug
-        run: |
-          docker images
-          echo "Checking authentication:"
-          docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} 2>&1 || true
-
       - name: Build and push succinct-proposer
         uses: docker/build-push-action@v6
         with:
@@ -85,5 +68,16 @@ jobs:
           push: true
           tags: ${{ steps.meta-succinct.outputs.tags }}
           labels: ${{ steps.meta-succinct.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push op-proposer
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: proposer/op/Dockerfile.op_proposer
+          push: true
+          tags: ${{ steps.meta-op-proposer.outputs.tags }}
+          labels: ${{ steps.meta-op-proposer.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

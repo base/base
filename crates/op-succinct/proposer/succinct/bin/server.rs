@@ -268,7 +268,10 @@ async fn request_agg_proof(
 
     let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await {
         Ok(f) => f,
-        Err(e) => return Err(AppError(anyhow::anyhow!("Failed to create fetcher: {}", e))),
+        Err(e) => {
+            error!("Failed to create fetcher: {}", e);
+            return Err(AppError(anyhow::anyhow!("Failed to create fetcher: {}", e)));
+        }
     };
 
     let headers = match fetcher
