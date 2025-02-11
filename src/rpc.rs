@@ -1,19 +1,31 @@
+use crate::cache::Cache;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{Address, Sealable, TxHash, U256};
+use alloy_rpc_types::BlockTransactions;
+use alloy_rpc_types_eth::Header;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use op_alloy_network::Optimism;
-use reth_rpc_eth_api::helpers::{EthBlocks, EthState};
+use op_alloy_rpc_types::Transaction;
+use reth::{core::primitives::InMemorySize, providers::HeaderProvider};
+use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use reth_optimism_rpc::eth::OpNodeCore;
+use reth_optimism_rpc::OpEthApi;
+use reth_primitives::{BlockWithSenders, SealedBlockFor};
+use reth_rpc_eth_api::{
+    helpers::{EthBlocks, EthState},
+    RpcNodeCore,
+};
 use reth_rpc_eth_api::{
     helpers::{EthTransactions, FullEthApi},
-    RpcBlock, RpcReceipt,
+    EthApiTypes, RpcBlock, RpcReceipt,
 };
+use reth_rpc_types_compat::block::from_block;
+use reth_rpc_types_compat::TransactionCompat;
 use serde::{Deserialize, Serialize};
 use tracing::info;
-
-use crate::cache::Cache;
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -23,13 +35,13 @@ pub trait EthApiOverride {
         &self,
         number: BlockNumberOrTag,
         full: bool,
-    ) -> RpcResult<Option<RpcBlock<Optimism>>>;
+    ) -> RpcResult<Option<OpBlock>>;
 
     #[method(name = "getTransactionReceipt")]
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
+    ) -> RpcResult<Option<OpTransactionSigned>>;
 
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
@@ -58,31 +70,38 @@ where
         &self,
         number: BlockNumberOrTag,
         _full: bool,
-    ) -> RpcResult<Option<RpcBlock<Optimism>>> {
+    ) -> RpcResult<Option<OpBlock>> {
         match number {
             BlockNumberOrTag::Pending => {
                 info!("pending block by number, delegating to flashblocks");
-                todo!()
+                if let Ok(Some(block)) = self.cache.get::<OpBlock>(&number.to_string()) {
+                    return Ok(Some(block));
+                } else {
+                    return Ok(None);
+                }
             }
             _ => {
                 info!("non pending block, using standard flow");
-                EthBlocks::rpc_block(&self.eth_api, number.into(), _full)
-                    .await
-                    .map_err(Into::into)
+                todo!()
+                // EthBlocks::rpc_block(&self.eth_api, number.into(), _full)
+                //     .await
+                //     .map_err(Into::into)
             }
         }
     }
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        if let Ok(Some(receipt)) = self.cache.get::<RpcReceipt<Optimism>>(&tx_hash.to_string()) {
+    ) -> RpcResult<Option<OpTransactionSigned>> {
+        if let Ok(Some(receipt)) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
             return Ok(Some(receipt));
         }
 
-        EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-            .await
-            .map_err(Into::into)
+        todo!()
+
+        // EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+        //     .await
+        //     .map_err(Into::into)
     }
 
     async fn get_balance(
