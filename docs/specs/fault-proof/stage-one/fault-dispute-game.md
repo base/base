@@ -12,6 +12,7 @@
   - [Claims](#claims)
   - [Anchor State](#anchor-state)
   - [Anchor State Registry](#anchor-state-registry)
+  - [Respected Game Type](#respected-game-type)
   - [DAG](#dag)
   - [Subgame](#subgame)
   - [Game Tree](#game-tree)
@@ -102,10 +103,16 @@ states at initialization time so that these updates do not impact active games.
 
 ### Anchor State Registry
 
-The Anchor State Registry is a registry that maps FDG types to their current [anchor states](#anchor-state).
-The Anchor State Registry is specific to Fault Dispute Game contracts and may not be applicable to
-other types of dispute game contracts that do not have the same concept of state that progresses
-over time.
+The Anchor State Registry is a registry that the FDG uses to determine its [anchor state](#anchor-state). It also
+determines if the game is [finalized](anchor-state-registry.md#finalized-game) and
+["proper"](anchor-state-registry.md#proper-game) for purposes of [Bond
+Distribution](./bond-incentives.md#game-finalization). See [Anchor State Registry](anchor-state-registry.md) for more
+details.
+
+### Respected Game Type
+
+A Fault Dispute Game must record whether its game type is respected at the time of its creation. See
+[Respected Game Type](./anchor-state-registry.md#respected-game-type) for more details.
 
 ### DAG
 
@@ -552,14 +559,6 @@ Thus, no moves against the root, including uncontested ones, can win a root subg
 
 ### Finalization
 
-Once the game is resolved, if the claim is shown to be valid, the FDG reports its state to the
-Anchor State Registry. The Anchor State Registry verifies that the request to update an anchor
-state comes from a FDG contract created by the Dispute Game Factory contract, confirms that the
-game resolved in favor of the defender, and confirms that the updated state would be newer than
-the current anchor state (based on the result of `FaultDisputeGame.l2BlockNumber()`). If these
-conditions are true, the Anchor State Registry updates the anchor state for the given game type.
-
-Note that the dependency of the Anchor State Registry on the `l2BlockNumber()` function means that
-the registry may not be applicable to dispute game types that do not have a similar sense of
-progressing state over time. Currently, the Anchor State Registry is therefore assumed to be
-specific to the Fault Dispute Game contract and not to other dispute game types.
+Once the game is resolved, it must wait for the `disputeGameFinalityDelaySeconds` on the `OptimismPortal` to pass before
+it can be finalized, after which bonds can be distributed via the process outlined in [Bond Incentives: Game
+Finalization](bond-incentives.md#game-finalization).

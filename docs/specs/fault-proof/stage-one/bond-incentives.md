@@ -14,6 +14,12 @@
   - [Bond Scaling](#bond-scaling)
   - [Required Bond Formula](#required-bond-formula)
   - [Other Incentives](#other-incentives)
+- [Game Finalization](#game-finalization)
+  - [Bond Distribution Mode](#bond-distribution-mode)
+    - [Normal Mode](#normal-mode)
+    - [Refund Mode](#refund-mode)
+  - [Game Closure](#game-closure)
+  - [Claiming Credit](#claiming-credit)
   - [DelayedWETH](#delayedweth)
     - [Sub-Account Model](#sub-account-model)
     - [Delay Period](#delay-period)
@@ -76,9 +82,9 @@ proof system.
 
 ### Authenticated Roles
 
-| Name | Description |
-| ---- | ----------- |
-| Guardian | Role responsible for blacklisting dispute game contracts and changing the respected dispute game type |
+| Name         | Description                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| Guardian     | Role responsible for blacklisting dispute game contracts and changing the respected dispute game type |
 | System Owner | Role that owns the `ProxyAdmin` contract that in turn owns most `Proxy` contracts within the OP Stack |
 
 ### Base Fee Assumption
@@ -125,9 +131,57 @@ opportunity cost of locking up capital in the dispute game. While we do not expl
 these costs, we assume that the current bond rewards, based on this specification, are enough as a whole to cover
 all other costs of participation.
 
+## Game Finalization
+
+After the game is resolved, claimants must wait for the [AnchorStateRegistry's
+`isGameFinalized()`](anchor-state-registry.md#isgamefinalized) to return `true` before they can claim their bonds. This
+implies a wait period of at least the `disputeGameFinalityDelaySeconds` variable from the `OptimismPortal` contract.
+After the game is finalized, bonds can be distributed.
+
+### Bond Distribution Mode
+
+The FDG will in most cases distribute bonds to the winners of the game after it is resolved and finalized, but in
+special cases will refund the bonds to the original depositor.
+
+#### Normal Mode
+
+In normal mode, the FDG will distribute bonds to the winners of the game after it is resolved and finalized.
+
+#### Refund Mode
+
+In refund mode, the FDG will refund the bonds to the original depositor.
+
+### Game Closure
+
+The `FaultDisputeGame` contract can be closed after finalization via the `closeGame()` function.
+
+`closeGame` must do the following:
+
+1. Verify the game is resolved and finalized according to the Anchor State Registry
+2. Attempt to set this game as the new anchor game.
+3. Determine the bond distribution mode based on whether the [AnchorStateRegistry's
+   `isGameProper()`](anchor-state-registry.md#isgameproper) returns `true`.
+4. Emit a `GameClosed` event with the chosen distribution mode.
+
+### Claiming Credit
+
+There is a 2-step process to claim credit. First, `claimCredit(address claimant)` should be called to unlock the credit
+from the [DelayedWETH](#delayedweth) contract. After DelayedWETH's [delay period](#delay-period) has passed,
+`claimCredit` should be called again to withdraw the credit.
+
+The `claimCredit(address claimant)` function must do the following:
+
+- Call `closeGame()` to determine the distribution mode if not already closed.
+  - In NORMAL mode: Distribute credit from the standard `normalModeCredit` mapping.
+  - In REFUND mode: Distribute credit from the `refundModeCredit` mapping.
+- If the claimant has not yet unlocked their credit, unlock it by calling `DelayedWETH.unlock(claimant, credit)`.
+  - Claimant must not be able to unlock this credit again.
+- If the claimant has already unlocked their credit, call `DelayedWETH.withdraw(claimant, credit)` (implying a
+  [delay period](#delay-period)) to withdraw the credit, and set claimant's `credit` balances to 0.
+
 ### DelayedWETH
 
-FPM introduces a contract `DelayedWETH` designed to hold the bonded ETH for each
+`DelayedWETH` is designed to hold the bonded ETH for each
 [Fault Dispute Game](fault-dispute-game.md).
 `DelayedWETH` is an extended version of the standard `WETH` contract that introduces a delayed unwrap mechanism that
 allows an owner address to function as a backstop in the case that a Fault Dispute Game would
@@ -139,19 +193,22 @@ incorrectly distribute bonds.
 - `DelayedWETH` has an `owner()` address. We typically expect this to be set to the `System Owner` address.
 - `DelayedWETH` has a `delay()` function that returns a period of time that withdrawals will be delayed.
 - `DelayedWETH` has an `unlock(guy,wad)` function that modifies a mapping called `withdrawals` keyed as
-`withdrawals[msg.sender][guy] => WithdrawalRequest` where `WithdrawalRequest` is
-`struct Withdrawal Request { uint256 amount, uint256 timestamp }`. When `unlock` is called, the timestamp for
-`withdrawals[msg.sender][guy]` is set to the current timestamp and the amount is increased by the given amount.
-- `DelayedWETH` modifies the `WETH.withdraw` function such that an address *must* provide a "sub-account" to withdraw
-from. The function signature becomes `withdraw(guy,wad)`. The function retrieves `withdrawals[msg.sender][guy]` and
-checks that the current `block.timestamp` is greater than the timestamp on the withdrawal request plus the `delay()`
-seconds and reverts if not. It also confirms that the amount being withdrawn is less than the amount in the withdrawal
-request. Before completing the withdrawal, it reduces the amount contained within the withdrawal request. The original
-`withdraw(wad)` function becomes an alias for `withdraw(msg.sender, wad)`.
-`withdraw(guy,wad)` will not be callable when `SuperchainConfig.paused()` is `true`.
-- `DelayedWETH` has a `hold()` function that allows the `owner()` address to give itself an allowance from any address.
+  `withdrawals[msg.sender][guy] => WithdrawalRequest` where `WithdrawalRequest` is
+  `struct Withdrawal Request { uint256 amount, uint256 timestamp }`. When `unlock` is called, the timestamp for
+  `withdrawals[msg.sender][guy]` is set to the current timestamp and the amount is increased by the given amount.
+- `DelayedWETH` modifies the `WETH.withdraw` function such that an address _must_ provide a "sub-account" to withdraw
+  from. The function signature becomes `withdraw(guy,wad)`. The function retrieves `withdrawals[msg.sender][guy]` and
+  checks that the current `block.timestamp` is greater than the timestamp on the withdrawal request plus the `delay()`
+  seconds and reverts if not. It also confirms that the amount being withdrawn is less than the amount in the withdrawal
+  request. Before completing the withdrawal, it reduces the amount contained within the withdrawal request. The original
+  `withdraw(wad)` function becomes an alias for `withdraw(msg.sender, wad)`.
+  `withdraw(guy,wad)` will not be callable when `SuperchainConfig.paused()` is `true`.
+- `DelayedWETH` has a `hold(guy,wad)` function that allows the `owner()` address to, for any holder, give itself an
+  allowance and immediately `transferFrom` that allowance amount to itself.
+- `DelayedWETH` has a `hold(guy)` function that allows the `owner()` address to, for any holder, give itself a full
+  allowance of the holder's balance and immediately `transferFrom` that amount to itself.
 - `DelayedWETH` has a `recover()` function that allows the `owner()` address to recover any amount of ETH from the
-contract.
+  contract.
 
 #### Sub-Account Model
 
@@ -174,8 +231,8 @@ over multiple timezones.
 
 - When `FaultDisputeGame.initialize` is triggered, `DelayedWETH.deposit{value: msg.value}()` is called.
 - When `FaultDisputeGame.move` is triggered, `DelayedWETH.deposit{value: msg.value}()` is called.
-- When `FaultDisputeGame.resolveClaim` is triggered, `DelayedWETH.unlock(recipient, bond)` is called.
-- When `FaultDisputeGame.claimCredit` is triggered, `DelayedWETH.withdraw(recipient, claim)` is called.
+- When `FaultDisputeGame.resolveClaim` is triggered, the game will add to the claimant's internal credit balance.
+- When `FaultDisputeGame.claimCredit` is triggered, `DelayedWETH.withdraw(recipient, credit)` is called.
 
 ```mermaid
 sequenceDiagram
@@ -195,13 +252,17 @@ sequenceDiagram
 
     loop resolveClaim by Users
         U->>FDG: resolveClaim()
-        FDG->>DW: unlock(recipient, bond)
-        Note over DW: Starts timer for recipient
+        FDG->>FDG: Add to claimant credit
     end
 
-    loop claimCredit by Users
+  loop Initial claimCredit call by Users
         U->>FDG: claimCredit()
-        FDG->>DW: withdraw(recipient, claim)
+        FDG->>DW: unlock(recipient, bond)
+    end
+
+    loop Subsequent claimCredit call by Users
+        U->>FDG: claimCredit()
+        FDG->>DW: withdraw(recipient, credit)
         Note over DW: Checks timer/amount for recipient
         DW->>FDG: Transfer claim to FDG
         FDG->>U: Transfer claim to User
