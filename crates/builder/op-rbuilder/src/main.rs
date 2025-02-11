@@ -119,6 +119,10 @@ fn main() {
                         .payload(CustomPayloadBuilder::new(builder_args.builder_signer)),
                 )
                 .with_add_ons(op_node.add_ons())
+                /*
+                // TODO: ExEx in Op-reth fails from time to time when restarting the node.
+                // Switching to the spawn task on the meantime.
+                // https://github.com/paradigmxyz/reth/issues/14360
                 .install_exex("monitoring", move |ctx| {
                     let builder_signer = builder_args.builder_signer;
                     if let Some(signer) = &builder_signer {
@@ -126,7 +130,22 @@ fn main() {
                     } else {
                         tracing::info!("Builder signer is not set");
                     }
-                    async move { Ok(Monitoring::new(ctx, builder_signer).start()) }
+                    async move { Ok(Monitoring::new(builder_signer).run_with_exex(ctx)) }
+                })
+                */
+                .on_node_started(move |ctx| {
+                    let new_canonical_blocks = ctx.provider().canonical_state_stream();
+                    let builder_signer = builder_args.builder_signer;
+
+                    ctx.task_executor.spawn_critical(
+                        "monitoring",
+                        Box::pin(async move {
+                            let monitoring = Monitoring::new(builder_signer);
+                            let _ = monitoring.run_with_stream(new_canonical_blocks).await;
+                        }),
+                    );
+
+                    Ok(())
                 })
                 .launch_with_fn(|builder| {
                     let launcher = EngineNodeLauncher::new(

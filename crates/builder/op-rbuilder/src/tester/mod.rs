@@ -306,10 +306,7 @@ impl<'a> BlockGenerator<'a> {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        println!("now: {}", timestamp);
         let timestamp = timestamp + self.block_time_secs;
-
-        println!("timestamp: {}", timestamp);
 
         let result = self
             .engine_api
