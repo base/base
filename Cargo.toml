@@ -13,7 +13,9 @@ reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
-
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
 clap = { version = "4.4.3" }
 jsonrpsee = { version = "0.24.8" }
 tracing = { version = "0.1.41" }
@@ -44,7 +46,9 @@ default = ["optimism"]
 optimism = [
 	"reth-optimism-node/optimism",
 	"reth-optimism-cli/optimism",
-	"reth-primitives/optimism"
+	"reth-primitives/optimism",
+	"reth-optimism-primitives/optimism",
+	"reth-optimism-rpc/optimism"
 ]
 
 [[bin]]
