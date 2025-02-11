@@ -8,9 +8,11 @@
 - [Definitions](#definitions)
   - [Dispute Game](#dispute-game)
   - [Respected Game Type](#respected-game-type)
+  - [Dispute Game Finality Delay (Airgap)](#dispute-game-finality-delay-airgap)
   - [Registered Game](#registered-game)
   - [Respected Game](#respected-game)
   - [Blacklisted Game](#blacklisted-game)
+  - [Retirement Timestamp](#retirement-timestamp)
   - [Retired Game](#retired-game)
   - [Proper Game](#proper-game)
   - [Resolved Game](#resolved-game)
@@ -25,10 +27,8 @@
     - [Mitigations](#mitigations)
   - [aASR-002: DisputeGameFactory properly reports its created games](#aasr-002-disputegamefactory-properly-reports-its-created-games)
     - [Mitigations](#mitigations-1)
-  - [aASR-003: OptimismPortal properly reports respected game type, blacklist, and retirement time](#aasr-003-optimismportal-properly-reports-respected-game-type-blacklist-and-retirement-time)
+  - [aASR-003: Incorrectly resolving games will be invalidated before they have Valid Claims](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
     - [Mitigations](#mitigations-2)
-  - [aASR-004: Incorrectly resolving games will be invalidated within the airgap delay period](#aasr-004-incorrectly-resolving-games-will-be-invalidated-within-the-airgap-delay-period)
-    - [Mitigations](#mitigations-3)
 - [Invariants](#invariants)
   - [iASR-001: Games are represented as Proper Games accurately](#iasr-001-games-are-represented-as-proper-games-accurately)
     - [Impact](#impact)
@@ -43,6 +43,15 @@
     - [Impact](#impact-3)
     - [Dependencies](#dependencies-3)
 - [Function Specification](#function-specification)
+  - [constructor](#constructor)
+  - [initialize](#initialize)
+  - [paused](#paused)
+  - [respectedGameType](#respectedgametype)
+  - [retirementTimestamp](#retirementtimestamp)
+  - [disputeGameFinalityDelaySeconds](#disputegamefinalitydelayseconds)
+  - [setRespectedGameType](#setrespectedgametype)
+  - [updateRetirementTimestamp](#updateretirementtimestamp)
+  - [blacklistDisputeGame](#blacklistdisputegame)
   - [isGameRegistered](#isgameregistered)
   - [isGameRespected](#isgamerespected)
   - [isGameBlacklisted](#isgameblacklisted)
@@ -83,16 +92,16 @@ AnchorStateRegistry contract are arguing over the same underlying state/claim st
 
 ### Respected Game Type
 
-The `OptimismPortal` contract defines a "respected game type" which is the Dispute Game type that
-the portal allows to be used for the purpose of proving and finalizing withdrawals. This mechanism
-allows the system to use multiple game types simultaneously while still ensuring that the
-`OptimismPortal` contract only trusts respected games specifically.
+The `AnchorStateRegistry` contract defines a **Respected Game Type** which is the Dispute Game type
+that is considered to be the correct by the `AnchorStateRegistry` and, by extension, other
+contracts that may rely on the assertions made within the `AnchorStateRegistry`. The Respected Game
+Type is, in a more general sense, a game type that the system believes will resolve correctly. For
+now, the `AnchorStateRegistry` only allows a single Respected Game Type.
 
-The `OptimismPortal` contract defines a "respected game type" which is the type of Dispute Game
-that it believes to be correct for the purpose of proving and finalizing withdrawals. This
-mechanism allows the system to use multiple game types simultaneously while still ensuring that the
-`OptimismPortal` contract only trusts respected games specifically. If the respected game type is
-updated, any games created when their game type was respected are still considered Respected Games.
+### Dispute Game Finality Delay (Airgap)
+
+The **Dispute Game Finality Delay** or **Airgap** is the amount of time that must elapse after a
+game resolves before the game's result is considered "final".
 
 ### Registered Game
 
@@ -102,39 +111,57 @@ system's `DisputeGameFactory` contract.
 ### Respected Game
 
 A Dispute Game is considered to be a **Respected Game** if the game contract's game type **was**
-the `respectedGameType` defined by the `OptimismPortal` contract at the time of the game's
+the Respected Game Type defined by the `AnchorStateRegistry` contract at the time of the game's
 creation. Games that are not Respected Games cannot be used as an Anchor Game. See
 [Respected Game Type](#respected-game-type) for more information.
 
 ### Blacklisted Game
 
 A Dispute Game is considered to be a **Blacklisted Game** if the game contract's address is marked
-as blacklisted inside of the `OptimismPortal` contract.
+as blacklisted inside of the `AnchorStateRegistry` contract.
+
+### Retirement Timestamp
+
+The **Retirement Timestamp** is a timestamp value maintained within the `AnchorStateRegistry` that
+can be used to invalidate games. Games with a creation timestamp less than or equal to the
+Retirement Timestamp are automatically considered to be invalid.
+
+The RetirementTimestamp has the effect of retiring all games created before the specific
+transaction in which the retirement timestamp was set. This includes all games created in the same
+block as the transaction that set the Retirement Timestamp. We acknowledge the edge-case that games
+created in the same block *after* the Retirement Timestamp was set will be considered Retired Games
+even though they were technically created "after" the Retirement Timestamp was set.
 
 ### Retired Game
 
 A Dispute Game is considered to be a **Retired Game** if the game contract was created with a
-timestamp less than or equal to the retirement timestamp (`respectedGameTypeUpdatedAt`) defined in
-the `OptimismPortal` contract. The retirement timestamp has the effect of retiring all games
-created before the specific transaction in which the retirement timestamp was set. This includes
-all games created in the same block as the transaction that set the retirement timestamp. We
-acknowledge the edge-case that games created in the same block *after* the retirement timestamp
-was set will be considered Retired Games even though they were technically created after the
-retirement timestamp was set.
+timestamp less than or equal to the [Retirement Timestamp](#retirement-timestamp).
 
 ### Proper Game
 
 A Dispute Game is considered to be a **Proper Game** if it has not been invalidated through any of
-the mechanisms defined by the `OptimismPortal` contract. A Proper Game is, in a sense, a "clean"
-game that exists in the set of games that are playing out correctly in a bug-free manner. A Dispute
-Game can be a Proper Game even if it has not yet resolved or resolves in favor of the Challenger.
-A Game that was previously a Proper Game can no longer be a Proper Game if it is later invalidated.
+the mechanisms defined by the `AnchorStateRegistry` contract. A Proper Game is, in a sense, a
+"clean" game that exists in the set of games that are playing out correctly in a bug-free manner. A
+Dispute Game can be a Proper Game even if it has not yet resolved or resolves in favor of the
+Challenger.
 
-Specifically, a game is considered to be a Proper Game if all of the following are true:
+A Dispute Game that is **NOT** a Proper Game can also be referred to as an **Improper Game** for
+brevity. A Dispute Game can go from being a Proper Game to later *not* being an **Improper Game**
+if it is invalidated by being [blacklisted](#blacklisted-game) or [retired](#retired-game).
 
-- The game is a Registered Game
-- The game is not a Blacklisted Game
-- The game is not a Retired Game
+**ALL** Dispute Games **TEMPORARILY** become Improper Games while the Superchain-wide pause
+mechanism is active. However, this is a *temporary* condition such that Registered Games that are
+not invalidated by [blacklisting](#blacklisted-game) or [retirement](#retired-game) will become
+Proper Games again once the pause is lifted. The Superchain-wide pause is therefore a way to
+*temporarily* prevent Dispute Games from being used by consumers like the `OptimismPortal` while
+relevant parties coordinate the use of some other invalidation mechanism.
+
+A Game is considered to be a Proper Game if all of the following are true:
+
+- The game is a [Registered Game](#registered-game)
+- The game is **NOT** a [Blacklisted Game](#blacklisted-game)
+- The game is **NOT** a [Retired Game](#retired-game)
+- The Superchain-wide pause is not active
 
 ### Resolved Game
 
@@ -145,17 +172,18 @@ of either the Challenger or the Defender.
 
 A Dispute Game is considered to be a **Finalized Game** if all of the following are true:
 
-- The game is a Resolved Game
-- The game resolved a result more than the airgap delay seconds ago as defined by the
-  `disputeGameFinalityDelaySeconds` variable in the `OptimismPortal` contract.
+- The game is a [Resolved Game](#resolved-game)
+- The game resolved a result more than
+  [Dispute Game Finality Delay](#dispute-game-finality-delay-airgap) seconds ago as defined by the
+  `disputeGameFinalityDelaySeconds` variable in the `AnchorStateRegistry` contract.
 
 ### Valid Claim
 
 A Dispute Game is considered to have a **Valid Claim** if all of the following are true:
 
-- The game is a Proper Game
-- The game is a Respected Game
-- The game is a Finalized Game
+- The game is a [Proper Game](#proper-game)
+- The game is a [Respected Game](#respected-game)
+- The game is a [Finalized Game](#finalized-game)
 - The game resolved in favor of the root claim (i.e., in favor of the Defender)
 
 ### Truly Valid Claim
@@ -225,20 +253,18 @@ created.
 - Existing audit on the `DisputeGameFactory` contract
 - Integration testing
 
-### aASR-003: OptimismPortal properly reports respected game type, blacklist, and retirement time
+### aASR-003: Incorrectly resolving games will be invalidated before they have Valid Claims
 
-We assume that the `OptimismPortal` contract properly and faithfully reports the respected game
-type, blacklist, and retirement timestamp.
+We assume that any games that are resolved incorrectly will be invalidated either by
+[blacklisting](#blacklisted-game) or by [retirement](#retired-game) BEFORE they are considered to
+have [Valid Claims](#valid-claim).
 
-#### Mitigations
-
-- Existing audit on the `OptimismPortal` contract
-- Integration testing
-
-### aASR-004: Incorrectly resolving games will be invalidated within the airgap delay period
-
-We assume that any games that are resolved incorrectly will be invalidated within the airgap delay
-period. Invalidation happens within the `OptimismPortal` contract.
+Proper Games that resolve in favor the Defender will be considered to have Valid Claims after the
+[Dispute Game Finality Delay](#dispute-game-finality-delay-airgap) has elapsed UNLESS the
+Superchain-wide pause mechanism is active. Therefore, in the absence of the Superchain-wide pause
+mechanism, parties responsible for game invalidation have exactly the Dispute Game Finality Delay
+to invalidate a withdrawal after it resolves incorrectly. If the Superchain-wide pause is active,
+then any incorrectly resolving games must be invalidated before the pause is deactivated.
 
 #### Mitigations
 
@@ -266,7 +292,7 @@ bond refunding mode.
 
 - [aASR-001](#aasr-001-dispute-game-contracts-properly-report-important-properties)
 - [aASR-002](#aasr-002-disputegamefactory-properly-reports-its-created-games)
-- [aASR-003](#aasr-003-optimismportal-properly-reports-respected-game-type-blacklist-and-retirement-time)
+- [aASR-003](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
 
 ### iASR-002: All Valid Claims are Truly Valid Claims
 
@@ -281,23 +307,24 @@ In a nutshell, the set of Valid Claims is a subset of the set of Truly Valid Cla
 
 #### Impact
 
-**Severity: High**
+**Severity: Critical**
 
-If this invariant is broken, the Anchor Game could be set to an incorrect value, which would cause
-future Dispute Game instances to use an incorrect starting state. This would lead games to resolve
-incorrectly. If the `OptimismPortal` contract is updated to use the `AnchorStateRegistry` as the
-source of truth for the validity of claims, the severity of this invariant will be increased to
-Critical.
+If this invariant is broken, then any component that relies on the correctness of this function may
+allow actions to occur based on invalid dispute games.
 
-Fundamentally, this invariant depends on the safety net mechanisms in the `OptimismPortal` contract
-being used correctly.
+Some examples of strong negative impact are:
+
+- Invalid Dispute Game could be used as the Anchor Game, which would cause future Dispute Game
+  instances to use an incorrect starting state. This would lead these games to resolve incorrectly.
+  **(HIGH)**
+- Invalid Dispute Game could be used to prove or finalize withdrawals within the `OptimismPortal`
+  contract. This would lead to a critical vulnerability in the bridging system. **(CRITICAL)**
 
 #### Dependencies
 
 - [aASR-001](#aasr-001-dispute-game-contracts-properly-report-important-properties)
 - [aASR-002](#aasr-002-disputegamefactory-properly-reports-its-created-games)
-- [aASR-003](#aasr-003-optimismportal-properly-reports-respected-game-type-blacklist-and-retirement-time)
-- [aASR-004](#aasr-004-incorrectly-resolving-games-will-be-invalidated-within-the-airgap-delay-period)
+- [aASR-003](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
 
 ### iASR-003: The Anchor Game is a Truly Valid Claim
 
@@ -322,8 +349,7 @@ Dispute Game instances. This would lead games to resolve incorrectly.
 
 - [aASR-001](#aasr-001-dispute-game-contracts-properly-report-important-properties)
 - [aASR-002](#aasr-002-disputegamefactory-properly-reports-its-created-games)
-- [aASR-003](#aasr-003-optimismportal-properly-reports-respected-game-type-blacklist-and-retirement-time)
-- [aASR-004](#aasr-004-incorrectly-resolving-games-will-be-invalidated-within-the-airgap-delay-period)
+- [aASR-003](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
 
 ### iASR-004: Invalidation functions operate correctly
 
@@ -344,9 +370,67 @@ finalize withdrawals with invalidated games would be considered Critical Severit
 
 #### Dependencies
 
-- [aASR-003](#aasr-003-optimismportal-properly-reports-respected-game-type-blacklist-and-retirement-time)
+- [aASR-003](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
 
 ## Function Specification
+
+### constructor
+
+- MUST set the value of the [Dispute Game Finality Delay](#dispute-game-finality-delay-airgap).
+
+### initialize
+
+- MUST only be triggerable once.
+- MUST set the value of the `SuperchainConfig` contract that stores the address of the Guardian.
+- MUST set the value of the `DisputeGameFactory` contract that creates Dispute Game instances.
+- MUST set the value of the [Starting Anchor State](#starting-anchor-state).
+- MUST set the value of the initial [Respected Game Type](#respected-game-type).
+- MUST set the value of the [Retirement Timestamp](#retirement-timestamp) to the current block
+  timestamp. NOTE that this is a safety mechanism that invalidates all existing Dispute Game
+  contracts to support the safe transition away from the `OptimismPortal` as the source of truth
+  for game validity. In this way, the `AnchorStateRegistry` does not need to consider the state of
+  the legacy blacklisting/retirement mechanisms within the `OptimismPortal` and starts from a clean
+  slate.
+
+### paused
+
+Returns the value of the Superchain-wide `paused()` flag in the `SuperchainConfig` contract.
+
+### respectedGameType
+
+Returns the value of the currently [Respected Game Type](#respected-game-type).
+
+### retirementTimestamp
+
+Returns the value of the current [Retirement Timestamp](#retirement-timestamp).
+
+### disputeGameFinalityDelaySeconds
+
+Returns the value of the [Dispute Game Finality Delay](#dispute-game-finality-delay-airgap).
+
+### setRespectedGameType
+
+Permits the Guardian role to set the [Respected Game Type](#respected-game-type).
+
+- MUST revert if called by any address other than the Guardian.
+- MUST update the respected game type with the provided type.
+- MUST emit an event showing that the game type was updated.
+
+### updateRetirementTimestamp
+
+Permits the Guardian role to update the [Retirement Timestamp](#retirement-timestamp).
+
+- MUST revert if called by any address other than the Guardian.
+- MUST set the retirement timestamp to the current block timestamp.
+- MUST emit an event showing that the retirement timestamp was updated.
+
+### blacklistDisputeGame
+
+Permits the Guardian role to [blacklist](#blacklisted-game) a Dispute Game.
+
+- MUST revert if called by any address other than the Guardian.
+- MUST mark the game as blacklisted.
+- MUST emit an event showing that the game was blacklisted.
 
 ### isGameRegistered
 
@@ -359,30 +443,31 @@ Determines if a game is a Registered Game.
 Determines if a game is a Respected Game.
 
 - MUST return `true` if and only if the game's game type was the respected game type defined by the
-  `OptimismPortal` contract at the time of the game's creation as per a call to
-  `OptimismPortal.respectedGameType()`.
+  `AnchorStateRegistry` contract at the time of the game's creation as per a call to
+  `AnchorStateRegistry.respectedGameType()`.
+- MUST return `false` if the call to `FaultDisputeGame.wasRespectedGameTypeWhenCreated` reverts.
 
 ### isGameBlacklisted
 
 Determines if a game is a Blacklisted Game.
 
 - MUST return `true` if and only if the game's address is marked as blacklisted inside of the
-  `OptimismPortal` contract as per a call to `OptimismPortal.disputeGameBlacklist(game)`.
+  `AnchorStateRegistry` contract.
 
 ### isGameRetired
 
 Determines if a game is a Retired Game.
 
 - MUST return `true` if and only if the game was created before the retirement timestamp defined by
-  the `OptimismPortal` contract as per a call to `OptimismPortal.respectedGameTypeUpdatedAt()`.
+  the `AnchorStateRegistry` contract as per a call to `AnchorStateRegistry.retirementTimestamp()`.
   Check should be a strict comparison that the creation is less than the retirement timestamp.
 
 ### isGameProper
 
 Determines if a game is a Proper Game.
 
-- MUST return `true` if and only if `isGameRegistered(game)` is `true` and
-  `isGameBlacklisted(game)` and `isGameRetired(game)` are both `false`.
+- MUST return `true` if and only if `isGameRegistered(game)` is `true`, `isGameBlacklisted(game)`
+  and `isGameRetired(game)` are both `false`, and `paused()` is `false`.
 
 ### isGameResolved
 
@@ -397,7 +482,7 @@ Determines if a game is a Finalized Game.
 
 - MUST return `true` if and only if `isGameResolved(game)` and the game has resolved a result more
   than the airgap delay seconds ago as defined by the `disputeGameFinalityDelaySeconds` variable in
-  the `OptimismPortal` contract.
+  the `AnchorStateRegistry` contract.
 
 ### isGameClaimValid
 
