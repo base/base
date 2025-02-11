@@ -178,8 +178,7 @@ become the Anchor Game if it has a Valid Claim and the claim's L2 block height i
 current Starting Anchor State's L2 block height.
 
 After a Game becomes the Anchor Game, it will remain the Anchor Game until it is replaced by some
-other Game. A Game that is retired after becoming the Anchor Game will remain the Anchor Game. A
-Game that is blacklisted after becoming the Anchor Game must not be used as the Anchor Game.
+other Game. A Game that is retired after becoming the Anchor Game will remain the Anchor Game.
 
 ### Anchor Root
 
@@ -187,10 +186,6 @@ The Anchor Root is the root and L2 block height that is used as the starting sta
 Game instances. The value of the Anchor Root is the Starting Anchor State if no Anchor Game has
 been set. Otherwise, the value of the Anchor Root is the root and L2 block height of the current
 Anchor Game.
-
-If the Anchor Game exists and is blacklisted, the AnchorStateRegistry will have no Anchor Root,
-will not allow new Dispute Games to be created using the Anchor Root, and will not allow the Anchor
-Root to be updated except through manual intervention.
 
 ## Assumptions
 
