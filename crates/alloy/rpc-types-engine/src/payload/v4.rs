@@ -46,11 +46,11 @@ pub struct OpExecutionPayloadEnvelopeV4 {
 }
 
 #[cfg(test)]
+#[cfg(feature = "serde")]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
     fn serde_roundtrip_execution_payload_envelope_v4() {
         // modified execution payload envelope v3 with empty deposit, withdrawal, and consolidation
         // requests.

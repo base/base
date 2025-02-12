@@ -26,11 +26,11 @@ pub struct OpExecutionPayloadEnvelopeV3 {
 }
 
 #[cfg(test)]
+#[cfg(feature = "serde")]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "serde")]
     fn serde_roundtrip_execution_payload_envelope_v3() {
         // pulled from a geth response getPayloadV3 in hive tests, modified to add a mock parent
         // beacon block root.

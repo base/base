@@ -153,7 +153,7 @@ impl From<ssz::DecodeError> for PayloadEnvelopeError {
 
 /// Represents the Keccak256 hash of the block
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 pub struct PayloadHash(pub B256);
 
 impl From<&[u8]> for PayloadHash {

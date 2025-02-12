@@ -57,6 +57,7 @@ impl OpPayloadAttributes {
 #[cfg(all(test, feature = "serde"))]
 mod test {
     use super::*;
+    use alloc::vec;
     use alloy_primitives::{b64, Address, B256};
     use alloy_rpc_types_engine::PayloadAttributes;
     use core::str::FromStr;

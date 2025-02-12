@@ -242,6 +242,7 @@ impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use serde_json::{json, Value};
 
     // <https://github.com/alloy-rs/op-alloy/issues/18>
