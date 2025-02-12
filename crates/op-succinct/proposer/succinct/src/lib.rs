@@ -2,7 +2,10 @@ use alloy_primitives::B256;
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
-use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode, SP1ProvingKey, SP1VerifyingKey};
+use sp1_sdk::{
+    network::FulfillmentStrategy, NetworkProver, SP1ProofMode, SP1ProvingKey, SP1VerifyingKey,
+};
+use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ValidateConfigRequest {
@@ -76,16 +79,17 @@ pub struct ProofStatus {
 /// to the contract's configuration.
 #[derive(Clone)]
 pub struct SuccinctProposerConfig {
-    pub range_vk: SP1VerifyingKey,
-    pub range_pk: SP1ProvingKey,
-    pub agg_pk: SP1ProvingKey,
-    pub agg_vk: SP1VerifyingKey,
+    pub range_vk: Arc<SP1VerifyingKey>,
+    pub range_pk: Arc<SP1ProvingKey>,
+    pub agg_pk: Arc<SP1ProvingKey>,
+    pub agg_vk: Arc<SP1VerifyingKey>,
     pub agg_vkey_hash: B256,
     pub range_vkey_commitment: B256,
     pub rollup_config_hash: B256,
     pub range_proof_strategy: FulfillmentStrategy,
     pub agg_proof_strategy: FulfillmentStrategy,
     pub agg_proof_mode: SP1ProofMode,
+    pub network_prover: Arc<NetworkProver>,
 }
 
 /// Deserialize a vector of base64 strings into a vector of vectors of bytes. Go serializes
