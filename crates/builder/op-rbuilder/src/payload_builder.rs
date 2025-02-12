@@ -53,9 +53,6 @@ use tokio_tungstenite::WebSocketStream;
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
 pub struct OpPayloadBuilder<EvmConfig, Txs = ()> {
-    /// The rollup's compute pending block configuration option.
-    // TODO(clabby): Implement this feature.
-    pub compute_pending_block: bool,
     /// The type responsible for creating the evm.
     pub evm_config: EvmConfig,
     /// The type responsible for yielding the best transactions for the payload if mempool
@@ -76,7 +73,6 @@ impl<EvmConfig> OpPayloadBuilder<EvmConfig> {
         Self::publish_task(rx, subscribers.clone());
 
         Self {
-            compute_pending_block: true,
             evm_config,
             best_transactions: (),
             subscribers,
@@ -157,7 +153,7 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     fn build_payload<Client, Pool>(
         &self,
-        args: BuildArguments<Pool, Client, OpPayloadBuilderAttributes, OpBuiltPayload>,
+        args: BuildArguments<Pool, Client, OpPayloadBuilderAttributes>,
         best_payload: BlockCell<OpBuiltPayload>,
     ) -> Result<(), PayloadBuilderError>
     where
@@ -185,7 +181,6 @@ where
             initialized_cfg: cfg_env_with_handler_cfg,
             initialized_block_env: block_env,
             cancel,
-            best_payload: None, // remove
         };
 
         let best = self.best_transactions.clone();
@@ -312,7 +307,7 @@ where
 
     fn try_build(
         &self,
-        args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+        args: BuildArguments<Pool, Client, Self::Attributes>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         self.build_payload(args, best_payload)
@@ -540,8 +535,6 @@ pub struct OpPayloadBuilderCtx<EvmConfig> {
     pub initialized_block_env: BlockEnv,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The currently best payload.
-    pub best_payload: Option<OpBuiltPayload>,
 }
 
 impl<EvmConfig> OpPayloadBuilderCtx<EvmConfig> {
@@ -642,11 +635,6 @@ impl<EvmConfig> OpPayloadBuilderCtx<EvmConfig> {
     pub fn is_holocene_active(&self) -> bool {
         self.chain_spec
             .is_holocene_active_at_timestamp(self.attributes().timestamp())
-    }
-
-    /// Returns true if the fees are higher than the previous payload.
-    pub fn is_better_payload(&self, total_fees: U256) -> bool {
-        is_better_payload(self.best_payload.as_ref(), total_fees)
     }
 
     /// Commits the withdrawals from the payload attributes to the state.

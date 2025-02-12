@@ -56,9 +56,6 @@ use tracing::{info, trace, warn};
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
 pub struct OpPayloadBuilderVanilla<EvmConfig, Txs = ()> {
-    // /// The rollup's compute pending block configuration option.
-    // // TODO(clabby): Implement this feature.
-    // pub compute_pending_block: bool,
     /// The type responsible for creating the evm.
     pub evm_config: EvmConfig,
     /// The builder's signer key to use for an end of block tx
@@ -74,7 +71,6 @@ impl<EvmConfig> OpPayloadBuilderVanilla<EvmConfig> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(evm_config: EvmConfig, builder_signer: Option<Signer>) -> Self {
         Self {
-            // compute_pending_block: true,
             evm_config,
             builder_signer,
             best_transactions: (),
@@ -94,7 +90,7 @@ where
 
     fn try_build(
         &self,
-        args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+        args: BuildArguments<Pool, Client, Self::Attributes>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
         let pool = args.pool.clone();
@@ -145,7 +141,7 @@ where
     /// a result indicating success with the payload or an error in case of failure.
     fn build_payload<'a, Client, Pool, Txs>(
         &self,
-        args: BuildArguments<Pool, Client, OpPayloadBuilderAttributes, OpBuiltPayload>,
+        args: BuildArguments<Pool, Client, OpPayloadBuilderAttributes>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
     where
@@ -167,7 +163,6 @@ where
             mut cached_reads,
             config,
             cancel,
-            best_payload,
         } = args;
 
         let ctx = OpPayloadBuilderCtx {
@@ -177,7 +172,6 @@ where
             initialized_cfg: cfg_env_with_handler_cfg,
             initialized_block_env: block_env,
             cancel,
-            best_payload,
             builder_signer: self.builder_signer,
             metrics: Default::default(),
         };
@@ -309,14 +303,6 @@ where
                 .is_some()
             {
                 return Ok(BuildOutcomeKind::Cancelled);
-            }
-
-            // check if the new payload is even more valuable
-            if !ctx.is_better_payload(info.total_fees) {
-                // can skip building the block
-                return Ok(BuildOutcomeKind::Aborted {
-                    fees: info.total_fees,
-                });
             }
         }
 
@@ -567,8 +553,6 @@ pub struct OpPayloadBuilderCtx<EvmConfig> {
     pub initialized_block_env: BlockEnv,
     /// Marker to check whether the job has been cancelled.
     pub cancel: CancellationToken,
-    /// The currently best payload.
-    pub best_payload: Option<OpBuiltPayload>,
     /// The builder signer
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
@@ -690,11 +674,6 @@ impl<EvmConfig> OpPayloadBuilderCtx<EvmConfig> {
     /// Returns the builder signer
     pub fn builder_signer(&self) -> Option<Signer> {
         self.builder_signer
-    }
-
-    /// Returns true if the fees are higher than the previous payload.
-    pub fn is_better_payload(&self, total_fees: U256) -> bool {
-        is_better_payload(self.best_payload.as_ref(), total_fees)
     }
 
     /// Commits the withdrawals from the payload attributes to the state.

@@ -124,7 +124,7 @@ pub trait PayloadBuilder<Pool, Client>: Send + Sync + Clone {
     /// A `Result` indicating the build outcome or an error.
     fn try_build(
         &self,
-        args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+        args: BuildArguments<Pool, Client, Self::Attributes>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError>;
 }
@@ -323,7 +323,7 @@ where
     }
 }
 
-pub struct BuildArguments<Pool, Client, Attributes, Payload> {
+pub struct BuildArguments<Pool, Client, Attributes> {
     /// How to interact with the chain.
     pub client: Client,
     /// The transaction pool.
@@ -336,8 +336,6 @@ pub struct BuildArguments<Pool, Client, Attributes, Payload> {
     pub config: PayloadConfig<Attributes>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
-    /// The best payload achieved so far.
-    pub best_payload: Option<Payload>,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -368,7 +366,6 @@ where
                 cached_reads: Default::default(),
                 config: payload_config,
                 cancel,
-                best_payload: None,
             };
 
             let result = builder.try_build(args, cell);
@@ -657,7 +654,7 @@ mod tests {
 
         fn try_build(
             &self,
-            args: BuildArguments<Pool, Client, Self::Attributes, Self::BuiltPayload>,
+            args: BuildArguments<Pool, Client, Self::Attributes>,
             _best_payload: BlockCell<Self::BuiltPayload>,
         ) -> Result<(), PayloadBuilderError> {
             self.new_event(BlockEvent::Started);
