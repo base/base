@@ -21,7 +21,9 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives = { workspace = true, features = ["rlp"] }
 
-# Maili
+# compat
+alloy-network = { workspace = true, optional = true }
+alloy-rpc-types-eth = { workspace = true, optional = true }
 
 # misc
 thiserror.workspace = true
@@ -51,6 +53,7 @@ std = [
     "alloy-consensus/std",
     "derive_more/std",
 ]
+alloy-compat = ["serde", "dep:alloy-network", "dep:alloy-rpc-types-eth"]
 k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
 kzg = ["alloy-eips/kzg", "alloy-consensus/kzg", "std"]
 arbitrary = [
