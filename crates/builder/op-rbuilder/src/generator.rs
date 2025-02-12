@@ -2,15 +2,28 @@ use futures_util::Future;
 use futures_util::FutureExt;
 use reth::providers::BlockReaderIdExt;
 use reth::{
-    providers::StateProviderFactory, tasks::TaskSpawner, transaction_pool::TransactionPool,
+    builder::{components::PayloadServiceBuilder, node::FullNodeTypes, BuilderContext},
+    payload::PayloadBuilderHandle,
+    providers::CanonStateSubscriptions,
+    transaction_pool::TransactionPool,
 };
+use reth::{providers::StateProviderFactory, tasks::TaskSpawner};
 use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, PayloadConfig};
+use reth_node_api::NodeTypesWithEngine;
 use reth_node_api::PayloadBuilderAttributes;
 use reth_node_api::PayloadKind;
+use reth_node_api::PayloadTypes;
+use reth_node_api::TxTy;
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_node::OpEngineTypes;
+use reth_optimism_payload_builder::OpPayloadBuilderAttributes;
+use reth_optimism_primitives::OpPrimitives;
+use reth_payload_builder::PayloadBuilderService;
 use reth_payload_builder::PayloadJobGenerator;
 use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadJob};
 use reth_payload_primitives::BuiltPayload;
 use reth_revm::cached::CachedReads;
+use reth_transaction_pool::PoolTransaction;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
@@ -20,6 +33,68 @@ use tokio::time::Duration;
 use tokio::time::Sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
+
+#[derive(Debug, Clone, Copy, Default)]
+#[non_exhaustive]
+pub struct CustomOpPayloadBuilder<Builder> {
+    builder: Builder,
+}
+
+impl<Builder> CustomOpPayloadBuilder<Builder> {
+    pub fn new(builder: Builder) -> Self {
+        Self { builder }
+    }
+}
+
+impl<Node, Pool, Builder> PayloadServiceBuilder<Node, Pool> for CustomOpPayloadBuilder<Builder>
+where
+    Node: FullNodeTypes<
+        Types: NodeTypesWithEngine<
+            Engine = OpEngineTypes,
+            ChainSpec = OpChainSpec,
+            Primitives = OpPrimitives,
+        >,
+    >,
+    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
+        + Unpin
+        + 'static,
+    Builder: PayloadBuilder<
+            Pool,
+            <Node as FullNodeTypes>::Provider,
+            Attributes = OpPayloadBuilderAttributes,
+        > + Unpin
+        + 'static,
+    <Builder as PayloadBuilder<Pool, Node::Provider>>::BuiltPayload:
+        Into<<OpEngineTypes as PayloadTypes>::BuiltPayload> + Unpin + Clone,
+{
+    async fn spawn_payload_service(
+        self,
+        ctx: &BuilderContext<Node>,
+        pool: Pool,
+    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypesWithEngine>::Engine>> {
+        tracing::info!("Spawning a custom payload builder");
+        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
+
+        let payload_generator = BlockPayloadJobGenerator::with_builder(
+            ctx.provider().clone(),
+            pool,
+            ctx.task_executor().clone(),
+            payload_job_config,
+            self.builder,
+            false,
+        );
+
+        let (payload_service, payload_builder) =
+            PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
+
+        ctx.task_executor()
+            .spawn_critical("custom payload builder service", Box::pin(payload_service));
+
+        tracing::info!("Custom payload service started");
+
+        Ok(payload_builder)
+    }
+}
 
 /// A trait for building payloads that encapsulate Ethereum transactions.
 ///
