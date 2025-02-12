@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use crate::cache::Cache;
+use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo, Signed};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{Address, Sealable, TxHash, U256};
+use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types::{BlockTransactions, Header};
 use jsonrpsee::{
@@ -14,8 +15,11 @@ use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::HeaderProvider};
+use reth_optimism_chainspec::{OpChainSpec, OP_SEPOLIA};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredTx;
+use reth_rpc_eth_api::RpcReceipt;
 use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
     RpcNodeCore,
@@ -41,7 +45,7 @@ pub trait EthApiOverride {
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<OpTransactionSigned>>;
+    ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
 
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
@@ -58,6 +62,35 @@ pub struct EthApiExt<Eth> {
 impl<E> EthApiExt<E> {
     pub const fn new(eth_api: E, cache: Arc<Cache>) -> Self {
         Self { eth_api, cache }
+    }
+
+    pub fn transform_block(&self, block: OpBlock) -> RpcBlock<Optimism> {
+        let header: alloy_consensus::Header = block.header.clone();
+        let transactions = block.body.transactions.to_vec();
+        let transactions_with_senders = transactions
+            .into_iter()
+            .zip(block.body.recover_signers().unwrap());
+        let converted_txs = transactions_with_senders
+            .enumerate()
+            .map(|(idx, (tx, sender))| {
+                let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender.clone());
+                let tx_info = TransactionInfo {
+                    hash: Some(*tx.tx_hash()),
+                    block_hash: None,
+                    block_number: Some(block.number),
+                    index: Some(idx as u64),
+                    base_fee: None,
+                };
+                self.transform_tx(signed_tx_ec_recovered, tx_info)
+            })
+            .collect();
+
+        return RpcBlock::<Optimism> {
+            header: Header::from_consensus(header.seal_slow(), None, None),
+            transactions: BlockTransactions::Full(converted_txs),
+            uncles: Vec::new(),
+            withdrawals: None,
+        };
     }
 
     pub fn transform_tx(
@@ -81,17 +114,14 @@ impl<E> EthApiExt<E> {
             OpTypedTransaction::Eip1559(tx) => Signed::new_unchecked(tx, signature, hash).into(),
             OpTypedTransaction::Eip7702(tx) => Signed::new_unchecked(tx, signature, hash).into(),
             OpTypedTransaction::Deposit(tx) => {
-                // TODO: implement deposit receipt version and nonce
-                // self.eth_api
-                // .provider()
-                // .receipt_by_hash(hash)
-                // .map_err(Into::into)?
-                // .inspect(|receipt| {
-                //     if let OpReceipt::Deposit(receipt) = receipt {
-                //         deposit_receipt_version = receipt.deposit_receipt_version;
-                //         deposit_nonce = receipt.deposit_nonce;
-                //     }
-                // });
+                let receipt = self
+                    .cache
+                    .get::<OpReceipt>(&format!("receipt:{:?}", hash))
+                    .unwrap();
+                if let OpReceipt::Deposit(receipt) = receipt {
+                    deposit_receipt_version = receipt.deposit_receipt_version;
+                    deposit_nonce = receipt.deposit_nonce;
+                }
                 OpTxEnvelope::Deposit(tx.seal_unchecked(hash))
             }
         };
@@ -133,6 +163,47 @@ impl<E> EthApiExt<E> {
             deposit_receipt_version,
         }
     }
+
+    pub fn transform_receipt(
+        &self,
+        receipt: OpReceipt,
+        tx_hash: TxHash,
+        chain_spec: &OpChainSpec,
+    ) -> RpcReceipt<Optimism> {
+        let tx = self
+            .cache
+            .get::<OpTransactionSigned>(&tx_hash.to_string())
+            .unwrap();
+        let block = self.cache.get::<OpBlock>("pending").unwrap();
+        let l1_block_info =
+            reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
+
+        let meta = TransactionMeta {
+            tx_hash: tx_hash,
+            index: 0,                    // placeholder
+            block_hash: B256::default(), // placeholder
+            block_number: block.number,
+            base_fee: block.base_fee_per_gas,
+            excess_blob_gas: block.excess_blob_gas,
+            timestamp: block.timestamp,
+        };
+
+        // get all receipts from cache too
+        let all_receipts = self
+            .cache
+            .get::<Vec<OpReceipt>>("pending_receipts")
+            .unwrap();
+        OpReceiptBuilder::new(
+            chain_spec,
+            &tx,
+            meta,
+            &receipt,
+            &all_receipts,
+            l1_block_info,
+        )
+        .expect("failed to build receipt")
+        .build()
+    }
 }
 
 #[async_trait]
@@ -151,34 +222,7 @@ where
             BlockNumberOrTag::Pending => {
                 info!("pending block by number, delegating to flashblocks");
                 if let Some(block) = self.cache.get::<OpBlock>(&number.to_string()) {
-                    let header: alloy_consensus::Header = block.header.clone();
-                    let transactions = block.body.transactions.to_vec();
-                    let transactions_with_senders = transactions
-                        .into_iter()
-                        .zip(block.body.recover_signers().unwrap());
-                    let converted_txs = transactions_with_senders
-                        .enumerate()
-                        .map(|(idx, (tx, sender))| {
-                            let signed_tx_ec_recovered =
-                                Recovered::new_unchecked(tx.clone(), sender.clone());
-                            let tx_info = TransactionInfo {
-                                hash: Some(*tx.tx_hash()),
-                                block_hash: None,
-                                block_number: Some(block.number),
-                                index: Some(idx as u64),
-                                base_fee: None,
-                            };
-                            self.transform_tx(signed_tx_ec_recovered, tx_info)
-                        })
-                        .collect();
-
-                    let rpc_block: RpcBlock<Optimism> = RpcBlock::<Optimism> {
-                        header: Header::from_consensus(header.seal_slow(), None, None),
-                        transactions: BlockTransactions::Full(converted_txs),
-                        uncles: Vec::new(),
-                        withdrawals: None,
-                    };
-                    return Ok(Some(rpc_block));
+                    return Ok(Some(self.transform_block(block)));
                 } else {
                     return Ok(None);
                 }
@@ -194,16 +238,21 @@ where
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
-    ) -> RpcResult<Option<OpTransactionSigned>> {
-        if let Some(receipt) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
-            return Ok(Some(receipt));
+    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+        if let Some(receipt) = self
+            .cache
+            .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash))
+        {
+            return Ok(Some(self.transform_receipt(
+                receipt,
+                tx_hash,
+                &OP_SEPOLIA.as_ref(), // placeholder
+            )));
         }
-
-        todo!()
-
-        // EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-        //     .await
-        //     .map_err(Into::into)
+        info!("no receipt found in cache, using standard flow");
+        EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+            .await
+            .map_err(Into::into)
     }
 
     async fn get_balance(
