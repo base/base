@@ -39,6 +39,7 @@ alloy-primitives = { version = "=0.8.20", default-features = false }
 alloy-eips = { version = "=0.9.2", default-features = false }
 alloy-rpc-types = { version = "=0.9.2", default-features = false }
 alloy-rpc-types-eth = { version = "=0.9.2" }
+alloy-consensus = { version = "=0.9.2" }
 
 [features]
 default = ["optimism"]

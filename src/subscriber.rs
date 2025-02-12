@@ -1,14 +1,11 @@
-use futures_util::StreamExt;
-use op_alloy_consensus::OpTypedTransaction;
-//use op_alloy_consensus::{OpBlock, OpTypedTransaction};
 use crate::cache::Cache;
+use futures_util::StreamExt;
 use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelopeV4;
 use reqwest::Client;
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use reth_primitives::{BlockExt, SealedBlockFor};
+use reth::core::primitives::SignedTransaction;
+use reth_optimism_primitives::OpBlock;
 use serde_json::Value;
 use std::error::Error;
-use std::hash::Hash;
 
 pub struct Subscriber {
     cache: Cache,
@@ -41,22 +38,15 @@ impl Subscriber {
                             serde_json::from_value(json.clone())?;
                         let execution_payload = execution_payload_envelope.execution_payload;
                         let block: OpBlock = execution_payload.try_into_block()?;
-                        //println!("block: {:?}", block);
                         // store the block in cache
                         self.cache.set(&format!("pending"), &block, Some(10))?;
 
                         let txs = block.body.transactions();
+                        println!("block number {:?}", block.number);
                         for tx in txs {
-                            // This should return the tx hash if it's not a deposit
-                            if let Some(tx_hash) = tx.hash.get() {
-                                println!("tx_hash: {:?}", tx_hash);
-                                // store the tx in cache
-                                self.cache.set(&format!("{:?}", tx_hash), &tx, Some(10))?;
-                            } else if let OpTypedTransaction::Deposit(deposit) = &tx.transaction {
-                                let tx_hash = deposit.source_hash;
-                                println!("deposit tx_hash: {:?}", tx_hash);
-                                self.cache.set(&format!("{:?}", tx_hash), &tx, Some(10))?;
-                            }
+                            let tx_hash = *tx.tx_hash();
+                            println!("tx_hash: {:?}", tx_hash);
+                            self.cache.set(&format!("{:?}", tx_hash), &tx, Some(10))?;
                         }
                     }
                 }
