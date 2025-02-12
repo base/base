@@ -303,8 +303,9 @@ The additional parameters should be set as follows:
 
 ### `engine_newPayloadV4`
 
-[`engine_newPayloadV4`][engine_newPayloadV4] applies an Isthmus L2 block to the engine state. There are no
-modifications to this API.
+[`engine_newPayloadV4`][engine_newPayloadV4] applies an Isthmus L2 block to the engine state.
+The `ExecutionPayload` parameter will contain an extra field, `withdrawalsRoot`, after the Isthmus hardfork.
+
 `engine_newPayloadV4` **must only be called with Isthmus payload.**
 
 The additional parameters should be set as follows:

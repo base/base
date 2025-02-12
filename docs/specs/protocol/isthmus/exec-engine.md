@@ -22,7 +22,7 @@
 - [EVM Changes](#evm-changes)
 - [Block Sealing](#block-sealing)
 - [Engine API Updates](#engine-api-updates)
-  - [Update to `ExecutableData`](#update-to-executabledata)
+  - [Update to `ExecutionPayload`](#update-to-executionpayload)
   - [`engine_newPayloadV4` API](#engine_newpayloadv4-api)
 - [Fees](#fees)
   - [Operator Fee](#operator-fee)
@@ -180,14 +180,15 @@ specific hardfork as this type does not exist pre-Pectra.
 
 ## Engine API Updates
 
-### Update to `ExecutableData`
+### Update to `ExecutionPayload`
 
-`ExecutableData` will contain an extra field for `withdrawalsRoot` after Isthmus hard fork.
+`ExecutionPayload` will contain an extra field for `withdrawalsRoot` after Isthmus hard fork.
 
 ### `engine_newPayloadV4` API
 
-Post Isthmus, `engine_newPayloadV4` will be used with the additional `ExecutionPayload` attribute. This attribute
-is omitted prior to Isthmus.
+Post Isthmus, `engine_newPayloadV4` will be used.
+
+The `executionRequests` parameter MUST be an empty array.
 
 ## Fees
 
