@@ -1,6 +1,6 @@
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, sync::Arc, sync::Mutex};
 
-use crate::generator::{BlockCell, PayloadBuilder};
+use crate::generator::{BlockCell, BuildArguments, PayloadBuilder};
 use alloy_consensus::{Eip658Value, Header, Transaction, Typed2718, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -35,14 +35,23 @@ use revm::{
     },
     Database, DatabaseCommit,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
 
+use op_alloy_rpc_types_engine::OpExecutionPayloadEnvelopeV3;
 use reth_optimism_payload_builder::error::OpPayloadBuilderError;
 use reth_optimism_payload_builder::payload::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_transaction_pool::pool::BestPayloadTransactions;
 
+use futures_util::FutureExt;
+use futures_util::SinkExt;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::WebSocketStream;
+
 /// Optimism's payload builder
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct OpPayloadBuilder<EvmConfig, Txs = ()> {
     /// The rollup's compute pending block configuration option.
     // TODO(clabby): Implement this feature.
@@ -52,16 +61,79 @@ pub struct OpPayloadBuilder<EvmConfig, Txs = ()> {
     /// The type responsible for yielding the best transactions for the payload if mempool
     /// transactions are allowed.
     pub best_transactions: Txs,
+    /// WebSocket subscribers
+    pub subscribers: Arc<Mutex<Vec<WebSocketStream<TcpStream>>>>,
+    /// Channel sender for publishing messages
+    pub tx: mpsc::UnboundedSender<String>,
 }
 
 impl<EvmConfig> OpPayloadBuilder<EvmConfig> {
     /// `OpPayloadBuilder` constructor.
-    pub const fn new(evm_config: EvmConfig) -> Self {
+    pub fn new(evm_config: EvmConfig) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let subscribers = Arc::new(Mutex::new(Vec::new()));
+
+        Self::publish_task(rx, subscribers.clone());
+
         Self {
             compute_pending_block: true,
             evm_config,
             best_transactions: (),
+            subscribers,
+            tx,
         }
+    }
+
+    /// Start the WebSocket server
+    pub async fn start_ws(&self, addr: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(addr).await?;
+        let subscribers = self.subscribers.clone();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tracing::info!("Accepted websocket connection");
+                let subscribers = subscribers.clone();
+
+                tokio::spawn(async move {
+                    match accept_async(stream).await {
+                        Ok(ws_stream) => {
+                            let mut subs = subscribers.lock().unwrap();
+                            subs.push(ws_stream);
+                        }
+                        Err(e) => eprintln!("Error accepting websocket connection: {}", e),
+                    }
+                });
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Background task that handles publishing messages to WebSocket subscribers
+    fn publish_task(
+        mut rx: mpsc::UnboundedReceiver<String>,
+        subscribers: Arc<Mutex<Vec<WebSocketStream<TcpStream>>>>,
+    ) {
+        tokio::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                let mut subscribers = subscribers.lock().unwrap();
+
+                // Remove disconnected subscribers and send message to connected ones
+                subscribers.retain_mut(|ws_stream| {
+                    let message = message.clone();
+                    async move {
+                        ws_stream
+                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                message.into(),
+                            ))
+                            .await
+                            .is_ok()
+                    }
+                    .now_or_never()
+                    .unwrap_or(false)
+                });
+            }
+        });
     }
 }
 
@@ -70,6 +142,11 @@ where
     EvmConfig: ConfigureEvm<Header = Header, Transaction = OpTransactionSigned>,
     Txs: OpPayloadTransactions,
 {
+    /// Send a message to be published
+    pub fn send_message(&self, message: String) -> Result<(), Box<dyn std::error::Error>> {
+        self.tx.send(message).map_err(|e| e.into())
+    }
+
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
     /// the payload attributes, the transaction pool will be ignored and the only transactions
@@ -124,7 +201,11 @@ where
         // 1. execute the pre steps and seal an early block with that
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         let (payload, mut bundle_state) = build_block(db, &ctx, &info)?;
-        best_payload.set(payload);
+
+        best_payload.set(payload.clone());
+        let _ = self.send_message(
+            serde_json::to_string(&OpExecutionPayloadEnvelopeV3::from(payload)).unwrap_or_default(),
+        );
 
         tracing::info!(target: "payload_builder", "Fallback block built");
 
@@ -183,7 +264,11 @@ where
 
             let (payload, new_bundle_state) = build_block(db, &ctx, &info)?;
 
-            best_payload.set(payload);
+            best_payload.set(payload.clone());
+            let _ = self.send_message(
+                serde_json::to_string(&OpExecutionPayloadEnvelopeV3::from(payload))
+                    .unwrap_or_default(),
+            );
 
             bundle_state = new_bundle_state;
             total_gas_per_batch += gas_per_batch;
@@ -454,7 +539,7 @@ pub struct OpPayloadBuilderCtx<EvmConfig> {
     /// Block config
     pub initialized_block_env: BlockEnv,
     /// Marker to check whether the job has been cancelled.
-    pub cancel: Cancelled,
+    pub cancel: CancellationToken,
     /// The currently best payload.
     pub best_payload: Option<OpBuiltPayload>,
 }

@@ -3,6 +3,7 @@ use reth::core::primitives::InMemorySize;
 use reth_transaction_pool::PoolTransaction;
 use std::{fmt::Display, sync::Arc, time::Instant};
 
+use crate::generator::BuildArguments;
 use crate::{
     generator::{BlockCell, PayloadBuilder},
     metrics::OpRBuilderMetrics,
@@ -14,6 +15,7 @@ use alloy_consensus::{
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
+use op_alloy_consensus::{OpDepositReceipt, OpTxType, OpTypedTransaction};
 use reth_basic_payload_builder::*;
 use reth_chain_state::ExecutedBlock;
 use reth_chainspec::{ChainSpecProvider, EthereumHardforks};
@@ -22,6 +24,10 @@ use reth_execution_types::ExecutionOutcome;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::calculate_receipt_root_no_memo_optimism;
 use reth_optimism_forks::OpHardforks;
+use reth_optimism_payload_builder::{
+    error::OpPayloadBuilderError,
+    payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
+};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
@@ -34,6 +40,7 @@ use reth_provider::{
     HashedPostStateProvider, ProviderError, StateProviderFactory, StateRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
+use reth_transaction_pool::pool::BestPayloadTransactions;
 use reth_transaction_pool::{BestTransactionsAttributes, TransactionPool};
 use revm::{
     db::{states::bundle_state::BundleRetention, State},
@@ -43,14 +50,8 @@ use revm::{
     },
     Database, DatabaseCommit,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
-
-use op_alloy_consensus::{OpDepositReceipt, OpTxType, OpTypedTransaction};
-use reth_optimism_payload_builder::{
-    error::OpPayloadBuilderError,
-    payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
-};
-use reth_transaction_pool::pool::BestPayloadTransactions;
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
@@ -565,7 +566,7 @@ pub struct OpPayloadBuilderCtx<EvmConfig> {
     /// Block config
     pub initialized_block_env: BlockEnv,
     /// Marker to check whether the job has been cancelled.
-    pub cancel: Cancelled,
+    pub cancel: CancellationToken,
     /// The currently best payload.
     pub best_payload: Option<OpBuiltPayload>,
     /// The builder signer
