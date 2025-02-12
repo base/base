@@ -18,7 +18,7 @@ mod envelope;
 pub use envelope::{OpExecutionData, OpNetworkPayloadEnvelope, PayloadEnvelopeError, PayloadHash};
 
 mod sidecar;
-pub use sidecar::{IsthmusPayloadFields, MaybeIsthmusPayloadFields, OpExecutionPayloadSidecar};
+pub use sidecar::OpExecutionPayloadSidecar;
 
 pub mod payload;
 pub use payload::{
