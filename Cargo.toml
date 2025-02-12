@@ -20,7 +20,6 @@ clap = { version = "4.4.3" }
 jsonrpsee = { version = "0.24.8" }
 tracing = { version = "0.1.41" }
 serde = "1"
-redis = { version = "0.28.2" }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 tokio-stream = "0.1"

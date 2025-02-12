@@ -1,56 +1,62 @@
-use redis::{Client, Commands, RedisResult};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
+use serde_json;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone)]
+struct CacheEntry<T> {
+    value: T,
+    expiry: Option<Instant>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Cache {
-    client: Client,
+    store: Arc<RwLock<HashMap<String, CacheEntry<Vec<u8>>>>>,
 }
 
 impl Cache {
-    pub fn new(redis_url: &str) -> RedisResult<Self> {
-        let client = Client::open(redis_url)?;
-        Ok(Self { client })
+    pub fn new() -> Self {
+        Self {
+            store: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
-    #[allow(dead_code)]
     pub fn set<T: Serialize>(
         &self,
         key: &str,
         value: &T,
-        expiry_secs: Option<u64>,
-    ) -> RedisResult<()> {
-        let mut conn = self.client.get_connection()?;
-        let serialized = serde_json::to_string(value).map_err(|e| {
-            redis::RedisError::from((
-                redis::ErrorKind::ParseError,
-                "Serialization error",
-                e.to_string(),
-            ))
-        })?;
+        ttl_secs: Option<u64>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let serialized = serde_json::to_vec(value)?;
+        let entry = CacheEntry {
+            value: serialized,
+            expiry: ttl_secs.map(|secs| Instant::now() + Duration::from_secs(secs)),
+        };
 
-        match expiry_secs {
-            Some(secs) => conn.set_ex(key, serialized, secs)?,
-            None => conn.set(key, serialized)?,
-        }
+        let mut store = self.store.write().unwrap();
+        store.insert(key.to_string(), entry);
         Ok(())
     }
 
-    pub fn get<T: for<'de> Deserialize<'de>>(&self, key: &str) -> RedisResult<Option<T>> {
-        let mut conn = self.client.get_connection()?;
-        let value: Option<String> = conn.get(key)?;
-
-        match value {
-            Some(val) => {
-                let deserialized = serde_json::from_str(&val).map_err(|e| {
-                    redis::RedisError::from((
-                        redis::ErrorKind::ParseError,
-                        "Deserialization error",
-                        e.to_string(),
-                    ))
-                })?;
-                Ok(Some(deserialized))
+    pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        let store = self.store.read().unwrap();
+        store.get(key).and_then(|entry| {
+            if entry.expiry.map_or(false, |e| Instant::now() > e) {
+                return None;
             }
-            None => Ok(None),
+            serde_json::from_slice(&entry.value).ok()
+        })
+    }
+
+    pub fn cleanup_expired(&self) {
+        if let Ok(mut store) = self.store.write() {
+            store.retain(|_, entry| {
+                entry
+                    .expiry
+                    .map(|expiry| Instant::now() <= expiry)
+                    .unwrap_or(true)
+            });
         }
     }
 }

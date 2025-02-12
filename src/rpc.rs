@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::cache::Cache;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo, Signed};
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -50,11 +52,11 @@ pub trait EthApiOverride {
 pub struct EthApiExt<Eth> {
     #[allow(dead_code)] // temporary until we implement the flashblocks API
     eth_api: Eth,
-    cache: Cache,
+    cache: Arc<Cache>,
 }
 
 impl<E> EthApiExt<E> {
-    pub const fn new(eth_api: E, cache: Cache) -> Self {
+    pub const fn new(eth_api: E, cache: Arc<Cache>) -> Self {
         Self { eth_api, cache }
     }
 
@@ -148,7 +150,7 @@ where
         match number {
             BlockNumberOrTag::Pending => {
                 info!("pending block by number, delegating to flashblocks");
-                if let Ok(Some(block)) = self.cache.get::<OpBlock>(&number.to_string()) {
+                if let Some(block) = self.cache.get::<OpBlock>(&number.to_string()) {
                     let header: alloy_consensus::Header = block.header.clone();
                     let transactions = block.body.transactions.to_vec();
                     let transactions_with_senders = transactions
@@ -193,7 +195,7 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<OpTransactionSigned>> {
-        if let Ok(Some(receipt)) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
+        if let Some(receipt) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
             return Ok(Some(receipt));
         }
 
