@@ -5,15 +5,15 @@ use reqwest::Client;
 use reth::core::primitives::SignedTransaction;
 use reth_optimism_primitives::OpBlock;
 use serde_json::Value;
-use std::error::Error;
+use std::{error::Error, sync::Arc};
 
 pub struct Subscriber {
-    cache: Cache,
+    cache: Arc<Cache>,
     producer_url: String,
 }
 
 impl Subscriber {
-    pub fn new(cache: Cache, producer_url: String) -> Self {
+    pub fn new(cache: Arc<Cache>, producer_url: String) -> Self {
         Self {
             cache,
             producer_url,

@@ -2,6 +2,9 @@ mod cache;
 mod rpc;
 mod subscriber;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use crate::cache::Cache;
 use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
 use clap::Parser;
@@ -21,13 +24,6 @@ struct FlashblocksRollupArgs {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    #[arg(
-        long = "redis-url",
-        value_name = "REDIS_URL",
-        default_value = "redis://localhost:6379"
-    )]
-    pub redis_url: String,
-
     #[arg(long = "producer-url", value_name = "PRODUCER_URL")]
     pub producer_url: String,
 }
@@ -37,21 +33,23 @@ fn main() {
         .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
 
-            let cache = Cache::new(flashblocks_rollup_args.redis_url.as_str()).unwrap();
+            let cache = Arc::new(Cache::new());
             let subscriber = subscriber::Subscriber::new(
-                cache.clone(),
+                Arc::clone(&cache),
                 flashblocks_rollup_args.producer_url.clone(),
             );
 
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
+            let cache_clone = Arc::clone(&cache);
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider2<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
-                    let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), cache);
+                    let api_ext =
+                        EthApiExt::new(ctx.registry.eth_api().clone(), Arc::clone(&cache_clone));
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
 
                     let base_ext = BaseApiExt {};
@@ -77,6 +75,13 @@ fn main() {
                     builder.task_executor().spawn(async move {
                         if let Err(e) = subscriber.subscribe_to_sse().await {
                             eprintln!("Error subscribing to SSE: {}", e);
+                        }
+                    });
+                    builder.task_executor().spawn(async move {
+                        let mut interval = tokio::time::interval(Duration::from_secs(2));
+                        loop {
+                            interval.tick().await;
+                            cache.cleanup_expired();
                         }
                     });
                     builder.launch_with(launcher)
