@@ -1,11 +1,12 @@
 mod cache;
+mod flashblocks;
 mod rpc;
-mod subscriber;
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::cache::Cache;
+use crate::flashblocks::FlashblocksClient;
 use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
 use clap::Parser;
 use reth::builder::Node;
@@ -24,22 +25,17 @@ struct FlashblocksRollupArgs {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    #[arg(long = "producer-url", value_name = "PRODUCER_URL")]
-    pub producer_url: String,
+    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
+    pub websocket_url: String,
 }
 
 fn main() {
     Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
         .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
-
             let cache = Arc::new(Cache::new());
-            let subscriber = subscriber::Subscriber::new(
-                Arc::clone(&cache),
-                flashblocks_rollup_args.producer_url.clone(),
-            );
-
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
+            let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
 
             let cache_clone = Arc::clone(&cache);
             let handle = builder
@@ -73,9 +69,9 @@ fn main() {
                         engine_tree_config,
                     );
                     builder.task_executor().spawn(async move {
-                        if let Err(e) = subscriber.subscribe_to_sse().await {
-                            eprintln!("Error subscribing to SSE: {}", e);
-                        }
+                        flashblocks_client
+                            .init(flashblocks_rollup_args.websocket_url.clone())
+                            .unwrap();
                     });
                     builder.task_executor().spawn(async move {
                         let mut interval = tokio::time::interval(Duration::from_secs(2));
