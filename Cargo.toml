@@ -28,6 +28,8 @@ tokio-stream = "0.1"
 futures = "0.3"
 futures-util = "0.3"
 reqwest = { version = "0.11", features = ["json", "stream"] }
+tokio-tungstenite = "0.26.1"
+url = "2.5"
 
 # TODO: Pinning dependencies to work around deposit-transaction being removed and Reth 1.1.5 not being updated, see:
 # https://github.com/alloy-rs/op-alloy/pull/383/files. This can be removed in the future
