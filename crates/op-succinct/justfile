@@ -181,19 +181,21 @@ update-parameters env_file=".env":
     forge install
     
     # Run the forge upgrade script
-    ENV_VARS="L2OO_ADDRESS=$L2OO_ADDRESS"
-    if [ -n "${EXECUTE_UPGRADE_CALL:-}" ]; then ENV_VARS="$ENV_VARS EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL"; fi
-    if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
-    if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
-
-
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        $ENV_VARS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        env L2OO_ADDRESS="$L2OO_ADDRESS" \
+            ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
+            ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
+            ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
+            forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --broadcast
     else
-        $ENV_VARS forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        env L2OO_ADDRESS="$L2OO_ADDRESS" \
+            ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
+            ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
+            ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
+            forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --broadcast
