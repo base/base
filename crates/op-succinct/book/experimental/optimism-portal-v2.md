@@ -3,7 +3,7 @@
 If you want to use `OptimismPortalV2` or conform to Optimism's `IDisputeGame`, you can follow this section that describe how to deploy the 2 contracts:
 
 * `OPSuccinctDisputeGame` a thin wrapper around `OPSuccinctL2OutputOracle` that implements `IDisputeGame`.
-* `OPSuccinctDisputeGameFactory` the proposer entry point when creating new dispute game.
+* `DisputeGameFactory` the proposer entry point when creating new dispute game.
 
 And instructions about how to configure the proposer to use them.
 
@@ -41,6 +41,8 @@ Estimated amount required: 0.001614671022605394 ETH
 ==========================
 ```
 
-In these deployment logs, `0x6B3342821680031732Bc7d4E88A6528478aF9E38` is the address of the proxy for the `OPSuccinctDisputeGameFactory` contract.
+In these deployment logs, `0x6B3342821680031732Bc7d4E88A6528478aF9E38` is the address of the proxy for the `DisputeGameFactory` contract.
 
-In order to have the poposer to use it, you have to add a new variable `DGF_ADDRESS` to your `.env` file with the value above.
+In order to have the proposer to use it, you have to add a new variable `DGF_ADDRESS` to your `.env` file with the value above.
+
+If `DGF_ADDRESS` is not set, the proposer will submit the output root directly to the `OPSuccinctL2OutputOracle` contract.

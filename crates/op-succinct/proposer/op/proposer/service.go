@@ -252,6 +252,7 @@ func (ps *ProposerService) initDGF(cfg *CLIConfig) {
 		return
 	}
 	ps.DisputeGameFactoryAddr = &dgfAddress
+	ps.DisputeGameType = cfg.DisputeGameType
 }
 
 func (ps *ProposerService) initDriver() error {
