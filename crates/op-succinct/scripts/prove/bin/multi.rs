@@ -32,12 +32,12 @@ async fn main() -> Result<()> {
     let (l2_start_block, l2_end_block) =
         get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
-    let host_cli = data_fetcher
-        .get_host_cli_args(l2_start_block, l2_end_block, ProgramType::Multi, cache_mode)
+    let host_args = data_fetcher
+        .get_host_args(l2_start_block, l2_end_block, ProgramType::Multi, cache_mode)
         .await?;
 
     let start_time = Instant::now();
-    let oracle = start_server_and_native_client(host_cli.clone()).await?;
+    let oracle = start_server_and_native_client(host_args.clone()).await?;
     let witness_generation_duration = start_time.elapsed();
 
     // Get the stdin for the block.
@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
             execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
         let l1_block_number = data_fetcher
-            .get_l1_header(host_cli.l1_head.into())
+            .get_l1_header(host_args.l1_head.into())
             .await
             .unwrap()
             .number;
