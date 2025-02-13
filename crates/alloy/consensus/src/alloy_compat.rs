@@ -1,9 +1,9 @@
 //! Additional compatibility implementations.
 
-use crate::{TxDeposit, DEPOSIT_TX_TYPE_ID};
+use crate::{OpTxEnvelope, TxDeposit, DEPOSIT_TX_TYPE_ID};
 use alloc::string::ToString;
 use alloy_eips::Typed2718;
-use alloy_network::{UnknownTxEnvelope, UnknownTypedTransaction};
+use alloy_network::{AnyTxEnvelope, UnknownTxEnvelope, UnknownTypedTransaction};
 use alloy_rpc_types_eth::ConversionError;
 
 impl TryFrom<UnknownTxEnvelope> for TxDeposit {
@@ -25,6 +25,14 @@ impl TryFrom<UnknownTypedTransaction> for TxDeposit {
             .fields
             .deserialize_into()
             .map_err(|_| ConversionError::Custom("invalid transaction data".to_string()))
+    }
+}
+
+impl TryFrom<AnyTxEnvelope> for OpTxEnvelope {
+    type Error = AnyTxEnvelope;
+
+    fn try_from(value: AnyTxEnvelope) -> Result<Self, Self::Error> {
+        Self::try_from_any_envelope(value)
     }
 }
 
@@ -58,5 +66,10 @@ mod tests {
         let unknown_tx_envelope: UnknownTxEnvelope = serde_json::from_str(deposit).unwrap();
 
         let _deposit: TxDeposit = unknown_tx_envelope.try_into().unwrap();
+
+        let any: AnyTxEnvelope = serde_json::from_str(deposit).unwrap();
+
+        let envelope = OpTxEnvelope::try_from(any).unwrap();
+        assert!(envelope.is_deposit());
     }
 }

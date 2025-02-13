@@ -1,7 +1,7 @@
 use crate::{OpTxType, TxDeposit};
 use alloy_consensus::{
     transaction::RlpEcdsaTx, Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEip7702, TxLegacy, Typed2718,
+    TxEip7702, TxEnvelope, TxLegacy, Typed2718,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
@@ -297,6 +297,44 @@ impl OpTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.inner().is_system_transaction,
             _ => false,
+        }
+    }
+
+    /// Attempts to convert an ethereum [`TxEnvelope`] into the optimism variant.
+    ///
+    /// Returns the given envelope as error if [`OpTxEnvelope`] doesn't support the variant
+    /// (EIP-4844)
+    pub fn try_from_eth_envelope(tx: TxEnvelope) -> Result<Self, TxEnvelope> {
+        match tx {
+            TxEnvelope::Legacy(tx) => Ok(tx.into()),
+            TxEnvelope::Eip2930(tx) => Ok(tx.into()),
+            TxEnvelope::Eip1559(tx) => Ok(tx.into()),
+            tx @ TxEnvelope::Eip4844(_) => Err(tx),
+            TxEnvelope::Eip7702(tx) => Ok(tx.into()),
+        }
+    }
+
+    /// Attempts to convert an ethereum [`TxEnvelope`] into the optimism variant.
+    ///
+    /// Returns the given envelope as error if [`OpTxEnvelope`] doesn't support the variant
+    /// (EIP-4844)
+    #[cfg(feature = "alloy-compat")]
+    pub fn try_from_any_envelope(
+        tx: alloy_network::AnyTxEnvelope,
+    ) -> Result<Self, alloy_network::AnyTxEnvelope> {
+        match tx.try_into_envelope() {
+            Ok(eth) => {
+                Self::try_from_eth_envelope(eth).map_err(alloy_network::AnyTxEnvelope::Ethereum)
+            }
+            Err(err) => match err {
+                alloy_network::AnyTxEnvelope::Unknown(unknown) => {
+                    let Ok(deposit) = unknown.inner.clone().try_into() else {
+                        return Err(alloy_network::AnyTxEnvelope::Unknown(unknown));
+                    };
+                    Ok(Self::Deposit(Sealed::new_unchecked(deposit, unknown.hash)))
+                }
+                unsupported => Err(unsupported),
+            },
         }
     }
 
