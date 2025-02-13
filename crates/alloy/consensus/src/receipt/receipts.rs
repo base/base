@@ -190,13 +190,12 @@ impl OpTxReceipt for OpDepositReceipt {
 /// [`Sealed`]: alloy_consensus::Sealed
 pub type OpDepositReceiptWithBloom<T = Log> = ReceiptWithBloom<OpDepositReceipt<T>>;
 
-#[cfg(any(test, feature = "arbitrary"))]
+#[cfg(feature = "arbitrary")]
 impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceipt<T>
 where
     T: arbitrary::Arbitrary<'a>,
 {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        #[cfg(not(feature = "std"))]
         use alloc::vec::Vec;
         let deposit_nonce = Option::<u64>::arbitrary(u)?;
         let deposit_receipt_version =
