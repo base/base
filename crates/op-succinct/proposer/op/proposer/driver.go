@@ -32,8 +32,8 @@ import (
 )
 
 var (
-	supportedL2OutputVersion   = eth.Bytes32{}
-	ErrProposerNotRunning      = errors.New("proposer is not running")
+	supportedL2OutputVersion = eth.Bytes32{}
+	ErrProposerNotRunning    = errors.New("proposer is not running")
 )
 
 type L1Client interface {
@@ -135,7 +135,7 @@ func newL2OOSubmitter(ctx context.Context, cancel context.CancelFunc, setup Driv
 		return nil, err
 	}
 
-	dfgAbiParsed, err := opsuccinctbindings.OPSuccinctDisputeGameFactoryMetaData.GetAbi()
+	dfgAbiParsed, err := opsuccinctbindings.DisputeGameFactoryMetaData.GetAbi()
 	if err != nil {
 		cancel()
 		return nil, err
@@ -440,13 +440,47 @@ func proposeL2OutputTxData(abi *abi.ABI, output *eth.OutputResponse, proof []byt
 		proof)
 }
 
+func (l *L2OutputSubmitter) GetBondAmount() (*big.Int, error) {
+	data, err := l.dgfABI.Pack(
+		"initBonds",
+		l.Cfg.DisputeGameType,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	initBonds, err := l.L1Client.CallContract(context.Background(), ethereum.CallMsg{
+		To:   l.Cfg.DisputeGameFactoryAddr,
+		Data: data,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return big.NewInt(0).SetBytes(initBonds), nil
+}
+
 func (l *L2OutputSubmitter) ProposeL2OutputDGFTxData(output *eth.OutputResponse, proof []byte, l1BlockNum uint64) ([]byte, error) {
-	return l.dgfABI.Pack(
-		"create",
-		output.OutputRoot,
+	arguments := abi.Arguments{
+		{Type: abi.Type{T: abi.UintTy, Size: 256}}, // for l2BlockNumber
+		{Type: abi.Type{T: abi.UintTy, Size: 256}}, // for l1BlockNumber
+		{Type: abi.Type{T: abi.BytesTy}},           // for proof
+	}
+	extraData, err := arguments.Pack(
 		new(big.Int).SetUint64(output.BlockRef.Number),
 		new(big.Int).SetUint64(l1BlockNum),
-		proof)
+		proof,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return l.dgfABI.Pack(
+		"create",
+		l.Cfg.DisputeGameType,
+		output.OutputRoot,
+		extraData,
+	)
 }
 
 func (l *L2OutputSubmitter) CheckpointBlockHashTxData(blockNumber *big.Int) ([]byte, error) {
@@ -489,6 +523,10 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 	l.Log.Info("Proposing output root", "output", output.OutputRoot, "block", output.BlockRef)
 	var receipt *types.Receipt
 	if l.Cfg.DisputeGameFactoryAddr != nil {
+		bondAmount, err := l.GetBondAmount()
+		if err != nil {
+			return err
+		}
 		data, err := l.ProposeL2OutputDGFTxData(output, proof, l1BlockNum)
 		if err != nil {
 			return err
@@ -498,6 +536,7 @@ func (l *L2OutputSubmitter) sendTransaction(ctx context.Context, output *eth.Out
 			TxData:   data,
 			To:       l.Cfg.DisputeGameFactoryAddr,
 			GasLimit: 0,
+			Value:    bondAmount,
 		})
 		if err != nil {
 			return err

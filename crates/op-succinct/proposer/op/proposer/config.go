@@ -136,7 +136,6 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		L1EthRpc:     ctx.String(flags.L1EthRpcFlag.Name),
 		RollupRpc:    ctx.String(flags.RollupRpcFlag.Name),
 		L2OOAddress:  ctx.String(flags.L2OOAddressFlag.Name),
-		DGFAddress:   ctx.String(flags.DGFAddressFlag.Name),
 		PollInterval: ctx.Duration(flags.PollIntervalFlag.Name),
 		TxMgrConfig:  txmgr.ReadCLIConfig(ctx),
 		BeaconRpc:    ctx.String(flags.BeaconRpcFlag.Name),
@@ -159,5 +158,11 @@ func NewConfig(ctx *cli.Context) *CLIConfig {
 		OPSuccinctServerUrl:          ctx.String(flags.OPSuccinctServerUrlFlag.Name),
 		MaxConcurrentProofRequests:   ctx.Uint64(flags.MaxConcurrentProofRequestsFlag.Name),
 		Mock:                         ctx.Bool(flags.MockFlag.Name),
+		DGFAddress:                   ctx.String(flags.DGFAddressFlag.Name),
+
+		// NOTE(fakedev9999): GameType 6 is the game type for the op-succinct proof system.
+		// See https://github.com/ethereum-optimism/optimism/blob/develop/op-challenger/game/fault/types/types.go#L33
+		// Will be updated to OPSuccinctGameType once we upgrade to a new version of the op-challenger.
+		DisputeGameType: uint32(6),
 	}
 }
