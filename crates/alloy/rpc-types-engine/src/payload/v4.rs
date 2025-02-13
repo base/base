@@ -1,8 +1,10 @@
 //! Optimism execution payload envelope V3.
 
 use alloc::vec::Vec;
+use alloy_consensus::Block;
+use alloy_eips::Decodable2718;
 use alloy_primitives::{Bytes, B256, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
 /// The Opstack execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.optimism.io/protocol/isthmus/exec-engine.html#engine_newpayloadv4-api>
@@ -17,6 +19,23 @@ pub struct OpExecutionPayloadV4 {
     /// instead of computing the root from a withdrawals list, set it directly.
     /// The "withdrawals" list attribute must be non-nil but empty.
     pub withdrawals_root: B256,
+}
+
+impl OpExecutionPayloadV4 {
+    /// Converts [`OpExecutionPayloadV4`] to [`Block`].
+    ///
+    /// This performs the same conversion as the underlying V3 payload, but inserts the L2
+    /// withdrawals root.
+    ///
+    /// See also [`ExecutionPayloadV3::try_into_block`].
+    pub fn try_into_block<T: Decodable2718>(self) -> Result<Block<T>, PayloadError> {
+        let mut base_block = self.payload_inner.try_into_block()?;
+
+        // overwrite l1 withdrawals root with l2 withdrawals root
+        base_block.header.withdrawals_root = Some(self.withdrawals_root);
+
+        Ok(base_block)
+    }
 }
 
 /// This structure maps for the return value of `engine_getPayload` of the beacon chain spec, for
