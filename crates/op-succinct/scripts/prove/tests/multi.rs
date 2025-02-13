@@ -39,7 +39,7 @@ async fn execute_batch() -> Result<()> {
         execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
     let l1_block_number = data_fetcher
-        .get_l1_header(host_args.l1_head.into())
+        .get_l1_header(host_args.kona_args.l1_head.into())
         .await
         .unwrap()
         .number;
