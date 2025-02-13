@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
-use kona_host::single::SingleChainHost;
 use log::info;
 use op_succinct_host_utils::{
     block_range::{
@@ -11,7 +10,7 @@ use op_succinct_host_utils::{
     fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
     get_proof_stdin, start_server_and_native_client,
     stats::ExecutionStats,
-    ProgramType,
+    OPSuccinctHost, ProgramType,
 };
 use op_succinct_scripts::HostExecutorArgs;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -31,7 +30,7 @@ const ONE_WEEK: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
 async fn execute_blocks_and_write_stats_csv(
-    host_clis: &[SingleChainHost],
+    host_args: &[OPSuccinctHost],
     ranges: Vec<SpanBatchRange>,
     l2_chain_id: u64,
     start: u64,
@@ -75,9 +74,9 @@ async fn execute_blocks_and_write_stats_csv(
 
     // Use futures::future::join_all to run the server and client in parallel. Note: stream::iter did not work here, possibly
     // because the server and client are long-lived tasks.
-    let handles = host_clis.iter().cloned().map(|host_cli| {
+    let handles = host_args.iter().cloned().map(|host_args| {
         tokio::spawn(async move {
-            let oracle = start_server_and_native_client(host_cli).await.unwrap();
+            let oracle = start_server_and_native_client(host_args).await.unwrap();
             get_proof_stdin(oracle).unwrap()
         })
     });
@@ -222,10 +221,10 @@ async fn main() -> Result<()> {
     };
 
     // Get the host CLIs in order, in parallel.
-    let host_clis = futures::stream::iter(split_ranges.iter())
+    let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
             data_fetcher
-                .get_host_cli_args(range.start, range.end, ProgramType::Multi, cache_mode)
+                .get_host_args(range.start, range.end, ProgramType::Multi, cache_mode)
                 .await
                 .expect("Failed to get host CLI args")
         })
@@ -234,7 +233,7 @@ async fn main() -> Result<()> {
         .await;
 
     execute_blocks_and_write_stats_csv(
-        &host_clis,
+        &host_args,
         split_ranges,
         l2_chain_id,
         l2_start_block,

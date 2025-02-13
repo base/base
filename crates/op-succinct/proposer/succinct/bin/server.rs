@@ -158,8 +158,8 @@ async fn request_span_proof(
         }
     };
 
-    let host_cli = match fetcher
-        .get_host_cli_args(
+    let host_args = match fetcher
+        .get_host_args(
             payload.start,
             payload.end,
             ProgramType::Multi,
@@ -177,7 +177,7 @@ async fn request_span_proof(
         }
     };
 
-    let mem_kv_store = start_server_and_native_client(host_cli).await?;
+    let mem_kv_store = start_server_and_native_client(host_args).await?;
 
     let sp1_stdin = match get_proof_stdin(mem_kv_store) {
         Ok(stdin) => stdin,
@@ -338,8 +338,8 @@ async fn request_mock_span_proof(
         }
     };
 
-    let host_cli = match fetcher
-        .get_host_cli_args(
+    let host_args = match fetcher
+        .get_host_args(
             payload.start,
             payload.end,
             ProgramType::Multi,
@@ -355,7 +355,7 @@ async fn request_mock_span_proof(
     };
 
     let start_time = Instant::now();
-    let oracle = start_server_and_native_client(host_cli.clone()).await?;
+    let oracle = start_server_and_native_client(host_args.clone()).await?;
     let witness_generation_duration = start_time.elapsed();
 
     let sp1_stdin = match get_proof_stdin(oracle) {
@@ -377,7 +377,7 @@ async fn request_mock_span_proof(
         .get_l2_block_data_range(payload.start, payload.end)
         .await?;
 
-    let l1_head = host_cli.l1_head;
+    let l1_head = host_args.kona_args.l1_head;
     // Get the L1 block number from the L1 head.
     let l1_block_number = fetcher.get_l1_header(l1_head.into()).await?.number;
     let stats = ExecutionStats::new(

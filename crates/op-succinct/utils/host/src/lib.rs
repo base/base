@@ -47,6 +47,7 @@ sol! {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct OPSuccinctHost {
     pub kona_args: SingleChainHost,
 }
@@ -95,12 +96,10 @@ pub fn get_agg_proof_stdin(
 
 /// Start the server and native client. Each server is tied to a single client.
 pub async fn start_server_and_native_client(
-    cfg: SingleChainHost,
+    cfg: OPSuccinctHost,
 ) -> Result<InMemoryOracle, anyhow::Error> {
-    let host = OPSuccinctHost { kona_args: cfg };
-
     info!("Starting preimage server and client program.");
-    let in_memory_oracle = host.run().await?;
+    let in_memory_oracle = cfg.run().await?;
 
     Ok(in_memory_oracle)
 }

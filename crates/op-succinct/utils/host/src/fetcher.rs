@@ -32,11 +32,11 @@ use std::{
 
 use alloy_primitives::{keccak256, map::HashMap, Bytes, U256, U64};
 
-use crate::L2Output;
 use crate::{
     rollup_config::{get_rollup_config_path, merge_rollup_config},
     ProgramType,
 };
+use crate::{L2Output, OPSuccinctHost};
 
 #[derive(Clone)]
 /// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
@@ -671,13 +671,13 @@ impl OPSuccinctDataFetcher {
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
     /// directory with block_number. Return the arguments to be passed to the native host for
     /// datagen.
-    pub async fn get_host_cli_args(
+    pub async fn get_host_args(
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
         multi_block: ProgramType,
         cache_mode: CacheMode,
-    ) -> Result<SingleChainHost> {
+    ) -> Result<OPSuccinctHost> {
         // If the rollup config is not already loaded, fetch and save it.
         if self.rollup_config.is_none() {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
@@ -780,39 +780,41 @@ impl OPSuccinctDataFetcher {
         // witness data.
         fs::create_dir_all(&data_directory)?;
 
-        Ok(SingleChainHost {
-            l1_head: l1_head_hash,
-            agreed_l2_output_root,
-            agreed_l2_head_hash,
-            claimed_l2_output_root,
-            claimed_l2_block_number: l2_end_block,
-            l2_chain_id: None,
-            // Trim the trailing slash to avoid double slashes in the URL.
-            l2_node_address: Some(
-                self.rpc_config
-                    .l2_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
-            ),
-            l1_node_address: Some(
-                self.rpc_config
-                    .l1_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
-            ),
-            l1_beacon_address: Some(
-                self.rpc_config
-                    .l1_beacon_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
-            ),
-            data_dir: Some(data_directory.into()),
-            native: false,
-            server: true,
-            rollup_config_path: Some(rollup_config_path),
+        Ok(OPSuccinctHost {
+            kona_args: SingleChainHost {
+                l1_head: l1_head_hash,
+                agreed_l2_output_root,
+                agreed_l2_head_hash,
+                claimed_l2_output_root,
+                claimed_l2_block_number: l2_end_block,
+                l2_chain_id: None,
+                // Trim the trailing slash to avoid double slashes in the URL.
+                l2_node_address: Some(
+                    self.rpc_config
+                        .l2_rpc
+                        .as_str()
+                        .trim_end_matches('/')
+                        .to_string(),
+                ),
+                l1_node_address: Some(
+                    self.rpc_config
+                        .l1_rpc
+                        .as_str()
+                        .trim_end_matches('/')
+                        .to_string(),
+                ),
+                l1_beacon_address: Some(
+                    self.rpc_config
+                        .l1_beacon_rpc
+                        .as_str()
+                        .trim_end_matches('/')
+                        .to_string(),
+                ),
+                data_dir: Some(data_directory.into()),
+                native: false,
+                server: true,
+                rollup_config_path: Some(rollup_config_path),
+            },
         })
     }
 
