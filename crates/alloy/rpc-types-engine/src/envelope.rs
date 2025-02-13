@@ -19,6 +19,28 @@ pub struct OpExecutionData {
     pub sidecar: OpExecutionPayloadSidecar,
 }
 
+impl OpExecutionData {
+    /// Creates new instance of [`OpExecutionData`].
+    pub const fn new(payload: OpExecutionPayload, sidecar: OpExecutionPayloadSidecar) -> Self {
+        Self { payload, sidecar }
+    }
+
+    /// Returns the parent hash of the block.
+    pub const fn parent_hash(&self) -> B256 {
+        self.payload.parent_hash()
+    }
+
+    /// Returns the hash of the block.
+    pub const fn block_hash(&self) -> B256 {
+        self.payload.block_hash()
+    }
+
+    /// Returns the number of the block.
+    pub const fn block_number(&self) -> u64 {
+        self.payload.block_number()
+    }
+}
+
 /// Optimism execution payload envelope in network format.
 ///
 /// This struct is used to represent payloads that are sent over the Optimism
