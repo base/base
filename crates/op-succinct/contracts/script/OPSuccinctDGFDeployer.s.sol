@@ -39,7 +39,6 @@ contract OPSuccinctDFGDeployer is Script, Utils {
         // See https://github.com/ethereum-optimism/optimism/blob/6d7f3bcf1e3a80749a5d70f224e35b49dbd3bb3c/packages/contracts-bedrock/src/dispute/lib/Types.sol#L63-L64
         // Will be updated to GameTypes.OP_SUCCINCT once we upgrade to a new version of the Optimism contracts.
         GameType gameType = GameType.wrap(uint32(6));
-        gameFactory.setInitBond(gameType, 0.01 ether);
         gameFactory.setImplementation(gameType, IDisputeGame(address(game)));
 
         vm.stopBroadcast();
