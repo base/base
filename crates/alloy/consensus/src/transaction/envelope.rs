@@ -78,6 +78,22 @@ impl From<Sealed<TxDeposit>> for OpTxEnvelope {
     }
 }
 
+impl TryFrom<TxEnvelope> for OpTxEnvelope {
+    type Error = TxEnvelope;
+
+    fn try_from(value: TxEnvelope) -> Result<Self, Self::Error> {
+        Self::try_from_eth_envelope(value)
+    }
+}
+
+impl TryFrom<OpTxEnvelope> for TxEnvelope {
+    type Error = OpTxEnvelope;
+
+    fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
+        value.try_into_eth_envelope()
+    }
+}
+
 impl Typed2718 for OpTxEnvelope {
     fn ty(&self) -> u8 {
         match self {
@@ -297,6 +313,19 @@ impl OpTxEnvelope {
         match self {
             Self::Deposit(tx) => tx.inner().is_system_transaction,
             _ => false,
+        }
+    }
+
+    /// Attempts to convert the optimism variant into an ethereum [`TxEnvelope`].
+    ///
+    /// Returns the envelope as error if it is a variant unsupported on ethereum: [`TxDeposit`]
+    pub fn try_into_eth_envelope(self) -> Result<TxEnvelope, Self> {
+        match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip7702(tx) => Ok(tx.into()),
+            tx @ Self::Deposit(_) => Err(tx),
         }
     }
 
