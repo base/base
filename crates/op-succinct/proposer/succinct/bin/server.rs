@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();
-
     dotenv::dotenv().ok();
 
     let network_prover = Arc::new(ProverClient::builder().network().build());
@@ -368,11 +367,10 @@ async fn request_mock_span_proof(
     };
 
     let start_time = Instant::now();
-    let (pv, report) = state
-        .network_prover
-        .execute(RANGE_ELF, &sp1_stdin)
-        .run()
-        .unwrap();
+
+    // Note(ratan): In a future version of the server which only supports mock proofs, Arc<MockProver> should be used to reduce memory usage.
+    let prover = ProverClient::builder().mock().build();
+    let (pv, report) = prover.execute(RANGE_ELF, &sp1_stdin).run().unwrap();
     let execution_duration = start_time.elapsed();
 
     let block_data = fetcher
@@ -486,6 +484,7 @@ async fn request_mock_agg_proof(
             }
         };
 
+    // Note(ratan): In a future version of the server which only supports mock proofs, Arc<MockProver> should be used to reduce memory usage.
     let prover = ProverClient::builder().mock().build();
     let proof = match prover
         .prove(&state.agg_pk, &stdin)
