@@ -18,7 +18,8 @@ remappings = [
     "src/libraries/=lib/optimism/packages/contracts-bedrock/src/libraries/",
     "src/L1/=lib/optimism/packages/contracts-bedrock/src/L1/",
     "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
-    "src/dispute/=lib/optimism/packages/contracts-bedrock/src/dispute/"
+    "src/dispute/=lib/optimism/packages/contracts-bedrock/src/dispute/",
+    "src/universal/=lib/optimism/packages/contracts-bedrock/src/universal/",
 ]
 
 # Enable read-write access to opsuccinctl2ooconfig.json
