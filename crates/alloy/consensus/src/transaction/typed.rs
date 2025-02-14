@@ -1,7 +1,9 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
-use alloy_consensus::{Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718};
+use alloy_consensus::{
+    SignableTransaction, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
+};
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
 /// Stack.
@@ -85,6 +87,19 @@ impl OpTypedTransaction {
             Self::Eip1559(_) => OpTxType::Eip1559,
             Self::Eip7702(_) => OpTxType::Eip7702,
             Self::Deposit(_) => OpTxType::Deposit,
+        }
+    }
+
+    /// Calculates the signing hash for the transaction.
+    ///
+    /// Returns `None` if the tx is a deposit transaction.
+    pub fn signature_hash(&self) -> Option<B256> {
+        match self {
+            Self::Legacy(tx) => Some(tx.signature_hash()),
+            Self::Eip2930(tx) => Some(tx.signature_hash()),
+            Self::Eip1559(tx) => Some(tx.signature_hash()),
+            Self::Eip7702(tx) => Some(tx.signature_hash()),
+            Self::Deposit(_) => None,
         }
     }
 
