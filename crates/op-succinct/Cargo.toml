@@ -102,7 +102,7 @@ maili-registry = { version = "0.2.6", default-features = false }
 maili-genesis = { version = "0.2.6", default-features = false }
 
 # Revm
-revm = { version = "19.4.0", default-features = false, features = ["kzg-rs"] }
+revm = { version = "19.5.0", default-features = false, features = ["kzg-rs"] }
 
 # SP1
 sp1-lib = { version = "4.1.0", features = ["verify"] }
