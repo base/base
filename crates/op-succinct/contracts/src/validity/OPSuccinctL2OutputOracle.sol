@@ -4,7 +4,7 @@ pragma solidity ^0.8.15;
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {ISemver} from "@optimism/src/universal/interfaces/ISemver.sol";
 import {Types} from "@optimism/src/libraries/Types.sol";
-import {AggregationOutputs} from "src/lib/Types.sol";
+import {AggregationOutputs} from "../lib/Types.sol";
 import {Constants} from "@optimism/src/libraries/Constants.sol";
 import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
 
