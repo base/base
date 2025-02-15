@@ -212,6 +212,120 @@ where
     }
 }
 
+/// Bincode-compatible [`OpDepositReceipt`] serde implementation.
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub(crate) mod serde_bincode_compat {
+    use alloc::{borrow::Cow, vec::Vec};
+    use alloy_consensus::Receipt;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_with::{DeserializeAs, SerializeAs};
+
+    /// Bincode-compatible [`super::OpDepositReceipt`] serde implementation.
+    ///
+    /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
+    /// ```rust
+    /// use op_alloy_consensus::{serde_bincode_compat, OpDepositReceipt};
+    /// use serde::{de::DeserializeOwned, Deserialize, Serialize};
+    /// use serde_with::serde_as;
+    ///
+    /// #[serde_as]
+    /// #[derive(Serialize, Deserialize)]
+    /// struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
+    ///     #[serde_as(as = "serde_bincode_compat::OpDepositReceipt<'_, T>")]
+    ///     receipt: OpDepositReceipt<T>,
+    /// }
+    /// ```
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct OpDepositReceipt<'a, T: Clone> {
+        logs: Cow<'a, Vec<T>>,
+        status: bool,
+        cumulative_gas_used: u64,
+        deposit_nonce: Option<u64>,
+        deposit_receipt_version: Option<u64>,
+    }
+
+    impl<'a, T: Clone> From<&'a super::OpDepositReceipt<T>> for OpDepositReceipt<'a, T> {
+        fn from(value: &'a super::OpDepositReceipt<T>) -> Self {
+            Self {
+                logs: Cow::Borrowed(&value.inner.logs),
+                // OP has no post state root variant
+                status: value.inner.status.coerce_status(),
+                cumulative_gas_used: value.inner.cumulative_gas_used,
+                deposit_nonce: value.deposit_nonce,
+                deposit_receipt_version: value.deposit_receipt_version,
+            }
+        }
+    }
+
+    impl<'a, T: Clone> From<OpDepositReceipt<'a, T>> for super::OpDepositReceipt<T> {
+        fn from(value: OpDepositReceipt<'a, T>) -> Self {
+            Self {
+                inner: Receipt {
+                    status: value.status.into(),
+                    cumulative_gas_used: value.cumulative_gas_used,
+                    logs: value.logs.into_owned(),
+                },
+                deposit_nonce: value.deposit_nonce,
+                deposit_receipt_version: value.deposit_receipt_version,
+            }
+        }
+    }
+
+    impl<T: Serialize + Clone> SerializeAs<super::OpDepositReceipt<T>> for OpDepositReceipt<'_, T> {
+        fn serialize_as<S>(
+            source: &super::OpDepositReceipt<T>,
+            serializer: S,
+        ) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            OpDepositReceipt::<'_, T>::from(source).serialize(serializer)
+        }
+    }
+
+    impl<'de, T: Deserialize<'de> + Clone> DeserializeAs<'de, super::OpDepositReceipt<T>>
+        for OpDepositReceipt<'de, T>
+    {
+        fn deserialize_as<D>(deserializer: D) -> Result<super::OpDepositReceipt<T>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            OpDepositReceipt::<'_, T>::deserialize(deserializer).map(Into::into)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::{serde_bincode_compat, OpDepositReceipt};
+        use alloy_primitives::Log;
+        use arbitrary::Arbitrary;
+        use rand::Rng;
+        use serde::{de::DeserializeOwned, Deserialize, Serialize};
+        use serde_with::serde_as;
+
+        #[test]
+        fn test_tx_deposit_bincode_roundtrip() {
+            #[serde_as]
+            #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+            struct Data<T: Serialize + DeserializeOwned + Clone + 'static> {
+                #[serde_as(as = "serde_bincode_compat::OpDepositReceipt<'_,T>")]
+                transaction: OpDepositReceipt<T>,
+            }
+
+            let mut bytes = [0u8; 1024];
+            rand::thread_rng().fill(bytes.as_mut_slice());
+            let data = Data {
+                transaction: OpDepositReceipt::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
+                    .unwrap(),
+            };
+
+            let encoded = bincode::serialize(&data).unwrap();
+            let decoded: Data<Log> = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(decoded, data);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

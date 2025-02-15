@@ -5,7 +5,7 @@ use alloy_consensus::TxReceipt;
 mod envelope;
 pub use envelope::OpReceiptEnvelope;
 
-mod receipts;
+pub(crate) mod receipts;
 pub use receipts::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
 /// Receipt is the result of a transaction execution.

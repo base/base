@@ -48,5 +48,8 @@ pub use transaction::serde_deposit_tx_rpc;
 /// Read more: <https://github.com/bincode-org/bincode/issues/326>
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
-    pub use super::transaction::serde_bincode_compat::TxDeposit;
+    pub use super::{
+        receipt::receipts::serde_bincode_compat::OpDepositReceipt,
+        transaction::serde_bincode_compat::TxDeposit,
+    };
 }
