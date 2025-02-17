@@ -1,4 +1,4 @@
-use crate::{OpTxType, TxDeposit};
+use crate::{OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
     transaction::RlpEcdsaTx, Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930,
     TxEip7702, TxEnvelope, TxLegacy, Typed2718,
@@ -69,6 +69,31 @@ impl From<Signed<TxEip7702>> for OpTxEnvelope {
 impl From<TxDeposit> for OpTxEnvelope {
     fn from(v: TxDeposit) -> Self {
         v.seal_slow().into()
+    }
+}
+
+impl From<Signed<OpTypedTransaction>> for OpTxEnvelope {
+    fn from(value: Signed<OpTypedTransaction>) -> Self {
+        let (tx, sig, hash) = value.into_parts();
+        match tx {
+            OpTypedTransaction::Legacy(tx_legacy) => {
+                let tx = Signed::new_unchecked(tx_legacy, sig, hash);
+                Self::Legacy(tx)
+            }
+            OpTypedTransaction::Eip2930(tx_eip2930) => {
+                let tx = Signed::new_unchecked(tx_eip2930, sig, hash);
+                Self::Eip2930(tx)
+            }
+            OpTypedTransaction::Eip1559(tx_eip1559) => {
+                let tx = Signed::new_unchecked(tx_eip1559, sig, hash);
+                Self::Eip1559(tx)
+            }
+            OpTypedTransaction::Eip7702(tx_eip7702) => {
+                let tx = Signed::new_unchecked(tx_eip7702, sig, hash);
+                Self::Eip7702(tx)
+            }
+            OpTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
+        }
     }
 }
 
