@@ -44,11 +44,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/succinct-proposer
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
             type=ref,event=tag
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
             type=sha
 
       - name: Login to GitHub Container Registry
