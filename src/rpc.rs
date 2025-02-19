@@ -73,7 +73,7 @@ impl<E> EthApiExt<E> {
         let converted_txs = transactions_with_senders
             .enumerate()
             .map(|(idx, (tx, sender))| {
-                let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender.clone());
+                let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
                 let tx_info = TransactionInfo {
                     hash: Some(*tx.tx_hash()),
                     block_hash: None,
@@ -85,12 +85,12 @@ impl<E> EthApiExt<E> {
             })
             .collect();
 
-        return RpcBlock::<Optimism> {
+        RpcBlock::<Optimism> {
             header: Header::from_consensus(header.seal_slow(), None, None),
             transactions: BlockTransactions::Full(converted_txs),
             uncles: Vec::new(),
             withdrawals: None,
-        };
+        }
     }
 
     pub fn transform_tx(
@@ -179,7 +179,7 @@ impl<E> EthApiExt<E> {
             reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
 
         let meta = TransactionMeta {
-            tx_hash: tx_hash,
+            tx_hash,
             index: 0,                    // placeholder
             block_hash: B256::default(), // placeholder
             block_number: block.number,
@@ -262,14 +262,15 @@ where
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
-            info!("pending tag, delegating to flashblocks");
-            todo!()
-        } else {
-            info!("non pending block, using standard flow");
-            EthState::balance(&self.eth_api, address, block_number)
-                .await
-                .map_err(Into::into)
+            if let Some(balance) = self.cache.get::<U256>(&format!("{:?}", address)) {
+                return Ok(balance);
+            }
+            // If pending not found, use standard flow below
         }
+
+        EthState::balance(&self.eth_api, address, block_number)
+            .await
+            .map_err(Into::into)
     }
 }
 
