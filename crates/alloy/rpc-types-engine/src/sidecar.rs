@@ -70,6 +70,16 @@ impl OpExecutionPayloadSidecar {
         self.canyon.into_inner()
     }
 
+    /// Returns a reference to the [`PraguePayloadFields`].
+    pub const fn isthmus(&self) -> Option<&PraguePayloadFields> {
+        self.isthmus.as_ref()
+    }
+
+    /// Consumes the type and returns the [`PraguePayloadFields`]
+    pub fn into_isthmus(self) -> Option<PraguePayloadFields> {
+        self.isthmus.into_inner()
+    }
+
     /// Returns the parent beacon block root, if any.
     pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.canyon.parent_beacon_block_root()
