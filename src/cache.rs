@@ -1,5 +1,4 @@
 use serde::{de::DeserializeOwned, Serialize};
-use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
