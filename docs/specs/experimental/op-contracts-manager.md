@@ -32,7 +32,6 @@ of governance approved [contract releases] can be found on the
   - [Interface](#interface-1)
     - [`upgrade`](#upgrade)
   - [Implementation](#implementation-1)
-    - [`IsthmusConfig` struct](#isthmusconfig-struct)
     - [Requirements on the OP Chain contracts](#requirements-on-the-op-chain-contracts)
 - [Adding game types](#adding-game-types)
   - [Interface](#interface-2)
@@ -66,11 +65,9 @@ Upgrades must be performed by the [Upgrade Controller](../protocol/stage-1.md#ro
 The following interface defines the available getter methods:
 
 ```solidity
-/// @notice Returns the latest approved release of the OP Stack contracts are named with the
-///         format `op-contracts/vX.Y.Z`.
-function release() external view returns (string memory);
-/// @notice Represents the interface version so consumers know how to decode the DeployOutput struct
-function outputVersion() external view returns (uint256);
+/// @notice Returns the release string with the format `op-contracts/vX.Y.Z`. 
+/// Appends "-rc" if this is a release candidate.
+function l1ContractsRelease() external view returns (string memory);
 /// @notice Addresses of the Blueprint contracts.
 function blueprints() external view returns (Blueprints memory);
 /// @notice Maps an L2 chain ID to an L1 batch inbox address
@@ -80,9 +77,7 @@ function implementations() external view returns (Implementations memory);
 /// @notice Address of the ProtocolVersions contract shared by all chains.
 function protocolVersions() external view returns (address);
 /// @notice Address of the SuperchainConfig contract shared by all chains.
-function superchainConfig() external view returns (address);
-/// @notice Maps an L2 Chain ID to the SystemConfig for that chain.
-function systemConfigs(uint256 _l2ChainId) external view returns (address);
+function superchainConfig() external view returns (ISuperchainConfig);
 /// @notice Semver version specific to the OPContractsManager
 function version() external view returns (string memory);
 ```
@@ -97,6 +92,7 @@ The `deploy` method is used to deploy the full set of L1 contracts required to s
 chain that complies with the [standard configuration]. It has the following interface:
 
 ```solidity
+/// @notice Represents the roles that can be set when deploying a standard OP Stack chain.
 struct Roles {
     address opChainProxyAdminOwner;
     address systemConfigOwner;
@@ -106,12 +102,13 @@ struct Roles {
     address challenger;
 }
 
+/// @notice The full set of inputs to deploy a new OP Stack chain.
 struct DeployInput {
     Roles roles;
     uint32 basefeeScalar;
     uint32 blobBasefeeScalar;
     uint256 l2ChainId;
-    bytes startingAnchorRoots;
+    bytes startingAnchorRoot;
     string saltMixer;
     uint64 gasLimit;
     uint32 disputeGameType;
@@ -122,24 +119,24 @@ struct DeployInput {
     uint64 disputeMaxClockDuration;
 }
 
+/// @notice The full set of outputs from deploying a new OP Stack chain.
 struct DeployOutput {
-      IProxyAdmin opChainProxyAdmin;
-      IAddressManager addressManager;
-      IL1ERC721Bridge l1ERC721BridgeProxy;
-      ISystemConfig systemConfigProxy;
-      IOptimismMintableERC20Factory optimismMintableERC20FactoryProxy;
-      IL1StandardBridge l1StandardBridgeProxy;
-      IL1CrossDomainMessenger l1CrossDomainMessengerProxy;
-      // Fault proof contracts below.
-      IOptimismPortal2 optimismPortalProxy;
-      IDisputeGameFactory disputeGameFactoryProxy;
-      IAnchorStateRegistry anchorStateRegistryProxy;
-      IAnchorStateRegistry anchorStateRegistryImpl;
-      IFaultDisputeGame faultDisputeGame;
-      IPermissionedDisputeGame permissionedDisputeGame;
-      IDelayedWETH delayedWETHPermissionedGameProxy;
-      IDelayedWETH delayedWETHPermissionlessGameProxy;
-  }
+    IProxyAdmin opChainProxyAdmin;
+    IAddressManager addressManager;
+    IL1ERC721Bridge l1ERC721BridgeProxy;
+    ISystemConfig systemConfigProxy;
+    IOptimismMintableERC20Factory optimismMintableERC20FactoryProxy;
+    IL1StandardBridge l1StandardBridgeProxy;
+    IL1CrossDomainMessenger l1CrossDomainMessengerProxy;
+    // Fault proof contracts below.
+    IOptimismPortal2 optimismPortalProxy;
+    IDisputeGameFactory disputeGameFactoryProxy;
+    IAnchorStateRegistry anchorStateRegistryProxy;
+    IFaultDisputeGame faultDisputeGame;
+    IPermissionedDisputeGame permissionedDisputeGame;
+    IDelayedWETH delayedWETHPermissionedGameProxy;
+    IDelayedWETH delayedWETHPermissionlessGameProxy;
+}
 
 /// @notice Deploys a new OP Chain
 /// @param _input DeployInput containing chain specific config information.
@@ -159,12 +156,12 @@ The `l2ChainId` has the following restrictions:
 On success, the following event is emitted:
 
 ```solidity
-event Deployed(uint256 indexed outputVersion, uint256 indexed l2ChainId, address indexed deployer, bytes deployOutput);
+event Deployed(uint256 indexed l2ChainId, address indexed deployer, bytes deployOutput);
 ```
 
 This method reverts on failure. This occurs when:
 
-- The input `l2ChainId` does not comply with the restrictions above.
+- The input `l2ChainId` does not comply with the enforced restrictions above.
 - The resulting configuration is not compliant with the [standard configuration].
 
 ### Implementation
@@ -199,9 +196,6 @@ This provides the following benefits:
 
 ## Upgrading
 
-This section is written specifically for the Isthmus upgrade path, which is the first upgrade which will
-be performed by the OP Contracts Manager.
-
 ### Interface
 
 #### `upgrade`
@@ -212,12 +206,17 @@ all chains that it controls.
 It has the following interface:
 
 ```solidity
-struct IsthmusConfig {
-    uint32 public operatorFeeScalar;
-    uint64 public operatorFeeConstant;
+/// @notice The input required to identify a chain for upgrading, along with new prestate hashes
+struct OpChainConfig {
+    ISystemConfig systemConfigProxy;
+    IProxyAdmin proxyAdmin;
+    bytes32 absolutePrestate;
 }
 
-function upgrade(ISystemConfig[] _systemConfigs, IProxyAdmin[] _proxyAdmins, IsthmusConfig[] _isthmusConfigs) public;
+/// @notice Upgrades a set of chains to the latest implementation contracts
+/// @param _opChainConfigs Array of OpChain structs, one per chain to upgrade
+/// @dev This function is intended to be called via DELEGATECALL from the Upgrade Controller Safe
+function upgrade(OpChainConfig[] memory _opChainConfigs) external
 ```
 
 For each chain successfully upgraded, the following event is emitted:
@@ -233,9 +232,11 @@ This method reverts if the upgrade is not successful for any of the chains.
 The high level logic of the upgrade method is as follows:
 
 1. The Upgrade Controller Safe will `DELEGATECALL` to the `OPCM.upgrade()` method.
-2. For each `_systemConfig`, the list of addresses in the chain is retrieved.
-3. For each address:
-   1. If it is receiving new state variables (only the SystemConfig for Isthmus), a call is made to:
+2. The SuperchainConfig contract will be upgraded, if not yet done.
+3. The ProtocolVersions contract will be upgraded, if not yet done.
+4. For each `_systemConfig`, the list of addresses in the chain is retrieved.
+5. For each address:
+   1. If it is receiving new state variables, a call is made to:
       `ProxyAdmin.upgradeAndCall()` with data corresponding to the new value being set.
    2. Otherwise, `ProxyAdmin.upgrade()` is called on that address.
 
@@ -244,18 +245,6 @@ have an upgrade function which:
 
 1. Writes the new state variables
 2. MUST only be callable once
-
-Thus for Isthmus, the System config will receive the following new function.
-
-```solidity
-function upgradeIsthmus(IsthmusConfig _isthmusConfig) external;
-```
-
-#### `IsthmusConfig` struct
-
-This struct is used to pass the new chain configuration to the `upgrade` method. It's name and
-field will vary for each release of the OP Contracts Manager, based on what (if any) new parameters
-are being added.
 
 #### Requirements on the OP Chain contracts
 
@@ -280,36 +269,51 @@ The `addGameType` method is used to orchestrate the actions required to add a ne
 or more chains.
 
 ```solidity
-struct PermissionlessGameConfig {
-  bytes32 absolutePrestate;
+struct AddGameInput {
+    string saltMixer;
+    ISystemConfig systemConfig;
+    IProxyAdmin proxyAdmin;
+    IDelayedWETH delayedWETH;
+    uint32 disputeGameType;
+    bytes32 disputeAbsolutePrestate;
+    uint256 disputeMaxGameDepth;
+    uint256 disputeSplitDepth;
+    uint64 disputeClockExtension;
+    uint64 disputeMaxClockDuration;
+    uint256 initialBond;
+    IBigStepper vm;
+    bool permissioned;
 }
 
-function addGameType(ISystemConfig[] _systemConfigs, PermissionlessGameConfig[] _newGames) public;
+struct AddGameOutput {
+    IDelayedWETH delayedWETH;
+    IFaultDisputeGame faultDisputeGame;
+}
+
+/// @notice addGameType deploys a new dispute game and links it to the DisputeGameFactory. The inputted _gameConfigs
+/// must be added in ascending GameType order.
+function addGameType(AddGameInput[] memory _gameConfigs) external returns (AddGameOutput[] memory)
+```
+
+On success, the following event is emitted:
+
+```solidity
+event GameTypeAdded(uint256 indexed l2ChainId, uint32 indexed gameType, address indexed deployer);
 ```
 
 ### Implementation
 
 The high level logic of the `addGameType` method is as follows (for each chain):
 
-1. Deploy and initialize new `DelayedWethProxy` for the new game type, reusing the existing implementation
-1. Deploy a new `FaultDisputeGame` contract. The source of the constructor args is indicated below this list,
-   the value which is not available onchain is the `absolutePrestate`.
-1. Calls `upgrade()` on the `AnchorStateRegistry` to set the new game type to
-   add a new entry to the `anchors` mapping. The `upgrade()` method should
-   revert if it would overwrite an existing entry.
-1. Read the `DisputeGameFactory` address from the `SystemConfig`.
-1. Call `DisputeGameFactory.setImplementation()` to register the new game.
+1. Deploy and initialize new `DelayedWethProxy` for the new game type, if one hasn't already been specified.
+2. Deploy a new dispute game contract, based on the specified game type. The constructor args must be provided as
+   arguments, unless otherwise specified in the table below.
+3. Read the `DisputeGameFactory` address from the `SystemConfig`.
+4. Call `DisputeGameFactory.setImplementation()` to register the new game.
 
 | Name                | Type    | Description                                        | Source                                     |
 | ------------------- | ------- | -------------------------------------------------- | ------------------------------------------ |
-| gameType            | uint32  | Constant value of 1 indicating the game type       | Hardcoded constant                         |
-| absolutePrestate    | bytes32 | Initial state of the game                          | Input in `PermissionlessGameConfig` struct |
-| maxGameDepth        | uint256 | Maximum depth of the game tree                     | Copied from existing `PermissionedGame`    |
-| splitDepth          | uint256 | Depth at which the game tree splits                | Copied from existing `PermissionedGame`    |
-| clockExtension      | uint64  | Time extension granted for moves                   | Copied from existing `PermissionedGame`    |
-| maxClockDuration    | uint64  | Maximum duration of the game clock                 | Copied from existing `PermissionedGame`    |
-| vm                  | address | Virtual machine contract address                   | Copied from existing `PermissionedGame`    |
-| weth                | address | Address of the newly deployed DelayedWeth contract | Newly deployed contract                    |
+| weth                | address | Address of the DelayedWeth contract | Newly deployed contract, or provided       |
 | anchorStateRegistry | address | Registry contract address                          | Copied from existing `PermissionedGame`    |
 | l2ChainId           | uint256 | Chain ID of the L2 network                         | Copied from existing `PermissionedGame`    |
 
