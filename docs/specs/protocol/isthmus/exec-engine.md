@@ -20,6 +20,7 @@
 - [Deposit Requests](#deposit-requests)
 - [Block Body Withdrawals List](#block-body-withdrawals-list)
 - [EVM Changes](#evm-changes)
+  - [BLS Precompiles](#bls-precompiles)
 - [Block Sealing](#block-sealing)
 - [Engine API Updates](#engine-api-updates)
   - [Update to `ExecutionPayload`](#update-to-executionpayload)
@@ -156,6 +157,8 @@ Withdrawals list in the block body is encoded as an empty RLP list.
 
 ## EVM Changes
 
+### BLS Precompiles
+
 Similar to the `bn256Pairing` precompile in the [granite hardfork](../granite/exec-engine.md),
 [EIP-2537](https://eips.ethereum.org/EIPS/eip-2537) introduces a BLS
 precompile that short-circuits depending on input size in the EVM.
@@ -173,10 +176,10 @@ programs so they call out to the L1 instead of calculating the result inside the
 
 ## Block Sealing
 
-[EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) introduces new request type `0x02`, the `CONSOLIDATION_REQUEST_TYPE`.
-Typed request envelopes debut in Pectra [EIP-7685](https://eips.ethereum.org/EIPS/eip-7685). Execution layer requests
-continue to be ignored in Isthmus, including those of new type `0x02`. Note, this does not need to activate after any
-specific hardfork as this type does not exist pre-Pectra.
+To match EVM execution as closely as possible, the post-execution transactions to process logs and the request queue
+included as part of [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110), [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002),
+and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) must be executed. However, the resulting
+`requests` is ignored because Isthmus block `requests` must be an empty array.
 
 ## Engine API Updates
 
