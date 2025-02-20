@@ -89,8 +89,7 @@ where
             .with_required_confirmations(NUM_CONFIRMATIONS)
             .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
             .get_receipt()
-            .await
-            .context("Failed to get transaction receipt for create")?;
+            .await?;
 
         let game_address =
             Address::from_slice(&receipt.inner.logs()[0].inner.data.topics()[1][12..]);
@@ -164,11 +163,6 @@ where
 
     /// Handles the resolution of all eligible unchallenged games.
     async fn handle_game_resolution(&self) -> Result<()> {
-        // Only resolve games if the config is enabled.
-        if !self.config.enable_game_resolution {
-            return Ok(());
-        }
-
         let _span = tracing::info_span!("[[Resolving]]").entered();
 
         self.factory

@@ -9,7 +9,7 @@ use alloy_provider::{
     fillers::{FillProvider, TxFiller},
     Provider, RootProvider,
 };
-use alloy_rpc_types::eth::Block;
+use alloy_rpc_types_eth::Block;
 use alloy_sol_types::SolValue;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -214,12 +214,12 @@ where
         let game_count = self.gameCount().call().await?;
 
         if game_count.gameCount_ == U256::ZERO {
-            tracing::info!("No games exist yet");
+            tracing::debug!("No games exist yet");
             return Ok(None);
         }
 
         let latest_game_index = game_count.gameCount_ - U256::from(1);
-        tracing::info!("Latest game index: {:?}", latest_game_index);
+        tracing::debug!("Latest game index: {:?}", latest_game_index);
 
         Ok(Some(latest_game_index))
     }
