@@ -4122,6 +4122,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-fp"
+version = "0.1.0"
+dependencies = [
+ "alloy-contract",
+ "alloy-eips",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types",
+ "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
+ "alloy-transport",
+ "alloy-transport-http",
+ "anyhow",
+ "async-trait",
+ "clap",
+ "dotenv",
+ "log",
+ "op-alloy-network",
+ "op-alloy-rpc-types",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "op-succinct-host-utils"
 version = "0.1.0"
 dependencies = [

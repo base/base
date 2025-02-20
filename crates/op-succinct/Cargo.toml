@@ -1,11 +1,11 @@
 [workspace]
-members = ["utils/*", "programs/*", "scripts/*", "proposer/succinct"]
+members = ["utils/*", "programs/*", "scripts/*", "proposer/succinct", "fault_proof"]
 resolver = "2"
 
 [workspace.package]
 license = "MIT"
 edition = "2021"
-authors = ["ratankaliani", "zachobront"]
+authors = ["ratankaliani", "zachobront", "fakedev9999"]
 homepage = "https://succinctlabs.github.io/op-succinct/"
 repository = "https://github.com/succinctlabs/op-succinct"
 
@@ -62,6 +62,7 @@ op-succinct-build-utils = { path = "utils/build" }
 op-succinct-proposer = { path = "proposer/succinct" }
 
 # Alloy (Network)
+alloy-network = { version = "0.11.0", default-features = false }
 alloy-signer-local = { version = "0.11.0", default-features = false }
 alloy-provider = { version = "0.11.0", default-features = false }
 alloy-transport = { version = "0.11.0", default-features = false }
@@ -85,6 +86,7 @@ alloy-primitives = { version = "0.8.19", default-features = false, features = [
     "sha3-keccak",
 ] }
 alloy-sol-types = { version = "0.8.19", default-features = false }
+alloy-sol-macro = { version = "0.8.19", default-features = false }
 
 # OP Alloy
 op-alloy-consensus = { version = "0.10.0", default-features = false }
