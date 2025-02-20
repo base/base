@@ -6,16 +6,16 @@ import {Test, console} from "forge-std/Test.sol";
 import {Utils} from "../helpers/Utils.sol";
 
 // Libraries
-import {IDisputeGame} from "@optimism/src/dispute/interfaces/IDisputeGame.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {LibCWIA} from "@solady-v0.0.281/utils/legacy/LibCWIA.sol";
 
-import {GameType, Claim} from "@optimism/src/dispute/lib/Types.sol";
+import {GameType, Claim} from "src/dispute/lib/Types.sol";
 
 // Contracts
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {OPSuccinctL2OutputOracle} from "../../src/validity/OPSuccinctL2OutputOracle.sol";
 import {OPSuccinctDisputeGame} from "../../src/validity/OPSuccinctDisputeGame.sol";
-import {DisputeGameFactory} from "@optimism/src/dispute/DisputeGameFactory.sol";
+import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
 
 contract OPSuccinctDisputeGameFactoryTest is Test, Utils {
     using LibCWIA for address;

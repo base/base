@@ -5,7 +5,7 @@ import {Test, console} from "forge-std/Test.sol";
 import {Utils} from "../helpers/Utils.sol";
 import {OPSuccinctL2OutputOracle} from "../../src/validity/OPSuccinctL2OutputOracle.sol";
 import {OPSuccinctDisputeGame} from "../../src/validity/OPSuccinctDisputeGame.sol";
-import {IDisputeGame} from "@optimism/src/dispute/interfaces/IDisputeGame.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {LibCWIA} from "@solady-v0.0.281/utils/legacy/LibCWIA.sol";
 
 contract OPSuccinctL2OutputOracleTest is Test, Utils {
