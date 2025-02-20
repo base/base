@@ -42,7 +42,7 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
 
 ## Step 2: Run the Proposer
 
-1. Create a `.env.proposer` file in the fault_proof directory:
+1. Create a `.env.proposer` file in the project root directory:
 ```env
 # Required Configuration
 L1_RPC=<YOUR_L1_RPC_URL>
@@ -57,11 +57,28 @@ PRIVATE_KEY=<YOUR_PRIVATE_KEY>
 cargo run --bin proposer
 ```
 
-## Step 3: Monitor Games
+## Step 3: Run the Challenger
+
+1. Create a `.env.challenger` file in the project root directory:
+```env
+# Required Configuration
+L1_RPC=<YOUR_L1_RPC_URL>
+L2_RPC=<YOUR_L2_RPC_URL>
+FACTORY_ADDRESS=<FACTORY_ADDRESS_FROM_DEPLOYMENT>
+GAME_TYPE=42
+PRIVATE_KEY=<YOUR_PRIVATE_KEY>
+```
+
+2. Run the challenger:
+```bash
+cargo run --bin challenger
+```
+
+## Step 4: Monitor Games
 
 1. The proposer will automatically create new games at regular intervals (every 1800 blocks with the default config)
 2. You can view created games on a block explorer using the factory address and the game address in the proposer logs
-3. The proposer will also attempt to resolve unchallenged games after the challenge period expires
+3. Both the proposer and challenger will attempt to resolve unchallenged games after the challenge period expires
 
 ## Troubleshooting
 

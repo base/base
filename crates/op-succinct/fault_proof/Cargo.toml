@@ -15,6 +15,10 @@ path = "src/lib.rs"
 name = "proposer"
 path = "bin/proposer.rs"
 
+[[bin]]
+name = "challenger"
+path = "bin/challenger.rs"
+
 [dependencies]
 # alloy
 alloy-contract.workspace = true

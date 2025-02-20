@@ -634,4 +634,9 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_) {
         registry_ = ANCHOR_STATE_REGISTRY;
     }
+
+    /// @notice Returns the proof reward.
+    function proofReward() external view returns (uint256 proofReward_) {
+        proofReward_ = PROOF_REWARD;
+    }
 }

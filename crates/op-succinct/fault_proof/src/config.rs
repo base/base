@@ -65,3 +65,54 @@ impl ProposerConfig {
         })
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct ChallengerConfig {
+    pub l1_rpc: Url,
+    pub l2_rpc: Url,
+    pub factory_address: Address,
+
+    /// The interval in seconds between checking for new challenges opportunities.
+    pub fetch_interval: u64,
+
+    /// The game type to challenge.
+    pub game_type: u32,
+
+    /// The number of games to check for challenges.
+    /// The challenger will check for challenges up to `max_games_to_check_for_challenge` games behind the latest game.
+    pub max_games_to_check_for_challenge: u64,
+
+    /// Whether to enable game resolution.
+    /// When game resolution is not enabled, the challenger will only challenge games.
+    pub enable_game_resolution: bool,
+
+    /// The number of games to check for resolution.
+    /// When game resolution is enabled, the challenger will attempt to resolve games that are
+    /// challenged up to `max_games_to_check_for_resolution` games behind the latest game.
+    pub max_games_to_check_for_resolution: u64,
+}
+
+impl ChallengerConfig {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
+            l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
+            factory_address: env::var("FACTORY_ADDRESS")?
+                .parse()
+                .expect("FACTORY_ADDRESS not set"),
+            game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
+            fetch_interval: env::var("FETCH_INTERVAL")
+                .unwrap_or("30".to_string())
+                .parse()?,
+            max_games_to_check_for_challenge: env::var("MAX_GAMES_TO_CHECK_FOR_CHALLENGE")
+                .unwrap_or("100".to_string())
+                .parse()?,
+            enable_game_resolution: env::var("ENABLE_GAME_RESOLUTION")
+                .unwrap_or("true".to_string())
+                .parse()?,
+            max_games_to_check_for_resolution: env::var("MAX_GAMES_TO_CHECK_FOR_RESOLUTION")
+                .unwrap_or("100".to_string())
+                .parse()?,
+        })
+    }
+}
