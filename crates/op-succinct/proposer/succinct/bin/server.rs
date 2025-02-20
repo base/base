@@ -162,6 +162,7 @@ async fn request_span_proof(
         .get_host_args(
             payload.start,
             payload.end,
+            None,
             ProgramType::Multi,
             CacheMode::DeleteCache,
         )
@@ -342,6 +343,7 @@ async fn request_mock_span_proof(
         .get_host_args(
             payload.start,
             payload.end,
+            None,
             ProgramType::Multi,
             CacheMode::DeleteCache,
         )

@@ -39,6 +39,9 @@ sol! {
         /// @notice Getter for the root claim.
         function rootClaim() public pure returns (Claim rootClaim_);
 
+        /// @notice Getter for the parent hash of the L1 block when the dispute game was created.
+        function l1Head() public pure returns (Hash l1Head_);
+
         /// @notice Getter for the status of the game.
         function status() public view returns (GameStatus status_);
 
@@ -47,6 +50,8 @@ sol! {
 
         /// @notice Challenges the game.
         function challenge() external payable returns (ProposalStatus);
+        /// @notice Proves the game.
+        function prove(bytes calldata proofBytes) external returns (ProposalStatus);
 
         /// @notice Resolves the game after the clock expires.
         ///         `DEFENDER_WINS` when no one has challenged the proposer's claim and `MAX_CHALLENGE_DURATION` has passed

@@ -41,6 +41,7 @@ The proposer is configured through various environment variables. Create a `.env
 
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
+| `FAST_FINALITY_MODE` | Whether to use fast finality mode | `false` |
 | `PROPOSAL_INTERVAL_IN_BLOCKS` | Number of L2 blocks between proposals | `1800` |
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
 | `ENABLE_GAME_RESOLUTION` | Whether to enable automatic game resolution | `true` |
@@ -55,6 +56,7 @@ GAME_TYPE=               # Type identifier for the dispute game (must match fact
 PRIVATE_KEY=             # Private key for transaction signing
 
 # Optional Configuration
+FAST_FINALITY_MODE=false # Whether to use fast finality mode
 PROPOSAL_INTERVAL_IN_BLOCKS=1800    # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                   # Polling interval in seconds
 ENABLE_GAME_RESOLUTION=false        # Whether to enable automatic game resolution
@@ -84,7 +86,7 @@ The proposer will run indefinitely, creating new games and optionally resolving 
 - Computes L2 output roots for game proposals.
 - Ensures proper game sequencing with parent-child relationships.
 - Handles bond requirements for game creation.
-- Supports fast finality mode with proofs.
+- Supports fast finality mode with proofs. (Set `FAST_FINALITY_MODE=true` in `.env.proposer`)
 
 ### Game Resolution
 When enabled (`ENABLE_GAME_RESOLUTION=true`), the proposer:

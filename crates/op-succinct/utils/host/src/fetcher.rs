@@ -675,6 +675,7 @@ impl OPSuccinctDataFetcher {
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
+        l1_head_hash: Option<B256>,
         multi_block: ProgramType,
         cache_mode: CacheMode,
     ) -> Result<OPSuccinctHost> {
@@ -744,19 +745,24 @@ impl OPSuccinctDataFetcher {
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
-        let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
+        let l1_head_hash = match l1_head_hash {
+            Some(l1_head_hash) => l1_head_hash,
+            None => {
+                let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
 
-        // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
-        let l1_head_number = l1_head_number + 20;
-        // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
-        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
+                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
+                let l1_head_number = l1_head_number + 20;
+                // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
+                let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
-        let l1_head_hash = match l1_head_number > finalized_l1_header.number {
-            true => self
-                .get_l1_header(finalized_l1_header.number.into())
-                .await?
-                .hash_slow(),
-            false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
+                match l1_head_number > finalized_l1_header.number {
+                    true => self
+                        .get_l1_header(finalized_l1_header.number.into())
+                        .await?
+                        .hash_slow(),
+                    false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
+                }
+            }
         };
 
         // Get the workspace root, which is where the data directory is.

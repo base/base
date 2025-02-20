@@ -20,6 +20,13 @@ name = "challenger"
 path = "bin/challenger.rs"
 
 [dependencies]
+# local
+op-succinct-client-utils.workspace = true
+op-succinct-host-utils.workspace = true
+
+# sp1
+sp1-sdk.workspace = true
+
 # alloy
 alloy-contract.workspace = true
 alloy-eips.workspace = true
@@ -49,3 +56,4 @@ tokio.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json.workspace = true
 tracing.workspace = true
+hex.workspace = true
