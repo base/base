@@ -55,6 +55,9 @@ sol! {
         ///         its claim within the `MAX_PROVE_DURATION`.
         function resolve() external returns (GameStatus status_);
 
+        /// @notice Returns the max challenge duration.
+        function maxChallengeDuration() external view returns (uint256 maxChallengeDuration_);
+
         /// @notice Returns the anchor state registry contract.
         function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_);
 

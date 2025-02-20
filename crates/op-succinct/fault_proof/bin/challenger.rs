@@ -112,11 +112,6 @@ where
 
     /// Handles resolution of challenged games that are ready to be resolved.
     async fn handle_game_resolution(&self) -> Result<()> {
-        // Only resolve games if the config is enabled
-        if !self.config.enable_game_resolution {
-            return Ok(());
-        }
-
         let _span = tracing::info_span!("[[Resolving]]").entered();
 
         self.factory
