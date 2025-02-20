@@ -39,6 +39,7 @@ USE_SP1_MOCK_VERIFIER=true
 ```
 
 For production, set all of these:
+
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `VERIFIER_ADDRESS` | Address of the SP1 verifier ([see contract addresses](https://docs.succinct.xyz/docs/sp1/verification/onchain/contract-addresses)) | `0x...` |

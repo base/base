@@ -45,6 +45,9 @@ sol! {
         /// @notice Getter for the claim data.
         function claimData() public view returns (ClaimData memory claimData_);
 
+        /// @notice Challenges the game.
+        function challenge() external payable returns (ProposalStatus);
+
         /// @notice Resolves the game after the clock expires.
         ///         `DEFENDER_WINS` when no one has challenged the proposer's claim and `MAX_CHALLENGE_DURATION` has passed
         ///         or there is a challenge but the prover has provided a valid proof within the `MAX_PROVE_DURATION`.
@@ -54,6 +57,9 @@ sol! {
 
         /// @notice Returns the anchor state registry contract.
         function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_);
+
+        /// @notice Returns the proof reward.
+        function proofReward() external view returns (uint256 proofReward_);
     }
 
     #[allow(missing_docs)]
