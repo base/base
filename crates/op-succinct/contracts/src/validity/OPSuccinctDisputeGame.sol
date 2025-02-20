@@ -4,13 +4,17 @@ pragma solidity ^0.8.15;
 import {OPSuccinctL2OutputOracle} from "./OPSuccinctL2OutputOracle.sol";
 import {CWIA} from "@solady-v0.0.281/utils/legacy/CWIA.sol";
 import {LibBytes} from "@solady-v0.0.281/utils/LibBytes.sol";
-import {ISemver} from "@optimism/src/universal/interfaces/ISemver.sol";
-import {IDisputeGame} from "@optimism/src/dispute/interfaces/IDisputeGame.sol";
+import {ISemver} from "interfaces/universal/ISemver.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 import {Claim, GameStatus, GameType, GameTypes, Hash, Timestamp} from "@optimism/src/dispute/lib/Types.sol";
 import {GameNotInProgress, OutOfOrderResolution} from "@optimism/src/dispute/lib/Errors.sol";
 
 contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     using LibBytes for bytes;
+
+    ////////////////////////////////////////////////////////////////
+    //                         Events                             //
+    ////////////////////////////////////////////////////////////////
 
     /// @notice The address of the L2 output oracle proxy contract.
     address internal immutable l2OutputOracle;
@@ -23,6 +27,9 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
 
     /// @notice Returns the current status of the game.
     GameStatus public status;
+
+    /// @notice A boolean for whether or not the game type was respected when the game was created.
+    bool public wasRespectedGameTypeWhenCreated;
 
     /// @notice Semantic version.
     /// @custom:semver v1.0.0-beta
@@ -39,11 +46,14 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     function initialize() external payable {
         createdAt = Timestamp.wrap(uint64(block.timestamp));
         status = GameStatus.IN_PROGRESS;
+        wasRespectedGameTypeWhenCreated = true;
 
-        (uint256 l2BlockNumber, uint256 l1BlockNumber, bytes memory proof) =
+        (uint256 l2BlockNumber_, uint256 l1BlockNumber_, bytes memory proof_) =
             abi.decode(extraData(), (uint256, uint256, bytes));
 
-        OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(rootClaim().raw(), l2BlockNumber, l1BlockNumber, proof);
+        OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(
+            rootClaim().raw(), l2BlockNumber_, l1BlockNumber_, proof_
+        );
 
         this.resolve();
     }
@@ -78,6 +88,11 @@ contract OPSuccinctDisputeGame is ISemver, CWIA, IDisputeGame {
     /// @return The parent hash of the L1 block when the dispute game was created.
     function l1Head() public pure returns (Hash) {
         return Hash.wrap(_getArgBytes32(0x34));
+    }
+
+    /// @notice The l2BlockNumber of the disputed output root in the `L2OutputOracle`.
+    function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
+        l2BlockNumber_ = _getArgUint256(0x54);
     }
 
     /// @notice Getter for the extra data.

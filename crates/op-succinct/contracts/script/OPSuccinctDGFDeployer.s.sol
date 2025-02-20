@@ -10,7 +10,7 @@ import {Proxy} from "@optimism/src/universal/Proxy.sol";
 import {console} from "forge-std/console.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {GameType} from "src/dispute/lib/Types.sol";
-import {IDisputeGame} from "src/dispute/interfaces/IDisputeGame.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
 
 contract OPSuccinctDFGDeployer is Script, Utils {
     function run() public returns (address) {

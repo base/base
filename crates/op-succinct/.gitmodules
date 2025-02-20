@@ -19,3 +19,6 @@
 [submodule "contracts/lib/solady-v0.0.281"]
 	path = contracts/lib/solady-v0.0.281
 	url = https://github.com/vectorized/solady
+[submodule "contracts/lib/lib-keccak"]
+	path = contracts/lib/lib-keccak
+	url = https://github.com/ethereum-optimism/lib-keccak
