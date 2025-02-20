@@ -52,13 +52,13 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     ////////////////////////////////////////////////////////////////
 
     enum ProposalStatus {
-        // The initial state of a new proposal
+        // The initial state of a new proposal.
         Unchallenged,
-        // A proposal that has been challenged but not yet proven
+        // A proposal that has been challenged but not yet proven.
         Challenged,
-        // An unchallenged proposal that has been proven valid with a verified proof
+        // An unchallenged proposal that has been proven valid with a verified proof.
         UnchallengedAndValidProofProvided,
-        // A challenged proposal that has been proven valid with a verified proof
+        // A challenged proposal that has been proven valid with a verified proof.
         ChallengedAndValidProofProvided,
         // The final state after resolution, either GameStatus.CHALLENGER_WINS or GameStatus.DEFENDER_WINS.
         Resolved
@@ -136,13 +136,13 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     /// @custom:semver 1.0.0
     string public constant version = "1.0.0";
 
-    /// @notice The starting timestamp of the game
+    /// @notice The starting timestamp of the game.
     Timestamp public createdAt;
 
     /// @notice The timestamp of the game's global resolution.
     Timestamp public resolvedAt;
 
-    /// @notice Returns the current status of the game.
+    /// @notice The current status of the game.
     GameStatus public status;
 
     /// @notice Flag for the `initialize` function to prevent re-initialization.
@@ -302,7 +302,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             GameType.unwrap(ANCHOR_STATE_REGISTRY.respectedGameType()) == GameType.unwrap(GAME_TYPE);
     }
 
-    /// @notice The l2BlockNumber of the disputed output root in the `L2OutputOracle`.
+    /// @notice The L2 block number for which this game is proposing an output root.
     function l2BlockNumber() public pure returns (uint256 l2BlockNumber_) {
         l2BlockNumber_ = _getArgUint256(0x54);
     }

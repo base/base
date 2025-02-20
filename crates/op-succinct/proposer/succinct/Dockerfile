@@ -31,6 +31,7 @@ RUN curl -L https://sp1.succinct.xyz | bash && \
 # Copy only what's needed for the build
 COPY Cargo.toml Cargo.lock ./
 COPY proposer/succinct ./proposer/succinct
+COPY fault_proof ./fault_proof
 COPY elf ./elf
 COPY utils ./utils
 COPY programs ./programs

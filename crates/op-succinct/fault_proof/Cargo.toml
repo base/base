@@ -1,0 +1,45 @@
+[package]
+name = "op-succinct-fp"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "fault_proof"
+path = "src/lib.rs"
+
+[[bin]]
+name = "proposer"
+path = "bin/proposer.rs"
+
+[dependencies]
+# alloy
+alloy-contract.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-signer-local.workspace = true
+alloy-sol-macro.workspace = true
+alloy-sol-types.workspace = true
+alloy-transport.workspace = true
+alloy-transport-http.workspace = true
+
+# op-alloy
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+clap = { workspace = true, features = ["derive"] }
+dotenv.workspace = true
+log.workspace = true
+tokio.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json.workspace = true
+tracing.workspace = true
