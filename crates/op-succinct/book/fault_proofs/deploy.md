@@ -31,6 +31,35 @@ Create a `.env` file in the contracts directory with the following variables:
 | `DISPUTE_GAME_FINALITY_DELAY_SECONDS` | Delay before finalizing dispute games. | `604800` for 7 days |
 | `MAX_CHALLENGE_DURATION` | Maximum duration for challenges in seconds. | `604800` for 7 days |
 | `MAX_PROVE_DURATION` | Maximum duration for proving in seconds. | `86400` for 1 day |
+| `STARTING_L2_BLOCK_NUMBER` | Starting L2 block number in decimal. | `786000` |
+| `STARTING_ROOT` | Starting anchor root in hex. | `0x...` |
+
+#### Getting the Starting Root
+
+You can get the starting root for the `STARTING_L2_BLOCK_NUMBER` from the L2 node RPC using this command:
+
+```bash
+# Convert block number to hex and remove '0x' prefix
+BLOCK_HEX=$(cast --to-hex <STARTING_L2_BLOCK_NUMBER> | sed 's/0x//')
+
+# Construct the JSON RPC request
+JSON_DATA='{
+    "jsonrpc": "2.0",
+    "method": "optimism_outputAtBlock",
+    "params": ["0x'$BLOCK_HEX'"],
+    "id": 1
+}'
+
+# Make the RPC call and extract the output root
+starting_root=$(curl -s -X POST \
+    -H "Content-Type: application/json" \
+    <L2_NODE_RPC> \
+    --data "$JSON_DATA" \
+    | jq -r '.result.outputRoot')
+
+# Display the result
+printf "\nStarting root: %s\n" "$starting_root"
+```
 
 ### SP1 Verifier Configuration
 For testing, set:

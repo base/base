@@ -15,6 +15,9 @@ pub struct ProposerConfig {
     /// The address of the factory contract.
     pub factory_address: Address,
 
+    /// Whether to use fast finality mode.
+    pub fast_finality_mode: bool,
+
     /// The interval in blocks between proposing new games.
     pub proposal_interval_in_blocks: u64,
 
@@ -49,6 +52,9 @@ impl ProposerConfig {
             factory_address: env::var("FACTORY_ADDRESS")?
                 .parse()
                 .expect("FACTORY_ADDRESS not set"),
+            fast_finality_mode: env::var("FAST_FINALITY_MODE")
+                .unwrap_or("false".to_string())
+                .parse()?,
             proposal_interval_in_blocks: env::var("PROPOSAL_INTERVAL_IN_BLOCKS")
                 .unwrap_or("1800".to_string())
                 .parse()?,

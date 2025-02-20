@@ -44,7 +44,10 @@ contract DeployOPSuccinctFDG is Script {
             new MockOptimismPortal2(gameType, vm.envUint("DISPUTE_GAME_FINALITY_DELAY_SECONDS"));
         console.log("OptimismPortal2:", address(portal));
 
-        OutputRoot memory startingAnchorRoot = OutputRoot({root: Hash.wrap(keccak256("genesis")), l2BlockNumber: 0});
+        OutputRoot memory startingAnchorRoot = OutputRoot({
+            root: Hash.wrap(vm.envBytes32("STARTING_ROOT")),
+            l2BlockNumber: vm.envUint("STARTING_L2_BLOCK_NUMBER")
+        });
 
         // Deploy the anchor state registry proxy.
         ERC1967Proxy registryProxy = new ERC1967Proxy(

@@ -25,6 +25,7 @@ async fn execute_batch() -> Result<()> {
         .get_host_args(
             l2_start_block,
             l2_end_block,
+            None,
             ProgramType::Multi,
             CacheMode::DeleteCache,
         )

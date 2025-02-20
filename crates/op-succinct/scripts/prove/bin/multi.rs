@@ -33,7 +33,13 @@ async fn main() -> Result<()> {
         get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
     let host_args = data_fetcher
-        .get_host_args(l2_start_block, l2_end_block, ProgramType::Multi, cache_mode)
+        .get_host_args(
+            l2_start_block,
+            l2_end_block,
+            None,
+            ProgramType::Multi,
+            cache_mode,
+        )
         .await?;
 
     let start_time = Instant::now();
