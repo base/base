@@ -1,10 +1,13 @@
 # Architecture
 
-OP Succinct is also offered in "fault proof" mode, which is a good solution for chains that wish to have faster finality while not paying the ZK proving costs for every single block. The exact same OP Succinct ZK program is used for this mode--the only difference is the smart contrcts deployed onchain that integrate with OP Stack's `DisputeGameFactory` contract.
-
 ## Overview
 
-We assume that the reader has a solid understanding of the OP Stack's `DisputeGameFactory` and `IDisputeGame` interface. Documentation can be found [here](https://specs.optimism.io/fault-proof/stage-one/dispute-game-interface.html). We implement the `IDisputeGame` interface with a ZK-enabled fault proof (using the OP Succinct SP1 program) instead of the standard interactive bisection game that the vanilla OP Stack uses.
+OP Succinct's fault proof mode offers faster finality without ZK proving costs for every block. This mode uses:
+- The same OP Succinct ZK program
+- `OPSuccinctFaultDisputeGame` contract integrated with OP Stack's [DisputeGameFactory](https://github.com/ethereum-optimism/optimism/blob/v1.11.1/packages/contracts-bedrock/src/dispute/DisputeGameFactory.sol)
+- Single-round dispute resolution with ZK proofs
+
+We assume that the reader has a solid understanding of the OP Stack's `DisputeGameFactory` and `IDisputeGame` interface. Documentation can be found [here](https://specs.optimism.io/fault-proof/stage-one/dispute-game-interface.html). We implement the `IDisputeGame` interface with a ZK-enabled fault proof (using the OP Succinct ZK program) instead of the standard interactive bisection game that the vanilla OP Stack uses.
 
 ## Core Concepts
 
@@ -36,42 +39,42 @@ graph TB
     Root: 0x123] --> |Parent| B[Proposal 1
     Block: 1000
     Root: 0xabc
-    State: DEFENDER_WON]
+    Game Status: DEFENDER_WINS]
     B --> |Parent| C[Proposal 2A
     Block: 2000
     Root: 0xdef
-    State: CHALLENGER_WON]
+    Game Status: CHALLENGER_WINS]
     B --> |Parent| D[Proposal 2B
     Block: 2000
     Root: 0xff1
-    State: Unchallenged]
+    Game Status: Unchallenged]
     C --> |Parent| E[Proposal 3A
     Block: 3000
     Root: 0xbee
-    State: Unchallenged]
+    Game Status: Unchallenged]
     D --> |Parent| F[Proposal 3B
     Block: 3000
     Root: 0xfab
-    State: ChallengedAndValidProofProvided]
+    Game Status: ChallengedAndValidProofProvided]
 
     classDef genesis fill:#d4edda,stroke:#155724
-    classDef defender_won fill:#28a745,stroke:#1e7e34,color:#fff
-    classDef challenger_won fill:#dc3545,stroke:#bd2130,color:#fff
+    classDef defender_wins fill:#28a745,stroke:#1e7e34,color:#fff
+    classDef challenger_wins fill:#dc3545,stroke:#bd2130,color:#fff
     classDef unchallenged fill:#e2e3e5,stroke:#383d41
     classDef proven fill:#17a2b8,stroke:#138496,color:#fff
 
     class A genesis
-    class B defender_won
-    class C challenger_won
+    class B defender_wins
+    class C challenger_wins
     class D,E unchallenged
     class F proven
 ```
 
-In this example, Proposal 3A would always resolve to `CHALLENGER_WON`, as its parent 2A has `CHALLENGER_WON`. Proposal 3B would resolve to `DEFENDER_WON` if and only if its parent 2B successfully is unchallenged past its deadline and the final status is `DEFENDER_WON`.
+In this example, Proposal 3A would always resolve to `CHALLENGER_WINS`, as its parent 2A has `CHALLENGER_WINS`. Proposal 3B would resolve to `DEFENDER_WINS` if and only if its parent 2B successfully is unchallenged past its deadline and the final status is `DEFENDER_WINS`.
 
 ## Contract Description
 
-### Immutable Parameters
+### Immutable Variables
 
 - `MAX_CHALLENGE_DURATION`: Time window during which a proposal can be challenged.
 - `MAX_PROVE_DURATION`: Time allowed for proving a challenge.
@@ -81,9 +84,9 @@ In this example, Proposal 3A would always resolve to `CHALLENGER_WON`, as its pa
 - `ROLLUP_CONFIG_HASH`: Hash of the chain's rollup configuration
 - `AGGREGATION_VKEY`: The verification key for the aggregation SP1 program.
 - `RANGE_VKEY_COMMITMENT`: The commitment to the BabyBear representation of the verification key of the range SP1 program.
-- `GENESIS_L2_BLOCK_NUMBER`: The genesis L2 block number.
-- `GENESIS_L2_OUTPUT_ROOT`: The genesis L2 output root.
 - `PROOF_REWARD`: Amount of ETH required to submit a challenge (the reward given to a proof generator).
+- `ANCHOR_STATE_REGISTRY`: The anchor state registry contract.
+- `ACCESS_MANAGER`: The access manager contract.
 
 ### Types
 
@@ -105,7 +108,7 @@ enum ProposalStatus {
 }
 ```
 
-State Transitions:
+Proposal Status Transitions:
 - `Unchallenged` → 
   - `Challenged` (via `challenge()`)
   - `UnchallengedAndValidProofProvided` (via `prove()`)
@@ -124,10 +127,10 @@ Core data structure holding the state of a proposal:
 struct ClaimData {
     uint32 parentIndex;        // Reference to parent game (uint32.max for first game)
     address counteredBy;       // Address of challenger (address(0) if unchallenged)
-    address prover;           // Address that provided valid proof (address(0) if unproven)
-    Claim claim;              // The claimed L2 output root
-    ProposalStatus status;    // Current status of the proposal
-    Timestamp deadline;       // Time by which proof must be provided
+    address prover;            // Address that provided valid proof (address(0) if unproven)
+    Claim claim;               // The claimed L2 output root
+    ProposalStatus status;     // Current status of the proposal
+    Timestamp deadline;        // Time by which proof must be provided
 }
 ```
 
@@ -152,11 +155,11 @@ Initializes the dispute game with:
 
 - Initial state of the game
   - `startingOutputRoot`: Starting point for verification
-    - For first game: `GENESIS_L2_OUTPUT_ROOT` at `GENESIS_L2_BLOCK_NUMBER`
+    - For first game: Anchor state root for the game type
     - For subsequent games: Parent game's root claim and block number
   
   - `claimData`: Core game state
-    - `parentIndex`: Reference to parent game (`uint32.max` for first game)
+    - `parentIndex`: Reference to the parent game (`uint32.max` for first game)
     - `counteredBy`: Initially `address(0)`
     - `prover`: Initially `address(0)`
     - `claim`: Proposer's claimed output root
@@ -165,14 +168,14 @@ Initializes the dispute game with:
 
 - Validation Rules
   - Parent Game (if not first game)
-    - Must be same game type
+    - Must not have been blacklisted
+    - Must have been respected game type when created
     - Must not have been won by challenger
-    - Root claim becomes starting output root
   
   - Output Root
     - Must be after starting block number
-    - First game starts from genesis
-    - Later games start from parent's output
+    - First game starts from the anchor state root for the game type
+    - Later games start from parent's output root
 
 - Bond Management
   - Proposer's bond enforced by factory
@@ -183,6 +186,7 @@ Initialization will revert if:
 - Invalid parent game
 - Root claim at/before starting block
 - Incorrect calldata size for `extraData`
+- Proposer is not whitelisted
 
 ### Challenge
 
@@ -196,13 +200,19 @@ Allows participants to challenge a proposal by:
 - Setting the proposal deadline to be `+ provingTime` over the current timestamp
 - Updating proposal state to `ProposalStatus.Challenged`
 
+Attempting to challenge a game will revert if:
+- Game is already challenged, proven or resolved
+- Deadline has already passed
+- Challenger is not whitelisted
+
+
 ### Proving
 
 ```solidity
 function prove(bytes calldata proofBytes) external returns (ProposalStatus)
 ```
 
-Validates a proof for a proposal:
+Validates a proposal with a proof:
 
 - Timing Requirements
   - Must be submitted before the proof deadline
@@ -212,7 +222,7 @@ Validates a proof for a proposal:
 - Proof Verification
   - Uses SP1 verifier to validate the aggregation proof against public inputs:
     - L1 head hash (from game creation)
-    - Starting output root (from parent game or genesis)
+    - Starting output root (from parent game or anchor state root)
     - Claimed output root
     - Claimed L2 block number
     - Rollup configuration hash
@@ -227,7 +237,7 @@ Validates a proof for a proposal:
 
 - Rewards
   - No immediate reward distribution
-  - Proof reward is distributed in `resolve()`:
+  - Proof reward is distributed in `claimCredit()`:
     - If challenged: prover receives the challenger's bond
     - If unchallenged: no reward but can have fast finality
 
@@ -244,15 +254,49 @@ function resolve() external returns (GameStatus)
 
 Resolves the game by:
 
-- Checking parent game status. Ensures that the parent game is resolved and that the proposal is valid. If the proposal is invalid (aka `CHALLENGER_WON`), then set the current game status to `CHALLENGER_WON`.
-- If the current game is in `UnchallengedAndValidProofProvided` or `ChallengedAndValidProofProvided` state, then set `DEFENDER_WON`.
-- Ensure that the deadline has passed, and if the proposal is `Unchallenged`, then set `DEFENDER_WON`.
-- Ensure that the deadline has passed, and if the proposal is `Challenged`, then set `CHALLENGER_WON`
+- Checking parent game status. Ensures that the parent game is resolved and that the proposal is valid. If the proposal is invalid (aka `CHALLENGER_WINS`), then set the current game status to `CHALLENGER_WINS`.
+- If the current game is in `UnchallengedAndValidProofProvided` or `ChallengedAndValidProofProvided` state, then set `DEFENDER_WINS`.
+- Ensure that the deadline has passed, and if the proposal is `Unchallenged`, then set `DEFENDER_WINS`.
+- Ensure that the deadline has passed, and if the proposal is `Challenged`, then set `CHALLENGER_WINS`
 - Distributing bonds based on outcome
-    - Distribution result is stored in `mapping(address => uint256) public credit;`.
-    - Actual distribution is done when appropriate recipient calls `claimCredit()`.
-    - If parent game is `CHALLENGER_WON`, then the proposer's bond is distributed to the challenger.
-      But if there was no challenge for the current game, then the proposer's bond is burned.
+  - Distribution result is stored in `mapping(address => uint256) public normalModeCredit;`.
+  - Actual distribution is done when appropriate recipient calls `claimCredit()`.
+  - If parent game is `CHALLENGER_WINS`, then the proposer's bond is distributed to the challenger.
+  - But if there was no challenge for the current game, then the proposer's bond is burned.
+
+Attempting to resolve will revert if:
+- Parent game is not yet resolved
+- Game is already resolved (i.e, not `IN_PROGRESS`)
+- Challenge/proof window has not expired
+
+### Reward Distribution
+
+```solidity
+function claimCredit(address _recipient) external
+```
+
+Claims rewards by:
+
+- Closing the game and determining bond distribution mode if not already set
+- Checking recipient's credit balance based on distribution mode:
+  - `NORMAL`: Uses `normalModeCredit` for standard game outcomes
+  - `REFUND`: Uses `refundModeCredit` when game is improper
+- Setting recipient's credit balance to 0
+- Transferring ETH to recipient
+
+Attempting to claim will revert if:
+- Game is not resolved
+- Game is not finalized according to AnchorStateRegistry
+- Recipient has no credit to claim
+- ETH transfer fails
+- Invalid bond distribution mode
+
+Bond distribution modes:
+- `NORMAL`: Standard outcome-based distribution
+  - Defender wins unchallenged: Proposer gets full bond
+  - Defender wins challenged: Prover gets reward, proposer gets remainder
+  - Challenger wins: Challenger gets full bond
+- `REFUND`: Returns bonds to original depositors when game is improper
 
 ## Security Model
 
@@ -260,23 +304,21 @@ Resolves the game by:
 
 The contract implements a bond system to incentivize honest behavior:
 
-1. **Proposal Bond**: Required to submit a proposal
-2. **Proof Reward (Challenge Bond)**: Required to challenge a proposal, which is paid to successful provers
+1. **Proposal Bond**: Required to submit a proposal.
+2. **Proof Reward (Challenge Bond)**: Required to challenge a proposal, which is paid to successful provers.
 
 ### Time Windows
 
 Two key time windows ensure fair participation:
 
-1. **Challenge Window**: Period during which proposals can be challenged
-2. **Proving Window**: Time allowed for submitting proofs after a challenge
+1. **Challenge Window**: Period during which proposals can be challenged.
+2. **Proving Window**: Time allowed for submitting proofs after a challenge.
 
-### Parent-Child Relationship
+### Parent-Child Relationships
 
-Proposals maintain a hierarchical relationship:
-
-- Each proposal (except the first) has a parent
-- Child proposals are only valid if their parent is valid
-- Invalid parents automatically invalidate children
+- Each game (except genesis) has a parent
+- Invalid parent automatically invalidates children
+- Child games can only be resolved if their parent game is resolved
 
 ## Acknowledgements
 
