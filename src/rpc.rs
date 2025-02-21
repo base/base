@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::cache::Cache;
 use alloy_consensus::transaction::TransactionMeta;
-use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo, Signed};
+use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
 use alloy_rpc_types::TransactionTrait;
@@ -11,14 +11,13 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
+use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::HeaderProvider};
 use reth_optimism_chainspec::{OpChainSpec, OP_SEPOLIA};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
-use reth_primitives::RecoveredTx;
 use reth_rpc_eth_api::RpcReceipt;
 use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
@@ -95,36 +94,25 @@ impl<E> EthApiExt<E> {
 
     pub fn transform_tx(
         &self,
-        tx: RecoveredTx<OpTransactionSigned>,
+        tx: Recovered<OpTransactionSigned>,
         tx_info: TransactionInfo,
     ) -> Transaction {
-        let from = tx.signer();
-        let hash = *tx.tx_hash();
-        let OpTransactionSigned {
-            transaction,
-            signature,
-            ..
-        } = tx.into_tx();
+        let (tx, from) = tx.into_parts();
         let mut deposit_receipt_version = None;
         let mut deposit_nonce = None;
 
-        let inner = match transaction {
-            OpTypedTransaction::Legacy(tx) => Signed::new_unchecked(tx, signature, hash).into(),
-            OpTypedTransaction::Eip2930(tx) => Signed::new_unchecked(tx, signature, hash).into(),
-            OpTypedTransaction::Eip1559(tx) => Signed::new_unchecked(tx, signature, hash).into(),
-            OpTypedTransaction::Eip7702(tx) => Signed::new_unchecked(tx, signature, hash).into(),
-            OpTypedTransaction::Deposit(tx) => {
-                let receipt = self
-                    .cache
-                    .get::<OpReceipt>(&format!("receipt:{:?}", hash))
-                    .unwrap();
-                if let OpReceipt::Deposit(receipt) = receipt {
-                    deposit_receipt_version = receipt.deposit_receipt_version;
-                    deposit_nonce = receipt.deposit_nonce;
-                }
-                OpTxEnvelope::Deposit(tx.seal_unchecked(hash))
+        let inner: OpTxEnvelope = tx.into();
+
+        if inner.is_deposit() {
+            let receipt = self
+                .cache
+                .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash))
+                .unwrap();
+            if let OpReceipt::Deposit(receipt) = receipt {
+                deposit_receipt_version = receipt.deposit_receipt_version;
+                deposit_nonce = receipt.deposit_nonce;
             }
-        };
+        }
 
         let TransactionInfo {
             block_hash,
@@ -145,7 +133,7 @@ impl<E> EthApiExt<E> {
                     inner
                         .effective_tip_per_gas(base_fee as u64)
                         .unwrap_or_default()
-                        + base_fee
+                        + base_fee as u128
                 })
                 .unwrap_or_else(|| inner.max_fee_per_gas())
         };
@@ -175,7 +163,7 @@ impl<E> EthApiExt<E> {
             .get::<OpTransactionSigned>(&tx_hash.to_string())
             .unwrap();
         let block = self.cache.get::<OpBlock>("pending").unwrap();
-        let l1_block_info =
+        let mut l1_block_info =
             reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
 
         let meta = TransactionMeta {
@@ -199,7 +187,7 @@ impl<E> EthApiExt<E> {
             meta,
             &receipt,
             &all_receipts,
-            l1_block_info,
+            &mut l1_block_info,
         )
         .expect("failed to build receipt")
         .build()
@@ -239,6 +227,7 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+        println!("get_transaction_receipt {:?}", tx_hash);
         if let Some(receipt) = self
             .cache
             .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash))

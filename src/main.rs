@@ -12,7 +12,7 @@ use clap::Parser;
 use reth::builder::Node;
 use reth::{
     builder::{engine_tree_config::TreeConfig, EngineNodeLauncher},
-    providers::providers::BlockchainProvider2,
+    providers::providers::BlockchainProvider,
 };
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
@@ -39,7 +39,7 @@ fn main() {
 
             let cache_clone = Arc::clone(&cache);
             let handle = builder
-                .with_types_and_provider::<OpNode, BlockchainProvider2<_>>()
+                .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
@@ -54,15 +54,15 @@ fn main() {
                     Ok(())
                 })
                 .launch_with_fn(|builder| {
-                    let engine_tree_config = TreeConfig::default()
-                        .with_persistence_threshold(
-                            flashblocks_rollup_args.rollup_args.persistence_threshold,
-                        )
-                        .with_memory_block_buffer_target(
-                            flashblocks_rollup_args
-                                .rollup_args
-                                .memory_block_buffer_target,
-                        );
+                    let engine_tree_config = TreeConfig::default();
+                    // .with_persistence_threshold(
+                    //     flashblocks_rollup_args.rollup_args.persistence_threshold,
+                    // )
+                    // .with_memory_block_buffer_target(
+                    //     flashblocks_rollup_args
+                    //         .rollup_args
+                    //         .memory_block_buffer_target,
+                    // );
                     let launcher = EngineNodeLauncher::new(
                         builder.task_executor().clone(),
                         builder.config().datadir(),
