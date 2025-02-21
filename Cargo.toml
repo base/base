@@ -8,7 +8,7 @@ homepage = "https://github.com/base-org/reth-flashblocks"
 repository = "https://github.com/base-org/reth-flashblocks"
 
 [dependencies]
-revm = { version = "19.5.0", default-features = false }
+# reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
@@ -19,25 +19,11 @@ reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1
 reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.0" }
-clap = { version = "4.4.3" }
-jsonrpsee = { version = "0.24.8" }
-tracing = { version = "0.1.41" }
-serde = "1"
-serde_json = "1.0"
-tokio = { version = "1.0", features = ["full"] }
-tokio-stream = "0.1"
-futures = "0.3"
-futures-util = "0.3"
-reqwest = { version = "0.11", features = ["json", "stream"] }
-url = "2.5"
-tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0b089a37b8525d328ab93962bb8121811ee3ca1f" }
 
-op-alloy-rpc-types = { version = "0.10.3", default-features = false }
-op-alloy-rpc-types-engine = { version =  "0.10.3", default-features = false }
-op-alloy-rpc-jsonrpsee = { version =  "0.10.3", default-features = false }
-op-alloy-network = { version =  "0.10.3", default-features = false }
-op-alloy-consensus = { version =  "0.10.3", default-features = false }
+# revm
+revm = { version = "19.5.0", default-features = false }
+
+# alloy
 alloy-primitives = { version = "0.8.20", default-features = false, features = ["map-foldhash"] }
 alloy-eips = { version = "0.11.1", default-features = false }
 alloy-rpc-types = { version = "0.11.1", default-features = false }
@@ -46,13 +32,42 @@ alloy-rpc-types-eth = { version = "0.11.1" }
 alloy-consensus = { version = "0.11.1" }
 alloy-trie = { version = "0.7.9", default-features = false }
 
+# op-alloy
+op-alloy-rpc-types = { version = "0.10.3", default-features = false }
+op-alloy-rpc-types-engine = { version =  "0.10.3", default-features = false }
+op-alloy-rpc-jsonrpsee = { version =  "0.10.3", default-features = false }
+op-alloy-network = { version =  "0.10.3", default-features = false }
+op-alloy-consensus = { version =  "0.10.3", default-features = false }
+
+# rollup-boost
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0b089a37b8525d328ab93962bb8121811ee3ca1f" }
+
+# tokio
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
+
+# async
+futures = "0.3"
+futures-util = "0.3"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# rpc
+jsonrpsee = { version = "0.24.8" }
+
+# misc
+clap = { version = "4.4.3" }
+tracing = { version = "0.1.41" }
+serde = "1"
+serde_json = "1.0"
+url = "2.5"
+
 [features]
 default = ["optimism"]
 
 optimism = [
 	"reth-optimism-node/optimism",
 	"reth-optimism-cli/optimism",
-	#"reth-primitives/optimism",
 	"reth-optimism-primitives/optimism",
 	"reth-optimism-rpc/optimism",
 	"reth-optimism-evm/optimism",
