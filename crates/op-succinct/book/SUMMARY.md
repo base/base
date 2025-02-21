@@ -26,6 +26,7 @@
   - [Quick Start](./fault_proofs/quick_start.md)
   - [Deploy FP Contracts](./fault_proofs/deploy.md)
   - [How to run the FP Proposer](./fault_proofs/proposer.md)
+  - [How to run the FP Challenger](./fault_proofs/challenger.md)
 - [Experimental](./experimental/intro.md)
   - [OptimismPortalV2](./experimental/optimism-portal-v2.md)
 - [FAQ](./faq.md)

@@ -31,6 +31,10 @@ path = "bin/fetch_rollup_config.rs"
 name = "gen-sp1-test-artifacts"
 path = "bin/gen_sp1_test_artifacts.rs"
 
+[[bin]]
+name = "fetch-rollup-config-hash"
+path = "bin/fetch_rollup_config_hash.rs"
+
 [dependencies]
 
 # workspace

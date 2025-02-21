@@ -36,6 +36,9 @@ The proposer is configured through various environment variables. Create a `.env
 | `FACTORY_ADDRESS` | Address of the DisputeGameFactory contract |
 | `GAME_TYPE` | Type identifier for the dispute game |
 | `PRIVATE_KEY` | Private key for transaction signing |
+| `NETWORK_PRIVATE_KEY` | Private key for the succinct prover network (Set to `0x0000000000000000000000000000000000000000000000000000000000000001` if not using fast finality mode) |
+
+To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The Succinct team will reach out to you with an RPC endpoint you can use.
 
 ### Optional Environment Variables
 
@@ -46,6 +49,8 @@ The proposer is configured through various environment variables. Create a `.env
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
 | `ENABLE_GAME_RESOLUTION` | Whether to enable automatic game resolution | `true` |
 | `MAX_GAMES_TO_CHECK_FOR_RESOLUTION` | Maximum number of games to check for resolution | `100` |
+| `L1_BEACON_RPC` | L1 Beacon RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
+| `L2_NODE_RPC` | L2 Node RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
 
 ```env
 # Required Configuration
