@@ -27,9 +27,6 @@ pub use eip1559::{
     EIP1559ParamError,
 };
 
-mod hardforks;
-pub use hardforks::{Ecotone, Fjord, Hardfork, Hardforks, Isthmus};
-
 mod source;
 pub use source::*;
 
