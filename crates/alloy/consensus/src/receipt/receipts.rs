@@ -314,10 +314,12 @@ pub(crate) mod serde_bincode_compat {
 
             let mut bytes = [0u8; 1024];
             rand::thread_rng().fill(bytes.as_mut_slice());
-            let data = Data {
+            let mut data = Data {
                 transaction: OpDepositReceipt::arbitrary(&mut arbitrary::Unstructured::new(&bytes))
                     .unwrap(),
             };
+            // ensure we don't have an invalid poststate variant
+            data.transaction.inner.status = data.transaction.inner.status.coerce_status().into();
 
             let encoded = bincode::serialize(&data).unwrap();
             let decoded: Data<Log> = bincode::deserialize(&encoded).unwrap();
