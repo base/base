@@ -5,11 +5,10 @@ pub mod v3;
 pub mod v4;
 
 use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
-use alloc::string::String;
 use alloy_consensus::{Block, EMPTY_ROOT_HASH};
 use alloy_eips::{Decodable2718, Typed2718};
-use alloy_primitives::{map::HashMap, B256};
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_primitives::B256;
+use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
 use error::OpPayloadError;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
@@ -45,6 +44,9 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
             where
                 A: serde::de::MapAccess<'de>,
             {
+                use alloc::string::String;
+                use alloy_primitives::map::HashMap;
+                use alloy_rpc_types_engine::ExecutionPayloadV1;
                 use serde::de::IntoDeserializer;
 
                 enum Fields {
