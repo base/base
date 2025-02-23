@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 use alloy_consensus::Block;
-use alloy_eips::Decodable2718;
+use alloy_eips::{eip4895::Withdrawal, Decodable2718};
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
@@ -35,6 +35,11 @@ impl OpExecutionPayloadV4 {
         base_block.header.withdrawals_root = Some(self.withdrawals_root);
 
         Ok(base_block)
+    }
+
+    /// Returns the withdrawals for the payload.
+    pub const fn withdrawals(&self) -> &Vec<Withdrawal> {
+        self.payload_inner.withdrawals()
     }
 }
 

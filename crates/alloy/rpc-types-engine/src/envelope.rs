@@ -3,6 +3,7 @@
 //! This module uses the `snappy` compression algorithm to decompress the payload.
 //! The license for snappy can be found in the `SNAPPY-LICENSE` at the root of the repository.
 
+use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
 use alloy_rpc_types_engine::ExecutionPayload;
 
@@ -23,6 +24,24 @@ impl OpExecutionData {
     /// Creates new instance of [`OpExecutionData`].
     pub const fn new(payload: OpExecutionPayload, sidecar: OpExecutionPayloadSidecar) -> Self {
         Self { payload, sidecar }
+    }
+
+    /// Returns the parent beacon block root, if any.
+    pub fn parent_beacon_block_root(&self) -> Option<B256> {
+        self.sidecar.parent_beacon_block_root()
+    }
+
+    /// Return the withdrawals for the payload or attributes.
+    pub const fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
+        match &self.payload {
+            OpExecutionPayload::V2(execution_payload_v2) => Some(&execution_payload_v2.withdrawals),
+            OpExecutionPayload::V3(execution_payload_v3) => {
+                Some(execution_payload_v3.withdrawals())
+            }
+            OpExecutionPayload::V4(op_execution_payload_v4) => {
+                Some(op_execution_payload_v4.withdrawals())
+            }
+        }
     }
 
     /// Returns the parent hash of the block.
