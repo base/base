@@ -69,7 +69,17 @@ impl FlashblocksClient {
                         // Handle incoming messages
                         while let Some(msg) = read.next().await {
                             match msg {
-                                Ok(Message::Text(text)) => {
+                                Ok(Message::Binary(bytes)) => {
+                                    // Decode binary message to string first
+                                    let text = match String::from_utf8(bytes.to_vec()) {
+                                        Ok(text) => text,
+                                        Err(e) => {
+                                            error!("Failed to decode binary message: {}", e);
+                                            continue;
+                                        }
+                                    };
+
+                                    // Then parse JSON
                                     let payload: FlashblocksPayloadV1 =
                                         match serde_json::from_str(&text) {
                                             Ok(m) => m,
@@ -79,9 +89,8 @@ impl FlashblocksClient {
                                             }
                                         };
 
-                                    let _ = sender
-                                        .send(ActorMessage::BestPayload { payload: payload })
-                                        .await;
+                                    let _ =
+                                        sender.send(ActorMessage::BestPayload { payload }).await;
                                 }
                                 Ok(Message::Close(_)) => break,
                                 Err(e) => {

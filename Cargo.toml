@@ -61,6 +61,8 @@ tracing = { version = "0.1.41" }
 serde = "1"
 serde_json = "1.0"
 url = "2.5"
+metrics = "0.24.1"
+metrics-derive = "0.1"
 
 [features]
 default = ["optimism"]
