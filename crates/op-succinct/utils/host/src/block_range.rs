@@ -8,7 +8,7 @@ use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use alloy_eips::BlockId;
 use anyhow::{bail, Result};
 use futures::StreamExt;
-use maili_rpc::{OutputResponse, SafeHeadResponse};
+use kona_rpc::{OutputResponse, SafeHeadResponse};
 use serde::{Deserialize, Serialize};
 
 /// Get the start and end block numbers for a range, with validation.

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use kona_derive::traits::BlobProvider;
 use kona_preimage::{CommsClient, PreimageKey, PreimageKeyType};
 use kona_proof::{errors::OracleProviderError, HintType};
-use maili_protocol::BlockInfo;
+use kona_protocol::BlockInfo;
 
 /// An oracle-backed blob provider. Modified from the original `OracleBlobProvider` to request for
 /// the Keccak256 preimage of the blob commitment and field elements as well as the KZG proof.

@@ -40,19 +40,25 @@ tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
 
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.9" }
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11" }
+kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", default-features = false, features = [
+    "serde",
+] }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.11", default-features = false }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -94,15 +100,6 @@ op-alloy-consensus = { version = "0.10.0", default-features = false }
 op-alloy-rpc-types = { version = "0.10.0", default-features = false }
 op-alloy-rpc-types-engine = { version = "0.10.0", default-features = false }
 op-alloy-network = { version = "0.10.0", default-features = false }
-
-# Maili
-maili-consensus = { version = "0.2.6", default-features = false }
-maili-rpc = { version = "0.2.6", default-features = false, features = [
-    "serde",
-] }
-maili-protocol = { version = "0.2.6", default-features = false }
-maili-registry = { version = "0.2.6", default-features = false }
-maili-genesis = { version = "0.2.6", default-features = false }
 
 # Revm
 revm = { version = "19.5.0", default-features = false, features = ["kzg-rs"] }

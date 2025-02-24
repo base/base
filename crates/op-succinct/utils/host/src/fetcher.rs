@@ -7,11 +7,11 @@ use alloy_sol_types::SolValue;
 use anyhow::Result;
 use anyhow::{anyhow, bail};
 use cargo_metadata::MetadataCommand;
+use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
-use maili_genesis::RollupConfig;
-use maili_protocol::calculate_tx_l1_cost_fjord;
-use maili_protocol::L2BlockInfo;
-use maili_rpc::{OutputResponse, SafeHeadResponse};
+use kona_protocol::calculate_tx_l1_cost_fjord;
+use kona_protocol::L2BlockInfo;
+use kona_rpc::{OutputResponse, SafeHeadResponse};
 use op_alloy_consensus::OpBlock;
 use op_alloy_network::{
     primitives::{BlockTransactions, BlockTransactionsKind, HeaderResponse},
