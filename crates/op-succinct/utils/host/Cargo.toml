@@ -19,9 +19,9 @@ op-alloy-consensus.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 
 # maili
-maili-genesis.workspace = true
-maili-protocol.workspace = true
-maili-rpc.workspace = true
+kona-genesis.workspace = true
+kona-protocol.workspace = true
+kona-rpc.workspace = true
 
 # revm
 revm.workspace = true
