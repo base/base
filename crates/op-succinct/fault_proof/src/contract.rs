@@ -66,8 +66,8 @@ sol! {
         /// @notice Returns the anchor state registry contract.
         function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_);
 
-        /// @notice Returns the proof reward.
-        function proofReward() external view returns (uint256 proofReward_);
+        /// @notice Returns the challenger bond amount.
+        function challengerBond() external view returns (uint256 challengerBond_);
     }
 
     #[allow(missing_docs)]

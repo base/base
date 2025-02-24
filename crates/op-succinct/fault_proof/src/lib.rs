@@ -125,8 +125,8 @@ where
     /// Fetches the bond required to create a game.
     async fn fetch_init_bond(&self, game_type: u32) -> Result<U256>;
 
-    /// Fetches the proof reward required to challenge a game.
-    async fn fetch_proof_reward(&self, game_type: u32) -> Result<U256>;
+    /// Fetches the challenger bond required to challenge a game.
+    async fn fetch_challenger_bond(&self, game_type: u32) -> Result<U256>;
 
     /// Fetches the latest game index.
     async fn fetch_latest_game_index(&self) -> Result<Option<U256>>;
@@ -201,12 +201,12 @@ where
         Ok(init_bond._0)
     }
 
-    /// Fetches the proof reward required to challenge a game.
-    async fn fetch_proof_reward(&self, game_type: u32) -> Result<U256> {
+    /// Fetches the challenger bond required to challenge a game.
+    async fn fetch_challenger_bond(&self, game_type: u32) -> Result<U256> {
         let game_impl_address = self.gameImpls(game_type).call().await?._0;
         let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
-        let proof_reward = game_impl.proofReward().call().await?;
-        Ok(proof_reward.proofReward_)
+        let challenger_bond = game_impl.challengerBond().call().await?;
+        Ok(challenger_bond.challengerBond_)
     }
 
     /// Fetches the latest game index.
@@ -503,7 +503,6 @@ where
         }
 
         let contract = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
-        // TODO(fakedev9999): Potentially need to add a gas provider.
         let receipt = contract
             .resolve()
             .send()
