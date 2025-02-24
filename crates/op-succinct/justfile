@@ -59,7 +59,7 @@ upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   L1_RPC="{{l1_rpc}}"
   ADMIN_PK="{{admin_pk}}"
 
-  cd contracts && forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
+  cd contracts && forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
 
 # Deploy mock verifier
 deploy-mock-verifier env_file=".env":
@@ -85,7 +85,7 @@ deploy-mock-verifier env_file=".env":
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     
-    forge script script/DeployMockVerifier.s.sol:DeployMockVerifier \
+    forge script script/validity/DeployMockVerifier.s.sol:DeployMockVerifier \
     --rpc-url $L1_RPC \
     --private-key $PRIVATE_KEY \
     --broadcast \
@@ -118,7 +118,7 @@ deploy-oracle env_file=".env":
     if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
     
     # Run the forge deployment script
-    $ENV_VARS forge script script/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
+    $ENV_VARS forge script script/validity/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
         --rpc-url $L1_RPC \
         --private-key $PRIVATE_KEY \
         --broadcast \
@@ -149,12 +149,12 @@ upgrade-oracle env_file=".env":
     if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
     
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        $ENV_VARS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        $ENV_VARS forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --etherscan-api-key $ETHERSCAN_API_KEY
     else
-        $ENV_VARS forge script script/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
+        $ENV_VARS forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --verify \
@@ -186,7 +186,7 @@ update-parameters env_file=".env":
             ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
             ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
             ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
-            forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+            forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --broadcast
@@ -195,7 +195,7 @@ update-parameters env_file=".env":
             ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
             ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
             ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
-            forge script script/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+            forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
             --broadcast
@@ -220,7 +220,7 @@ deploy-dispute-game-factory env_file=".env":
     fi
     
     # Run the forge deployment script
-    L2OO_ADDRESS=$L2OO_ADDRESS forge script script/OPSuccinctDGFDeployer.s.sol:OPSuccinctDFGDeployer \
+    L2OO_ADDRESS=$L2OO_ADDRESS forge script script/validity/OPSuccinctDGFDeployer.s.sol:OPSuccinctDFGDeployer \
         --rpc-url $L1_RPC \
         --private-key $PRIVATE_KEY \
         --broadcast \
