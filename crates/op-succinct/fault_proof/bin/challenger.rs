@@ -37,7 +37,7 @@ where
     l2_provider: L2Provider,
     l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
     factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
-    proof_reward: U256,
+    challenger_bond: U256,
 }
 
 impl<F, P> OPSuccinctChallenger<F, P>
@@ -59,7 +59,7 @@ where
             l2_provider: ProviderBuilder::default().on_http(config.l2_rpc.clone()),
             l1_provider_with_wallet: l1_provider_with_wallet.clone(),
             factory: factory.clone(),
-            proof_reward: factory.fetch_proof_reward(config.game_type).await?,
+            challenger_bond: factory.fetch_challenger_bond(config.game_type).await?,
         })
     }
 
@@ -68,10 +68,9 @@ where
         let game =
             OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
 
-        // TODO(fakedev9999): Potentially need to add a gas provider.
         let receipt = game
             .challenge()
-            .value(self.proof_reward)
+            .value(self.challenger_bond)
             .send()
             .await
             .context("Failed to send challenge transaction")?

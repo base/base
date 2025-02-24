@@ -17,5 +17,8 @@ error InvalidParentGame();
 /// @notice Thrown when the parent game is not resolved.
 error ParentGameNotResolved();
 
-/// @notice Thrown when the claim has already been proven.
-error AlreadyProven();
+/// @notice Thrown when the game is over.
+error GameOver();
+
+/// @notice Thrown when the game is not over.
+error GameNotOver();

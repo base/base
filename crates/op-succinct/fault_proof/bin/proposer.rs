@@ -105,7 +105,6 @@ where
 
         let extra_data = <(U256, u32)>::abi_encode_packed(&(l2_block_number, parent_game_index));
 
-        // TODO(fakedev9999): Potentially need to add a gas provider.
         let receipt = self
             .factory
             .create(

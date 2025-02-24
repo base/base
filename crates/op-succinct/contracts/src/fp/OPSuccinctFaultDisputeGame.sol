@@ -21,7 +21,6 @@ import {
     BadAuth,
     BondTransferFailed,
     ClaimAlreadyResolved,
-    ClockNotExpired,
     ClockTimeExceeded,
     GameNotFinalized,
     GameNotInProgress,
@@ -122,9 +121,10 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     /// this verification is the output of converting the [u32; 8] range BabyBear verification key to a [u8; 32] array.
     bytes32 internal immutable RANGE_VKEY_COMMITMENT;
 
-    /// @notice The proof reward for the game. This is the amount of the bond that the challenger has to bond to challenge and
-    ///         is the amount of the bond that is distributed to the prover when proven with a valid proof.
-    uint256 internal immutable PROOF_REWARD;
+    /// @notice The challenger bond for the game. This is the amount of the bond that the
+    ///         challenger has to bond to challenge. The prover will receive this bond if they
+    ///         provide a valid proof in response to a challenge.
+    uint256 internal immutable CHALLENGER_BOND;
 
     /// @notice The anchor state registry.
     IAnchorStateRegistry internal immutable ANCHOR_STATE_REGISTRY;
@@ -174,7 +174,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     /// @param _rollupConfigHash The rollup config hash for the L2 network.
     /// @param _aggregationVkey The vkey for the aggregation program.
     /// @param _rangeVkeyCommitment The commitment to the range vkey.
-    /// @param _proofReward The proof reward for the game.
+    /// @param _challengerBond The bond amount that must be submitted by the challenger.
     /// @param _anchorStateRegistry The anchor state registry for the L2 network.
     constructor(
         Duration _maxChallengeDuration,
@@ -184,7 +184,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         bytes32 _rollupConfigHash,
         bytes32 _aggregationVkey,
         bytes32 _rangeVkeyCommitment,
-        uint256 _proofReward,
+        uint256 _challengerBond,
         IAnchorStateRegistry _anchorStateRegistry,
         AccessManager _accessManager
     ) {
@@ -197,7 +197,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         ROLLUP_CONFIG_HASH = _rollupConfigHash;
         AGGREGATION_VKEY = _aggregationVkey;
         RANGE_VKEY_COMMITMENT = _rangeVkeyCommitment;
-        PROOF_REWARD = _proofReward;
+        CHALLENGER_BOND = _challengerBond;
         ANCHOR_STATE_REGISTRY = _anchorStateRegistry;
         ACCESS_MANAGER = _accessManager;
     }
@@ -249,13 +249,16 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             // For subsequent games, get the parent game's information
             (,, IDisputeGame proxy) = DISPUTE_GAME_FACTORY.gameAtIndex(parentIndex());
 
-            // NOTE(fakedev9999): We're performing a subset of the checks from AnchorStateRegistry.isGameProper()
-            // plus isGameRespected(). Since we're pulling the parent game directly from the factory, we can skip
-            // the isGameRegistered() check and even if the parent game's game type is retired, if it was respected
-            // when created, it's considered as a proper game. We verify that the game:
-            // 1. Is not blacklisted (isGameBlacklisted()).
-            // 2. Was a respected game type when created (isGameRespected()).
-            if (ANCHOR_STATE_REGISTRY.isGameBlacklisted(proxy) || !ANCHOR_STATE_REGISTRY.isGameRespected(proxy)) {
+            // We perform a subset of AnchorStateRegistry.isGameProper() checks plus isGameRespected():
+            // 1. isGameRespected(): Verifies the parent game was respected when it was created.
+            //    There's only one respected game type in an AnchorStateRegistry at a time.
+            // 2. isGameRetired(): Ensures the game hasn't been retroactively marked as retired.
+            // 3. isGameBlacklisted(): Confirms the parent game isn't blacklisted.
+            // Note: isGameRegistered() check is skipped since the parent game is coming directly from factory.
+            if (
+                !ANCHOR_STATE_REGISTRY.isGameRespected(proxy) || ANCHOR_STATE_REGISTRY.isGameBlacklisted(proxy)
+                    || ANCHOR_STATE_REGISTRY.isGameRetired(proxy)
+            ) {
                 revert InvalidParentGame();
             }
 
@@ -334,11 +337,11 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         // INVARIANT: The challenger must be whitelisted.
         if (!ACCESS_MANAGER.isAllowedChallenger(msg.sender)) revert BadAuth();
 
-        // INVARIANT: Cannot challenge a game if the clock has already expired.
-        if (uint64(block.timestamp) > claimData.deadline.raw()) revert ClockTimeExceeded();
+        // INVARIANT: Cannot challenge if the game is over.
+        if (gameOver()) revert GameOver();
 
         // If the required bond is not met, revert.
-        if (msg.value != PROOF_REWARD) revert IncorrectBondAmount();
+        if (msg.value != CHALLENGER_BOND) revert IncorrectBondAmount();
 
         // Update the counteredBy address
         claimData.counteredBy = msg.sender;
@@ -360,11 +363,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
     /// @notice Proves the game.
     /// @param proofBytes The proof bytes to validate the claim.
     function prove(bytes calldata proofBytes) external returns (ProposalStatus) {
-        // INVARIANT: Cannot prove a game if the clock has timed out.
-        if (uint64(block.timestamp) > claimData.deadline.raw()) revert ClockTimeExceeded();
-
-        // INVARIANT: Cannot prove a claim that has already been proven
-        if (claimData.prover != address(0)) revert AlreadyProven();
+        // INVARIANT: Cannot prove if the game is over.
+        if (gameOver()) revert GameOver();
 
         // Decode the public values to check the claim root
         AggregationOutputs memory publicValues = AggregationOutputs({
@@ -376,6 +376,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
             rangeVkeyCommitment: RANGE_VKEY_COMMITMENT
         });
 
+        // Verify the proof. Reverts if the proof is invalid.
         SP1_VERIFIER.verifyProof(AGGREGATION_VKEY, abi.encode(publicValues), proofBytes);
 
         // Update the prover address
@@ -399,10 +400,9 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         if (parentIndex() != type(uint32).max) {
             (,, IDisputeGame parentGame) = DISPUTE_GAME_FACTORY.gameAtIndex(parentIndex());
             return parentGame.status();
-        }
-        // If this is the first dispute game (i.e. parent game index is `uint32.max`),
-        // then the parent game's status is considered as `DEFENDER_WINS`.
-        else {
+        } else {
+            // If this is the first dispute game (i.e. parent game index is `uint32.max`), then the
+            // parent game's status is considered as `DEFENDER_WINS`.
             return GameStatus.DEFENDER_WINS;
         }
     }
@@ -418,66 +418,46 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
 
         // INVARIANT: Cannot resolve a game if the parent game has not been resolved.
         GameStatus parentGameStatus = getParentGameStatus();
-
         if (parentGameStatus == GameStatus.IN_PROGRESS) revert ParentGameNotResolved();
 
         // INVARIANT: If the parent game's claim is invalid, then the current game's claim is invalid.
         if (parentGameStatus == GameStatus.CHALLENGER_WINS) {
-            claimData.status = ProposalStatus.Resolved;
+            // Parent game is invalid so this game is invalid too. Therefore the challenger wins and gets all bonds.
+            // If the game has not been challenged then there will not be any challenger address and the bond is burned.
             status = GameStatus.CHALLENGER_WINS;
-            resolvedAt = Timestamp.wrap(uint64(block.timestamp));
-
-            // Record the challenger's reward.
             normalModeCredit[claimData.counteredBy] += address(this).balance;
+        } else {
+            // INVARIANT: Game must be completed either by clock expiration or valid proof.
+            if (!gameOver()) revert GameNotOver();
 
-            emit Resolved(status);
-
-            return status;
+            // Determine status based on claim status.
+            if (claimData.status == ProposalStatus.Unchallenged) {
+                // Claim is unchallenged, defender wins, game creator gets everything.
+                status = GameStatus.DEFENDER_WINS;
+                normalModeCredit[gameCreator()] += address(this).balance;
+            } else if (claimData.status == ProposalStatus.Challenged) {
+                // Claim is challenged, challenger wins, challenger wins everything
+                status = GameStatus.CHALLENGER_WINS;
+                normalModeCredit[claimData.counteredBy] += address(this).balance;
+            } else if (claimData.status == ProposalStatus.UnchallengedAndValidProofProvided) {
+                // Claim is unchallenged but a valid proof was provided, defender wins, game
+                // creator gets everything. Note that the prover does not receive any reward in
+                // this particular case.
+                status = GameStatus.DEFENDER_WINS;
+                normalModeCredit[gameCreator()] += address(this).balance;
+            } else if (claimData.status == ProposalStatus.ChallengedAndValidProofProvided) {
+                // Claim is challenged but a valid proof was provided, defender wins, prover gets
+                // the challenger's bond and the game creator gets everything else.
+                status = GameStatus.DEFENDER_WINS;
+                normalModeCredit[claimData.prover] += CHALLENGER_BOND;
+                normalModeCredit[gameCreator()] += address(this).balance - CHALLENGER_BOND;
+            }
         }
 
-        if (claimData.status == ProposalStatus.Unchallenged) {
-            if (claimData.deadline.raw() >= uint64(block.timestamp)) revert ClockNotExpired();
-
-            claimData.status = ProposalStatus.Resolved;
-            status = GameStatus.DEFENDER_WINS;
-            resolvedAt = Timestamp.wrap(uint64(block.timestamp));
-
-            // Record the proposer's reward.
-            normalModeCredit[gameCreator()] += address(this).balance;
-
-            emit Resolved(status);
-        } else if (claimData.status == ProposalStatus.Challenged) {
-            if (claimData.deadline.raw() >= uint64(block.timestamp)) revert ClockNotExpired();
-            claimData.status = ProposalStatus.Resolved;
-            status = GameStatus.CHALLENGER_WINS;
-            resolvedAt = Timestamp.wrap(uint64(block.timestamp));
-
-            // Record the challenger's reward.
-            normalModeCredit[claimData.counteredBy] += address(this).balance;
-
-            emit Resolved(status);
-        } else if (claimData.status == ProposalStatus.UnchallengedAndValidProofProvided) {
-            claimData.status = ProposalStatus.Resolved;
-            status = GameStatus.DEFENDER_WINS;
-            resolvedAt = Timestamp.wrap(uint64(block.timestamp));
-
-            // Record the proposer's reward.
-            normalModeCredit[gameCreator()] += address(this).balance;
-
-            emit Resolved(status);
-        } else if (claimData.status == ProposalStatus.ChallengedAndValidProofProvided) {
-            claimData.status = ProposalStatus.Resolved;
-            status = GameStatus.DEFENDER_WINS;
-            resolvedAt = Timestamp.wrap(uint64(block.timestamp));
-
-            // Record the proof reward for the prover.
-            normalModeCredit[claimData.prover] += PROOF_REWARD;
-
-            // Record the remaining balance (proposer's bond) for the proposer.
-            normalModeCredit[gameCreator()] += address(this).balance - PROOF_REWARD;
-
-            emit Resolved(status);
-        }
+        // Mark the game as resolved.
+        claimData.status = ProposalStatus.Resolved;
+        resolvedAt = Timestamp.wrap(uint64(block.timestamp));
+        emit Resolved(status);
 
         return status;
     }
@@ -560,6 +540,12 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         emit GameClosed(bondDistributionMode);
     }
 
+    /// @notice Determines if the game is finished.
+    /// @return gameOver_ True if the game is either expired or proven.
+    function gameOver() public view returns (bool gameOver_) {
+        gameOver_ = claimData.deadline.raw() < uint64(block.timestamp) || claimData.prover != address(0);
+    }
+
     /// @notice Getter for the game type.
     /// @dev The reference impl should be entirely different depending on the type (fault, validity)
     ///      i.e. The game type should indicate the security model.
@@ -635,8 +621,8 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         registry_ = ANCHOR_STATE_REGISTRY;
     }
 
-    /// @notice Returns the proof reward.
-    function proofReward() external view returns (uint256 proofReward_) {
-        proofReward_ = PROOF_REWARD;
+    /// @notice Returns the challenger bond amount.
+    function challengerBond() external view returns (uint256 challengerBond_) {
+        challengerBond_ = CHALLENGER_BOND;
     }
 }

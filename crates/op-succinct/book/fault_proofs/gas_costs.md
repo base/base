@@ -14,6 +14,7 @@ Creating a new game through the factory costs approximately 330,000 gas. This in
 ### Challenge
 Challenging a game costs approximately 85,000 gas. This includes:
 - State validation checks
+- Game over checks
 - Updating game status
 - Setting challenge deadline
 - Recording challenger address
@@ -21,6 +22,7 @@ Challenging a game costs approximately 85,000 gas. This includes:
 
 ### Proving
 Proving a game costs approximately 280,000~300,000 gas. This includes:
+- Game over checks
 - Proof verification
 - State updates
 - Event emissions

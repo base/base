@@ -84,7 +84,7 @@ In this example, Proposal 3A would always resolve to `CHALLENGER_WINS`, as its p
 - `ROLLUP_CONFIG_HASH`: Hash of the chain's rollup configuration
 - `AGGREGATION_VKEY`: The verification key for the aggregation SP1 program.
 - `RANGE_VKEY_COMMITMENT`: The commitment to the BabyBear representation of the verification key of the range SP1 program.
-- `PROOF_REWARD`: Amount of ETH required to submit a challenge (the reward given to a proof generator).
+- `CHALLENGER_BOND`: Amount of ETH required to submit a challenge. If a prover supplies a valid proof, the bond is disbursed to the prover.
 - `ANCHOR_STATE_REGISTRY`: The anchor state registry contract.
 - `ACCESS_MANAGER`: The access manager contract.
 
@@ -196,15 +196,14 @@ function challenge() external payable returns (ProposalStatus)
 
 Allows participants to challenge a proposal by:
 
-- Depositing the proof reward (the challenge bond)
+- Depositing the challenger bond (the proof reward)
 - Setting the proposal deadline to be `+ provingTime` over the current timestamp
 - Updating proposal state to `ProposalStatus.Challenged`
 
 Attempting to challenge a game will revert if:
-- Game is already challenged, proven or resolved
-- Deadline has already passed
+- Game is over (past deadline or already proven)
 - Challenger is not whitelisted
-
+- Incorrect bond amount provided
 
 ### Proving
 
@@ -215,9 +214,7 @@ function prove(bytes calldata proofBytes) external returns (ProposalStatus)
 Validates a proposal with a proof:
 
 - Timing Requirements
-  - Must be submitted before the proof deadline
-  - Clock starts when game is created (for unchallenged proofs)
-  - Clock starts when game is challenged (for challenged proofs)
+  - Must be submitted before the game is over (deadline passed or already proven)
 
 - Proof Verification
   - Uses SP1 verifier to validate the aggregation proof against public inputs:
@@ -254,15 +251,20 @@ function resolve() external returns (GameStatus)
 
 Resolves the game by:
 
-- Checking parent game status. Ensures that the parent game is resolved and that the proposal is valid. If the proposal is invalid (aka `CHALLENGER_WINS`), then set the current game status to `CHALLENGER_WINS`.
-- If the current game is in `UnchallengedAndValidProofProvided` or `ChallengedAndValidProofProvided` state, then set `DEFENDER_WINS`.
-- Ensure that the deadline has passed, and if the proposal is `Unchallenged`, then set `DEFENDER_WINS`.
-- Ensure that the deadline has passed, and if the proposal is `Challenged`, then set `CHALLENGER_WINS`
-- Distributing bonds based on outcome
-  - Distribution result is stored in `mapping(address => uint256) public normalModeCredit;`.
-  - Actual distribution is done when appropriate recipient calls `claimCredit()`.
-  - If parent game is `CHALLENGER_WINS`, then the proposer's bond is distributed to the challenger.
-  - But if there was no challenge for the current game, then the proposer's bond is burned.
+- Checking parent game status:
+  - Must be resolved
+  - Must be respected
+  - Must not be blacklisted
+  - Must not be retired
+  - If parent game is `CHALLENGER_WINS`, current game automatically resolves to `CHALLENGER_WINS`
+
+- For other cases:
+  - Game must be over (past deadline or proven)
+  - Resolution depends on final state:
+    - Unchallenged: `DEFENDER_WINS`, proposer gets its bond back
+    - Challenged: `CHALLENGER_WINS`, challenger gets everything
+    - UnchallengedAndValidProofProvided: `DEFENDER_WINS`, proposer gets its bond back
+    - ChallengedAndValidProofProvided: `DEFENDER_WINS`, prover gets challenger bond, proposer gets its bond back
 
 Attempting to resolve will revert if:
 - Parent game is not yet resolved
@@ -305,7 +307,7 @@ Bond distribution modes:
 The contract implements a bond system to incentivize honest behavior:
 
 1. **Proposal Bond**: Required to submit a proposal.
-2. **Proof Reward (Challenge Bond)**: Required to challenge a proposal, which is paid to successful provers.
+2. **Challenger Bond (Proof Reward)**: Required to challenge a proposal, which is paid to successful provers.
 
 ### Time Windows
 
@@ -321,5 +323,7 @@ Two key time windows ensure fair participation:
 - Child games can only be resolved if their parent game is resolved
 
 ## Acknowledgements
+
+Special thanks to Kelvin Fichter for his invaluable contributions with thorough design reviews, technical guidance, and insightful feedback throughout the development process.
 
 Zach Obront, who worked on the first version of OP Succinct, prototyped a similar `MultiProof` dispute game implementation with OP Succinct as part of his work with the Ithaca team. This fault proof implementation takes some inspiration from his multiproof work.

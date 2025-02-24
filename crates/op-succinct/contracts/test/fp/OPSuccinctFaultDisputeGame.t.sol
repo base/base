@@ -9,7 +9,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {Claim, Duration, GameStatus, GameType, Hash, OutputRoot, Timestamp} from "src/dispute/lib/Types.sol";
 import {
     BadAuth,
-    ClockNotExpired,
     IncorrectBondAmount,
     AlreadyInitialized,
     UnexpectedRootClaim,
@@ -17,7 +16,13 @@ import {
     GameNotResolved,
     GameNotFinalized
 } from "src/dispute/lib/Errors.sol";
-import {ParentGameNotResolved, InvalidParentGame, ClaimAlreadyChallenged, AlreadyProven} from "src/fp/lib/Errors.sol";
+import {
+    ParentGameNotResolved,
+    InvalidParentGame,
+    ClaimAlreadyChallenged,
+    GameOver,
+    GameNotOver
+} from "src/fp/lib/Errors.sol";
 import {AggregationOutputs} from "src/lib/Types.sol";
 
 // Contracts
@@ -244,7 +249,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         assertEq(uint8(game.status()), uint8(GameStatus.IN_PROGRESS));
 
         // Should revert if we try to resolve before deadline.
-        vm.expectRevert(ClockNotExpired.selector);
+        vm.expectRevert(GameNotOver.selector);
         game.resolve();
 
         // Warp forward past the challenge deadline.
@@ -278,7 +283,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         assertEq(uint8(game.status()), uint8(GameStatus.IN_PROGRESS));
 
         // Should revert if we try to resolve before the first challenge deadline.
-        vm.expectRevert(ClockNotExpired.selector);
+        vm.expectRevert(GameNotOver.selector);
         game.resolve();
 
         // Prover proves the claim while unchallenged.
@@ -316,7 +321,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         assertEq(address(game).balance, 1 ether);
 
         // Try to resolve too early.
-        vm.expectRevert(ClockNotExpired.selector);
+        vm.expectRevert(GameNotOver.selector);
         game.resolve();
 
         // Challenger posts the bond incorrectly.
@@ -558,7 +563,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     function testCannotProveMultipleTimes() public {
         vm.startPrank(prover);
         game.prove(bytes(""));
-        vm.expectRevert(AlreadyProven.selector);
+        vm.expectRevert(GameOver.selector);
         game.prove(bytes(""));
         vm.stopPrank();
     }
@@ -582,9 +587,6 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     // Test: Cannot create a game with a parent game that is not respected
     // =========================================
     function testParentGameNotRespected() public {
-        // Set the respected game type to a different game type.
-        portal.setRespectedGameType(GameType.wrap(43));
-
         // Create a game that is not respected at index 2.
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
@@ -592,6 +594,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
             gameType, Claim.wrap(keccak256("not-respected-parent-game")), abi.encodePacked(uint256(3000), uint32(1))
         );
         vm.stopPrank();
+
+        // Set the respected game type to a different game type.
+        portal.setRespectedGameType(GameType.wrap(43));
 
         // Try to create a game with a parent game that is not respected.
         vm.startPrank(proposer);

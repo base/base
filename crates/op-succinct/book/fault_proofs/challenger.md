@@ -11,7 +11,7 @@ Before running the challenger, ensure you have:
 3. The DisputeGameFactory contract deployed (See [Deploy](./deploy.md))
 4. Sufficient ETH balance for:
    - Transaction fees
-   - Challenge bonds (proof rewards)
+   - Challenger bonds (proof rewards)
 5. Required environment variables properly configured (See [Configuration](#configuration))
 
 ## Overview
