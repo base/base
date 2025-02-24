@@ -7001,6 +7001,8 @@ dependencies = [
  "futures",
  "futures-util",
  "jsonrpsee",
+ "metrics",
+ "metrics-derive",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-jsonrpsee",
