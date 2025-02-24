@@ -1,6 +1,8 @@
-# End-to-End Tests
+# Testing Guide
 
-This guide explains how to run and understand the end-to-end tests for the OP Succinct fault dispute game system. All tests are in the [fault_proof/tests/e2e.rs](../../fault_proof/tests/e2e.rs) file.
+This guide explains how to run and understand the test suite for the OP Succinct fault dispute game system. Tests are located in:
+- End-to-end tests: fault_proof/tests/e2e.rs
+- Integration tests: fault_proof/tests/integration.rs
 
 ## Prerequisites
 
@@ -16,13 +18,23 @@ See [Proposer Configuration](./proposer.md#configuration) and [Challenger Config
 
 ## Available Tests
 
-### 1. Proposer Wins Scenario
+### Integration Tests
+
+#### 1. Proposer Defense Scenario
+`test_proposer_defends_successfully()`: Tests the scenario where:
+- The proposer creates a valid game
+- A malicious challenger challenges it
+- The proposer successfully defends with a valid proof
+
+### End-to-End Tests
+
+#### 1. Proposer Wins Scenario
 `test_e2e_proposer_wins()`: Tests the happy path where:
 - The honest proposer creates valid games
 - No challenges are submitted
 - Games are resolved successfully in favor of the proposer after timeout
 
-### 2. Challenger Wins Scenario
+#### 2. Challenger Wins Scenario
 `test_e2e_challenger_wins()`: Tests the scenario where:
 - The malicious proposer creates invalid games
 - The challenger successfully challenges them
@@ -30,7 +42,20 @@ See [Proposer Configuration](./proposer.md#configuration) and [Challenger Config
 
 ## Running the Tests
 
-To run an e2e test:
+To run a specific test:
 ```bash
+# For e2e tests
 cargo test --test e2e <TEST_NAME>
+
+# For integration tests
+cargo test --test integration <TEST_NAME>
+```
+
+For example:
+```bash
+# Run the proposer defense test
+cargo test --test integration test_proposer_defends_successfully
+
+# Run the proposer wins e2e test
+cargo test --test e2e test_e2e_proposer_wins
 ```

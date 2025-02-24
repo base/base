@@ -32,6 +32,9 @@ pub struct ProposerConfig {
     /// The type of game to propose.
     pub game_type: u32,
 
+    /// The number of games to check for defense.
+    pub max_games_to_check_for_defense: u64,
+
     /// Whether to enable game resolution.
     /// When game resolution is not enabled, the proposer will only propose new games.
     pub enable_game_resolution: bool,
@@ -62,6 +65,9 @@ impl ProposerConfig {
                 .unwrap_or("30".to_string())
                 .parse()?,
             game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
+            max_games_to_check_for_defense: env::var("MAX_GAMES_TO_CHECK_FOR_DEFENSE")
+                .unwrap_or("100".to_string())
+                .parse()?,
             enable_game_resolution: env::var("ENABLE_GAME_RESOLUTION")
                 .unwrap_or("true".to_string())
                 .parse()?,
