@@ -15,7 +15,7 @@ use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::HeaderProvider};
-use reth_optimism_chainspec::{OpChainSpec, OP_SEPOLIA};
+use reth_optimism_chainspec::{OpChainSpec, BASE_SEPOLIA};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_eth_api::RpcReceipt;
@@ -63,32 +63,42 @@ impl<E> EthApiExt<E> {
         Self { eth_api, cache }
     }
 
-    pub fn transform_block(&self, block: OpBlock) -> RpcBlock<Optimism> {
+    pub fn transform_block(&self, block: OpBlock, full: bool) -> RpcBlock<Optimism> {
         let header: alloy_consensus::Header = block.header.clone();
         let transactions = block.body.transactions.to_vec();
-        let transactions_with_senders = transactions
-            .into_iter()
-            .zip(block.body.recover_signers().unwrap());
-        let converted_txs = transactions_with_senders
-            .enumerate()
-            .map(|(idx, (tx, sender))| {
-                let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
-                let tx_info = TransactionInfo {
-                    hash: Some(*tx.tx_hash()),
-                    block_hash: None,
-                    block_number: Some(block.number),
-                    index: Some(idx as u64),
-                    base_fee: None,
-                };
-                self.transform_tx(signed_tx_ec_recovered, tx_info)
-            })
-            .collect();
 
-        RpcBlock::<Optimism> {
-            header: Header::from_consensus(header.seal_slow(), None, None),
-            transactions: BlockTransactions::Full(converted_txs),
-            uncles: Vec::new(),
-            withdrawals: None,
+        if full {
+            let transactions_with_senders = transactions
+                .into_iter()
+                .zip(block.body.recover_signers().unwrap());
+            let converted_txs = transactions_with_senders
+                .enumerate()
+                .map(|(idx, (tx, sender))| {
+                    let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
+                    let tx_info = TransactionInfo {
+                        hash: Some(*tx.tx_hash()),
+                        block_hash: None,
+                        block_number: Some(block.number),
+                        index: Some(idx as u64),
+                        base_fee: None,
+                    };
+                    self.transform_tx(signed_tx_ec_recovered, tx_info)
+                })
+                .collect();
+            RpcBlock::<Optimism> {
+                header: Header::from_consensus(header.seal_slow(), None, None),
+                transactions: BlockTransactions::Full(converted_txs),
+                uncles: Vec::new(),
+                withdrawals: None,
+            }
+        } else {
+            let tx_hashes = transactions.into_iter().map(|tx| *tx.tx_hash()).collect();
+            RpcBlock::<Optimism> {
+                header: Header::from_consensus(header.seal_slow(), None, None),
+                transactions: BlockTransactions::Hashes(tx_hashes),
+                uncles: Vec::new(),
+                withdrawals: None,
+            }
         }
     }
 
@@ -106,7 +116,7 @@ impl<E> EthApiExt<E> {
         if inner.is_deposit() {
             let receipt = self
                 .cache
-                .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash))
+                .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash.unwrap().to_string()))
                 .unwrap();
             if let OpReceipt::Deposit(receipt) = receipt {
                 deposit_receipt_version = receipt.deposit_receipt_version;
@@ -207,7 +217,7 @@ where
             BlockNumberOrTag::Pending => {
                 info!("pending block by number, delegating to flashblocks");
                 if let Some(block) = self.cache.get::<OpBlock>(&number.to_string()) {
-                    return Ok(Some(self.transform_block(block)));
+                    return Ok(Some(self.transform_block(block, _full)));
                 } else {
                     return Ok(None);
                 }
@@ -226,12 +236,12 @@ where
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
         if let Some(receipt) = self
             .cache
-            .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash))
+            .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
         {
             return Ok(Some(self.transform_receipt(
                 receipt,
                 tx_hash,
-                OP_SEPOLIA.as_ref(), // placeholder
+                BASE_SEPOLIA.as_ref(), // hardcoded for now
             )));
         }
         info!("no receipt found in cache, using standard flow");
