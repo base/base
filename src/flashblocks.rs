@@ -11,6 +11,9 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::error;
 use url::Url;
 
+use crate::metrics::Metrics;
+use std::time::Instant;
+
 #[derive(Debug, Deserialize, Serialize)]
 struct FlashbotsMessage {
     method: String,
@@ -36,6 +39,7 @@ pub struct FlashblocksClient {
     sender: mpsc::Sender<ActorMessage>,
     mailbox: mpsc::Receiver<ActorMessage>,
     cache: Arc<Cache>,
+    metrics: Metrics,
 }
 
 impl FlashblocksClient {
@@ -46,6 +50,7 @@ impl FlashblocksClient {
             sender,
             mailbox,
             cache,
+            metrics: Default::default(),
         }
     }
 
@@ -59,15 +64,16 @@ impl FlashblocksClient {
         let mut mailbox = std::mem::replace(&mut self.mailbox, mpsc::channel(1).1);
 
         // Spawn WebSocket handler with integrated actor loop
+        let metrics = self.metrics.clone(); // Take reference before the loop
         tokio::spawn(async move {
             loop {
                 match connect_async(url.as_str()).await {
                     Ok((ws_stream, _)) => {
                         println!("WebSocket connected!");
                         let (_write, mut read) = ws_stream.split();
-
                         // Handle incoming messages
                         while let Some(msg) = read.next().await {
+                            metrics.upstream_messages.increment(1);
                             match msg {
                                 Ok(Message::Binary(bytes)) => {
                                     // Decode binary message to string first
@@ -94,6 +100,7 @@ impl FlashblocksClient {
                                 }
                                 Ok(Message::Close(_)) => break,
                                 Err(e) => {
+                                    metrics.upstream_errors.increment(1);
                                     error!("Error receiving message: {}", e);
                                     break;
                                 }
@@ -118,6 +125,7 @@ impl FlashblocksClient {
             while let Some(message) = mailbox.recv().await {
                 match message {
                     ActorMessage::BestPayload { payload } => {
+                        let msg_processing_start_time = Instant::now();
                         let metadata: Metadata = serde_json::from_value(payload.metadata)
                             .expect("failed to deserialize metadata");
                         let receipts = metadata.receipts;
@@ -190,7 +198,6 @@ impl FlashblocksClient {
                             cache_clone
                                 .set(&format!("receipt:{:?}", tx_hash), receipt, Some(10))
                                 .expect("failed to set receipt in cache");
-                            println!("stored receipt {:?}", tx_hash);
                         }
 
                         // Store account balances
@@ -198,8 +205,11 @@ impl FlashblocksClient {
                             cache_clone
                                 .set(&format!("{:?}", address), &balance, Some(10))
                                 .expect("failed to set account balance in cache");
-                            println!("stored account balance {:?}", address);
                         }
+
+                        metrics
+                            .block_processing_duration
+                            .record(msg_processing_start_time.elapsed());
                     }
                 }
             }
