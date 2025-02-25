@@ -41,7 +41,7 @@ impl Cache {
     pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
         let store = self.store.read().unwrap();
         store.get(key).and_then(|entry| {
-            if entry.expiry.map_or(false, |e| Instant::now() > e) {
+            if entry.expiry.is_some_and(|e| Instant::now() > e) {
                 return None;
             }
             serde_json::from_slice(&entry.value).ok()
