@@ -130,10 +130,7 @@ impl<E> EthApiExt<E> {
         } else {
             base_fee
                 .map(|base_fee| {
-                    inner
-                        .effective_tip_per_gas(base_fee as u64)
-                        .unwrap_or_default()
-                        + base_fee as u128
+                    inner.effective_tip_per_gas(base_fee).unwrap_or_default() + base_fee as u128
                 })
                 .unwrap_or_else(|| inner.max_fee_per_gas())
         };
@@ -234,7 +231,7 @@ where
             return Ok(Some(self.transform_receipt(
                 receipt,
                 tx_hash,
-                &OP_SEPOLIA.as_ref(), // placeholder
+                OP_SEPOLIA.as_ref(), // placeholder
             )));
         }
         info!("no receipt found in cache, using standard flow");

@@ -158,7 +158,7 @@ impl FlashblocksClient {
                             blob_gas_used: 0,
                             excess_blob_gas: 0,
                             payload_inner: ExecutionPayloadV2 {
-                                withdrawals: withdrawals,
+                                withdrawals,
                                 payload_inner: ExecutionPayloadV1 {
                                     parent_hash: base.parent_hash,
                                     fee_recipient: base.fee_recipient,
@@ -183,13 +183,13 @@ impl FlashblocksClient {
                             .expect("failed to convert execution payload to block");
 
                         cache_clone
-                            .set(&format!("pending"), &block, Some(10))
+                            .set("pending", &block, Some(10))
                             .expect("failed to set block in cache");
 
                         // Store receipts
                         let all_receipts = receipts.values().cloned().collect::<Vec<_>>();
                         cache_clone
-                            .set(&format!("pending_receipts"), &all_receipts, Some(10))
+                            .set("pending_receipts", &all_receipts, Some(10))
                             .expect("failed to set receipts in cache");
 
                         // Store tx receipts
