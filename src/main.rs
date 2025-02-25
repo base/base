@@ -1,5 +1,6 @@
 mod cache;
 mod flashblocks;
+mod metrics;
 mod rpc;
 
 use std::sync::Arc;
