@@ -227,7 +227,6 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        println!("get_transaction_receipt {:?}", tx_hash);
         if let Some(receipt) = self
             .cache
             .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash))
