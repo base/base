@@ -185,7 +185,6 @@ impl FlashblocksClient {
                         cache_clone
                             .set(&format!("pending"), &block, Some(10))
                             .expect("failed to set block in cache");
-                        println!("block number {:?}", block.number);
 
                         // Store receipts
                         let all_receipts = receipts.values().cloned().collect::<Vec<_>>();
