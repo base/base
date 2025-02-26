@@ -12,6 +12,7 @@ use alloy_rpc_types_engine::ExecutionPayloadV2;
 use alloy_rpc_types_engine::PayloadAttributes;
 use alloy_rpc_types_engine::PayloadStatusEnum;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
+use alloy_rpc_types_eth::Block;
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::http_client::{transport::HttpBackend, HttpClient};
 use jsonrpsee::proc_macros::rpc;
@@ -212,7 +213,7 @@ impl<'a> BlockGenerator<'a> {
     }
 
     /// Initialize the block generator by fetching the latest block
-    pub async fn init(&mut self) -> eyre::Result<()> {
+    pub async fn init(&mut self) -> eyre::Result<Block> {
         let latest_block = self.engine_api.latest().await?.expect("block not found");
         self.latest_hash = latest_block.header.hash;
 
@@ -221,7 +222,7 @@ impl<'a> BlockGenerator<'a> {
             self.sync_validation_node(validation_api).await?;
         }
 
-        Ok(())
+        Ok(latest_block)
     }
 
     /// Sync the validation node to the current state

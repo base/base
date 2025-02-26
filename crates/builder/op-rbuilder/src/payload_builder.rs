@@ -6,7 +6,6 @@ use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use op_alloy_consensus::{OpDepositReceipt, OpTxType};
-use reth_basic_payload_builder::*;
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::{env::EvmEnv, system_calls::SystemCaller, ConfigureEvm, NextBlockEnvAttributes};
 use reth_execution_types::ExecutionOutcome;
@@ -31,7 +30,7 @@ use revm::{
     db::{states::bundle_state::BundleRetention, BundleState, State},
     primitives::{
         BlockEnv, CfgEnvWithHandlerCfg, EVMError, EnvWithHandlerCfg, InvalidTransaction,
-        ResultAndState, TxEnv,
+        ResultAndState, SpecId, TxEnv,
     },
     Database, DatabaseCommit,
 };
@@ -276,7 +275,12 @@ where
 
 impl<EvmConfig, Txs> OpPayloadBuilder<EvmConfig, Txs>
 where
-    EvmConfig: ConfigureEvm<Header = Header>,
+    EvmConfig: ConfigureEvm<
+        Spec = SpecId,
+        Header = Header,
+        Transaction = OpTransactionSigned,
+        EvmError<ProviderError> = EVMError<ProviderError>,
+    >,
 {
     /// Returns the configured [`CfgEnvWithHandlerCfg`] and [`BlockEnv`] for the targeted payload
     /// (that has the `parent` as its parent).
@@ -730,7 +734,7 @@ where
                 ));
             }
 
-            // Convert the transaction to a [TransactionSignedEcRecovered]. This is
+            // Convert the transaction to a [Recovered<TransactionSigned>]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
             // will just pull in its `from` address.

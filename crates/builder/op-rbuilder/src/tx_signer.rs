@@ -4,7 +4,7 @@ use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, PrimitiveSignature as Signature, B256, U256};
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::{public_key_to_address, TransactionSignedEcRecovered};
+use reth_primitives::{public_key_to_address, Recovered};
 use secp256k1::{Message, SecretKey, SECP256K1};
 
 /// Simple struct to sign txs/messages.
@@ -40,7 +40,7 @@ impl Signer {
     pub fn sign_tx(
         &self,
         tx: OpTypedTransaction,
-    ) -> Result<TransactionSignedEcRecovered<OpTransactionSigned>, secp256k1::Error> {
+    ) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
         let signature_hash = match &tx {
             OpTypedTransaction::Legacy(tx) => tx.signature_hash(),
             OpTypedTransaction::Eip2930(tx) => tx.signature_hash(),
@@ -50,12 +50,7 @@ impl Signer {
         };
         let signature = self.sign_message(signature_hash)?;
         let signed = OpTransactionSigned::new_unhashed(tx, signature);
-        Ok(
-            TransactionSignedEcRecovered::<OpTransactionSigned>::new_unchecked(
-                signed,
-                self.address,
-            ),
-        )
+        Ok(Recovered::new_unchecked(signed, self.address))
     }
 
     pub fn random() -> Self {
@@ -101,6 +96,6 @@ mod test {
         assert_eq!(signed_tx.signer(), address);
 
         let signed = signed_tx.into_tx();
-        assert_eq!(signed.recover_signer(), Some(address));
+        assert_eq!(signed.recover_signer().ok(), Some(address));
     }
 }

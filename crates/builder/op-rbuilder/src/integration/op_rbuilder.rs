@@ -93,7 +93,8 @@ impl Service for OpRbuilderConfig {
             .arg(self.data_dir.as_ref().expect("data_dir not set"))
             .arg("--disable-discovery")
             .arg("--port")
-            .arg(self.network_port.expect("network_port not set").to_string());
+            .arg(self.network_port.expect("network_port not set").to_string())
+            .arg("--ipcdisable");
 
         if let Some(builder_private_key) = &self.builder_private_key {
             cmd.arg("--rollup.builder-secret-key")

@@ -5,7 +5,7 @@ use reth_chain_state::CanonStateNotification;
 use reth_exex::{ExExContext, ExExEvent};
 use reth_node_api::{FullNodeComponents, NodeTypes};
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
-use reth_primitives::{Block, SealedBlockWithSenders};
+use reth_primitives::{Block, RecoveredBlock};
 use reth_provider::Chain;
 use tracing::info;
 
@@ -117,24 +117,25 @@ impl Monitoring {
 fn decode_chain_into_builder_txs(
     chain: &Chain<OpPrimitives>,
     builder_signer: Option<Signer>,
-) -> Vec<(&SealedBlockWithSenders<Block<OpTransactionSigned>>, bool)> {
+) -> Vec<(&RecoveredBlock<Block<OpTransactionSigned>>, bool)> {
     chain
         // Get all blocks and receipts
         .blocks_and_receipts()
         // Get all receipts
         .map(|(block, receipts)| {
-            let has_builder_tx = block
-                .body()
-                .transactions
-                .iter()
-                .zip(receipts.iter().flatten())
-                .any(move |(tx, receipt)| {
-                    receipt.status()
-                        && tx.input().starts_with(OP_BUILDER_TX_PREFIX)
-                        && tx.recover_signer().is_some_and(|signer| {
-                            builder_signer.is_some_and(|bs| signer == bs.address)
-                        })
-                });
+            let has_builder_tx =
+                block
+                    .body()
+                    .transactions
+                    .iter()
+                    .zip(receipts.iter())
+                    .any(move |(tx, receipt)| {
+                        receipt.status()
+                            && tx.input().starts_with(OP_BUILDER_TX_PREFIX)
+                            && tx.recover_signer().is_ok_and(|signer| {
+                                builder_signer.is_some_and(|bs| signer == bs.address)
+                            })
+                    });
             (block, has_builder_tx)
         })
         .collect()
