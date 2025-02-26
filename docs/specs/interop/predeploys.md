@@ -95,10 +95,10 @@ Emits the `ExecutingMessage` event to signal the transaction has a cross chain m
 
 The following fields are required for validating a cross chain message:
 
-| Name     | Type       | Description                                                                |
-| -------- | ---------- | -------------------------------------------------------------------------- |
-| `_id`      | Identifier | A [`Identifier`] pointing to the initiating message.                         |
-| `_msgHash` | `bytes32`    | The keccak256 hash of the message payload matching the initiating message. |
+| Name       | Type       | Description                                                                |
+| ---------- | ---------- | -------------------------------------------------------------------------- |
+| `_id`      | Identifier | A [`Identifier`] pointing to the initiating message.                       |
+| `_msgHash` | `bytes32`  | The keccak256 hash of the message payload matching the initiating message. |
 
 ```solidity
 function validateMessage(Identifier calldata _id, bytes32 _msgHash)
@@ -768,9 +768,9 @@ sequenceDiagram
   L2SBA->>SuperERC20_A: crosschainBurn(from, amount)
   SuperERC20_A-->SuperERC20_A: emit CrosschainBurn(from, amount)
   L2SBA->>Messenger_A: sendMessage(chainId, message)
-  Messenger_A->>L2SBA: return msgHash_ 
+  Messenger_A->>L2SBA: return msgHash_
   L2SBA-->L2SBA: emit SentERC20(tokenAddr, from, to, amount, destination)
-  L2SBA->>from: return msgHash_ 
+  L2SBA->>from: return msgHash_
   Inbox->>Messenger_B: relayMessage()
   Messenger_B->>L2SBB: relayERC20(tokenAddr, from, to, amount)
   L2SBB->>SuperERC20_B: crosschainMint(to, amount)
@@ -801,7 +801,7 @@ The bridging of `SuperchainERC20` using the `SuperchainTokenBridge` will require
   to the same address on the target chain.
   Similarly, the `relayERC20()` function should only process messages originating from the same address.
   - Note: The [`Create2Deployer` preinstall](../protocol/preinstalls.md#create2deployer)
-  and the custom Factory will ensure same address deployment.
+    and the custom Factory will ensure same address deployment.
 - Locally initiated: The bridging action should be initialized
   from the chain where funds are located only.
   - This is because the same address might correspond to different users cross-chain.

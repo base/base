@@ -81,6 +81,8 @@
     - [SuperchainWETH](./interop/superchain-weth.md)
     - [Derivation](./interop/derivation.md)
     - [Transaction Pool](./interop/tx-pool.md)
+    - [OptimismPortal](./interop/optimism-portal.md)
+    - [ETH Lockbox](./interop/eth-lockbox.md)
   - [OP Contracts Manager](./experimental/op-contracts-manager.md)
   - [Governance Token](./experimental/gov-token.md)
   - [Multithreaded Cannon FPVM](./experimental/cannon-fault-proof-vm-mt.md)

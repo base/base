@@ -20,8 +20,6 @@ a single Superchain network.
 
 ## Configurable values
 
-Configurability of the Superchain is currently limited to two values:
-
 The `SuperchainConfig` contract manages the following configuration values:
 
 - `PAUSED_SLOT`: A boolean value indicating whether the Superchain is paused.
@@ -59,8 +57,8 @@ layer.
 When the Pause is activated, the following methods are disabled:
 
 1. `OptimismPortal.proveWithdrawalTransaction()`
-1. `OptimismPortal.finalizeWithdrawalTransaction()`
-1. `L1CrossDomainMessenger.relayMessage()`
-1. `StandardBridge.finalizeBridgeERC20()`
-1. `StandardBridge.finalizeBridgeETH()`
-1. `L1ERC721Bridge.finalizeBridgeERC721()`
+2. `OptimismPortal.finalizeWithdrawalTransaction()`
+3. `L1CrossDomainMessenger.relayMessage()`
+4. `StandardBridge.finalizeBridgeERC20()`
+5. `StandardBridge.finalizeBridgeETH()`
+6. `L1ERC721Bridge.finalizeBridgeERC721()`
