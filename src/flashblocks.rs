@@ -214,7 +214,7 @@ impl FlashblocksClient {
                                     extra_data: base.extra_data,
                                     base_fee_per_gas: base.base_fee_per_gas,
                                     block_hash: diff.block_hash,
-                                    transactions: transactions,
+                                    transactions,
                                 },
                             },
                         };
@@ -249,7 +249,7 @@ impl FlashblocksClient {
                         }
 
                         // Store tx transaction signed
-                        for transaction in block.body.transactions {
+                        for (idx, transaction) in block.body.transactions.iter().enumerate() {
                             // check if exists, if not update
                             let existing_tx = cache_clone
                                 .get::<OpTransactionSigned>(&transaction.tx_hash().to_string());
@@ -257,6 +257,14 @@ impl FlashblocksClient {
                                 cache_clone
                                     .set(&transaction.tx_hash().to_string(), &transaction, Some(10))
                                     .expect("failed to set tx in cache");
+                                // update tx index
+                                cache_clone
+                                    .set(
+                                        &format!("tx_idx:{}", transaction.tx_hash()),
+                                        &idx,
+                                        Some(10),
+                                    )
+                                    .expect("failed to set tx index in cache");
                             }
                         }
 
@@ -271,11 +279,13 @@ impl FlashblocksClient {
                             .block_processing_duration
                             .record(msg_processing_start_time.elapsed());
 
-                        // check duration
-                        println!(
-                            "block processing time: {:?}",
-                            msg_processing_start_time.elapsed()
-                        );
+                        // check duration on the most heavy payload
+                        if payload.index == 0 {
+                            println!(
+                                "block processing time: {:?}",
+                                msg_processing_start_time.elapsed()
+                            );
+                        }
                     }
                 }
             }

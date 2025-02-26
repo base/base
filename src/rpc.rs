@@ -4,7 +4,7 @@ use crate::cache::Cache;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
+use alloy_primitives::{Address, Sealable, TxHash, U256};
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types::{BlockTransactions, Header};
 use jsonrpsee::{
@@ -175,8 +175,11 @@ impl<E> EthApiExt<E> {
 
         let meta = TransactionMeta {
             tx_hash,
-            index: 0,                    // placeholder
-            block_hash: B256::default(), // placeholder
+            index: self
+                .cache
+                .get::<u64>(&format!("tx_idx:{}", tx_hash))
+                .unwrap(),
+            block_hash: block.header.hash_slow(),
             block_number: block.number,
             base_fee: block.base_fee_per_gas,
             excess_blob_gas: block.excess_blob_gas,
