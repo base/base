@@ -219,7 +219,7 @@ where
         match number {
             BlockNumberOrTag::Pending => {
                 info!("pending block by number, delegating to flashblocks");
-                if let Some(block) = self.cache.get::<OpBlock>(&number.to_string()) {
+                if let Some(block) = self.cache.get::<OpBlock>("pending") {
                     return Ok(Some(self.transform_block(block, _full)));
                 } else {
                     return Ok(None);
@@ -237,20 +237,22 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        if let Some(receipt) = self
-            .cache
-            .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
-        {
-            return Ok(Some(self.transform_receipt(
-                receipt,
-                tx_hash,
-                BASE_SEPOLIA.as_ref(), // hardcoded for now
-            )));
+        let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
+        // check if receipt is none
+        if let Ok(None) = receipt {
+            if let Some(receipt) = self
+                .cache
+                .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
+            {
+                return Ok(Some(self.transform_receipt(
+                    receipt,
+                    tx_hash,
+                    BASE_SEPOLIA.as_ref(),
+                )));
+            }
         }
-        info!("no receipt found in cache, using standard flow");
-        EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-            .await
-            .map_err(Into::into)
+
+        receipt.map_err(Into::into)
     }
 
     async fn get_balance(

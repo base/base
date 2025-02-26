@@ -143,6 +143,12 @@ impl FlashblocksClient {
                             continue;
                         }
 
+                        // Prevent updating to older blocks
+                        let current_block = cache_clone.get::<OpBlock>("pending");
+                        if current_block.is_some() && current_block.unwrap().number > block_number {
+                            continue;
+                        }
+
                         // base only appears once in the first payload index
                         let base = if let Some(base) = payload.base {
                             cache_clone
@@ -223,6 +229,8 @@ impl FlashblocksClient {
                             .try_into_block()
                             .expect("failed to convert execution payload to block");
 
+                        // "pending" because users query the block using "pending" tag
+                        // This is an optimistic update will likely need to tweak in the future
                         cache_clone
                             .set("pending", &block, Some(10))
                             .expect("failed to set block in cache");
