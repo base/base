@@ -12,6 +12,10 @@
   - [Valid Withdrawal](#valid-withdrawal)
   - [Invalid Withdrawal](#invalid-withdrawal)
   - [L2 Withdrawal Sender](#l2-withdrawal-sender)
+  - [Block Output](#block-output)
+  - [Output Root](#output-root)
+  - [Super Output](#super-output)
+  - [Super Root](#super-root)
 - [Assumptions](#assumptions)
   - [aOP-001: Dispute Game contracts properly report important properties](#aop-001-dispute-game-contracts-properly-report-important-properties)
     - [Mitigations](#mitigations)
@@ -31,11 +35,13 @@
   - [paused](#paused)
   - [guardian](#guardian)
   - [proofMaturityDelaySeconds](#proofmaturitydelayseconds)
+  - [superRootsActive](#superrootsactive)
   - [disputeGameFinalityDelaySeconds](#disputegamefinalitydelayseconds)
   - [respectedGameType](#respectedgametype)
   - [respectedGameTypeUpdatedAt](#respectedgametypeupdatedat)
   - [l2Sender](#l2sender)
-  - [proveWithdrawalTransaction](#provewithdrawaltransaction)
+  - [proveWithdrawalTransaction (Super Roots)](#provewithdrawaltransaction-super-roots)
+  - [proveWithdrawalTransaction (Output Roots)](#provewithdrawaltransaction-output-roots)
   - [checkWithdrawal](#checkwithdrawal)
   - [finalizeWithdrawalTransaction](#finalizewithdrawaltransaction)
 
@@ -104,6 +110,83 @@ An **Invalid Withdrawal** is any withdrawal that is not a [Valid Withdrawal](#va
 The **L2 Withdrawal Sender** is the address of the account that triggered a given withdrawal
 transaction on L2. The `OptimismPortal` is expected to expose a variable that includes this value
 when [finalizing](#finalized-withdrawal) a withdrawal.
+
+### Block Output
+
+A **Block Output**, commonly called an **Output**, is a data structure that wraps the key hash
+elements of a given L2 block.
+
+The structure of the Block Output is versioned (32 bytes). The current Block Output version is
+`0x0000000000000000000000000000000000000000000000000000000000000000` (V0). A V0 Block Output has
+the following structure:
+
+```solidity
+struct BlockOutput {
+  bytes32 version;
+  bytes32 stateRoot;
+  bytes32 messagePasserStorageRoot;
+  bytes32 blockHash;
+}
+```
+
+Where:
+
+- `version` is a version identifier that describes the structure of the Output Root
+- `stateRoot` is the state root of the L2 block this Output Root corresponds to
+- `messagePasserStorageRoot` is the storage root of the `L2ToL1MessagePasser` contract at the L2
+  block this Output Root corresponds to
+- `blockHash` is the block hash of the L2 block this Output Root corresponds to
+
+### Output Root
+
+An **Output Root** is a commitment to a [Block Output](#block-output). A detailed description of
+this commitment can be found [here](../../protocol/proposals.md#l2-output-commitment-construction).
+
+### Super Output
+
+A **Super Output** is a data structure that commits all of the [Block Outputs](#block-output) for
+all chains within the Superchain Interop Set at a given timestamp. A Super Output can also commit
+to a single Block Output to maintain compatibility with chains outside of the Interop Set.
+
+The structure of the Super Output is versioned (1 byte). The current version is `0x01` (V1). A V1
+Super Output has the following structure:
+
+```solidity
+struct OutputRootWithChainId {
+  uint256 chainId;
+  bytes32 root;
+}
+
+struct SuperOutput {
+  uint64 timestamp;
+  OutputRootWithChainid[] outputRoots;
+}
+```
+
+### Super Root
+
+A **Super Root** is a commitment to a [Super Output](#super-output), computed as:
+
+```solidity
+keccak256(encodeSuperRoot(SuperRoot))
+```
+
+Where `encodeSuperRoot` for the V1 Super Output is:
+
+```solidity
+function encodeSuperRoot(SuperRoot memory root) returns (bytes) {
+  require(root.outputRoots.length > 0); // Super Root must have at least one Output Root.
+  return concat(
+    0x01, // Super Root version byte
+    root.timestamp,
+    [
+      concat(outputRoot.chainId, outputRoot.root)
+      for outputRoot
+      in root.outputRoots
+    ]
+  );
+}
+```
 
 ## Assumptions
 
@@ -204,6 +287,7 @@ see this as a critical system risk.
 - MUST set the value of the `SystemConfig` contract.
 - MUST set the value of the `SuperchainConfig` contract.
 - MUST set the value of the `AnchorStateRegistry` contract.
+- MUST set `superRootsActive` to either `true` or `false`.
 - MUST set the value of the [L2 Withdrawal Sender](#l2-withdrawal-sender) variable to the default
   value if the value is not set already.
 - MUST initialize the resource metering configuration.
@@ -219,6 +303,11 @@ Returns the address of the Guardian as per `SuperchainConfig.guardian()`.
 ### proofMaturityDelaySeconds
 
 Returns the value of the [Proof Maturity Delay](#proof-maturity-delay).
+
+### superRootsActive
+
+Returns the value of the `superRootsActive` variable which determines if the `OptimismPortal` will
+use the standard Output Root proof or the Super Root proof.
 
 ### disputeGameFinalityDelaySeconds
 
@@ -251,9 +340,10 @@ has not been initialized then this value will be `address(0)` and should not be 
 `OptimismPortal` is not currently executing an withdrawal transaction then this value will be
 `0x000000000000000000000000000000000000dEaD` and should not be used.
 
-### proveWithdrawalTransaction
+### proveWithdrawalTransaction (Super Roots)
 
-Allows a user to [prove](#proven-withdrawal) a withdrawal transaction.
+Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an `OptimismPortal`
+that uses dispute games that argue over [Super Roots](#super-root).
 
 - MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
 - MUST revert if the withdrawal is being proven against a game that is not a
@@ -262,6 +352,37 @@ Allows a user to [prove](#proven-withdrawal) a withdrawal transaction.
   [Respected Game](./anchor-state-registry.md#respected-game).
 - MUST revert if the withdrawal is being proven against a game that has resolved in favor of the
   Challenger.
+- MUST revert if `superRootsActive` is `false`.
+- MUST revert if the proof provided by the user of the preimage of the Super Root that the dispute
+  game argues about is invalid. This proof is verified by hashing the user-provided Super Root
+  preimage and comparing them to the Super Root in the referenced dispute game.
+- MUST revert if the pointer index of the Output Root inside of the Super Root provided by the user
+  is beyond the size of the Output Roots array or points to a chain ID other than the chain ID
+  stored within the `SystemConfig` contract for the `OptimismPortal`.
+- MUST revert if the proof provided by the user of the preimage of the Output Root is invalid. This
+  proof is verified by hashing the user-provided preimage and comparing them to the Output Root.
+- MUST revert if the provided merkle trie proof that the withdrawal was included within the root
+  claim of the provided dispute game is invalid.
+- MUST otherwise store a record of the withdrawal proof that includes the hash of the proven  
+  withdrawal, the address of the game against which it was proven, and the block timestamp at which
+  the proof transaction was submitted.
+
+### proveWithdrawalTransaction (Output Roots)
+
+Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an `OptimismPortal`
+that uses dispute games that argue over [Output Roots](#output-root).
+
+- MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
+- MUST revert if the withdrawal is being proven against a game that is not a
+  [Proper Game](./anchor-state-registry.md#proper-game).
+- MUST revert if the withdrawal is being proven against a game that is not a
+  [Respected Game](./anchor-state-registry.md#respected-game).
+- MUST revert if the withdrawal is being proven against a game that has resolved in favor of the
+  Challenger.
+- MUST revert if `superRootsActive` is `true`.
+- MUST revert if the proof provided by the user of the preimage of the Output Root that the dispute
+  game argues about is invalid. This proof is verified by hashing the user-provided preimage and
+  comparing them to the root claim of the referenced dispute game.
 - MUST revert if the provided merkle trie proof that the withdrawal was included within the root
   claim of the provided dispute game is invalid.
 - MUST otherwise store a record of the withdrawal proof that includes the hash of the proven  
