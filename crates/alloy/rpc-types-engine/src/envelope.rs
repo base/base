@@ -3,11 +3,14 @@
 //! This module uses the `snappy` compression algorithm to decompress the payload.
 //! The license for snappy can be found in the `SNAPPY-LICENSE` at the root of the repository.
 
-use crate::{OpExecutionPayload, OpExecutionPayloadSidecar};
+use crate::{OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloc::vec::Vec;
-use alloy_eips::eip4895::Withdrawal;
+use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
 use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
-use alloy_rpc_types_engine::ExecutionPayload;
+use alloy_rpc_types_engine::{
+    CancunPayloadFields, ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV3,
+    PraguePayloadFields,
+};
 
 /// Struct aggregating [`OpExecutionPayload`] and [`OpExecutionPayloadSidecar`] and encapsulating
 /// complete payload supplied for execution.
@@ -26,6 +29,48 @@ impl OpExecutionData {
         Self { payload, sidecar }
     }
 
+    /// Creates a new instance from args to engine API method `newPayloadV2`.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv2>
+    pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
+        Self::new(OpExecutionPayload::v2(payload), OpExecutionPayloadSidecar::default())
+    }
+
+    /// Creates a new instance from args to engine API method `newPayloadV3`.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>
+    pub fn v3(
+        payload: ExecutionPayloadV3,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+    ) -> Self {
+        Self::new(
+            OpExecutionPayload::v3(payload),
+            OpExecutionPayloadSidecar::v3(CancunPayloadFields::new(
+                parent_beacon_block_root,
+                versioned_hashes,
+            )),
+        )
+    }
+
+    /// Creates a new instance from args to engine API method `newPayloadV4`.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
+    pub fn v4(
+        payload: OpExecutionPayloadV4,
+        versioned_hashes: Vec<B256>,
+        parent_beacon_block_root: B256,
+        execution_requests: Requests,
+    ) -> Self {
+        Self::new(
+            OpExecutionPayload::v4(payload),
+            OpExecutionPayloadSidecar::v4(
+                CancunPayloadFields::new(parent_beacon_block_root, versioned_hashes),
+                PraguePayloadFields::new(execution_requests),
+            ),
+        )
+    }
+
     /// Returns the parent beacon block root, if any.
     pub fn parent_beacon_block_root(&self) -> Option<B256> {
         self.sidecar.parent_beacon_block_root()
@@ -34,6 +79,7 @@ impl OpExecutionData {
     /// Return the withdrawals for the payload or attributes.
     pub const fn withdrawals(&self) -> Option<&Vec<Withdrawal>> {
         match &self.payload {
+            OpExecutionPayload::V1(_) => None,
             OpExecutionPayload::V2(execution_payload_v2) => Some(&execution_payload_v2.withdrawals),
             OpExecutionPayload::V3(execution_payload_v3) => {
                 Some(execution_payload_v3.withdrawals())

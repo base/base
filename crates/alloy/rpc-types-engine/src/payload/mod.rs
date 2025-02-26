@@ -8,7 +8,10 @@ use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloy_consensus::{Block, EMPTY_ROOT_HASH};
 use alloy_eips::{Decodable2718, Typed2718};
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::{ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{
+    ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
+    ExecutionPayloadV3,
+};
 use error::OpPayloadError;
 
 /// An execution payload, which can be either [`ExecutionPayloadV2`], [`ExecutionPayloadV3`], or
@@ -17,6 +20,8 @@ use error::OpPayloadError;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum OpExecutionPayload {
+    /// V1 payload
+    V1(ExecutionPayloadV1),
     /// V2 payload
     V2(ExecutionPayloadV2),
     /// V3 payload
@@ -286,61 +291,119 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
 }
 
 impl OpExecutionPayload {
-    /// Returns a reference to the V2 payload, if any.
-    pub const fn as_v2(&self) -> &ExecutionPayloadV2 {
+    /// Creates a new instance from `newPayloadV2` payload, i.e. [`V1`](Self::V1) or
+    /// [`V2`](Self::V2) variant.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv2>
+    pub fn v2(payload: ExecutionPayloadInputV2) -> Self {
+        match payload.into_payload() {
+            ExecutionPayload::V1(payload) => Self::V1(payload),
+            ExecutionPayload::V2(payload) => Self::V2(payload),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Creates a new instance from `newPayloadV3` payload, i.e. [`V3`](Self::V3) variant.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv3>
+    pub const fn v3(payload: ExecutionPayloadV3) -> Self {
+        Self::V3(payload)
+    }
+
+    /// Creates a new instance from `newPayloadV4` payload, i.e. [`V4`](Self::V4) variant.
+    ///
+    /// Spec: <https://specs.optimism.io/protocol/exec-engine.html#engine_newpayloadv4>
+    pub const fn v4(payload: OpExecutionPayloadV4) -> Self {
+        Self::V4(payload)
+    }
+
+    /// Returns a reference to the V1 payload.
+    pub const fn as_v1(&self) -> &ExecutionPayloadV1 {
         match self {
-            Self::V2(payload) => payload,
-            Self::V3(payload) => &payload.payload_inner,
-            Self::V4(payload) => &payload.payload_inner.payload_inner,
+            Self::V1(payload) => payload,
+            Self::V2(payload) => &payload.payload_inner,
+            Self::V3(payload) => &payload.payload_inner.payload_inner,
+            Self::V4(payload) => &payload.payload_inner.payload_inner.payload_inner,
+        }
+    }
+
+    /// Returns a mutable reference to the V1 payload.
+    pub fn as_v1_mut(&mut self) -> &mut ExecutionPayloadV1 {
+        match self {
+            Self::V1(payload) => payload,
+            Self::V2(payload) => &mut payload.payload_inner,
+            Self::V3(payload) => &mut payload.payload_inner.payload_inner,
+            Self::V4(payload) => &mut payload.payload_inner.payload_inner.payload_inner,
+        }
+    }
+
+    /// Returns a reference to the V2 payload, if any.
+    pub const fn as_v2(&self) -> Option<&ExecutionPayloadV2> {
+        match self {
+            Self::V1(_) => None,
+            Self::V2(payload) => Some(payload),
+            Self::V3(payload) => Some(&payload.payload_inner),
+            Self::V4(payload) => Some(&payload.payload_inner.payload_inner),
         }
     }
 
     /// Returns a mutable reference to the V2 payload, if any.
-    pub fn as_v2_mut(&mut self) -> &ExecutionPayloadV2 {
+    pub fn as_v2_mut(&mut self) -> Option<&mut ExecutionPayloadV2> {
         match self {
-            Self::V2(payload) => payload,
-            Self::V3(payload) => &mut payload.payload_inner,
-            Self::V4(payload) => &payload.payload_inner.payload_inner,
+            Self::V1(_) => None,
+            Self::V2(payload) => Some(payload),
+            Self::V3(payload) => Some(&mut payload.payload_inner),
+            Self::V4(payload) => Some(&mut payload.payload_inner.payload_inner),
         }
     }
+
     /// Returns a reference to the V3 payload, if any.
     pub const fn as_v3(&self) -> Option<&ExecutionPayloadV3> {
         match self {
-            Self::V2(_) => None,
+            Self::V1(_) | Self::V2(_) => None,
             Self::V3(payload) => Some(payload),
             Self::V4(payload) => Some(&payload.payload_inner),
         }
     }
 
     /// Returns a mutable reference to the V3 payload, if any.
-    pub fn as_v3_mut(&mut self) -> Option<&ExecutionPayloadV3> {
+    pub fn as_v3_mut(&mut self) -> Option<&mut ExecutionPayloadV3> {
         match self {
-            Self::V2(_) => None,
+            Self::V1(_) | Self::V2(_) => None,
             Self::V3(payload) => Some(payload),
-            Self::V4(payload) => Some(&payload.payload_inner),
+            Self::V4(payload) => Some(&mut payload.payload_inner),
         }
     }
 
     /// Returns a reference to the V4 payload, if any.
     pub const fn as_v4(&self) -> Option<&OpExecutionPayloadV4> {
         match self {
-            Self::V2(_) | Self::V3(_) => None,
+            Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
         }
     }
+
+    /// Returns a mutable reference to the V4 payload, if any.
+    pub const fn as_v4_mut(&mut self) -> Option<&mut OpExecutionPayloadV4> {
+        match self {
+            Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
+            Self::V4(payload) => Some(payload),
+        }
+    }
+
     /// Returns the parent hash for the payload.
     pub const fn parent_hash(&self) -> B256 {
-        self.as_v2().payload_inner.parent_hash
+        self.as_v1().parent_hash
     }
 
     /// Returns the block hash for the payload.
     pub const fn block_hash(&self) -> B256 {
-        self.as_v2().payload_inner.block_hash
+        self.as_v1().block_hash
     }
 
     /// Returns the block number for this payload.
     pub const fn block_number(&self) -> u64 {
-        self.as_v2().payload_inner.block_number
+        self.as_v1().block_number
     }
 
     #[allow(rustdoc::broken_intra_doc_links)]
@@ -356,11 +419,14 @@ impl OpExecutionPayload {
     ///
     /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
     pub fn try_into_block<T: Decodable2718 + Typed2718>(self) -> Result<Block<T>, OpPayloadError> {
-        if !self.as_v2().withdrawals.is_empty() {
-            return Err(OpPayloadError::NonEmptyL1Withdrawals);
+        if let Some(payload) = self.as_v2() {
+            if !payload.withdrawals.is_empty() {
+                return Err(OpPayloadError::NonEmptyL1Withdrawals);
+            }
         }
         let block = match self {
-            Self::V2(payload) => payload.try_into_block()?,
+            Self::V1(payload) => return Ok(payload.try_into_block()?),
+            Self::V2(payload) => return Ok(payload.try_into_block()?),
             Self::V3(payload) => payload.try_into_block()?,
             Self::V4(payload) => payload.try_into_block()?,
         };
@@ -442,7 +508,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&payload).unwrap(), response_v2);
 
         let payload_v2: ExecutionPayloadV2 = serde_json::from_str(response_v2).unwrap();
-        assert_eq!(payload.as_v2(), &payload_v2);
+        assert_eq!(payload.as_v2(), Some(&payload_v2));
     }
 
     #[test]
