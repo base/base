@@ -7,7 +7,7 @@ import {Utils} from "../helpers/Utils.sol";
 
 // Libraries
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
-import {LibCWIA} from "@solady-v0.0.281/utils/legacy/LibCWIA.sol";
+import {LibClone} from "@solady/utils/LibClone.sol";
 
 import {GameType, Claim} from "src/dispute/lib/Types.sol";
 
@@ -18,7 +18,7 @@ import {OPSuccinctDisputeGame} from "../../src/validity/OPSuccinctDisputeGame.so
 import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
 
 contract OPSuccinctDisputeGameFactoryTest is Test, Utils {
-    using LibCWIA for address;
+    using LibClone for address;
 
     // Example proof data for the BoB testnet. Tx: https://sepolia.etherscan.io/tx/0x35df99dce5db3d7644a005bd582af2d66533b56fdb01970f248d96e8053fc0ba
     uint256 checkpointedL1BlockNum = 7438547;
