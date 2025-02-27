@@ -384,7 +384,7 @@ impl OpExecutionPayload {
     }
 
     /// Returns a mutable reference to the V4 payload, if any.
-    pub const fn as_v4_mut(&mut self) -> Option<&mut OpExecutionPayloadV4> {
+    pub fn as_v4_mut(&mut self) -> Option<&mut OpExecutionPayloadV4> {
         match self {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
