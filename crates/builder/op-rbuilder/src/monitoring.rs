@@ -1,13 +1,14 @@
 use alloy_consensus::{Transaction, TxReceipt};
+use alloy_primitives::U256;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use reth::core::primitives::SignedTransaction;
 use reth_chain_state::CanonStateNotification;
 use reth_exex::{ExExContext, ExExEvent};
 use reth_node_api::{FullNodeComponents, NodeTypes};
-use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_primitives::{Block, RecoveredBlock};
-use reth_provider::Chain;
-use tracing::info;
+use reth_provider::{Chain, ExecutionOutcome};
+use tracing::{info, warn};
 
 use crate::{metrics::OpRBuilderMetrics, tx_signer::Signer};
 
@@ -16,6 +17,7 @@ const OP_BUILDER_TX_PREFIX: &[u8] = b"Block Number:";
 pub struct Monitoring {
     builder_signer: Option<Signer>,
     metrics: OpRBuilderMetrics,
+    execution_outcome: ExecutionOutcome<OpReceipt>,
 }
 
 impl Monitoring {
@@ -23,6 +25,7 @@ impl Monitoring {
         Self {
             builder_signer,
             metrics: Default::default(),
+            execution_outcome: Default::default(),
         }
     }
 
@@ -31,7 +34,6 @@ impl Monitoring {
     where
         Node: FullNodeComponents<Types: NodeTypes<Primitives = OpPrimitives>>,
     {
-        // TODO: add builder balance monitoring
         // Process all new chain state notifications
         while let Some(notification) = ctx.notifications.try_next().await? {
             if let Some(reverted_chain) = notification.reverted_chain() {
@@ -83,6 +85,27 @@ impl Monitoring {
             }
         }
 
+        let num_reverted_tx = decode_chain_into_reverted_txs(chain);
+        self.metrics.inc_num_reverted_tx(num_reverted_tx);
+
+        self.execution_outcome
+            .extend(chain.execution_outcome().clone());
+        let builder_balance =
+            decode_state_into_builder_balance(&self.execution_outcome, self.builder_signer)
+                .and_then(|balance| {
+                    balance
+                        .to_string()
+                        .parse::<f64>()
+                        .map_err(|e| {
+                            warn!("Failed to parse builder balance: {}", e);
+                            e
+                        })
+                        .ok()
+                });
+        if let Some(balance) = builder_balance {
+            self.metrics.set_builder_balance(balance);
+        }
+
         Ok(())
     }
 
@@ -91,6 +114,7 @@ impl Monitoring {
     /// This function decodes all transactions in the block, updates the metrics for builder built blocks
     async fn revert(&mut self, chain: &Chain<OpPrimitives>) -> eyre::Result<()> {
         info!("Processing new chain revert");
+        self.execution_outcome.revert_to(chain.first().number - 1);
         let mut blocks = decode_chain_into_builder_txs(chain, self.builder_signer);
         // Reverse the order of txs to start reverting from the tip
         blocks.reverse();
@@ -139,4 +163,37 @@ fn decode_chain_into_builder_txs(
             (block, has_builder_tx)
         })
         .collect()
+}
+
+/// Decode chain of blocks and check if any transactions has reverted
+fn decode_chain_into_reverted_txs(chain: &Chain<OpPrimitives>) -> usize {
+    chain
+        // Get all blocks and receipts
+        .blocks_and_receipts()
+        // Get all receipts
+        .map(|(block, receipts)| {
+            block
+                .body()
+                .transactions
+                .iter()
+                .zip(receipts.iter())
+                .filter(|(_, receipt)| !receipt.status())
+                .count()
+        })
+        .sum()
+}
+
+/// Decode state and find the last builder balance
+fn decode_state_into_builder_balance(
+    execution_outcome: &ExecutionOutcome<OpReceipt>,
+    builder_signer: Option<Signer>,
+) -> Option<U256> {
+    builder_signer.and_then(|signer| {
+        execution_outcome
+            .bundle
+            .state
+            .iter()
+            .find(|(address, _)| *address == &signer.address)
+            .and_then(|(_, account)| account.info.as_ref().map(|info| info.balance))
+    })
 }

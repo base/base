@@ -4,6 +4,8 @@ use reth_metrics::{metrics::Counter, metrics::Gauge, metrics::Histogram, Metrics
 #[derive(Metrics, Clone)]
 #[metrics(scope = "op_rbuilder")]
 pub struct OpRBuilderMetrics {
+    /// Builder balance of the last block
+    pub builder_balance: Gauge,
     /// Number of builder landed blocks
     pub builder_landed_blocks: Gauge,
     /// Last built block height
@@ -40,9 +42,15 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
+    /// Number of reverted transactions
+    pub num_reverted_tx: Counter,
 }
 
 impl OpRBuilderMetrics {
+    pub fn inc_num_reverted_tx(&self, num_reverted_tx: usize) {
+        self.num_reverted_tx.increment(num_reverted_tx as u64);
+    }
+
     pub fn inc_builder_landed_blocks(&self) {
         self.builder_landed_blocks.increment(1);
     }
@@ -57,5 +65,9 @@ impl OpRBuilderMetrics {
 
     pub fn set_last_landed_block_height(&self, height: u64) {
         self.last_landed_block_height.set(height as f64);
+    }
+
+    pub fn set_builder_balance(&self, balance: f64) {
+        self.builder_balance.set(balance);
     }
 }
