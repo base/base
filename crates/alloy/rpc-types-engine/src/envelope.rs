@@ -116,7 +116,7 @@ impl OpExecutionData {
                 Some(execution_payload_v3.withdrawals())
             }
             OpExecutionPayload::V4(op_execution_payload_v4) => {
-                Some(op_execution_payload_v4.withdrawals())
+                Some(op_execution_payload_v4.payload_inner.withdrawals())
             }
         }
     }
