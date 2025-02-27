@@ -149,15 +149,17 @@ where
     async fn get_anchor_l2_block_number(&self, game_type: u32) -> Result<U256>;
 
     /// Get the oldest game address with a given condition.
-    async fn get_oldest_game_address<C>(
+    async fn get_oldest_game_address<S, O>(
         &self,
         max_games_to_check: u64,
         l2_provider: L2Provider,
-        status_check: C,
+        status_check: S,
+        output_root_check: O,
         log_message: &str,
     ) -> Result<Option<Address>>
     where
-        C: Fn(ProposalStatus) -> bool + Send + Sync;
+        S: Fn(ProposalStatus) -> bool + Send + Sync,
+        O: Fn(B256, B256) -> bool + Send + Sync;
 
     /// Get the oldest challengable game address.
     ///
@@ -336,15 +338,17 @@ where
         Ok(anchor_l2_block_number)
     }
 
-    async fn get_oldest_game_address<C>(
+    async fn get_oldest_game_address<S, O>(
         &self,
         max_games_to_check: u64,
         l2_provider: L2Provider,
-        status_check: C,
+        status_check: S,
+        output_root_check: O,
         log_message: &str,
     ) -> Result<Option<Address>>
     where
-        C: Fn(ProposalStatus) -> bool + Send + Sync,
+        S: Fn(ProposalStatus) -> bool + Send + Sync,
+        O: Fn(B256, B256) -> bool + Send + Sync,
     {
         let Some(latest_game_index) = self.fetch_latest_game_index().await? else {
             tracing::info!("No games exist yet");
@@ -391,7 +395,7 @@ where
                 .compute_output_root_at_block(block_number)
                 .await?;
 
-            if output_root != game_claim {
+            if output_root_check(output_root, game_claim) {
                 tracing::info!(
                     "{} {:?} at game index {:?} with L2 block number: {:?}",
                     log_message,
@@ -418,6 +422,7 @@ where
             max_games_to_check_for_challenge,
             l2_provider,
             |status| status == ProposalStatus::Unchallenged,
+            |output_root, game_claim| output_root != game_claim,
             "Oldest challengable game",
         )
         .await
@@ -433,6 +438,7 @@ where
             max_games_to_check_for_defense,
             l2_provider,
             |status| status == ProposalStatus::Challenged,
+            |output_root, game_claim| output_root == game_claim,
             "Oldest defensible game",
         )
         .await
