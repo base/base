@@ -5,9 +5,9 @@ pub mod v3;
 pub mod v4;
 
 use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
-use alloy_consensus::{Block, EMPTY_ROOT_HASH};
-use alloy_eips::{Decodable2718, Typed2718};
-use alloy_primitives::B256;
+use alloy_consensus::{Block, BlockHeader, Transaction, EMPTY_ROOT_HASH};
+use alloy_eips::{Decodable2718, Encodable2718, Typed2718};
+use alloy_primitives::{Sealable, B256};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3,
@@ -291,6 +291,60 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
 }
 
 impl OpExecutionPayload {
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the
+    /// [`OpExecutionPayloadSidecar`] extracted from the block.
+    ///
+    /// See also [`from_block_unchecked`](OpExecutionPayload::from_block_unchecked).
+    ///
+    /// Note: This re-calculates the block hash.
+    pub fn from_block_slow<T, H>(block: &Block<T, H>) -> (Self, OpExecutionPayloadSidecar)
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader + Sealable,
+    {
+        Self::from_block_unchecked(block.hash_slow(), block)
+    }
+
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the
+    /// [`OpExecutionPayloadSidecar`] extracted from the block.
+    ///
+    /// See also [`ExecutionPayload::from_block_unchecked`].
+    /// See also [`OpExecutionPayloadSidecar::from_block`].
+    pub fn from_block_unchecked<T, H>(
+        block_hash: B256,
+        block: &Block<T, H>,
+    ) -> (Self, OpExecutionPayloadSidecar)
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader,
+    {
+        let sidecar = OpExecutionPayloadSidecar::from_block(block);
+
+        let execution_payload = match block.withdrawals_root() {
+            Some(withdrawals_root) if sidecar.isthmus().is_some() => {
+                // block with (empty) request hashes: V4
+                Self::V4(OpExecutionPayloadV4::from_v3_with_withdrawals_root(
+                    ExecutionPayloadV3::from_block_unchecked(block_hash, block),
+                    withdrawals_root,
+                ))
+            }
+            Some(_) if block.header.parent_beacon_block_root().is_some() => {
+                // block with parent beacon block root: at least V3
+                Self::V3(ExecutionPayloadV3::from_block_unchecked(block_hash, block))
+            }
+            Some(_) => {
+                // block with withdrawals root: at least V2
+                Self::V2(ExecutionPayloadV2::from_block_unchecked(block_hash, block))
+            }
+            None => {
+                // otherwise V1
+                Self::V1(ExecutionPayloadV1::from_block_unchecked(block_hash, block))
+            }
+        };
+
+        (execution_payload, sidecar)
+    }
+
     /// Creates a new instance from `newPayloadV2` payload, i.e. [`V1`](Self::V1) or
     /// [`V2`](Self::V2) variant.
     ///

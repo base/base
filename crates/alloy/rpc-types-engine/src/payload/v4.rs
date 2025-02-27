@@ -22,6 +22,17 @@ pub struct OpExecutionPayloadV4 {
 }
 
 impl OpExecutionPayloadV4 {
+    /// Converts [`ExecutionPayloadV3`] to [`OpExecutionPayloadV4`] using the given L2 withdrawals
+    /// root.
+    ///
+    /// See also [`ExecutionPayloadV3::from_block_unchecked`].
+    pub const fn from_v3_with_withdrawals_root(
+        payload: ExecutionPayloadV3,
+        withdrawals_root: B256,
+    ) -> Self {
+        Self { withdrawals_root, payload_inner: payload }
+    }
+
     /// Converts [`OpExecutionPayloadV4`] to [`Block`].
     ///
     /// This performs the same conversion as the underlying V3 payload, but inserts the L2

@@ -5,7 +5,8 @@
 
 use crate::{OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloc::vec::Vec;
-use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
+use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
+use alloy_eips::{eip4895::Withdrawal, eip7685::Requests, Encodable2718};
 use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV3,
@@ -27,6 +28,36 @@ impl OpExecutionData {
     /// Creates new instance of [`OpExecutionData`].
     pub const fn new(payload: OpExecutionPayload, sidecar: OpExecutionPayloadSidecar) -> Self {
         Self { payload, sidecar }
+    }
+
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`OpExecutionPayloadSidecar`]
+    /// extracted from the block.
+    ///
+    /// See also [`from_block_unchecked`](OpExecutionPayload::from_block_slow).
+    ///
+    /// Note: This re-calculates the block hash.
+    pub fn from_block_slow<T, H>(block: &Block<T, H>) -> Self
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader + Sealable,
+    {
+        let (payload, sidecar) = OpExecutionPayload::from_block_slow(block);
+
+        Self::new(payload, sidecar)
+    }
+
+    /// Conversion from [`alloy_consensus::Block`]. Also returns the [`OpExecutionPayloadSidecar`]
+    /// extracted from the block.
+    ///
+    /// See also [`OpExecutionPayload::from_block_unchecked`].
+    pub fn from_block_unchecked<T, H>(block_hash: B256, block: &Block<T, H>) -> Self
+    where
+        T: Encodable2718 + Transaction,
+        H: BlockHeader,
+    {
+        let (payload, sidecar) = OpExecutionPayload::from_block_unchecked(block_hash, block);
+
+        Self::new(payload, sidecar)
     }
 
     /// Creates a new instance from args to engine API method `newPayloadV2`.
