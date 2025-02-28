@@ -80,7 +80,8 @@ where
     }
 
     pub async fn prove_game(&self, game_address: Address) -> Result<TxHash> {
-        let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await {
+        let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await
+        {
             Ok(f) => f,
             Err(e) => {
                 tracing::error!("Failed to create data fetcher: {}", e);
