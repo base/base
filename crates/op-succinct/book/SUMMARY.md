@@ -27,6 +27,7 @@
   - [Deploy FP Contracts](./fault_proofs/deploy.md)
   - [How to run the FP Proposer](./fault_proofs/proposer.md)
   - [How to run the FP Challenger](./fault_proofs/challenger.md)
+  - [Running with Docker](./fault_proofs/docker.md)
   - [Gas Costs](./fault_proofs/gas_costs.md)
   - [Testing Guide](./fault_proofs/testing.md)
 - [Experimental](./experimental/intro.md)
