@@ -47,8 +47,6 @@ pub struct ProposerConfig {
 
 impl ProposerConfig {
     pub fn from_env() -> Result<Self> {
-        dotenv::from_filename(".env.proposer").ok();
-
         Ok(Self {
             l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
             l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
