@@ -1,9 +1,12 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
 use alloy_consensus::{
-    SignableTransaction, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
+    transaction::RlpEcdsaTx, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEip7702, TxLegacy, Typed2718,
 };
 use alloy_eips::eip2930::AccessList;
-use alloy_primitives::{Address, Bytes, TxKind, B256};
+use alloy_primitives::{
+    bytes::BufMut, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256,
+};
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP
 /// Stack.
@@ -93,7 +96,7 @@ impl OpTypedTransaction {
     /// Calculates the signing hash for the transaction.
     ///
     /// Returns `None` if the tx is a deposit transaction.
-    pub fn signature_hash(&self) -> Option<B256> {
+    pub fn checked_signature_hash(&self) -> Option<B256> {
         match self {
             Self::Legacy(tx) => Some(tx.signature_hash()),
             Self::Eip2930(tx) => Some(tx.signature_hash()),
@@ -138,6 +141,19 @@ impl OpTypedTransaction {
     /// Returns `true` if transaction is deposit transaction.
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
+    }
+
+    /// Calculate the transaction hash for the given signature.
+    ///
+    /// Note: Returns the regular tx hash if this is a deposit variant
+    pub fn tx_hash(&self, signature: &Signature) -> TxHash {
+        match self {
+            Self::Legacy(tx) => tx.tx_hash(signature),
+            Self::Eip2930(tx) => tx.tx_hash(signature),
+            Self::Eip1559(tx) => tx.tx_hash(signature),
+            Self::Eip7702(tx) => tx.tx_hash(signature),
+            Self::Deposit(tx) => tx.tx_hash(),
+        }
     }
 }
 
@@ -314,7 +330,7 @@ impl Transaction for OpTypedTransaction {
         }
     }
 
-    fn blob_versioned_hashes(&self) -> Option<&[alloy_primitives::B256]> {
+    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
         match self {
             Self::Legacy(tx) => tx.blob_versioned_hashes(),
             Self::Eip2930(tx) => tx.blob_versioned_hashes(),
@@ -332,6 +348,46 @@ impl Transaction for OpTypedTransaction {
             Self::Eip7702(tx) => tx.authorization_list(),
             Self::Deposit(tx) => tx.authorization_list(),
         }
+    }
+}
+
+impl SignableTransaction<Signature> for OpTypedTransaction {
+    fn set_chain_id(&mut self, chain_id: ChainId) {
+        match self {
+            Self::Legacy(tx) => tx.set_chain_id(chain_id),
+            Self::Eip2930(tx) => tx.set_chain_id(chain_id),
+            Self::Eip1559(tx) => tx.set_chain_id(chain_id),
+            Self::Eip7702(tx) => tx.set_chain_id(chain_id),
+            Self::Deposit(_) => {}
+        }
+    }
+
+    fn encode_for_signing(&self, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.encode_for_signing(out),
+            Self::Eip2930(tx) => tx.encode_for_signing(out),
+            Self::Eip1559(tx) => tx.encode_for_signing(out),
+            Self::Eip7702(tx) => tx.encode_for_signing(out),
+            Self::Deposit(_) => {}
+        }
+    }
+
+    fn payload_len_for_signature(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.payload_len_for_signature(),
+            Self::Eip2930(tx) => tx.payload_len_for_signature(),
+            Self::Eip1559(tx) => tx.payload_len_for_signature(),
+            Self::Eip7702(tx) => tx.payload_len_for_signature(),
+            Self::Deposit(_) => 0,
+        }
+    }
+
+    fn into_signed(self, signature: Signature) -> Signed<Self, Signature>
+    where
+        Self: Sized,
+    {
+        let hash = self.tx_hash(&signature);
+        Signed::new_unchecked(self, signature, hash)
     }
 }
 
