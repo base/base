@@ -176,10 +176,15 @@ programs so they call out to the L1 instead of calculating the result inside the
 
 ## Block Sealing
 
-To match EVM execution as closely as possible, the post-execution transactions to process logs and the request queue
-included as part of [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110), [EIP-7002](https://eips.ethereum.org/EIPS/eip-7002),
-and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) must be executed. However, the resulting
-`requests` is ignored because Isthmus block `requests` must be an empty array.
+In the OP Stack, `EIP-7685` is no-op'd, and the `requestsHash` is always set to `sha256('')` (as noted in
+[header validity rules](#header-validity-rules)). As such, [EIP-6110](https://eips.ethereum.org/EIPS/eip-6110),
+[EIP-7002](https://eips.ethereum.org/EIPS/eip-7002), and [EIP-7251](https://eips.ethereum.org/EIPS/eip-7251) are not
+enabled either. The OP Stack execution layer must ensure that the post-block filtering of events in the deposit contract
+(EIP-6110) as well as the `EIP-7002` + `EIP-7251` system calls are _not invoked_ during the block sealing process after
+Isthmus activation.
+
+Users of the OP Stack may still permissionlessly deploy these smart contracts, but they will not be treated as special
+by the OP Stack execution layer, and the system calls introduced in L1's Pectra hardfork are not considered.
 
 ## Engine API Updates
 
