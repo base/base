@@ -1,7 +1,7 @@
 # OP Contracts Manager
 
 [Optimism Monorepo releases]: https://github.com/ethereum-optimism/optimism/releases
-[contract releases]: https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/VERSIONING.md
+[contract releases]: https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/meta/VERSIONING.md
 [standard configuration]: ../protocol/configurability.md
 [superchain registry]: https://github.com/ethereum-optimism/superchain-registry
 [ethereum-lists/chains]: https://github.com/ethereum-lists/chains
