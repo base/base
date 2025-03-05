@@ -12,7 +12,7 @@ use alloy_consensus::{
 };
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::private::alloy_rlp::Encodable;
-use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
@@ -57,6 +57,7 @@ use reth_primitives::{transaction::SignedTransactionIntoRecoveredExt, BlockBody,
 use reth_primitives_traits::proofs;
 use reth_primitives_traits::Block;
 use reth_primitives_traits::RecoveredBlock;
+use reth_primitives_traits::SignedTransaction;
 use reth_provider::CanonStateSubscriptions;
 use reth_provider::{
     HashedPostStateProvider, ProviderError, StateProviderFactory, StateRootProvider,
@@ -71,6 +72,7 @@ use revm::{
     primitives::{ExecutionResult, ResultAndState},
     DatabaseCommit,
 };
+use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::{fmt::Display, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -259,10 +261,18 @@ where
         let pool = self.pool.clone();
         let block_build_start_time = Instant::now();
 
-        match self.build_payload(args, |attrs| {
-            #[allow(clippy::unit_arg)]
-            self.best_transactions.best_transactions(pool, attrs)
-        })? {
+        match self.build_payload(
+            args,
+            |attrs| {
+                #[allow(clippy::unit_arg)]
+                self.best_transactions
+                    .best_transactions(pool.clone(), attrs)
+            },
+            |hashes| {
+                #[allow(clippy::unit_arg)]
+                self.best_transactions.remove_reverted(pool.clone(), hashes)
+            },
+        )? {
             BuildOutcome::Better { payload, .. } => {
                 best_payload.set(payload);
                 self.metrics
@@ -309,6 +319,7 @@ where
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<N::SignedTx>, OpBuiltPayload<N>>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
+        remove_reverted: impl FnOnce(Vec<TxHash>),
     ) -> Result<BuildOutcome<OpBuiltPayload<N>>, PayloadBuilderError>
     where
         Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
@@ -335,7 +346,7 @@ where
             metrics: Default::default(),
         };
 
-        let builder = OpBuilder::new(best);
+        let builder = OpBuilder::new(best, remove_reverted);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(state_provider);
@@ -393,12 +404,19 @@ where
 pub struct OpBuilder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
+    /// Removes reverted transactions from the tx pool
+    #[debug(skip)]
+    remove_reverted: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> OpBuilder<'a, Txs> {
-    fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
+    fn new(
+        best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
+        remove_reverted: impl FnOnce(Vec<TxHash>) + 'a,
+    ) -> Self {
         Self {
             best: Box::new(best),
+            remove_reverted: Box::new(remove_reverted),
         }
     }
 }
@@ -418,7 +436,10 @@ impl<Txs> OpBuilder<'_, Txs> {
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StorageRootProvider,
     {
-        let Self { best } = self;
+        let Self {
+            best,
+            remove_reverted,
+        } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
         // 1. apply eip-4788 pre block contract call
@@ -513,6 +534,8 @@ impl<Txs> OpBuilder<'_, Txs> {
         } else {
             None
         };
+
+        remove_reverted(info.reverted_tx_hashes.iter().copied().collect());
 
         let payload = ExecutedPayload {
             info,
@@ -680,6 +703,13 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = Transaction>;
+
+    /// Removes reverted transactions from the tx pool
+    fn remove_reverted<Pool: TransactionPool<Transaction = Transaction>>(
+        &self,
+        pool: Pool,
+        hashes: Vec<TxHash>,
+    );
 }
 
 impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
@@ -689,6 +719,14 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
         BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
+    }
+
+    fn remove_reverted<Pool: TransactionPool<Transaction = T>>(
+        &self,
+        pool: Pool,
+        hashes: Vec<TxHash>,
+    ) {
+        pool.remove_transactions(hashes);
     }
 }
 
@@ -716,6 +754,8 @@ pub struct ExecutionInfo<N: NodePrimitives> {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
+    /// Tracks the reverted transaction hashes to remove from the transaction pool
+    pub reverted_tx_hashes: HashSet<TxHash>,
 }
 
 impl<N: NodePrimitives> ExecutionInfo<N> {
@@ -728,6 +768,7 @@ impl<N: NodePrimitives> ExecutionInfo<N> {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
+            reverted_tx_hashes: HashSet::new(),
         }
     }
 
@@ -1176,6 +1217,9 @@ where
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
+                trace!(target: "payload_builder", ?tx, "skipping reverted transaction");
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                info.reverted_tx_hashes.insert(*tx.tx_hash());
                 continue;
             }
 
