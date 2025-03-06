@@ -463,13 +463,13 @@ impl<'a> BlockGenerator<'a> {
 
     /// Submit a deposit transaction to seed an account with ETH
     #[allow(dead_code)]
-    pub async fn deposit(&mut self, to: Address, value: u128) -> eyre::Result<B256> {
+    pub async fn deposit(&mut self, address: Address, value: u128) -> eyre::Result<B256> {
         // Create deposit transaction
         let deposit_tx = TxDeposit {
             source_hash: B256::default(),
-            from: address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92200"), // Standard deposit source
-            to: TxKind::Call(to),                                       // Recipient address
-            mint: Some(value),                                          // Amount to deposit
+            from: address, // Set the sender to the address of the account to seed
+            to: TxKind::Create,
+            mint: Some(value), // Amount to deposit
             value: U256::default(),
             gas_limit: 210000,
             is_system_transaction: true,
