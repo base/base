@@ -42,6 +42,12 @@ pub enum OpTxEnvelope {
     Deposit(Sealed<TxDeposit>),
 }
 
+impl AsRef<Self> for OpTxEnvelope {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
 impl From<Signed<TxLegacy>> for OpTxEnvelope {
     fn from(v: Signed<TxLegacy>) -> Self {
         Self::Legacy(v)
