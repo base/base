@@ -21,7 +21,8 @@ import {
     InvalidParentGame,
     ClaimAlreadyChallenged,
     GameOver,
-    GameNotOver
+    GameNotOver,
+    IncorrectDisputeGameFactory
 } from "src/fp/lib/Errors.sol";
 import {AggregationOutputs} from "src/lib/Types.sol";
 
@@ -614,7 +615,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
     // Test: Cannot close the game before it is resolved
     // =========================================
     function testCannotCloseGameBeforeResolved() public {
-        vm.expectRevert(GameNotResolved.selector);
+        vm.expectRevert(GameNotFinalized.selector);
         game.closeGame();
     }
 
@@ -672,6 +673,36 @@ contract OPSuccinctFaultDisputeGameTest is Test {
 
         vm.expectRevert(BadAuth.selector);
         game.challenge{value: 1 ether}();
+
+        vm.stopPrank();
+    }
+
+    // =========================================
+    // Test: Cannot initialize new factory with same implementation
+    // =========================================
+    function testCannotInitializeNewFactoryWithSameImplementation() public {
+        // Deploy the implementation contract for new DisputeGameFactory.
+        DisputeGameFactory newFactoryImpl = new DisputeGameFactory();
+
+        // Deploy a proxy pointing to the new factory implementation.
+        ERC1967Proxy newFactoryProxy = new ERC1967Proxy(
+            address(newFactoryImpl), abi.encodeWithSelector(DisputeGameFactory.initialize.selector, address(this))
+        );
+
+        // Cast the proxy to the DisputeGameFactory interface.
+        DisputeGameFactory newFactory = DisputeGameFactory(address(newFactoryProxy));
+
+        // Set the implementation with the same implementation as the old factory.
+        newFactory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
+        newFactory.setInitBond(gameType, 1 ether);
+
+        vm.startPrank(proposer);
+        vm.deal(proposer, 1 ether);
+
+        vm.expectRevert(IncorrectDisputeGameFactory.selector);
+        newFactory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim")), abi.encodePacked(uint256(3000), uint32(1))
+        );
 
         vm.stopPrank();
     }
