@@ -5,7 +5,7 @@ mod tests {
     };
     use crate::tester::{BlockGenerator, EngineApi};
     use crate::tx_signer::Signer;
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{Transaction, TxEip1559};
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::hex;
@@ -211,6 +211,130 @@ mod tests {
             base_fee = max(
                 block.header.base_fee_per_gas.unwrap(),
                 MIN_PROTOCOL_BASE_FEE,
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn integration_test_fee_priority_ordering() -> eyre::Result<()> {
+        // This test validates that transactions are ordered by fee priority in blocks
+        let mut framework =
+            IntegrationFramework::new("integration_test_fee_priority_ordering").unwrap();
+
+        // we are going to use a genesis file pre-generated before the test
+        let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        genesis_path.push("../../genesis.json");
+        assert!(genesis_path.exists());
+
+        // create the builder
+        let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let op_rbuilder_config = OpRbuilderConfig::new()
+            .chain_config_path(genesis_path.clone())
+            .data_dir(builder_data_dir)
+            .auth_rpc_port(1264)
+            .network_port(1265)
+            .http_port(1268)
+            .with_builder_private_key(BUILDER_PRIVATE_KEY);
+
+        // create the validation reth node
+        let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let reth = OpRethConfig::new()
+            .chain_config_path(genesis_path)
+            .data_dir(reth_data_dir)
+            .auth_rpc_port(1266)
+            .network_port(1267);
+
+        framework.start("op-reth", &reth).await.unwrap();
+
+        let _ = framework
+            .start("op-rbuilder", &op_rbuilder_config)
+            .await
+            .unwrap();
+
+        let engine_api = EngineApi::new("http://localhost:1264").unwrap();
+        let validation_api = EngineApi::new("http://localhost:1266").unwrap();
+
+        let mut generator = BlockGenerator::new(&engine_api, Some(&validation_api), false, 1, None);
+        let latest_block = generator.init().await?;
+
+        let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
+            .on_http("http://localhost:1268".parse()?);
+
+        let base_fee = max(
+            latest_block.header.base_fee_per_gas.unwrap(),
+            MIN_PROTOCOL_BASE_FEE,
+        );
+
+        // Create transactions with increasing fee values
+        let priority_fees: [u128; 5] = [1, 3, 5, 2, 4]; // Deliberately not in order
+        let signers = vec![
+            Signer::random(),
+            Signer::random(),
+            Signer::random(),
+            Signer::random(),
+            Signer::random(),
+        ];
+        let mut txs = Vec::new();
+
+        // Fund test accounts with deposits
+        for signer in &signers {
+            generator
+                .deposit(signer.address, 1000000000000000000)
+                .await?;
+        }
+
+        // Send transactions in non-optimal fee order
+        for (i, priority_fee) in priority_fees.iter().enumerate() {
+            let tx_request = OpTypedTransaction::Eip1559(TxEip1559 {
+                chain_id: 901,
+                nonce: 1,
+                gas_limit: 210000,
+                max_fee_per_gas: base_fee as u128 + *priority_fee,
+                max_priority_fee_per_gas: *priority_fee,
+                ..Default::default()
+            });
+            let signed_tx = signers[i].sign_tx(tx_request)?;
+            let tx = provider
+                .send_raw_transaction(signed_tx.encoded_2718().as_slice())
+                .await?;
+            txs.push(tx);
+        }
+
+        // Generate a block that should include these transactions
+        let block_hash = generator.generate_block().await?;
+
+        // Query the block and check transaction ordering
+        let block = provider
+            .get_block_by_hash(block_hash, BlockTransactionsKind::Full)
+            .await?
+            .expect("block");
+
+        // Verify all transactions are included
+        for tx in &txs {
+            assert!(
+                block
+                    .transactions
+                    .hashes()
+                    .any(|hash| hash == *tx.tx_hash()),
+                "transaction missing from block"
+            );
+        }
+
+        let tx_fees: Vec<_> = block
+            .transactions
+            .into_transactions()
+            .map(|tx| tx.effective_tip_per_gas(base_fee.into()))
+            .collect();
+
+        // Verify transactions are ordered by decreasing fee (highest fee first)
+        // Skip the first deposit transaction and last builder transaction
+        for i in 1..tx_fees.len() - 2 {
+            assert!(
+                tx_fees[i] >= tx_fees[i + 1],
+                "Transactions not ordered by decreasing fee: {:?}",
+                tx_fees
             );
         }
 
