@@ -21,12 +21,10 @@ use crate::{
 };
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
-    get_agg_proof_stdin, get_proof_stdin, start_server_and_native_client, ProgramType,
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
+    get_agg_proof_stdin, get_proof_stdin, start_server_and_native_client, AGGREGATION_ELF,
+    RANGE_ELF_EMBEDDED,
 };
-
-pub const RANGE_ELF: &[u8] = include_bytes!("../../elf/range-elf");
-pub const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
 
 struct SP1Prover {
     network_prover: Arc<NetworkProver>,
@@ -61,8 +59,8 @@ where
         let config = ProposerConfig::from_env()?;
 
         let network_prover = Arc::new(ProverClient::builder().network().build());
-        let (range_pk, range_vk) = network_prover.setup(RANGE_ELF);
-        let (agg_pk, _) = network_prover.setup(AGG_ELF);
+        let (range_pk, range_vk) = network_prover.setup(RANGE_ELF_EMBEDDED);
+        let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
 
         Ok(Self {
             config: config.clone(),
@@ -80,8 +78,7 @@ where
     }
 
     pub async fn prove_game(&self, game_address: Address) -> Result<TxHash> {
-        let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Docker).await
-        {
+        let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config().await {
             Ok(f) => f,
             Err(e) => {
                 tracing::error!("Failed to create data fetcher: {}", e);
@@ -100,7 +97,6 @@ where
                 l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks,
                 l2_block_number.to::<u64>(),
                 Some(l1_head_hash),
-                ProgramType::Multi,
                 CacheMode::DeleteCache,
             )
             .await

@@ -76,7 +76,7 @@ For production, remove the `USE_SP1_MOCK_VERIFIER` environment variable and set 
 | `AGGREGATION_VKEY` | Verification key for aggregation | `0x...` |
 | `RANGE_VKEY_COMMITMENT` | Commitment to range verification key | `0x...` |
 
-#### Getting the Rollup Config Hash, Aggregation VKEY, and Range VKEY Commitment
+#### Getting the Rollup Config Hash, Aggregation Verification Key, and Range Verification Key Commitment
 
 First, create a `.env` file in the root directory with the following variables:
 ```bash
@@ -86,15 +86,10 @@ L2_RPC=<L2_RPC_URL>
 L2_NODE_RPC=<L2_NODE_RPC_URL>
 ```
 
-Then run the following command to get the Rollup Config Hash:
-```bash
-cargo run --bin fetch-rollup-config-hash
-```
-
-You can get the aggregation program verification key, and range program verification key commitment by running the following command:
+You can get the aggregation program verification key, range program verification key commitment, and rollup config hash by running the following command:
 
 ```bash
-cargo run --bin vkey --release
+cargo run --bin config --release -- --env-file <PATH_TO_ENV_FILE>
 ```
 
 ## Deployment

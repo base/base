@@ -29,3 +29,10 @@ pub struct HostExecutorArgs {
     #[clap(long)]
     pub prove: bool,
 }
+
+#[derive(Debug, Clone, Parser)]
+pub struct ConfigArgs {
+    /// The environment file to use.
+    #[clap(long)]
+    pub env_file: Option<PathBuf>,
+}

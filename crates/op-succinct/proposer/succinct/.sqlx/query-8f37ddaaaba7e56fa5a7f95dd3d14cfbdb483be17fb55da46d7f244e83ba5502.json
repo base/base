@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT checkpointed_l1_block_hash, checkpointed_l1_block_number FROM requests WHERE range_vkey_commitment = $1 AND rollup_config_hash = $2 AND aggregation_vkey_hash = $3 AND req_type = $4 AND start_block = $5 AND end_block = $6 AND status = $7 AND checkpointed_l1_block_hash IS NOT NULL AND checkpointed_l1_block_number IS NOT NULL AND l1_chain_id = $8 AND l2_chain_id = $9 LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "checkpointed_l1_block_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 1,
+        "name": "checkpointed_l1_block_number",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Bytea",
+        "Int2",
+        "Int8",
+        "Int8",
+        "Int2",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "8f37ddaaaba7e56fa5a7f95dd3d14cfbdb483be17fb55da46d7f244e83ba5502"
+}

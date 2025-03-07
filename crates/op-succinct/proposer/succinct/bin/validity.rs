@@ -1,0 +1,95 @@
+use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
+use anyhow::Result;
+use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use op_succinct_proposer::{
+    read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
+};
+use std::sync::Arc;
+use tikv_jemallocator::Jemalloc;
+use tracing::info;
+
+#[global_allocator]
+static ALLOCATOR: Jemalloc = Jemalloc;
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to environment file
+    #[arg(long, default_value = ".env")]
+    env_file: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let provider = rustls::crypto::ring::default_provider();
+    provider
+        .install_default()
+        .map_err(|e| anyhow::anyhow!("Failed to install default provider: {:?}", e))?;
+
+    let args = Args::parse();
+
+    dotenv::from_filename(args.env_file).ok();
+
+    setup_proposer_logger();
+
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+
+    // Read the environment variables.
+    let env_config = read_proposer_env()?;
+
+    let db_client = Arc::new(DriverDBClient::new(&env_config.db_url).await?);
+    let proposer_config = RequesterConfig {
+        l1_chain_id: fetcher.l1_provider.get_chain_id().await? as i64,
+        l2_chain_id: fetcher.l2_provider.get_chain_id().await? as i64,
+        l2oo_address: env_config.l2oo_address,
+        dgf_address: env_config.dgf_address,
+        range_proof_interval: env_config.range_proof_interval,
+        max_concurrent_witness_gen: env_config.max_concurrent_witness_gen,
+        max_concurrent_proof_requests: env_config.max_concurrent_proof_requests,
+        range_proof_strategy: env_config.range_proof_strategy,
+        agg_proof_strategy: env_config.agg_proof_strategy,
+        agg_proof_mode: env_config.agg_proof_mode,
+        submission_interval: env_config.submission_interval,
+        mock: env_config.mock,
+    };
+
+    // Read all config from env vars
+    let signer = EthereumWallet::new(env_config.private_key);
+    let l1_provider = ProviderBuilder::new()
+        .wallet(signer.clone())
+        .on_http(env_config.l1_rpc.parse().expect("Failed to parse L1_RPC"));
+
+    let proposer = Proposer::new(
+        l1_provider,
+        db_client.clone(),
+        Arc::new(fetcher),
+        proposer_config,
+        env_config.loop_interval,
+    )
+    .await?;
+
+    // Spawn a thread for the proposer.
+    info!("Starting proposer.");
+    let proposer_handle = tokio::spawn(async move {
+        if let Err(e) = proposer.run().await {
+            tracing::error!("Proposer error: {}", e);
+            return Err(e);
+        }
+        Ok(())
+    });
+
+    // Initialize metrics exporter.
+    info!("Initializing metrics on port {}", env_config.metrics_port);
+    op_succinct_proposer::init_metrics(&env_config.metrics_port);
+
+    // Wait for all tasks to complete.
+    let proposer_res = proposer_handle.await?;
+    if let Err(e) = proposer_res {
+        tracing::error!("Proposer task failed: {}", e);
+        return Err(e);
+    }
+
+    Ok(())
+}

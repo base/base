@@ -28,9 +28,6 @@ block-data/
 # Rollup Config
 **/rollup-config.json
 
-# DB
-db
-
 # Stdins
 stdins
 

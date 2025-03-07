@@ -1,0 +1,190 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM requests WHERE range_vkey_commitment = $1 AND rollup_config_hash = $2 AND status = $3 AND req_type = $4 AND start_block >= $5 AND l1_chain_id = $6 AND l2_chain_id = $7 ORDER BY start_block ASC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "status",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 2,
+        "name": "req_type",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 3,
+        "name": "mode",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 4,
+        "name": "start_block",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "end_block",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 7,
+        "name": "updated_at",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 8,
+        "name": "proof_request_id",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 9,
+        "name": "checkpointed_l1_block_number",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "checkpointed_l1_block_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 11,
+        "name": "execution_statistics",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 12,
+        "name": "witnessgen_duration",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "execution_duration",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "proof_request_time",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 15,
+        "name": "prove_duration",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "range_vkey_commitment",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 17,
+        "name": "aggregation_vkey_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 18,
+        "name": "rollup_config_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 19,
+        "name": "relay_tx_hash",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 20,
+        "name": "proof",
+        "type_info": "Bytea"
+      },
+      {
+        "ordinal": 21,
+        "name": "total_nb_transactions",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 22,
+        "name": "total_eth_gas_used",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "total_l1_fees",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 24,
+        "name": "total_tx_fees",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 25,
+        "name": "l1_chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 26,
+        "name": "l2_chain_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 27,
+        "name": "contract_address",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Int2",
+        "Int2",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "45ff3dc7e48f178edeb583bfd216ee2abe9e2b845b28e2b051edf6e2d9c5da81"
+}

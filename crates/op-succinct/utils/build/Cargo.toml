@@ -7,4 +7,3 @@ edition.workspace = true
 [dependencies]
 sp1-build.workspace = true
 cargo_metadata.workspace = true
-chrono = "0.4.38"

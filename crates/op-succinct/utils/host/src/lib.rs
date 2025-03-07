@@ -1,15 +1,14 @@
 pub mod block_range;
+mod contract;
 pub mod fetcher;
-pub mod rollup_config;
 pub mod stats;
+pub use contract::*;
 
 use alloy_consensus::Header;
 use alloy_primitives::B256;
-use alloy_sol_types::sol;
 use anyhow::Result;
 use kona_host::single::SingleChainHost;
 use kona_preimage::{BidirectionalChannel, HintWriter, NativeChannel, OracleReader};
-use log::info;
 use op_succinct_client_utils::client::run_opsuccinct_client;
 use op_succinct_client_utils::precompiles::zkvm_handle_register;
 use op_succinct_client_utils::{boot::BootInfoStruct, types::AggregationInputs};
@@ -18,34 +17,9 @@ use rkyv::to_bytes;
 use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
 use std::sync::Arc;
 
-sol! {
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    contract L2OutputOracle {
-        bytes32 public aggregationVkey;
-        bytes32 public rangeVkeyCommitment;
-        bytes32 public rollupConfigHash;
-
-        function updateAggregationVKey(bytes32 _aggregationVKey) external onlyOwner;
-
-        function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) external onlyOwner;
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ProgramType {
-    Single,
-    Multi,
-}
-
-sol! {
-    struct L2Output {
-        uint64 zero;
-        bytes32 l2_state_root;
-        bytes32 l2_storage_hash;
-        bytes32 l2_claim_hash;
-    }
-}
+pub const RANGE_ELF_BUMP: &[u8] = include_bytes!("../../../elf/range-elf-bump");
+pub const RANGE_ELF_EMBEDDED: &[u8] = include_bytes!("../../../elf/range-elf-embedded");
+pub const AGGREGATION_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
 
 #[derive(Debug, Clone)]
 pub struct OPSuccinctHost {
@@ -76,7 +50,7 @@ pub fn get_agg_proof_stdin(
     let mut stdin = SP1Stdin::new();
     for proof in proofs {
         let SP1Proof::Compressed(compressed_proof) = proof else {
-            panic!();
+            return Err(anyhow::anyhow!("Invalid proof passed as compressed proof!"));
         };
         stdin.write_proof(*compressed_proof, multi_block_vkey.vk.clone());
     }
@@ -98,7 +72,6 @@ pub fn get_agg_proof_stdin(
 pub async fn start_server_and_native_client(
     cfg: OPSuccinctHost,
 ) -> Result<InMemoryOracle, anyhow::Error> {
-    info!("Starting preimage server and client program.");
     let in_memory_oracle = cfg.run().await?;
 
     Ok(in_memory_oracle)

@@ -105,9 +105,6 @@ deploy-oracle env_file=".env":
     # cd into contracts directory
     cd contracts
 
-    # forge install
-    forge install
-
     VERIFY=""
     if [ $ETHERSCAN_API_KEY != "" ]; then
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"

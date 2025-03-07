@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT start_block, end_block FROM requests WHERE range_vkey_commitment = $1 AND rollup_config_hash = $2 AND status = $3 AND req_type = $4 AND start_block >= $5 AND l1_chain_id = $6 AND l2_chain_id = $7 ORDER BY start_block ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "start_block",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "end_block",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Bytea",
+        "Bytea",
+        "Int2",
+        "Int2",
+        "Int8",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "55a94cd0e6ec095cf5f162bb9086493fffe12970836c2519862598a4eead22f4"
+}

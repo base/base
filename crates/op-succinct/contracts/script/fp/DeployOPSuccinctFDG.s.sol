@@ -20,7 +20,7 @@ import {AccessManager} from "../../src/fp/AccessManager.sol";
 import {SuperchainConfig} from "src/L1/SuperchainConfig.sol";
 import {DisputeGameFactory} from "src/dispute/DisputeGameFactory.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {OPSuccinctFaultDisputeGame} from "src/fp/OPSuccinctFaultDisputeGame.sol";
+import {OPSuccinctFaultDisputeGame} from "../../src/fp/OPSuccinctFaultDisputeGame.sol";
 import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 
 // Utils

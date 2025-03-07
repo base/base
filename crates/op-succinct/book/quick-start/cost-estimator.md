@@ -2,7 +2,7 @@
 
 The cost estimator is a convenient CLI tool to determine the costs of running OP Succinct. The tool simulates proving the validity of a range of blocks and returns the "costs" in terms of RISC-V cycles.
 
-> Machines with fast network connectivity (500+ Mbps) are recommended because witness generation is bandwidth-intensive.
+> Machines with fast network connectivity are recommended because witness generation is bandwidth-intensive.
 
 ## Overview
 
@@ -32,12 +32,8 @@ The cost estimator:
 
 ### Basic Usage
 
-Run for the last 5 finalized blocks:
-```shell
-RUST_LOG=info just cost-estimator
-```
+Run for a specific block range on the chain:
 
-Run for a specific block range:
 ```shell
 RUST_LOG=info just cost-estimator <start_l2_block> <end_l2_block>
 ```
@@ -46,7 +42,7 @@ RUST_LOG=info just cost-estimator <start_l2_block> <end_l2_block>
 
 | Flag | Default | Description |
 |-----------|-------------|-------------|
-| `batch-size` | 300 | Blocks per batch. Chain-specific defaults:<br>- Base: 5<br>- OP Mainnet: 10<br>- OP Sepolia: 30 |
+| `batch-size` | 300 | Blocks per batch. |
 | `env-file` | `.env` | Custom env file path (e.g. `.env.opmainnet`) |
 | `use-cache` | false | Reuse previously generated witness data |
 

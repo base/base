@@ -13,6 +13,7 @@ use kzg_rs::{get_kzg_settings, Blob as KzgRsBlob, Bytes48};
 use rkyv::{from_bytes, Archive};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use tracing::info;
 
 use super::StoreOracle;
 
@@ -183,7 +184,7 @@ impl InMemoryOracle {
             .values()
             .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
             .collect_vec();
-        println!("Verifying {} blobs", blob_datas.len());
+        info!("Verifying {} blobs", blob_datas.len());
         // Verify reconstructed blobs.
         kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
             blob_datas,
