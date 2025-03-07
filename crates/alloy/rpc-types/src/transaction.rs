@@ -167,10 +167,12 @@ mod tx_serde {
     //! Helper module for serializing and deserializing OP [`Transaction`].
     //!
     //! This is needed because we might need to deserialize the `from` field into both
-    //! [`alloy_rpc_types_eth::Transaction::from`] and [`op_alloy_consensus::TxDeposit::from`].
+    //! [`alloy_consensus::transaction::Recovered::signer`] which resides in
+    //! [`alloy_rpc_types_eth::Transaction::inner`] and [`op_alloy_consensus::TxDeposit::from`].
     //!
     //! Additionaly, we need similar logic for the `gasPrice` field
     use super::*;
+    use alloy_consensus::transaction::Recovered;
     use serde::de::Error;
 
     /// Helper struct which will be flattened into the transaction and will only contain `from`
@@ -227,20 +229,23 @@ mod tx_serde {
                         block_number,
                         transaction_index,
                         effective_gas_price,
-                        from,
                     },
                 deposit_receipt_version,
                 deposit_nonce,
             } = value;
 
             // if inner transaction is a deposit, then don't serialize `from` directly
-            let from = if matches!(inner, OpTxEnvelope::Deposit(_)) { None } else { Some(from) };
+            let from = if matches!(inner.inner(), OpTxEnvelope::Deposit(_)) {
+                None
+            } else {
+                Some(inner.signer())
+            };
 
             // if inner transaction has its own `gasPrice` don't serialize it in this struct.
             let effective_gas_price = effective_gas_price.filter(|_| inner.gas_price().is_none());
 
             Self {
-                inner,
+                inner: inner.into_inner(),
                 block_hash,
                 block_number,
                 transaction_index,
@@ -280,11 +285,10 @@ mod tx_serde {
 
             Ok(Self {
                 inner: alloy_rpc_types_eth::Transaction {
-                    inner,
+                    inner: Recovered::new_unchecked(inner, from),
                     block_hash,
                     block_number,
                     transaction_index,
-                    from,
                     effective_gas_price,
                 },
                 deposit_receipt_version,
@@ -309,7 +313,7 @@ mod tests {
         let OpTxEnvelope::Deposit(inner) = tx.as_ref() else {
             panic!("Expected deposit transaction");
         };
-        assert_eq!(tx.from, inner.from);
+        assert_eq!(tx.inner.inner.signer(), inner.from);
         assert_eq!(tx.deposit_nonce, Some(22211221));
         assert_eq!(tx.inner.effective_gas_price, Some(0));
 

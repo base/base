@@ -1,9 +1,9 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
 use alloy_consensus::{
-    transaction::RlpEcdsaTx, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEip7702, TxLegacy, Typed2718,
+    transaction::RlpEcdsaEncodableTx, SignableTransaction, Signed, Transaction, TxEip1559,
+    TxEip2930, TxEip7702, TxLegacy, Typed2718,
 };
-use alloy_eips::eip2930::AccessList;
+use alloy_eips::{eip2930::AccessList, Encodable2718};
 use alloy_primitives::{
     bytes::BufMut, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256,
 };
@@ -347,6 +347,91 @@ impl Transaction for OpTypedTransaction {
             Self::Eip1559(tx) => tx.authorization_list(),
             Self::Eip7702(tx) => tx.authorization_list(),
             Self::Deposit(tx) => tx.authorization_list(),
+        }
+    }
+}
+
+impl RlpEcdsaEncodableTx for OpTypedTransaction {
+    // Setting this to zero for enum txs type is alright, as it shouldn't be used.
+    const DEFAULT_TX_TYPE: u8 = 0;
+
+    fn rlp_encoded_fields_length(&self) -> usize {
+        match self {
+            Self::Legacy(tx) => tx.rlp_encoded_fields_length(),
+            Self::Eip2930(tx) => tx.rlp_encoded_fields_length(),
+            Self::Eip1559(tx) => tx.rlp_encoded_fields_length(),
+            Self::Eip7702(tx) => tx.rlp_encoded_fields_length(),
+            Self::Deposit(tx) => tx.rlp_encoded_fields_length(),
+        }
+    }
+
+    fn rlp_encode_fields(&self, out: &mut dyn alloy_rlp::BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.rlp_encode_fields(out),
+            Self::Eip2930(tx) => tx.rlp_encode_fields(out),
+            Self::Eip1559(tx) => tx.rlp_encode_fields(out),
+            Self::Eip7702(tx) => tx.rlp_encode_fields(out),
+            Self::Deposit(tx) => tx.rlp_encode_fields(out),
+        }
+    }
+
+    fn eip2718_encode_with_type(&self, signature: &Signature, _ty: u8, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
+            Self::Eip2930(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
+            Self::Eip1559(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
+            Self::Eip7702(tx) => tx.eip2718_encode_with_type(signature, tx.ty(), out),
+            Self::Deposit(tx) => tx.encode_2718(out),
+        }
+    }
+
+    fn eip2718_encode(&self, signature: &Signature, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.eip2718_encode(signature, out),
+            Self::Eip2930(tx) => tx.eip2718_encode(signature, out),
+            Self::Eip1559(tx) => tx.eip2718_encode(signature, out),
+            Self::Eip7702(tx) => tx.eip2718_encode(signature, out),
+            Self::Deposit(tx) => tx.encode_2718(out),
+        }
+    }
+
+    fn network_encode_with_type(&self, signature: &Signature, _ty: u8, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
+            Self::Eip2930(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
+            Self::Eip1559(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
+            Self::Eip7702(tx) => tx.network_encode_with_type(signature, tx.ty(), out),
+            Self::Deposit(tx) => tx.network_encode(out),
+        }
+    }
+
+    fn network_encode(&self, signature: &Signature, out: &mut dyn BufMut) {
+        match self {
+            Self::Legacy(tx) => tx.network_encode(signature, out),
+            Self::Eip2930(tx) => tx.network_encode(signature, out),
+            Self::Eip1559(tx) => tx.network_encode(signature, out),
+            Self::Eip7702(tx) => tx.network_encode(signature, out),
+            Self::Deposit(tx) => tx.network_encode(out),
+        }
+    }
+
+    fn tx_hash_with_type(&self, signature: &Signature, _ty: u8) -> TxHash {
+        match self {
+            Self::Legacy(tx) => tx.tx_hash_with_type(signature, tx.ty()),
+            Self::Eip2930(tx) => tx.tx_hash_with_type(signature, tx.ty()),
+            Self::Eip1559(tx) => tx.tx_hash_with_type(signature, tx.ty()),
+            Self::Eip7702(tx) => tx.tx_hash_with_type(signature, tx.ty()),
+            Self::Deposit(tx) => tx.tx_hash(),
+        }
+    }
+
+    fn tx_hash(&self, signature: &Signature) -> TxHash {
+        match self {
+            Self::Legacy(tx) => tx.tx_hash(signature),
+            Self::Eip2930(tx) => tx.tx_hash(signature),
+            Self::Eip1559(tx) => tx.tx_hash(signature),
+            Self::Eip7702(tx) => tx.tx_hash(signature),
+            Self::Deposit(tx) => tx.tx_hash(),
         }
     }
 }

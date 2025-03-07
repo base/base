@@ -42,9 +42,10 @@ impl TryFrom<AnyRpcTransaction> for OpTxEnvelope {
     type Error = ConversionError;
 
     fn try_from(tx: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let WithOtherFields { inner: AlloyRpcTransaction { inner, from, .. }, other: _ } = tx;
+        let WithOtherFields { inner: AlloyRpcTransaction { inner, .. }, other: _ } = tx.0;
 
-        match inner {
+        let from = inner.signer();
+        match inner.into_inner() {
             AnyTxEnvelope::Ethereum(tx) => Self::try_from_eth_envelope(tx).map_err(|_| {
                 ConversionError::Custom("unable to convert from ethereum type".to_string())
             }),

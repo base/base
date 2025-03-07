@@ -48,11 +48,7 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 
 [features]
 default = ["std"]
-std = [
-    "alloy-eips/std",
-    "alloy-consensus/std",
-    "derive_more/std",
-]
+std = ["alloy-eips/std", "alloy-consensus/std", "derive_more/std"]
 alloy-compat = ["serde", "dep:alloy-network", "dep:alloy-rpc-types-eth"]
 k256 = ["alloy-primitives/k256", "alloy-consensus/k256"]
 kzg = ["alloy-eips/kzg", "alloy-consensus/kzg", "std"]
