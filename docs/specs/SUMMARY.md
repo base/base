@@ -75,6 +75,7 @@
     - [Predeploys](./interop/predeploys.md)
     - [Sequencer](./interop/sequencer.md)
     - [Verifier](./interop/verifier.md)
+    - [Supervisor](./interop/supervisor.md)
     - [Fault Proof](./interop/fault-proof.md)
     - [Upgrade](./interop/upgrade.md)
     - [Token Bridging](./interop/token-bridging.md)

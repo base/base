@@ -44,6 +44,7 @@ The proof system is able to check the validity of all executing messages.
 - [Predeploys](./predeploys.md): system contracts to interface with other chains.
 - [Sequencer](./sequencer.md): Sequencer Policy and block-building information.
 - [Verifier](./verifier.md): Verification of cross-L2 messaging.
+- [Supervisor](./supervisor.md): API for validating messages.
 - [Fault Proof](./fault-proof.md): modifications to prove interop functionality in the fault-proof.
 - [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains

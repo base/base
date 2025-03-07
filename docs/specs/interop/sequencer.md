@@ -55,6 +55,8 @@ If the block containing the initiating message is considered safe, no additional
 assumptions are assumed. The only time that additional trust assumptions are added is
 when an initiating message from an unsafe block is consumed.
 
+It is recommended to leverage the [supervisor](./supervisor.md) API to validate messages.
+
 #### Executing Message Validation
 
 The block builder SHOULD validate executing messages directly before including the transaction
