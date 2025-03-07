@@ -259,7 +259,7 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     };
 
     // update all receipts
-    let receipts = match get_and_set_all_receipts(
+    let _receipts = match get_and_set_all_receipts(
         payload.index,
         block_number,
         cache.clone(),
@@ -272,19 +272,6 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
         }
     };
 
-    // if block.body.transactions.len() != receipts.len() {
-    //     let added_receipts = diff_receipts.len();
-    //     println!(
-    //         "block transaction count: {:?}",
-    //         block.body.transactions.len()
-    //     );
-    //     println!("receipt count: {:?}", receipts.len());
-    //     println!("diff transaction count: {:?}", diff.transactions.len());
-    //     println!("diff receipt count: {:?}", metadata.receipts.len());
-    //     println!("added receipts: {:?}", added_receipts);
-    //     println!("metadata receipts: {:?}", metadata.receipts);
-    //     assert!(false, "block transaction count and receipt count mismatch");
-    // }
     // Store account balances
     for (address, balance) in metadata.new_account_balances.iter() {
         if let Err(e) = cache.set(address, &balance, Some(10)) {
@@ -466,8 +453,6 @@ mod tests {
             new_account_balances: HashMap::default(),
         };
 
-        
-
         FlashblocksPayloadV1 {
             index: 0,
             payload_id: PayloadId::new([0; 8]),
@@ -527,8 +512,6 @@ mod tests {
                 map
             },
         };
-
-        
 
         FlashblocksPayloadV1 {
             index: 1,
