@@ -18,16 +18,13 @@ use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::Heade
 use reth_optimism_chainspec::{OpChainSpec, BASE_SEPOLIA};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
+use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::RpcReceipt;
+use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
     RpcNodeCore,
 };
-use reth_rpc_eth_api::{
-    helpers::{EthTransactions, FullEthApi},
-    RpcBlock,
-};
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -163,22 +160,28 @@ impl<E> EthApiExt<E> {
         &self,
         receipt: OpReceipt,
         tx_hash: TxHash,
+        block_number: u64,
         chain_spec: &OpChainSpec,
     ) -> RpcReceipt<Optimism> {
         let tx = self
             .cache
             .get::<OpTransactionSigned>(&tx_hash.to_string())
             .unwrap();
-        let block = self.cache.get::<OpBlock>("pending").unwrap();
+
+        let block = self
+            .cache
+            .get::<OpBlock>(&format!("block:{}", block_number))
+            .unwrap();
         let mut l1_block_info =
             reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
 
+        let index = self
+            .cache
+            .get::<u64>(&format!("tx_idx:{}", &tx_hash.to_string()))
+            .unwrap();
         let meta = TransactionMeta {
             tx_hash,
-            index: self
-                .cache
-                .get::<u64>(&format!("tx_idx:{}", tx_hash))
-                .unwrap(),
+            index,
             block_hash: block.header.hash_slow(),
             block_number: block.number,
             base_fee: block.base_fee_per_gas,
@@ -189,8 +192,9 @@ impl<E> EthApiExt<E> {
         // get all receipts from cache too
         let all_receipts = self
             .cache
-            .get::<Vec<OpReceipt>>("pending_receipts")
+            .get::<Vec<OpReceipt>>(&format!("pending_receipts:{}", block_number))
             .unwrap();
+
         OpReceiptBuilder::new(
             chain_spec,
             &tx,
@@ -233,26 +237,33 @@ where
             }
         }
     }
+
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
         let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
+
         // check if receipt is none
         if let Ok(None) = receipt {
             if let Some(receipt) = self
                 .cache
                 .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
             {
-                return Ok(Some(self.transform_receipt(
-                    receipt,
-                    tx_hash,
-                    BASE_SEPOLIA.as_ref(),
-                )));
+                return Ok(Some(
+                    self.transform_receipt(
+                        receipt,
+                        tx_hash,
+                        self.cache
+                            .get::<u64>(&format!("receipt_block:{:?}", tx_hash.to_string()))
+                            .unwrap(),
+                        BASE_SEPOLIA.as_ref(),
+                    ),
+                ));
             }
         }
 
-        receipt.map_err(Into::into)
+        return Ok(None);
     }
 
     async fn get_balance(
@@ -262,7 +273,7 @@ where
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
-            if let Some(balance) = self.cache.get::<U256>(&format!("{:?}", address)) {
+            if let Some(balance) = self.cache.get::<U256>(address.to_string().as_str()) {
                 return Ok(balance);
             }
             // If pending not found, use standard flow below
@@ -271,26 +282,5 @@ where
         EthState::balance(&self.eth_api, address, block_number)
             .await
             .map_err(Into::into)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Status {
-    pub name: String,
-}
-
-#[cfg_attr(not(test), rpc(server, namespace = "base"))]
-#[cfg_attr(test, rpc(server, client, namespace = "base"))]
-pub trait BaseApi {
-    #[method(name = "status")]
-    async fn status(&self, name: String) -> RpcResult<Status>;
-}
-
-pub struct BaseApiExt {}
-
-#[async_trait]
-impl BaseApiServer for BaseApiExt {
-    async fn status(&self, name: String) -> RpcResult<Status> {
-        Ok(Status { name })
     }
 }

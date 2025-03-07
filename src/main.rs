@@ -1,5 +1,6 @@
 mod cache;
 mod flashblocks;
+mod integration;
 mod metrics;
 mod rpc;
 
@@ -8,7 +9,7 @@ use std::time::Duration;
 
 use crate::cache::Cache;
 use crate::flashblocks::FlashblocksClient;
-use crate::rpc::{BaseApiExt, BaseApiServer, EthApiExt, EthApiOverrideServer};
+use crate::rpc::{EthApiExt, EthApiOverrideServer};
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
@@ -48,22 +49,15 @@ fn main() {
                     let api_ext =
                         EthApiExt::new(ctx.registry.eth_api().clone(), Arc::clone(&cache_clone));
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
-
-                    let base_ext = BaseApiExt {};
-                    ctx.modules.merge_http(base_ext.into_rpc())?;
-
                     Ok(())
                 })
                 .launch_with_fn(|builder| {
-                    let engine_tree_config = TreeConfig::default();
-                    // .with_persistence_threshold(
-                    //     flashblocks_rollup_args.rollup_args.persistence_threshold,
-                    // )
-                    // .with_memory_block_buffer_target(
-                    //     flashblocks_rollup_args
-                    //         .rollup_args
-                    //         .memory_block_buffer_target,
-                    // );
+                    let engine_tree_config = TreeConfig::default()
+                        .with_persistence_threshold(builder.config().engine.persistence_threshold)
+                        .with_memory_block_buffer_target(
+                            builder.config().engine.memory_block_buffer_target,
+                        );
+
                     let launcher = EngineNodeLauncher::new(
                         builder.task_executor().clone(),
                         builder.config().datadir(),
