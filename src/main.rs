@@ -1,5 +1,6 @@
 mod cache;
 mod flashblocks;
+#[cfg(test)]
 mod integration;
 mod metrics;
 mod rpc;
