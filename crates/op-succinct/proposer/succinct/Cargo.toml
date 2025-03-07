@@ -8,14 +8,16 @@ repository.workspace = true
 homepage.workspace = true
 
 [[bin]]
-name = "server"
-path = "bin/server.rs"
+name = "validity"
+path = "bin/validity.rs"
 
 [dependencies]
 
 # workspace
 tokio.workspace = true
 alloy-primitives.workspace = true
+tracing-subscriber.workspace = true
+tracing.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
@@ -23,19 +25,37 @@ op-succinct-host-utils.workspace = true
 # sp1
 sp1-sdk.workspace = true
 
+# alloy
+alloy-eips.workspace = true
+alloy-provider = { workspace = true }
+alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
+
 anyhow.workspace = true
 dotenv.workspace = true
 op-succinct-client-utils.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-csv.workspace = true
+
 # server
-axum = "0.7.4"
 bincode.workspace = true
-log.workspace = true
 base64.workspace = true
-tower-http.workspace = true
 serde_repr = "0.1.19"
+sqlx = { version = "0.8.3", features = [
+    "postgres",
+    "chrono",
+    "bigdecimal",
+    "runtime-tokio",
+    "tls-native-tls",
+] }
+chrono = "0.4.39"
+futures-util = "0.3.31"
+clap.workspace = true
+tikv-jemallocator = "0.6.0"
+metrics-exporter-prometheus = "0.16.2"
+metrics = "0.24.1"
+metrics-process = "2.4.0"
+rustls = "0.23.23"
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true

@@ -1,12 +1,12 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::{keccak256, map::HashMap, Bytes, U256, U64};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use anyhow::{anyhow, bail};
-use cargo_metadata::MetadataCommand;
 use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
 use kona_protocol::calculate_tx_l1_cost_fjord;
@@ -22,6 +22,7 @@ use op_succinct_client_utils::boot::BootInfoStruct;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::{
     cmp::{min, Ordering},
     env, fs,
@@ -30,12 +31,6 @@ use std::{
     sync::Arc,
 };
 
-use alloy_primitives::{keccak256, map::HashMap, Bytes, U256, U64};
-
-use crate::{
-    rollup_config::{get_rollup_config_path, merge_rollup_config},
-    ProgramType,
-};
 use crate::{L2Output, OPSuccinctHost};
 
 #[derive(Clone)]
@@ -47,12 +42,12 @@ pub struct OPSuccinctDataFetcher {
     pub l1_provider: Arc<RootProvider>,
     pub l2_provider: Arc<RootProvider<Optimism>>,
     pub rollup_config: Option<RollupConfig>,
-    pub run_context: RunContext,
+    pub rollup_config_path: Option<PathBuf>,
 }
 
 impl Default for OPSuccinctDataFetcher {
     fn default() -> Self {
-        OPSuccinctDataFetcher::new(RunContext::Dev)
+        OPSuccinctDataFetcher::new()
     }
 }
 
@@ -78,13 +73,6 @@ pub enum RPCMode {
 pub enum CacheMode {
     KeepCache,
     DeleteCache,
-}
-
-/// Dev or Docker context.
-#[derive(Clone, Copy)]
-pub enum RunContext {
-    Dev,
-    Docker,
 }
 
 fn get_rpcs() -> RPCConfig {
@@ -122,7 +110,7 @@ pub struct FeeData {
 
 impl OPSuccinctDataFetcher {
     /// Gets the RPC URL's and saves the rollup config for the chain to the rollup config file.
-    pub fn new(run_context: RunContext) -> Self {
+    pub fn new() -> Self {
         let rpc_config = get_rpcs();
 
         let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
@@ -133,25 +121,26 @@ impl OPSuccinctDataFetcher {
             l1_provider,
             l2_provider,
             rollup_config: None,
-            run_context,
+            rollup_config_path: None,
         }
     }
 
     /// Initialize the fetcher with a rollup config.
-    pub async fn new_with_rollup_config(run_context: RunContext) -> Result<Self> {
+    pub async fn new_with_rollup_config() -> Result<Self> {
         let rpc_config = get_rpcs();
 
         let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
         let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
 
-        let rollup_config = Self::fetch_and_save_rollup_config(&rpc_config, run_context).await?;
+        let (rollup_config, rollup_config_path) =
+            Self::fetch_and_save_rollup_config(&rpc_config).await?;
 
         Ok(OPSuccinctDataFetcher {
             rpc_config,
             l1_provider,
             l2_provider,
             rollup_config: Some(rollup_config),
-            run_context,
+            rollup_config_path: Some(rollup_config_path),
         })
     }
 
@@ -168,18 +157,6 @@ impl OPSuccinctDataFetcher {
             Ok(block.header.inner)
         } else {
             bail!("Failed to get L2 head");
-        }
-    }
-
-    pub async fn get_l2_header_by_number(&self, block_number: u64) -> Result<Header> {
-        let block = self
-            .l2_provider
-            .get_block_by_number(block_number.into(), BlockTransactionsKind::Hashes)
-            .await?;
-        if let Some(block) = block {
-            Ok(block.header.inner)
-        } else {
-            bail!("Failed to get L2 header for block {block_number}");
         }
     }
 
@@ -490,33 +467,27 @@ impl OPSuccinctDataFetcher {
         }
     }
 
-    /// Fetch the rollup config. Combines the rollup config from `optimism_rollupConfig` and the
-    /// chain config from `debug_chainConfig`. Saves the rollup config to the rollup config file and
-    /// in memory.
+    /// Fetch and save the rollup config to a temporary file.
     async fn fetch_and_save_rollup_config(
         rpc_config: &RPCConfig,
-        run_context: RunContext,
-    ) -> Result<RollupConfig> {
-        let rollup_config =
+    ) -> Result<(RollupConfig, PathBuf)> {
+        let rollup_config: RollupConfig =
             Self::fetch_rpc_data(&rpc_config.l2_node_rpc, "optimism_rollupConfig", vec![]).await?;
-        let chain_config =
-            Self::fetch_rpc_data(&rpc_config.l2_rpc, "debug_chainConfig", vec![]).await?;
-        let rollup_config = merge_rollup_config(&rollup_config, &chain_config)?;
 
-        // Save rollup config to the rollup config file.
-        let rollup_config_path = get_rollup_config_path(rollup_config.l2_chain_id, run_context)?;
+        // Create configs directory if it doesn't exist
+        let rollup_config_dir = PathBuf::from("configs");
+        fs::create_dir_all(&rollup_config_dir)?;
 
-        // Create the directory for the rollup config if it doesn't exist.
-        let rollup_configs_dir = rollup_config_path.parent().unwrap();
-        if !rollup_configs_dir.exists() {
-            fs::create_dir_all(rollup_configs_dir)?;
-        }
+        // Save rollup config to a file named by chain ID
+        let rollup_config_path =
+            rollup_config_dir.join(format!("{}.json", rollup_config.l2_chain_id));
 
-        // Write the rollup config to the file.
+        // Write the rollup config to the file
         let rollup_config_str = serde_json::to_string_pretty(&rollup_config)?;
-        fs::write(rollup_config_path, rollup_config_str)?;
+        fs::write(&rollup_config_path, rollup_config_str)?;
 
-        Ok(rollup_config)
+        // Return both the rollup config and the path to the temporary file
+        Ok((rollup_config, rollup_config_path))
     }
 
     async fn fetch_rpc_data<T>(url: &Url, method: &str, params: Vec<Value>) -> Result<T>
@@ -634,38 +605,17 @@ impl OPSuccinctDataFetcher {
         Ok(headers)
     }
 
-    /// Get the data directory for the given program type and run context.
-    ///
-    /// If the RunContext is Dev, prepend the workspace root.
+    /// Get the data directory path. Note: This path is relative to the location from which the program is run.
     fn get_data_directory(
         &self,
         l2_chain_id: u64,
         l2_start_block: u64,
         l2_end_block: u64,
-        multi_block: ProgramType,
     ) -> Result<String> {
-        let mut data_directory = match multi_block {
-            ProgramType::Single => {
-                format!("data/{}/{}", l2_chain_id, l2_end_block)
-            }
-            ProgramType::Multi => {
-                format!("data/{}/{}-{}", l2_chain_id, l2_start_block, l2_end_block)
-            }
-        };
-
-        // If the run context is Dev, prepend the workspace root.
-        match self.run_context {
-            RunContext::Dev => {
-                let metadata = MetadataCommand::new().exec().unwrap();
-                let workspace_root = metadata.workspace_root;
-                data_directory = format!("{}/{}", workspace_root, data_directory);
-                Ok(data_directory)
-            }
-            RunContext::Docker => {
-                data_directory = format!("/usr/local/{}", data_directory);
-                Ok(data_directory)
-            }
-        }
+        Ok(format!(
+            "data/{}/{}-{}",
+            l2_chain_id, l2_start_block, l2_end_block
+        ))
     }
 
     /// Get the L2 output data for a given block number and save the boot info to a file in the data
@@ -676,7 +626,6 @@ impl OPSuccinctDataFetcher {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
-        multi_block: ProgramType,
         cache_mode: CacheMode,
     ) -> Result<OPSuccinctHost> {
         // If the rollup config is not already loaded, fetch and save it.
@@ -766,8 +715,7 @@ impl OPSuccinctDataFetcher {
         };
 
         // Get the workspace root, which is where the data directory is.
-        let data_directory =
-            self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block, multi_block)?;
+        let data_directory = self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block)?;
 
         // Delete the data directory if the cache mode is DeleteCache.
         match cache_mode {
@@ -778,9 +726,6 @@ impl OPSuccinctDataFetcher {
                 }
             }
         }
-
-        // Create the path to the rollup config file.
-        let rollup_config_path = get_rollup_config_path(l2_chain_id, self.run_context)?;
 
         // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
         // witness data.
@@ -819,32 +764,21 @@ impl OPSuccinctDataFetcher {
                 data_dir: Some(data_directory.into()),
                 native: false,
                 server: true,
-                rollup_config_path: Some(rollup_config_path),
+                rollup_config_path: self.rollup_config_path.clone(),
             },
         })
     }
 
-    /// Get the L1 block time in seconds.
-    #[allow(dead_code)]
-    async fn get_l1_block_time(&self) -> Result<u64> {
-        let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
-
-        let finalized_l1_header_minus_1 = finalized_l1_header.number - 1;
-        let l1_block_minus_1 = self
-            .get_l1_header(finalized_l1_header_minus_1.into())
+    pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
+        let block_number_hex = format!("0x{:x}", block_number);
+        let l2_output_data: OutputResponse = self
+            .fetch_rpc_data_with_mode(
+                RPCMode::L2Node,
+                "optimism_outputAtBlock",
+                vec![block_number_hex.into()],
+            )
             .await?;
-        Ok(finalized_l1_header.timestamp - l1_block_minus_1.timestamp)
-    }
-
-    /// Get the L2 block time in seconds.
-    pub async fn get_l2_block_time(&self) -> Result<u64> {
-        let finalized_l2_header = self.get_l2_header(BlockId::finalized()).await?;
-
-        let finalized_l2_header_minus_1 = finalized_l2_header.number - 1;
-        let l2_block_minus_1 = self
-            .get_l2_header(finalized_l2_header_minus_1.into())
-            .await?;
-        Ok(finalized_l2_header.timestamp - l2_block_minus_1.timestamp)
+        Ok(l2_output_data)
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
@@ -891,42 +825,27 @@ impl OPSuccinctDataFetcher {
         }
     }
 
-    /// For OP Sepolia, OP Mainnet and Base, the batcher posts at least every 10 minutes. Otherwise,
-    /// the batcher may post as infrequently as every couple hours. The l1Head is set as the l1 block from which all of the
-    /// relevant L2 block data can be derived.
-    /// E.g. Origin Advance Error: BlockInfoFetch(Block number past L1 head.).
+    /// If the safeDB is not activated, then  estimate the L1 head based on the timestamp of the L2 block and the finalized L1 block.
     async fn get_l1_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
-        // If the rollup config is not already loaded, fetch and save it.
         if self.rollup_config.is_none() {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
         }
-        let l2_chain_id = self.rollup_config.as_ref().unwrap().l2_chain_id;
 
-        // See if optimism_safeHeadAtL1Block is available. If there's an error, then estimate the L1 block necessary based on the chain config.
-        let result = self.get_l1_head_with_safe_head(l2_end_block).await;
+        match self.get_l1_head_with_safe_head(l2_end_block).await {
+            Ok(safe_head) => Ok(safe_head),
+            Err(_) => {
+                // Fallback: estimate L1 block based on timestamp
+                let max_batch_post_delay_minutes = 30;
+                let l2_block_timestamp = self.get_l2_header(l2_end_block.into()).await?.timestamp;
+                let finalized_l1_timestamp =
+                    self.get_l1_header(BlockId::finalized()).await?.timestamp;
 
-        if let Ok(safe_head_at_l1_block) = result {
-            Ok(safe_head_at_l1_block)
-        } else {
-            // Estimate the L1 block necessary based on the chain config. This is based on the maximum
-            // delay between batches being posted on the L2 chain.
-            let max_batch_post_delay_minutes = match l2_chain_id {
-                11155420 => 10,
-                10 => 10,
-                8453 => 10,
-                _ => 60,
-            };
-
-            // Get L1 head.
-            let l2_block_timestamp = self.get_l2_header(l2_end_block.into()).await?.timestamp;
-            let finalized_l1_timestamp = self.get_l1_header(BlockId::finalized()).await?.timestamp;
-
-            // Ensure that the target timestamp is not greater than the finalized L1 timestamp.
-            let target_timestamp = min(
-                l2_block_timestamp + (max_batch_post_delay_minutes * 60),
-                finalized_l1_timestamp,
-            );
-            Ok(self.find_l1_block_by_timestamp(target_timestamp).await?)
+                let target_timestamp = min(
+                    l2_block_timestamp + (max_batch_post_delay_minutes * 60),
+                    finalized_l1_timestamp,
+                );
+                self.find_l1_block_by_timestamp(target_timestamp).await
+            }
         }
     }
 
@@ -975,28 +894,5 @@ impl OPSuccinctDataFetcher {
             )
             .await;
         Ok(result.is_ok())
-    }
-
-    /// Get the l2_end_block number given the l2_start_block number and the ideal block interval.
-    /// Picks the l2 end block that minimizes the derivation cost by picking the l2 block that can be derived from the same batch as the l2_start_block.
-    pub async fn get_l2_end_block(
-        &self,
-        l2_start_block: u64,
-        ideal_block_interval: u64,
-    ) -> Result<u64> {
-        let ideal_l2_block_end = l2_start_block + ideal_block_interval;
-        let l2_end_block_info = self.l2_block_info_by_number(ideal_l2_block_end).await?;
-
-        let l2_derivable_block_end = self
-            .get_l2_safe_head_from_l1_block_number(l2_end_block_info.l1_origin.number)
-            .await?;
-
-        // If blocks are in same batch or if derivable end is past ideal end, use ideal end block, as it will just pull in one batch.
-        if l2_derivable_block_end < l2_start_block || l2_derivable_block_end > ideal_l2_block_end {
-            Ok(ideal_l2_block_end)
-        } else {
-            // Otherwise use derivable end to avoid pulling in multiple batches.
-            Ok(l2_derivable_block_end)
-        }
     }
 }

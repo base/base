@@ -1,27 +1,8 @@
 services:
-  # OP Succinct Server
-  op-succinct-server:
+  op-succinct:
     build:
       context: .
       dockerfile: ./proposer/succinct/Dockerfile
     env_file:
       - ${ENV_FILE:-.env}
     restart: unless-stopped
-    ports:
-      - "3000:3000"
-
-  # OP Succinct Proposer
-  op-succinct-proposer:
-    build:
-      context: .
-      dockerfile: ./proposer/op/Dockerfile.op_proposer
-    env_file:
-      - ${ENV_FILE:-.env}
-    restart: unless-stopped
-    depends_on:
-      - op-succinct-server
-    volumes:
-      - ./db:/usr/local/bin/dbdata
-    # The metrics port is the default port for the OP Proposer.
-    ports:
-      - "7300:7300"

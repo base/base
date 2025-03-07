@@ -3,7 +3,10 @@ use alloy_primitives::{hex, Address};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
-use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode, RunContext};
+use op_succinct_host_utils::{
+    fetcher::{OPSuccinctDataFetcher, RPCMode},
+    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sp1_sdk::{HashableKey, Prover, ProverClient};
@@ -11,9 +14,6 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
 };
-
-pub const AGG_ELF: &[u8] = include_bytes!("../../../elf/aggregation-elf");
-pub const RANGE_ELF: &[u8] = include_bytes!("../../../elf/range-elf");
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -71,7 +71,7 @@ fn get_address(env_var: &str, private_key_by_default: bool) -> String {
 /// - vkey: Get the vkey from the aggregation program ELF.
 /// - owner: Set to the address associated with the private key.
 async fn update_l2oo_config() -> Result<()> {
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let workspace_root = cargo_metadata::MetadataCommand::new()
         .exec()?
@@ -136,10 +136,10 @@ async fn update_l2oo_config() -> Result<()> {
     let op_succinct_l2_output_oracle_impl = get_address("OP_SUCCINCT_L2_OUTPUT_ORACLE_IMPL", false);
 
     let prover = ProverClient::builder().cpu().build();
-    let (_, agg_vkey) = prover.setup(AGG_ELF);
+    let (_, agg_vkey) = prover.setup(AGGREGATION_ELF);
     let aggregation_vkey = agg_vkey.vk.bytes32();
 
-    let (_, range_vkey) = prover.setup(RANGE_ELF);
+    let (_, range_vkey) = prover.setup(RANGE_ELF_EMBEDDED);
     let range_vkey_commitment = format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
     let l2oo_config = L2OOConfig {

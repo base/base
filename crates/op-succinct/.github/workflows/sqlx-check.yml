@@ -1,0 +1,30 @@
+name: SQLx Query Check
+
+on:
+  pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/*.sql'
+      - 'sqlx-data.json'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+jobs:
+  sqlx-check:
+    name: Verify SQLx queries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Install SQLx CLI
+        run: cargo install sqlx-cli --no-default-features --features native-tls,postgres
+      
+      - name: Verify SQLx query files
+        run: cd proposer/succinct && cargo sqlx prepare --check

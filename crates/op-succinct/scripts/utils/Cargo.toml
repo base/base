@@ -12,8 +12,8 @@ name = "fetch-and-save-proof"
 path = "bin/fetch_and_save_proof.rs"
 
 [[bin]]
-name = "vkey"
-path = "bin/vkey.rs"
+name = "config"
+path = "bin/config.rs"
 
 [[bin]]
 name = "cost-estimator"
@@ -31,10 +31,6 @@ path = "bin/fetch_rollup_config.rs"
 name = "gen-sp1-test-artifacts"
 path = "bin/gen_sp1_test_artifacts.rs"
 
-[[bin]]
-name = "fetch-rollup-config-hash"
-path = "bin/fetch_rollup_config_hash.rs"
-
 [dependencies]
 
 # workspace
@@ -51,13 +47,9 @@ dotenv.workspace = true
 log.workspace = true
 csv.workspace = true
 serde.workspace = true
-reqwest.workspace = true
 futures.workspace = true
 rayon = "1.10.0"
 serde_json.workspace = true
-
-# kona
-kona-host.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true

@@ -2,15 +2,16 @@ use anyhow::Result;
 use clap::Parser;
 use op_succinct_host_utils::{
     block_range::get_validated_block_range,
-    fetcher::{CacheMode, OPSuccinctDataFetcher, RunContext},
+    fetcher::{CacheMode, OPSuccinctDataFetcher},
     get_proof_stdin, start_server_and_native_client,
     stats::ExecutionStats,
-    ProgramType,
+    RANGE_ELF_EMBEDDED,
 };
-use op_succinct_prove::{execute_multi, DEFAULT_RANGE, RANGE_ELF};
+use op_succinct_prove::{execute_multi, DEFAULT_RANGE};
 use op_succinct_scripts::HostExecutorArgs;
 use sp1_sdk::{utils, ProverClient};
 use std::{fs, time::Instant};
+use tracing::debug;
 
 /// Execute the OP Succinct program for multiple blocks.
 #[tokio::main]
@@ -20,7 +21,7 @@ async fn main() -> Result<()> {
     dotenv::from_path(&args.env_file)?;
     utils::setup_logger();
 
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
+    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let cache_mode = if args.use_cache {
         CacheMode::KeepCache
@@ -33,14 +34,10 @@ async fn main() -> Result<()> {
         get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
     let host_args = data_fetcher
-        .get_host_args(
-            l2_start_block,
-            l2_end_block,
-            None,
-            ProgramType::Multi,
-            cache_mode,
-        )
+        .get_host_args(l2_start_block, l2_end_block, None, cache_mode)
         .await?;
+
+    debug!("Host args: {:?}", host_args);
 
     let start_time = Instant::now();
     let oracle = start_server_and_native_client(host_args.clone()).await?;
@@ -53,7 +50,7 @@ async fn main() -> Result<()> {
 
     if args.prove {
         // If the prove flag is set, generate a proof.
-        let (pk, _) = prover.setup(RANGE_ELF);
+        let (pk, _) = prover.setup(RANGE_ELF_EMBEDDED);
 
         // Generate proofs in compressed mode for aggregation verification.
         let proof = prover.prove(&pk, &sp1_stdin).compressed().run().unwrap();

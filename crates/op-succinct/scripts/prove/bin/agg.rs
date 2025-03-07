@@ -4,10 +4,8 @@ use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
 use op_succinct_host_utils::{
-    fetcher::{OPSuccinctDataFetcher, RunContext},
-    get_agg_proof_stdin,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
-use op_succinct_prove::{AGG_ELF, RANGE_ELF};
 use sp1_sdk::{
     utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
 };
@@ -73,9 +71,9 @@ async fn main() -> Result<()> {
     dotenv::from_filename(args.env_file).ok();
 
     let prover = ProverClient::from_env();
-    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config(RunContext::Dev).await?;
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let (_, vkey) = prover.setup(RANGE_ELF);
+    let (_, vkey) = prover.setup(RANGE_ELF_EMBEDDED);
 
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey);
 
@@ -92,7 +90,7 @@ async fn main() -> Result<()> {
     let stdin =
         get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, header.hash_slow()).unwrap();
 
-    let (agg_pk, agg_vk) = prover.setup(AGG_ELF);
+    let (agg_pk, agg_vk) = prover.setup(AGGREGATION_ELF);
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());
 
     if args.prove {
@@ -102,7 +100,7 @@ async fn main() -> Result<()> {
             .run()
             .expect("proving failed");
     } else {
-        let (_, report) = prover.execute(AGG_ELF, &stdin).run().unwrap();
+        let (_, report) = prover.execute(AGGREGATION_ELF, &stdin).run().unwrap();
         println!("report: {:?}", report);
     }
 
