@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --all-targets
+      - run: cargo build --bin reth-flashblocks
 
   test:
     name: Test
