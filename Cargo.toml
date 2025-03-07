@@ -31,6 +31,7 @@ alloy-rpc-types-engine = { version = "0.11.1", default-features = false }
 alloy-rpc-types-eth = { version = "0.11.1" }
 alloy-consensus = { version = "0.11.1" }
 alloy-trie = { version = "0.7.9", default-features = false }
+alloy-provider = { version = "0.11.1" }
 
 # op-alloy
 op-alloy-rpc-types = { version = "0.10.3", default-features = false }
@@ -63,6 +64,11 @@ serde_json = "1.0"
 url = "2.5"
 metrics = "0.24.1"
 metrics-derive = "0.1"
+itertools = "0.12"
+eyre = { version = "0.6.12" }
+uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
+time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
+chrono = "0.4"
 
 [features]
 default = ["optimism"]
@@ -75,6 +81,12 @@ optimism = [
 	"reth-optimism-evm/optimism",
 ]
 
+integration = []
+
 [[bin]]
 name = "reth-flashblocks"
 path = "./src/main.rs"
+
+[[bin]]
+name = "utils"
+path = "src/utils/main.rs"
