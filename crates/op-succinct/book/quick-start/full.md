@@ -80,6 +80,7 @@ To start the `op-succinct` service, add the following parameters to the `.env` f
 | `NETWORK_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
 | `NETWORK_RPC_URL` | The RPC endpoint for the Succinct Prover Network. The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. Reach out to the Succinct team to get access with OP Succinct. |
 | `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
+
 Now, you should have the following in your `.env` file:
 
 | Parameter | Description |

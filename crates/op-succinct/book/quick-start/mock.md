@@ -124,6 +124,7 @@ To start the mock `op-succinct` service, add the following parameters to the `.e
 |-----------|-------------|
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
 | `OP_SUCCINCT_MOCK` | Set to `true` for mock mode. |
+| `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
 
 Now, you should have the following in your `.env` file:
 
@@ -137,7 +138,7 @@ Now, you should have the following in your `.env` file:
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
 | `OP_SUCCINCT_MOCK` | Set to `true` for mock mode. |
-
+| `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
 ### 5) Start the `op-succinct` service in mock mode.
 
 We provide a Docker Compose file for running the `op-succinct` service.
