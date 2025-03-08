@@ -18,7 +18,10 @@ use tracing::debug;
 async fn main() -> Result<()> {
     let args = HostExecutorArgs::parse();
 
-    dotenv::from_path(&args.env_file)?;
+    dotenv::from_path(&args.env_file).expect(&format!(
+        "Environment file not found: {}",
+        args.env_file.display()
+    ));
     utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;

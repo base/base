@@ -29,7 +29,6 @@ use op_alloy_consensus::OpBlock;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_consensus::OpTxType;
 use std::fmt::Debug;
-use std::mem::forget;
 use std::sync::Arc;
 use tracing::error;
 use tracing::info;
@@ -159,10 +158,10 @@ where
     // Only need to forget resources on non-zkvm targets
     #[cfg(target_os = "zkvm")]
     {
-        forget(driver);
-        forget(l1_provider);
-        forget(oracle);
-        forget(rollup_config);
+        std::mem::forget(driver);
+        std::mem::forget(l1_provider);
+        std::mem::forget(oracle);
+        std::mem::forget(rollup_config);
     }
 
     Ok(boot_clone)
@@ -349,6 +348,7 @@ where
         driver.cursor.write().advance(origin, tip_cursor);
 
         // Add forget calls to save cycles
-        forget(block);
+        #[cfg(target_os = "zkvm")]
+        std::mem::forget(block);
     }
 }
