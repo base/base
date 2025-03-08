@@ -11,7 +11,8 @@ on:
       - "programs/**"
       - "scripts/**"
       - "utils/**"
-      - "proposer/succinct/**"
+      - "fault-proof/**"
+      - "validity/**"
       - "Cargo.toml"
   merge_group:
 

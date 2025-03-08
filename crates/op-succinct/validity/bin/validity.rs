@@ -1,7 +1,7 @@
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use anyhow::Result;
 use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
-use op_succinct_proposer::{
+use op_succinct_validity::{
     read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
 };
 use std::sync::Arc;
@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
 
     // Initialize metrics exporter.
     info!("Initializing metrics on port {}", env_config.metrics_port);
-    op_succinct_proposer::init_metrics(&env_config.metrics_port);
+    op_succinct_validity::init_metrics(&env_config.metrics_port);
 
     // Wait for all tasks to complete.
     let proposer_res = proposer_handle.await?;
