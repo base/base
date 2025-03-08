@@ -27,7 +27,7 @@ RUN --mount=type=ssh \
     --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build --bin validity --release && \
-    cp target/release/validity /build/validity
+    cp target/release/validity /build/validity-proposer
 
 # Final stage
 FROM rust:1.85-slim
@@ -52,10 +52,10 @@ RUN curl -L https://sp1.succinct.xyz | bash && \
     ~/.sp1/bin/cargo-prove prove --version
 
 # Copy only the built binaries from builder
-COPY --from=builder /build/validity /usr/local/bin/validity
+COPY --from=builder /build/validity-proposer /usr/local/bin/validity-proposer
 
 # Set jemalloc flags to aggressively release memory to avoid memory fragmentation.
 ENV JEMALLOC_SYS_WITH_MALLOC_CONF="background_thread:true,narenas:1,tcache:false,dirty_decay_ms:0,muzzy_decay_ms:0,abort_conf:true"
 
 # Run the server from its permanent location
-CMD ["/usr/local/bin/validity"]
+CMD ["/usr/local/bin/validity-proposer"]
