@@ -67,6 +67,9 @@ impl FlashblocksClient {
         // Spawn WebSocket handler with integrated actor loop
         let metrics = self.metrics.clone(); // Clone here for the first spawn
         tokio::spawn(async move {
+            let mut backoff = std::time::Duration::from_secs(1);
+            const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(10);
+
             loop {
                 match connect_async(url.as_str()).await {
                     Ok((ws_stream, _)) => {
@@ -111,10 +114,13 @@ impl FlashblocksClient {
                     }
                     Err(e) => {
                         error!(
-                            message = "WebSocket connection error, retrying in 5 seconds",
-                            error = %e
+                            "WebSocket connection error, retrying in {:?}: {}",
+                            backoff,
+                            e
                         );
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        tokio::time::sleep(backoff).await;
+                        // Double the backoff time, but cap at MAX_BACKOFF
+                        backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
                         continue;
                     }
                 }
