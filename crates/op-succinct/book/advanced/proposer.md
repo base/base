@@ -36,6 +36,7 @@ Before starting the proposer, ensure you have deployed the L2 Output Oracle and 
 | `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/docs/generating-proofs/prover-network). |
 | `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract. |
 | `PRIVATE_KEY` | Private key for the account that will be posting output roots to L1. |
+| `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
 
 ## Advanced Environment Variables
 

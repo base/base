@@ -79,7 +79,7 @@ To start the `op-succinct` service, add the following parameters to the `.env` f
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
 | `NETWORK_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
 | `NETWORK_RPC_URL` | The RPC endpoint for the Succinct Prover Network. The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. Reach out to the Succinct team to get access with OP Succinct. |
-
+| `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
 Now, you should have the following in your `.env` file:
 
 | Parameter | Description |
@@ -93,6 +93,7 @@ Now, you should have the following in your `.env` file:
 | `L2OO_ADDRESS` | The address of the `OPSuccinctL2OutputOracle` contract from the previous step. |
 | `NETWORK_PRIVATE_KEY` | The private key for the account that will be submitting proofs to the L1. |
 | `NETWORK_RPC_URL` | Reach out to the Succinct team to get access [here](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The default endpoint (`https://rpc.succinct.xyz`) is not suitable for use in OP Succinct. |
+| `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
 
 ### 4) Start the `op-succinct` service.
 

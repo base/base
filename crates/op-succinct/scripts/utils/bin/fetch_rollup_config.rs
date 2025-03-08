@@ -118,7 +118,7 @@ async fn update_l2oo_config() -> Result<()> {
 
     let submission_interval = env::var("SUBMISSION_INTERVAL")
         .map(|p| p.parse().unwrap())
-        .unwrap_or(1000);
+        .unwrap_or(10);
 
     // Default finalization period of 1 hour. Gives the challenger enough time to dispute the output.
     // Docs: https://docs.optimism.io/builders/chain-operators/configuration/rollup#finalizationperiodseconds
