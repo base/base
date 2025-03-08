@@ -76,12 +76,7 @@ pub struct RequesterConfig {
 pub struct DriverConfig {
     pub network_prover: Arc<NetworkProver>,
     pub fetcher: Arc<OPSuccinctDataFetcher>,
-    pub range_proof_size: u64,
-    pub submission_interval: u64,
-    pub proof_timeout: u64,
     pub driver_db_client: Arc<DriverDBClient>,
-    pub max_concurrent_proof_requests: u64,
-    pub max_concurrent_witness_gen: u64,
     pub loop_interval_seconds: u64,
 }
 /// Type alias for a map of task IDs to their join handles and associated requests
@@ -130,7 +125,6 @@ where
 
         // Initialize fetcher
         let rollup_config_hash = hash_rollup_config(fetcher.rollup_config.as_ref().unwrap());
-        const PROOF_TIMEOUT: u64 = 60 * 60;
 
         let program_config = ProgramConfig {
             range_vk: Arc::new(range_vk),
@@ -168,12 +162,7 @@ where
             driver_config: DriverConfig {
                 network_prover,
                 fetcher,
-                range_proof_size: 0,
-                submission_interval: 0,
-                proof_timeout: PROOF_TIMEOUT,
                 driver_db_client: db_client,
-                max_concurrent_proof_requests: requester_config.max_concurrent_proof_requests,
-                max_concurrent_witness_gen: requester_config.max_concurrent_witness_gen,
                 loop_interval_seconds: loop_interval_seconds.unwrap_or(DEFAULT_LOOP_INTERVAL),
             },
             contract_config: ContractConfig {
@@ -551,14 +540,14 @@ where
 
         // If there are already MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute, and Prove status, return.
         if witness_gen_count + execution_count + prove_count
-            >= self.driver_config.max_concurrent_proof_requests as i64
+            >= self.requester_config.max_concurrent_proof_requests as i64
         {
             debug!("There are already MAX_CONCURRENT_PROOF_REQUESTS proofs in WitnessGeneration, Execute, and Prove status.");
             return Ok(());
         }
 
         // If there are already MAX_CONCURRENT_WITNESS_GEN proofs in WitnessGeneration status, return.
-        if witness_gen_count >= self.driver_config.max_concurrent_witness_gen as i64 {
+        if witness_gen_count >= self.requester_config.max_concurrent_witness_gen as i64 {
             debug!(
                 "There are already MAX_CONCURRENT_WITNESS_GEN proofs in WitnessGeneration status."
             );
