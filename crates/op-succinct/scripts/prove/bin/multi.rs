@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use op_succinct_host_utils::{
     block_range::get_validated_block_range,
@@ -18,10 +18,10 @@ use tracing::debug;
 async fn main() -> Result<()> {
     let args = HostExecutorArgs::parse();
 
-    dotenv::from_path(&args.env_file).expect(&format!(
+    dotenv::from_path(&args.env_file).context(format!(
         "Environment file not found: {}",
         args.env_file.display()
-    ));
+    ))?;
     utils::setup_logger();
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
