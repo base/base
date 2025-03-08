@@ -2,7 +2,7 @@ services:
   op-succinct:
     build:
       context: .
-      dockerfile: ./proposer/succinct/Dockerfile
+      dockerfile: ./validity/Dockerfile
     env_file:
       - ${ENV_FILE:-.env}
     restart: unless-stopped

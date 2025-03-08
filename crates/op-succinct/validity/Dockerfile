@@ -20,13 +20,7 @@ RUN curl -L https://sp1.succinct.xyz | bash && \
     ~/.sp1/bin/cargo-prove prove --version
 
 # Copy only what's needed for the build
-COPY Cargo.toml Cargo.lock ./
-COPY proposer/succinct ./proposer/succinct
-COPY fault_proof ./fault_proof
-COPY elf ./elf
-COPY utils ./utils
-COPY programs ./programs
-COPY scripts ./scripts
+COPY . .
 
 # Build the server
 RUN --mount=type=ssh \

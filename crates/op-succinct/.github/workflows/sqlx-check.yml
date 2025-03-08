@@ -27,4 +27,4 @@ jobs:
         run: cargo install sqlx-cli --no-default-features --features native-tls,postgres
       
       - name: Verify SQLx query files
-        run: cd proposer/succinct && cargo sqlx prepare --check
+        run: cd validity && cargo sqlx prepare --check

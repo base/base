@@ -3,8 +3,8 @@ members = [
     "utils/*",
     "programs/*",
     "scripts/*",
-    "proposer/succinct",
-    "fault_proof",
+    "validity",
+    "fault-proof",
 ]
 resolver = "2"
 
@@ -72,7 +72,8 @@ op-succinct-prove = { path = "scripts/prove" }
 op-succinct-client-utils = { path = "utils/client" }
 op-succinct-host-utils = { path = "utils/host" }
 op-succinct-build-utils = { path = "utils/build" }
-op-succinct-proposer = { path = "proposer/succinct" }
+op-succinct-validity = { path = "validity" }
+op-succinct-fp = { path = "fault-proof" }
 
 # Alloy (Network)
 alloy-signer-local = { version = "0.11.1" }

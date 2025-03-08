@@ -4473,40 +4473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "op-succinct-proposer"
-version = "0.1.0"
-dependencies = [
- "alloy-eips",
- "alloy-primitives",
- "alloy-provider",
- "alloy-signer-local",
- "alloy-sol-types",
- "anyhow",
- "base64 0.22.1",
- "bincode",
- "chrono",
- "clap",
- "dotenv",
- "futures-util",
- "metrics",
- "metrics-exporter-prometheus",
- "metrics-process",
- "op-succinct-build-utils",
- "op-succinct-client-utils",
- "op-succinct-host-utils",
- "rustls",
- "serde",
- "serde_json",
- "serde_repr",
- "sp1-sdk",
- "sqlx",
- "tikv-jemallocator",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "op-succinct-prove"
 version = "0.1.0"
 dependencies = [
@@ -4551,6 +4517,40 @@ dependencies = [
  "serde_json",
  "sp1-sdk",
  "tokio",
+]
+
+[[package]]
+name = "op-succinct-validity"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "chrono",
+ "clap",
+ "dotenv",
+ "futures-util",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "metrics-process",
+ "op-succinct-build-utils",
+ "op-succinct-client-utils",
+ "op-succinct-host-utils",
+ "rustls",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "sp1-sdk",
+ "sqlx",
+ "tikv-jemallocator",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
