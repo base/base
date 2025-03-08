@@ -13,7 +13,7 @@ pub fn build_all() {
     //         elf_name: Some("aggregation-elf".to_string()),
     //         output_directory: Some("../../elf".to_string()),
     //         docker: true,
-    //         tag: "v4.1.2".to_string(),
+    //         tag: "v4.1.3".to_string(),
     //         workspace_directory: Some("../../".to_string()),
     //         ..Default::default()
     //     },
@@ -25,7 +25,7 @@ pub fn build_all() {
     //         elf_name: Some("range-elf-bump".to_string()),
     //         output_directory: Some("../../elf".to_string()),
     //         docker: true,
-    //         tag: "v4.1.2".to_string(),
+    //         tag: "v4.1.3".to_string(),
     //         workspace_directory: Some("../../".to_string()),
     //         ..Default::default()
     //     },
@@ -37,7 +37,7 @@ pub fn build_all() {
     //         elf_name: Some("range-elf-embedded".to_string()),
     //         output_directory: Some("../../elf".to_string()),
     //         docker: true,
-    //         tag: "v4.1.2".to_string(),
+    //         tag: "v4.1.3".to_string(),
     //         workspace_directory: Some("../../".to_string()),
     //         features: vec!["embedded".to_string()],
     //         ..Default::default()

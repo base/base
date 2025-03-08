@@ -729,7 +729,7 @@ impl OPSuccinctDataFetcher {
 
         // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
         // witness data.
-        fs::create_dir_all(&data_directory)?;
+        fs::create_dir_all(&data_directory).expect("Failed to create data directory");
 
         Ok(OPSuccinctHost {
             kona_args: SingleChainHost {
