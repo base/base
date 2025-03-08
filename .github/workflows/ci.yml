@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --bin reth-flashblocks
+      - run: cargo build --all-targets
 
   test:
     name: Test
@@ -24,6 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build reth-flashblocks
+        run: cargo build --bin reth-flashblocks
       - name: Generate genesis file
         run: cargo run --bin utils -- genesis --output genesis.json
       - run: cargo test --all-features
