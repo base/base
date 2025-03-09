@@ -1192,7 +1192,7 @@ where
         let mut current_end = completed_range_proofs[0].1;
 
         for proof in completed_range_proofs.iter().skip(1) {
-            if proof.0 == current_end + 1 {
+            if proof.0 == current_end {
                 current_end = proof.1;
                 highest_block = current_end;
             } else {
