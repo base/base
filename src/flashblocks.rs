@@ -115,8 +115,7 @@ impl FlashblocksClient {
                     Err(e) => {
                         error!(
                             "WebSocket connection error, retrying in {:?}: {}",
-                            backoff,
-                            e
+                            backoff, e
                         );
                         tokio::time::sleep(backoff).await;
                         // Double the backoff time, but cap at MAX_BACKOFF
