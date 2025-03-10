@@ -24,4 +24,18 @@ pub struct OpRbuilderArgs {
         default_value = "127.0.0.1:1111"
     )]
     pub flashblocks_ws_url: String,
+    /// chain block time in milliseconds
+    #[arg(
+        long = "rollup.chain-block-time",
+        default_value = "1000",
+        env = "CHAIN_BLOCK_TIME"
+    )]
+    pub chain_block_time: u64,
+    /// flashblock block time in milliseconds
+    #[arg(
+        long = "rollup.flashblock-block-time",
+        default_value = "250",
+        env = "FLASHBLOCK_BLOCK_TIME"
+    )]
+    pub flashblock_block_time: u64,
 }

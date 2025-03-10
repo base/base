@@ -25,6 +25,8 @@ pub struct OpRbuilderConfig {
     network_port: Option<u16>,
     builder_private_key: Option<String>,
     flashblocks_ws_url: Option<String>,
+    chain_block_time: Option<u64>,
+    flashbots_block_time: Option<u64>,
 }
 
 impl OpRbuilderConfig {
@@ -64,6 +66,16 @@ impl OpRbuilderConfig {
 
     pub fn with_flashblocks_ws_url(mut self, url: &str) -> Self {
         self.flashblocks_ws_url = Some(url.to_string());
+        self
+    }
+
+    pub fn with_chain_block_time(mut self, time: u64) -> Self {
+        self.chain_block_time = Some(time);
+        self
+    }
+
+    pub fn with_flashbots_block_time(mut self, time: u64) -> Self {
+        self.flashbots_block_time = Some(time);
         self
     }
 }
@@ -116,6 +128,16 @@ impl Service for OpRbuilderConfig {
         if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {
             cmd.arg("--rollup.flashblocks-ws-url")
                 .arg(flashblocks_ws_url);
+        }
+
+        if let Some(chain_block_time) = self.chain_block_time {
+            cmd.arg("--rollup.chain-block-time")
+                .arg(chain_block_time.to_string());
+        }
+
+        if let Some(flashbots_block_time) = self.flashbots_block_time {
+            cmd.arg("--rollup.flashblock-block-time")
+                .arg(flashbots_block_time.to_string());
         }
 
         cmd

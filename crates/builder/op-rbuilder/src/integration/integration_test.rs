@@ -370,7 +370,9 @@ mod tests {
             .network_port(1235)
             .http_port(1238)
             .with_builder_private_key(BUILDER_PRIVATE_KEY)
-            .with_flashblocks_ws_url("localhost:1239");
+            .with_flashblocks_ws_url("localhost:1239")
+            .with_chain_block_time(2000)
+            .with_flashbots_block_time(200);
 
         // create the validation reth node
         let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
@@ -407,7 +409,7 @@ mod tests {
         let engine_api = EngineApi::new("http://localhost:1234").unwrap();
         let validation_api = EngineApi::new("http://localhost:1236").unwrap();
 
-        let mut generator = BlockGenerator::new(&engine_api, Some(&validation_api), false, 1, None);
+        let mut generator = BlockGenerator::new(&engine_api, Some(&validation_api), false, 2, None);
         generator.init().await?;
 
         let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
@@ -433,6 +435,9 @@ mod tests {
         op_rbuilder
             .find_log_line("Processing new chain commit") // no builder tx for flashblocks builder
             .await?;
+
+        // check there's 10 flashblocks log lines (2000ms / 200ms)
+        op_rbuilder.find_log_line("Building flashblock 9").await?;
 
         // Process websocket messages
         let timeout_duration = Duration::from_secs(10);

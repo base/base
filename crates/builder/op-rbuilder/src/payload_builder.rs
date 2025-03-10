@@ -89,13 +89,22 @@ pub struct CustomOpPayloadBuilder {
     #[allow(dead_code)]
     builder_signer: Option<Signer>,
     flashblocks_ws_url: String,
+    chain_block_time: u64,
+    flashblock_block_time: u64,
 }
 
 impl CustomOpPayloadBuilder {
-    pub fn new(builder_signer: Option<Signer>, flashblocks_ws_url: String) -> Self {
+    pub fn new(
+        builder_signer: Option<Signer>,
+        flashblocks_ws_url: String,
+        chain_block_time: u64,
+        flashblock_block_time: u64,
+    ) -> Self {
         Self {
             builder_signer,
             flashblocks_ws_url,
+            chain_block_time,
+            flashblock_block_time,
         }
     }
 }
@@ -126,6 +135,8 @@ where
             ctx.provider().clone(),
             Arc::new(BasicOpReceiptBuilder::default()),
             self.flashblocks_ws_url.clone(),
+            self.chain_block_time,
+            self.flashblock_block_time,
         ))
     }
 
@@ -199,6 +210,10 @@ pub struct OpPayloadBuilder<Pool, Client, EvmConfig, N: NodePrimitives> {
     pub tx: mpsc::UnboundedSender<String>,
     /// Node primitive types.
     pub receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
+    /// chain block time
+    pub chain_block_time: u64,
+    /// Flashblock block time
+    pub flashblock_block_time: u64,
 }
 
 impl<Pool, Client, EvmConfig, N: NodePrimitives> OpPayloadBuilder<Pool, Client, EvmConfig, N> {
@@ -209,6 +224,8 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives> OpPayloadBuilder<Pool, Client, 
         client: Client,
         receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
         flashblocks_ws_url: String,
+        chain_block_time: u64,
+        flashblock_block_time: u64,
     ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let subscribers = Arc::new(Mutex::new(Vec::new()));
@@ -225,6 +242,8 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives> OpPayloadBuilder<Pool, Client, 
             client,
             tx,
             receipt_builder,
+            chain_block_time,
+            flashblock_block_time,
         }
     }
 
@@ -346,8 +365,8 @@ where
             return Ok(());
         }
 
-        // Right now it assumes a 1 second block time (TODO)
-        let gas_per_batch = ctx.block_gas_limit() / 4;
+        let gas_per_batch =
+            ctx.block_gas_limit() / (self.chain_block_time / self.flashblock_block_time);
         let mut total_gas_per_batch = gas_per_batch;
 
         let mut flashblock_count = 0;
@@ -410,7 +429,7 @@ where
             total_gas_per_batch += gas_per_batch;
             flashblock_count += 1;
 
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            std::thread::sleep(std::time::Duration::from_millis(self.flashblock_block_time));
         }
     }
 

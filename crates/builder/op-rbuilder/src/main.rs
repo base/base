@@ -36,6 +36,8 @@ fn main() {
                 .with_components(op_node.components().payload(CustomOpPayloadBuilder::new(
                     builder_args.builder_signer,
                     builder_args.flashblocks_ws_url,
+                    builder_args.chain_block_time,
+                    builder_args.flashblock_block_time,
                 )))
                 .with_add_ons(
                     OpAddOnsBuilder::default()

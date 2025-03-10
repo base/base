@@ -84,19 +84,35 @@ pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
+    #[cfg(feature = "flashblocks")]
+    chain_block_time: u64,
+    #[cfg(feature = "flashblocks")]
+    flashblock_block_time: u64,
 }
 
 impl CustomOpPayloadBuilder {
     #[cfg(feature = "flashblocks")]
-    pub fn new(builder_signer: Option<Signer>, flashblocks_ws_url: String) -> Self {
+    pub fn new(
+        builder_signer: Option<Signer>,
+        flashblocks_ws_url: String,
+        chain_block_time: u64,
+        flashblock_block_time: u64,
+    ) -> Self {
         Self {
             builder_signer,
             flashblocks_ws_url,
+            chain_block_time,
+            flashblock_block_time,
         }
     }
 
     #[cfg(not(feature = "flashblocks"))]
-    pub fn new(builder_signer: Option<Signer>, _flashblocks_ws_url: String) -> Self {
+    pub fn new(
+        builder_signer: Option<Signer>,
+        _flashblocks_ws_url: String,
+        _chain_block_time: u64,
+        _flashblock_block_time: u64,
+    ) -> Self {
         Self { builder_signer }
     }
 }
