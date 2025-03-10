@@ -8,28 +8,67 @@ homepage = "https://github.com/base-org/reth-flashblocks"
 repository = "https://github.com/base-org/reth-flashblocks"
 
 [dependencies]
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.1.5" }
+# reth
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
 
-clap = { version = "4.4.3" }
+# revm
+revm = { version = "19.5.0", default-features = false }
+
+# alloy
+alloy-primitives = { version = "0.8.20", default-features = false, features = ["map-foldhash"] }
+alloy-eips = { version = "0.11.1", default-features = false }
+alloy-rpc-types = { version = "0.11.1", default-features = false }
+alloy-rpc-types-engine = { version = "0.11.1", default-features = false }
+alloy-rpc-types-eth = { version = "0.11.1" }
+alloy-consensus = { version = "0.11.1" }
+alloy-trie = { version = "0.7", default-features = false }
+alloy-provider = { version = "0.11.1" }
+
+# op-alloy
+op-alloy-rpc-types = { version = "0.10.3", default-features = false }
+op-alloy-rpc-types-engine = { version =  "0.10.3", default-features = false }
+op-alloy-rpc-jsonrpsee = { version =  "0.10.3", default-features = false }
+op-alloy-network = { version =  "0.10.3", default-features = false }
+op-alloy-consensus = { version =  "0.10.3", default-features = false }
+
+# rollup-boost
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0b089a37b8525d328ab93962bb8121811ee3ca1f" }
+
+# tokio
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
+
+# async
+futures = "0.3"
+futures-util = "0.3"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# rpc
 jsonrpsee = { version = "0.24.8" }
+
+# misc
+clap = { version = "4.4.3" }
 tracing = { version = "0.1.41" }
 serde = "1"
-
-# TODO: Pinning dependencies to work around deposit-transaction being removed and Reth 1.1.5 not being updated, see:
-# https://github.com/alloy-rs/op-alloy/pull/383/files. This can be removed in the future
-op-alloy-rpc-types = { version = "=0.9.0", default-features = false }
-op-alloy-rpc-types-engine = { version =  "=0.9.0", default-features = false }
-op-alloy-rpc-jsonrpsee = { version =  "=0.9.0", default-features = false }
-op-alloy-network = { version =  "=0.9.0", default-features = false }
-op-alloy-consensus = { version =  "=0.9.0", default-features = false }
-alloy-primitives = { version = "=0.8.20", default-features = false }
-alloy-eips = { version = "=0.9.2", default-features = false }
-alloy-rpc-types = { version = "=0.9.2", default-features = false }
-alloy-rpc-types-eth = { version = "=0.9.2" }
+serde_json = "1.0"
+url = "2.5"
+metrics = "0.24.1"
+metrics-derive = "0.1"
+itertools = "0.12"
+eyre = { version = "0.6.12" }
+uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
+time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
+chrono = "0.4"
 
 [features]
 default = ["optimism"]
@@ -37,8 +76,12 @@ default = ["optimism"]
 optimism = [
 	"reth-optimism-node/optimism",
 	"reth-optimism-cli/optimism",
-	"reth-primitives/optimism"
+	"reth-optimism-primitives/optimism",
+	"reth-optimism-rpc/optimism",
+	"reth-optimism-evm/optimism",
 ]
+
+integration = []
 
 [[bin]]
 name = "reth-flashblocks"
