@@ -24,6 +24,7 @@ pub struct OpRbuilderConfig {
     http_port: Option<u16>,
     network_port: Option<u16>,
     builder_private_key: Option<String>,
+    flashblocks_ws_url: Option<String>,
 }
 
 impl OpRbuilderConfig {
@@ -58,6 +59,11 @@ impl OpRbuilderConfig {
 
     pub fn with_builder_private_key(mut self, private_key: &str) -> Self {
         self.builder_private_key = Some(private_key.to_string());
+        self
+    }
+
+    pub fn with_flashblocks_ws_url(mut self, url: &str) -> Self {
+        self.flashblocks_ws_url = Some(url.to_string());
         self
     }
 }
@@ -105,6 +111,11 @@ impl Service for OpRbuilderConfig {
             cmd.arg("--http")
                 .arg("--http.port")
                 .arg(http_port.to_string());
+        }
+
+        if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {
+            cmd.arg("--rollup.flashblocks-ws-url")
+                .arg(flashblocks_ws_url);
         }
 
         cmd

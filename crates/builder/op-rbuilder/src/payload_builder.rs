@@ -6,7 +6,7 @@ use crate::tx_signer::Signer;
 use alloy_consensus::{Eip658Value, Header, Transaction, Typed2718, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_eips::Encodable2718;
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::OpDepositReceipt;
@@ -45,6 +45,7 @@ use reth_payload_util::PayloadTransactions;
 use reth_primitives::{transaction::SignedTransactionIntoRecoveredExt, BlockBody, SealedHeader};
 use reth_primitives_traits::proofs;
 use reth_primitives_traits::Block as _;
+use reth_primitives_traits::SignedTransaction;
 use reth_provider::CanonStateSubscriptions;
 use reth_provider::StorageRootProvider;
 use reth_provider::{
@@ -62,7 +63,6 @@ use revm::{
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
-use serde_json::Value;
 use std::error::Error as StdError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
@@ -74,16 +74,29 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::WebSocketStream;
 
-#[derive(Debug, Clone, Copy, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FlashblocksMetadata<N: NodePrimitives> {
+    receipts: HashMap<B256, N::Receipt>,
+    new_account_balances: HashMap<Address, U256>,
+    block_number: u64,
+}
+
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct CustomOpPayloadBuilder {
     #[allow(dead_code)]
     builder_signer: Option<Signer>,
+    flashblocks_ws_url: String,
 }
 
 impl CustomOpPayloadBuilder {
-    pub fn new(builder_signer: Option<Signer>) -> Self {
-        Self { builder_signer }
+    pub fn new(builder_signer: Option<Signer>, flashblocks_ws_url: String) -> Self {
+        Self {
+            builder_signer,
+            flashblocks_ws_url,
+        }
     }
 }
 
@@ -112,6 +125,7 @@ where
             pool,
             ctx.provider().clone(),
             Arc::new(BasicOpReceiptBuilder::default()),
+            self.flashblocks_ws_url.clone(),
         ))
     }
 
@@ -194,6 +208,7 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives> OpPayloadBuilder<Pool, Client, 
         pool: Pool,
         client: Client,
         receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
+        flashblocks_ws_url: String,
     ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let subscribers = Arc::new(Mutex::new(Vec::new()));
@@ -201,7 +216,7 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives> OpPayloadBuilder<Pool, Client, 
         Self::publish_task(rx, subscribers.clone());
 
         tokio::spawn(async move {
-            Self::start_ws(subscribers, "127.0.0.1:1111").await;
+            Self::start_ws(subscribers, &flashblocks_ws_url).await;
         });
 
         Self {
@@ -548,9 +563,28 @@ where
     info.last_flashblock_index = info.executed_transactions.len();
 
     let new_transactions_encoded = new_transactions
+        .clone()
         .into_iter()
         .map(|tx| tx.encoded_2718().into())
         .collect::<Vec<_>>();
+
+    let new_receipts = info.receipts[info.last_flashblock_index..].to_vec();
+    let receipts_with_hash = new_transactions
+        .iter()
+        .zip(new_receipts.iter())
+        .map(|(tx, receipt)| (*tx.tx_hash(), receipt.clone()))
+        .collect::<HashMap<B256, N::Receipt>>();
+    let new_account_balances = new_bundle
+        .state
+        .iter()
+        .filter_map(|(address, account)| account.info.as_ref().map(|info| (*address, info.balance)))
+        .collect::<HashMap<Address, U256>>();
+
+    let metadata: FlashblocksMetadata<N> = FlashblocksMetadata {
+        receipts: receipts_with_hash,
+        new_account_balances,
+        block_number: ctx.parent().number + 1,
+    };
 
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
@@ -580,7 +614,7 @@ where
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
         },
-        metadata: Value::Null,
+        metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
 
     Ok((
