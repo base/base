@@ -35,6 +35,7 @@
   - [Thread Stack Hashing](#thread-stack-hashing)
 - [Memory](#memory)
   - [Heap](#heap)
+    - [mmap hints](#mmap-hints)
 - [Delay Slots](#delay-slots)
 - [Syscalls](#syscalls)
   - [Supported Syscalls](#supported-syscalls)
@@ -388,6 +389,17 @@ Such VM steps are still considered valid state transitions.
 
 Specification of memory mappings is outside the scope of this document as it is irrelevant to
 the VM state. FPVM implementers may refer to the Linux/MIPS kernel for inspiration.
+
+#### mmap hints
+
+When a process issues an mmap(2) syscall with a non-NULL addr parameter, the FPVM honors this hint as a strict requirement
+rather than a suggestion. The VM unconditionally maps memory at exactly the requested address,
+creating the mapping without performing address validity checks.
+
+The VM does not validate whether the specified address range overlaps with existing mappings.
+As this is a single-process execution environment, collision detection is delegated to userspace.
+The calling process must track its own page mappings to avoid mapping conflicts, as the usual
+kernel protections against overlapping mappings are not implemented.
 
 ## Delay Slots
 
