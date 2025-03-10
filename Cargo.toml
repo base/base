@@ -86,7 +86,3 @@ integration = []
 [[bin]]
 name = "reth-flashblocks"
 path = "./src/main.rs"
-
-[[bin]]
-name = "utils"
-path = "src/utils/main.rs"
