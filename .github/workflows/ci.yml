@@ -26,8 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Build reth-flashblocks
         run: cargo build --bin reth-flashblocks
-      - name: Generate genesis file
-        run: cargo run --bin utils -- genesis --output genesis.json
       - run: cargo test --all-features
 
   fmt:
