@@ -352,9 +352,6 @@ impl Transaction for OpTypedTransaction {
 }
 
 impl RlpEcdsaEncodableTx for OpTypedTransaction {
-    // Setting this to zero for enum txs type is alright, as it shouldn't be used.
-    const DEFAULT_TX_TYPE: u8 = 0;
-
     fn rlp_encoded_fields_length(&self) -> usize {
         match self {
             Self::Legacy(tx) => tx.rlp_encoded_fields_length(),
