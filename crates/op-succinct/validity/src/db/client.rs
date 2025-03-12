@@ -46,9 +46,10 @@ impl DriverDBClient {
                 total_tx_fees,
                 l1_chain_id,
                 l2_chain_id,
-                contract_address
+                contract_address,
+                prover_address
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28
             )
             "#,
             req.status as i16,
@@ -79,6 +80,7 @@ impl DriverDBClient {
             req.l1_chain_id,
             req.l2_chain_id,
             req.contract_address.as_ref().map(|arr| &arr[..]),
+            req.prover_address.as_ref().map(|arr| &arr[..]),
         )
         .execute(&self.pool)
         .await

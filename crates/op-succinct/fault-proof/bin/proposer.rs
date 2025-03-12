@@ -43,8 +43,12 @@ async fn main() {
         l1_provider_with_wallet.clone(),
     );
 
-    let proposer = OPSuccinctProposer::new(l1_provider_with_wallet, factory)
-        .await
-        .unwrap();
+    let proposer = OPSuccinctProposer::new(
+        wallet.default_signer().address(), // prover_address
+        l1_provider_with_wallet,
+        factory,
+    )
+    .await
+    .unwrap();
     proposer.run().await.expect("Runs in an infinite loop");
 }

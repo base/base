@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use anyhow::{Context, Result};
 use op_succinct_client_utils::boot::BootInfoStruct;
@@ -109,6 +109,12 @@ impl OPSuccinctProofRequester {
             headers,
             &self.program_config.range_vk,
             B256::from_slice(l1_head),
+            Address::from_slice(
+                request
+                    .prover_address
+                    .as_ref()
+                    .context("Prover address must be set for aggregation proofs.")?,
+            ),
         )
         .context("Failed to get agg proof stdin")?;
 

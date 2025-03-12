@@ -10,6 +10,7 @@ pub struct EnvironmentConfig {
     pub metrics_port: u16,
     pub l1_rpc: String,
     pub private_key: PrivateKeySigner,
+    pub prover_address: Address,
     pub loop_interval: Option<u64>,
     pub range_proof_strategy: FulfillmentStrategy,
     pub agg_proof_strategy: FulfillmentStrategy,
@@ -42,6 +43,9 @@ where
 
 /// Read proposer environment variables and return a config.
 pub fn read_proposer_env() -> Result<EnvironmentConfig> {
+    // Parse private key
+    let private_key = get_env_var::<PrivateKeySigner>("PRIVATE_KEY", None)?;
+
     // Parse strategy values
     let range_proof_strategy = if get_env_var("RANGE_PROOF_STRATEGY", Some("reserved".to_string()))?
         .to_lowercase()
@@ -77,7 +81,8 @@ pub fn read_proposer_env() -> Result<EnvironmentConfig> {
     let config = EnvironmentConfig {
         metrics_port: get_env_var("METRICS_PORT", Some(8080))?,
         l1_rpc: get_env_var("L1_RPC", None)?,
-        private_key: get_env_var("PRIVATE_KEY", None)?,
+        private_key: private_key.clone(),
+        prover_address: get_env_var("PROVER_ADDRESS", Some(private_key.address()))?,
         db_url: get_env_var("DATABASE_URL", None)?,
         range_proof_strategy,
         agg_proof_strategy,

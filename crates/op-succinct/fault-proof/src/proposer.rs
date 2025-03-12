@@ -39,6 +39,11 @@ where
     P: Provider<Ethereum> + Clone + Send + Sync,
 {
     pub config: ProposerConfig,
+
+    // The address being committed to when generating the aggregation proof to prevent front-running attacks.
+    // This should be the same address that is being used to send `prove` transactions.
+    pub prover_address: Address,
+
     pub l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
     pub l2_provider: L2Provider,
     pub factory: Arc<DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>>,
@@ -53,6 +58,7 @@ where
 {
     /// Creates a new challenger instance with the provided L1 provider with wallet and factory contract instance.
     pub async fn new(
+        prover_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
     ) -> Result<Self> {
@@ -64,6 +70,7 @@ where
 
         Ok(Self {
             config: config.clone(),
+            prover_address,
             l1_provider_with_wallet: l1_provider_with_wallet.clone(),
             l2_provider: ProviderBuilder::default().on_http(config.l2_rpc),
             factory: Arc::new(factory.clone()),
@@ -152,6 +159,7 @@ where
             headers,
             &self.prover.range_vk,
             boot_info.l1Head,
+            self.prover_address,
         ) {
             Ok(s) => s,
             Err(e) => {
