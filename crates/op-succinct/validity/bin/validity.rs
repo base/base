@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
         agg_proof_mode: env_config.agg_proof_mode,
         submission_interval: env_config.submission_interval,
         mock: env_config.mock,
+        prover_address: env_config.prover_address,
     };
 
     // Read all config from env vars

@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use chrono::{Local, NaiveDateTime};
 use op_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
@@ -107,6 +107,7 @@ pub struct OPSuccinctRequest {
     pub l1_chain_id: i64,
     pub l2_chain_id: i64,
     pub contract_address: Option<Vec<u8>>, //Address
+    pub prover_address: Option<Vec<u8>>,   //Address
 }
 
 impl OPSuccinctRequest {
@@ -192,6 +193,7 @@ impl OPSuccinctRequest {
         l2_chain_id: i64,
         checkpointed_l1_block_number: i64,
         checkpointed_l1_block_hash: B256,
+        prover_address: Address,
     ) -> Self {
         let now = Local::now().naive_local();
 
@@ -211,6 +213,7 @@ impl OPSuccinctRequest {
             rollup_config_hash: rollup_config_hash.to_vec(),
             l1_chain_id,
             l2_chain_id,
+            prover_address: Some(prover_address.to_vec()),
             ..Default::default()
         }
     }

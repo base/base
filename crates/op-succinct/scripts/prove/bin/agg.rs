@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use cargo_metadata::MetadataCommand;
 use clap::Parser;
@@ -21,6 +21,10 @@ struct Args {
     /// Prove flag.
     #[arg(short, long)]
     prove: bool,
+
+    /// Prover address.
+    #[arg(short, long)]
+    prover: Address,
 
     /// Env file path.
     #[arg(default_value = ".env", short, long)]
@@ -87,8 +91,15 @@ async fn main() -> Result<()> {
         "Range ELF Verification Key Commitment: {}",
         multi_block_vkey_b256
     );
-    let stdin =
-        get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, header.hash_slow()).unwrap();
+    let stdin = get_agg_proof_stdin(
+        proofs,
+        boot_infos,
+        headers,
+        &vkey,
+        header.hash_slow(),
+        args.prover,
+    )
+    .expect("Failed to get agg proof stdin");
 
     let (agg_pk, agg_vk) = prover.setup(AGGREGATION_ELF);
     println!("Aggregate ELF Verification Key: {:?}", agg_vk.vk.bytes32());

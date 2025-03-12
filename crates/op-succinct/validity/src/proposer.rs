@@ -60,6 +60,9 @@ pub struct ProgramConfig {
 pub struct RequesterConfig {
     pub l1_chain_id: i64,
     pub l2_chain_id: i64,
+    // The address being committed to when generating the aggregation proof to prevent front-running attacks.
+    // This should be the same address that is being used to send `proposeL2Output` transactions.
+    pub prover_address: Address,
     pub l2oo_address: Address,
     pub dgf_address: Address,
     pub range_proof_interval: u64,
@@ -493,6 +496,7 @@ where
                     self.requester_config.l2_chain_id,
                     checkpointed_l1_block_number,
                     checkpointed_l1_block_hash,
+                    self.requester_config.prover_address,
                 ))
                 .await?;
         }

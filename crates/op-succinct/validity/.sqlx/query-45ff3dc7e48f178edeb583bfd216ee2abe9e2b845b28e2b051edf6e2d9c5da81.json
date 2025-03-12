@@ -142,6 +142,11 @@
         "ordinal": 27,
         "name": "contract_address",
         "type_info": "Bytea"
+      },
+      {
+        "ordinal": 28,
+        "name": "prover_address",
+        "type_info": "Bytea"
       }
     ],
     "parameters": {
@@ -183,6 +188,7 @@
       false,
       false,
       false,
+      true,
       true
     ]
   },
