@@ -68,6 +68,12 @@ sol! {
 
         /// @notice Returns the challenger bond amount.
         function challengerBond() external view returns (uint256 challengerBond_);
+
+        /// @notice Claim the credit belonging to the recipient address.
+        function claimCredit(address _recipient) external;
+
+        /// @notice Returns the credit balance of a given recipient.
+        function credit(address _recipient) external view returns (uint256 credit_);
     }
 
     #[allow(missing_docs)]
@@ -79,6 +85,9 @@ sol! {
     contract AnchorStateRegistry {
         /// @notice Returns the current anchor root.
         function getAnchorRoot() public view returns (Hash, uint256);
+
+        /// @notice Returns whether a game is finalized.
+        function isGameFinalized(IDisputeGame _game) public view returns (bool);
     }
 
     #[derive(Debug, PartialEq)]
