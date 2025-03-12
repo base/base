@@ -43,12 +43,14 @@ async fn main() {
         l1_provider_with_wallet.clone(),
     );
 
-    let proposer = OPSuccinctProposer::new(
-        wallet.default_signer().address(), // prover_address
-        l1_provider_with_wallet,
-        factory,
-    )
-    .await
-    .unwrap();
+    // Use PROVER_ADDRESS from env if available, otherwise use wallet's default signer address from the private key.
+    let prover_address = env::var("PROVER_ADDRESS")
+        .ok()
+        .and_then(|addr| addr.parse::<Address>().ok())
+        .unwrap_or_else(|| wallet.default_signer().address());
+
+    let proposer = OPSuccinctProposer::new(prover_address, l1_provider_with_wallet, factory)
+        .await
+        .unwrap();
     proposer.run().await.expect("Runs in an infinite loop");
 }

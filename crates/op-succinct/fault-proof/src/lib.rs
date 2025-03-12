@@ -143,10 +143,24 @@ where
         l2_provider: L2Provider,
     ) -> Result<Option<(U256, U256)>>;
 
+    /// Get the anchor state registry address.
+    async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address>;
+
     /// Get the anchor L2 block number.
     ///
     /// This function returns the L2 block number of the anchor game for a given game type.
     async fn get_anchor_l2_block_number(&self, game_type: u32) -> Result<U256>;
+
+    /// Check if a game is finalized.
+    async fn is_game_finalized(&self, game_type: u32, game_address: Address) -> Result<bool>;
+
+    /// Check if a game is claimable.
+    async fn is_claimable(
+        &self,
+        game_type: u32,
+        game_address: Address,
+        claimant: Address,
+    ) -> Result<bool>;
 
     /// Get the oldest game address with a given condition.
     async fn get_oldest_game_address<S, O>(
@@ -183,7 +197,21 @@ where
         l2_provider: L2Provider,
     ) -> Result<Option<Address>>;
 
-    /// Determines if we should attempt resolution or not. The `oldest_game_index` is configured
+    /// Get the oldest game address with claimable bonds.
+    ///
+    /// Claimable games are games that have been finalized and have a determined bond distribution mode.
+    /// Check if the game is finalized by checking if it's not in progress (status is Resolved).
+    ///
+    /// This function checks a window of recent games, starting from
+    /// (latest_game_index - max_games_to_check_for_bond_claiming) up to latest_game_index.
+    async fn get_oldest_claimable_bond_game_address(
+        &self,
+        game_type: u32,
+        max_games_to_check_for_bond_claiming: u64,
+        claimant: Address,
+    ) -> Result<Option<Address>>;
+
+    /// Determines whether to attempt resolution or not. The `oldest_game_index` is configured
     /// to be `latest_game_index` - `max_games_to_check_for_resolution`.
     ///
     /// If the oldest game has no parent (i.e., it's a first game), we always attempt resolution.
@@ -324,18 +352,73 @@ where
         Ok(Some((block_number, game_index)))
     }
 
+    /// Get the anchor state registry address.
+    async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address> {
+        let game_impl_address = self.gameImpls(game_type).call().await?._0;
+        let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
+        let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?.registry_;
+        Ok(anchor_state_registry_address)
+    }
+
     /// Get the anchor L2 block number.
     ///
     /// This function returns the L2 block number of the anchor game for a given game type.
     async fn get_anchor_l2_block_number(&self, game_type: u32) -> Result<U256> {
-        let game_impl_address = self.gameImpls(game_type).call().await?._0;
-        let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
-        let anchor_state_registry = AnchorStateRegistry::new(
-            game_impl.anchorStateRegistry().call().await?.registry_,
-            self.provider(),
-        );
+        let anchor_state_registry_address =
+            self.get_anchor_state_registry_address(game_type).await?;
+        let anchor_state_registry =
+            AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
         let anchor_l2_block_number = anchor_state_registry.getAnchorRoot().call().await?._1;
         Ok(anchor_l2_block_number)
+    }
+
+    /// Check if a game is finalized.
+    async fn is_game_finalized(&self, game_type: u32, game_address: Address) -> Result<bool> {
+        let anchor_state_registry_address =
+            self.get_anchor_state_registry_address(game_type).await?;
+        let anchor_state_registry =
+            AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
+        let is_finalized = anchor_state_registry
+            .isGameFinalized(game_address)
+            .call()
+            .await?;
+        Ok(is_finalized._0)
+    }
+
+    /// Check if a game is claimable.
+    async fn is_claimable(
+        &self,
+        game_type: u32,
+        game_address: Address,
+        claimant: Address,
+    ) -> Result<bool> {
+        let game = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
+        let claim_data = game.claimData().call().await?.claimData_;
+
+        // NOTE(fakedev9999): This is a redundant check with the is_game_finalized check below,
+        // but is useful for better logging.
+        if claim_data.status != ProposalStatus::Resolved {
+            tracing::info!("Game {:?} is not resolved yet", game_address);
+            return Ok(false);
+        }
+
+        // Game must be finalized before claiming credit.
+        if !self.is_game_finalized(game_type, game_address).await? {
+            tracing::info!("Game {:?} is resolved but not finalized", game_address);
+            return Ok(false);
+        }
+
+        // Claimant must have credit left to claim.
+        if game.credit(claimant).call().await?.credit_ == U256::ZERO {
+            tracing::info!(
+                "Claimant {:?} has no credit to claim from game {:?}",
+                claimant,
+                game_address
+            );
+            return Ok(false);
+        }
+
+        Ok(true)
     }
 
     async fn get_oldest_game_address<S, O>(
@@ -444,7 +527,45 @@ where
         .await
     }
 
-    /// Determines if we should attempt resolution or not. The `oldest_game_index` is configured
+    /// Get the oldest game address with claimable bonds.
+    ///
+    /// Claimable games are games that have been finalized and have a determined bond distribution mode.
+    /// Check if the game is finalized by checking if it's not in progress (status is Resolved).
+    ///
+    /// This function checks a window of recent games, starting from
+    /// (latest_game_index - max_games_to_check_for_bond_claiming) up to latest_game_index.
+    async fn get_oldest_claimable_bond_game_address(
+        &self,
+        game_type: u32,
+        max_games_to_check_for_bond_claiming: u64,
+        claimant: Address,
+    ) -> Result<Option<Address>> {
+        let latest_game_index = match self.fetch_latest_game_index().await? {
+            Some(index) => index,
+            None => {
+                tracing::info!("No games exist yet");
+                return Ok(None);
+            }
+        };
+
+        let oldest_game_index =
+            latest_game_index.saturating_sub(U256::from(max_games_to_check_for_bond_claiming));
+        let games_to_check = latest_game_index
+            .min(U256::from(max_games_to_check_for_bond_claiming))
+            .to::<u64>();
+
+        for i in 0..games_to_check {
+            let index = oldest_game_index + U256::from(i);
+            let game_address = self.fetch_game_address_by_index(index).await?;
+            if self.is_claimable(game_type, game_address, claimant).await? {
+                return Ok(Some(game_address));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Determines whether to attempt resolution or not. The `oldest_game_index` is configured
     /// to be `latest_game_index` - `max_games_to_check_for_resolution`.
     ///
     /// If the oldest game has no parent (i.e., it's a first game), we always attempt resolution.
@@ -545,7 +666,7 @@ where
             .get_receipt()
             .await?;
         tracing::info!(
-            "Successfully resolved challenged game {:?} at index {:?} with tx {:?}",
+            "\x1b[1mSuccessfully resolved game {:?} at index {:?} with tx {:?}\x1b[0m",
             game_address,
             index,
             receipt.transaction_hash
@@ -589,7 +710,7 @@ where
             }
         } else {
             tracing::info!(
-                "Oldest game {:?} at index {:?} is not resolved, not attempting resolution",
+                "Oldest game {:?} at index {:?} has unresolved parent, not attempting resolution",
                 game_address,
                 oldest_game_index
             );

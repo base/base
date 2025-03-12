@@ -39,11 +39,9 @@ where
     P: Provider<Ethereum> + Clone + Send + Sync,
 {
     pub config: ProposerConfig,
-
     // The address being committed to when generating the aggregation proof to prevent front-running attacks.
     // This should be the same address that is being used to send `prove` transactions.
     pub prover_address: Address,
-
     pub l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
     pub l2_provider: L2Provider,
     pub factory: Arc<DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>>,
@@ -348,6 +346,52 @@ where
         Ok(())
     }
 
+    /// Handles claiming bonds from resolved games.
+    pub async fn handle_bond_claiming(&self) -> Result<()> {
+        let _span = tracing::info_span!("[[Claiming Bonds]]").entered();
+
+        if let Some(game_address) = self
+            .factory
+            .get_oldest_claimable_bond_game_address(
+                self.config.game_type,
+                self.config.max_games_to_check_for_bond_claiming,
+                self.prover_address,
+            )
+            .await?
+        {
+            tracing::info!("Attempting to claim bond from game {:?}", game_address);
+
+            // Create a contract instance for the game
+            let game =
+                OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+
+            // Create a transaction to claim credit
+            let tx = game.claimCredit(self.prover_address);
+
+            // Send the transaction
+            match tx.send().await {
+                Ok(pending_tx) => {
+                    let receipt = pending_tx
+                        .with_required_confirmations(NUM_CONFIRMATIONS)
+                        .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                        .get_receipt()
+                        .await?;
+
+                    tracing::info!(
+                        "\x1b[1mSuccessfully claimed bond from game {:?} with tx {:?}\x1b[0m",
+                        game_address,
+                        receipt.transaction_hash
+                    );
+                }
+                Err(e) => {
+                    tracing::error!("Failed to claim bond from game {:?}: {:?}", game_address, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Runs the proposer indefinitely.
     pub async fn run(&self) -> Result<()> {
         tracing::info!("OP Succinct Proposer running...");
@@ -366,6 +410,10 @@ where
 
             if let Err(e) = self.handle_game_resolution().await {
                 tracing::warn!("Failed to handle game resolution: {:?}", e);
+            }
+
+            if let Err(e) = self.handle_bond_claiming().await {
+                tracing::warn!("Failed to handle bond claiming: {:?}", e);
             }
         }
     }

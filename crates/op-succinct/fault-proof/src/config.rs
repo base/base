@@ -43,6 +43,9 @@ pub struct ProposerConfig {
     /// When game resolution is enabled, the proposer will attempt to resolve games that are
     /// unchallenged up to `max_games_to_check_for_resolution` games behind the latest game.
     pub max_games_to_check_for_resolution: u64,
+
+    /// The maximum number of games to check for bond claiming.
+    pub max_games_to_check_for_bond_claiming: u64,
 }
 
 impl ProposerConfig {
@@ -70,6 +73,9 @@ impl ProposerConfig {
                 .unwrap_or("true".to_string())
                 .parse()?,
             max_games_to_check_for_resolution: env::var("MAX_GAMES_TO_CHECK_FOR_RESOLUTION")
+                .unwrap_or("100".to_string())
+                .parse()?,
+            max_games_to_check_for_bond_claiming: env::var("MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING")
                 .unwrap_or("100".to_string())
                 .parse()?,
         })

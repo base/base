@@ -50,8 +50,10 @@ To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill ou
 | `ENABLE_GAME_RESOLUTION` | Whether to enable automatic game resolution | `true` |
 | `MAX_GAMES_TO_CHECK_FOR_RESOLUTION` | Maximum number of games to check for resolution | `100` |
 | `MAX_GAMES_TO_CHECK_FOR_DEFENSE` | Maximum number of recent games to check for defense | `100` |
+| `MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING` | Maximum number of games to check for bond claiming | `100` |
 | `L1_BEACON_RPC` | L1 Beacon RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
 | `L2_NODE_RPC` | L2 Node RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
+| `PROVER_ADDRESS` | Address of the account that will be posting output roots to L1. This address is committed to when generating the aggregation proof to prevent front-running attacks. It can be different from the signing address if you want to separate these roles. Default: The address derived from the `PRIVATE_KEY` environment variable. | (Only used if `FAST_FINALITY_MODE` is `true`) |
 
 ```env
 # Required Configuration
@@ -68,6 +70,7 @@ FETCH_INTERVAL=30                   # Polling interval in seconds
 ENABLE_GAME_RESOLUTION=false        # Whether to enable automatic game resolution
 MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100  # Maximum number of games to check for resolution
 MAX_GAMES_TO_CHECK_FOR_DEFENSE=100    # Maximum number of recent games to check for defense
+MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING=100 # Maximum number of games to check for bond claiming
 ```
 
 ### Configuration Steps
@@ -111,6 +114,12 @@ When enabled (`ENABLE_GAME_RESOLUTION=true`), the proposer:
 - Resolves games after their challenge period expires
 - Respects parent-child game relationships in resolution
 - Only resolves games whose parent games are already resolved
+
+### Bond Claiming
+- Monitors games for bond claiming opportunities
+- Only claims bonds from games that:
+  - Are finalized (resolved and airgapped)
+  - Has credit left to claim
 
 ### Chain Monitoring
 - Monitors the L2 chain's finalized (safe) head
