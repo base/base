@@ -75,7 +75,7 @@ jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/L1Block.sol/
 ```
 
 This transaction MUST deploy a contract with the following code hash
-0x8e3fe7a416d3e5f3b7be74ddd4e7e58e516fa3f80b67c6d930e3cd7297da4a4b.
+`0x8e3fe7a416d3e5f3b7be74ddd4e7e58e516fa3f80b67c6d930e3cd7297da4a4b`.
 
 To verify the code hash:
 
@@ -123,7 +123,7 @@ jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOrac
 ```
 
 This transaction MUST deploy a contract with the following code hash
-0x4d195a9d7caf9fb6d4beaf80de252c626c853afd5868c4f4f8d19c9d301c2679.
+`0x4d195a9d7caf9fb6d4beaf80de252c626c853afd5868c4f4f8d19c9d301c2679`.
 
 To verify the code hash:
 
@@ -177,15 +177,21 @@ jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/OperatorFeeV
 ```
 
 This transaction MUST deploy a contract with the following code hash
-0x83d0e197ddf18068cfb3a7b07539aa1d3e4f30b39430edca78b49ae4f6be08d5.
+`0x57dc55c9c09ca456fa728f253fe7b895d3e6aae0706104935fe87c7721001971`.
 
 To verify the code hash:
 
 ```bash
 git checkout 9436dba8c4c906e36675f5922e57d1b55582889e
 make build-contracts
-cast k $(jq -r ".deployedBytecode.object" packages/contracts-bedrock/forge-artifacts/OperatorFeeVault.sol/OperatorFeeVault.json)
+export ETH_RPC_URL=https://mainnet.optimism.io # Any RPC running Cancun or Prague
+cast k $(cast call --create $(jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/OperatorFeeVault.sol/OperatorFeeVault.json))
 ```
+
+Note that this verification differs from the other deployments because the `OperatorFeeVault`
+inherits the `FeeVault` contract which contains immutables. So the deployment bytecode has to be
+executed on an EVM to get the actual deployed contract bytecode. But it sets all immutables to fixed
+constants, so the resulting code hash is constant.
 
 ## L1Block Proxy Update
 
