@@ -29,6 +29,7 @@
   - [Operator Fee](#operator-fee)
     - [Configuring Parameters](#configuring-parameters)
   - [Fee Vaults](#fee-vaults)
+  - [Receipts](#receipts)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -236,3 +237,8 @@ These collected fees are sent to a new vault for the `operatorFee`: the [`Operat
 
 Like the existing vaults, this is a hardcoded address, pointing at a pre-deployed proxy contract.
 The proxy is backed by a vault contract deployment, based on `FeeVault`, to route vault funds to L1 securely.
+
+### Receipts
+
+After Isthmus activation, 2 new fields `operatorFeeScalar` and `operatorFeeConstant` are added to transaction receipts
+if and only if at least one of them is non zero.
