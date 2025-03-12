@@ -834,8 +834,9 @@ impl OPSuccinctDataFetcher {
         match self.get_l1_head_with_safe_head(l2_end_block).await {
             Ok(safe_head) => Ok(safe_head),
             Err(_) => {
+                tracing::warn!("SafeDB not activated - falling back to timestamp-based L1 head estimation. WARNING: This fallback method is more expensive and less reliable. Derivation may fail if the L2 block batch is posted after our estimated L1 head. Enable SafeDB on op-node to fix this.");
                 // Fallback: estimate L1 block based on timestamp
-                let max_batch_post_delay_minutes = 30;
+                let max_batch_post_delay_minutes = 40;
                 let l2_block_timestamp = self.get_l2_header(l2_end_block.into()).await?.timestamp;
                 let finalized_l1_timestamp =
                     self.get_l1_header(BlockId::finalized()).await?.timestamp;
