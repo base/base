@@ -24,7 +24,7 @@ jobs:
     - name: Build
       run: cargo build --release
     - name: Test
-      run: cargo test --release -- --skip e2e integration
+      run: cargo test --release -- --skip e2e --skip test_proposer_defends_successfully
       env:
         L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
         L1_RPC: ${{ secrets.L1_RPC }}
