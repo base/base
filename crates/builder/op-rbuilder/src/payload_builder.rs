@@ -579,7 +579,6 @@ where
 
     // pick the new transactions from the info field and update the last flashblock index
     let new_transactions = info.executed_transactions[info.last_flashblock_index..].to_vec();
-    info.last_flashblock_index = info.executed_transactions.len();
 
     let new_transactions_encoded = new_transactions
         .clone()
@@ -588,6 +587,7 @@ where
         .collect::<Vec<_>>();
 
     let new_receipts = info.receipts[info.last_flashblock_index..].to_vec();
+    info.last_flashblock_index = info.executed_transactions.len();
     let receipts_with_hash = new_transactions
         .iter()
         .zip(new_receipts.iter())

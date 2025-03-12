@@ -465,6 +465,19 @@ mod tests {
                         "new_account_balances missing"
                     );
                     assert!(metadata.get("receipts").is_some(), "receipts missing");
+                    // also check if the length of the receipts is the same as the number of transactions
+                    assert!(
+                        metadata.get("receipts").unwrap().as_object().unwrap().len()
+                            == msg
+                                .get("diff")
+                                .unwrap()
+                                .get("transactions")
+                                .unwrap()
+                                .as_array()
+                                .unwrap()
+                                .len(),
+                        "receipts length mismatch"
+                    );
                     message_count += 1;
                 }
                 drop(messages);
