@@ -6,6 +6,8 @@
 /// # Example
 ///
 /// ```
+/// use op_succinct_validity::find_gaps;
+///
 /// let overall_start = 1;
 /// let overall_end = 10;
 /// let ranges = [(2, 5), (7, 9)];
@@ -35,16 +37,20 @@ pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) ->
 /// Determines the block ranges to be proven based on disjoint ranges and a specified interval.
 ///
 /// Given a set of disjoint block ranges and a range proof interval, this function calculates
-/// and returns the specific block ranges that need to be proven.
+/// and returns the specific block ranges that need to be proven. Only ranges that are exactly
+/// equal to the range proof interval size are included in the result. Partial ranges at the
+/// end of each disjoint range are intentionally excluded.
 ///
 /// # Example
 ///
 /// ```
+/// use op_succinct_validity::get_ranges_to_prove;
+///
 /// let disjoint_ranges = [(0, 50), (100, 200), (200, 210)];
 /// let range_proof_interval = 25;
 ///
 /// let ranges_to_prove = get_ranges_to_prove(&disjoint_ranges, range_proof_interval);
-/// assert_eq!(ranges_to_prove, [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200), (200, 210)]);
+/// assert_eq!(ranges_to_prove, [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]);
 /// ```
 ///
 pub fn get_ranges_to_prove(
@@ -126,8 +132,7 @@ mod tests {
             (100, 125),
             (125, 150),
             (150, 175),
-            (175, 200),
-            (200, 210)
+            (175, 200)
         ]
     );
 
@@ -156,6 +161,6 @@ mod tests {
         test_get_ranges_to_prove_case_5,
         &[(0, 5), (10, 15), (20, 25)],
         3,
-        &[(0, 3), (3, 5), (10, 13), (13, 15), (20, 23), (23, 25)]
+        &[(0, 3), (10, 13), (20, 23)]
     );
 }
