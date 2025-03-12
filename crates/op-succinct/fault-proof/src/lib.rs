@@ -14,7 +14,7 @@ use alloy_rpc_types_eth::Block;
 use alloy_sol_types::SolValue;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use op_alloy_network::{primitives::BlockTransactionsKind, Optimism};
+use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use tokio::time::Duration;
 
@@ -63,9 +63,7 @@ impl L2ProviderTrait for L2Provider {
         &self,
         block_number: BlockNumberOrTag,
     ) -> Result<Block<Transaction>> {
-        let block = self
-            .get_block_by_number(block_number, BlockTransactionsKind::Hashes)
-            .await?;
+        let block = self.get_block_by_number(block_number).await?;
         if let Some(block) = block {
             Ok(block)
         } else {
