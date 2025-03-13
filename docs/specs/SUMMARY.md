@@ -56,6 +56,8 @@
       - [Derivation](./protocol/holocene/derivation.md)
       - [Execution Engine](./protocol/holocene/exec-engine.md)
       - [System Config](./protocol/holocene/system-config.md)
+    - [Pectra Blob Schedule](./protocol/pectra-blob-schedule/overview.md)
+      - [Derivation](./protocol/pectra-blob-schedule/derivation.md)
     - [Isthmus](./protocol/isthmus/overview.md)
       - [Configurability](./protocol/isthmus/configurability.md)
       - [Execution Engine](./protocol/isthmus/exec-engine.md)
