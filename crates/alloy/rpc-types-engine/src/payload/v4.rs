@@ -2,9 +2,11 @@
 
 use alloc::vec::Vec;
 use alloy_consensus::Block;
-use alloy_eips::Decodable2718;
-use alloy_primitives::{Bytes, B256, U256};
-use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
+use alloy_eips::{eip4895::Withdrawal, Decodable2718};
+use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
+use alloy_rpc_types_engine::{
+    BlobsBundleV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadError,
+};
 
 /// The Opstack execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.optimism.io/protocol/isthmus/exec-engine.html#engine_newpayloadv4-api>
@@ -46,6 +48,109 @@ impl OpExecutionPayloadV4 {
         base_block.header.withdrawals_root = Some(self.withdrawals_root);
 
         Ok(base_block)
+    }
+}
+
+#[cfg(feature = "std")]
+impl ssz::Decode for OpExecutionPayloadV4 {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, ssz::DecodeError> {
+        let mut builder = ssz::SszDecoderBuilder::new(bytes);
+
+        builder.register_type::<B256>()?;
+        builder.register_type::<Address>()?;
+        builder.register_type::<B256>()?;
+        builder.register_type::<B256>()?;
+        builder.register_type::<Bloom>()?;
+        builder.register_type::<B256>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<Bytes>()?;
+        builder.register_type::<U256>()?;
+        builder.register_type::<B256>()?;
+        builder.register_type::<Vec<Bytes>>()?;
+        builder.register_type::<Vec<Withdrawal>>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<u64>()?;
+        builder.register_type::<B256>()?;
+
+        let mut decoder = builder.build()?;
+
+        Ok(Self {
+            payload_inner: ExecutionPayloadV3 {
+                payload_inner: ExecutionPayloadV2 {
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: decoder.decode_next()?,
+                        fee_recipient: decoder.decode_next()?,
+                        state_root: decoder.decode_next()?,
+                        receipts_root: decoder.decode_next()?,
+                        logs_bloom: decoder.decode_next()?,
+                        prev_randao: decoder.decode_next()?,
+                        block_number: decoder.decode_next()?,
+                        gas_limit: decoder.decode_next()?,
+                        gas_used: decoder.decode_next()?,
+                        timestamp: decoder.decode_next()?,
+                        extra_data: decoder.decode_next()?,
+                        base_fee_per_gas: decoder.decode_next()?,
+                        block_hash: decoder.decode_next()?,
+                        transactions: decoder.decode_next()?,
+                    },
+                    withdrawals: decoder.decode_next()?,
+                },
+                blob_gas_used: decoder.decode_next()?,
+                excess_blob_gas: decoder.decode_next()?,
+            },
+            withdrawals_root: decoder.decode_next()?,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+impl ssz::Encode for OpExecutionPayloadV4 {
+    fn is_ssz_fixed_len() -> bool {
+        false
+    }
+
+    fn ssz_append(&self, buf: &mut Vec<u8>) {
+        let offset = <B256 as ssz::Encode>::ssz_fixed_len() * 6
+            + <Address as ssz::Encode>::ssz_fixed_len()
+            + <Bloom as ssz::Encode>::ssz_fixed_len()
+            + <u64 as ssz::Encode>::ssz_fixed_len() * 6
+            + <U256 as ssz::Encode>::ssz_fixed_len()
+            + ssz::BYTES_PER_LENGTH_OFFSET * 3;
+
+        let mut encoder = ssz::SszEncoder::container(buf, offset);
+
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.parent_hash);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.fee_recipient);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.state_root);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.receipts_root);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.logs_bloom);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.prev_randao);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.block_number);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.gas_limit);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.gas_used);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.timestamp);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.extra_data);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.base_fee_per_gas);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.block_hash);
+        encoder.append(&self.payload_inner.payload_inner.payload_inner.transactions);
+        encoder.append(&self.payload_inner.payload_inner.withdrawals);
+        encoder.append(&self.payload_inner.blob_gas_used);
+        encoder.append(&self.payload_inner.excess_blob_gas);
+        encoder.append(&self.withdrawals_root);
+
+        encoder.finalize();
+    }
+
+    fn ssz_bytes_len(&self) -> usize {
+        <ExecutionPayloadV3 as ssz::Encode>::ssz_bytes_len(&self.payload_inner)
+            + <B256 as ssz::Encode>::ssz_fixed_len()
     }
 }
 

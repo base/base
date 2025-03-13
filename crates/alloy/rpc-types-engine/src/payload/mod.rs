@@ -460,6 +460,11 @@ impl OpExecutionPayload {
         self.as_v1().block_number
     }
 
+    /// Returns the timestamp for this payload.
+    pub const fn timestamp(&self) -> u64 {
+        self.as_v1().timestamp
+    }
+
     #[allow(rustdoc::broken_intra_doc_links)]
     /// Converts [`OpExecutionPayload`] to [`Block`].
     ///
