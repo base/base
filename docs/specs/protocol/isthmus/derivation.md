@@ -20,7 +20,7 @@
 
 # Network upgrade automation transactions
 
-The Isthumus hardfork activation block contains the following transactions, in this order:
+The Isthmus hardfork activation block contains the following transactions, in this order:
 
 - L1 Attributes Transaction
 - User deposits from L1
