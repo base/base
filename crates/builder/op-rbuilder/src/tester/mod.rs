@@ -26,7 +26,6 @@ use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
 use rollup_boost::flashblocks::FlashblocksService;
 use rollup_boost::Flashblocks;
-use serde_json;
 use serde_json::Value;
 use std::str::FromStr;
 use std::time::SystemTime;

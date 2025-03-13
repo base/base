@@ -1,8 +1,10 @@
 use std::{fmt::Display, sync::Arc, sync::Mutex};
 
-use crate::generator::BlockPayloadJobGenerator;
-use crate::generator::{BlockCell, BuildArguments, PayloadBuilder};
-use crate::tx_signer::Signer;
+use crate::{
+    generator::{BlockCell, BlockPayloadJobGenerator, BuildArguments, PayloadBuilder},
+    primitives::reth::{ExecutedPayload, ExecutionInfo},
+    tx_signer::Signer,
+};
 use alloy_consensus::{Eip658Value, Header, Transaction, Typed2718, EMPTY_OMMER_ROOT_HASH};
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_eips::Encodable2718;
@@ -695,46 +697,6 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
     }
 }
 
-/// Holds the state after execution
-#[derive(Debug)]
-pub struct ExecutedPayload<N: NodePrimitives> {
-    /// Tracked execution info
-    pub info: ExecutionInfo<N>,
-    /// Withdrawal hash.
-    pub withdrawals_root: Option<B256>,
-}
-
-/// This acts as the container for executed transactions and its byproducts (receipts, gas used)
-#[derive(Default, Debug, Clone)]
-pub struct ExecutionInfo<N: NodePrimitives> {
-    /// All executed transactions (unrecovered).
-    pub executed_transactions: Vec<N::SignedTx>,
-    /// The recovered senders for the executed transactions.
-    pub executed_senders: Vec<Address>,
-    /// The transaction receipts
-    pub receipts: Vec<N::Receipt>,
-    /// All gas used so far
-    pub cumulative_gas_used: u64,
-    /// Tracks fees from executed mempool transactions
-    pub total_fees: U256,
-    /// Index of the last consumed flashblock
-    pub last_flashblock_index: usize,
-}
-
-impl<N: NodePrimitives> ExecutionInfo<N> {
-    /// Create a new instance with allocated slots.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            executed_transactions: Vec::with_capacity(capacity),
-            executed_senders: Vec::with_capacity(capacity),
-            receipts: Vec::with_capacity(capacity),
-            cumulative_gas_used: 0,
-            total_fees: U256::ZERO,
-            last_flashblock_index: 0,
-        }
-    }
-}
-
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
 pub struct OpPayloadBuilderCtx<EvmConfig: ConfigureEvmEnv, ChainSpec, N: NodePrimitives> {
@@ -1099,7 +1061,7 @@ where
             }
 
             // ensure we still have capacity for this transaction
-            if info.cumulative_gas_used + tx.gas_limit() > batch_gas_limit {
+            if info.is_tx_over_limits(tx.tx(), batch_gas_limit, None, None) {
                 println!("A");
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
