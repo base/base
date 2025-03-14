@@ -35,12 +35,6 @@ alloy-serde = { workspace = true, optional = true }
 # misc
 thiserror.workspace = true
 arbitrary = { workspace = true, features = ["derive"], optional = true }
-derive_more = { workspace = true, default-features = false, features = [
-  "constructor",
-  "from",
-  "into",
-]}
-
 
 [dev-dependencies]
 arbtest.workspace = true

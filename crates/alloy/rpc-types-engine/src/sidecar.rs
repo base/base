@@ -4,7 +4,6 @@ use alloy_primitives::B256;
 use alloy_rpc_types_engine::{
     CancunPayloadFields, MaybeCancunPayloadFields, MaybePraguePayloadFields, PraguePayloadFields,
 };
-use derive_more::Into;
 
 /// Container type for all available additional `newPayload` request parameters that are not present
 /// in the [`ExecutionPayload`](alloy_rpc_types_engine::ExecutionPayload) object itself.
