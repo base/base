@@ -157,9 +157,6 @@ where
         // that cancels existing jobs when receiving new block building requests.
         let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(500);
 
-        println!("attributes timestmap: {:?}", attributes.timestamp());
-        println!("Deadline: {:?}", deadline);
-
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
 
