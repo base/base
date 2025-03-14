@@ -285,8 +285,9 @@ A block is structured as the concatenation of:
 - V4 topic
   - `signature`: A `secp256k1` signature, always 65 bytes, `r (uint256), s (uint256), y_parity (uint8)`
   - `parentBeaconBlockRoot`: L1 origin parent beacon block root, always 32 bytes
-  - `withdrawalsRoot`: L2 withdrawals root, always 32 bytes.
   - `payload`: A SSZ-encoded `ExecutionPayload`, always the remaining bytes.
+    - _Note_ - the `ExecutionPayload` is modified for the first time in Isthmus. See
+      ["Update to `ExecutionPayload`"](./isthmus/exec-engine.md#update-to-executionpayload) in the Isthmus spec.
 
 All topics use Snappy block-compression (i.e. no snappy frames):
 the above needs to be compressed after encoding, and decompressed before decoding.
