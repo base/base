@@ -1,7 +1,7 @@
 //! Classification of deposit transaction source
 
 use alloc::string::String;
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{B256, keccak256};
 
 /// Source domain identifiers for deposit transactions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]

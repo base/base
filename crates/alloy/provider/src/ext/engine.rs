@@ -1,5 +1,5 @@
 use alloy_network::Network;
-use alloy_primitives::{BlockHash, Bytes, B256};
+use alloy_primitives::{B256, BlockHash, Bytes};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadInputV2,

@@ -1,7 +1,7 @@
 //! Support for EIP-1559 parameters after holocene.
 
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_primitives::{Bytes, B64};
+use alloy_primitives::{B64, Bytes};
 
 /// Extracts the Holocene 1599 parameters from the encoded form:
 /// <https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md#eip1559params-encoding>

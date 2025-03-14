@@ -2,7 +2,7 @@
 
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Eip2718Error;
-use alloy_primitives::{U64, U8};
+use alloy_primitives::{U8, U64};
 use alloy_rlp::{BufMut, Decodable, Encodable};
 use derive_more::Display;
 

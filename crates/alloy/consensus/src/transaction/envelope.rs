@@ -1,14 +1,14 @@
 use crate::{OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
-    transaction::RlpEcdsaDecodableTx, Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930,
-    TxEip7702, TxEnvelope, TxLegacy, Typed2718,
+    Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
+    Typed2718, transaction::RlpEcdsaDecodableTx,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use alloy_rlp::{Decodable, Encodable};
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
@@ -629,7 +629,7 @@ mod tests {
     use super::*;
     use alloc::vec;
     use alloy_consensus::SignableTransaction;
-    use alloy_primitives::{hex, Address, Bytes, PrimitiveSignature, TxKind, B256, U256};
+    use alloy_primitives::{Address, B256, Bytes, PrimitiveSignature, TxKind, U256, hex};
 
     #[test]
     fn test_tx_gas_limit() {
@@ -704,7 +704,9 @@ mod tests {
     #[test]
     fn eip2718_deposit_decode() {
         // <https://basescan.org/tx/0xc468b38a20375922828c8126912740105125143b9856936085474b2590bbca91>
-        let b = hex!("7ef8f8a0417d134467f4737fcdf2475f0ecdd2a0ed6d87ecffc888ba9f60ee7e3b8ac26a94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c1200000000000000040000000066c352bb000000000139c4f500000000000000000000000000000000000000000000000000000000c0cff1460000000000000000000000000000000000000000000000000000000000000001d4c88f4065ac9671e8b1329b90773e89b5ddff9cf8675b2b5e9c1b28320609930000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9");
+        let b = hex!(
+            "7ef8f8a0417d134467f4737fcdf2475f0ecdd2a0ed6d87ecffc888ba9f60ee7e3b8ac26a94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000008dd00101c1200000000000000040000000066c352bb000000000139c4f500000000000000000000000000000000000000000000000000000000c0cff1460000000000000000000000000000000000000000000000000000000000000001d4c88f4065ac9671e8b1329b90773e89b5ddff9cf8675b2b5e9c1b28320609930000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9"
+        );
 
         let tx = OpTxEnvelope::decode_2718(&mut b[..].as_ref()).unwrap();
         let deposit = tx.as_deposit().unwrap();

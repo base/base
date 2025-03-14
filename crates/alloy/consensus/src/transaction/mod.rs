@@ -4,7 +4,7 @@ mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
 mod tx_type;
-pub use tx_type::{OpTxType, DEPOSIT_TX_TYPE_ID};
+pub use tx_type::{DEPOSIT_TX_TYPE_ID, OpTxType};
 
 mod envelope;
 pub use envelope::OpTxEnvelope;

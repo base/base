@@ -109,11 +109,7 @@ pub fn flz_compress_len(input: &[u8]) -> u32 {
 const fn literals(r: u32, size: u32) -> u32 {
     let size = size + 0x21 * (r / 0x20);
     let r = r % 0x20;
-    if r != 0 {
-        size + r + 1
-    } else {
-        size
-    }
+    if r != 0 { size + r + 1 } else { size }
 }
 
 const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
@@ -131,11 +127,7 @@ const fn cmp(input: &[u8], p: u32, q: u32, r: u32) -> u32 {
 const fn flz_match(l: u32, size: u32) -> u32 {
     let l = l - 1;
     let size = size + (3 * (l / 262));
-    if l % 262 >= 6 {
-        size + 3
-    } else {
-        size + 2
-    }
+    if l % 262 >= 6 { size + 3 } else { size + 2 }
 }
 
 fn set_next_hash(htab: &mut [u32; 8192], input: &[u8], idx: u32) -> u32 {

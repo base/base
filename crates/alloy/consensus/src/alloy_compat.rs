@@ -1,6 +1,6 @@
 //! Additional compatibility implementations.
 
-use crate::{OpTxEnvelope, TxDeposit, DEPOSIT_TX_TYPE_ID};
+use crate::{DEPOSIT_TX_TYPE_ID, OpTxEnvelope, TxDeposit};
 use alloc::string::ToString;
 use alloy_consensus::Sealed;
 use alloy_eips::Typed2718;

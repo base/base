@@ -1,11 +1,11 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
 use alloy_consensus::{
-    transaction::RlpEcdsaEncodableTx, SignableTransaction, Signed, Transaction, TxEip1559,
-    TxEip2930, TxEip7702, TxLegacy, Typed2718,
+    SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
+    transaction::RlpEcdsaEncodableTx,
 };
-use alloy_eips::{eip2930::AccessList, Encodable2718};
+use alloy_eips::{Encodable2718, eip2930::AccessList};
 use alloy_primitives::{
-    bytes::BufMut, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256,
+    Address, B256, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, bytes::BufMut,
 };
 
 /// The TypedTransaction enum represents all Ethereum transaction request types, modified for the OP

@@ -6,8 +6,8 @@ pub mod v4;
 
 use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloy_consensus::{Block, BlockHeader, Transaction};
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, Decodable2718, Encodable2718, Typed2718};
-use alloy_primitives::{Sealable, B256};
+use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
+use alloy_primitives::{B256, Sealable};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3,

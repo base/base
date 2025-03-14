@@ -2,9 +2,9 @@
 
 use alloc::vec::Vec;
 use alloy_eips::eip1559::BaseFeeParams;
-use alloy_primitives::{Bytes, B64};
+use alloy_primitives::{B64, Bytes};
 use alloy_rpc_types_engine::PayloadAttributes;
-use op_alloy_consensus::{decode_eip_1559_params, encode_holocene_extra_data, EIP1559ParamError};
+use op_alloy_consensus::{EIP1559ParamError, decode_eip_1559_params, encode_holocene_extra_data};
 
 /// Optimism Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,7 +58,7 @@ impl OpPayloadAttributes {
 mod test {
     use super::*;
     use alloc::vec;
-    use alloy_primitives::{b64, Address, B256};
+    use alloy_primitives::{Address, B256, b64};
     use alloy_rpc_types_engine::PayloadAttributes;
     use core::str::FromStr;
 

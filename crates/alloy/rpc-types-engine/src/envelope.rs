@@ -6,8 +6,8 @@
 use crate::{OpExecutionPayload, OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloc::vec::Vec;
 use alloy_consensus::{Block, BlockHeader, Sealable, Transaction};
-use alloy_eips::{eip4895::Withdrawal, eip7685::Requests, Encodable2718};
-use alloy_primitives::{keccak256, PrimitiveSignature as Signature, B256};
+use alloy_eips::{Encodable2718, eip4895::Withdrawal, eip7685::Requests};
+use alloy_primitives::{B256, PrimitiveSignature as Signature, keccak256};
 use alloy_rpc_types_engine::{
     CancunPayloadFields, ExecutionPayloadInputV2, ExecutionPayloadV3, PraguePayloadFields,
 };

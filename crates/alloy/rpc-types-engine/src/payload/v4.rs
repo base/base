@@ -2,8 +2,8 @@
 
 use alloc::vec::Vec;
 use alloy_consensus::Block;
-use alloy_eips::{eip4895::Withdrawal, Decodable2718};
-use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
+use alloy_eips::{Decodable2718, eip4895::Withdrawal};
+use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
 use alloy_rpc_types_engine::{
     BlobsBundleV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadError,
 };

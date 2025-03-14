@@ -17,14 +17,14 @@ pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope
 
 mod transaction;
 pub use transaction::{
-    DepositTransaction, OpPooledTransaction, OpTxEnvelope, OpTxType, OpTypedTransaction, TxDeposit,
-    DEPOSIT_TX_TYPE_ID,
+    DEPOSIT_TX_TYPE_ID, DepositTransaction, OpPooledTransaction, OpTxEnvelope, OpTxType,
+    OpTypedTransaction, TxDeposit,
 };
 
 pub mod eip1559;
 pub use eip1559::{
-    decode_eip_1559_params, decode_holocene_extra_data, encode_holocene_extra_data,
-    EIP1559ParamError,
+    EIP1559ParamError, decode_eip_1559_params, decode_holocene_extra_data,
+    encode_holocene_extra_data,
 };
 
 mod source;

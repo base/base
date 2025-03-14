@@ -8,10 +8,10 @@ use alloy_eips::{
     eip2930::AccessList,
 };
 use alloy_primitives::{
-    keccak256, Address, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, B256, U256,
+    Address, B256, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, U256, keccak256,
 };
 use alloy_rlp::{
-    Buf, BufMut, Decodable, Encodable, Error as DecodeError, Header, EMPTY_STRING_CODE,
+    Buf, BufMut, Decodable, EMPTY_STRING_CODE, Encodable, Error as DecodeError, Header,
 };
 use core::mem;
 
@@ -462,7 +462,9 @@ mod tests {
 
     #[test]
     fn test_rlp_roundtrip() {
-        let bytes = Bytes::from_static(&hex!("7ef9015aa044bae9d41b8380d781187b426c6fe43df5fb2fb57bd4466ef6a701e1f01e015694deaddeaddeaddeaddeaddeaddeaddeaddead000194420000000000000000000000000000000000001580808408f0d18001b90104015d8eb900000000000000000000000000000000000000000000000000000000008057650000000000000000000000000000000000000000000000000000000063d96d10000000000000000000000000000000000000000000000000000000000009f35273d89754a1e0387b89520d989d3be9c37c1f32495a88faf1ea05c61121ab0d1900000000000000000000000000000000000000000000000000000000000000010000000000000000000000002d679b567db6187c0c8323fa982cfb88b74dbcc7000000000000000000000000000000000000000000000000000000000000083400000000000000000000000000000000000000000000000000000000000f4240"));
+        let bytes = Bytes::from_static(&hex!(
+            "7ef9015aa044bae9d41b8380d781187b426c6fe43df5fb2fb57bd4466ef6a701e1f01e015694deaddeaddeaddeaddeaddeaddeaddeaddead000194420000000000000000000000000000000000001580808408f0d18001b90104015d8eb900000000000000000000000000000000000000000000000000000000008057650000000000000000000000000000000000000000000000000000000063d96d10000000000000000000000000000000000000000000000000000000000009f35273d89754a1e0387b89520d989d3be9c37c1f32495a88faf1ea05c61121ab0d1900000000000000000000000000000000000000000000000000000000000000010000000000000000000000002d679b567db6187c0c8323fa982cfb88b74dbcc7000000000000000000000000000000000000000000000000000000000000083400000000000000000000000000000000000000000000000000000000000f4240"
+        ));
         let tx_a = TxDeposit::decode(&mut bytes[1..].as_ref()).unwrap();
         let mut buf_a = BytesMut::default();
         tx_a.encode(&mut buf_a);
@@ -573,7 +575,7 @@ mod tests {
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(super) mod serde_bincode_compat {
     use alloc::borrow::Cow;
-    use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
+    use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
 
@@ -581,7 +583,7 @@ pub(super) mod serde_bincode_compat {
     ///
     /// Intended to use with the [`serde_with::serde_as`] macro in the following way:
     /// ```rust
-    /// use op_alloy_consensus::{serde_bincode_compat, TxDeposit};
+    /// use op_alloy_consensus::{TxDeposit, serde_bincode_compat};
     /// use serde::{Deserialize, Serialize};
     /// use serde_with::serde_as;
     ///
@@ -661,7 +663,7 @@ pub(super) mod serde_bincode_compat {
         use serde::{Deserialize, Serialize};
         use serde_with::serde_as;
 
-        use super::super::{serde_bincode_compat, TxDeposit};
+        use super::super::{TxDeposit, serde_bincode_compat};
 
         #[test]
         fn test_tx_deposit_bincode_roundtrip() {
