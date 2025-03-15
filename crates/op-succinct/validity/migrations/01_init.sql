@@ -30,24 +30,4 @@ CREATE TABLE IF NOT EXISTS requests (
     l1_chain_id BIGINT NOT NULL,
     l2_chain_id BIGINT NOT NULL,
     contract_address BYTEA,
-    prover_address BYTEA
 );
-
--- Create eth_metrics table
-CREATE TABLE IF NOT EXISTS eth_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    block_nb BIGINT NOT NULL,
-    nb_transactions BIGINT NOT NULL,
-    eth_gas_used BIGINT NOT NULL,
-    l1_fees NUMERIC(38,0) NOT NULL,
-    tx_fees NUMERIC(38,0) NOT NULL
-);
-
--- Create composite index on requests table
-CREATE INDEX IF NOT EXISTS idx_requests_vkey_config_agg ON requests (range_vkey_commitment, rollup_config_hash, aggregation_vkey_hash); 
-
--- Create index on chain_id for faster lookups
-CREATE INDEX IF NOT EXISTS idx_requests_chain_id ON requests (l1_chain_id, l2_chain_id);
-
--- Create composite index including chain_id
-CREATE INDEX IF NOT EXISTS idx_requests_chain_id_status ON requests (l1_chain_id, l2_chain_id, status); 
