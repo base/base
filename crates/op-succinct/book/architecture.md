@@ -4,7 +4,7 @@
 
 OP Succinct transforms any OP Stack chain into a fully validity-proven rollup with a lightweight upgrade that maintains compatibility with existing OP Stack components.
 
-This document explains the standard OP Stack components and the lightweight modifications OP Succinct adds to enable proving blocks with zero-knowledge proofs using [SP1](https://docs.succinct.xyz/docs/introduction).
+This document explains the standard OP Stack components and the lightweight modifications OP Succinct adds to enable proving blocks with zero-knowledge proofs using [SP1](https://docs.succinct.xyz/docs/sp1/introduction).
 
 ## Standard OP Stack Components
 

@@ -1,6 +1,6 @@
 # Proposer
 
-The `op-succinct` service consists of one service that monitors the state of the L2 chain, requests proofs and submits them to the L1. Proofs are submitted to the [Succinct Prover Network](https://docs.succinct.xyz/docs/generating-proofs/prover-network)
+The `op-succinct` service consists of one service that monitors the state of the L2 chain, requests proofs and submits them to the L1. Proofs are submitted to the [Succinct Prover Network](https://docs.succinct.xyz/docs/sp1/generating-proofs/prover-network)
 
 # Prerequisites
 
@@ -33,7 +33,7 @@ Before starting the proposer, ensure you have deployed the L2 Output Oracle and 
 | `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
-| `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/docs/generating-proofs/prover-network). |
+| `NETWORK_PRIVATE_KEY` | Key for the Succinct Prover Network. Get access [here](https://docs.succinct.xyz/docs/sp1/generating-proofs/prover-network). |
 | `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract. |
 | `PRIVATE_KEY` | Private key for the account that will be posting output roots to L1. |
 | `DATABASE_URL` | The address of a Postgres database for storing the intermediate proposer state. |
