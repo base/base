@@ -4717,12 +4717,17 @@ dependencies = [
 name = "op-succinct-validity"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus 0.12.4",
  "alloy-eips 0.12.4",
+ "alloy-network 0.12.4",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-signer 0.12.4",
  "alloy-signer-local 0.12.4",
  "alloy-sol-types",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bincode",
  "chrono",
@@ -4735,6 +4740,7 @@ dependencies = [
  "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-host-utils",
+ "reqwest",
  "rustls",
  "serde",
  "serde_json",
@@ -4745,6 +4751,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
