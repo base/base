@@ -7,10 +7,11 @@ use op_succinct_host_utils::{
         get_rolling_block_range, get_validated_block_range, split_range_based_on_safe_heads,
         split_range_basic, SpanBatchRange,
     },
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
-    get_proof_stdin, start_server_and_native_client,
+    fetcher::OPSuccinctDataFetcher,
+    get_proof_stdin,
+    hosts::{default::SingleChainOPSuccinctHost, OPSuccinctHost},
     stats::ExecutionStats,
-    OPSuccinctHost, RANGE_ELF_EMBEDDED,
+    RANGE_ELF_EMBEDDED,
 };
 use op_succinct_scripts::HostExecutorArgs;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -20,6 +21,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Seek,
     path::PathBuf,
+    sync::Arc,
     time::Duration,
 };
 
@@ -27,8 +29,9 @@ const ONE_WEEK: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
-async fn execute_blocks_and_write_stats_csv(
-    host_args: &[OPSuccinctHost],
+async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
+    host: Arc<H>,
+    host_args: &[H::Args],
     ranges: Vec<SpanBatchRange>,
     l2_chain_id: u64,
     start: u64,
@@ -68,14 +71,16 @@ async fn execute_blocks_and_write_stats_csv(
 
     let prover = ProverClient::builder().cpu().build();
 
-    // Use futures::future::join_all to run the server and client in parallel. Note: stream::iter did not work here, possibly
-    // because the server and client are long-lived tasks.
-    let handles = host_args.iter().cloned().map(|host_args| {
+    // Run the host tasks in parallel using join_all
+    let handles = host_args.iter().map(|host_args| {
+        let host_args = host_args.clone();
+        let host = host.clone();
         tokio::spawn(async move {
-            let oracle = start_server_and_native_client(host_args).await.unwrap();
+            let oracle = host.run(&host_args).await.unwrap();
             get_proof_stdin(oracle).unwrap()
         })
     });
+
     let stdins = futures::future::join_all(handles)
         .await
         .into_iter()
@@ -212,17 +217,13 @@ async fn main() -> Result<()> {
         split_ranges
     );
 
-    let cache_mode = if args.use_cache {
-        CacheMode::KeepCache
-    } else {
-        CacheMode::DeleteCache
-    };
-
     // Get the host CLIs in order, in parallel.
+    let host = Arc::new(SingleChainOPSuccinctHost {
+        fetcher: Arc::new(data_fetcher),
+    });
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            data_fetcher
-                .get_host_args(range.start, range.end, None, cache_mode)
+            host.fetch(range.start, range.end, None)
                 .await
                 .expect("Failed to get host CLI args")
         })
@@ -231,6 +232,7 @@ async fn main() -> Result<()> {
         .await;
 
     execute_blocks_and_write_stats_csv(
+        host,
         &host_args,
         split_ranges,
         l2_chain_id,

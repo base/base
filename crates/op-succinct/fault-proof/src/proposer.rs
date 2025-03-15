@@ -21,9 +21,8 @@ use crate::{
 };
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
-    get_agg_proof_stdin, get_proof_stdin, start_server_and_native_client, AGGREGATION_ELF,
-    RANGE_ELF_EMBEDDED,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, hosts::OPSuccinctHost,
+    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
 
 struct SP1Prover {
@@ -33,7 +32,7 @@ struct SP1Prover {
     agg_pk: Arc<SP1ProvingKey>,
 }
 
-pub struct OPSuccinctProposer<F, P>
+pub struct OPSuccinctProposer<F, P, H: OPSuccinctHost>
 where
     F: TxFiller<Ethereum> + Send + Sync,
     P: Provider<Ethereum> + Clone + Send + Sync,
@@ -47,9 +46,10 @@ where
     pub factory: Arc<DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>>,
     pub init_bond: U256,
     prover: SP1Prover,
+    host: Arc<H>,
 }
 
-impl<F, P> OPSuccinctProposer<F, P>
+impl<F, P, H: OPSuccinctHost> OPSuccinctProposer<F, P, H>
 where
     F: TxFiller<Ethereum> + Send + Sync,
     P: Provider<Ethereum> + Clone + Send + Sync,
@@ -59,6 +59,7 @@ where
         prover_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
+        host: Arc<H>,
     ) -> Result<Self> {
         let config = ProposerConfig::from_env()?;
 
@@ -79,6 +80,7 @@ where
                 range_vk: Arc::new(range_vk),
                 agg_pk: Arc::new(agg_pk),
             },
+            host,
         })
     }
 
@@ -97,23 +99,17 @@ where
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
         let l2_block_number = game.l2BlockNumber().call().await?.l2BlockNumber_;
 
-        let host_args = match fetcher
-            .get_host_args(
+        let host_args = self
+            .host
+            .fetch(
                 l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks,
                 l2_block_number.to::<u64>(),
                 Some(l1_head_hash),
-                CacheMode::DeleteCache,
             )
             .await
-        {
-            Ok(cli) => cli,
-            Err(e) => {
-                tracing::error!("Failed to get host CLI args: {}", e);
-                return Err(anyhow::anyhow!("Failed to get host CLI args: {}", e));
-            }
-        };
+            .context("Failed to get host CLI args")?;
 
-        let mem_kv_store = start_server_and_native_client(host_args).await?;
+        let mem_kv_store = self.host.run(&host_args).await?;
 
         let sp1_stdin = match get_proof_stdin(mem_kv_store) {
             Ok(stdin) => stdin,

@@ -8,13 +8,13 @@ use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 
 #[derive(Parser)]
 struct Args {
-    #[clap(long)]
+    #[arg(long)]
     start: u64,
-    #[clap(long)]
+    #[arg(long)]
     end: u64,
-    #[clap(long, default_value = None)]
+    #[arg(long, default_value = None)]
     l1_fee_scalar: Option<U256>,
-    #[clap(long, default_value = ".env")]
+    #[arg(long, default_value = ".env")]
     env_file: String,
 }
 

@@ -44,3 +44,9 @@ num-format.workspace = true
 serde.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+strum_macros = "0.27.1"
+strum = "0.27.1"
+
+[features]

@@ -22,7 +22,7 @@ use fault_proof::{
 
 #[derive(Parser)]
 struct Args {
-    #[clap(long, default_value = ".env.challenger")]
+    #[arg(long, default_value = ".env.challenger")]
     env_file: String,
 }
 

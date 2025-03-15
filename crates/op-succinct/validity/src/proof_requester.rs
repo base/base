@@ -3,9 +3,8 @@ use alloy_provider::Provider;
 use anyhow::{Context, Result};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
-    get_agg_proof_stdin, get_proof_stdin, start_server_and_native_client, AGGREGATION_ELF,
-    RANGE_ELF_EMBEDDED,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, hosts::OPSuccinctHost,
+    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
 use sp1_sdk::{
     network::{proto::network::ExecutionStatus, FulfillmentStrategy},
@@ -19,7 +18,8 @@ use crate::{
     OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics, RequestStatus, RequestType,
 };
 
-pub struct OPSuccinctProofRequester {
+pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
+    pub host: Arc<H>,
     pub network_prover: Arc<NetworkProver>,
     pub fetcher: Arc<OPSuccinctDataFetcher>,
     pub db_client: Arc<DriverDBClient>,
@@ -30,9 +30,10 @@ pub struct OPSuccinctProofRequester {
     pub agg_mode: SP1ProofMode,
 }
 
-impl OPSuccinctProofRequester {
+impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
+        host: Arc<H>,
         network_prover: Arc<NetworkProver>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         db_client: Arc<DriverDBClient>,
@@ -43,6 +44,7 @@ impl OPSuccinctProofRequester {
         agg_mode: SP1ProofMode,
     ) -> Self {
         Self {
+            host,
             network_prover,
             fetcher,
             db_client,
@@ -57,17 +59,10 @@ impl OPSuccinctProofRequester {
     /// Generates the witness for a range proof.
     pub async fn range_proof_witnessgen(&self, request: &OPSuccinctRequest) -> Result<SP1Stdin> {
         let host_args = self
-            .fetcher
-            .get_host_args(
-                request.start_block as u64,
-                request.end_block as u64,
-                None,
-                CacheMode::DeleteCache,
-            )
-            .await
-            .context("Failed to get host CLI args")?;
-
-        let mem_kv_store = start_server_and_native_client(host_args).await?;
+            .host
+            .fetch(request.start_block as u64, request.end_block as u64, None)
+            .await?;
+        let mem_kv_store = self.host.run(&host_args).await?;
         let sp1_stdin = get_proof_stdin(mem_kv_store).context("Failed to get proof stdin")?;
 
         Ok(sp1_stdin)

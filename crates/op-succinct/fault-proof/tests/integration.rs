@@ -1,4 +1,5 @@
 use std::env;
+use std::sync::Arc;
 
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
@@ -7,6 +8,8 @@ use alloy_transport_http::reqwest::Url;
 use anyhow::Context;
 use anyhow::Result;
 use op_alloy_network::EthereumWallet;
+use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use op_succinct_host_utils::hosts::default::SingleChainOPSuccinctHost;
 use tokio::time::Duration;
 
 use fault_proof::{
@@ -42,10 +45,14 @@ async fn test_proposer_defends_successfully() -> Result<()> {
         l1_provider_with_wallet.clone(),
     );
 
+    let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let proposer = OPSuccinctProposer::new(
         wallet.default_signer().address(),
         l1_provider_with_wallet.clone(),
         factory.clone(),
+        Arc::new(SingleChainOPSuccinctHost {
+            fetcher: Arc::new(fetcher),
+        }),
     )
     .await
     .unwrap();
