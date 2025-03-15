@@ -22,9 +22,6 @@
     - [`SuperRootResponse`](#superrootresponse)
     - [`SafetyLevel`](#safetylevel)
   - [Methods](#methods)
-    - [`supervisor_checkMessage`](#supervisor_checkmessage)
-    - [`supervisor_checkMessages`](#supervisor_checkmessages)
-    - [`supervisor_checkMessagesV2`](#supervisor_checkmessagesv2)
     - [`supervisor_crossDerivedToSource`](#supervisor_crossderivedtosource)
     - [`supervisor_localUnsafe`](#supervisor_localunsafe)
     - [`supervisor_crossSafe`](#supervisor_crosssafe)
@@ -33,6 +30,11 @@
     - [`supervisor_superRootAtTimestamp`](#supervisor_superrootattimestamp)
     - [`supervisor_syncStatus`](#supervisor_syncstatus)
     - [`supervisor_allSafeDerivedAt`](#supervisor_allsafederivedat)
+    - [`supervisor_checkAccessList`](#supervisor_checkaccesslist)
+      - [Access-list contents](#access-list-contents)
+      - [Access-list execution context](#access-list-execution-context)
+      - [Access-list checks](#access-list-checks)
+      - [`supervisor_checkAccessList` contents](#supervisor_checkaccesslist-contents)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -73,7 +75,10 @@ Describes the context for message verification.
 Specifically, this helps apply message-expiry rules on message checks.
 
 Object:
-- `timestamp`: `HexUint64`
+- `timestamp`: `HexUint64` - expected timestamp during message execution.
+- `timeout`: `HexUint64` - optional, requests verification to still hold at `timestamp+timeout` (inclusive).
+  The message expiry-window may invalidate messages.
+  Default interpretation is a `0` timeout: what is valid at `timestamp` may not be valid at `timestamp+1`.
 
 #### `HexUint64`
 
@@ -144,43 +149,13 @@ Corresponds to a verifier [SafetyLevel](./verifier.md#safety).
 
 `STRING`, one of:
 - `invalid`
-- `unsafe`
+- `unsafe`: equivalent to safety of the `latest` RPC label.
 - `cross-unsafe`
 - `local-safe`
-- `safe`
+- `safe`: matching cross-safe, named `safe` to match the RPC label.
 - `finalized`
 
 ### Methods
-
-#### `supervisor_checkMessage`
-
-Checks the safety level of a specific message based on its identifier and message hash.
-This RPC is useful for the block builder to determine if a message should be included in a block.
-
-Parameters:
-- `identifier`: `Identifier`
-- `payloadHash`: `Hash`
-- `executingDescriptor`: `ExecutingDescriptor`
-
-Returns: `SafetyLevel`
-
-#### `supervisor_checkMessages`
-
-Parameters:
-- `messages`: ARRAY of `Message`
-- `minSafety`: `SafetyLevel`
-
-#### `supervisor_checkMessagesV2`
-
-Next version `supervisor_checkMessage`,
-additionally verifying the message-expiry, by referencing when the execution happens.
-
-Parameters:
-- `messages`: ARRAY of `Message`
-- `minSafety`: `SafetyLevel`
-- `executingDescriptor`: `ExecutingDescriptor` - applies as execution-context to all messages
-
-Returns: RPC error the minSafety is not met by one or more of the messages, with
 
 #### `supervisor_crossDerivedToSource`
 
@@ -243,3 +218,65 @@ Parameters:
 Returns: derived blocks, mapped in a `OBJECT`:
 - key: `ChainID`
 - value: `BlockID`
+
+#### `supervisor_checkAccessList`
+
+Verifies if an access-list, as defined in [EIP-2930], references only valid messages.
+Message execution in the [`CrossL2Inbox`] that is statically declared in the access-list will not revert.
+
+[EIP-2930]: https://eips.ethereum.org/EIPS/eip-2930
+
+##### Access-list contents
+
+Only the [`CrossL2Inbox`] subset of the access-list in the transaction is required,
+storage-access by other addresses is not included.
+
+Note that an access-list can contain multiple different storage key lists for the `CrossL2Inbox` address.
+All storage keys applicable to the `CrossL2Inbox` MUST be joined together (preserving ordering),
+missing storage-keys breaks inbox safety.
+
+**ALL storage-keys in the access-list for the `CrossL2Inbox` MUST be checked.**
+If there is any unrecognized or invalid key, the access-list check MUST fail.
+
+[`CrossL2Inbox`]: ./predeploys.md#crossl2inbox
+
+##### Access-list execution context
+
+The provided execution-context is used to determine validity relative to the provided time constraints,
+see [timestamp invariants](./derivation.md#invariants).
+
+Since messages expire, validity is not definitive.
+To reserve validity for a longer time range, a non-zero `timeout` value can be used.
+See [`ExecutingDescriptor`](#executingdescriptor) documentation.
+
+As block-builder a `timeout` of `0` should be used.
+
+As transaction pre-verifier, a `timeout` of `86400` (1 day) should be used.
+The transaction should be re-verified or dropped after this time duration,
+as it can no longer be safely included in the block due to message-expiry.
+
+##### Access-list checks
+
+The access-list check errors are not definite state-transition blockers, the RPC based checks can be extra conservative.
+I.e. a message that is uncertain to meet the requested safety level may be denied.
+Specifically, no attempt may be made to verify messages that are initiated and executed within the same timestamp,
+these are `invalid` by default.
+Advanced block-builders may still choose to include these messages by verifying the intra-block constraints.
+
+##### `supervisor_checkAccessList` contents
+
+Parameters:
+- `inboxEntries`: `ARRAY` of `Hash` - statically declared `CrossL2Inbox` access entries.
+- `minSafety`: `SafetyLevel` - minimum required safety, one of:
+  - `unsafe`: the message exists.
+  - `cross-unsafe`: the message exists in a cross-unsafe block.
+  - `local-safe`: the message exists in a local-safe block, not yet cross-verified.
+  - `safe`: the message exists in a derived block that is cross-verified.
+  - `finalized`: the message exists in a finalized block.
+  - Other safety levels are invalid and result in an error.
+- `executingDescriptor`: `ExecutingDescriptor` - applies as execution-context to all messages.
+
+Returns: RPC error if the `minSafety` is not met by one or more of the access entries.
+
+The access-list entries represent messages, and may be incomplete or malformed.
+Malformed access-lists result in an RPC error.
