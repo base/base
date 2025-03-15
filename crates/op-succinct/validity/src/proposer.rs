@@ -12,7 +12,7 @@ use futures_util::{stream, StreamExt, TryStreamExt};
 use metrics::gauge;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher,
+    fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost,
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
     ValidityDisputeGameExtraData, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
@@ -87,7 +87,7 @@ pub struct DriverConfig {
 pub type TaskMap =
     HashMap<tokio::task::Id, (tokio::task::JoinHandle<Result<()>>, OPSuccinctRequest)>;
 
-pub struct Proposer<P, N>
+pub struct Proposer<P, N, H: OPSuccinctHost>
 where
     P: Provider<N> + 'static,
     N: Network,
@@ -96,7 +96,7 @@ where
     contract_config: ContractConfig<P, N>,
     program_config: ProgramConfig,
     requester_config: RequesterConfig,
-    proof_requester: Arc<OPSuccinctProofRequester>,
+    proof_requester: Arc<OPSuccinctProofRequester<H>>,
     tasks: Arc<Mutex<TaskMap>>,
 }
 
@@ -107,7 +107,7 @@ const TIMEOUT: u64 = 120;
 /// Task completion handler interval.
 const TASK_COMPLETION_HANDLER_INTERVAL: u64 = 1;
 
-impl<P, N> Proposer<P, N>
+impl<P, N, H: OPSuccinctHost> Proposer<P, N, H>
 where
     P: Provider<N> + 'static + Clone,
     N: Network,
@@ -118,6 +118,7 @@ where
         fetcher: Arc<OPSuccinctDataFetcher>,
         requester_config: RequesterConfig,
         loop_interval_seconds: Option<u64>,
+        host: Arc<H>,
     ) -> Result<Self> {
         let network_prover = Arc::new(ProverClient::builder().network().build());
         let (range_pk, range_vk) = network_prover.setup(RANGE_ELF_EMBEDDED);
@@ -143,6 +144,7 @@ where
 
         // Initialize the proof requester.
         let proof_requester = Arc::new(OPSuccinctProofRequester::new(
+            host,
             network_prover.clone(),
             fetcher.clone(),
             db_client.clone(),

@@ -155,7 +155,6 @@ where
         output_root = output_root
     );
 
-    // Only need to forget resources on non-zkvm targets
     #[cfg(target_os = "zkvm")]
     {
         std::mem::forget(driver);

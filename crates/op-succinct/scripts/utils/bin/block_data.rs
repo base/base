@@ -12,13 +12,13 @@ use std::{
 #[derive(Debug, Clone, Parser)]
 struct BlockDataArgs {
     /// The start block of the range to execute.
-    #[clap(long)]
+    #[arg(long)]
     start: u64,
     /// The end block of the range to execute.
-    #[clap(long)]
+    #[arg(long)]
     end: u64,
     /// The environment file to use.
-    #[clap(long, default_value = ".env")]
+    #[arg(long, default_value = ".env")]
     env_file: PathBuf,
 }
 

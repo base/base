@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{L2Output, OPSuccinctHost};
+use crate::L2Output;
 
 #[derive(Clone)]
 /// The OPSuccinctDataFetcher struct is used to fetch the L2 output data and L2 claim data for a
@@ -66,13 +66,6 @@ pub enum RPCMode {
     L1Beacon,
     L2,
     L2Node,
-}
-
-/// Whether to keep the cache or delete the cache.
-#[derive(Clone, Copy)]
-pub enum CacheMode {
-    KeepCache,
-    DeleteCache,
 }
 
 fn get_rpcs() -> RPCConfig {
@@ -591,7 +584,7 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the data directory path. Note: This path is relative to the location from which the program is run.
-    fn get_data_directory(
+    pub fn get_data_directory(
         &self,
         l2_chain_id: u64,
         l2_start_block: u64,
@@ -601,157 +594,6 @@ impl OPSuccinctDataFetcher {
             "data/{}/{}-{}",
             l2_chain_id, l2_start_block, l2_end_block
         ))
-    }
-
-    /// Get the L2 output data for a given block number and save the boot info to a file in the data
-    /// directory with block_number. Return the arguments to be passed to the native host for
-    /// datagen.
-    pub async fn get_host_args(
-        &self,
-        l2_start_block: u64,
-        l2_end_block: u64,
-        l1_head_hash: Option<B256>,
-        cache_mode: CacheMode,
-    ) -> Result<OPSuccinctHost> {
-        // If the rollup config is not already loaded, fetch and save it.
-        if self.rollup_config.is_none() {
-            return Err(anyhow::anyhow!("Rollup config not loaded."));
-        }
-        let l2_chain_id = self.rollup_config.as_ref().unwrap().l2_chain_id;
-
-        if l2_start_block >= l2_end_block {
-            return Err(anyhow::anyhow!(
-                "L2 start block is greater than or equal to L2 end block. Start: {}, End: {}",
-                l2_start_block,
-                l2_end_block
-            ));
-        }
-
-        let l2_provider = self.l2_provider.clone();
-
-        // Get L2 output data.
-        let l2_output_block = l2_provider
-            .get_block_by_number(l2_start_block.into())
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("Block not found for block number {}", l2_start_block)
-            })?;
-        let l2_output_state_root = l2_output_block.header.state_root;
-        let agreed_l2_head_hash = l2_output_block.header.hash;
-        let l2_output_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
-            .block_id(l2_start_block.into())
-            .await?
-            .storage_hash;
-
-        let l2_output_encoded = L2Output {
-            zero: 0,
-            l2_state_root: l2_output_state_root.0.into(),
-            l2_storage_hash: l2_output_storage_hash.0.into(),
-            l2_claim_hash: agreed_l2_head_hash.0.into(),
-        };
-        let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
-
-        // Get L2 claim data.
-        let l2_claim_block = l2_provider
-            .get_block_by_number(l2_end_block.into())
-            .await?
-            .unwrap();
-        let l2_claim_state_root = l2_claim_block.header.state_root;
-        let l2_claim_hash = l2_claim_block.header.hash;
-        let l2_claim_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
-            .block_id(l2_end_block.into())
-            .await?
-            .storage_hash;
-
-        let l2_claim_encoded = L2Output {
-            zero: 0,
-            l2_state_root: l2_claim_state_root.0.into(),
-            l2_storage_hash: l2_claim_storage_hash.0.into(),
-            l2_claim_hash: l2_claim_hash.0.into(),
-        };
-        let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
-
-        let l1_head_hash = match l1_head_hash {
-            Some(l1_head_hash) => l1_head_hash,
-            None => {
-                let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
-
-                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
-                let l1_head_number = l1_head_number + 20;
-                // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
-                let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
-
-                match l1_head_number > finalized_l1_header.number {
-                    true => self
-                        .get_l1_header(finalized_l1_header.number.into())
-                        .await?
-                        .hash_slow(),
-                    false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
-                }
-            }
-        };
-
-        // Get the workspace root, which is where the data directory is.
-        let data_directory = self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block)?;
-
-        // Delete the data directory if the cache mode is DeleteCache.
-        match cache_mode {
-            CacheMode::KeepCache => (),
-            CacheMode::DeleteCache => {
-                if Path::new(&data_directory).exists() {
-                    fs::remove_dir_all(&data_directory)?;
-                }
-            }
-        }
-
-        // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
-        // witness data.
-        fs::create_dir_all(&data_directory).expect("Failed to create data directory");
-
-        Ok(OPSuccinctHost {
-            kona_args: SingleChainHost {
-                l1_head: l1_head_hash,
-                agreed_l2_output_root,
-                agreed_l2_head_hash,
-                claimed_l2_output_root,
-                claimed_l2_block_number: l2_end_block,
-                l2_chain_id: None,
-                // Trim the trailing slash to avoid double slashes in the URL.
-                l2_node_address: Some(
-                    self.rpc_config
-                        .l2_rpc
-                        .as_str()
-                        .trim_end_matches('/')
-                        .to_string(),
-                ),
-                l1_node_address: Some(
-                    self.rpc_config
-                        .l1_rpc
-                        .as_str()
-                        .trim_end_matches('/')
-                        .to_string(),
-                ),
-                l1_beacon_address: Some(
-                    self.rpc_config
-                        .l1_beacon_rpc
-                        .as_str()
-                        .trim_end_matches('/')
-                        .to_string(),
-                ),
-                data_dir: Some(data_directory.into()),
-                native: false,
-                server: true,
-                rollup_config_path: self.rollup_config_path.clone(),
-            },
-        })
     }
 
     pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
@@ -880,5 +722,147 @@ impl OPSuccinctDataFetcher {
             )
             .await;
         Ok(result.is_ok())
+    }
+
+    /// Get the L2 output data for a given block number and save the boot info to a file in the data
+    /// directory with block_number. Return the arguments to be passed to the native host for
+    /// datagen.
+    pub async fn get_host_args(
+        &self,
+        l2_start_block: u64,
+        l2_end_block: u64,
+        l1_head_hash: Option<B256>,
+    ) -> Result<SingleChainHost> {
+        // If the rollup config is not already loaded, fetch and save it.
+        if self.rollup_config.is_none() {
+            return Err(anyhow::anyhow!("Rollup config not loaded."));
+        }
+        let l2_chain_id = self.rollup_config.as_ref().unwrap().l2_chain_id;
+
+        if l2_start_block >= l2_end_block {
+            return Err(anyhow::anyhow!(
+                "L2 start block is greater than or equal to L2 end block. Start: {}, End: {}",
+                l2_start_block,
+                l2_end_block
+            ));
+        }
+
+        let l2_provider = self.l2_provider.clone();
+
+        // Get L2 output data.
+        let l2_output_block = l2_provider
+            .get_block_by_number(l2_start_block.into())
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Block not found for block number {}", l2_start_block)
+            })?;
+        let l2_output_state_root = l2_output_block.header.state_root;
+        let agreed_l2_head_hash = l2_output_block.header.hash;
+        let l2_output_storage_hash = l2_provider
+            .get_proof(
+                Address::from_str("0x4200000000000000000000000000000000000016")?,
+                Vec::new(),
+            )
+            .block_id(l2_start_block.into())
+            .await?
+            .storage_hash;
+
+        let l2_output_encoded = L2Output {
+            zero: 0,
+            l2_state_root: l2_output_state_root.0.into(),
+            l2_storage_hash: l2_output_storage_hash.0.into(),
+            l2_claim_hash: agreed_l2_head_hash.0.into(),
+        };
+        let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
+
+        // Get L2 claim data.
+        let l2_claim_block = l2_provider
+            .get_block_by_number(l2_end_block.into())
+            .await?
+            .unwrap();
+        let l2_claim_state_root = l2_claim_block.header.state_root;
+        let l2_claim_hash = l2_claim_block.header.hash;
+        let l2_claim_storage_hash = l2_provider
+            .get_proof(
+                Address::from_str("0x4200000000000000000000000000000000000016")?,
+                Vec::new(),
+            )
+            .block_id(l2_end_block.into())
+            .await?
+            .storage_hash;
+
+        let l2_claim_encoded = L2Output {
+            zero: 0,
+            l2_state_root: l2_claim_state_root.0.into(),
+            l2_storage_hash: l2_claim_storage_hash.0.into(),
+            l2_claim_hash: l2_claim_hash.0.into(),
+        };
+        let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
+
+        let l1_head_hash = match l1_head_hash {
+            Some(l1_head_hash) => l1_head_hash,
+            None => {
+                let (_, l1_head_number) = self.get_l1_head(l2_end_block).await?;
+
+                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
+                let l1_head_number = l1_head_number + 20;
+                // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
+                let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
+
+                match l1_head_number > finalized_l1_header.number {
+                    true => self
+                        .get_l1_header(finalized_l1_header.number.into())
+                        .await?
+                        .hash_slow(),
+                    false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
+                }
+            }
+        };
+
+        // Get the workspace root, which is where the data directory is.
+        let data_directory = self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block)?;
+
+        if Path::new(&data_directory).exists() {
+            fs::remove_dir_all(&data_directory)?;
+        }
+
+        // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
+        // witness data.
+        fs::create_dir_all(&data_directory).expect("Failed to create data directory");
+
+        Ok(SingleChainHost {
+            l1_head: l1_head_hash,
+            agreed_l2_output_root,
+            agreed_l2_head_hash,
+            claimed_l2_output_root,
+            claimed_l2_block_number: l2_end_block,
+            l2_chain_id: None,
+            // Trim the trailing slash to avoid double slashes in the URL.
+            l2_node_address: Some(
+                self.rpc_config
+                    .l2_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
+            l1_node_address: Some(
+                self.rpc_config
+                    .l1_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
+            l1_beacon_address: Some(
+                self.rpc_config
+                    .l1_beacon_rpc
+                    .as_str()
+                    .trim_end_matches('/')
+                    .to_string(),
+            ),
+            data_dir: Some(data_directory.into()),
+            native: false,
+            server: true,
+            rollup_config_path: self.rollup_config_path.clone(),
+        })
     }
 }

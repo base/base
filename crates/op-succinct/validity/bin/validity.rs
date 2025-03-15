@@ -1,6 +1,6 @@
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use anyhow::Result;
-use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, hosts::initialize_host};
 use op_succinct_validity::{
     read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
 };
@@ -62,12 +62,15 @@ async fn main() -> Result<()> {
         .wallet(signer.clone())
         .on_http(env_config.l1_rpc.parse().expect("Failed to parse L1_RPC"));
 
+    let host = initialize_host(fetcher.clone().into());
+
     let proposer = Proposer::new(
         l1_provider,
         db_client.clone(),
-        Arc::new(fetcher),
+        fetcher.into(),
         proposer_config,
         env_config.loop_interval,
+        host,
     )
     .await?;
 

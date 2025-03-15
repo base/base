@@ -2,15 +2,16 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use op_succinct_host_utils::{
     block_range::get_validated_block_range,
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
-    get_proof_stdin, start_server_and_native_client,
+    fetcher::OPSuccinctDataFetcher,
+    get_proof_stdin,
+    hosts::{default::SingleChainOPSuccinctHost, OPSuccinctHost},
     stats::ExecutionStats,
     RANGE_ELF_EMBEDDED,
 };
 use op_succinct_prove::{execute_multi, DEFAULT_RANGE};
 use op_succinct_scripts::HostExecutorArgs;
 use sp1_sdk::{utils, ProverClient};
-use std::{fs, time::Instant};
+use std::{fs, sync::Arc, time::Instant};
 use tracing::debug;
 
 /// Execute the OP Succinct program for multiple blocks.
@@ -26,24 +27,19 @@ async fn main() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let cache_mode = if args.use_cache {
-        CacheMode::KeepCache
-    } else {
-        CacheMode::DeleteCache
-    };
-
     // If the end block is provided, check that it is less than the latest finalized block. If the end block is not provided, use the latest finalized block.
     let (l2_start_block, l2_end_block) =
         get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
-    let host_args = data_fetcher
-        .get_host_args(l2_start_block, l2_end_block, None, cache_mode)
-        .await?;
+    let host = SingleChainOPSuccinctHost {
+        fetcher: Arc::new(data_fetcher.clone()),
+    };
+    let host_args = host.fetch(l2_start_block, l2_end_block, None).await?;
 
     debug!("Host args: {:?}", host_args);
 
     let start_time = Instant::now();
-    let oracle = start_server_and_native_client(host_args.clone()).await?;
+    let oracle = host.run(&host_args).await?;
     let witness_generation_duration = start_time.elapsed();
 
     // Get the stdin for the block.
@@ -80,7 +76,7 @@ async fn main() -> Result<()> {
             execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
         let l1_block_number = data_fetcher
-            .get_l1_header(host_args.kona_args.l1_head.into())
+            .get_l1_header(host_args.l1_head.into())
             .await
             .unwrap()
             .number;

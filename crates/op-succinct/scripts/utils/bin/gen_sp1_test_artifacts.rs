@@ -4,14 +4,17 @@ use futures::StreamExt;
 use log::info;
 use op_succinct_host_utils::{
     block_range::{get_validated_block_range, split_range_basic},
-    fetcher::{CacheMode, OPSuccinctDataFetcher},
-    get_proof_stdin, start_server_and_native_client, RANGE_ELF_EMBEDDED,
+    fetcher::OPSuccinctDataFetcher,
+    get_proof_stdin,
+    hosts::{default::SingleChainOPSuccinctHost, OPSuccinctHost},
+    RANGE_ELF_EMBEDDED,
 };
 use op_succinct_scripts::HostExecutorArgs;
 use sp1_sdk::utils;
 use std::{
     fs::{self},
     path::PathBuf,
+    sync::Arc,
 };
 
 #[tokio::main]
@@ -34,17 +37,13 @@ async fn main() -> Result<()> {
         split_ranges
     );
 
-    let cache_mode = if args.use_cache {
-        CacheMode::KeepCache
-    } else {
-        CacheMode::DeleteCache
-    };
-
     // Get the host CLIs in order, in parallel.
+    let host = Arc::new(SingleChainOPSuccinctHost {
+        fetcher: Arc::new(data_fetcher),
+    });
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            data_fetcher
-                .get_host_args(range.start, range.end, None, cache_mode)
+            host.fetch(range.start, range.end, None)
                 .await
                 .expect("Failed to get host CLI args")
         })
@@ -54,9 +53,7 @@ async fn main() -> Result<()> {
 
     let mut successful_ranges = Vec::new();
     for (range, host_args) in split_ranges.iter().zip(host_args.iter()) {
-        let oracle = start_server_and_native_client(host_args.clone())
-            .await
-            .unwrap();
+        let oracle = host.run(host_args).await.unwrap();
         let sp1_stdin = get_proof_stdin(oracle).unwrap();
         successful_ranges.push((sp1_stdin, range.clone()));
     }
