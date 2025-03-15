@@ -30,12 +30,18 @@ alloy-eips.workspace = true
 alloy-provider = { workspace = true }
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
+alloy-consensus = { workspace = true }
+alloy-network = { workspace = true }
+alloy-rpc-client = { workspace = true }
+alloy-signer = { workspace = true }
 
 anyhow.workspace = true
 dotenv.workspace = true
 op-succinct-client-utils.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
 
 # server
 bincode.workspace = true
@@ -56,6 +62,7 @@ metrics-exporter-prometheus = "0.16.2"
 metrics = "0.24.1"
 metrics-process = "2.4.0"
 rustls = "0.23.23"
+url = "2.5.4"
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true
