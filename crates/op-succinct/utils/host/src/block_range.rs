@@ -127,7 +127,7 @@ pub async fn split_range_based_on_safe_heads(
     let l1_start = start_output.block_ref.l1_origin.number;
 
     // Get the L1Head from which l2_end can be derived
-    let (_, l1_head_number) = data_fetcher.get_l1_head_with_safe_head(l2_end).await?;
+    let (_, l1_head_number) = data_fetcher.get_safe_l1_block_for_l2_block(l2_end).await?;
 
     // Get all the unique safeHeads between l1_start and l1_head
     let mut ranges = Vec::new();

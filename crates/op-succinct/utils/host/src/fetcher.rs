@@ -609,7 +609,9 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the L1 block from which the `l2_end_block` can be derived.
-    pub async fn get_l1_head_with_safe_head(&self, l2_end_block: u64) -> Result<(B256, u64)> {
+    ///
+    /// Use binary search to find the first L1 block with an L2 safe head >= l2_end_block.
+    pub async fn get_safe_l1_block_for_l2_block(&self, l2_end_block: u64) -> Result<(B256, u64)> {
         let latest_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
         // Get the l1 origin of the l2 end block.
@@ -624,17 +626,14 @@ impl OPSuccinctDataFetcher {
 
         let l1_origin = optimism_output_data.block_ref.l1_origin;
 
-        // Search forward from the l1Origin, checking each L1 block until we find one with an L2 safe head greater than l2_end_block
-        let mut current_l1_block_number = l1_origin.number;
-        loop {
-            // If the current L1 block number is greater than the latest L1 header number, then return an error.
-            if current_l1_block_number > latest_l1_header.number {
-                return Err(anyhow::anyhow!(
-                    "Could not find an L1 block with an L2 safe head greater than the L2 end block."
-                ));
-            }
+        // Binary search for the first L1 block with L2 safe head >= l2_end_block.
+        let mut low = l1_origin.number;
+        let mut high = latest_l1_header.number;
+        let mut first_valid = None;
 
-            let l1_block_number_hex = format!("0x{:x}", current_l1_block_number);
+        while low <= high {
+            let mid = low + (high - low) / 2;
+            let l1_block_number_hex = format!("0x{:x}", mid);
             let result: SafeHeadResponse = self
                 .fetch_rpc_data_with_mode(
                     RPCMode::L2Node,
@@ -643,13 +642,22 @@ impl OPSuccinctDataFetcher {
                 )
                 .await?;
             let l2_safe_head = result.safe_head.number;
-            // If the safe head is GTE to the L2 end block at this L1 block, then we can derive the L2 end block from this L1 block.
-            if l2_safe_head >= l2_end_block {
-                return Ok((result.l1_block.hash, result.l1_block.number));
-            }
 
-            current_l1_block_number += 1;
+            if l2_safe_head >= l2_end_block {
+                // Found a valid block, save it and keep searching lower.
+                first_valid = Some((result.l1_block.hash, result.l1_block.number));
+                high = mid - 1;
+            } else {
+                // Need to search higher
+                low = mid + 1;
+            }
         }
+
+        first_valid.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Could not find an L1 block with an L2 safe head greater than the L2 end block."
+            )
+        })
     }
 
     /// If the safeDB is not activated, then  estimate the L1 head based on the timestamp of the L2 block and the finalized L1 block.
@@ -658,7 +666,7 @@ impl OPSuccinctDataFetcher {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
         }
 
-        match self.get_l1_head_with_safe_head(l2_end_block).await {
+        match self.get_safe_l1_block_for_l2_block(l2_end_block).await {
             Ok(safe_head) => Ok(safe_head),
             Err(_) => {
                 tracing::warn!("SafeDB not activated - falling back to timestamp-based L1 head estimation. WARNING: This fallback method is more expensive and less reliable. Derivation may fail if the L2 block batch is posted after our estimated L1 head. Enable SafeDB on op-node to fix this.");
