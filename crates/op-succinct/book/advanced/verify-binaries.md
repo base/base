@@ -10,7 +10,7 @@ Recall there are two programs used in OP Succinct:
 
 ## Prerequisites
 
-To reproduce the OP Succinct program binaries, you first need to install the [cargo prove](https://docs.succinct.xyz/docs/getting-started/install.html#option-1-prebuilt-binaries-recommended) toolchain.
+To reproduce the OP Succinct program binaries, you first need to install the [cargo prove](https://docs.succinct.xyz/docs/sp1/getting-started/install#option-1-prebuilt-binaries-recommended) toolchain.
 
 Ensure that you have the latest version of the toolchain by running:
 
