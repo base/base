@@ -50,6 +50,10 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
             .await?;
         Ok(host)
     }
+
+    fn get_l1_head_hash(&self, args: &Self::Args) -> Option<B256> {
+        Some(args.l1_head)
+    }
 }
 
 impl SingleChainOPSuccinctHost {

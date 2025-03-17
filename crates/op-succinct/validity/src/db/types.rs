@@ -108,6 +108,7 @@ pub struct OPSuccinctRequest {
     pub l2_chain_id: i64,
     pub contract_address: Option<Vec<u8>>, //Address
     pub prover_address: Option<Vec<u8>>,   //Address
+    pub l1_head_block_number: Option<i64>, // L1 head block number used for request
 }
 
 impl OPSuccinctRequest {
@@ -214,6 +215,7 @@ impl OPSuccinctRequest {
             l1_chain_id,
             l2_chain_id,
             prover_address: Some(prover_address.to_vec()),
+            l1_head_block_number: None,
             ..Default::default()
         }
     }

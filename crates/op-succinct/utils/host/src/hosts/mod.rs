@@ -49,6 +49,9 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
         l1_head_hash: Option<B256>,
         safe_db_fallback: Option<bool>,
     ) -> Result<Self::Args>;
+
+    /// Get the L1 head hash from the host args.
+    fn get_l1_head_hash(&self, args: &Self::Args) -> Option<B256>;
 }
 
 /// Initialize the host.
