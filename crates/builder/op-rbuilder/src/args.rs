@@ -38,4 +38,8 @@ pub struct OpRbuilderArgs {
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
     pub flashblock_block_time: u64,
+
+    /// Signals whether to log pool transactions events
+    #[arg(long = "builder.log-pool-transactions", default_value = "false")]
+    pub log_pool_transactions: bool,
 }

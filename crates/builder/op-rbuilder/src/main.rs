@@ -9,6 +9,7 @@ use reth_optimism_node::OpNode;
 use payload_builder::CustomOpPayloadBuilder;
 #[cfg(not(feature = "flashblocks"))]
 use payload_builder_vanilla::CustomOpPayloadBuilder;
+use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
 pub mod args;
@@ -16,6 +17,7 @@ pub mod generator;
 #[cfg(test)]
 mod integration;
 mod metrics;
+mod monitor_tx_pool;
 mod monitoring;
 #[cfg(feature = "flashblocks")]
 pub mod payload_builder;
@@ -25,6 +27,7 @@ mod primitives;
 #[cfg(test)]
 mod tester;
 mod tx_signer;
+use monitor_tx_pool::monitor_tx_pool;
 
 fn main() {
     Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
@@ -49,6 +52,16 @@ fn main() {
                 .on_node_started(move |ctx| {
                     let new_canonical_blocks = ctx.provider().canonical_state_stream();
                     let builder_signer = builder_args.builder_signer;
+
+                    if builder_args.log_pool_transactions {
+                        tracing::info!("Logging pool transactions");
+                        ctx.task_executor.spawn_critical(
+                            "txlogging",
+                            Box::pin(async move {
+                                monitor_tx_pool(ctx.pool.all_transactions_event_listener()).await;
+                            }),
+                        );
+                    }
 
                     ctx.task_executor.spawn_critical(
                         "monitoring",
