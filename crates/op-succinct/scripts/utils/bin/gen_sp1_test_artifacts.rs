@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     });
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            host.fetch(range.start, range.end, None)
+            host.fetch(range.start, range.end, None, Some(args.safe_db_fallback))
                 .await
                 .expect("Failed to get host CLI args")
         })

@@ -27,7 +27,9 @@ async fn execute_batch() -> Result<()> {
         fetcher: Arc::new(data_fetcher.clone()),
     };
 
-    let host_args = host.fetch(l2_start_block, l2_end_block, None).await?;
+    let host_args = host
+        .fetch(l2_start_block, l2_end_block, None, Some(false))
+        .await?;
 
     let oracle = host.run(&host_args).await?;
 

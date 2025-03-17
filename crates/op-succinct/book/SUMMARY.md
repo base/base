@@ -24,6 +24,7 @@
   - [Modifications to Original `L2OutputOracle`](./contracts/modifications.md)
 - [Fault Proofs](./fault_proofs/fault_proof_architecture.md)
   - [Quick Start](./fault_proofs/quick_start.md)
+  - [Best Practices](./fault_proofs/best_practices.md)
   - [Deploy FP Contracts](./fault_proofs/deploy.md)
   - [How to run the FP Proposer](./fault_proofs/proposer.md)
   - [How to run the FP Challenger](./fault_proofs/challenger.md)

@@ -6,7 +6,7 @@ This guide provides the fastest path to try out OP Succinct fault dispute games 
 
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
 - [Rust](https://www.rust-lang.org/tools/install) (latest stable version)
-- L1 and L2 archive node RPC endpoints
+- L1 and L2 archive node RPC endpoints. L2 node should be configured with SafeDB enabled. See [SafeDB Configuration](./best_practices.md#safe-db-configuration) for more details.
 - ETH on L1 for:
   - Contract deployment
   - Game bonds (configurable in factory)

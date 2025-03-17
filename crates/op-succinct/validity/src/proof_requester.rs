@@ -28,6 +28,7 @@ pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
     pub range_strategy: FulfillmentStrategy,
     pub agg_strategy: FulfillmentStrategy,
     pub agg_mode: SP1ProofMode,
+    pub safe_db_fallback: bool,
 }
 
 impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
@@ -42,6 +43,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         range_strategy: FulfillmentStrategy,
         agg_strategy: FulfillmentStrategy,
         agg_mode: SP1ProofMode,
+        safe_db_fallback: bool,
     ) -> Self {
         Self {
             host,
@@ -53,6 +55,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             range_strategy,
             agg_strategy,
             agg_mode,
+            safe_db_fallback,
         }
     }
 
@@ -60,7 +63,12 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     pub async fn range_proof_witnessgen(&self, request: &OPSuccinctRequest) -> Result<SP1Stdin> {
         let host_args = self
             .host
-            .fetch(request.start_block as u64, request.end_block as u64, None)
+            .fetch(
+                request.start_block as u64,
+                request.end_block as u64,
+                None,
+                Some(self.safe_db_fallback),
+            )
             .await?;
         let mem_kv_store = self.host.run(&host_args).await?;
         let sp1_stdin = get_proof_stdin(mem_kv_store).context("Failed to get proof stdin")?;

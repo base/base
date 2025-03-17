@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
         submission_interval: env_config.submission_interval,
         mock: env_config.mock,
         prover_address: env_config.prover_address,
+        safe_db_fallback: env_config.safe_db_fallback,
     };
 
     // Read all config from env vars. If both signer_url and signer_address are provided, use Web3Signer.
