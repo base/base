@@ -316,13 +316,26 @@ where
                 .get_proof_status(B256::from_slice(proof_request_id))
                 .await?;
 
-            let execution_status = ExecutionStatus::try_from(status.execution_status)
-                .context("Failed to convert execution status to ExecutionStatus.")?;
-            let fulfillment_status = FulfillmentStatus::try_from(status.fulfillment_status)
-                .context("Failed to convert fulfillment status to FulfillmentStatus.")?;
+            // Check if current time exceeds deadline. If so, the proof has timed out.
+            let current_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            if current_time > status.deadline {
+                self.proof_requester
+                    .retry_request(request.clone(), status.execution_status())
+                    .await?;
+
+                tracing::error!(
+                    "Proof request has timed out for request id: {:?}",
+                    proof_request_id
+                );
+
+                return Ok(());
+            }
 
             // If the proof request has been fulfilled, update the request to status Complete and add the proof bytes to the database.
-            if fulfillment_status == FulfillmentStatus::Fulfilled {
+            if status.fulfillment_status() == FulfillmentStatus::Fulfilled {
                 let proof: SP1ProofWithPublicValues = proof.unwrap();
 
                 let proof_bytes = match proof.proof {
@@ -343,9 +356,9 @@ where
                     .driver_db_client
                     .update_prove_duration(request.id)
                     .await?;
-            } else if status.fulfillment_status == FulfillmentStatus::Unfulfillable as i32 {
+            } else if status.fulfillment_status() == FulfillmentStatus::Unfulfillable {
                 self.proof_requester
-                    .retry_request(request, execution_status)
+                    .retry_request(request, status.execution_status())
                     .await?;
             }
         } else {
