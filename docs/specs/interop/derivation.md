@@ -6,17 +6,12 @@
 
 - [Overview](#overview)
 - [Invariants](#invariants)
-- [L1 Attributes Transaction](#l1-attributes-transaction)
-  - [Deposit Context](#deposit-context)
-    - [Opening the deposit context](#opening-the-deposit-context)
-    - [Closing the deposit context](#closing-the-deposit-context)
-      - [Deposits-complete Source-hash](#deposits-complete-source-hash)
 - [Replacing Invalid Blocks](#replacing-invalid-blocks)
   - [Optimistic Block Deposited Transaction](#optimistic-block-deposited-transaction)
     - [Optimistic Block Source-hash](#optimistic-block-source-hash)
+- [Network Upgrade Transactions](#network-upgrade-transactions)
 - [Expiry Window](#expiry-window)
 - [Security Considerations](#security-considerations)
-  - [Gas Considerations](#gas-considerations)
   - [Depositing an Executing Message](#depositing-an-executing-message)
   - [Reliance on History](#reliance-on-history)
   - [Expiry Window](#expiry-window-1)
@@ -43,79 +38,6 @@ They MAY optimistically exist as unsafe blocks for some period of time. An L2 bl
 because it includes invalid executing messages MUST be replaced by a deposits only block at the same
 block height. This guarantees progression of the chain, ensuring that an infinite loop of processing
 the same block in the proof system is not possible.
-
-## L1 Attributes Transaction
-
-The L1 attributes transaction is updated to a new entrypoint on the `L1Block` contract.
-
-### Deposit Context
-
-Derivation is extended to create **deposit contexts**, which signify the execution of a depositing transaction.
-A deposit context is scoped to a single block, opening with the first deposited transaction and closing after
-the execution of the final deposited transaction. As such, there is exactly one deposit context per block.
-The deposit context exists to give legibility within the EVM that execution is happening in the context of
-a deposit transaction. See [`isDeposit()`](./predeploys.md#isdeposit) for more information.
-
-The order of deposit transactions occurs as follows:
-
-1. L1 attributes transaction, [opening the deposit context](#opening-the-deposit-context).
-2. User deposits (if any).
-3. L1 attributes transaction, [closing the deposit context](#closing-the-deposit-context).
-4. During upgrades, additional deposits, inserted by derivation, may follow after the above.
-   See [upgrade specification](./upgrade.md).
-
-The L1 attributes operations wrap user deposits,
-such that `isDeposit = true` occurs during the first L1 attributes transaction
-and `isDeposit = false` occurs immediately after the last user deposit,
-if any exists, or after the first L1 attributes transaction if there are no user deposits.
-
-#### Opening the deposit context
-
-A new `L1Block` predeploy function is introduced to set the L1 attributes: `setL1BlockValuesIsthmus()`.
-
-The block-attributes contents are unchanged from the previous fork.
-See [Ecotone L1 attributes specifications](../protocol/ecotone/l1-attributes.md),
-and [Holocene specifications](../protocol/holocene/overview.md).
-
-In addition to the setting L1 block attributes, the `setL1BlockValuesIsthmus` function
-now sets `isDeposit = true` on the `L1Block` predeploy contract.
-
-This instantiates a deposit context for the current block.
-
-#### Closing the deposit context
-
-A new `L1Block` predeploy function is introduced to close the deposit context: `depositsComplete()`.
-
-This sets `isDeposit = false` in the `L1Block` predeploy contract.
-
-This function is called by a new L1 block system transaction.
-This transaction MUST have the following values:
-
-1. `from` is `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001`, the address of the
-   [L1 Attributes depositor account](../protocol/deposits.md#l1-attributes-depositor-account).
-2. `to` is `0x4200000000000000000000000000000000000015`, the address of the
-   [L1 attributes predeployed contract](../protocol/deposits.md#l1-attributes-predeployed-contract).
-3. `mint` is `0`.
-4. `value` is `0`.
-5. `gasLimit` is set `36000` gas, to cover intrinsic costs, processing costs, and margin for change.
-6. `isSystemTx` is `false`.
-7. `data` is set to `0xe32d20bb`, the 4-byte selector of `depositsComplete()`.
- This closes the existing deposit context.
-8. `sourceHash` is computed with a new deposit source-hash domain, see below.
-
-##### Deposits-complete Source-hash
-
-The source hash is [computed](../protocol/deposits.md#source-hash-computation) alike to that
-of the "L1 attributes deposited" deposit that opens the deposit context.
-The one difference is the source-hash domain: `3` (instead of `1`).
-
-The source-hash is thus computed as:
-`keccak256(bytes32(uint256(3)), keccak256(l1BlockHash, bytes32(uint256(seqNumber))))`.
-
-Where `l1BlockHash` refers to the L1 block hash of which the info attributes are deposited.
-And `seqNumber = l2BlockNum - l2EpochStartBlockNum`,
-where `l2BlockNum` is the L2 block number of the inclusion of the deposit tx in L2,
-and `l2EpochStartBlockNum` is the L2 block number of the first L2 block in the epoch.
 
 ## Replacing Invalid Blocks
 
@@ -159,6 +81,24 @@ combined with the [L2 output root] of the optimistic block that was invalidated.
 The source-hash is thus computed as:
 `keccak256(bytes32(uint256(4)), outputRoot))`.
 
+## Network Upgrade Transactions
+
+The interop network upgrade timestamp defines the timestamp at which all functionality in this document is considered
+the consensus rules for an OP Stack based network. On the interop network upgrade block, a set of deposit transaction
+based upgrade transactions are deterministically generated by the derivation pipeline in the following order:
+
+- L1 Attributes Transaction calling `setL1BlockValuesEcotone`
+- User deposits from L1
+- Network Upgrade Transactions
+  - CrossL2Inbox deployment
+  - L2ToL2CrossDomainMessenger deployment
+  - OptimismMintableERC20Factory deployment
+  - Update CrossL2Inbox Proxy ERC-1967 Implementation Slot
+  - Update L2ToL2CrossDomainMessenger Proxy ERC-1967 Implementation Slot
+  - Update the OptimismMintableERC20Factory Proxy ERC-1967 Implementation Slot
+
+The execution payload MUST set `noTxPool` to `true` for this block.
+
 ## Expiry Window
 
 The expiry window is the time period after which an initiating message is no longer considered valid.
@@ -168,13 +108,6 @@ The expiry window is the time period after which an initiating message is no lon
 | `EXPIRY_WINDOW` | `TODO` |
 
 ## Security Considerations
-
-### Gas Considerations
-
-There must be sufficient gas available in the block to destroy deposit context. Depending on the
-chain configuration, there is no guarantee that the amount of guaranteed gas plus the amount used
-by the system transactions is less than the L2 block gas limit. It is important that the chain operator
-maintains a ~9 million gas buffer between the guaranteed gas limit and the L2 gas limit.
 
 ### Depositing an Executing Message
 

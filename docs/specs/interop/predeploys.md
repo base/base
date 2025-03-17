@@ -37,11 +37,6 @@
   - [Deployment Flow](#deployment-flow)
 - [OptimismSuperchainERC20Beacon](#optimismsuperchainerc20beacon)
   - [Overview](#overview-2)
-- [L1Block](#l1block)
-  - [L1 Atributes Transaction](#l1-atributes-transaction)
-  - [Deposit Context](#deposit-context)
-  - [`isDeposit()`](#isdeposit)
-    - [`depositsComplete()`](#depositscomplete)
 - [OptimismMintableERC20Factory](#optimismmintableerc20factory)
   - [OptimismMintableERC20](#optimismmintableerc20)
   - [Updates](#updates)
@@ -554,58 +549,6 @@ The Beacon Contract implements the interface defined
 in [EIP-1967](https://eips.ethereum.org/EIPS/eip-1967).
 
 The implementation address gets deduced similarly to the `GasPriceOracle` address in Ecotone and Fjord updates.
-
-## L1Block
-
-| Constant            | Value                                        |
-| ------------------- | -------------------------------------------- |
-| Address             | `0x4200000000000000000000000000000000000015` |
-| `DEPOSITOR_ACCOUNT` | `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` |
-
-### L1 Atributes Transaction
-
-A new entrypoint on the `L1Block` contract is added that is used to open the [deposit context](./derivation.md#deposit-context).
-
-```solidity
-function setL1AttributesInterop() external;
-```
-
-WARNING: the function name is subject to change depending on the name of the network upgrade.
-
-| Input arg         | Type    | Calldata bytes | Segment |
-| ----------------- | ------- | -------------- | ------- |
-| {0xfe8f4eaf}      |         | 0-3            | n/a     |
-| baseFeeScalar     | uint32  | 4-7            | 1       |
-| blobBaseFeeScalar | uint32  | 8-11           |         |
-| sequenceNumber    | uint64  | 12-19          |         |
-| l1BlockTimestamp  | uint64  | 20-27          |         |
-| l1BlockNumber     | uint64  | 28-35          |         |
-| basefee           | uint256 | 36-67          | 2       |
-| blobBaseFee       | uint256 | 68-99          | 3       |
-| l1BlockHash       | bytes32 | 100-131        | 4       |
-| batcherHash       | bytes32 | 132-163        | 5       |
-
-### Deposit Context
-
-New methods will be added on the `L1Block` contract to interact with [deposit contexts](./derivation.md#deposit-context).
-
-```solidity
-function isDeposit() public view returns (bool);
-function depositsComplete() public;
-```
-
-### `isDeposit()`
-
-Returns true if the current execution occurs in a [deposit context](./derivation.md#deposit-context).
-
-Only the `CrossL2Inbox` is authorized to call `isDeposit`.
-This is done to prevent apps from easily detecting and censoring deposits.
-
-#### `depositsComplete()`
-
-Called after processing the first L1 Attributes transaction and user deposits to destroy the deposit context.
-
-Only the `DEPOSITOR_ACCOUNT` is authorized to call `depositsComplete()`.
 
 ## OptimismMintableERC20Factory
 

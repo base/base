@@ -46,7 +46,6 @@ The proof system is able to check the validity of all executing messages.
 - [Verifier](./verifier.md): Verification of cross-L2 messaging.
 - [Supervisor](./supervisor.md): API for validating messages.
 - [Fault Proof](./fault-proof.md): modifications to prove interop functionality in the fault-proof.
-- [Upgrade](./upgrade.md): Superchain upgrade process to activate Interop.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
 - [Superchain WETH](./superchain-weth.md): Making ETH interoperable.
 - [Derivation](./derivation.md): Changes to derivation of block-attributes.
