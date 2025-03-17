@@ -1,6 +1,7 @@
 use crate::{
     db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus},
-    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, OPSuccinctProofRequester,
+    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, init_gauges, GaugeMetric,
+    OPSuccinctProofRequester,
 };
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
@@ -9,7 +10,6 @@ use alloy_sol_types::SolValue;
 use anyhow::anyhow;
 use anyhow::{Context, Result};
 use futures_util::{stream, StreamExt, TryStreamExt};
-use metrics::gauge;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost,
@@ -322,9 +322,19 @@ where
                 .unwrap()
                 .as_secs();
             if current_time > status.deadline {
-                self.proof_requester
+                match self
+                    .proof_requester
                     .retry_request(request.clone(), status.execution_status())
-                    .await?;
+                    .await
+                {
+                    Ok(_) => GaugeMetric::ProofRequestRetryCount.increment(1.0),
+                    Err(e) => {
+                        GaugeMetric::RetryErrorCount.increment(1.0);
+                        return Err(e);
+                    }
+                }
+
+                GaugeMetric::ProofRequestTimeoutErrorCount.increment(1.0);
 
                 tracing::error!(
                     "Proof request has timed out for request id: {:?}",
@@ -360,6 +370,7 @@ where
                 self.proof_requester
                     .retry_request(request, status.execution_status())
                     .await?;
+                GaugeMetric::ProofRequestRetryCount.increment(1.0);
             }
         } else {
             // There should never be a proof request in Prove status without a proof request id.
@@ -669,7 +680,13 @@ where
         };
 
         // Relay the aggregation proof.
-        let transaction_hash = self.relay_aggregation_proof(&completed_agg_proof).await?;
+        let transaction_hash = match self.relay_aggregation_proof(&completed_agg_proof).await {
+            Ok(transaction_hash) => transaction_hash,
+            Err(e) => {
+                GaugeMetric::RelayAggProofErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
 
         info!(
             "Relayed aggregation proof. Transaction hash: {:?}",
@@ -760,7 +777,7 @@ where
 
         // If the transaction reverted, log the error.
         if !receipt.status() {
-            tracing::error!("Transaction reverted: {:?}", receipt);
+            return Err(anyhow!("Transaction reverted: {:?}", receipt));
         }
 
         Ok(receipt.transaction_hash())
@@ -867,14 +884,20 @@ where
                                         "Task failed with error"
                                     );
                                     // Now safe to retry as original task is cleaned up
-                                    if let Err(retry_err) = proof_requester
+                                    match proof_requester
                                         .retry_request(
                                             request,
                                             ExecutionStatus::UnspecifiedExecutionStatus,
                                         )
                                         .await
                                     {
-                                        error!(error = ?retry_err, "Failed to retry request");
+                                        Ok(_) => {
+                                            GaugeMetric::ProofRequestRetryCount.increment(1.0);
+                                        }
+                                        Err(retry_err) => {
+                                            error!(error = ?retry_err, "Failed to retry request");
+                                            GaugeMetric::RetryErrorCount.increment(1.0);
+                                        }
                                     }
                                 }
                             }
@@ -886,14 +909,20 @@ where
                                     "Task panicked"
                                 );
                                 // Now safe to retry as original task is cleaned up
-                                if let Err(retry_err) = proof_requester
+                                match proof_requester
                                     .retry_request(
                                         request,
                                         ExecutionStatus::UnspecifiedExecutionStatus,
                                     )
                                     .await
                                 {
-                                    error!(error = ?retry_err, "Failed to retry request after panic");
+                                    Ok(_) => {
+                                        GaugeMetric::ProofRequestRetryCount.increment(1.0);
+                                    }
+                                    Err(retry_err) => {
+                                        error!(error = ?retry_err, "Failed to retry request after panic");
+                                        GaugeMetric::RetryErrorCount.increment(1.0);
+                                    }
                                 }
                             }
                         }
@@ -1105,18 +1134,18 @@ where
         );
 
         // Update gauges for proof counts
-        gauge!("succinct_current_unrequested_proofs").set(num_unrequested_requests as f64);
-        gauge!("succinct_current_proving_proofs").set(num_prove_requests as f64);
-        gauge!("succinct_current_witnessgen_proofs").set(num_witness_generation_requests as f64);
-        gauge!("succinct_current_execute_proofs").set(num_execution_requests as f64);
-        gauge!("succinct_highest_proven_contiguous_block").set(highest_block_number as f64);
-        gauge!("succinct_latest_contract_l2_block").set(latest_proposed_block_number as f64);
+        GaugeMetric::CurrentUnrequestedProofs.set(num_unrequested_requests as f64);
+        GaugeMetric::CurrentProvingProofs.set(num_prove_requests as f64);
+        GaugeMetric::CurrentWitnessgenProofs.set(num_witness_generation_requests as f64);
+        GaugeMetric::CurrentExecuteProofs.set(num_execution_requests as f64);
+        GaugeMetric::HighestProvenContiguousBlock.set(highest_block_number as f64);
+        GaugeMetric::LatestContractL2Block.set(latest_proposed_block_number as f64);
 
         // Get and set L2 block metrics
         let fetcher = &self.proof_requester.fetcher;
-        gauge!("succinct_l2_unsafe_head_block")
+        GaugeMetric::L2UnsafeHeadBlock
             .set(fetcher.get_l2_header(BlockId::latest()).await?.number as f64);
-        gauge!("succinct_l2_finalized_block")
+        GaugeMetric::L2FinalizedBlock
             .set(fetcher.get_l2_header(BlockId::finalized()).await?.number as f64);
 
         // Get submission interval from contract and set gauge
@@ -1132,7 +1161,7 @@ where
 
         let submission_interval =
             contract_submission_interval.max(self.requester_config.submission_interval);
-        gauge!("succinct_min_block_to_prove_to_agg")
+        GaugeMetric::MinBlockToProveToAgg
             .set((latest_proposed_block_number + submission_interval) as f64);
 
         Ok(())
@@ -1146,7 +1175,8 @@ where
         // Handle the case where the proposer is being re-started and the proposer state needs to be updated.
         self.initialize_proposer().await?;
 
-        gauge!("succinct_error_count").set(0.0);
+        // Initialize the metrics gauges.
+        init_gauges();
 
         // Loop interval in seconds.
         loop {
@@ -1163,8 +1193,7 @@ where
                     // Log the error
                     tracing::error!("Error in proposer loop: {}", e);
                     // Update the error gauge
-                    let error_gauge = gauge!("succinct_error_count");
-                    error_gauge.increment(1.0);
+                    GaugeMetric::TotalErrorCount.increment(1.0);
                     // Pause for 10 seconds before restarting
                     tracing::info!("Pausing for 10 seconds before restarting the process");
                     tokio::time::sleep(Duration::from_secs(10)).await;
