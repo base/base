@@ -147,6 +147,11 @@
         "ordinal": 28,
         "name": "prover_address",
         "type_info": "Bytea"
+      },
+      {
+        "ordinal": 29,
+        "name": "l1_head_block_number",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -189,6 +194,7 @@
       false,
       false,
       false,
+      true,
       true,
       true
     ]
