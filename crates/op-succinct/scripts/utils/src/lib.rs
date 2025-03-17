@@ -29,6 +29,9 @@ pub struct HostExecutorArgs {
     /// Whether to generate proofs.
     #[arg(long)]
     pub prove: bool,
+    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node.
+    #[clap(long)]
+    pub safe_db_fallback: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

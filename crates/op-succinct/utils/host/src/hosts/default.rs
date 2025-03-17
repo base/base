@@ -37,10 +37,16 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
+        safe_db_fallback: Option<bool>,
     ) -> Result<SingleChainHost> {
         let host = self
             .fetcher
-            .get_host_args(l2_start_block, l2_end_block, l1_head_hash)
+            .get_host_args(
+                l2_start_block,
+                l2_end_block,
+                l1_head_hash,
+                safe_db_fallback.expect("`safe_db_fallback` must be set"),
+            )
             .await?;
         Ok(host)
     }

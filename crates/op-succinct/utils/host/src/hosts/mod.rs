@@ -34,12 +34,20 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
         Ok(in_memory_oracle)
     }
 
-    /// Fetch the host arguments. Optionally supply an L1 block number which is used as the L1 origin.
+    /// Fetch the host arguments.
+    ///
+    /// Parameters:
+    /// - `l2_start_block`: The starting L2 block number
+    /// - `l2_end_block`: The ending L2 block number
+    /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
+    /// - `safe_db_fallback`: Optionally supplied flag to indicate whether to fallback to timestamp-based L1 head estimation
+    ///   when SafeDB is not available. This is optional to support abstraction across different node implementations.
     async fn fetch(
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
+        safe_db_fallback: Option<bool>,
     ) -> Result<Self::Args>;
 }
 

@@ -46,6 +46,9 @@ pub struct ProposerConfig {
 
     /// The maximum number of games to check for bond claiming.
     pub max_games_to_check_for_bond_claiming: u64,
+
+    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node.
+    pub safe_db_fallback: bool,
 }
 
 impl ProposerConfig {
@@ -77,6 +80,9 @@ impl ProposerConfig {
                 .parse()?,
             max_games_to_check_for_bond_claiming: env::var("MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING")
                 .unwrap_or("100".to_string())
+                .parse()?,
+            safe_db_fallback: env::var("SAFE_DB_FALLBACK")
+                .unwrap_or("false".to_string())
                 .parse()?,
         })
     }

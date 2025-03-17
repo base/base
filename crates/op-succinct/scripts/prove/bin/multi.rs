@@ -34,7 +34,14 @@ async fn main() -> Result<()> {
     let host = SingleChainOPSuccinctHost {
         fetcher: Arc::new(data_fetcher.clone()),
     };
-    let host_args = host.fetch(l2_start_block, l2_end_block, None).await?;
+    let host_args = host
+        .fetch(
+            l2_start_block,
+            l2_end_block,
+            None,
+            Some(args.safe_db_fallback),
+        )
+        .await?;
 
     debug!("Host args: {:?}", host_args);
 
