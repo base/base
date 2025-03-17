@@ -15,7 +15,8 @@ use tracing::info;
 
 use crate::db::DriverDBClient;
 use crate::{
-    OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics, RequestStatus, RequestType,
+    GaugeMetric, OPSuccinctRequest, ProgramConfig, RequestExecutionStatistics, RequestStatus,
+    RequestType,
 };
 
 pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
@@ -134,7 +135,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
 
     /// Requests a range proof via the network prover.
     pub async fn request_range_proof(&self, stdin: SP1Stdin) -> Result<B256> {
-        self.network_prover
+        let proof_id = match self
+            .network_prover
             .prove(&self.program_config.range_pk, &stdin)
             .compressed()
             .strategy(self.range_strategy)
@@ -142,16 +144,35 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             .cycle_limit(1_000_000_000_000)
             .request_async()
             .await
+        {
+            Ok(proof_id) => proof_id,
+            Err(e) => {
+                GaugeMetric::RangeProofRequestErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
+
+        Ok(proof_id)
     }
 
     /// Requests an aggregation proof via the network prover.
     pub async fn request_agg_proof(&self, stdin: SP1Stdin) -> Result<B256> {
-        self.network_prover
+        let proof_id = match self
+            .network_prover
             .prove(&self.program_config.agg_pk, &stdin)
             .mode(self.agg_mode)
             .strategy(self.agg_strategy)
             .request_async()
             .await
+        {
+            Ok(proof_id) => proof_id,
+            Err(e) => {
+                GaugeMetric::AggProofRequestErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
+
+        Ok(proof_id)
     }
 
     /// Generates a mock range proof and writes the execution statistics to the database.
@@ -171,10 +192,17 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let start_time = Instant::now();
         let network_prover = self.network_prover.clone();
         // Move the CPU-intensive operation to a dedicated thread.
-        let (pv, report) = tokio::task::spawn_blocking(move || {
+        let (pv, report) = match tokio::task::spawn_blocking(move || {
             network_prover.execute(RANGE_ELF_EMBEDDED, &stdin).run()
         })
-        .await??; // Handle both JoinError and the Result from execute.
+        .await?
+        {
+            Ok((pv, report)) => (pv, report),
+            Err(e) => {
+                GaugeMetric::ExecutionErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
 
         let execution_duration = start_time.elapsed().as_secs();
 
@@ -215,13 +243,20 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let start_time = Instant::now();
         let network_prover = self.network_prover.clone();
         // Move the CPU-intensive operation to a dedicated thread.
-        let (pv, report) = tokio::task::spawn_blocking(move || {
+        let (pv, report) = match tokio::task::spawn_blocking(move || {
             network_prover
                 .execute(AGGREGATION_ELF, &stdin)
                 .deferred_proof_verification(false)
                 .run()
         })
-        .await??; // Handle both JoinError and the Result from execute.
+        .await?
+        {
+            Ok((pv, report)) => (pv, report),
+            Err(e) => {
+                GaugeMetric::ExecutionErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
 
         let execution_duration = start_time.elapsed().as_secs();
 
@@ -382,7 +417,13 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
 
         let witnessgen_duration = Instant::now();
         // Generate the stdin needed for the proof. If this fails, retry the request.
-        let stdin = self.generate_proof_stdin(&request).await?;
+        let stdin = match self.generate_proof_stdin(&request).await {
+            Ok(stdin) => stdin,
+            Err(e) => {
+                GaugeMetric::WitnessgenErrorCount.increment(1.0);
+                return Err(e);
+            }
+        };
         let duration = witnessgen_duration.elapsed();
 
         self.db_client

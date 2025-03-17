@@ -1,7 +1,6 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{keccak256, map::HashMap, Bytes, U256, U64};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256, U64};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
