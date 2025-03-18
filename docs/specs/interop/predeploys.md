@@ -94,6 +94,7 @@ After pre-verification of the access-list, the `CrossL2Inbox` can allow messages
 to execute when there is a matching pre-verified access-list entry.
 
 Each executing message is declared with 3 typed access-list entries:
+
 - 1: Lookup identity
 - 2: Chain-ID extension
 - 3: Checksum
@@ -107,6 +108,7 @@ the same message may be executed multiple times.
 The access-list content might not always be a multiple of 3.
 
 The access-list content is ordered:
+
 - after type 1, a type 2 or 3 entry is expected.
 - after type 2, a type 3 entry is expected.
 
@@ -192,7 +194,7 @@ Emits the `ExecutingMessage` event to signal the transaction has a cross chain m
 The following fields are required for validating a cross chain message:
 
 | Name       | Type         | Description                                                                |
-|------------|--------------|----------------------------------------------------------------------------|
+| ---------- | ------------ | -------------------------------------------------------------------------- |
 | `_id`      | `Identifier` | A [`Identifier`] pointing to the initiating message.                       |
 | `_msgHash` | `bytes32`    | The keccak256 hash of the message payload matching the initiating message. |
 

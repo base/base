@@ -20,7 +20,7 @@
 
 ## Overview
 
-New derivation rules are added to guaranteee integrity of cross chain messages.
+New derivation rules are added to guarantee integrity of cross chain messages.
 The fork choice rule is updated to fork out unsafe blocks that contain invalid
 executing messages.
 
@@ -128,5 +128,5 @@ needing to execute increasingly long chain histories.
 
 The expiry window ensures that the proof can execute in a reasonable amount of time.
 There is currently no way to prove old history with a sublinear proof size. The proof
-program needs to walk back and reexecute to reproduce the consumed logs. This means
+program needs to walk back and re-execute to reproduce the consumed logs. This means
 that very old logs are more expensive to prove.

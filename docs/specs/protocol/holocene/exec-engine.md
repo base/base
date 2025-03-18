@@ -49,7 +49,7 @@ Additionally,
 Note that `extraData` has a maximum capacity of 32 bytes (to fit in the L1 beacon-chain `extraData` data-type) and its
 format may be modified/extended by future upgrades.
 
-Note also that if the chain had Holocene genesis, the genesis block must have an above-formated `extraData` representing
+Note also that if the chain had Holocene genesis, the genesis block must have an above-formatted `extraData` representing
 the initial parameters to be used by the chain.
 
 ### EIP-1559 Parameters in `PayloadAttributesV3`

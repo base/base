@@ -105,7 +105,7 @@ available to the EVM/application layer.
 
 During sync, we expect the withdrawals list in the block body to be empty (OP stack does not make
 use of the withdrawals list) and hence the hash of the withdrawals list to be the MPT root of an empty list.
-When verifying the header chain using the final header that is synced, the header timesetamp is used to
+When verifying the header chain using the final header that is synced, the header timestamp is used to
 determine whether Isthmus is active at the said block. If it is, we expect that the header `withdrawalsRoot`
 MPT hash can be any non-null value (since it is expected to contain the `L2ToL1MessagePasser`'s storage root).
 

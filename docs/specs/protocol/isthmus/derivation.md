@@ -135,7 +135,7 @@ cast k $(jq -r ".deployedBytecode.object" packages/contracts-bedrock/forge-artif
 
 ## Operator fee vault deployment
 
-A new `OperatorFeeVault` contract has been created to recieve the operator fees. The contract is created
+A new `OperatorFeeVault` contract has been created to receive the operator fees. The contract is created
 with the following arguments:
 
 - Recipient address: The base fee vault

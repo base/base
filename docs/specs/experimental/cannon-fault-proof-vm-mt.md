@@ -429,6 +429,7 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 
 ### Supported Syscalls
 
+<!-- cspell:disable -->
 | \$v0 | system call   | \$a0            | \$a1             | \$a2         | \$a3             | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 |------|---------------|-----------------|------------------|--------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 5009 | mmap          | uint64 addr     | uint64 len       | 🚫           | 🚫               | Allocates a page from the heap. See [heap](#heap) for details.                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -446,9 +447,11 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 | 5034 | nanosleep     | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | 5222 | clock_gettime | uint64 clock_id | uint64 addr      | 🚫           | 🚫               | Supports `clock_id`'s `REALTIME`(0) and `MONOTONIC`(1). For other `clock_id`'s, sets errno to `0x16`.  Calculates a deterministic time value based on the state's `step` field and a constant `HZ` (10,000,000) where `HZ` represents the approximate clock rate (steps / second) of the FPVM:<br/><br/>`seconds = step/HZ`<br/>`nsecs = (step % HZ) * 10^9/HZ`<br/><br/>Seconds are set at memory address `addr` and nsecs are set at `addr + WordSize`. |
 | 5038 | getpid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+<!-- cspell:enable -->
 
 ### Noop Syscalls
 
+<!-- cspell:disable -->
 For the following noop syscalls, the VM must do nothing except to zero out the syscall return (`$v0`)
 and errno (`$a3`) registers.
 
@@ -485,6 +488,7 @@ and errno (`$a3`) registers.
 | 5216 | timer_create       |
 | 5217 | timer_settime      |
 | 5220 | timer_delete       |
+<!-- cspell:enable -->
 
 ## I/O
 

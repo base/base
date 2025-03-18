@@ -28,7 +28,7 @@ at any given L1 block will apply to the L1 Attributes Deposited Transaction.
 
 ## Motivation and Rationale
 
-Due to a consensus layer bug, OPStack chains on Holesky and Sepolia running oficially released op-node software
+Due to a consensus layer bug, OPStack chains on Holesky and Sepolia running officially released op-node software
 did not update their blob base fee update fraction (for L1 Attributes Deposited Transaction)
 in tandem with the Prague upgrade on L1.
 
