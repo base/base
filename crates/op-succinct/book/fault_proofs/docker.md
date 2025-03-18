@@ -72,6 +72,13 @@ docker compose up -d challenger
 
 ## Monitoring
 
+The fault proof system includes a Grafana dashboard for monitoring the proposer and challenger.
+To access the dashboard, open your browser and navigate to `http://localhost:3000`. Use the following credentials:
+- Username: `admin`
+- Password: `admin`
+
+If the default port 9090 and 3000 for Prometheus and Grafana are already in use, you can change the port by setting the `FP_PROMETHEUS_PORT` and `FP_GRAFANA_PORT` environment variables in fault-proof/.env file.
+
 View logs for the services:
 
 ```bash

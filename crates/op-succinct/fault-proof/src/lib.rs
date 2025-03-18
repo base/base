@@ -1,5 +1,6 @@
 pub mod config;
 pub mod contract;
+pub mod prometheus;
 pub mod proposer;
 pub mod utils;
 
@@ -18,10 +19,14 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use tokio::time::Duration;
 
-use crate::contract::{
-    AnchorStateRegistry, DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, L2Output,
-    OPSuccinctFaultDisputeGame, ProposalStatus,
+use crate::{
+    contract::{
+        AnchorStateRegistry, DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, L2Output,
+        OPSuccinctFaultDisputeGame, ProposalStatus,
+    },
+    prometheus::ProposerGauge,
 };
+use op_succinct_host_utils::metrics::MetricsGauge;
 
 pub type L1Provider = RootProvider;
 pub type L2Provider = RootProvider<Optimism>;
@@ -35,6 +40,12 @@ pub const TIMEOUT_SECONDS: u64 = 60;
 pub enum Mode {
     Proposer,
     Challenger,
+}
+
+#[derive(Debug)]
+pub enum Action {
+    Performed,
+    Skipped,
 }
 
 #[async_trait]
@@ -228,7 +239,7 @@ where
         mode: Mode,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         l2_provider: L2Provider,
-    ) -> Result<()>;
+    ) -> Result<Action>;
 
     /// Attempts to resolve all challenged games that the challenger won, up to `max_games_to_check_for_resolution`.
     async fn resolve_games(
@@ -602,7 +613,7 @@ where
         mode: Mode,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         l2_provider: L2Provider,
-    ) -> Result<()> {
+    ) -> Result<Action> {
         let game_address = self.fetch_game_address_by_index(index).await?;
         let game = OPSuccinctFaultDisputeGame::new(game_address, l1_provider_with_wallet.clone());
         if game.status().call().await?.status_ != GameStatus::IN_PROGRESS {
@@ -611,7 +622,7 @@ where
                 game_address,
                 index
             );
-            return Ok(());
+            return Ok(Action::Skipped);
         }
 
         let claim_data = game.claimData().call().await?.claimData_;
@@ -623,7 +634,7 @@ where
                         game_address,
                         index
                     );
-                    return Ok(());
+                    return Ok(Action::Skipped);
                 }
             }
             Mode::Challenger => {
@@ -633,7 +644,7 @@ where
                         game_address,
                         index
                     );
-                    return Ok(());
+                    return Ok(Action::Skipped);
                 }
             }
         }
@@ -651,7 +662,7 @@ where
                 index,
                 deadline
             );
-            return Ok(());
+            return Ok(Action::Skipped);
         }
 
         let contract = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
@@ -669,10 +680,10 @@ where
             index,
             receipt.transaction_hash
         );
-        Ok(())
+        Ok(Action::Performed)
     }
 
-    /// Attempts to resolve all challenged games that the challenger won, up to `max_games_to_check_for_resolution`.
+    /// Attempts to resolve games, up to `max_games_to_check_for_resolution`.
     async fn resolve_games(
         &self,
         mode: Mode,
@@ -698,13 +709,17 @@ where
         if should_attempt_resolution {
             for i in 0..games_to_check.to::<u64>() {
                 let index = oldest_game_index + U256::from(i);
-                self.try_resolve_games(
-                    index,
-                    mode,
-                    l1_provider_with_wallet.clone(),
-                    l2_provider.clone(),
-                )
-                .await?;
+                if let Ok(Action::Performed) = self
+                    .try_resolve_games(
+                        index,
+                        mode,
+                        l1_provider_with_wallet.clone(),
+                        l2_provider.clone(),
+                    )
+                    .await
+                {
+                    ProposerGauge::GamesResolved.increment(1.0);
+                }
             }
         } else {
             tracing::info!(

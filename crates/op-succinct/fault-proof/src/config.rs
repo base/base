@@ -49,6 +49,9 @@ pub struct ProposerConfig {
 
     /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node.
     pub safe_db_fallback: bool,
+
+    /// The metrics port.
+    pub metrics_port: u16,
 }
 
 impl ProposerConfig {
@@ -84,6 +87,9 @@ impl ProposerConfig {
             safe_db_fallback: env::var("SAFE_DB_FALLBACK")
                 .unwrap_or("false".to_string())
                 .parse()?,
+            metrics_port: env::var("PROPOSER_METRICS_PORT")
+                .unwrap_or("9000".to_string())
+                .parse()?,
         })
     }
 }
@@ -112,6 +118,9 @@ pub struct ChallengerConfig {
     /// When game resolution is enabled, the challenger will attempt to resolve games that are
     /// challenged up to `max_games_to_check_for_resolution` games behind the latest game.
     pub max_games_to_check_for_resolution: u64,
+
+    /// The metrics port.
+    pub metrics_port: u16,
 }
 
 impl ChallengerConfig {
@@ -134,6 +143,9 @@ impl ChallengerConfig {
                 .parse()?,
             max_games_to_check_for_resolution: env::var("MAX_GAMES_TO_CHECK_FOR_RESOLUTION")
                 .unwrap_or("100".to_string())
+                .parse()?,
+            metrics_port: env::var("CHALLENGER_METRICS_PORT")
+                .unwrap_or("9001".to_string())
                 .parse()?,
         })
     }
