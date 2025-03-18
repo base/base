@@ -29,7 +29,7 @@ pub struct ExecutionInfo<N: NodePrimitives> {
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
     /// Tracks the reverted transaction hashes to remove from the transaction pool
-    pub reverted_tx_hashes: HashSet<TxHash>,
+    pub invalid_tx_hashes: HashSet<TxHash>,
     #[cfg(feature = "flashblocks")]
     /// Index of the last consumed flashblock
     pub last_flashblock_index: usize,
@@ -45,7 +45,7 @@ impl<N: NodePrimitives> ExecutionInfo<N> {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
-            reverted_tx_hashes: HashSet::new(),
+            invalid_tx_hashes: HashSet::new(),
             #[cfg(feature = "flashblocks")]
             last_flashblock_index: 0,
         }

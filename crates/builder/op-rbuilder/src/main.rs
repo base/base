@@ -42,6 +42,8 @@ fn main() {
                     builder_args.flashblocks_ws_url,
                     builder_args.chain_block_time,
                     builder_args.flashblock_block_time,
+                    builder_args.supervisor_url,
+                    builder_args.supervisor_safety_level,
                 )))
                 .with_add_ons(
                     OpAddOnsBuilder::default()

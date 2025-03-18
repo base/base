@@ -56,6 +56,10 @@ op-alloy-consensus.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
 
+# kona
+kona-rpc = {workspace = true, optional = true}
+kona-interop = {workspace = true, optional = true}
+
 revm.workspace = true
 
 tracing.workspace = true
@@ -85,6 +89,7 @@ alloy-serde = "0.7"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "e74a1fd01366e4ddd13515da4efda59cdc8fbce0" }
+url = "2.5.3"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -113,7 +118,7 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-optimism = ["reth-optimism-node/optimism", "reth-optimism-cli/optimism"]
+optimism = ["reth-optimism-node/optimism", "reth-optimism-cli/optimism", "kona-rpc", "kona-interop"]
 
 integration = []
 flashblocks = []

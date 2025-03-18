@@ -1,9 +1,8 @@
-use crate::generator::BlockPayloadJobGenerator;
-use crate::generator::BuildArguments;
 use crate::{
-    generator::{BlockCell, PayloadBuilder},
+    generator::{BlockCell, BlockPayloadJobGenerator, BuildArguments, PayloadBuilder},
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutedPayload, ExecutionInfo},
+    primitives::supervisor::SupervisorValidator,
     tx_signer::Signer,
 };
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
@@ -13,9 +12,12 @@ use alloy_consensus::{
 };
 use alloy_eips::merge::BEACON_NONCE;
 use alloy_primitives::private::alloy_rlp::Encodable;
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
+use jsonrpsee::http_client::HttpClientBuilder;
+use kona_interop::{ExecutingDescriptor, SafetyLevel};
+use kona_rpc::{InteropTxValidator, InteropTxValidatorError};
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
 use reth::builder::{components::PayloadServiceBuilder, node::FullNodeTypes, BuilderContext};
 use reth::core::primitives::InMemorySize;
@@ -76,7 +78,8 @@ use revm::{
 use std::error::Error as StdError;
 use std::{fmt::Display, sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, trace, warn};
+use tracing::{error, info, trace, warn};
+use url::Url;
 
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -88,6 +91,8 @@ pub struct CustomOpPayloadBuilder {
     chain_block_time: u64,
     #[cfg(feature = "flashblocks")]
     flashblock_block_time: u64,
+    supervisor_url: Option<Url>,
+    supervisor_safety_level: Option<String>,
 }
 
 impl CustomOpPayloadBuilder {
@@ -97,12 +102,16 @@ impl CustomOpPayloadBuilder {
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
+        supervisor_url: Option<Url>,
+        supervisor_safety_level: Option<String>,
     ) -> Self {
         Self {
             builder_signer,
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
+            supervisor_url,
+            supervisor_safety_level,
         }
     }
 
@@ -112,8 +121,14 @@ impl CustomOpPayloadBuilder {
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
+        supervisor_url: Option<Url>,
+        supervisor_safety_level: Option<String>,
     ) -> Self {
-        Self { builder_signer }
+        Self {
+            builder_signer,
+            supervisor_url,
+            supervisor_safety_level,
+        }
     }
 }
 
@@ -143,6 +158,8 @@ where
             pool,
             ctx.provider().clone(),
             Arc::new(BasicOpReceiptBuilder::default()),
+            self.supervisor_url.clone(),
+            self.supervisor_safety_level.clone(),
         ))
     }
 
@@ -224,6 +241,10 @@ pub struct OpPayloadBuilderVanilla<Pool, Client, EvmConfig, N: NodePrimitives, T
     pub metrics: OpRBuilderMetrics,
     /// Node primitive types.
     pub receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
+    /// Client to execute supervisor validation
+    pub supervisor_client: Option<SupervisorValidator>,
+    /// Level to use in supervisor validation
+    pub supervisor_safety_level: SafetyLevel,
 }
 
 impl<Pool, Client, EvmConfig, N: NodePrimitives>
@@ -236,6 +257,8 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives>
         pool: Pool,
         client: Client,
         receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
+        supervisor_url: Option<Url>,
+        supervisor_safety_level: Option<String>,
     ) -> Self {
         Self::with_builder_config(
             evm_config,
@@ -243,18 +266,38 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives>
             pool,
             client,
             receipt_builder,
+            supervisor_url,
+            supervisor_safety_level,
             Default::default(),
         )
     }
 
+    // TODO: we will move supervisor_url and supervisor_safety_level into OpBuilderConfig to reduce
+    // number of args
+    #[allow(clippy::too_many_arguments)]
     pub fn with_builder_config(
         evm_config: EvmConfig,
         builder_signer: Option<Signer>,
         pool: Pool,
         client: Client,
         receipt_builder: Arc<dyn OpReceiptBuilder<N::SignedTx, Receipt = N::Receipt>>,
+        supervisor_url: Option<Url>,
+        supervisor_safety_level: Option<String>,
         config: OpBuilderConfig,
     ) -> Self {
+        // TODO: we should make this client required if interop hardfork enabled, add this after spec rebase
+        let supervisor_client = supervisor_url.map(|url| {
+            SupervisorValidator::new(
+                HttpClientBuilder::default()
+                    .build(url)
+                    .expect("building supervisor http client"),
+            )
+        });
+        let supervisor_safety_level = supervisor_safety_level
+            .map(|level| {
+                serde_json::from_str(level.as_str()).expect("parsing supervisor_safety_level")
+            })
+            .unwrap_or(SafetyLevel::CrossUnsafe);
         Self {
             pool,
             client,
@@ -264,6 +307,8 @@ impl<Pool, Client, EvmConfig, N: NodePrimitives>
             best_transactions: (),
             metrics: Default::default(),
             builder_signer,
+            supervisor_client,
+            supervisor_safety_level,
         }
     }
 }
@@ -297,7 +342,7 @@ where
             },
             |hashes| {
                 #[allow(clippy::unit_arg)]
-                self.best_transactions.remove_reverted(pool.clone(), hashes)
+                self.best_transactions.remove_invalid(pool.clone(), hashes)
             },
         )? {
             BuildOutcome::Better { payload, .. } => {
@@ -371,6 +416,8 @@ where
             receipt_builder: self.receipt_builder.clone(),
             builder_signer: self.builder_signer,
             metrics: Default::default(),
+            supervisor_client: self.supervisor_client.clone(),
+            supervisor_safety_level: self.supervisor_safety_level,
         };
 
         let builder = OpBuilder::new(best, remove_reverted);
@@ -433,7 +480,7 @@ pub struct OpBuilder<'a, Txs> {
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
     /// Removes reverted transactions from the tx pool
     #[debug(skip)]
-    remove_reverted: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
+    remove_invalid: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> OpBuilder<'a, Txs> {
@@ -443,7 +490,7 @@ impl<'a, Txs> OpBuilder<'a, Txs> {
     ) -> Self {
         Self {
             best: Box::new(best),
-            remove_reverted: Box::new(remove_reverted),
+            remove_invalid: Box::new(remove_reverted),
         }
     }
 }
@@ -465,7 +512,7 @@ impl<Txs> OpBuilder<'_, Txs> {
     {
         let Self {
             best,
-            remove_reverted,
+            remove_invalid,
         } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
@@ -562,7 +609,7 @@ impl<Txs> OpBuilder<'_, Txs> {
             None
         };
 
-        remove_reverted(info.reverted_tx_hashes.iter().copied().collect());
+        remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
 
         let payload = ExecutedPayload {
             info,
@@ -731,8 +778,8 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = Transaction>;
 
-    /// Removes reverted transactions from the tx pool
-    fn remove_reverted<Pool: TransactionPool<Transaction = Transaction>>(
+    /// Removes invalid transactions from the tx pool
+    fn remove_invalid<Pool: TransactionPool<Transaction = Transaction>>(
         &self,
         pool: Pool,
         hashes: Vec<TxHash>,
@@ -748,7 +795,7 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
     }
 
-    fn remove_reverted<Pool: TransactionPool<Transaction = T>>(
+    fn remove_invalid<Pool: TransactionPool<Transaction = T>>(
         &self,
         pool: Pool,
         hashes: Vec<TxHash>,
@@ -778,6 +825,10 @@ pub struct OpPayloadBuilderCtx<EvmConfig: ConfigureEvmEnv, ChainSpec, N: NodePri
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: OpRBuilderMetrics,
+    /// Client to execute supervisor validation
+    pub supervisor_client: Option<SupervisorValidator>,
+    /// Level to use in supervisor validation
+    pub supervisor_safety_level: SafetyLevel,
 }
 
 impl<EvmConfig, ChainSpec, N> OpPayloadBuilderCtx<EvmConfig, ChainSpec, N>
@@ -1035,6 +1086,18 @@ where
                     PayloadBuilderError::other(OpPayloadBuilderError::TransactionEcRecoverFailed)
                 })?;
 
+            // Check transactions against supervisor if it's cross chain
+            if let (false, _) = is_cross_tx_valid::<N>(
+                sequencer_tx.tx(),
+                self.supervisor_client.as_ref(),
+                self.supervisor_safety_level,
+                self.config.attributes.timestamp(),
+                &self.metrics,
+            ) {
+                // We skip this transaction because it's not possible to verify it's validity
+                continue;
+            }
+
             // Cache the depositor account prior to the state transition for the deposit nonce.
             //
             // Note that this *only* needs to be done post-regolith hardfork, as deposit nonces
@@ -1135,6 +1198,24 @@ where
                 continue;
             }
 
+            // Check transactions against supervisor if it's cross chain
+            if let (false, is_recoverable) = is_cross_tx_valid::<N>(
+                tx.tx(),
+                self.supervisor_client.as_ref(),
+                self.supervisor_safety_level,
+                self.config.attributes.timestamp(),
+                &self.metrics,
+            ) {
+                // We mark the tx invalid to ensure that it won't clog out pipeline
+                // in case there is bug in supervisor.
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                if !is_recoverable {
+                    // For some subset of errors we remove transaction from txpool
+                    info.invalid_tx_hashes.insert(*tx.tx_hash());
+                }
+                continue;
+            }
+
             // check if the job was cancelled, if so we can exit early
             if self.cancel.is_cancelled() {
                 return Ok(Some(()));
@@ -1177,7 +1258,7 @@ where
                 num_txs_simulated_fail += 1;
                 trace!(target: "payload_builder", ?tx, "skipping reverted transaction");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
-                info.reverted_tx_hashes.insert(*tx.tx_hash());
+                info.invalid_tx_hashes.insert(*tx.tx_hash());
                 continue;
             }
 
@@ -1354,4 +1435,94 @@ fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
     let nonzero_cost = nonzero_bytes * 16;
 
     zero_cost + nonzero_cost + 21_000
+}
+
+/// Extracts commitment from access list entries, pointing to 0x420..022 and validates them
+/// against supervisor.
+///
+/// If commitment present pre-interop tx rejected.
+///
+/// Returns (is_valid, is_recoverable)
+pub fn is_cross_tx_valid<N: NodePrimitives>(
+    tx: &N::SignedTx,
+    // TODO: after spec rebase we must make this field not optional
+    client: Option<&SupervisorValidator>,
+    safety_level: SafetyLevel,
+    timestamp: u64,
+    metrics: &OpRBuilderMetrics,
+) -> (bool, bool) {
+    if tx.access_list().is_none() {
+        return (true, true);
+    }
+    let access_list = tx.access_list().unwrap();
+    let inbox_entries = SupervisorValidator::parse_access_list(access_list)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !inbox_entries.is_empty() {
+        metrics.inc_num_cross_chain_tx();
+        if client.is_none() {
+            return (false, true);
+        }
+        match validate_supervisor_messages(inbox_entries, client.unwrap(), safety_level, timestamp)
+        {
+            Ok(res) => match res {
+                Ok(()) => (true, true),
+                Err(err) => {
+                    match err {
+                        // TODO: we should add reconnecting to supervisor in case of disconnect
+                        InteropTxValidatorError::SupervisorServerError(err) => {
+                            warn!(target: "payload_builder", %err, ?tx, "Supervisor error, skipping.");
+                            metrics.inc_num_cross_chain_tx_server_error();
+                            (false, true)
+                        }
+                        InteropTxValidatorError::ValidationTimeout(_) => {
+                            warn!(target: "payload_builder", %err, ?tx, "Cross tx validation timed out, skipping.");
+                            metrics.inc_num_cross_chain_tx_timeout();
+                            (false, true)
+                        }
+                        err => {
+                            trace!(target: "payload_builder", %err, ?tx, "Cross tx rejected.");
+                            metrics.inc_num_cross_chain_tx_fail();
+                            // It's possible that transaction invalid now, but would be valid later.
+                            // We should keep limited queue for transactions that could become valid.
+                            // We should have the limit to ensure that builder won't get overwhelmed.
+                            (false, false)
+                        }
+                    }
+                }
+            },
+            Err(err) => {
+                error!(target: "payload_builder", %err, ?tx, "Client side error during cross tx validation, skipping.");
+                (false, true)
+            }
+        }
+    } else {
+        (true, true)
+    }
+}
+
+/// Validate inbox_entries against supervisor.
+pub fn validate_supervisor_messages(
+    inbox_entries: Vec<B256>,
+    client: &SupervisorValidator,
+    safety_level: SafetyLevel,
+    timestamp: u64,
+) -> Result<Result<(), InteropTxValidatorError>, PayloadBuilderError> {
+    // For block building the timestamp should be `expected time of inclusion` and timeout 0
+    let descriptor = ExecutingDescriptor::new(timestamp, None);
+    let (channel_tx, rx) = std::sync::mpsc::channel();
+    tokio::task::block_in_place(move || {
+        let res = tokio::runtime::Handle::current().block_on(async {
+            client
+                .validate_messages(
+                    inbox_entries.as_slice(),
+                    safety_level,
+                    descriptor,
+                    Some(core::time::Duration::from_millis(100)),
+                )
+                .await
+        });
+        let _ = channel_tx.send(res);
+    });
+    rx.recv().map_err(|_| PayloadBuilderError::ChannelClosed)
 }
