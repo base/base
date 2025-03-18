@@ -12,7 +12,7 @@
     - [`crosschainBurn`](#crosschainburn)
     - [`CrosschainMint`](#crosschainmint)
     - [`CrosschainBurn`](#crosschainburn)
-- [`SuperchainERC20Bridge`](#superchainerc20bridge)
+- [`SuperchainTokenBridge`](#superchaintokenbridge)
 - [Diagram](#diagram)
 - [Implementation](#implementation)
 - [Future Considerations](#future-considerations)
@@ -25,8 +25,8 @@
 
 Without a standardized security model, bridged assets may not be fungible with each other.
 The `SuperchainERC20` standard is a set of properties and an interface allowing ERC20 to be fungible across the
-Superchain using the official `SuperchainERC20Bridge`.
-The `SuperchainERC20Bridge` is a predeploy that builds on the messaging protocol as the most trust-minimized bridging solution.
+Superchain using the official `SuperchainTokenBridge`.
+The `SuperchainTokenBridge` is a predeploy that builds on the messaging protocol as the most trust-minimized bridging solution.
 
 ## `SuperchainERC20` standard
 
@@ -38,19 +38,19 @@ interface, and include the following properties:
 
 1. Implement the [ERC20](https://eips.ethereum.org/EIPS/eip-20) interface
 2. Implement the [`ERC7802`](https://github.com/ethereum/ERCs/pull/692) interface
-3. Allow [`SuperchainERC20Bridge`](./predeploys.md#superchainerc20bridge) to call
+3. Allow [`SuperchainTokenBridge`](./predeploys.md#superchaintokenbridge) to call
    [`crosschainMint`](#crosschainmint) and [`crosschainBurn`](#crosschainburn).
 4. Be deployed at the same address on every chain in the Superchain.
 
-The third property will allow the `SuperchainERC20Bridge` to have a liquidity guarantee,
+The third property will allow the `SuperchainTokenBridge` to have a liquidity guarantee,
 which would not be possible in a model based on lock/unlock.
 Liquidity availability is fundamental to achieving fungibility.
 
-SuperchainERC20Bridge does not have to be the exclusive caller of `crosschainMint` and `crosschainBurn`;
+SuperchainTokenBridge does not have to be the exclusive caller of `crosschainMint` and `crosschainBurn`;
 other addresses may also be permitted to call these functions.
 
 The fourth property removes the need for cross-chain access control lists.
-Otherwise, the `SuperchainERC20Bridge` would need a way to verify if the tokens it mints on
+Otherwise, the `SuperchainTokenBridge` would need a way to verify if the tokens it mints on
 destination correspond to the tokens that were burned on source.
 Same address abstracts away cross-chain validation.
 
@@ -104,24 +104,24 @@ MUST trigger when `crosschainBurn` is called
 event CrosschainBurn(address indexed _from, uint256 _amount, address indexed _sender)
 ```
 
-## `SuperchainERC20Bridge`
+## `SuperchainTokenBridge`
 
-The `SuperchainERC20Bridge` is a predeploy that works as an abstraction
+The `SuperchainTokenBridge` is a predeploy that works as an abstraction
 on top of the [L2ToL2CrossDomainMessenger][l2-to-l2]
 for token bridging.
 The `L2ToL2CrossDomainMessenger` is used for replay protection,
 domain binding and access to additional message information.
-The `SuperchainERC20Bridge` includes two functions for bridging:
+The `SuperchainTokenBridge` includes two functions for bridging:
 
 - `sendERC20`: initializes a cross-chain transfer of a `SuperchainERC20`
-  by burning the tokens locally and sending a message to the `SuperchainERC20Bridge`
+  by burning the tokens locally and sending a message to the `SuperchainTokenBridge`
   on the target chain using the `L2toL2CrossDomainMessenger`.
   Additionally, it returns the `msgHash_` crafted by the `L2toL2CrossDomainMessenger`.
 - `relayERC20`: processes incoming messages from the `L2toL2CrossDomainMessenger`
   and mints the corresponding amount of the `SuperchainERC20`.
 
 The full specifications and invariants are detailed
-in the [predeploys spec](./predeploys.md#superchainerc20bridge).
+in the [predeploys spec](./predeploys.md#superchaintokenbridge).
 
 [l2-to-l2]: ./predeploys.md#l2tol2crossdomainmessenger
 
@@ -137,12 +137,12 @@ config:
 ---
 sequenceDiagram
   participant from
-  participant L2SBA as SuperchainERC20Bridge (Chain A)
+  participant L2SBA as SuperchainTokenBridge (Chain A)
   participant SuperERC20_A as SuperchainERC20 (Chain A)
   participant Messenger_A as L2ToL2CrossDomainMessenger (Chain A)
   participant Inbox as CrossL2Inbox
   participant Messenger_B as L2ToL2CrossDomainMessenger (Chain B)
-  participant L2SBB as SuperchainERC20Bridge (Chain B)
+  participant L2SBB as SuperchainTokenBridge (Chain B)
   participant SuperERC20_B as SuperchainERC20 (Chain B)
 
   from->>L2SBA: sendERC20(tokenAddr, to, amount, chainID)

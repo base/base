@@ -33,7 +33,7 @@ its native asset, the transferred ETH is converted into the **SuperchainWETH** E
 instead.
 2. **ERC20 Token**: It extends the **ERC20** contract, allowing ETH to be wrapped into the **SuperchainWETH** ERC20
 token. This wrapped token can be transferred across interoperable chains via the
-[SuperchainTokenBridge](./predeploys.md#superchainerc20bridge), serving as the entry point for ERC20 token
+[SuperchainTokenBridge](./predeploys.md#superchaintokenbridge), serving as the entry point for ERC20 token
 interoperability.
 
 Superchain WETH integrates with the `ETHLiquidity` contract to manage native ETH liquidity across chains, ensuring
