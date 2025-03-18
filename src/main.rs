@@ -14,7 +14,7 @@ use crate::rpc::{EthApiExt, EthApiOverrideServer};
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
-    builder::{engine_tree_config::TreeConfig, EngineNodeLauncher},
+    builder::{EngineNodeLauncher, TreeConfig},
     providers::providers::BlockchainProvider,
 };
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};

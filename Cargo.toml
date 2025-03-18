@@ -2,46 +2,47 @@
 name = "reth-flashblocks"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.84"
 license = "MIT"
 homepage = "https://github.com/base-org/reth-flashblocks"
 repository = "https://github.com/base-org/reth-flashblocks"
 
 [dependencies]
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.2.2" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.1" }
 
 # revm
-revm = { version = "19.5.0", default-features = false }
+revm = { version = "20.0.0-alpha.5", default-features = false }
+revm-bytecode = { version = "1.0.0-alpha.3", default-features = false }
 
 # alloy
 alloy-primitives = { version = "0.8.20", default-features = false, features = ["map-foldhash"] }
-alloy-eips = { version = "0.11.1", default-features = false }
-alloy-rpc-types = { version = "0.11.1", default-features = false }
-alloy-rpc-types-engine = { version = "0.11.1", default-features = false }
-alloy-rpc-types-eth = { version = "0.11.1" }
-alloy-consensus = { version = "0.11.1" }
-alloy-trie = { version = "0.7", default-features = false }
-alloy-provider = { version = "0.11.1" }
+alloy-eips = { version = "0.12.5", default-features = false }
+alloy-rpc-types = { version = "0.12.5", default-features = false }
+alloy-rpc-types-engine = { version = "0.12.5", default-features = false }
+alloy-rpc-types-eth = { version = "0.12.5" }
+alloy-consensus = { version = "0.12.5" }
+alloy-trie = { version = "0.7.9", default-features = false }
+alloy-provider = { version = "0.12.5" }
 
 # op-alloy
-op-alloy-rpc-types = { version = "0.10.3", default-features = false }
-op-alloy-rpc-types-engine = { version =  "0.10.3", default-features = false }
-op-alloy-rpc-jsonrpsee = { version =  "0.10.3", default-features = false }
-op-alloy-network = { version =  "0.10.3", default-features = false }
-op-alloy-consensus = { version =  "0.10.3", default-features = false }
+op-alloy-rpc-types = { version = "0.11.1", default-features = false }
+op-alloy-rpc-types-engine = { version =  "0.11.1", default-features = false }
+op-alloy-rpc-jsonrpsee = { version =  "0.11.1", default-features = false }
+op-alloy-network = { version =  "0.11.1", default-features = false }
+op-alloy-consensus = { version =  "0.11.1", default-features = false }
 
 # rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0b089a37b8525d328ab93962bb8121811ee3ca1f" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "67f5974cad17b9fef257e27f0a4ff6a097e75d5d" }
+rustls = "0.23.23"
 
 # tokio
 tokio = { version = "1.0", features = ["full"] }
@@ -73,13 +74,7 @@ chrono = "0.4"
 [features]
 default = ["optimism"]
 
-optimism = [
-	"reth-optimism-node/optimism",
-	"reth-optimism-cli/optimism",
-	"reth-optimism-primitives/optimism",
-	"reth-optimism-rpc/optimism",
-	"reth-optimism-evm/optimism",
-]
+optimism = []
 
 integration = []
 
