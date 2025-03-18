@@ -247,6 +247,7 @@ where
                 .cache
                 .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
             {
+                info!("receipt found in cache");
                 return Ok(Some(
                     self.transform_receipt(
                         receipt,
