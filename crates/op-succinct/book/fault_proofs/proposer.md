@@ -55,6 +55,7 @@ To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill ou
 | `L2_NODE_RPC` | L2 Node RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
 | `PROVER_ADDRESS` | Address of the account that will be posting output roots to L1. This address is committed to when generating the aggregation proof to prevent front-running attacks. It can be different from the signing address if you want to separate these roles. Default: The address derived from the `PRIVATE_KEY` environment variable. | (Only used if `FAST_FINALITY_MODE` is `true`) |
 | `SAFE_DB_FALLBACK` | Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node. When `false`, proposer will return an error if SafeDB is not available. It is by default `false` since using the fallback mechanism will result in higher proving cost. | `false` |
+| `PROPOSER_METRICS_PORT` | The port to expose metrics on. Update prometheus.yml to use this port, if using docker compose. | `9000` |
 
 ```env
 # Required Configuration
@@ -65,13 +66,14 @@ GAME_TYPE=               # Type identifier for the dispute game (must match fact
 PRIVATE_KEY=             # Private key for transaction signing
 
 # Optional Configuration
-FAST_FINALITY_MODE=false # Whether to use fast finality mode
-PROPOSAL_INTERVAL_IN_BLOCKS=1800    # Number of L2 blocks between proposals
-FETCH_INTERVAL=30                   # Polling interval in seconds
-ENABLE_GAME_RESOLUTION=false        # Whether to enable automatic game resolution
-MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100  # Maximum number of games to check for resolution
-MAX_GAMES_TO_CHECK_FOR_DEFENSE=100    # Maximum number of recent games to check for defense
+FAST_FINALITY_MODE=false                 # Whether to use fast finality mode
+PROPOSAL_INTERVAL_IN_BLOCKS=1800         # Number of L2 blocks between proposals
+FETCH_INTERVAL=30                        # Polling interval in seconds
+ENABLE_GAME_RESOLUTION=false             # Whether to enable automatic game resolution
+MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100    # Maximum number of games to check for resolution
+MAX_GAMES_TO_CHECK_FOR_DEFENSE=100       # Maximum number of recent games to check for defense
 MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING=100 # Maximum number of games to check for bond claiming
+PROPOSER_METRICS_PORT=9000               # The port to expose metrics on
 ```
 
 ### Configuration Steps

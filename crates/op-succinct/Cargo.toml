@@ -39,6 +39,8 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.18", features = ["fmt"] }
 metrics = "0.24.1"
+metrics-exporter-prometheus = "0.16.2"
+metrics-process = "2.4.0"
 strum = "0.27.1"
 strum_macros = "0.27.1"
 

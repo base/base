@@ -1,18 +1,11 @@
-use metrics::{describe_gauge, gauge};
-use metrics_exporter_prometheus::PrometheusBuilder;
-use metrics_process::Collector;
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    thread,
-    time::Duration,
-};
-use strum::{EnumMessage, IntoEnumIterator};
+use strum::EnumMessage;
 use strum_macros::{Display, EnumIter};
-use tracing::warn;
 
-// Define an enum for all gauge metrics
+use op_succinct_host_utils::metrics::MetricsGauge;
+
+// Define an enum for all validity metrics gauges.
 #[derive(Debug, Clone, Copy, Display, EnumIter, EnumMessage)]
-pub enum GaugeMetric {
+pub enum ValidityGauge {
     // Proof status gauges
     #[strum(
         serialize = "succinct_current_unrequested_proofs",
@@ -110,60 +103,4 @@ pub enum GaugeMetric {
     RelayAggProofErrorCount,
 }
 
-impl GaugeMetric {
-    // Helper to describe the gauge
-    pub fn describe(&self) {
-        describe_gauge!(self.to_string(), self.get_message().unwrap());
-    }
-
-    // Helper to set the gauge value
-    pub fn set(&self, value: f64) {
-        gauge!(self.to_string()).set(value);
-    }
-
-    // Helper to increment the gauge value
-    pub fn increment(&self, value: f64) {
-        gauge!(self.to_string()).increment(value);
-    }
-}
-
-pub fn custom_gauges() {
-    // Register all gauges
-    for metric in GaugeMetric::iter() {
-        metric.describe();
-    }
-}
-
-pub fn init_gauges() {
-    // Initialize all gauges to 0.0
-    for metric in GaugeMetric::iter() {
-        metric.set(0.0);
-    }
-}
-
-pub fn init_metrics(port: &u16) {
-    custom_gauges();
-
-    let builder = PrometheusBuilder::new().with_http_listener(SocketAddr::new(
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-        port.to_owned(),
-    ));
-
-    if let Err(e) = builder.install() {
-        warn!(
-            "Failed to start metrics server: {}. Will continue without metrics.",
-            e
-        );
-    }
-
-    // Spawn a thread to collect process metrics
-    thread::spawn(move || {
-        let collector = Collector::default();
-        collector.describe();
-        loop {
-            // Periodically call `collect()` method to update information.
-            collector.collect();
-            thread::sleep(Duration::from_millis(750));
-        }
-    });
-}
+impl MetricsGauge for ValidityGauge {}

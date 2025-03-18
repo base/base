@@ -49,5 +49,7 @@ clap.workspace = true
 strum_macros.workspace = true
 strum.workspace = true
 metrics.workspace = true
+metrics-process.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 [features]

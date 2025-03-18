@@ -16,13 +16,14 @@ use tokio::time;
 use crate::{
     config::ProposerConfig,
     contract::{DisputeGameFactory::DisputeGameFactoryInstance, OPSuccinctFaultDisputeGame},
-    FactoryTrait, L1ProviderWithWallet, L2Provider, L2ProviderTrait, Mode, NUM_CONFIRMATIONS,
-    TIMEOUT_SECONDS,
+    prometheus::ProposerGauge,
+    Action, FactoryTrait, L1ProviderWithWallet, L2Provider, L2ProviderTrait, Mode,
+    NUM_CONFIRMATIONS, TIMEOUT_SECONDS,
 };
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, hosts::OPSuccinctHost,
-    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    metrics::MetricsGauge, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
 
 struct SP1Prover {
@@ -246,14 +247,17 @@ where
     pub async fn handle_game_creation(&self) -> Result<Option<Address>> {
         let _span = tracing::info_span!("[[Proposing]]").entered();
 
-        // Get the safe L2 head block number
-        let safe_l2_head_block_number = self
+        // Get the finalized L2 head block number.
+        let finalized_l2_head_block_number = self
             .l2_provider
-            .get_l2_block_by_number(BlockNumberOrTag::Safe)
+            .get_l2_block_by_number(BlockNumberOrTag::Finalized)
             .await?
             .header
             .number;
-        tracing::debug!("Safe L2 head block number: {:?}", safe_l2_head_block_number);
+        tracing::debug!(
+            "Finalized L2 head block number: {:?}",
+            finalized_l2_head_block_number
+        );
 
         // Get the latest valid proposal.
         let latest_valid_proposal = self
@@ -292,8 +296,8 @@ where
         };
 
         // There's always a new game to propose, as the chain is always moving forward from the genesis block set for the game type.
-        // Only create a new game if the safe L2 head block number is greater than the next L2 block number for proposal.
-        if U256::from(safe_l2_head_block_number) > next_l2_block_number_for_proposal {
+        // Only create a new game if the finalized L2 head block number is greater than the next L2 block number for proposal.
+        if U256::from(finalized_l2_head_block_number) > next_l2_block_number_for_proposal {
             let game_address = self
                 .create_game(next_l2_block_number_for_proposal, parent_game_index)
                 .await?;
@@ -346,7 +350,7 @@ where
     }
 
     /// Handles claiming bonds from resolved games.
-    pub async fn handle_bond_claiming(&self) -> Result<()> {
+    pub async fn handle_bond_claiming(&self) -> Result<Action> {
         let _span = tracing::info_span!("[[Claiming Bonds]]").entered();
 
         if let Some(game_address) = self
@@ -381,12 +385,55 @@ where
                         game_address,
                         receipt.transaction_hash
                     );
+
+                    Ok(Action::Performed)
                 }
-                Err(e) => {
-                    tracing::error!("Failed to claim bond from game {:?}: {:?}", game_address, e);
-                }
+                Err(e) => Err(anyhow::anyhow!(
+                    "Failed to claim bond from game {:?}: {:?}",
+                    game_address,
+                    e
+                )),
             }
+        } else {
+            tracing::info!("No new games to claim bonds from");
+
+            Ok(Action::Skipped)
         }
+    }
+
+    /// Fetch the proposer metrics.
+    async fn fetch_proposer_metrics(&self) -> Result<()> {
+        let finalized_l2_block_number = self
+            .l2_provider
+            .get_l2_block_by_number(BlockNumberOrTag::Finalized)
+            .await?
+            .header
+            .number;
+
+        ProposerGauge::FinalizedL2BlockNumber.set(finalized_l2_block_number as f64);
+
+        // Get the latest valid proposal.
+        match self
+            .factory
+            .get_latest_valid_proposal(self.l2_provider.clone())
+            .await?
+        {
+            Some((l2_block_number, _game_index)) => {
+                // Update metrics for latest game block number
+                ProposerGauge::LatestGameL2BlockNumber.set(l2_block_number.to::<u64>() as f64);
+            }
+            None => {
+                tracing::debug!("No valid proposals found for metrics");
+                return Ok(());
+            }
+        };
+
+        let anchor_game_l2_block_number = self
+            .factory
+            .get_anchor_l2_block_number(self.config.game_type)
+            .await?;
+
+        ProposerGauge::AnchorGameL2BlockNumber.set(anchor_game_l2_block_number.to::<u64>() as f64);
 
         Ok(())
     }
@@ -395,24 +442,52 @@ where
     pub async fn run(&self) -> Result<()> {
         tracing::info!("OP Succinct Proposer running...");
         let mut interval = time::interval(Duration::from_secs(self.config.fetch_interval));
+        let mut metrics_interval = time::interval(Duration::from_secs(15));
 
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {
+                    match self.handle_game_creation().await {
+                        Ok(Some(_)) => {
+                            ProposerGauge::GamesCreated.increment(1.0);
+                        }
+                        Ok(None) => {}
+                            Err(e) => {
+                            tracing::warn!("Failed to handle game creation: {:?}", e);
+                            ProposerGauge::Errors.increment(1.0);
+                        }
+                    }
 
-            if let Err(e) = self.handle_game_creation().await {
-                tracing::warn!("Failed to handle game creation: {:?}", e);
-            }
+                    if let Err(e) = self.handle_game_defense().await {
+                        tracing::warn!("Failed to handle game defense: {:?}", e);
+                        ProposerGauge::Errors.increment(1.0);
+                    }
 
-            if let Err(e) = self.handle_game_defense().await {
-                tracing::warn!("Failed to handle game defense: {:?}", e);
-            }
+                    match self.handle_game_resolution().await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!("Failed to handle game resolution: {:?}", e);
+                            ProposerGauge::Errors.increment(1.0);
+                        }
+                    }
 
-            if let Err(e) = self.handle_game_resolution().await {
-                tracing::warn!("Failed to handle game resolution: {:?}", e);
-            }
-
-            if let Err(e) = self.handle_bond_claiming().await {
-                tracing::warn!("Failed to handle bond claiming: {:?}", e);
+                    match self.handle_bond_claiming().await {
+                        Ok(Action::Performed) => {
+                            ProposerGauge::GamesBondsClaimed.increment(1.0);
+                        }
+                        Ok(Action::Skipped) => {}
+                        Err(e) => {
+                            tracing::warn!("Failed to handle bond claiming: {:?}", e);
+                            ProposerGauge::Errors.increment(1.0);
+                        }
+                    }
+                }
+                _ = metrics_interval.tick() => {
+                    if let Err(e) = self.fetch_proposer_metrics().await {
+                        tracing::warn!("Failed to fetch metrics: {:?}", e);
+                        ProposerGauge::Errors.increment(1.0);
+                    }
+                }
             }
         }
     }

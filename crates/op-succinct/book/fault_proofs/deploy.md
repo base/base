@@ -94,14 +94,14 @@ cargo run --bin config --release -- --env-file <PATH_TO_ENV_FILE>
 
 ## Deployment
 
-1. Install dependencies:
-   ```bash
-   forge install
-   ```
-
-2. Change directory to contracts:
+1. Change directory to contracts:
    ```bash
    cd contracts
+   ```
+
+2. Install dependencies:
+   ```bash
+   forge install
    ```
 
 3. Build the contracts:
