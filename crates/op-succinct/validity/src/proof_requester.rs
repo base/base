@@ -88,30 +88,45 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     /// Generates the witness for an aggregation proof.
     pub async fn agg_proof_witnessgen(
         &self,
-        request: &OPSuccinctRequest,
-        mut range_proofs: Vec<SP1ProofWithPublicValues>,
+        start_block: i64,
+        end_block: i64,
+        checkpointed_l1_block_hash: B256,
+        l1_chain_id: i64,
+        l2_chain_id: i64,
+        prover_address: Address,
     ) -> Result<SP1Stdin> {
-        let boot_infos: Vec<BootInfoStruct> = range_proofs
-            .iter_mut()
-            .map(|proof| proof.public_values.read())
-            .collect();
+        // Fetch consecutive range proofs from the database.
+        let range_proofs = self
+            .db_client
+            .get_consecutive_complete_range_proofs(
+                start_block,
+                end_block,
+                &self.program_config.commitments,
+                l1_chain_id,
+                l2_chain_id,
+            )
+            .await?;
 
-        let proofs: Vec<SP1Proof> = range_proofs
-            .iter_mut()
-            .map(|proof| proof.proof.clone())
-            .collect();
-
-        let l1_head = request
-            .checkpointed_l1_block_hash
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Aggregation proof has no checkpointed block."))?;
+        // Deserialize the proofs and extract the boot infos and proofs.
+        let (boot_infos, proofs): (Vec<BootInfoStruct>, Vec<SP1Proof>) = range_proofs
+            .iter()
+            .map(|proof| {
+                let mut proof_with_pv: SP1ProofWithPublicValues =
+                    bincode::deserialize(proof.proof.as_ref().unwrap())
+                        .expect("Deserialization failure for range proof");
+                (
+                    proof_with_pv.public_values.read(),
+                    proof_with_pv.proof.clone(),
+                )
+            })
+            .unzip();
 
         // This can fail for a few reasons:
         // 1. The L1 RPC is down (e.g. error code 32001). Double-check the L1 RPC is running correctly.
         // 2. The L1 head was re-orged and the block is no longer available. This is unlikely given we wait for 3 confirmations on a transaction.
         let headers = self
             .fetcher
-            .get_header_preimages(&boot_infos, B256::from_slice(l1_head))
+            .get_header_preimages(&boot_infos, checkpointed_l1_block_hash)
             .await
             .context("Failed to get header preimages")?;
 
@@ -120,13 +135,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             boot_infos,
             headers,
             &self.program_config.range_vk,
-            B256::from_slice(l1_head),
-            Address::from_slice(
-                request
-                    .prover_address
-                    .as_ref()
-                    .context("Prover address must be set for aggregation proofs.")?,
-            ),
+            checkpointed_l1_block_hash,
+            prover_address,
         )
         .context("Failed to get agg proof stdin")?;
 
@@ -371,25 +381,19 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let stdin = match request.req_type {
             RequestType::Range => self.range_proof_witnessgen(request).await?,
             RequestType::Aggregation => {
-                // Fetch consecutive range proofs from the database.
-                let range_proofs_raw = self
-                    .db_client
-                    .get_consecutive_complete_range_proofs(
-                        request.start_block,
-                        request.end_block,
-                        &self.program_config.commitments,
-                        request.l1_chain_id,
-                        request.l2_chain_id,
-                    )
-                    .await?;
-                let range_proofs: Vec<SP1ProofWithPublicValues> = range_proofs_raw
-                    .iter()
-                    .map(|proof| {
-                        bincode::deserialize(proof.proof.as_ref().unwrap())
-                            .expect("Deserialization failure for range proof")
-                    })
-                    .collect();
-                self.agg_proof_witnessgen(request, range_proofs).await?
+                self.agg_proof_witnessgen(
+                    request.start_block,
+                    request.end_block,
+                    B256::from_slice(request.checkpointed_l1_block_hash.as_ref().ok_or_else(
+                        || anyhow::anyhow!("Aggregation proof has no checkpointed block."),
+                    )?),
+                    request.l1_chain_id,
+                    request.l2_chain_id,
+                    Address::from_slice(request.prover_address.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("Prover address must be set for aggregation proofs.")
+                    })?),
+                )
+                .await?
             }
         };
 
