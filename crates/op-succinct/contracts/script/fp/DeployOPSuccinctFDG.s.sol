@@ -5,6 +5,7 @@ pragma solidity ^0.8.15;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {Claim, GameType, Hash, OutputRoot, Duration} from "src/dispute/lib/Types.sol";
+import {LibString} from "@solady/utils/LibString.sol";
 
 // Interfaces
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
@@ -39,10 +40,17 @@ contract DeployOPSuccinctFDG is Script {
 
         GameType gameType = GameType.wrap(uint32(vm.envUint("GAME_TYPE")));
 
-        // TODO(fakedev9999): Use real OptimismPortal2.
-        MockOptimismPortal2 portal =
-            new MockOptimismPortal2(gameType, vm.envUint("DISPUTE_GAME_FINALITY_DELAY_SECONDS"));
-        console.log("OptimismPortal2:", address(portal));
+        // Use provided OptimismPortal2 address if given, otherwise deploy MockOptimismPortal2.
+        address payable portalAddress;
+        if (vm.envOr("OPTIMISM_PORTAL2_ADDRESS", address(0)) != address(0)) {
+            portalAddress = payable(vm.envAddress("OPTIMISM_PORTAL2_ADDRESS"));
+            console.log("Using existing OptimismPortal2:", portalAddress);
+        } else {
+            MockOptimismPortal2 portal =
+                new MockOptimismPortal2(gameType, vm.envUint("DISPUTE_GAME_FINALITY_DELAY_SECONDS"));
+            portalAddress = payable(address(portal));
+            console.log("Deployed MockOptimismPortal2:", portalAddress);
+        }
 
         OutputRoot memory startingAnchorRoot = OutputRoot({
             root: Hash.wrap(vm.envBytes32("STARTING_ROOT")),
@@ -57,7 +65,7 @@ contract DeployOPSuccinctFDG is Script {
                 (
                     ISuperchainConfig(address(new SuperchainConfig())),
                     IDisputeGameFactory(address(factory)),
-                    IOptimismPortal2(payable(address(portal))),
+                    IOptimismPortal2(portalAddress),
                     startingAnchorRoot
                 )
             )
@@ -69,10 +77,39 @@ contract DeployOPSuccinctFDG is Script {
         AccessManager accessManager = new AccessManager();
         console.log("Access manager:", address(accessManager));
 
-        // Set to permissionless games.
-        // TODO(fakedev9999): Allow custom config with env vars.
-        accessManager.setProposer(address(0), true);
-        accessManager.setChallenger(address(0), true);
+        // Configure access control based on `PERMISSIONLESS_MODE` flag.
+        if (vm.envOr("PERMISSIONLESS_MODE", false)) {
+            // Set to permissionless games (anyone can propose and challenge).
+            accessManager.setProposer(address(0), true);
+            accessManager.setChallenger(address(0), true);
+            console.log("Access Manager configured for permissionless mode");
+        } else {
+            // Set proposers from comma-separated list.
+            string memory proposersStr = vm.envOr("PROPOSER_ADDRESSES", string(""));
+            if (bytes(proposersStr).length > 0) {
+                string[] memory proposers = LibString.split(proposersStr, ",");
+                for (uint256 i = 0; i < proposers.length; i++) {
+                    address proposer = vm.parseAddress(proposers[i]);
+                    if (proposer != address(0)) {
+                        accessManager.setProposer(proposer, true);
+                        console.log("Added proposer:", proposer);
+                    }
+                }
+            }
+
+            // Set challengers from comma-separated list.
+            string memory challengersStr = vm.envOr("CHALLENGER_ADDRESSES", string(""));
+            if (bytes(challengersStr).length > 0) {
+                string[] memory challengers = LibString.split(challengersStr, ",");
+                for (uint256 i = 0; i < challengers.length; i++) {
+                    address challenger = vm.parseAddress(challengers[i]);
+                    if (challenger != address(0)) {
+                        accessManager.setChallenger(challenger, true);
+                        console.log("Added challenger:", challenger);
+                    }
+                }
+            }
+        }
 
         // Config values dependent on the `USE_SP1_MOCK_VERIFIER` flag.
         address sp1VerifierAddress;
