@@ -178,7 +178,7 @@ mod tests {
 
         // Query first subblock
         if let Some(block) = provider
-            .get_block_by_number(BlockNumberOrTag::Pending, BlockTransactionsKind::Full)
+            .get_block_by_number(BlockNumberOrTag::Pending)
             .await?
         {
             // Verify block properties
@@ -191,7 +191,7 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(3)).await;
         // Query second subblock, now there should be 2 transactions
         if let Some(block) = provider
-            .get_block_by_number(BlockNumberOrTag::Pending, BlockTransactionsKind::Full)
+            .get_block_by_number(BlockNumberOrTag::Pending)
             .await?
         {
             // Verify block properties
