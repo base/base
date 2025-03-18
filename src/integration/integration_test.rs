@@ -241,8 +241,6 @@ mod tests {
         let balance = U256::from_str(response["result"].as_str().unwrap()).unwrap();
         assert_eq!(balance, U256::from_str("0x1234").unwrap());
 
-        // make the op-reth node sync and store the blocks in the DB
-
         // Don't forget to cleanup
         ws_server.abort();
         Ok(())
