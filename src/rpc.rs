@@ -104,13 +104,11 @@ impl<E> EthApiExt<E> {
         tx: Recovered<OpTransactionSigned>,
         tx_info: TransactionInfo,
     ) -> Transaction {
-        let (tx, from) = tx.into_parts();
+        let tx = tx.convert::<OpTxEnvelope>();
         let mut deposit_receipt_version = None;
         let mut deposit_nonce = None;
 
-        let inner: OpTxEnvelope = tx.into();
-
-        if inner.is_deposit() {
+        if tx.is_deposit() {
             let receipt = self
                 .cache
                 .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash.unwrap().to_string()))
@@ -129,7 +127,7 @@ impl<E> EthApiExt<E> {
             ..
         } = tx_info;
 
-        let effective_gas_price = if inner.is_deposit() {
+        let effective_gas_price = if tx.is_deposit() {
             // For deposits, we must always set the `gasPrice` field to 0 in rpc
             // deposit tx don't have a gas price field, but serde of `Transaction` will take care of
             // it
@@ -137,18 +135,17 @@ impl<E> EthApiExt<E> {
         } else {
             base_fee
                 .map(|base_fee| {
-                    inner.effective_tip_per_gas(base_fee).unwrap_or_default() + base_fee as u128
+                    tx.effective_tip_per_gas(base_fee).unwrap_or_default() + base_fee as u128
                 })
-                .unwrap_or_else(|| inner.max_fee_per_gas())
+                .unwrap_or_else(|| tx.max_fee_per_gas())
         };
 
         Transaction {
             inner: alloy_rpc_types_eth::Transaction {
-                inner,
+                inner: tx,
                 block_hash,
                 block_number,
                 transaction_index,
-                from,
                 effective_gas_price: Some(effective_gas_price),
             },
             deposit_nonce,
@@ -250,6 +247,7 @@ where
                 .cache
                 .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
             {
+                info!("receipt found in cache");
                 return Ok(Some(
                     self.transform_receipt(
                         receipt,
@@ -263,7 +261,7 @@ where
             }
         }
 
-        return Ok(None);
+        return receipt.map_err(Into::into);
     }
 
     async fn get_balance(
