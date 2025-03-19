@@ -1,7 +1,7 @@
 use crate::{
     db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus},
-    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, OPSuccinctProofRequester,
-    ValidityGauge,
+    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, CommitmentConfig,
+    ContractConfig, OPSuccinctProofRequester, ProgramConfig, RequesterConfig, ValidityGauge,
 };
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
@@ -18,64 +18,13 @@ use op_succinct_host_utils::{
     ValidityDisputeGameExtraData, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
 use sp1_sdk::{
-    network::{
-        proto::network::{ExecutionStatus, FulfillmentStatus},
-        FulfillmentStrategy,
-    },
-    HashableKey, NetworkProver, Prover, ProverClient, SP1Proof, SP1ProofMode,
-    SP1ProofWithPublicValues, SP1ProvingKey, SP1VerifyingKey,
+    network::proto::network::{ExecutionStatus, FulfillmentStatus},
+    HashableKey, NetworkProver, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues,
 };
 use std::collections::HashMap;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info};
-
-pub struct ContractConfig<P, N>
-where
-    P: Provider<N> + 'static,
-    N: Network,
-{
-    pub l2oo_address: Address,
-    pub dgf_address: Address,
-    pub l2oo_contract: OPSuccinctL2OOContract<(), P, N>,
-    pub dgf_contract: DisputeGameFactoryContract<(), P, N>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CommitmentConfig {
-    pub range_vkey_commitment: B256,
-    pub agg_vkey_hash: B256,
-    pub rollup_config_hash: B256,
-}
-
-#[derive(Clone)]
-pub struct ProgramConfig {
-    pub range_vk: Arc<SP1VerifyingKey>,
-    pub range_pk: Arc<SP1ProvingKey>,
-    pub agg_vk: Arc<SP1VerifyingKey>,
-    pub agg_pk: Arc<SP1ProvingKey>,
-    pub commitments: CommitmentConfig,
-}
-
-pub struct RequesterConfig {
-    pub l1_chain_id: i64,
-    pub l2_chain_id: i64,
-    // The address being committed to when generating the aggregation proof to prevent front-running attacks.
-    // This should be the same address that is being used to send `proposeL2Output` transactions.
-    pub prover_address: Address,
-    pub l2oo_address: Address,
-    pub dgf_address: Address,
-    pub range_proof_interval: u64,
-    pub submission_interval: u64,
-    pub max_concurrent_witness_gen: u64,
-    pub max_concurrent_proof_requests: u64,
-    pub range_proof_strategy: FulfillmentStrategy,
-    pub agg_proof_strategy: FulfillmentStrategy,
-    pub agg_proof_mode: SP1ProofMode,
-    pub mock: bool,
-    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node.
-    pub safe_db_fallback: bool,
-}
 
 /// Configuration for the driver.
 pub struct DriverConfig {
@@ -85,9 +34,7 @@ pub struct DriverConfig {
     pub loop_interval_seconds: u64,
 }
 /// Type alias for a map of task IDs to their join handles and associated requests
-// TODO: Investigate whether we can use DashMap for this.
-pub type TaskMap =
-    HashMap<tokio::task::Id, (tokio::task::JoinHandle<Result<()>>, OPSuccinctRequest)>;
+pub type TaskMap = HashMap<i64, (tokio::task::JoinHandle<Result<()>>, OPSuccinctRequest)>;
 
 pub struct Proposer<P, N, H: OPSuccinctHost>
 where
@@ -106,8 +53,6 @@ where
 const NUM_CONFIRMATIONS: u64 = 5;
 /// 2 minute timeout.
 const TIMEOUT: u64 = 120;
-/// Task completion handler interval.
-const TASK_COMPLETION_HANDLER_INTERVAL: u64 = 1;
 
 impl<P, N, H: OPSuccinctHost> Proposer<P, N, H>
 where
@@ -190,87 +135,91 @@ where
     /// Use the in-memory index of the highest block number to add new ranges to the database.
     #[tracing::instrument(name = "proposer.add_new_ranges", skip(self))]
     pub async fn add_new_ranges(&self) -> Result<()> {
-        let latest_finalized_header = self
+        // Get the latest proposed block number on the contract.
+        let latest_proposed_block_number = get_latest_proposed_block_number(
+            self.contract_config.l2oo_address,
+            self.driver_config.fetcher.as_ref(),
+        )
+        .await?;
+
+        let finalized_block_number = self
             .driver_config
             .fetcher
             .get_l2_header(BlockId::finalized())
-            .await?;
+            .await?
+            .number;
 
-        // Get the highest block number of any of range request in the database that is not FAILED or CANCELLED or RELAYED with the same commitment.
-        let highest_end_block = self
+        // Get all active (non-failed) requests with the same commitment config and start block >= latest_proposed_block_number.
+        // These requests are non-overlapping.
+        let mut requests = self
             .driver_config
             .driver_db_client
-            .fetch_highest_end_block_for_range_request(
+            .fetch_ranges_after_block(
                 &[
                     RequestStatus::Unrequested,
                     RequestStatus::WitnessGeneration,
                     RequestStatus::Execution,
-                    RequestStatus::Complete,
                     RequestStatus::Prove,
+                    RequestStatus::Complete,
                 ],
+                latest_proposed_block_number as i64,
                 &self.program_config.commitments,
                 self.requester_config.l1_chain_id,
                 self.requester_config.l2_chain_id,
             )
             .await?;
 
-        // If there are no requests in the database, the current processed block number is the latest finalized block number on the contract. Otherwise, it's the highest block number
-        // of any of the requests in the database that are not FAILED or CANCELLED.
-        let mut current_processed_block = match highest_end_block {
-            Some(end_block) => end_block as u64,
-            None => {
-                tracing::debug!(
-                    "No requests in the database, using latest proposed block number on contract."
-                );
-                get_latest_proposed_block_number(
-                    self.contract_config.l2oo_address,
-                    self.driver_config.fetcher.as_ref(),
-                )
-                .await?
-            }
-        };
-        tracing::debug!("Current processed block: {}.", current_processed_block);
+        // Sort the requests by start block.
+        requests.sort_by_key(|r| r.0);
 
-        let mut requests = Vec::new();
+        let disjoint_ranges = find_gaps(
+            latest_proposed_block_number as i64,
+            finalized_block_number as i64,
+            &requests,
+        );
 
-        // Only add new ranges if the current block is less than the latest finalized block minus the
-        // range proof interval. This ensures that only ranges that cover range_proof_interval blocks
-        // are added to the database.
-        while current_processed_block
-            < latest_finalized_header.number - self.requester_config.range_proof_interval
-        {
-            let end_block = std::cmp::min(
-                current_processed_block + self.requester_config.range_proof_interval,
-                latest_finalized_header.number,
+        let ranges_to_prove = get_ranges_to_prove(
+            &disjoint_ranges,
+            self.requester_config.range_proof_interval as i64,
+        );
+
+        if !ranges_to_prove.is_empty() {
+            info!(
+                "Inserting {} range proof requests into the database.",
+                ranges_to_prove.len()
             );
+        }
 
-            let request = OPSuccinctRequest::create_range_request(
-                if self.requester_config.mock {
+        // Create range proof requests for the ranges to prove in parallel
+        let new_range_requests = stream::iter(ranges_to_prove)
+            .map(|range| {
+                let mode = if self.requester_config.mock {
                     RequestMode::Mock
                 } else {
                     RequestMode::Real
-                },
-                current_processed_block as i64,
-                end_block as i64,
-                self.program_config.commitments.range_vkey_commitment,
-                self.program_config.commitments.rollup_config_hash,
-                self.requester_config.l1_chain_id,
-                self.requester_config.l2_chain_id,
-                self.driver_config.fetcher.clone(),
-            )
+                };
+                OPSuccinctRequest::create_range_request(
+                    mode,
+                    range.0,
+                    range.1,
+                    self.program_config.commitments.range_vkey_commitment,
+                    self.program_config.commitments.rollup_config_hash,
+                    self.requester_config.l1_chain_id,
+                    self.requester_config.l2_chain_id,
+                    self.driver_config.fetcher.clone(),
+                )
+            })
+            .buffer_unordered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
+            .try_collect::<Vec<OPSuccinctRequest>>()
             .await?;
 
-            requests.push(request);
-            current_processed_block = end_block;
-        }
+        info!("Inserting new range proof requests into the database.");
 
-        if !requests.is_empty() {
-            tracing::debug!("Inserting {} requests into the database.", requests.len());
-            self.driver_config
-                .driver_db_client
-                .insert_requests(&requests)
-                .await?;
-        }
+        // Insert the new range proof requests into the database.
+        self.driver_config
+            .driver_db_client
+            .insert_requests(&new_range_requests)
+            .await?;
 
         Ok(())
     }
@@ -324,7 +273,7 @@ where
             if current_time > status.deadline {
                 match self
                     .proof_requester
-                    .retry_request(request.clone(), status.execution_status())
+                    .handle_failed_request(request.clone(), status.execution_status())
                     .await
                 {
                     Ok(_) => ValidityGauge::ProofRequestRetryCount.increment(1.0),
@@ -368,7 +317,7 @@ where
                     .await?;
             } else if status.fulfillment_status() == FulfillmentStatus::Unfulfillable {
                 self.proof_requester
-                    .retry_request(request, status.execution_status())
+                    .handle_failed_request(request, status.execution_status())
                     .await?;
                 ValidityGauge::ProofRequestRetryCount.increment(1.0);
             }
@@ -413,7 +362,8 @@ where
         }
 
         // Get the completed range proofs with a start block greater than the latest proposed block number.
-        let completed_range_proofs = self
+        // These blocks are sorted.
+        let mut completed_range_proofs = self
             .driver_config
             .driver_db_client
             .fetch_completed_ranges(
@@ -423,6 +373,9 @@ where
                 self.requester_config.l2_chain_id,
             )
             .await?;
+
+        // Sort the completed range proofs by start block.
+        completed_range_proofs.sort_by_key(|(start_block, _)| *start_block);
 
         // Get the highest block number of the completed range proofs.
         let highest_proven_contiguous_block_number =
@@ -601,8 +554,10 @@ where
                 tokio::spawn(
                     async move { proof_requester.make_proof_request(request_clone).await },
                 );
-            let id = handle.id();
-            self.tasks.lock().await.insert(id, (handle, request));
+            self.tasks
+                .lock()
+                .await
+                .insert(request.id, (handle, request));
         }
 
         Ok(())
@@ -853,86 +808,117 @@ where
         Ok(())
     }
 
-    /// Spawns thread for handling task completion and error handling.
-    async fn spawn_task_completion_handler(&self) -> Result<()> {
-        let tasks = self.tasks.clone();
-        let proof_requester = self.proof_requester.clone();
+    /// Set orphaned tasks to status FAILED. If a task is in the database in status Execution or WitnessGeneration but not in the tasks map, set it to status FAILED.
+    async fn set_orphaned_tasks_to_failed(&self) -> Result<()> {
+        let witnessgen_requests = self
+            .driver_config
+            .driver_db_client
+            .fetch_requests_by_status(
+                RequestStatus::WitnessGeneration,
+                &self.program_config.commitments,
+                self.requester_config.l1_chain_id,
+                self.requester_config.l2_chain_id,
+            )
+            .await?;
 
-        tokio::spawn(async move {
-            loop {
-                let mut tasks = tasks.lock().await;
-                let mut completed = Vec::new();
+        let execution_requests = self
+            .driver_config
+            .driver_db_client
+            .fetch_requests_by_status(
+                RequestStatus::Execution,
+                &self.program_config.commitments,
+                self.requester_config.l1_chain_id,
+                self.requester_config.l2_chain_id,
+            )
+            .await?;
 
-                // Check and process completed tasks
-                for (id, (handle, _)) in tasks.iter() {
-                    if handle.is_finished() {
-                        completed.push(*id);
-                    }
-                }
+        let requests = [witnessgen_requests, execution_requests].concat();
 
-                // Process completed tasks - this will properly await and drop them
-                for id in completed {
-                    if let Some((handle, request)) = tasks.remove(&id) {
-                        // First await the handle to properly clean up the task.
-                        match handle.await {
-                            Ok(result) => {
-                                if let Err(e) = result {
-                                    error!(
-                                        request_id = request.id,
-                                        request_type = ?request.req_type,
-                                        error = ?e,
-                                        "Task failed with error"
-                                    );
-                                    // Now safe to retry as original task is cleaned up
-                                    match proof_requester
-                                        .retry_request(
-                                            request,
-                                            ExecutionStatus::UnspecifiedExecutionStatus,
-                                        )
-                                        .await
-                                    {
-                                        Ok(_) => {
-                                            ValidityGauge::ProofRequestRetryCount.increment(1.0);
-                                        }
-                                        Err(retry_err) => {
-                                            error!(error = ?retry_err, "Failed to retry request");
-                                            ValidityGauge::RetryErrorCount.increment(1.0);
-                                        }
-                                    }
+        // If a task is in the database in status Execution or WitnessGeneration but not in the tasks map, set it to status FAILED.
+        for request in requests {
+            if !self.tasks.lock().await.contains_key(&request.id) {
+                self.driver_config
+                    .driver_db_client
+                    .update_request_status(request.id, RequestStatus::Failed)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle the ongoing witness generation and execution tasks.
+    async fn handle_ongoing_tasks(&self) -> Result<()> {
+        let mut tasks = self.tasks.lock().await;
+        let mut completed = Vec::new();
+
+        // Check and process completed tasks
+        for (id, (handle, _)) in tasks.iter() {
+            if handle.is_finished() {
+                completed.push(*id);
+            }
+        }
+
+        // Process completed tasks - this will properly await and drop them
+        for id in completed {
+            if let Some((handle, request)) = tasks.remove(&id) {
+                // First await the handle to properly clean up the task.
+                match handle.await {
+                    Ok(result) => {
+                        if let Err(e) = result {
+                            error!(
+                                request_id = request.id,
+                                request_type = ?request.req_type,
+                                error = ?e,
+                                "Task failed with error"
+                            );
+                            // Now safe to retry as original task is cleaned up
+                            match self
+                                .proof_requester
+                                .handle_failed_request(
+                                    request,
+                                    ExecutionStatus::UnspecifiedExecutionStatus,
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    ValidityGauge::ProofRequestRetryCount.increment(1.0);
                                 }
-                            }
-                            Err(e) => {
-                                error!(
-                                    request_id = request.id,
-                                    request_type = ?request.req_type,
-                                    error = ?e,
-                                    "Task panicked"
-                                );
-                                // Now safe to retry as original task is cleaned up
-                                match proof_requester
-                                    .retry_request(
-                                        request,
-                                        ExecutionStatus::UnspecifiedExecutionStatus,
-                                    )
-                                    .await
-                                {
-                                    Ok(_) => {
-                                        ValidityGauge::ProofRequestRetryCount.increment(1.0);
-                                    }
-                                    Err(retry_err) => {
-                                        error!(error = ?retry_err, "Failed to retry request after panic");
-                                        ValidityGauge::RetryErrorCount.increment(1.0);
-                                    }
+                                Err(retry_err) => {
+                                    error!(error = ?retry_err, "Failed to retry request");
+                                    ValidityGauge::RetryErrorCount.increment(1.0);
                                 }
                             }
                         }
                     }
+                    Err(e) => {
+                        error!(
+                            request_id = request.id,
+                            request_type = ?request.req_type,
+                            error = ?e,
+                            "Task panicked"
+                        );
+                        // Now safe to retry as original task is cleaned up
+                        match self
+                            .proof_requester
+                            .handle_failed_request(
+                                request,
+                                ExecutionStatus::UnspecifiedExecutionStatus,
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                ValidityGauge::ProofRequestRetryCount.increment(1.0);
+                            }
+                            Err(retry_err) => {
+                                error!(error = ?retry_err, "Failed to retry request after panic");
+                                ValidityGauge::RetryErrorCount.increment(1.0);
+                            }
+                        }
+                    }
                 }
-
-                drop(tasks);
-                tokio::time::sleep(Duration::from_secs(TASK_COMPLETION_HANDLER_INTERVAL)).await;
             }
-        });
+        }
 
         Ok(())
     }
@@ -969,9 +955,7 @@ where
             )
             .await?;
 
-        info!("Deleted all unrecoverable requests.");
-
-        // Cancel all requests in PROVE state for the same chain ID that have a different commitment config.
+        // Cancel all requests in PROVE state for the same chain id's that have a different commitment config.
         self.driver_config
             .driver_db_client
             .cancel_prove_requests_with_different_commitment_config(
@@ -981,80 +965,7 @@ where
             )
             .await?;
 
-        // Get the latest proposed block number on the contract.
-        let latest_proposed_block_number = get_latest_proposed_block_number(
-            self.contract_config.l2oo_address,
-            self.driver_config.fetcher.as_ref(),
-        )
-        .await?;
-
-        let finalized_block_number = self
-            .driver_config
-            .fetcher
-            .get_l2_header(BlockId::finalized())
-            .await?
-            .number;
-
-        // Get all requests in PROVE or COMPLETE status with the same commitment config and start block >= latest_proposed_block_number.
-        // These requests are non-overlapping.
-        let mut requests = self
-            .driver_config
-            .driver_db_client
-            .fetch_ranges_after_block(
-                &[RequestStatus::Prove, RequestStatus::Complete],
-                latest_proposed_block_number as i64,
-                &self.program_config.commitments,
-                self.requester_config.l1_chain_id,
-                self.requester_config.l2_chain_id,
-            )
-            .await?;
-
-        // Sort the requests by start block.
-        requests.sort_by_key(|r| r.0);
-
-        let disjoint_ranges = find_gaps(
-            latest_proposed_block_number as i64,
-            finalized_block_number as i64,
-            &requests,
-        );
-
-        let ranges_to_prove = get_ranges_to_prove(
-            &disjoint_ranges,
-            self.requester_config.range_proof_interval as i64,
-        );
-
-        info!("Found {} ranges to prove.", ranges_to_prove.len());
-
-        // Create range proof requests for the ranges to prove in parallel
-        let new_range_requests = stream::iter(ranges_to_prove)
-            .map(|range| {
-                let mode = if self.requester_config.mock {
-                    RequestMode::Mock
-                } else {
-                    RequestMode::Real
-                };
-                OPSuccinctRequest::create_range_request(
-                    mode,
-                    range.0,
-                    range.1,
-                    self.program_config.commitments.range_vkey_commitment,
-                    self.program_config.commitments.rollup_config_hash,
-                    self.requester_config.l1_chain_id,
-                    self.requester_config.l2_chain_id,
-                    self.driver_config.fetcher.clone(),
-                )
-            })
-            .buffer_unordered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
-            .try_collect::<Vec<OPSuccinctRequest>>()
-            .await?;
-
-        info!("Inserting new range proof requests into the database.");
-
-        // Insert the new range proof requests into the database.
-        self.driver_config
-            .driver_db_client
-            .insert_requests(&new_range_requests)
-            .await?;
+        info!("Deleted all unrequested, execution, and witness generation requests and canceled all prove requests with different commitment configs.");
 
         Ok(())
     }
@@ -1169,9 +1080,6 @@ where
 
     #[tracing::instrument(name = "proposer.run", skip(self))]
     pub async fn run(&self) -> Result<()> {
-        // Spawn the task completion handler.
-        self.spawn_task_completion_handler().await?;
-
         // Handle the case where the proposer is being re-started and the proposer state needs to be updated.
         self.initialize_proposer().await?;
 
@@ -1195,7 +1103,7 @@ where
                     // Update the error gauge
                     ValidityGauge::TotalErrorCount.increment(1.0);
                     // Pause for 10 seconds before restarting
-                    tracing::info!("Pausing for 10 seconds before restarting the process");
+                    tracing::debug!("Pausing for 10 seconds before restarting the process");
                     tokio::time::sleep(Duration::from_secs(10)).await;
                 }
             }
@@ -1210,11 +1118,17 @@ where
         // Log the proposer metrics.
         self.log_proposer_metrics().await?;
 
-        // Add new range requests to the database.
-        self.add_new_ranges().await?;
+        // Handle the ongoing tasks.
+        self.handle_ongoing_tasks().await?;
+
+        // Set orphaned WitnessGeneration and Execution tasks to status Failed.
+        self.set_orphaned_tasks_to_failed().await?;
 
         // Get all proof statuses of all requests in the proving state.
         self.handle_proving_requests().await?;
+
+        // Add new range requests to the database.
+        self.add_new_ranges().await?;
 
         // Create aggregation proofs based on the completed range proofs. Checkpoints the block hash associated with the aggregation proof
         // in advance.
@@ -1239,18 +1153,15 @@ where
             return Ok(None);
         }
 
-        let mut highest_block = completed_range_proofs[0].0;
         let mut current_end = completed_range_proofs[0].1;
 
         for proof in completed_range_proofs.iter().skip(1) {
-            if proof.0 == current_end {
-                current_end = proof.1;
-                highest_block = current_end;
-            } else {
+            if proof.0 != current_end {
                 break;
             }
+            current_end = proof.1;
         }
 
-        Ok(Some(highest_block))
+        Ok(Some(current_end))
     }
 }

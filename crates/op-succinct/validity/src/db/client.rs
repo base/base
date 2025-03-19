@@ -3,6 +3,7 @@ use anyhow::Result;
 use serde_json::Value;
 use sqlx::Error;
 use sqlx::{postgres::PgQueryResult, PgPool};
+use tracing::info;
 
 use crate::{CommitmentConfig, DriverDBClient, OPSuccinctRequest, RequestStatus, RequestType};
 
@@ -12,6 +13,8 @@ impl DriverDBClient {
 
         // Run migrations.
         sqlx::migrate!("./migrations").run(&pool).await?;
+
+        info!("Database configured successfully.");
 
         Ok(DriverDBClient { pool })
     }
