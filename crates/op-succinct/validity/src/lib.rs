@@ -1,3 +1,4 @@
+mod config;
 mod contract;
 mod db;
 mod env;
@@ -9,6 +10,7 @@ mod signer;
 mod types;
 mod utils;
 
+pub use config::*;
 pub use contract::*;
 pub use db::*;
 pub use env::*;

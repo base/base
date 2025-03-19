@@ -27,7 +27,8 @@ pub fn setup_proposer_logger() {
                 .add_directive("client-derivation-driver=error".parse().unwrap())
                 .add_directive("host-server=error".parse().unwrap())
                 .add_directive("kona_protocol=error".parse().unwrap())
-                .add_directive("sp1_core_executor=off".parse().unwrap()),
+                .add_directive("sp1_core_executor=off".parse().unwrap())
+                .add_directive("sp1_core_machine=error".parse().unwrap()),
         )
         .event_format(format)
         .init();

@@ -298,11 +298,12 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         ))
     }
 
-    /// Handles a failed proof request by inserting a new request.
+    /// Handles a failed proof request.
     ///
     /// If the request is a range proof and the number of failed requests is greater than 2 or the execution status is unexecutable, the request is split into two new requests.
-    /// Otherwise, the same request is inserted again with a new ID.
-    pub async fn retry_request(
+    /// Otherwise, add_new_ranges will insert the new request. This ensures better failure-resilience. If the request to add two range requests fails, add_new_ranges will handle it gracefully by submitting
+    /// the same range.
+    pub async fn handle_failed_request(
         &self,
         request: OPSuccinctRequest,
         execution_status: ExecutionStatus,
@@ -312,7 +313,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             start_block = request.start_block,
             end_block = request.end_block,
             req_type = ?request.req_type,
-            "Retrying request"
+            "Setting request to failed"
         );
 
         // Mark the existing request as failed.
@@ -335,9 +336,9 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 )
                 .await?;
 
-            // NOTE: The failed_requests check here can be removed in V5 once the only failures that occur are unexecutable requests.
+            // NOTE: The failed_requests check here can be removed in V5.
             if num_failed_requests > 2 || execution_status == ExecutionStatus::Unexecutable {
-                info!("Splitting request into two: {:?}", request.id);
+                info!("Splitting failed request into two: {:?}", request.id);
                 let mid_block = (request.start_block + request.end_block) / 2;
                 let new_requests = vec![
                     OPSuccinctRequest::create_range_request(
@@ -365,13 +366,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 ];
 
                 self.db_client.insert_requests(&new_requests).await?;
-                return Ok(());
             }
         }
-
-        self.db_client
-            .insert_request(&OPSuccinctRequest::new_retry_request(&request))
-            .await?;
 
         Ok(())
     }

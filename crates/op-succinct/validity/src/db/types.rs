@@ -219,30 +219,6 @@ impl OPSuccinctRequest {
             ..Default::default()
         }
     }
-
-    /// Creates a retry request.
-    ///
-    /// Preserves the request type, mode, block range, vkey commitments, rollup config hash, transaction metrics, and chain IDs.
-    pub fn new_retry_request(existing_request: &OPSuccinctRequest) -> Self {
-        // Retry the same request if splitting was not triggered.
-        let mut new_request = existing_request.clone();
-        new_request.id = 0;
-        new_request.status = RequestStatus::Unrequested;
-        new_request.created_at = Local::now().naive_local();
-        new_request.updated_at = Local::now().naive_local();
-        new_request.proof_request_id = None;
-        new_request.proof_request_time = None;
-        new_request.checkpointed_l1_block_number = None;
-        new_request.checkpointed_l1_block_hash = None;
-        new_request.execution_statistics = serde_json::Value::Null;
-        new_request.witnessgen_duration = None;
-        new_request.execution_duration = None;
-        new_request.prove_duration = None;
-        new_request.relay_tx_hash = None;
-        new_request.proof = None;
-
-        new_request
-    }
 }
 
 pub struct DriverDBClient {

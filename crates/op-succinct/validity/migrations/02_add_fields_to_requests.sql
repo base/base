@@ -2,5 +2,5 @@
 
 -- Add prover_address and l1_head_block_number columns to requests table
 ALTER TABLE requests 
-ADD COLUMN prover_address BYTEA,
-ADD COLUMN l1_head_block_number BIGINT; 
+ADD COLUMN IF NOT EXISTS prover_address BYTEA,
+ADD COLUMN IF NOT EXISTS l1_head_block_number BIGINT
