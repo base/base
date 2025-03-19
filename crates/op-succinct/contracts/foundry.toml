@@ -22,10 +22,7 @@ remappings = [
     "@lib-keccak/=lib/lib-keccak/contracts/lib"
 ]
 
-# Enable read-write access to opsuccinctl2ooconfig.json
-fs_permissions = [
-    { access = "read-write", path = "./opsuccinctl2ooconfig.json" },
-    { access = "read-write", path = "./opsuccinctl2ooconfig-test.json" }
-]
+# Enable read-write access to all files in current directory
+fs_permissions = [{ access = "read-write", path = "." }]
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

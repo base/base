@@ -188,38 +188,36 @@ where
                 "Inserting {} range proof requests into the database.",
                 ranges_to_prove.len()
             );
+
+            // Create range proof requests for the ranges to prove in parallel
+            let new_range_requests = stream::iter(ranges_to_prove)
+                .map(|range| {
+                    let mode = if self.requester_config.mock {
+                        RequestMode::Mock
+                    } else {
+                        RequestMode::Real
+                    };
+                    OPSuccinctRequest::create_range_request(
+                        mode,
+                        range.0,
+                        range.1,
+                        self.program_config.commitments.range_vkey_commitment,
+                        self.program_config.commitments.rollup_config_hash,
+                        self.requester_config.l1_chain_id,
+                        self.requester_config.l2_chain_id,
+                        self.driver_config.fetcher.clone(),
+                    )
+                })
+                .buffer_unordered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
+                .try_collect::<Vec<OPSuccinctRequest>>()
+                .await?;
+
+            // Insert the new range proof requests into the database.
+            self.driver_config
+                .driver_db_client
+                .insert_requests(&new_range_requests)
+                .await?;
         }
-
-        // Create range proof requests for the ranges to prove in parallel
-        let new_range_requests = stream::iter(ranges_to_prove)
-            .map(|range| {
-                let mode = if self.requester_config.mock {
-                    RequestMode::Mock
-                } else {
-                    RequestMode::Real
-                };
-                OPSuccinctRequest::create_range_request(
-                    mode,
-                    range.0,
-                    range.1,
-                    self.program_config.commitments.range_vkey_commitment,
-                    self.program_config.commitments.rollup_config_hash,
-                    self.requester_config.l1_chain_id,
-                    self.requester_config.l2_chain_id,
-                    self.driver_config.fetcher.clone(),
-                )
-            })
-            .buffer_unordered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
-            .try_collect::<Vec<OPSuccinctRequest>>()
-            .await?;
-
-        info!("Inserting new range proof requests into the database.");
-
-        // Insert the new range proof requests into the database.
-        self.driver_config
-            .driver_db_client
-            .insert_requests(&new_range_requests)
-            .await?;
 
         Ok(())
     }
@@ -695,6 +693,7 @@ where
                 l2_block_number: completed_agg_proof.end_block as u64,
                 l1_block_number: completed_agg_proof.checkpointed_l1_block_number.unwrap() as u64,
                 proof: completed_agg_proof.proof.as_ref().unwrap().clone().into(),
+                prover_address: self.requester_config.prover_address,
             }
             .abi_encode();
 
@@ -721,6 +720,7 @@ where
                     U256::from(completed_agg_proof.end_block),
                     U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
                     completed_agg_proof.proof.clone().unwrap().into(),
+                    self.requester_config.prover_address,
                 )
                 .send()
                 .await?
