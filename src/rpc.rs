@@ -294,12 +294,16 @@ where
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256> {
-        let current_nonce = EthState::transaction_count(&self.eth_api, address, block_number)
+        let block_id = block_number.unwrap_or_default();
+        if block_id.is_pending() {
+            let current_nonce = EthState::transaction_count(
+                &self.eth_api,
+                address,
+                Some(BlockId::Number(BlockNumberOrTag::Latest)),
+            )
             .await
             .map_err(Into::into)?;
 
-        let block_id = block_number.unwrap_or_default();
-        if block_id.is_pending() {
             // get the current latest block number
             let latest_block_header =
                 EthBlocks::rpc_block_header(&self.eth_api, BlockNumberOrTag::Latest.into())
@@ -321,6 +325,8 @@ where
             return Ok(current_nonce + U256::from(tx_count));
         }
 
-        Ok(current_nonce)
+        EthState::transaction_count(&self.eth_api, address, block_number)
+            .await
+            .map_err(Into::into)
     }
 }
