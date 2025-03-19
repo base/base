@@ -50,9 +50,8 @@ pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) ->
 /// let range_proof_interval = 25;
 ///
 /// let ranges_to_prove = get_ranges_to_prove(&disjoint_ranges, range_proof_interval);
-/// assert_eq!(ranges_to_prove, [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200), (200, 210)]);
+/// assert_eq!(ranges_to_prove, [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]);
 /// ```
-///
 pub fn get_ranges_to_prove(
     disjoint_ranges: &[(i64, i64)],
     range_proof_interval: i64,
@@ -65,6 +64,14 @@ pub fn get_ranges_to_prove(
             let current_end = std::cmp::min(current_start + range_proof_interval, end);
             ranges.push((current_start, current_end));
             current_start = current_end;
+        }
+    }
+
+    // For the last range, remove it if it's less than range_proof_interval. This is to ensure when inserting the ranges
+    // near the tip, only requests of size range_proof_interval are inserted.
+    if let Some(&(start, end)) = ranges.last() {
+        if end - start < range_proof_interval {
+            ranges.pop();
         }
     }
 
@@ -130,8 +137,7 @@ mod tests {
             (100, 125),
             (125, 150),
             (150, 175),
-            (175, 200),
-            (200, 210)
+            (175, 200)
         ]
     );
 
@@ -160,13 +166,13 @@ mod tests {
         test_get_ranges_to_prove_case_5,
         &[(0, 5), (10, 15), (20, 25)],
         3,
-        &[(0, 3), (3, 5), (10, 13), (13, 15), (20, 23), (23, 25)]
+        &[(0, 3), (3, 5), (10, 13), (13, 15), (20, 23)]
     );
 
     test_get_ranges_to_prove!(
         test_get_ranges_to_prove_case_interval_larger_than_range,
         &[(0, 5), (10, 15), (20, 25)],
         30,
-        &[(0, 5), (10, 15), (20, 25)]
+        &[(0, 5), (10, 15)]
     );
 }

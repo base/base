@@ -45,11 +45,11 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         status = GameStatus.IN_PROGRESS;
         wasRespectedGameTypeWhenCreated = true;
 
-        (uint256 l2BlockNumber_, uint256 l1BlockNumber_, bytes memory proof_) =
-            abi.decode(extraData(), (uint256, uint256, bytes));
+        (uint256 l2BlockNumber_, uint256 l1BlockNumber_, bytes memory proof_, address proverAddress_) =
+            abi.decode(extraData(), (uint256, uint256, bytes, address));
 
         OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(
-            rootClaim().raw(), l2BlockNumber_, l1BlockNumber_, proof_
+            rootClaim().raw(), l2BlockNumber_, l1BlockNumber_, proof_, proverAddress_
         );
 
         this.resolve();
