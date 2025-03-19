@@ -49,7 +49,7 @@ pub struct OpRbuilderArgs {
         help = "Safety level to pass to supervisor, values: finalized, safe, local-safe, cross-unsafe, unsafe, invalid"
     )]
     pub supervisor_safety_level: Option<String>,
-    /// Signals whether to log pool transactions events
+    /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,
 }
