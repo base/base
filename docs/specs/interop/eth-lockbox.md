@@ -13,7 +13,7 @@
     - [`authorizeLockbox`](#authorizelockbox)
     - [`migrateLiquidity`](#migrateliquidity)
     - [`receiveLiquidity`](#receiveliquidity)
-    - [`adminOwner`](#adminowner)
+    - [`proxyAdminOwner`](#proxyadminowner)
   - [Events](#events)
     - [`ETHLocked`](#ethlocked)
     - [`ETHUnlocked`](#ethunlocked)
@@ -86,8 +86,8 @@ Authorizes an `OptimismPortal` to interact with the `ETHLockbox`.
 
 - Only the `ProxyAdmin` owner can call the function.
 - The `ProxyAdmin` owner of the `OptimismPortal` must be the same as the `ProxyAdmin` owner of the `ETHLockbox`.
+- The `OptimismPortal` and `ETHLockbox` MUST share the same `SuperchainConfig` address
 - The function MUST emit the `PortalAuthorized` event with the `portal`.
-- The function MUST NOT allow the same `OptimismPortal` to be authorized more than once.
 
 ```solidity
 function authorizePortal(address _portal) external;
@@ -100,7 +100,6 @@ Authorizes another `ETHLockbox` to migrate its ETH liquidity to the current `ETH
 - Only the `ProxyAdmin` owner can call the function.
 - The `ProxyAdmin` owner of the source lockbox must be the same as the `ProxyAdmin` owner of the destination lockbox.
 - The function MUST emit the `LockboxAuthorized` event with the `lockbox` that is being authorized.
-- The function MUST NOT allow the same `ETHLockbox` to be authorized more than once.
 
 ```solidity
 function authorizeLockbox(address _lockbox) external;
@@ -130,12 +129,12 @@ Receives the ETH liquidity from another `ETHLockbox`.
 function receiveLiquidity() external payable;
 ```
 
-#### `adminOwner`
+#### `proxyAdminOwner`
 
 Returns the `ProxyAdmin` owner that manages the `ETHLockbox`.
 
 ```solidity
-function adminOwner() external view returns (address);
+function proxyAdminOwner() external view returns (address);
 ```
 
 ### Events

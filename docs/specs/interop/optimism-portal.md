@@ -9,9 +9,10 @@
 - [Interface and properties](#interface-and-properties)
   - [ETH Management](#eth-management)
     - [`migrateLiquidity`](#migrateliquidity)
-  - [Internal ETH Functions](#internal-eth-functions)
-    - [`_lockETH`](#_locketh)
-    - [`_unlockETH`](#_unlocketh)
+    - [`proxyAdminOwner`](#proxyadminowner)
+  - [Internal ETH functionality](#internal-eth-functionality)
+    - [Locking ETH](#locking-eth)
+    - [Unlocking ETH](#unlocking-eth)
 - [Events](#events)
   - [`ETHMigrated`](#ethmigrated)
 - [Invariants](#invariants)
@@ -49,25 +50,33 @@ function migrateLiquidity() external;
 - MUST transfer all ETH balance to the `ETHLockbox`
 - MUST emit an `ETHMigrated` event with the amount transferred
 
-### Internal ETH Functions
+#### `proxyAdminOwner`
 
-#### `_lockETH`
+Returns the `ProxyAdmin` owner that manages the `ETHLockbox`.
+
+```solidity
+function proxyAdminOwner() external view returns (address);
+```
+
+### Internal ETH functionality
+
+#### Locking ETH
 
 Called during deposit transactions to handle ETH locking.
 
 ```solidity
-function _lockETH() internal;
+if (msg.value > 0) ethLockbox.lockETH{ value: msg.value }();
 ```
 
 - MUST be invoked during `depositTransaction` when there is ETH value
 - MUST lock any ETH value in the `ETHLockbox`
 
-#### `_unlockETH`
+#### Unlocking ETH
 
 Called during withdrawal finalization to handle ETH unlocking.
 
 ```solidity
-function _unlockETH(uint256 _amount) internal;
+if (_tx.value > 0) ethLockbox.unlockETH(_tx.value);
 ```
 
 - MUST be invoked during withdrawal finalization when there is ETH value
