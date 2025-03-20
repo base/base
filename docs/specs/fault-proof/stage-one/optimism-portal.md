@@ -163,6 +163,13 @@ struct SuperOutput {
 }
 ```
 
+The output root for each chain in the super root MUST be for the block with a timestamp where
+$Time_S - BlockTime < Time_B <= Time_S$ where $Time_S$ is the super root timestamp, $BlockTime$ is the chain block time
+and $Time_B$ is the block timestamp. That is the output root must be from the last possible block at or before the super
+root timestamp.
+
+The output roots in the super root MUST be sorted by chain ID ascending.
+
 ### Super Root
 
 A **Super Root** is a commitment to a [Super Output](#super-output), computed as:
