@@ -454,21 +454,18 @@ where
                         Ok(None) => {}
                             Err(e) => {
                             tracing::warn!("Failed to handle game creation: {:?}", e);
-                            ProposerGauge::Errors.increment(1.0);
+                            ProposerGauge::GameCreationError.increment(1.0);
                         }
                     }
 
                     if let Err(e) = self.handle_game_defense().await {
                         tracing::warn!("Failed to handle game defense: {:?}", e);
-                        ProposerGauge::Errors.increment(1.0);
+                        ProposerGauge::GameDefenseError.increment(1.0);
                     }
 
-                    match self.handle_game_resolution().await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::warn!("Failed to handle game resolution: {:?}", e);
-                            ProposerGauge::Errors.increment(1.0);
-                        }
+                    if let Err(e) = self.handle_game_resolution().await {
+                        tracing::warn!("Failed to handle game resolution: {:?}", e);
+                        ProposerGauge::GameResolutionError.increment(1.0);
                     }
 
                     match self.handle_bond_claiming().await {
@@ -478,14 +475,14 @@ where
                         Ok(Action::Skipped) => {}
                         Err(e) => {
                             tracing::warn!("Failed to handle bond claiming: {:?}", e);
-                            ProposerGauge::Errors.increment(1.0);
+                            ProposerGauge::BondClaimingError.increment(1.0);
                         }
                     }
                 }
                 _ = metrics_interval.tick() => {
                     if let Err(e) = self.fetch_proposer_metrics().await {
                         tracing::warn!("Failed to fetch metrics: {:?}", e);
-                        ProposerGauge::Errors.increment(1.0);
+                        ProposerGauge::MetricsError.increment(1.0);
                     }
                 }
             }

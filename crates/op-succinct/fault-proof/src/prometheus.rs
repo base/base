@@ -38,10 +38,30 @@ pub enum ProposerGauge {
     GamesBondsClaimed,
     // Error metrics
     #[strum(
-        serialize = "op_succinct_fp_errors",
-        message = "Total number of errors encountered by the proposer"
+        serialize = "op_succinct_fp_game_creation_error",
+        message = "Total number of game creation errors encountered by the proposer"
     )]
-    Errors,
+    GameCreationError,
+    #[strum(
+        serialize = "op_succinct_fp_game_defense_error",
+        message = "Total number of game defense errors encountered by the proposer"
+    )]
+    GameDefenseError,
+    #[strum(
+        serialize = "op_succinct_fp_game_resolution_error",
+        message = "Total number of game resolution errors encountered by the proposer"
+    )]
+    GameResolutionError,
+    #[strum(
+        serialize = "op_succinct_fp_bond_claiming_error",
+        message = "Total number of bond claiming errors encountered by the proposer"
+    )]
+    BondClaimingError,
+    #[strum(
+        serialize = "op_succinct_fp_metrics_error",
+        message = "Total number of metrics errors encountered by the proposer"
+    )]
+    MetricsError,
 }
 
 impl MetricsGauge for ProposerGauge {}
@@ -67,10 +87,20 @@ pub enum ChallengerGauge {
     GamesBondsClaimed,
     // Error metrics
     #[strum(
-        serialize = "op_succinct_fp_challenger_errors",
-        message = "Total number of errors encountered by the challenger"
+        serialize = "op_succinct_fp_challenger_game_challenging_error",
+        message = "Total number of game challenging errors encountered by the challenger"
     )]
-    Errors,
+    GameChallengingError,
+    #[strum(
+        serialize = "op_succinct_fp_challenger_game_resolution_error",
+        message = "Total number of game resolution errors encountered by the challenger"
+    )]
+    GameResolutionError,
+    #[strum(
+        serialize = "op_succinct_fp_challenger_bond_claiming_error",
+        message = "Total number of bond claiming errors encountered by the challenger"
+    )]
+    BondClaimingError,
 }
 
 impl MetricsGauge for ChallengerGauge {}

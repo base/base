@@ -194,7 +194,7 @@ where
                 Ok(Action::Skipped) => {}
                 Err(e) => {
                     tracing::warn!("Failed to handle game challenging: {:?}", e);
-                    ChallengerGauge::Errors.increment(1.0);
+                    ChallengerGauge::GameChallengingError.increment(1.0);
                 }
             }
 
@@ -204,7 +204,7 @@ where
                 }
                 Err(e) => {
                     tracing::warn!("Failed to handle game resolution: {:?}", e);
-                    ChallengerGauge::Errors.increment(1.0);
+                    ChallengerGauge::GameResolutionError.increment(1.0);
                 }
             }
 
@@ -215,7 +215,7 @@ where
                 Ok(Action::Skipped) => {}
                 Err(e) => {
                     tracing::warn!("Failed to handle bond claiming: {:?}", e);
-                    ChallengerGauge::Errors.increment(1.0);
+                    ChallengerGauge::BondClaimingError.increment(1.0);
                 }
             }
         }
