@@ -45,11 +45,8 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         status = GameStatus.IN_PROGRESS;
         wasRespectedGameTypeWhenCreated = true;
 
-        (uint256 l2BlockNumber_, uint256 l1BlockNumber_, bytes memory proof_, address proverAddress_) =
-            abi.decode(extraData(), (uint256, uint256, bytes, address));
-
         OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(
-            rootClaim().raw(), l2BlockNumber_, l1BlockNumber_, proof_, proverAddress_
+            rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
         );
 
         this.resolve();
@@ -60,10 +57,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     ///      i.e. The game type should indicate the security model.
     /// @return gameType_ The type of proof system being used.
     function gameType() public pure returns (GameType) {
-        // TODO: Once a new version of the Optimism contracts containing the PR below is released,
-        // update this to return the correct game type: GameTypes.OP_SUCCINCT
-        // https://github.com/ethereum-optimism/optimism/pull/13780
-        return GameType.wrap(6);
+        return GameTypes.OP_SUCCINCT;
     }
 
     /// @notice Getter for the creator of the dispute game.
@@ -92,33 +86,42 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         l2BlockNumber_ = _getArgUint256(0x54);
     }
 
+    /// @notice The l2BlockNumber of the disputed output root in the `L2OutputOracle`.
+    function l1BlockNumber() public pure returns (uint256 l1BlockNumber_) {
+        l1BlockNumber_ = _getArgUint256(0x74);
+    }
+
+    /// @notice The prover address of the disputed output root in the `L2OutputOracle`.
+    function proverAddress() public pure returns (address proverAddress_) {
+        proverAddress_ = _getArgAddress(0x94);
+    }
+
+    /// @notice The prover address of the disputed output root in the `L2OutputOracle`.
+    function proof() public pure returns (bytes memory proof_) {
+        uint256 len;
+        assembly {
+            // 0xA8 is the starting point of the proof in the calldata.
+            // calldataload(sub(calldatasize(), 2)) loads the last 2 bytes of the calldata, which gives the length of the immutable args.
+            // shr(240, calldataload(sub(calldatasize(), 2))) masks the last 30 bytes loaded in the previous step, so only the length of the immutable args is left.
+            // sub(sub(...)) subtracts the length of the immutable args (2 bytes) and the starting point of the proof (0xA8).
+            len := sub(sub(shr(240, calldataload(sub(calldatasize(), 2))), 2), 0xA8)
+        }
+        proof_ = _getArgBytes(0xA8, len);
+    }
+
     /// @notice Getter for the extra data.
     /// @dev `clones-with-immutable-args` argument #4
     /// @return extraData_ Any extra data supplied to the dispute game contract by the creator.
     function extraData() public pure returns (bytes memory extraData_) {
-        // The extra data starts at the second word within the cwia calldata
-        uint256 offset = _getImmutableArgsOffset();
-        /// @solidity memory-safe-assembly
+        uint256 len;
         assembly {
-            // Calculate the starting position (offset + 0x54)
-            let startPos := add(offset, 0x54)
-            // Calculate length (total calldata size minus the starting position)
-            let length := sub(calldatasize(), startPos)
-
-            // Allocate memory for the result
-            extraData_ := mload(0x40)
-            // Store the length
-            mstore(extraData_, length)
-            // Copy the calldata starting from offset+0x54
-            calldatacopy(add(extraData_, 0x20), startPos, length)
-
-            // Zeroize the slot after the bytes
-            let endPos := add(add(extraData_, 0x20), length)
-            mstore(endPos, 0)
-
-            // Update the free memory pointer
-            mstore(0x40, add(endPos, 0x20))
+            // 0x54 is the starting point of the extra data in the calldata.
+            // calldataload(sub(calldatasize(), 2)) loads the last 2 bytes of the calldata, which gives the length of the immutable args.
+            // shr(240, calldataload(sub(calldatasize(), 2))) masks the last 30 bytes loaded in the previous step, so only the length of the immutable args is left.
+            // sub(sub(...)) subtracts the length of the immutable args (2 bytes) and the starting point of the extra data (0x54).
+            len := sub(sub(shr(240, calldataload(sub(calldatasize(), 2))), 2), 0x54)
         }
+        extraData_ = _getArgBytes(0x54, len);
     }
 
     /// @notice If all necessary information has been gathered, this function should mark the game

@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS(SELECT 1 FROM chain_locks WHERE l1_chain_id = $1 AND l2_chain_id = $2 AND locked_at > NOW() - $3::interval)\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Interval"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "f12201f6546e96369d91ece210e95054bc277a1a2b13835b39b12b69ad4e1e0b"
+}
