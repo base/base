@@ -7,7 +7,6 @@ mod tests {
     use alloy_primitives::{Address, Bytes, B256, U256};
     use alloy_provider::Identity;
     use alloy_provider::{Provider, ProviderBuilder};
-    use alloy_rpc_types::BlockTransactionsKind;
     use alloy_rpc_types_engine::PayloadId;
     use futures::SinkExt;
     use futures_util::StreamExt;
@@ -240,6 +239,36 @@ mod tests {
         let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         let balance = U256::from_str(response["result"].as_str().unwrap()).unwrap();
         assert_eq!(balance, U256::from_str("0x1234").unwrap());
+
+        // check nonce
+        let output = std::process::Command::new("curl")
+        .arg("http://localhost:1238")
+        .arg("-X")
+        .arg("POST")
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-d")
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","pending"],"id":1}"#)
+        .output()?;
+
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let nonce = U256::from_str(response["result"].as_str().unwrap()).unwrap();
+        assert_eq!(nonce, U256::from_str("0x1").unwrap());
+
+        // check latest nonce, should still be 0
+        let output = std::process::Command::new("curl")
+        .arg("http://localhost:1238")
+        .arg("-X")
+        .arg("POST")
+        .arg("-H")
+        .arg("Content-Type: application/json")
+        .arg("-d")
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","latest"],"id":1}"#)
+        .output()?;
+
+        let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        let nonce = U256::from_str(response["result"].as_str().unwrap()).unwrap();
+        assert_eq!(nonce, U256::from_str("0x0").unwrap());
 
         // Don't forget to cleanup
         ws_server.abort();

@@ -46,6 +46,13 @@ pub trait EthApiOverride {
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
         -> RpcResult<U256>;
+
+    #[method(name = "getTransactionCount")]
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<U256>;
 }
 
 #[derive(Debug)]
@@ -278,6 +285,47 @@ where
         }
 
         EthState::balance(&self.eth_api, address, block_number)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn get_transaction_count(
+        &self,
+        address: Address,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<U256> {
+        let block_id = block_number.unwrap_or_default();
+        if block_id.is_pending() {
+            let current_nonce = EthState::transaction_count(
+                &self.eth_api,
+                address,
+                Some(BlockId::Number(BlockNumberOrTag::Latest)),
+            )
+            .await
+            .map_err(Into::into)?;
+
+            // get the current latest block number
+            let latest_block_header =
+                EthBlocks::rpc_block_header(&self.eth_api, BlockNumberOrTag::Latest.into())
+                    .await
+                    .map_err(Into::into)?;
+
+            // Check if we have a block header
+            let latest_block_number = if let Some(header) = latest_block_header {
+                header.number
+            } else {
+                // If there's no latest block, return the current nonce without additions
+                return Ok(current_nonce);
+            };
+
+            let tx_count = self
+                .cache
+                .get::<u64>(&format!("tx_count:{}:{}", address, latest_block_number + 1))
+                .unwrap_or(0);
+            return Ok(current_nonce + U256::from(tx_count));
+        }
+
+        EthState::transaction_count(&self.eth_api, address, block_number)
             .await
             .map_err(Into::into)
     }
