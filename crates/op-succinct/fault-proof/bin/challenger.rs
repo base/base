@@ -35,6 +35,7 @@ where
     P: Provider<Ethereum> + Clone,
 {
     config: ChallengerConfig,
+    challenger_address: Address,
     l2_provider: L2Provider,
     l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
     factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
@@ -48,6 +49,7 @@ where
 {
     /// Creates a new challenger instance with the provided L1 provider with wallet and factory contract instance.
     pub async fn new(
+        challenger_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
     ) -> Result<Self> {
@@ -55,6 +57,7 @@ where
 
         Ok(Self {
             config: config.clone(),
+            challenger_address,
             l2_provider: ProviderBuilder::default().on_http(config.l2_rpc.clone()),
             l1_provider_with_wallet: l1_provider_with_wallet.clone(),
             factory: factory.clone(),
@@ -122,6 +125,58 @@ where
             .await
     }
 
+    /// Handles claiming bonds from resolved games.
+    pub async fn handle_bond_claiming(&self) -> Result<Action> {
+        let _span = tracing::info_span!("[[Claiming Bonds]]").entered();
+
+        if let Some(game_address) = self
+            .factory
+            .get_oldest_claimable_bond_game_address(
+                self.config.game_type,
+                self.config.max_games_to_check_for_bond_claiming,
+                self.challenger_address,
+            )
+            .await?
+        {
+            tracing::info!("Attempting to claim bond from game {:?}", game_address);
+
+            // Create a contract instance for the game
+            let game =
+                OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+
+            // Create a transaction to claim credit
+            let tx = game.claimCredit(self.challenger_address);
+
+            // Send the transaction
+            match tx.send().await {
+                Ok(pending_tx) => {
+                    let receipt = pending_tx
+                        .with_required_confirmations(NUM_CONFIRMATIONS)
+                        .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                        .get_receipt()
+                        .await?;
+
+                    tracing::info!(
+                        "\x1b[1mSuccessfully claimed bond from game {:?} with tx {:?}\x1b[0m",
+                        game_address,
+                        receipt.transaction_hash
+                    );
+
+                    Ok(Action::Performed)
+                }
+                Err(e) => Err(anyhow::anyhow!(
+                    "Failed to claim bond from game {:?}: {:?}",
+                    game_address,
+                    e
+                )),
+            }
+        } else {
+            tracing::info!("No new games to claim bonds from");
+
+            Ok(Action::Skipped)
+        }
+    }
+
     /// Runs the challenger in an infinite loop, periodically checking for games to challenge and resolve.
     async fn run(&mut self) -> Result<()> {
         tracing::info!("OP Succinct Challenger running...");
@@ -149,6 +204,17 @@ where
                 }
                 Err(e) => {
                     tracing::warn!("Failed to handle game resolution: {:?}", e);
+                    ChallengerGauge::Errors.increment(1.0);
+                }
+            }
+
+            match self.handle_bond_claiming().await {
+                Ok(Action::Performed) => {
+                    ChallengerGauge::GamesBondsClaimed.increment(1.0);
+                }
+                Ok(Action::Skipped) => {}
+                Err(e) => {
+                    tracing::warn!("Failed to handle bond claiming: {:?}", e);
                     ChallengerGauge::Errors.increment(1.0);
                 }
             }
@@ -182,9 +248,13 @@ async fn main() -> Result<()> {
         l1_provider_with_wallet.clone(),
     );
 
-    let mut challenger = OPSuccinctChallenger::new(l1_provider_with_wallet, factory)
-        .await
-        .unwrap();
+    let mut challenger = OPSuccinctChallenger::new(
+        wallet.default_signer().address(),
+        l1_provider_with_wallet,
+        factory,
+    )
+    .await
+    .unwrap();
 
     // Initialize challenger gauges.
     ChallengerGauge::register_all();
