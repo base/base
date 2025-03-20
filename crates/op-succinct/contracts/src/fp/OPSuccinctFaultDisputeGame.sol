@@ -641,13 +641,18 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         disputeGameFactory_ = DISPUTE_GAME_FACTORY;
     }
 
+    /// @notice Returns the challenger bond amount.
+    function challengerBond() external view returns (uint256 challengerBond_) {
+        challengerBond_ = CHALLENGER_BOND;
+    }
+
     /// @notice Returns the anchor state registry contract.
     function anchorStateRegistry() external view returns (IAnchorStateRegistry registry_) {
         registry_ = ANCHOR_STATE_REGISTRY;
     }
 
-    /// @notice Returns the challenger bond amount.
-    function challengerBond() external view returns (uint256 challengerBond_) {
-        challengerBond_ = CHALLENGER_BOND;
+    /// @notice Returns the access manager contract.
+    function accessManager() external view returns (AccessManager accessManager_) {
+        accessManager_ = ACCESS_MANAGER;
     }
 }
