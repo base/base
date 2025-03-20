@@ -11,7 +11,7 @@ use sp1_sdk::{
     NetworkProver, SP1Proof, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin, SP1_CIRCUIT_VERSION,
 };
 use std::{sync::Arc, time::Instant};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::db::DriverDBClient;
 use crate::{
@@ -303,12 +303,16 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
     /// If the request is a range proof and the number of failed requests is greater than 2 or the execution status is unexecutable, the request is split into two new requests.
     /// Otherwise, add_new_ranges will insert the new request. This ensures better failure-resilience. If the request to add two range requests fails, add_new_ranges will handle it gracefully by submitting
     /// the same range.
+    #[tracing::instrument(
+        name = "proof_requester.handle_failed_request",
+        skip(self, request, execution_status)
+    )]
     pub async fn handle_failed_request(
         &self,
         request: OPSuccinctRequest,
         execution_status: ExecutionStatus,
     ) -> Result<()> {
-        info!(
+        warn!(
             id = request.id,
             start_block = request.start_block,
             end_block = request.end_block,

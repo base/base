@@ -97,11 +97,4 @@ sol! {
         bytes32 l2_storage_hash;
         bytes32 l2_claim_hash;
     }
-
-    struct ValidityDisputeGameExtraData {
-        uint64 l2_block_number;
-        uint64 l1_block_number;
-        bytes proof;
-        address prover_address;
-    }
 }

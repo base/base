@@ -4,7 +4,7 @@ use crate::{
     ContractConfig, OPSuccinctProofRequester, ProgramConfig, RequesterConfig, ValidityGauge,
 };
 use alloy_eips::BlockId;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_provider::{network::ReceiptResponse, Network, Provider};
 use alloy_sol_types::SolValue;
 use anyhow::anyhow;
@@ -15,7 +15,7 @@ use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost, metrics::MetricsGauge,
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
-    ValidityDisputeGameExtraData, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
 };
 use sp1_sdk::{
     network::proto::network::{ExecutionStatus, FulfillmentStatus},
@@ -24,7 +24,7 @@ use sp1_sdk::{
 use std::collections::HashMap;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 
 /// Configuration for the driver.
 pub struct DriverConfig {
@@ -67,6 +67,25 @@ where
         loop_interval_seconds: Option<u64>,
         host: Arc<H>,
     ) -> Result<Self> {
+        // This check prevents users from running multiple proposers for the same chain at the same time.
+        let is_locked = db_client
+            .is_chain_locked(
+                requester_config.l1_chain_id,
+                requester_config.l2_chain_id,
+                Duration::from_secs(DEFAULT_LOOP_INTERVAL),
+            )
+            .await?;
+        if is_locked {
+            return Err(anyhow!(
+                "There is another proposer for the same chain connected to the database. Only one proposer can be connected to the database for a chain at a time."
+            ));
+        }
+
+        // Add the chain lock to the database.
+        db_client
+            .add_chain_lock(requester_config.l1_chain_id, requester_config.l2_chain_id)
+            .await?;
+
         let network_prover = Arc::new(ProverClient::builder().network().build());
         let (range_pk, range_vk) = network_prover.setup(RANGE_ELF_EMBEDDED);
         let (agg_pk, agg_vk) = network_prover.setup(AGGREGATION_ELF);
@@ -109,7 +128,7 @@ where
         let dgf_contract = DisputeGameFactoryContract::new(requester_config.dgf_address, provider);
 
         // 1 minute default loop interval.
-        const DEFAULT_LOOP_INTERVAL: u64 = 60;
+        const DEFAULT_LOOP_INTERVAL: u64 = 30;
 
         let proposer = Proposer {
             driver_config: DriverConfig {
@@ -208,7 +227,7 @@ where
                         self.driver_config.fetcher.clone(),
                     )
                 })
-                .buffer_unordered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
+                .buffered(10) // Do 10 at a time, otherwise it's too slow when fetching the block range data.
                 .try_collect::<Vec<OPSuccinctRequest>>()
                 .await?;
 
@@ -283,7 +302,7 @@ where
 
                 ValidityGauge::ProofRequestTimeoutErrorCount.increment(1.0);
 
-                tracing::error!(
+                tracing::warn!(
                     "Proof request has timed out for request id: {:?}",
                     proof_request_id
                 );
@@ -450,7 +469,7 @@ where
 
                 // If transaction reverted, log the error.
                 if !receipt.status() {
-                    tracing::error!("Transaction reverted: {:?}", receipt);
+                    tracing::warn!("Transaction reverted: {:?}", receipt);
                 }
 
                 tracing::info!("Checkpointed L1 block number: {:?}.", latest_header.number);
@@ -689,13 +708,12 @@ where
                 .await?
                 ._0;
 
-            let extra_data = ValidityDisputeGameExtraData {
-                l2_block_number: completed_agg_proof.end_block as u64,
-                l1_block_number: completed_agg_proof.checkpointed_l1_block_number.unwrap() as u64,
-                proof: completed_agg_proof.proof.as_ref().unwrap().clone().into(),
-                prover_address: self.requester_config.prover_address,
-            }
-            .abi_encode();
+            let extra_data = <(U256, U256, Address, Bytes)>::abi_encode_packed(&(
+                U256::from(completed_agg_proof.end_block as u64),
+                U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap() as u64),
+                self.requester_config.prover_address,
+                completed_agg_proof.proof.as_ref().unwrap().clone().into(),
+            ));
 
             self.contract_config
                 .dgf_contract
@@ -837,6 +855,11 @@ where
         // If a task is in the database in status Execution or WitnessGeneration but not in the tasks map, set it to status FAILED.
         for request in requests {
             if !self.tasks.lock().await.contains_key(&request.id) {
+                tracing::warn!(
+                    request_id = request.id,
+                    request_type = ?request.req_type,
+                    "Task is in the database in status Execution or WitnessGeneration but not in the tasks map, setting to status FAILED."
+                );
                 self.driver_config
                     .driver_db_client
                     .update_request_status(request.id, RequestStatus::Failed)
@@ -866,7 +889,7 @@ where
                 match handle.await {
                     Ok(result) => {
                         if let Err(e) = result {
-                            error!(
+                            warn!(
                                 request_id = request.id,
                                 request_type = ?request.req_type,
                                 error = ?e,
@@ -885,14 +908,14 @@ where
                                     ValidityGauge::ProofRequestRetryCount.increment(1.0);
                                 }
                                 Err(retry_err) => {
-                                    error!(error = ?retry_err, "Failed to retry request");
+                                    warn!(error = ?retry_err, "Failed to retry request");
                                     ValidityGauge::RetryErrorCount.increment(1.0);
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        error!(
+                        warn!(
                             request_id = request.id,
                             request_type = ?request.req_type,
                             error = ?e,
@@ -911,7 +934,7 @@ where
                                 ValidityGauge::ProofRequestRetryCount.increment(1.0);
                             }
                             Err(retry_err) => {
-                                error!(error = ?retry_err, "Failed to retry request after panic");
+                                warn!(error = ?retry_err, "Failed to retry request after panic");
                                 ValidityGauge::RetryErrorCount.increment(1.0);
                             }
                         }
@@ -1041,7 +1064,7 @@ where
         // Log metrics
         info!(
             target: "proposer_metrics",
-            "unrequested={num_unrequested_requests} prove={num_prove_requests} execution={num_execution_requests} witness_generation={num_witness_generation_requests} highest_contiguous_proven_block={highest_block_number}"
+            "unrequested={num_unrequested_requests} prove={num_prove_requests} execution={num_execution_requests} witness_generation={num_witness_generation_requests} highest_contiguous_proven_block={highest_block_number} latest_proposed_block={latest_proposed_block_number}"
         );
 
         // Update gauges for proof counts
@@ -1099,7 +1122,7 @@ where
                 }
                 Err(e) => {
                     // Log the error
-                    tracing::error!("Error in proposer loop: {}", e);
+                    tracing::warn!("Error in proposer loop: {:?}", e);
                     // Update the error gauge
                     ValidityGauge::TotalErrorCount.increment(1.0);
                     // Pause for 10 seconds before restarting
@@ -1139,6 +1162,15 @@ where
 
         // Submit any aggregation proofs that are complete.
         self.submit_agg_proofs().await?;
+
+        // Update the chain lock.
+        self.proof_requester
+            .db_client
+            .update_chain_lock(
+                self.requester_config.l1_chain_id,
+                self.requester_config.l2_chain_id,
+            )
+            .await?;
 
         Ok(())
     }
