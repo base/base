@@ -349,6 +349,22 @@ fn get_and_set_txs_and_receipts(
                 error!("Failed to set transaction index in cache: {}", e);
                 continue;
             }
+
+            // update tx count for each from address
+            if let Ok(from) = transaction.recover_signer() {
+                // Get current tx count, default to 0 if not found
+                let current_count = cache
+                    .get::<u64>(&format!("tx_count:{}:{}", from, block_number))
+                    .unwrap_or(0);
+                // Increment tx count by 1
+                if let Err(e) = cache.set(
+                    &format!("tx_count:{}:{}", from, block_number),
+                    &(current_count + 1),
+                    Some(10),
+                ) {
+                    error!("Failed to set transaction count in cache: {}", e);
+                }
+            }
         }
 
         // TODO: move this into the transaction check
