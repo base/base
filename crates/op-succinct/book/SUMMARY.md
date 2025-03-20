@@ -26,6 +26,7 @@
   - [Quick Start](./fault_proofs/quick_start.md)
   - [Best Practices](./fault_proofs/best_practices.md)
   - [Deploy FP Contracts](./fault_proofs/deploy.md)
+  - [Upgrade FP Contracts](./fault_proofs/upgrade.md)
   - [How to run the FP Proposer](./fault_proofs/proposer.md)
   - [How to run the FP Challenger](./fault_proofs/challenger.md)
   - [Running with Docker](./fault_proofs/docker.md)
