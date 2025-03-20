@@ -27,7 +27,11 @@
   - [`engine_newPayloadV4` API](#engine_newpayloadv4-api)
 - [Fees](#fees)
   - [Operator Fee](#operator-fee)
-    - [Configuring Parameters](#configuring-parameters)
+    - [Fee Formula](#fee-formula)
+    - [Deposit Operator Fees](#deposit-operator-fees)
+    - [EVM Fee Semantics](#evm-fee-semantics)
+    - [Transaction Pool Changes](#transaction-pool-changes)
+    - [Configuring Operator Fee Parameters](#configuring-operator-fee-parameters)
   - [Fee Vaults](#fee-vaults)
   - [Receipts](#receipts)
 
@@ -208,17 +212,57 @@ and the `operatorFeeConstant`.
 
 ### Operator Fee
 
-The operator fee, is set as follows:
+The operator fee is integrated directly into the EVM, alongside the standard gas fee and the OP Stack specific L1 data
+fee. This fee follows the same semantics of existing fees charged in the EVM[^1], just with a new fee beneficiary account.
 
-`operatorFee = (gasUsed * operatorFeeScalar / 1e6) + operatorFeeConstant`
+#### Fee Formula
+
+$$
+\text{operatorFee} = (\text{gas} \times \text{operatorFeeScalar} \div 10^6) + \text{operatorFeeConstant}
+$$
 
 Where:
 
-- `gasUsed` is amount of gas used by the transaction.
+- `gas` is the amount of gas that the transaction used. When calculating the amount of gas that is bought at the
+  beginning of the transaction, this should be the `gas_limit`. When determining how much gas should be refunded,
+  based off of how much of the `gas_limit` the transaction used, this should be the `gas_used`.
 - `operatorFeeScalar` is a `uint32` scalar set by the chain operator, scaled by `1e6`.
 - `operatorFeeConstant` is a `uint64` scalar set by the chain operator.
 
-#### Configuring Parameters
+#### Deposit Operator Fees
+
+Deposit transactions do not get charged operator fees. For all deposit transactions, regardless of the operator fee
+parameter configuration, the operator fee should be **zero**. Deposit transactions also do not receive operator fee gas
+refunds, since they never buy the operator fee gas to begin with.
+
+#### EVM Fee Semantics
+
+Like other fees in the EVM, the operator fee should be charged following the pattern below:
+1. During pre-execution validation, the account must have enough ETH to cover the existing worst-case gas + L1 data fees
+   _as well as_ the worst-case operator fee (for deposits, the worst-case fee is `0`). To compute this value, use the
+   [fee formula](#fee-formula) with `gas` set to the `gas_limit` of the transaction, and add it to the existing
+   worst-case transaction fee.
+1. When buying gas prior to execution, charge the account the worst-case operator fee. To compute this value, use the
+   [fee formula](#fee-formula) with `gas` set to the `gas_limit` of the transaction.
+1. After execution, when issuing refunds, transactions that bought operator fee gas should be refunded the operator fee
+   gas that was unused (i.e., the caller should only be charged the _effective_ operator fee.) The refund should be
+   calculated as $\text{opFeeRefund} = \text{opFeeWorstCase} - \text{opFeeActual}$, where:
+    - $\text{opFeeWorstCase}$ is as described in #1 + #2.
+    - $\text{opFeeActual}$ is the amount of the operator fee that was actually used. This value is computed using the
+      [fee formula](#fee-formula) with `gas` set to the `gas_limit - gas_used + refunded_gas`. `refunded_gas` is as
+      described in [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529).
+1. After execution, when rewarding the fee beneficiaries, send the _spent operator fee_ to the
+   [operator fee vault](#fee-vaults). This value is exactly $\text{opFeeActual}$ as described above.
+
+Implementations must ensure ETH is neither minted nor destroyed as a result of the operator fee.
+
+#### Transaction Pool Changes
+
+To account for the additional fee factored into transaction validity mentioned above, the transaction pool must reject
+transactions that do not have enough balance to cover the worst-case cost of the transaction fee. This worst-case cost
+of a transaction now includes the worst-case operator fee.
+
+#### Configuring Operator Fee Parameters
 
 `operatorFeeScalar` and `operatorFeeConstant` are loaded in a similar way to the `baseFeeScalar` and
 `blobBaseFeeScalar` used in the [`L1Fee`](../../protocol/exec-engine.md#ecotone-l1-cost-fee-changes-eip-4844-da).
@@ -242,3 +286,5 @@ The proxy is backed by a vault contract deployment, based on `FeeVault`, to rout
 
 After Isthmus activation, 2 new fields `operatorFeeScalar` and `operatorFeeConstant` are added to transaction receipts
 if and only if at least one of them is non zero.
+
+[^1]: Wood, G., & Ethereum Contributors. (n.d.-a). Ethereum Yellow Paper. [https://ethereum.github.io/yellowpaper/paper.pdf](https://ethereum.github.io/yellowpaper/paper.pdf) Page 8, section 5: "Gas and Payment"
