@@ -20,8 +20,6 @@ upgrade-fault-dispute-game:
             --etherscan-api-key $ETHERSCAN_API_KEY \
             --broadcast
     else
-        forge script script/fp/UpgradeOPSuccinctFDG.s.sol:UpgradeOPSuccinctFDG \
-            --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY \
-            --etherscan-api-key $ETHERSCAN_API_KEY
+        forge script UpgradeOPSuccinctFDG --sig "getUpgradeCalldata()" \
+            --private-key $PRIVATE_KEY
     fi
