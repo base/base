@@ -51,4 +51,36 @@ contract UpgradeOPSuccinctFDG is Script {
 
         vm.stopBroadcast();
     }
+
+    function getUpgradeCalldata() public returns (bytes memory) {
+        // Get the factory address.
+        address factoryAddress = vm.envAddress("FACTORY_ADDRESS");
+        GameType gameType = GameType.wrap(uint32(vm.envUint("GAME_TYPE")));
+
+        // Create the new implementation instance (without deploying).
+        OPSuccinctFaultDisputeGame newImpl = new OPSuccinctFaultDisputeGame(
+            Duration.wrap(uint64(vm.envUint("MAX_CHALLENGE_DURATION"))),
+            Duration.wrap(uint64(vm.envUint("MAX_PROVE_DURATION"))),
+            IDisputeGameFactory(factoryAddress),
+            ISP1Verifier(vm.envAddress("VERIFIER_ADDRESS")),
+            vm.envBytes32("ROLLUP_CONFIG_HASH"),
+            vm.envBytes32("AGGREGATION_VKEY"),
+            vm.envBytes32("RANGE_VKEY_COMMITMENT"),
+            vm.envOr("CHALLENGER_BOND_WEI", uint256(0.001 ether)),
+            IAnchorStateRegistry(vm.envAddress("ANCHOR_STATE_REGISTRY")),
+            AccessManager(vm.envAddress("ACCESS_MANAGER"))
+        );
+
+        // Generate the calldata for setImplementation.
+        bytes memory calldata_ = abi.encodeWithSelector(
+            DisputeGameFactory.setImplementation.selector, gameType, IDisputeGame(address(newImpl))
+        );
+
+        string memory calldataString = string.concat("Upgrade Calldata: ", vm.toString(calldata_));
+        console.log(calldataString);
+        console.log("Factory address:", factoryAddress);
+        console.log("New implementation address:", address(newImpl));
+
+        return calldata_;
+    }
 }
