@@ -119,6 +119,9 @@ pub struct ChallengerConfig {
     /// challenged up to `max_games_to_check_for_resolution` games behind the latest game.
     pub max_games_to_check_for_resolution: u64,
 
+    /// The maximum number of games to check for bond claiming.
+    pub max_games_to_check_for_bond_claiming: u64,
+
     /// The metrics port.
     pub metrics_port: u16,
 }
@@ -142,6 +145,9 @@ impl ChallengerConfig {
                 .unwrap_or("true".to_string())
                 .parse()?,
             max_games_to_check_for_resolution: env::var("MAX_GAMES_TO_CHECK_FOR_RESOLUTION")
+                .unwrap_or("100".to_string())
+                .parse()?,
+            max_games_to_check_for_bond_claiming: env::var("MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING")
                 .unwrap_or("100".to_string())
                 .parse()?,
             metrics_port: env::var("CHALLENGER_METRICS_PORT")

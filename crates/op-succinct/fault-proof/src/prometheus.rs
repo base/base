@@ -60,6 +60,11 @@ pub enum ChallengerGauge {
         message = "Total number of games resolved by the challenger"
     )]
     GamesResolved,
+    #[strum(
+        serialize = "op_succinct_fp_challenger_games_bonds_claimed",
+        message = "Total number of games that bonds were claimed by the challenger"
+    )]
+    GamesBondsClaimed,
     // Error metrics
     #[strum(
         serialize = "op_succinct_fp_challenger_errors",
