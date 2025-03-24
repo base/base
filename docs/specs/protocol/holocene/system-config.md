@@ -43,7 +43,12 @@ The following actions should happen during the initialization of the `SystemConf
 - `emit ConfigUpdate.FEE_SCALARS`
 - `emit ConfigUpdate.GAS_LIMIT`
 - `emit ConfigUpdate.UNSAFE_BLOCK_SIGNER`
-- `emit ConfigUpdate.EIP_1559_PARAMS`
+
+Intentionally absent from this is `emit ConfigUpdate.EIP_1559_PARAMS`.
+As long as these values are unset, the default values will be used.
+Requiring 1559 parameters to be set during initialization would add a strict requirement
+that the L2 hardforks before the L1 contracts, and this is complicated to manage in a
+world of many chains.
 
 ### Modifying EIP-1559 Parameters
 
