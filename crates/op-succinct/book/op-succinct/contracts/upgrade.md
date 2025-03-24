@@ -27,7 +27,7 @@ If you want to manually upgrade the `OPSuccinctL2OutputOracle` contract, follow 
 
 ## 2. Configure your environment
 
-Ensure that you have the correct environment variables set in your environment file. See the [Configuration](./configuration.md) section for more information.
+Ensure that you have the correct environment variables set in your environment file. See the [Environment Variables](./environment.md) section for more information.
 
 ## 3. Upgrade the `OPSuccinctL2OutputOracle` contract
 

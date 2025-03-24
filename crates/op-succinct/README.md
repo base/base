@@ -1,6 +1,8 @@
 # op-succinct
 
-OP Succinct turns any OP stack rollup into a full type-1 zkEVM Rollup in 1 hour using SP1.
+OP Succinct is the production-grade proving engine for the OP Stack, powered by SP1.
+
+With support for both validity proofs, with OP Succinct, and ZK fault proofs, with OP Succinct Lite, OP Succinct enables seamless upgrades for OP Stack rollups to a type-1 zkEVM rollup.
 
 **[Docs](https://succinctlabs.github.io/op-succinct)**
 
@@ -22,11 +24,11 @@ The repository is organized into the following directories:
 - `proposer`: The implementation of the `op-succinct/op-succinct` service.
 - `fault-proof`: The implementation of the `op-succinct/fault-proof` service.
 - `scripts`: Scripts for testing and deploying OP Succinct.
-- `utils`: The shared utilities for the other directories.
+- `utils`: Shared utilities for the host, client, and proposer.
 
 ## Acknowledgments
 
 This repo would not exist without:
 * [OP Stack](https://docs.optimism.io/stack/getting-started): Modular software components for building L2 blockchains.
 * [Kona](https://github.com/anton-rs/kona/tree/main): A portable implementation of the OP Stack rollup state transition, namely the derivation pipeline and the block execution logic.
-* [SP1](https://github.com/succinctlabs/sp1): A fast, feature-complete zkVM for developers that can prove the execution of arbitrary Rust (or any LLVM-compiled) program.
+* [SP1](https://github.com/succinctlabs/sp1): The fastest, most feature-complete zkVM for developers.

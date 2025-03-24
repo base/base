@@ -6,7 +6,7 @@ The command will only update the parameters in the contract if they don't match 
 
 ## 1. Configure your environment
 
-First, ensure that you have the correct environment variables set in your `.env` file. See the [Configuration](./configuration.md) section for more information.
+First, ensure that you have the correct environment variables set in your `.env` file. See the [Environment Variables](./environment.md) section for more information.
 
 ## 2. Update the parameters
 
