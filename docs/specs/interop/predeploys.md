@@ -70,7 +70,7 @@
 ## Overview
 
 Four new system level predeploys are introduced for managing cross chain messaging and tokens, along with
-an update to the `L1Block`, `OptimismMintableERC20Factory` and `L2StandardBridge` contracts with additional functionalities.
+an update to the `OptimismMintableERC20Factory` and `L2StandardBridge` contracts with additional functionalities.
 
 ## CrossL2Inbox
 
@@ -275,12 +275,10 @@ contract MyCrossChainApp {
 
 ### Deposit Handling
 
-Any call to the `CrossL2Inbox` that would emit an `ExecutingMessage` event will reverts
-if the call is made in a [deposit context](./derivation.md#deposit-context).
-The deposit context status can be determined by calling `isDeposit` on the `L1Block` contract.
-
-In the future, deposit handling will be modified to be more permissive.
-It will revert only in specific cases where interop dependency resolution is not feasible.
+Any call to the `CrossL2Inbox` that would emit an `ExecutingMessage` event will revert if the
+transaction did not declare an access list including the message checksum, as
+[described above](#type-3-checksum). Because deposit transactions do not have access lists,
+all calls to the `CrossL2Inbox` originating within a deposit transaction will revert.
 
 ### `Identifier` Getters
 

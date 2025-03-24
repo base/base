@@ -44,9 +44,6 @@ and should thus be dropped from the transaction-pool.
 
 ## System deposits transaction margin
 
-The [Deposit context closing transaction](./derivation.md#closing-the-deposit-context) requires
-a small margin of additional EVM gas to be available for system operations.
-
 The transaction-pool should filter out L2 transactions that spend more than the
 gas limit, minus the gas spent on system transactions.
 This ensures that the transaction can be included in a valid L2 block,
