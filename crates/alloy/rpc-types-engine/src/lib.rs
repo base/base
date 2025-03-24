@@ -27,3 +27,8 @@ pub use payload::{
     v3::OpExecutionPayloadEnvelopeV3,
     v4::{OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4},
 };
+
+mod superchain;
+pub use superchain::{
+    ProtocolVersion, ProtocolVersionError, ProtocolVersionFormatV0, SuperchainSignal,
+};
