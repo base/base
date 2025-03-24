@@ -1,8 +1,35 @@
-# L2 Node Setup
+# Node Setup
 
-This guide will show you how to set up an L2 execution node (`op-geth`) and a rollup node (`op-node`) for your OP Stack chain.
+## Overview
 
-## Instructions
+To run OP Succinct or OP Succinct Lite, you will need the following RPCs:
+
+- L1 Execution Archive Node
+- L1 Consensus (Beacon) Node
+- L2 Execution Node (`op-geth`)
+- L2 Rollup Node (`op-node`)
+
+## Required Accessible Endpoints
+
+The RPCs must support the following endpoints:
+
+| RPC | Endpoints | Description |
+|-----|-----------|-------------|
+| `L1_RPC` | `debug_getRawHeader`, `debug_getRawReceipts`, `debug_getRawBlock` | L1 Execution Archive Node |
+| `L2_RPC` | `debug_getRawHeader`, `debug_getRawTransaction`, `debug_getRawBlock`, `debug_dbGet` | L2 Execution Node (`op-geth`) |
+| `L2_NODE_RPC` | `optimism_outputAtBlock`, `optimism_rollupConfig`, `optimism_syncStatus`, `optimism_safeHeadAtL1Block` | L2 Rollup Node (`op-node`) |
+
+## External RPC Provider
+
+First, we'd recommend asking your RPC provider if they support these endpoints. If they do, you can use them.
+
+> **Note:** While some RPC providers (like Alchemy and Infura) support the required L1 endpoints after enabling them, most RPC providers do not support the `debug_dbGet` endpoint for external users. You will likely need to run your own L2 nodes for this reason.
+
+## Running Your Own L2 Nodes
+
+If you don't have access to these endpoints, you can run your own L2 nodes.
+
+### Instructions
 1. Clone [simple-optimism-node](https://github.com/smartcontracts/simple-optimism-node) and follow the instructions in the README to set up your rollup.
 2. Ensure you configure the rollup with `NODE_TYPE`=`archive` and `OP_GETH__SYNCMODE`=snap. With this, you will be able to prove blocks in OP Succcinct using blocks after the snap sync.
 
@@ -10,7 +37,7 @@ Your `op-geth` endpoint will be available at the RPC port chosen [here](https://
 
 Your `op-node` endpoint (rollup node) will be available at the RPC port chosen [here](https://github.com/smartcontracts/simple-optimism-node/blob/main/scripts/start-op-node.sh#L21), which in this case is `9545` (e.g. `http://localhost:9545`).
 
-## Check Sync Status
+#### Check Sync Status
 
 After a few hours, your node should be fully synced and you can use it to begin generating ZKPs.
 
