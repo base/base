@@ -201,7 +201,7 @@ impl TxDeposit {
 
     /// Returns the signature for the optimism deposit transactions, which don't include a
     /// signature.
-    pub fn signature() -> Signature {
+    pub const fn signature() -> Signature {
         Signature::new(U256::ZERO, U256::ZERO, false)
     }
 }
