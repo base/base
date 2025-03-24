@@ -10,8 +10,6 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-This document is not finalized and should be considered experimental.
-
 ## Execution Layer
 
 - [Pectra](https://eips.ethereum.org/EIPS/eip-7600) (Execution Layer):
