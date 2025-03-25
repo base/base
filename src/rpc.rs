@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::cache::Cache;
+use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -25,7 +26,7 @@ use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
     RpcNodeCore,
 };
-use tracing::info;
+use tracing::{debug, info};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -60,11 +61,16 @@ pub struct EthApiExt<Eth> {
     #[allow(dead_code)] // temporary until we implement the flashblocks API
     eth_api: Eth,
     cache: Arc<Cache>,
+    metrics: Metrics,
 }
 
 impl<E> EthApiExt<E> {
-    pub const fn new(eth_api: E, cache: Arc<Cache>) -> Self {
-        Self { eth_api, cache }
+    pub fn new(eth_api: E, cache: Arc<Cache>) -> Self {
+        Self {
+            eth_api,
+            cache,
+            metrics: Metrics::default(),
+        }
     }
 
     pub fn transform_block(&self, block: OpBlock, full: bool) -> RpcBlock<Optimism> {
@@ -226,7 +232,8 @@ where
     ) -> RpcResult<Option<RpcBlock<Optimism>>> {
         match number {
             BlockNumberOrTag::Pending => {
-                info!("pending block by number, delegating to flashblocks");
+                debug!("pending block by number, delegating to flashblocks");
+                self.metrics.flashblocks_get_block_by_number.increment(1);
                 if let Some(block) = self.cache.get::<OpBlock>("pending") {
                     return Ok(Some(self.transform_block(block, _full)));
                 } else {
@@ -255,6 +262,9 @@ where
                 .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
             {
                 info!("receipt found in cache");
+                self.metrics
+                    .flashblocks_get_transaction_receipt
+                    .increment(1);
                 return Ok(Some(
                     self.transform_receipt(
                         receipt,
@@ -278,6 +288,7 @@ where
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
+            self.metrics.flashblocks_get_balance.increment(1);
             if let Some(balance) = self.cache.get::<U256>(address.to_string().as_str()) {
                 return Ok(balance);
             }
@@ -296,6 +307,7 @@ where
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
+            self.metrics.flashblocks_get_transaction_count.increment(1);
             let current_nonce = EthState::transaction_count(
                 &self.eth_api,
                 address,
@@ -303,6 +315,8 @@ where
             )
             .await
             .map_err(Into::into)?;
+
+            debug!("current nonce: {}", current_nonce);
 
             // get the current latest block number
             let latest_block_header =
@@ -312,8 +326,10 @@ where
 
             // Check if we have a block header
             let latest_block_number = if let Some(header) = latest_block_header {
+                debug!("latest block number: {}", header.number);
                 header.number
             } else {
+                debug!("no latest block, returning current nonce");
                 // If there's no latest block, return the current nonce without additions
                 return Ok(current_nonce);
             };
@@ -322,6 +338,9 @@ where
                 .cache
                 .get::<u64>(&format!("tx_count:{}:{}", address, latest_block_number + 1))
                 .unwrap_or(0);
+
+            debug!("tx count: {}", tx_count);
+
             return Ok(current_nonce + U256::from(tx_count));
         }
 
