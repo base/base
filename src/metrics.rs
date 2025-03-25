@@ -11,4 +11,16 @@ pub struct Metrics {
 
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
+
+    #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
+    pub flashblocks_get_transaction_count: Counter,
+
+    #[metric(describe = "Count of times flashblocks get_transaction_receipt is called")]
+    pub flashblocks_get_transaction_receipt: Counter,
+
+    #[metric(describe = "Count of times flashblocks get_balance is called")]
+    pub flashblocks_get_balance: Counter,
+
+    #[metric(describe = "Count of times flashblocks get_block_by_number is called")]
+    pub flashblocks_get_block_by_number: Counter,
 }
