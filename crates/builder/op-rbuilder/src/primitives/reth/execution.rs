@@ -1,8 +1,8 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_consensus::Transaction;
-use alloy_primitives::private::alloy_rlp::Encodable;
-use alloy_primitives::{Address, TxHash, B256, U256};
+use alloy_primitives::{private::alloy_rlp::Encodable, Address, TxHash, B256, U256};
 use reth_node_api::NodePrimitives;
+use reth_optimism_primitives::OpReceipt;
 use std::collections::HashSet;
 
 /// Holds the state after execution
@@ -21,7 +21,7 @@ pub struct ExecutionInfo<N: NodePrimitives> {
     /// The recovered senders for the executed transactions.
     pub executed_senders: Vec<Address>,
     /// The transaction receipts
-    pub receipts: Vec<N::Receipt>,
+    pub receipts: Vec<OpReceipt>,
     /// All gas used so far
     pub cumulative_gas_used: u64,
     /// Estimated DA size

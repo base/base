@@ -32,7 +32,7 @@ impl Signer {
         let signature = Signature::new(
             U256::try_from_be_slice(&data[..32]).expect("The slice has at most 32 bytes"),
             U256::try_from_be_slice(&data[32..64]).expect("The slice has at most 32 bytes"),
-            rec_id.to_i32() != 0,
+            i32::from(rec_id) != 0,
         );
         Ok(signature)
     }
@@ -95,7 +95,7 @@ mod test {
         let signed_tx = signer.sign_tx(tx).expect("sign tx");
         assert_eq!(signed_tx.signer(), address);
 
-        let signed = signed_tx.into_tx();
+        let signed = signed_tx.into_inner();
         assert_eq!(signed.recover_signer().ok(), Some(address));
     }
 }

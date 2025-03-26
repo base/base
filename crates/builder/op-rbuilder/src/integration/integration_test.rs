@@ -1,24 +1,24 @@
 #[cfg(all(test, feature = "integration"))]
 mod tests {
-    use crate::integration::{
-        op_rbuilder::OpRbuilderConfig, op_reth::OpRethConfig, IntegrationFramework,
+    use crate::{
+        integration::{op_rbuilder::OpRbuilderConfig, op_reth::OpRethConfig, IntegrationFramework},
+        tester::{BlockGenerator, EngineApi},
+        tx_signer::Signer,
     };
-    use crate::tester::{BlockGenerator, EngineApi};
-    use crate::tx_signer::Signer;
     use alloy_consensus::{Transaction, TxEip1559};
-    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
     use alloy_primitives::hex;
-    use alloy_provider::Identity;
-    use alloy_provider::{Provider, ProviderBuilder};
+    use alloy_provider::{Identity, Provider, ProviderBuilder};
     use alloy_rpc_types_eth::BlockTransactionsKind;
     use futures_util::StreamExt;
     use op_alloy_consensus::OpTypedTransaction;
     use op_alloy_network::Optimism;
-    use std::cmp::max;
-    use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::{
+        cmp::max,
+        path::PathBuf,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
     use tokio_tungstenite::connect_async;
     use uuid::Uuid;
 
@@ -77,7 +77,7 @@ mod tests {
 
             // query the block and the transactions inside the block
             let block = provider
-                .get_block_by_hash(block_hash, BlockTransactionsKind::Hashes)
+                .get_block_by_hash(block_hash)
                 .await?
                 .expect("block");
 
@@ -185,7 +185,7 @@ mod tests {
 
             // query the block and the transactions inside the block
             let block = provider
-                .get_block_by_hash(block_hash, BlockTransactionsKind::Hashes)
+                .get_block_by_hash(block_hash)
                 .await?
                 .expect("block");
 
@@ -314,7 +314,8 @@ mod tests {
 
         // Query the block and check transaction ordering
         let block = provider
-            .get_block_by_hash(block_hash, BlockTransactionsKind::Full)
+            .get_block_by_hash(block_hash)
+            .full()
             .await?
             .expect("block");
 
@@ -420,7 +421,7 @@ mod tests {
 
             // query the block and the transactions inside the block
             let block = provider
-                .get_block_by_hash(block_hash, BlockTransactionsKind::Hashes)
+                .get_block_by_hash(block_hash)
                 .await?
                 .expect("block");
 
