@@ -316,7 +316,7 @@ where
             .await
             .map_err(Into::into)?;
 
-            debug!("current nonce: {}", current_nonce);
+            info!("current nonce: {}", current_nonce);
 
             // get the current latest block number
             let latest_block_header =
@@ -326,10 +326,10 @@ where
 
             // Check if we have a block header
             let latest_block_number = if let Some(header) = latest_block_header {
-                debug!("latest block number: {}", header.number);
+                info!("latest block number: {}", header.number);
                 header.number
             } else {
-                debug!("no latest block, returning current nonce");
+                info!("no latest block, returning current nonce");
                 // If there's no latest block, return the current nonce without additions
                 return Ok(current_nonce);
             };
@@ -339,7 +339,7 @@ where
                 .get::<u64>(&format!("tx_count:{}:{}", address, latest_block_number + 1))
                 .unwrap_or(0);
 
-            debug!("tx count: {}", tx_count);
+            info!("tx count: {}", tx_count);
 
             return Ok(current_nonce + U256::from(tx_count));
         }
