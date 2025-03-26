@@ -33,6 +33,8 @@ pub use source::*;
 mod block;
 pub use block::OpBlock;
 
+pub mod interop;
+
 #[cfg(feature = "serde")]
 pub use transaction::serde_deposit_tx_rpc;
 
