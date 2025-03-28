@@ -220,14 +220,21 @@ impl OpNetworkPayloadEnvelope {
         let block_data = &decompressed[97..];
 
         let signature = Signature::try_from(sig_data)?;
-        let parent_beacon_block_root = Some(B256::from_slice(parent_beacon_block_root));
-        let hash = PayloadHash::from(block_data);
+        let parent_beacon_block_root = B256::from_slice(parent_beacon_block_root);
+        let hash = PayloadHash::from(
+            [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
+        );
 
         let payload = OpExecutionPayload::V3(
             alloy_rpc_types_engine::ExecutionPayloadV3::from_ssz_bytes(block_data)?,
         );
 
-        Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root })
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        })
     }
 
     /// Decode a payload envelope from a snappy-compressed byte array.
@@ -247,12 +254,19 @@ impl OpNetworkPayloadEnvelope {
         let block_data = &decompressed[97..];
 
         let signature = Signature::try_from(sig_data)?;
-        let parent_beacon_block_root = Some(B256::from_slice(parent_beacon_block_root));
-        let hash = PayloadHash::from(block_data);
+        let parent_beacon_block_root = B256::from_slice(parent_beacon_block_root);
+        let hash = PayloadHash::from(
+            [parent_beacon_block_root.as_slice(), block_data].concat().as_slice(),
+        );
 
         let payload = OpExecutionPayload::V4(OpExecutionPayloadV4::from_ssz_bytes(block_data)?);
 
-        Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root })
+        Ok(Self {
+            payload,
+            signature,
+            payload_hash: hash,
+            parent_beacon_block_root: Some(parent_beacon_block_root),
+        })
     }
 }
 
