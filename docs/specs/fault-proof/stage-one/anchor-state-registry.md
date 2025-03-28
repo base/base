@@ -42,6 +42,8 @@
   - [iASR-004: Invalidation functions operate correctly](#iasr-004-invalidation-functions-operate-correctly)
     - [Impact](#impact-3)
     - [Dependencies](#dependencies-3)
+  - [iASR-005: The Anchor Game is recent enough to be fault provable](#iasr-005-the-anchor-game-is-recent-enough-to-be-fault-provable)
+    - [Impact](#impact-4)
 - [Function Specification](#function-specification)
   - [constructor](#constructor)
   - [initialize](#initialize)
@@ -149,19 +151,20 @@ A Dispute Game that is **NOT** a Proper Game can also be referred to as an **Imp
 brevity. A Dispute Game can go from being a Proper Game to later *not* being an **Improper Game**
 if it is invalidated by being [blacklisted](#blacklisted-game) or [retired](#retired-game).
 
-**ALL** Dispute Games **TEMPORARILY** become Improper Games while the Superchain-wide pause
-mechanism is active. However, this is a *temporary* condition such that Registered Games that are
-not invalidated by [blacklisting](#blacklisted-game) or [retirement](#retired-game) will become
-Proper Games again once the pause is lifted. The Superchain-wide pause is therefore a way to
-*temporarily* prevent Dispute Games from being used by consumers like the `OptimismPortal` while
-relevant parties coordinate the use of some other invalidation mechanism.
+**ALL** Dispute Games **TEMPORARILY** become Improper Games while the
+[Pause Mechanism](../../protocol/stage-1.md#pause-mechanism) is active. However, this is
+a *temporary* condition such that Registered Games that are not invalidated by
+[blacklisting](#blacklisted-game) or [retirement](#retired-game) will become Proper Games again
+once the pause is lifted. The Pause Mechanism is therefore a way to *temporarily* prevent Dispute
+Games from being used by consumers like the `OptimismPortal` while relevant parties coordinate the
+use of some other invalidation mechanism.
 
 A Game is considered to be a Proper Game if all of the following are true:
 
 - The game is a [Registered Game](#registered-game)
 - The game is **NOT** a [Blacklisted Game](#blacklisted-game)
 - The game is **NOT** a [Retired Game](#retired-game)
-- The Superchain-wide pause is not active
+- The [Pause Mechanism](../../protocol/stage-1.md#pause-mechanism) is not active
 
 ### Resolved Game
 
@@ -261,10 +264,10 @@ have [Valid Claims](#valid-claim).
 
 Proper Games that resolve in favor the Defender will be considered to have Valid Claims after the
 [Dispute Game Finality Delay](#dispute-game-finality-delay-airgap) has elapsed UNLESS the
-Superchain-wide pause mechanism is active. Therefore, in the absence of the Superchain-wide pause
-mechanism, parties responsible for game invalidation have exactly the Dispute Game Finality Delay
-to invalidate a withdrawal after it resolves incorrectly. If the Superchain-wide pause is active,
-then any incorrectly resolving games must be invalidated before the pause is deactivated.
+Pause Mechanism is active. Therefore, in the absence of the Pause Mechanism, parties responsible
+for game invalidation have exactly the Dispute Game Finality Delay to invalidate a withdrawal after
+it resolves incorrectly. If the Pause Mechanism is active, then any incorrectly resolving games
+must be invalidated before the pause is deactivated.
 
 #### Mitigations
 
@@ -372,6 +375,20 @@ finalize withdrawals with invalidated games would be considered Critical Severit
 
 - [aASR-003](#aasr-003-incorrectly-resolving-games-will-be-invalidated-before-they-have-valid-claims)
 
+### iASR-005: The Anchor Game is recent enough to be fault provable
+
+We require that the Anchor Game corresponds to an L2 block with an L1 origin timestamp that is no
+older than 6 months from the current timestamp. This time constraint is necessary because the fault
+proof VM must walk backwards through L1 blocks to verify derivation, and processing 7 months worth
+of L1 blocks approaches the maximum time available to challengers in the dispute game process.
+
+#### Impact
+
+**Severity: High**
+
+If this invariant is broken, challengers will be unable to participate in fault proofs within the
+allotted response time, and resolution would require intervention from the Proxy Admin Owner.
+
 ## Function Specification
 
 ### constructor
@@ -381,7 +398,7 @@ finalize withdrawals with invalidated games would be considered Critical Severit
 ### initialize
 
 - MUST only be triggerable once.
-- MUST set the value of the `SuperchainConfig` contract that stores the address of the Guardian.
+- MUST set the value of the `SystemConfig` contract that stores the address of the Guardian.
 - MUST set the value of the `DisputeGameFactory` contract that creates Dispute Game instances.
 - MUST set the value of the [Starting Anchor State](#starting-anchor-state).
 - MUST set the value of the initial [Respected Game Type](#respected-game-type).
@@ -394,7 +411,7 @@ finalize withdrawals with invalidated games would be considered Critical Severit
 
 ### paused
 
-Returns the value of the Superchain-wide `paused()` flag in the `SuperchainConfig` contract.
+Returns the value of `paused()` from the `SystemConfig` contract.
 
 ### respectedGameType
 

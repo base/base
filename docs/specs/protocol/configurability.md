@@ -91,7 +91,7 @@ see [Batcher Transaction](../glossary.md#batcher-transaction)).<br/>
 concatenation, `versionByte` is `0x00`, and `chainId` is a `uint256`.<br/>
 **Notes:** It is recommended, but not required, to follow this convention.
 
-### [Batcher Hash](./system-config.md#batcherhash-bytes32)
+### [Batcher Hash](./system-config.md#batcher-hash)
 
 **Description:** A versioned hash of the current authorized batcher sender(s).<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -220,7 +220,7 @@ using fault proofs from genesis.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** Set such that Fee Margin is between 0 and 50%.<br/>
 
-### [Gas Limit](./system-config.md#gaslimit-uint64)
+### [Gas Limit](./system-config.md#l2-gas-limit)
 
 **Description:** Gas limit of the L2 blocks is configured through the system config.<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
@@ -436,8 +436,8 @@ respected game type in the `OptimismPortal`.<br/>
 **Requirement:**
 [0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2](https://etherscan.io/address/0x09f7150D8c019BeF34450d6920f6B3608ceFdAf2)<br/>
 **Notes:** A 1/1 Safe owned by the Security Council Safe, with
-the [Deputy Guardian Module](../protocol/safe-extensions.md#deputy-guardian-module) enabled to allow the Optimism
-Foundation to act as Guardian.<br/>
+the [Deputy Pause Module](./deputy-pause-module.md) enabled to allow the Optimism
+Foundation to act as [Pause Deputy](./stage-1.md#pause-deputy).<br/>
 
 ### [Proposer address](https://github.com/ethereum-optimism/optimism/blob/op-contracts/v1.5.0/packages/contracts-bedrock/src/dispute/PermissionedDisputeGame.sol#L20)
 

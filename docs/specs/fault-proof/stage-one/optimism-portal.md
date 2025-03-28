@@ -238,11 +238,10 @@ We assume that any games that are resolved incorrectly will be invalidated eithe
 
 Proper Games that resolve in favor the Defender will be considered to have Valid Claims after the
 [Dispute Game Finality Delay](./anchor-state-registry.md#dispute-game-finality-delay-airgap) has
-elapsed UNLESS the Superchain-wide pause mechanism is active. Therefore, in the absence of the
-Superchain-wide pause mechanism, parties responsible for game invalidation have exactly the Dispute
-Game Finality Delay to invalidate a withdrawal after it resolves incorrectly. If the
-Superchain-wide pause is active, then any incorrectly resolving games must be invalidated before
-the pause is deactivated.
+elapsed UNLESS the Pause Mechanism is active. Therefore, in the absence of the Pause Mechanism,
+parties responsible for game invalidation have exactly the Dispute Game Finality Delay to
+invalidate a withdrawal after it resolves incorrectly. If the Pause Mechanism is active, then any
+incorrectly resolving games must be invalidated before the pause is deactivated.
 
 #### Mitigations
 
@@ -292,7 +291,6 @@ see this as a critical system risk.
 - MUST only be triggerable once.
 - MUST set the value of the `DisputeGameFactory` contract.
 - MUST set the value of the `SystemConfig` contract.
-- MUST set the value of the `SuperchainConfig` contract.
 - MUST set the value of the `AnchorStateRegistry` contract.
 - MUST set `superRootsActive` to either `true` or `false`.
 - MUST set the value of the [L2 Withdrawal Sender](#l2-withdrawal-sender) variable to the default
@@ -301,11 +299,11 @@ see this as a critical system risk.
 
 ### paused
 
-Returns the current state of the `SuperchainConfig.paused()` function.
+Returns the current state of the `SystemConfig.paused()` function.
 
 ### guardian
 
-Returns the address of the Guardian as per `SuperchainConfig.guardian()`.
+Returns the address of the Guardian as per `SystemConfig.guardian()`.
 
 ### proofMaturityDelaySeconds
 

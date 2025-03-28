@@ -4,9 +4,6 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Guardian Safe](#guardian-safe)
-  - [Deputy Guardian Module](#deputy-guardian-module)
-  - [Deputy Guardian Module Security Properties](#deputy-guardian-module-security-properties)
 - [Security Council Liveness Checking Extensions](#security-council-liveness-checking-extensions)
   - [The Liveness Guard](#the-liveness-guard)
   - [The Liveness Module](#the-liveness-module)
@@ -41,76 +38,6 @@ built-in support for:
 
 For more information about the Security Council and Guardian roles, refer to the
 [Stage One Roles and Requirements](./stage-1.md) document.
-
-## Guardian Safe
-
-The Guardian Safe is extended by the Deputy Guardian Module.
-
-### Deputy Guardian Module
-
-As the sole owner of the Guardian Safe, the Security Council acts as the Guardian, which is
-authorized to activate the [Superchain Pause](../protocol/superchain-config.md#pausability)
-functionality.
-
-However the Security Council cannot be expected to react quickly in an emergency situation.
-Therefore the Deputy Guardian module enables the Security Council to share this authorization with
-another account.
-
-The module has the following minimal interface:
-
-```solidity
-interface DeputyGuardianModule {
-   /// @dev The address of the Security Council Safe
-   function safe() external view returns(address);
-
-   /// @dev The address of the account which can pause superchain withdrawals by calling this module
-   function deputyGuardian() external view returns(address);
-
-   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      necessary to call `pause()` on the `SuperchainConfig` contract.
-   ///      Only the deputy guardian can call this function.
-   function pause() external;
-
-   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      necessary to call `unpause()` on the `SuperchainConfig` contract.
-   ///      Only the deputy guardian can call this function.
-   function unpause() external;
-
-   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      necessary to call `blacklistDisputeGame()` on the `OptimismPortal2` contract.
-   ///      Only the deputy guardian can call this function.
-   /// @param _portal The `OptimismPortal2` contract instance.
-   /// @param _game The `IDisputeGame` contract instance.
-   function blacklistDisputeGame(address _portal, address _game) external;
-
-   /// @dev Calls the Security Council Safe's `execTransactionFromModule()`, with the arguments
-   ///      necessary to call `setRespectedGameType()` on the `OptimismPortal2` contract.
-   ///      Only the deputy guardian can call this function.
-   /// @param _portal The `OptimismPortal2` contract instance.
-   /// @param _gameType The `GameType` to set as the respected game type
-   function setRespectedGameType(address _portal, uint32 _gameType) external;
-}
-```
-
-For simplicity, the `DeputyGuardianModule` module does not have functions for updating the `safe`
-and `deputyGuardian` addresses. If necessary these can be modified by swapping out with a new
-module.
-
-### Deputy Guardian Module Security Properties
-
-The following security properties must be upheld by the `DeputyGuardianModule`:
-
-1. The module must correctly enforce access controls so that only the Deputy Guardian can call state
-   modifying functions on the `DeputyGuardianModule`.
-1. The module must be able to cause the Safe to make calls to all of the functions which the
-   Guardian role is authorized to make.
-1. The module must not be able to cause the Safe to make calls to functions which the Guardian role
-   is not authorized to make.
-1. The module must be safely removable.
-1. The module must not introduce any possibility of disabling the Safe so that it can no longer
-   forward transactions.
-1. The module must format calldata correctly such that the target it calls performs the expected
-   action.
 
 ## Security Council Liveness Checking Extensions
 

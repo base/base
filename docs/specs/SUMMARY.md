@@ -37,6 +37,7 @@
   - [Configurability](./protocol/configurability.md)
   - [Safe Extensions](./protocol/safe-extensions.md)
     - [Stage 1 Roles and Requirements](./protocol/stage-1.md)
+    - [Deputy Pause Module](./protocol/deputy-pause-module.md)
   - [Protocol Upgrades]()
     - [Regolith](./protocol/regolith/overview.md)
     - [Canyon](./protocol/canyon/overview.md)
