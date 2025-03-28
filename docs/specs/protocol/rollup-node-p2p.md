@@ -301,8 +301,8 @@ The `signature` is a `secp256k1` signature, and signs over a message:
 - `chain_id` is a big-endian encoded `uint256`.
 - `payload_hash` is `keccak256(payload)`, where `payload` is:
   - the `payload` in V1 and V2,
-  - `parentBeaconBlockRoot ++ payload` in V3.
-  - `parentBeaconBlockRoot ++  withdrawalsRoot ++ payload` in V4.
+  - `parentBeaconBlockRoot ++ payload` in V3 + V4 (_NOTE_: In V4, `payload` is extended to include the
+    `withdrawalsRoot`).
 
 The `secp256k1` signature must have `y_parity = 1 or 0`, the `chain_id` is already signed over.
 
@@ -325,7 +325,8 @@ An [extended-validator] checks the incoming messages as follows, in order of ope
 - `[REJECT]` if the block is on a topic >= V3 and has an excess blob gas value that is not zero
 - `[REJECT]` if the block is on a topic <= V2 and the parent beacon block root is not nil
 - `[REJECT]` if the block is on a topic >= V3 and the parent beacon block root is nil
-- `[REJECT]` if the block is on a topic >= V3 and the l2 withdrawals root is nil
+- `[REJECT]` if the block is on a topic <= V3 and the l2 withdrawals root is not nil
+- `[REJECT]` if the block is on a topic >= V4 and the l2 withdrawals root is nil
 - `[REJECT]` if more than 5 different blocks have been seen with the same block height
 - `[IGNORE]` if the block has already been seen
 - `[REJECT]` if the signature by the sequencer is not valid
