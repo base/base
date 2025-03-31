@@ -68,7 +68,6 @@ use tokio::{
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
-use url::Url;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata<N: NodePrimitives> {
@@ -85,10 +84,6 @@ pub struct CustomOpPayloadBuilder {
     flashblocks_ws_url: String,
     chain_block_time: u64,
     flashblock_block_time: u64,
-    #[expect(dead_code)]
-    supervisor_url: Option<Url>,
-    #[expect(dead_code)]
-    supervisor_safety_level: Option<String>,
 }
 
 impl CustomOpPayloadBuilder {
@@ -97,16 +92,12 @@ impl CustomOpPayloadBuilder {
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
-        supervisor_url: Option<Url>,
-        supervisor_safety_level: Option<String>,
     ) -> Self {
         Self {
             builder_signer,
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
-            supervisor_url,
-            supervisor_safety_level,
         }
     }
 }

@@ -44,14 +44,6 @@ pub struct OpRBuilderMetrics {
     pub tx_byte_size: Histogram,
     /// Number of reverted transactions
     pub num_reverted_tx: Counter,
-    /// Number of cross-chain transactions
-    pub num_cross_chain_tx: Counter,
-    /// Number of cross-chain transactions that didn't pass supervisor validation
-    pub num_cross_chain_tx_fail: Counter,
-    /// Number of cross-chain transactions that weren't verified because of the timeout
-    pub num_cross_chain_tx_timeout: Counter,
-    /// Number of cross-chain transactions that weren't verified because of the server error
-    pub num_cross_chain_tx_server_error: Counter,
 }
 
 impl OpRBuilderMetrics {
@@ -77,21 +69,5 @@ impl OpRBuilderMetrics {
 
     pub fn set_builder_balance(&self, balance: f64) {
         self.builder_balance.set(balance);
-    }
-
-    pub fn inc_num_cross_chain_tx_fail(&self) {
-        self.num_cross_chain_tx_fail.increment(1);
-    }
-
-    pub fn inc_num_cross_chain_tx(&self) {
-        self.num_cross_chain_tx.increment(1);
-    }
-
-    pub fn inc_num_cross_chain_tx_timeout(&self) {
-        self.num_cross_chain_tx_timeout.increment(1);
-    }
-
-    pub fn inc_num_cross_chain_tx_server_error(&self) {
-        self.num_cross_chain_tx_server_error.increment(1);
     }
 }

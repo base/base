@@ -6,7 +6,6 @@
 use reth_optimism_node::args::RollupArgs;
 
 use crate::tx_signer::Signer;
-use alloy_transport_http::reqwest::Url;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -39,16 +38,6 @@ pub struct OpRbuilderArgs {
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
     pub flashblock_block_time: u64,
-    /// URL of the supervisor service for transaction validation
-    #[arg(long = "rollup.supervisor-url", env = "SUPERVISOR_URL")]
-    pub supervisor_url: Option<Url>,
-    /// URL of the supervisor service for transaction validation
-    #[arg(
-        long = "rollup.supervisor_safety_level",
-        env = "SUPERVISOR_SAFETY_LEVEL",
-        help = "Safety level to pass to supervisor, values: finalized, safe, local-safe, cross-unsafe, unsafe, invalid"
-    )]
-    pub supervisor_safety_level: Option<String>,
     /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,

@@ -60,10 +60,6 @@ op-alloy-consensus.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
 
-# kona
-kona-rpc.workspace = true
-kona-interop.workspace = true
-
 revm.workspace = true
 op-revm.workspace = true
 
@@ -93,7 +89,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 # `flashblocks` branch
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "6b94e1037f41e0817f2bcb1f1ca5013a5359616a" }
-url = "2.5.3"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
