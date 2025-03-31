@@ -23,6 +23,7 @@ Rollups can choose between two configurations:
 - Validity proofs (OP Succinct) — generate a zero-knowledge proof for every transaction, eliminating disputes entirely
 
 Both configurations offer meaningful advantages over the standard OP Stack design.
+
 ![Comparison Table](./assets/comparison-table.png)
 
 ## Support and Community
