@@ -6,23 +6,24 @@
 
 ## Overview
 
-OP Succinct is the production-grade proving engine for the OP Stack, powered by [SP1](https://docs.succinct.xyz/docs/sp1/introduction) and the [Succinct Prover Network](https://docs.succinct.xyz/docs/network/introduction).
+OP Succinct gives **every** OP Stack rollup the ability to become a ZK rollup.
+
+It combines a few key technologies:
+- [Kona](https://op-rs.github.io/kona/), Optimism's Rust implementation of the OP Stack's state transition function
+- [SP1](https://docs.succinct.xyz/docs/sp1/introduction), Succinct's state-of-the-art Rust zkVM.
+- [Succinct Prover Network](https://docs.succinct.xyz/docs/network/introduction), Succinct's low-latency, cost-effective proving API
+
+OP Succinct is the only production-ready proving solution for the OP Stack and trusted by teams like [Mantle](https://www.mantle.xyz/blog/announcements/op-succinct-mantle-network-testnet) and [Phala](https://phala.network/posts/phala-network-20-first-opsuccinct-layer-2-on-ethereum).
+
 
 ## Proving Options
 
-OP Succinct provides two new proving options for the OP Stack: OP Succinct (Validity) and OP Succinct Lite.
+Rollups can choose between two configurations:
+- ZK fault proofs (OP Succinct Lite) — only generate a zero-knowledge proof when there is a dispute
+- Validity proofs (OP Succinct) — generate a zero-knowledge proof for every transaction, eliminating disputes entirely
 
-| | OP Succinct (Validity) | OP Succinct Lite | Standard OP Stack |
-|---------|-------------|------------------|-------------------|
-| Proof System | Full validity proofs with SP1 | ZK fault proofs with SP1 (optional fast finality) | Interactive fraud proofs |
-| Time to Finality | < 1 hour | 7 days* | 7 days |
-| Security Level | Highest | High | High |
-| Alt DA Support | ✅ | ✅ | ❌ |
-| Dispute Process | Prove every transcation | Prove when there is a dispute | Replay transactions on L1 with FPVM |
-| Dispute Capital Requirements | 0 | Configurable: 5-15 ETH (Less than worst-case prover cost) | Scales with TVL; up to 1000s of ETH |
-| Ongoing proving costs | Less than a tenth of a cent per transaction; can be paid by users | $0; Proofs only generated with disputes | $0 |
-| Designed for | Large L2s, DeFi Chains, and other high-value chains | Cost-sensitive L2s, appchains and gaming chains | When ZK was expensive |
-
+Both configurations offer meaningful advantages over the standard OP Stack design.
+![Comparison Table](./assets/comparison-table.png)
 
 ## Support and Community
 
