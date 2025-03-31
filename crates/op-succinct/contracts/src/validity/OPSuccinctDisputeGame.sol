@@ -29,8 +29,8 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     bool public wasRespectedGameTypeWhenCreated;
 
     /// @notice Semantic version.
-    /// @custom:semver v1.0.0-beta
-    string public constant version = "v1.0.0-beta";
+    /// @custom:semver v2.0.0-beta
+    string public constant version = "v2.0.0-beta";
 
     constructor(address _l2OutputOracle) {
         l2OutputOracle = _l2OutputOracle;
