@@ -13,7 +13,7 @@
     - [Upgrade Contract](./validity/contracts/upgrade.md)
     - [OptimismPortal2 Support](./validity/contracts/optimism-portal-2.md)
     - [Toggle Optimistic Mode](./validity/contracts/toggle-optimistic.md)
-  - [Running OP Succinct](./validity/validity-mode.md)
+  - [Validity Proposer](./validity/validity-mode.md)
     - [Proposer Configuration](./validity/proposer.md)
     - [Proposer Lifecycle](./validity/proposer-lifecycle.md)
     - [Gas Costs]()
