@@ -1,6 +1,6 @@
 # Toggle Optimistic Mode
 
-Optimistic mode is a feature that allows the L2OutputOracle to accept outputs without verification (mirroring the original `L2OutputOracle` contract). This is useful for testing and development purposes, and as a fallback for when `OPSuccinctL2OutputOracle` is unable to verify outputs.
+Optimistic mode is a feature that allows the L2OutputOracle to accept outputs without verification (mirroring the permissioned `L2OutputOracle` contract). This is useful for testing and development purposes, and as a fallback for `OPSuccinctL2OutputOracle` in the event of an outage.
 
 When optimistic mode is enabled, the `OPSuccinctL2OutputOracle`'s `proposeL2Output` function will match the interface of the original L2OutputOracle contract, with the modification that the proposer address must be in the `approvedProposers` mapping, or permissionless proposing must be enabled.
 

@@ -2,15 +2,23 @@
 
 ## Overview
 
-If you want to use `OptimismPortal2` or conform to Optimism's `IDisputeGame`, you can follow this section that describe how to use the `OPSuccinctDisputeGame` on the `DisputeGameFactory` contract.
+This section demonstrates how OP Succinct can be used with `OptimismPortal2` by conforming to Optimism's `IDisputeGame`.
 
-* `OPSuccinctDisputeGame` a thin wrapper around `OPSuccinctL2OutputOracle` that implements `IDisputeGame`
+The `OPSuccinctDisputeGame` contract is a thin wrapper around `OPSuccinctL2OutputOracle` that implements `IDisputeGame`.
 
-## Deploying the `OPSuccinctDisputeGame` contract
+## Set dispute game to `OPSuccinctDisputeGame`
 
-After having deployed the `OPSuccinctL2OutputOracle` contract, `L2OO_ADDRESS` should now be set with the address of the `OPSuccinctL2OutputOracle` contract in your `.env` file.
+`OptimismPortal2` requires a `DisputeGameFactory` contract which manages the lifecycle of dispute games, and the current active dispute game.
 
-Run the following to deploy the `OPSuccinctDisputeGame` contract:
+To use OP Succinct with `OptimismPortal2`, you must set the canonical dispute game implementation to `OPSuccinctDisputeGame`.
+
+### No Existing `DisputeGameFactory` (Testing)
+
+If you don't have a `DisputeGameFactory` contract or `OptimismPortal2` setup and want to test OP Succinct with the `DisputeGameFactory` contract, follow these steps:
+
+After deploying the `OPSuccinctL2OutputOracle` [contract](./deploy.md), set the `L2OO_ADDRESS` environment variable with the address of the `OPSuccinctL2OutputOracle` contract in your `.env` file.
+
+Run the following command to deploy the `OPSuccinctDisputeGame` contract:
 
 ```shell
 just deploy-dispute-game-factory
@@ -27,26 +35,24 @@ Script ran successfully.
 
 == Return ==
 0: address 0x6B3342821680031732Bc7d4E88A6528478aF9E38
-
-## Setting up 1 EVM.
-
-==========================
-
-Chain 3151908
-
-Estimated gas price: 1.000000014 gwei
-
-Estimated total gas used for script: 1614671
-
-Estimated amount required: 0.001614671022605394 ETH
-
-==========================
 ```
 
 In these deployment logs, `0x6B3342821680031732Bc7d4E88A6528478aF9E38` is the address of the proxy for the `DisputeGameFactory` contract.
 
-## Usage
+### Existing `DisputeGameFactory`
 
-Once the contract is deployed, you have to add a new variable `DGF_ADDRESS` to your `.env` file with the address above (ex. `DGF_ADDRESS=0x6B3342821680031732Bc7d4E88A6528478aF9E38`).
+If you already have a `DisputeGameFactory` contract, you must call the `setImplementation` function to set the canonical dispute game implementation to `OPSuccinctDisputeGame`.
 
-With this environment variable set, the proposer will create and initialize a new `OPSuccinctDisputeGame` contract on every proposal that wraps the `OPSuccinctL2OutputOracle` contract.
+```solidity
+    // The game type for the OP_SUCCINCT proof system.
+    GameType gameType = GameType.wrap(uint32(6));
+
+    // Set the canonical dispute game implementation.
+    gameFactory.setImplementation(gameType, IDisputeGame(address(game)));
+```
+
+## Use OP Succinct with `OptimismPortal2`
+
+Once you have a `DisputeGameFactory` contract, you can use OP Succinct with `OptimismPortal2` by setting the `DGF_ADDRESS` environment variable with the address of the `DisputeGameFactory` contract in your `.env` file.
+
+With this environment variable set, the proposer will create, initialize and finalize a new `OPSuccinctDisputeGame` contract on the `DisputeGameFactory` contract with every aggregation proof.

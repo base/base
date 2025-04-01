@@ -37,7 +37,7 @@ stateDiagram-v2
 
 ## Proposer Operations
 
-The proposer performs the following operations each loop (every 30 seconds by default):
+The proposer performs the following operations each loop:
 
 1. Validates that the requester config matches the contract configuration
 2. Logs proposer metrics like number of requests in each state
