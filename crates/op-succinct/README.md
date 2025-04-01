@@ -6,10 +6,6 @@ With support for both validity proofs, with OP Succinct, and ZK fault proofs, wi
 
 **[Docs](https://succinctlabs.github.io/op-succinct)**
 
-## Getting Started
-
-Today, you can use OP Succinct to upgrade any existing OP Stack rollup to a type-1 zkEVM rollup. To get started, make sure you have [Rust](https://rustup.rs/), [Foundry](https://book.getfoundry.sh/), and [Docker](https://docs.docker.com/engine/install/) installed. Then, follow the steps in the [book](https://succinctlabs.github.io/op-succinct/) to deploy the `OPSuccinctL2OutputOracle` contract and start the OP Succinct service.
-
 ## Repository Overview
 
 > [!CAUTION]
