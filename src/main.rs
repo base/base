@@ -41,14 +41,18 @@ fn main() {
             let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
 
             let cache_clone = Arc::clone(&cache);
+            let chain_spec = builder.config().chain.clone();
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
-                    let api_ext =
-                        EthApiExt::new(ctx.registry.eth_api().clone(), Arc::clone(&cache_clone));
+                    let api_ext = EthApiExt::new(
+                        ctx.registry.eth_api().clone(),
+                        Arc::clone(&cache_clone),
+                        chain_spec.clone(),
+                    );
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
                     Ok(())
                 })
