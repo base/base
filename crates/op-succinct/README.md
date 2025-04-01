@@ -21,7 +21,7 @@ The repository is organized into the following directories:
 - `book`: The documentation for OP Succinct users and developers.
 - `contracts`: The solidity contracts for posting state roots to L1.
 - `programs`: The programs for proving the execution and derivation of the L2 state transitions and proof aggregation.
-- `proposer`: The implementation of the `op-succinct/op-succinct` service.
+- `validity`: The implementation of the `op-succinct/op-succinct` service.
 - `fault-proof`: The implementation of the `op-succinct/fault-proof` service.
 - `scripts`: Scripts for testing and deploying OP Succinct.
 - `utils`: Shared utilities for the host, client, and proposer.
