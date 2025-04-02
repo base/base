@@ -10,7 +10,7 @@ fn build_program(program_name: &str, elf_name: &str, features: Option<Vec<String
         elf_name: Some(elf_name.to_string()),
         output_directory: Some("../../elf".to_string()),
         docker: true,
-        tag: "v4.1.3".to_string(),
+        tag: "v4.1.7".to_string(),
         workspace_directory: Some("../../".to_string()),
         ..Default::default()
     };
