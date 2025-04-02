@@ -5,6 +5,7 @@
 **Table of Contents**
 
 - [1559 Parameters](#1559-parameters)
+- [Extra Data](#extra-data)
 - [Deposited transaction processing](#deposited-transaction-processing)
   - [Deposited transaction boundaries](#deposited-transaction-boundaries)
 - [Fees](#fees)
@@ -45,7 +46,16 @@ The execution engine must be able to take a per chain configuration which specif
 and EIP-1559 elasticity. After Canyon it should also take a new value `EIP1559DenominatorCanyon` and use that as
 the denominator in the 1559 formula rather than the prior denominator.
 
-The formula for EIP-1559 is not otherwise modified.
+The formula for EIP-1559 is otherwise not modified.
+
+Starting with Holocene, the EIP-1559 parameters become [dynamically configurable](holocene/exec-engine.md#dynamic-eip-1559-parameters).
+
+## Extra Data
+
+Before Holocene, the genesis block may contain an arbitrary `extraData` value whereas all normal
+blocks must have an **empty** `extraData` field.
+
+With Holocene, the `extraData` field [encodes the EIP-1559 parameters](holocene/exec-engine.md#dynamic-eip-1559-parameters).
 
 ## Deposited transaction processing
 
@@ -213,7 +223,7 @@ to [`engine_forkchoiceUpdatedV2`][engine_forkchoiceUpdatedV2]: the extended `Pay
 ```js
 PayloadAttributesV2: {
     timestamp: QUANTITY
-    random: DATA (32 bytes)
+    prevRandao: DATA (32 bytes)
     suggestedFeeRecipient: DATA (20 bytes)
     withdrawals: array of WithdrawalV1
     transactions: array of DATA
@@ -269,13 +279,14 @@ to [`engine_forkchoiceUpdatedV3`][engine_forkchoiceUpdatedV3]: the extended `Pay
 ```js
 PayloadAttributesV3: {
     timestamp: QUANTITY
-    random: DATA (32 bytes)
+    prevRandao: DATA (32 bytes)
     suggestedFeeRecipient: DATA (20 bytes)
     withdrawals: array of WithdrawalV1
     parentBeaconBlockRoot: DATA (32 bytes)
     transactions: array of DATA
     noTxPool: bool
     gasLimit: QUANTITY or null
+    eip1559Params: DATA (8 bytes) or null
 }
 ```
 
@@ -284,6 +295,9 @@ the addition of `parentBeaconBlockRoot` which is the parent beacon block root fr
 
 Starting at Ecotone, the `parentBeaconBlockRoot` must be set to the L1 origin `parentBeaconBlockRoot`,
 or a zero `bytes32` if the Dencun functionality with `parentBeaconBlockRoot` is not active on L1.
+
+Starting with Holocene, the `eip1559Params` field must encode the EIP1559 parameters. It must be `null` before.
+See [Dynamic EIP-1559 Parameters](holocene/exec-engine.md#dynamic-eip-1559-parameters) for details.
 
 ### `engine_newPayloadV2`
 
