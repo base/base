@@ -45,25 +45,25 @@ strum = "0.27.1"
 strum_macros = "0.27.1"
 
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13" }
-kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", default-features = false, features = [
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false, features = [
     "serde",
 ] }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", default-features = false }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.13", default-features = false }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -112,10 +112,10 @@ op-alloy-network = { version = "0.11.0", default-features = false }
 revm = { version = "19.5.0", default-features = false, features = ["kzg-rs"] }
 
 # SP1
-sp1-sdk = { version = "4.1.3" }
-sp1-lib = { version = "4.1.3", features = ["verify"] }
-sp1-zkvm = { version = "4.1.3", features = ["verify"] }
-sp1-build = { version = "4.1.3" }
+sp1-sdk = { version = "4.1.7" }
+sp1-lib = { version = "4.1.7", features = ["verify"] }
+sp1-zkvm = { version = "4.1.7", features = ["verify"] }
+sp1-build = { version = "4.1.7" }
 kzg-rs = { version = "0.2.5" }
 
 [profile.release-client-lto]
