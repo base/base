@@ -178,6 +178,25 @@ impl OpNetworkPayloadEnvelope {
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
     }
 
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v1(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v1 = match &self.payload {
+            OpExecutionPayload::V1(execution_payload_v1) => execution_payload_v1,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        let block_data = execution_payload_v1.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
+
     /// Decode a payload envelope from a snappy-compressed byte array.
     /// The payload version decoded is `ExecutionPayloadV2` from SSZ bytes.
     #[cfg(feature = "std")]
@@ -201,6 +220,25 @@ impl OpNetworkPayloadEnvelope {
         );
 
         Ok(Self { payload, signature, payload_hash: hash, parent_beacon_block_root: None })
+    }
+
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v2(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v2 = match &self.payload {
+            OpExecutionPayload::V2(execution_payload_v2) => execution_payload_v2,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        let block_data = execution_payload_v2.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
     }
 
     /// Decode a payload envelope from a snappy-compressed byte array.
@@ -237,6 +275,26 @@ impl OpNetworkPayloadEnvelope {
         })
     }
 
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v3(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v3 = match &self.payload {
+            OpExecutionPayload::V3(execution_payload_v3) => execution_payload_v3,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        data.extend_from_slice(self.parent_beacon_block_root.as_ref().unwrap().as_slice());
+        let block_data = execution_payload_v3.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
+
     /// Decode a payload envelope from a snappy-compressed byte array.
     /// The payload version decoded is `ExecutionPayloadV4` from SSZ bytes.
     #[cfg(feature = "std")]
@@ -268,6 +326,38 @@ impl OpNetworkPayloadEnvelope {
             parent_beacon_block_root: Some(parent_beacon_block_root),
         })
     }
+
+    /// Encodes a payload envelope as a snappy-compressed byte array.
+    #[cfg(feature = "std")]
+    pub fn encode_v4(&self) -> Result<Vec<u8>, PayloadEnvelopeEncodeError> {
+        use ssz::Encode;
+        let execution_payload_v4 = match &self.payload {
+            OpExecutionPayload::V4(execution_payload_v4) => execution_payload_v4,
+            _ => return Err(PayloadEnvelopeEncodeError::WrongVersion),
+        };
+
+        let mut data = Vec::new();
+        let mut sig = self.signature.as_bytes();
+        sig[64] = self.signature.v() as u8;
+        data.extend_from_slice(&sig[..]);
+        data.extend_from_slice(self.parent_beacon_block_root.as_ref().unwrap().as_slice());
+        let block_data = execution_payload_v4.as_ssz_bytes();
+        data.extend_from_slice(block_data.as_slice());
+
+        Ok(snap::raw::Encoder::new().compress_vec(&data)?)
+    }
+}
+
+/// Errors that can occur when encoding a payload envelope.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PayloadEnvelopeEncodeError {
+    /// Wrong versions of the payload.
+    #[error("Wrong version of the payload")]
+    WrongVersion,
+    /// An error occured during snap encoding.
+    #[error(transparent)]
+    #[cfg(feature = "std")]
+    SnapEncoding(#[from] snap::Error),
 }
 
 /// Errors that can occur when decoding a payload envelope.
@@ -355,38 +445,45 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
-    fn decode_payload_v1() {
+    fn test_roundtrip_encode_envelope_v1() {
         use alloy_primitives::hex;
         let data = hex::decode("0xbd04f043128457c6ccf35128497167442bcc0f8cce78cda8b366e6a12e526d938d1e4c1046acffffbfc542a7e212bb7d80d3a4b2f84f7b196d935398a24eb84c519789b401000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c4a8fd56621ad04fc0101067601008ce60be0005b220117c32c0f3b394b346c2aa42cfa8157cd41f891aa0bec485a62fc010000").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v1(&data).unwrap();
         assert_eq!(1725271882, payload_envelop.payload.timestamp());
+        let encoded = payload_envelop.encode_v1().unwrap();
+        assert_eq!(data, encoded);
     }
 
     #[test]
     #[cfg(feature = "std")]
-    fn decode_payload_v2() {
+    fn test_roundtrip_encode_envelope_v2() {
         use alloy_primitives::hex;
         let data = hex::decode("0xc104f0433805080eb36c0b130a7cc1dc74c3f721af4e249aa6f61bb89d1557143e971bb738a3f3b98df7c457e74048e9d2d7e5cd82bb45e3760467e2270e9db86d1271a700000000fe0300fe0300fe0300fe0300fe0300fe0300a203000c6b89d46525ad000205067201009cda69cb5b9b73fc4eb2458b37d37f04ff507fe6c9cd2ab704a05ea9dae3cd61760002000000020000").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v2(&data).unwrap();
         assert_eq!(1708427627, payload_envelop.payload.timestamp());
+        let encoded = payload_envelop.encode_v2().unwrap();
+        assert_eq!(data, encoded);
     }
 
     #[test]
     #[cfg(feature = "std")]
-    fn decode_payload_v3() {
+    fn test_roundtrip_encode_envelope_v3() {
         use alloy_primitives::hex;
         let data = hex::decode("0xf104f0434442b9eb38b259f5b23826e6b623e829d2fb878dac70187a1aecf42a3f9bedfd29793d1fcb5822324be0d3e12340a95855553a65d64b83e5579dffb31470df5d010000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000cc588d465219504100201067601007cfece77b89685f60e3663b6e0faf2de0734674eb91339700c4858c773a8ff921e014401043e0100").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v3(&data).unwrap();
         assert_eq!(1708427461, payload_envelop.payload.timestamp());
+        let encoded = payload_envelop.encode_v3().unwrap();
+        assert_eq!(data, encoded);
     }
 
     #[test]
     #[cfg(feature = "std")]
-    fn decode_payload_v4() {
+    fn test_roundtrip_encode_envelope_v4() {
         use alloy_primitives::hex;
-
         let data = hex::decode("0x9105f043cee25401b6853202950d1d8a082f31a80c4fef5782c049a731f5d104b1b9b9aa7618605b420438ae98b44c8aaaebd482854473c2ae57c079286bb634bece5210000000006a03000412346a1d00fe0100fe0100fe0100fe0100fe0100fe01004201000c5766d26721950430020106f6010001440104b60100049876").unwrap();
         let payload_envelop = OpNetworkPayloadEnvelope::decode_v4(&data).unwrap();
         assert_eq!(1741842007, payload_envelop.payload.timestamp());
+        let encoded = payload_envelop.encode_v4().unwrap();
+        assert_eq!(data, encoded);
     }
 }
