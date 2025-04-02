@@ -229,6 +229,15 @@ Where:
 - `operatorFeeScalar` is a `uint32` scalar set by the chain operator, scaled by `1e6`.
 - `operatorFeeConstant` is a `uint64` scalar set by the chain operator.
 
+Note that the operator fee's maximum value has 77 bits, which can be calculated from the maximum input parameters:
+
+$$
+\text{operatorFee}\_{max} = (\text{uint64}\_{max} \times \text{uint32}\_{max} \div 10^6) + \text{uint64}\_{max}
+\approx 7.924660923989131 \times 10^{22}
+$$
+
+So implementations don't need to check for overflows if they perform the calculations with `uint256` types.
+
 #### Deposit Operator Fees
 
 Deposit transactions do not get charged operator fees. For all deposit transactions, regardless of the operator fee

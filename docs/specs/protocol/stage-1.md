@@ -152,7 +152,7 @@ A Stage 1 OP Stack chain must have a Security Council.
 
 ### Upgrade Controller
 
-The [Upgrade Controller](#upgrade-controller) role in the OP Stack is a priviledged role that is
+The [Upgrade Controller](#upgrade-controller) role in the OP Stack is a privileged role that is
 allowed to upgrade the smart contracts that make up an OP Stack chain's onchain footprint. This
 role must require sign-off from the Security Council. This specifically means that the role can
 either be entirely held by the Security Council or by some other configuration as long as the
@@ -173,7 +173,7 @@ because the Security Council is a required signatory on this role.
 
 ### Guardian
 
-The [Guardian](#guardian) role in the OP Stack is a priviledged role that is allowed to execute
+The [Guardian](#guardian) role in the OP Stack is a privileged role that is allowed to execute
 certain safety-net actions in the case that a bug exists in the OP Stack smart contracts. This role
 must be held by the Security Council in the form of a 1/1 Safe owned by the Security Council.
 

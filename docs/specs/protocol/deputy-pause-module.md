@@ -261,7 +261,7 @@ the authorization of the social consensus process that typically triggers this p
 ### iDPM-002: Deputy must only be able to trigger the pause
 
 The Deputy must only be able to trigger the pause action by causing the module to call the `pause`
-function on the `SuperchainConfig`. The Deputy must not be able to trigger any other priviledged
+function on the `SuperchainConfig`. The Deputy must not be able to trigger any other privileged
 action on behalf of the Guardian.
 
 #### Impact
