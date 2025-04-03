@@ -53,8 +53,8 @@ We require that the `SuperchainConfig` is constructed such that the
 **Severity: Medium**
 
 If the Pause Mechanism cannot be reset then it cannot be used again without intervention from the
-[Upgrade Controller](./stage-1.md#upgrade-controller). We consider this to be a Medium severity
-issue because the Upgrade Controller will have several months to coordinate such a fix assuming
+[Proxy Admin Owner](./stage-1.md#proxy-admin-owner). We consider this to be a Medium severity
+issue because the Proxy Admin Owner will have several months to coordinate such a fix assuming
 that [iSUPC-001][iSUPC-001] holds.
 
 ## Function Specification

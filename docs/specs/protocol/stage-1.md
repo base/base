@@ -8,7 +8,7 @@
 - [Definitions](#definitions)
   - [Withdrawal Liveness](#withdrawal-liveness)
   - [Withdrawal Safety](#withdrawal-safety)
-  - [Upgrade Controller](#upgrade-controller)
+  - [Proxy Admin Owner](#proxy-admin-owner)
   - [Guardian](#guardian)
   - [Pause Deputy](#pause-deputy)
   - [Pause Mechanism](#pause-mechanism)
@@ -17,7 +17,7 @@
 - [OP Stack Stage 1 Design](#op-stack-stage-1-design)
   - [Permissionless Fault Proofs](#permissionless-fault-proofs)
   - [Security Council](#security-council)
-  - [Upgrade Controller](#upgrade-controller-1)
+  - [Proxy Admin Owner](#proxy-admin-owner-1)
   - [Guardian](#guardian-1)
   - [Pause Deputy](#pause-deputy-1)
   - [Architecture Diagram](#architecture-diagram)
@@ -55,9 +55,9 @@ dispute game contracts (and ultimately into the `DelayedWETH` contract).
 out of any contract that stores ETH or tokens within an OP Chain's set of smart contracts.
 Generally speaking "liveness" means nothing gets bricked and "safety" means nothing gets stolen.
 
-### Upgrade Controller
+### Proxy Admin Owner
 
-The **Upgrade Controller** is a dedicated role in the OP Stack that is permitted to upgrade the
+The **Proxy Admin Owner** is a dedicated role in the OP Stack that is permitted to upgrade the
 contracts that make up an OP Stack chain's onchain footprint. In the Superchain, the Upgrade
 Controller role is held jointly in a 2/2 of the Optimism Security Council and the Optimism
 Foundation.
@@ -150,15 +150,15 @@ A Stage 1 OP Stack chain must operate a _permissionless_ Fault Proof system.
 
 A Stage 1 OP Stack chain must have a Security Council.
 
-### Upgrade Controller
+### Proxy Admin Owner
 
-The [Upgrade Controller](#upgrade-controller) role in the OP Stack is a privileged role that is
+The [Proxy Admin Owner](#proxy-admin-owner) role in the OP Stack is a privileged role that is
 allowed to upgrade the smart contracts that make up an OP Stack chain's onchain footprint. This
 role must require sign-off from the Security Council. This specifically means that the role can
 either be entirely held by the Security Council or by some other configuration as long as the
 Security Council is a required signatory (e.g., a 2/2 multisig).
 
-In addition to the ability to upgrade all smart contracts, the Upgrade Controller is the only
+In addition to the ability to upgrade all smart contracts, the Proxy Admin Owner is the only
 address authorized to perform the following actions:
 
 - `DisputeGameFactory.setImplementation`
@@ -166,7 +166,7 @@ address authorized to perform the following actions:
 - `DelayedWETH.hold`
 - `DelayedWETH.recover`
 
-The Upgrade Controller can theoretically cause an indefinite
+The Proxy Admin Owner can theoretically cause an indefinite
 [Withdrawal Liveness](#withdrawal-liveness) failure as well as
 [Withdrawal Safety](#withdrawal-safety) failures. This is aligned with the Stage 1 definition
 because the Security Council is a required signatory on this role.
@@ -221,7 +221,7 @@ flowchart LR
 
    subgraph UpgradeSystem[Upgrade System]
       FndUp[Foundation Upgrade Safe]
-      UC[Upgrade Controller Safe]
+      PAO[Proxy Admin Owner Safe]
       subgraph Security Council Safe
          Council[Security Council Safe + LivenessGuard]
          LM[Liveness Module]
@@ -235,9 +235,9 @@ flowchart LR
       end
    end
 
-    UC -->|controls| Safety
-    FndUp --> UC
-    Council --> UC
+    PAO -->|controls| Safety
+    FndUp --> PAO
+    Council --> PAO
     Council --> GS
     FndOps[Foundation Operations Safe] -->|pause| DPM
     FndUp -->|set versions|PV

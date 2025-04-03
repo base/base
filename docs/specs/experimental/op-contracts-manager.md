@@ -58,7 +58,7 @@ The OP Contracts Manager corresponding to each release can be used to:
 2. Upgrade the contracts for an existing OP chain from the previous release to the new release.
 3. Orchestrate adding a new game type on a per-chain basis
 
-Upgrades must be performed by the [Upgrade Controller](../protocol/stage-1.md#roles-for-stage-1) Safe for a chain.
+Upgrades must be performed by the [Proxy Admin Owner](../protocol/stage-1.md#roles-for-stage-1) Safe for a chain.
 
 ## Getter Methods
 
@@ -200,7 +200,7 @@ This provides the following benefits:
 
 #### `upgrade`
 
-The `upgrade` method is used by the Upgrade Controller to upgrade the full set of L1 contracts for
+The `upgrade` method is used by the Proxy Admin Owner to upgrade the full set of L1 contracts for
 all chains that it controls.
 
 It has the following interface:
@@ -215,7 +215,7 @@ struct OpChainConfig {
 
 /// @notice Upgrades a set of chains to the latest implementation contracts
 /// @param _opChainConfigs Array of OpChain structs, one per chain to upgrade
-/// @dev This function is intended to be called via DELEGATECALL from the Upgrade Controller Safe
+/// @dev This function is intended to be called via DELEGATECALL from the Proxy Admin Owner Safe
 function upgrade(OpChainConfig[] memory _opChainConfigs) external
 ```
 
@@ -231,7 +231,7 @@ This method reverts if the upgrade is not successful for any of the chains.
 
 The high level logic of the upgrade method is as follows:
 
-1. The Upgrade Controller Safe will `DELEGATECALL` to the `OPCM.upgrade()` method.
+1. The Proxy Admin Owner Safe will `DELEGATECALL` to the `OPCM.upgrade()` method.
 2. The SuperchainConfig contract will be upgraded, if not yet done.
 3. The ProtocolVersions contract will be upgraded, if not yet done.
 4. For each `_systemConfig`, the list of addresses in the chain is retrieved.
@@ -369,7 +369,7 @@ Because a Safe will `DELEGATECALL` to the `upgrade()` and `addGameType()` method
 critical that no storage writes occur. This should be enforced in multiple ways, including:
 
 - By static analysis of the `upgrade()` and `addGameType()` methods during the development process.
-- By simulating and verifying the state changes which occur in the Upgrade Controller Safe prior to execution.
+- By simulating and verifying the state changes which occur in the Proxy Admin Owner Safe prior to execution.
 
 ### Atomicity of upgrades
 
