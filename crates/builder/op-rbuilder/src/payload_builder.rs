@@ -3,7 +3,10 @@ use crate::{
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
-use alloy_consensus::{Eip658Value, Header, Transaction, Typed2718, EMPTY_OMMER_ROOT_HASH};
+use alloy_consensus::{
+    constants::EMPTY_WITHDRAWALS, Eip658Value, Header, Transaction, Typed2718,
+    EMPTY_OMMER_ROOT_HASH,
+};
 use alloy_eips::{merge::BEACON_NONCE, Encodable2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
@@ -29,7 +32,7 @@ use reth_evm::{
 use reth_execution_types::ExecutionOutcome;
 use reth_node_api::{NodePrimitives, NodeTypesWithEngine, TxTy};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_consensus::calculate_receipt_root_no_memo_optimism;
+use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpEngineTypes;
@@ -60,14 +63,25 @@ use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
 use tokio_tungstenite::{accept_async, WebSocketStream};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
+
+/// Flashblocks specific payload building errors.
+#[derive(Debug, thiserror::Error)]
+pub enum FlashblockPayloadBuilderError {
+    /// Thrown when the job was cancelled.
+    #[error("error sending build signal")]
+    SendBuildSignalError,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct FlashblocksMetadata<N: NodePrimitives> {
@@ -395,65 +409,115 @@ where
 
         let mut flashblock_count = 0;
 
-        // 2. loop every n time and try to build an increasing block
+        // Create a channel to coordinate flashblock building
+        let (build_tx, mut build_rx) = mpsc::channel(1);
+
+        // Spawn the timer task that signals when to build a new flashblock
+        let cancel_clone = ctx.cancel.clone();
+        let flashblock_block_time = self.flashblock_block_time;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_millis(flashblock_block_time));
+            loop {
+                tokio::select! {
+                // Add a cancellation check that only runs every 10ms to avoid tight polling
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {
+                    if cancel_clone.is_cancelled() {
+                            tracing::info!(target: "payload_builder", "Job cancelled during sleep, stopping payload building");
+                            drop(build_tx);
+                            break;
+                        }
+                    }
+                _ = interval.tick() => {
+                            if let Err(err) = build_tx.send(()).await {
+                                error!(target: "payload_builder", "Error sending build signal: {}", err);
+                                break;
+                            }
+                        }
+                }
+            }
+        });
+
+        // Process flashblocks in a blocking loop
         loop {
-            if ctx.cancel.is_cancelled() {
-                tracing::info!(
-                    target: "payload_builder",
-                    "Job cancelled, stopping payload building",
-                );
-                // if the job was cancelled, stop
-                return Ok(());
+            // Block on receiving a message, break on cancellation or closed channel
+            let received = tokio::task::block_in_place(|| {
+                // Get runtime handle
+                let rt = tokio::runtime::Handle::current();
+
+                // Run the async operation to completion, blocking the current thread
+                rt.block_on(async {
+                    // Check for cancellation first
+                    if ctx.cancel.is_cancelled() {
+                        tracing::info!(
+                            target: "payload_builder",
+                            "Job cancelled, stopping payload building",
+                        );
+                        return None;
+                    }
+
+                    // Wait for next message
+                    build_rx.recv().await
+                })
+            });
+
+            // Exit loop if channel closed or cancelled
+            match received {
+                Some(()) => {
+                    // Continue with flashblock building
+                    tracing::info!(
+                        target: "payload_builder",
+                        "Building flashblock {}",
+                        flashblock_count,
+                    );
+
+                    let state = StateProviderDatabase::new(&state_provider);
+
+                    let mut db = State::builder()
+                        .with_database(state)
+                        .with_bundle_update()
+                        .with_bundle_prestate(bundle_state)
+                        .build();
+
+                    let best_txs = BestPayloadTransactions::new(
+                        self.pool
+                            .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                    );
+                    ctx.execute_best_transactions(
+                        &mut info,
+                        &mut db,
+                        best_txs,
+                        total_gas_per_batch,
+                    )?;
+
+                    if ctx.cancel.is_cancelled() {
+                        tracing::info!(
+                            target: "payload_builder",
+                            "Job cancelled, stopping payload building",
+                        );
+                        // if the job was cancelled, stop
+                        return Ok(());
+                    }
+
+                    let (new_payload, mut fb_payload, new_bundle_state) =
+                        build_block(db, &ctx, &mut info)?;
+
+                    fb_payload.index = flashblock_count + 1; // we do this because the fallback block is index 0
+                    fb_payload.base = None;
+                    let _ =
+                        self.send_message(serde_json::to_string(&fb_payload).unwrap_or_default());
+
+                    best_payload.set(new_payload.clone());
+                    bundle_state = new_bundle_state;
+                    total_gas_per_batch += gas_per_batch;
+                    flashblock_count += 1;
+
+                    tracing::info!(target: "payload_builder", "Flashblock {} built", flashblock_count);
+                }
+                None => {
+                    // Exit loop if channel closed or cancelled
+                    return Ok(());
+                }
             }
-
-            println!(
-                "Building flashblock {} {}",
-                ctx.payload_id(),
-                flashblock_count,
-            );
-
-            tracing::info!(
-                target: "payload_builder",
-                "Building flashblock {}",
-                flashblock_count,
-            );
-
-            let state = StateProviderDatabase::new(&state_provider);
-
-            let mut db = State::builder()
-                .with_database(state)
-                .with_bundle_update()
-                .with_bundle_prestate(bundle_state)
-                .build();
-
-            let best_txs = BestPayloadTransactions::new(
-                self.pool
-                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
-            );
-            ctx.execute_best_transactions(&mut info, &mut db, best_txs, total_gas_per_batch)?;
-
-            if ctx.cancel.is_cancelled() {
-                tracing::info!(
-                    target: "payload_builder",
-                    "Job cancelled, stopping payload building",
-                );
-                // if the job was cancelled, stop
-                return Ok(());
-            }
-
-            let (payload, mut fb_payload, new_bundle_state) = build_block(db, &ctx, &mut info)?;
-
-            best_payload.set(payload.clone());
-
-            fb_payload.index = flashblock_count + 1; // we do this because the fallback block is index 0
-            fb_payload.base = None;
-            let _ = self.send_message(serde_json::to_string(&fb_payload).unwrap_or_default());
-
-            bundle_state = new_bundle_state;
-            total_gas_per_batch += gas_per_batch;
-            flashblock_count += 1;
-
-            std::thread::sleep(std::time::Duration::from_millis(self.flashblock_block_time));
         }
     }
 }
@@ -501,6 +565,7 @@ where
         block_number,
         vec![],
     );
+
     let receipts_root = execution_outcome
         .generic_receipts_root_slow(block_number, |receipts| {
             calculate_receipt_root_no_memo_optimism(
@@ -531,6 +596,25 @@ where
             })?
     };
 
+    let withdrawals_root = if ctx
+        .chain_spec
+        .is_isthmus_active_at_timestamp(ctx.attributes().timestamp())
+    {
+        // withdrawals root field in block header is used for storage root of L2 predeploy
+        // `l2tol1-message-passer`
+        Some(
+            isthmus::withdrawals_root(&execution_outcome.state(), state.database.as_ref())
+                .map_err(PayloadBuilderError::other)?,
+        )
+    } else if ctx
+        .chain_spec
+        .is_canyon_active_at_timestamp(ctx.attributes().timestamp())
+    {
+        Some(EMPTY_WITHDRAWALS)
+    } else {
+        None
+    };
+
     // create the block header
     let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
 
@@ -547,7 +631,7 @@ where
         state_root,
         transactions_root,
         receipts_root,
-        withdrawals_root: None,
+        withdrawals_root,
         logs_bloom,
         timestamp: ctx.attributes().payload_attributes.timestamp,
         mix_hash: ctx.attributes().payload_attributes.prev_randao,
@@ -961,22 +1045,12 @@ where
     where
         DB: Database<Error = ProviderError>,
     {
-        println!("Executing best transactions");
         let base_fee = self.base_fee();
 
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
             let tx = tx.into_consensus();
-            println!("tx: {:?}", tx);
-            println!(
-                "gas limit: {:?}, batch gas limit: {:?} cummulative gas used: {:?}",
-                tx.gas_limit(),
-                batch_gas_limit,
-                info.cumulative_gas_used
-            );
-            // gas limit: 100816112, batch gas limit: 2500000000 cummulative gas used: 100062216
-
             // check in info if the txn has been executed already
             if info.executed_transactions.contains(&tx) {
                 continue;
@@ -984,7 +1058,6 @@ where
 
             // ensure we still have capacity for this transaction
             if info.is_tx_over_limits(tx.inner(), batch_gas_limit, None, None) {
-                println!("A");
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
@@ -1001,11 +1074,9 @@ where
 
             // check if the job was cancelled, if so we can exit early
             if self.cancel.is_cancelled() {
-                println!("C");
                 return Ok(Some(()));
             }
 
-            println!("Start transaction");
             let ResultAndState { result, state } = match evm.transact(&tx) {
                 Ok(res) => res,
                 Err(err) => {
@@ -1026,7 +1097,6 @@ where
                     return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
                 }
             };
-            println!("Finish transaction");
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt

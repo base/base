@@ -350,7 +350,7 @@ impl<'a> BlockGenerator<'a> {
                 mint: None,
                 value: U256::default(),
                 gas_limit: 210000,
-                is_system_transaction: true,
+                is_system_transaction: false,
                 input: FJORD_DATA.into(),
             };
 
@@ -471,7 +471,7 @@ impl<'a> BlockGenerator<'a> {
             mint: Some(value), // Amount to deposit
             value: U256::default(),
             gas_limit: 210000,
-            is_system_transaction: true,
+            is_system_transaction: false,
             input: Bytes::default(),
         };
 
