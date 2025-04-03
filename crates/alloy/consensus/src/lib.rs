@@ -15,7 +15,7 @@ mod alloy_compat;
 mod receipt;
 pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope, OpTxReceipt};
 
-mod transaction;
+pub mod transaction;
 pub use transaction::{
     DEPOSIT_TX_TYPE_ID, DepositTransaction, OpPooledTransaction, OpTxEnvelope, OpTxType,
     OpTypedTransaction, TxDeposit,
@@ -49,6 +49,6 @@ pub use transaction::serde_deposit_tx_rpc;
 pub mod serde_bincode_compat {
     pub use super::{
         receipt::receipts::serde_bincode_compat::OpDepositReceipt,
-        transaction::serde_bincode_compat::TxDeposit,
+        transaction::{serde_bincode_compat as transaction, serde_bincode_compat::TxDeposit},
     };
 }

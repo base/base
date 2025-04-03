@@ -629,6 +629,167 @@ mod serde_from {
     }
 }
 
+/// Bincode-compatible serde implementation for OpTxEnvelope.
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub mod serde_bincode_compat {
+    use crate::serde_bincode_compat::TxDeposit;
+    use alloy_consensus::{
+        Sealed, Signed,
+        transaction::serde_bincode_compat::{TxEip1559, TxEip2930, TxEip7702, TxLegacy},
+    };
+    use alloy_primitives::{B256, PrimitiveSignature as Signature};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde_with::{DeserializeAs, SerializeAs};
+
+    /// Bincode-compatible representation of an OpTxEnvelope.
+    #[derive(Debug, Serialize, Deserialize)]
+    pub enum OpTxEnvelope<'a> {
+        /// Legacy variant.
+        Legacy {
+            /// Transaction signature.
+            signature: Signature,
+            /// Borrowed legacy transaction data.
+            #[serde(borrow)]
+            transaction: TxLegacy<'a>,
+        },
+        /// EIP-2930 variant.
+        Eip2930 {
+            /// Transaction signature.
+            signature: Signature,
+            /// Borrowed EIP-2930 transaction data.
+            #[serde(borrow)]
+            transaction: TxEip2930<'a>,
+        },
+        /// EIP-1559 variant.
+        Eip1559 {
+            /// Transaction signature.
+            signature: Signature,
+            /// Borrowed EIP-1559 transaction data.
+            #[serde(borrow)]
+            transaction: TxEip1559<'a>,
+        },
+        /// EIP-7702 variant.
+        Eip7702 {
+            /// Transaction signature.
+            signature: Signature,
+            /// Borrowed EIP-7702 transaction data.
+            #[serde(borrow)]
+            transaction: TxEip7702<'a>,
+        },
+        /// Deposit variant.
+        Deposit {
+            /// Precomputed hash.
+            hash: B256,
+            /// Borrowed deposit transaction data.
+            #[serde(borrow)]
+            transaction: TxDeposit<'a>,
+        },
+    }
+
+    impl<'a> From<&'a super::OpTxEnvelope> for OpTxEnvelope<'a> {
+        fn from(value: &'a super::OpTxEnvelope) -> Self {
+            match value {
+                super::OpTxEnvelope::Legacy(signed_legacy) => Self::Legacy {
+                    signature: *signed_legacy.signature(),
+                    transaction: signed_legacy.tx().into(),
+                },
+                super::OpTxEnvelope::Eip2930(signed_2930) => Self::Eip2930 {
+                    signature: *signed_2930.signature(),
+                    transaction: signed_2930.tx().into(),
+                },
+                super::OpTxEnvelope::Eip1559(signed_1559) => Self::Eip1559 {
+                    signature: *signed_1559.signature(),
+                    transaction: signed_1559.tx().into(),
+                },
+                super::OpTxEnvelope::Eip7702(signed_7702) => Self::Eip7702 {
+                    signature: *signed_7702.signature(),
+                    transaction: signed_7702.tx().into(),
+                },
+                super::OpTxEnvelope::Deposit(sealed_deposit) => Self::Deposit {
+                    hash: sealed_deposit.seal(),
+                    transaction: sealed_deposit.inner().into(),
+                },
+            }
+        }
+    }
+
+    impl<'a> From<OpTxEnvelope<'a>> for super::OpTxEnvelope {
+        fn from(value: OpTxEnvelope<'a>) -> Self {
+            match value {
+                OpTxEnvelope::Legacy { signature, transaction } => {
+                    super::OpTxEnvelope::Legacy(Signed::new_unhashed(transaction.into(), signature))
+                }
+                OpTxEnvelope::Eip2930 { signature, transaction } => super::OpTxEnvelope::Eip2930(
+                    Signed::new_unhashed(transaction.into(), signature),
+                ),
+                OpTxEnvelope::Eip1559 { signature, transaction } => super::OpTxEnvelope::Eip1559(
+                    Signed::new_unhashed(transaction.into(), signature),
+                ),
+                OpTxEnvelope::Eip7702 { signature, transaction } => super::OpTxEnvelope::Eip7702(
+                    Signed::new_unhashed(transaction.into(), signature),
+                ),
+                OpTxEnvelope::Deposit { hash, transaction } => {
+                    super::OpTxEnvelope::Deposit(Sealed::new_unchecked(transaction.into(), hash))
+                }
+            }
+        }
+    }
+
+    impl SerializeAs<super::OpTxEnvelope> for OpTxEnvelope<'_> {
+        fn serialize_as<S>(source: &super::OpTxEnvelope, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let borrowed = OpTxEnvelope::from(source);
+            borrowed.serialize(serializer)
+        }
+    }
+
+    impl<'de> DeserializeAs<'de, super::OpTxEnvelope> for OpTxEnvelope<'de> {
+        fn deserialize_as<D>(deserializer: D) -> Result<super::OpTxEnvelope, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let borrowed = OpTxEnvelope::deserialize(deserializer)?;
+            Ok(borrowed.into())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use arbitrary::Arbitrary;
+        use rand::Rng;
+        use serde::{Deserialize, Serialize};
+        use serde_with::serde_as;
+
+        /// Tests a bincode round-trip for OpTxEnvelope using an arbitrary instance.
+        #[test]
+        fn test_op_tx_envelope_bincode_roundtrip_arbitrary() {
+            #[serde_as]
+            #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+            struct Data {
+                // Use the bincode-compatible representation defined in this module.
+                #[serde_as(as = "OpTxEnvelope<'_>")]
+                envelope: super::super::OpTxEnvelope,
+            }
+
+            let mut bytes = [0u8; 1024];
+            rand::rng().fill(bytes.as_mut_slice());
+            let data = Data {
+                envelope: super::super::OpTxEnvelope::arbitrary(&mut arbitrary::Unstructured::new(
+                    &bytes,
+                ))
+                .unwrap(),
+            };
+
+            let encoded = bincode::serialize(&data).unwrap();
+            let decoded: Data = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(decoded, data);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

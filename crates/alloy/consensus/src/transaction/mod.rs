@@ -9,6 +9,9 @@ pub use tx_type::{DEPOSIT_TX_TYPE_ID, OpTxType};
 mod envelope;
 pub use envelope::OpTxEnvelope;
 
+#[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
+pub use envelope::serde_bincode_compat as envelope_serde_bincode_compat;
+
 mod typed;
 pub use typed::OpTypedTransaction;
 
@@ -20,6 +23,6 @@ pub use deposit::serde_deposit_tx_rpc;
 
 /// Bincode-compatible serde implementations for transaction types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
-pub(super) mod serde_bincode_compat {
-    pub use super::deposit::serde_bincode_compat::TxDeposit;
+pub mod serde_bincode_compat {
+    pub use super::{deposit::serde_bincode_compat::TxDeposit, envelope::serde_bincode_compat::*};
 }
