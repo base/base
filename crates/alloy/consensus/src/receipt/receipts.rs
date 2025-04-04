@@ -215,7 +215,7 @@ where
 /// Bincode-compatible [`OpDepositReceipt`] serde implementation.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub(crate) mod serde_bincode_compat {
-    use alloc::{borrow::Cow, vec::Vec};
+    use alloc::borrow::Cow;
     use alloy_consensus::Receipt;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     use serde_with::{DeserializeAs, SerializeAs};
@@ -237,7 +237,7 @@ pub(crate) mod serde_bincode_compat {
     /// ```
     #[derive(Debug, Serialize, Deserialize)]
     pub struct OpDepositReceipt<'a, T: Clone> {
-        logs: Cow<'a, Vec<T>>,
+        logs: Cow<'a, [T]>,
         status: bool,
         cumulative_gas_used: u64,
         deposit_nonce: Option<u64>,

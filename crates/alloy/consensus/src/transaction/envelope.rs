@@ -717,19 +717,19 @@ pub mod serde_bincode_compat {
         fn from(value: OpTxEnvelope<'a>) -> Self {
             match value {
                 OpTxEnvelope::Legacy { signature, transaction } => {
-                    super::OpTxEnvelope::Legacy(Signed::new_unhashed(transaction.into(), signature))
+                    Self::Legacy(Signed::new_unhashed(transaction.into(), signature))
                 }
-                OpTxEnvelope::Eip2930 { signature, transaction } => super::OpTxEnvelope::Eip2930(
-                    Signed::new_unhashed(transaction.into(), signature),
-                ),
-                OpTxEnvelope::Eip1559 { signature, transaction } => super::OpTxEnvelope::Eip1559(
-                    Signed::new_unhashed(transaction.into(), signature),
-                ),
-                OpTxEnvelope::Eip7702 { signature, transaction } => super::OpTxEnvelope::Eip7702(
-                    Signed::new_unhashed(transaction.into(), signature),
-                ),
+                OpTxEnvelope::Eip2930 { signature, transaction } => {
+                    Self::Eip2930(Signed::new_unhashed(transaction.into(), signature))
+                }
+                OpTxEnvelope::Eip1559 { signature, transaction } => {
+                    Self::Eip1559(Signed::new_unhashed(transaction.into(), signature))
+                }
+                OpTxEnvelope::Eip7702 { signature, transaction } => {
+                    Self::Eip7702(Signed::new_unhashed(transaction.into(), signature))
+                }
                 OpTxEnvelope::Deposit { hash, transaction } => {
-                    super::OpTxEnvelope::Deposit(Sealed::new_unchecked(transaction.into(), hash))
+                    Self::Deposit(Sealed::new_unchecked(transaction.into(), hash))
                 }
             }
         }
