@@ -287,14 +287,32 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     metrics
         .block_processing_duration
         .record(msg_processing_start_time.elapsed());
+    
+    // Store the current max index for this block
+    let max_index_key = format!("max_index:{}", block_number);
+    let current_max = cache.get::<u64>(&max_index_key).unwrap_or(0);
+    if payload.index > current_max {
+        if let Err(e) = cache.set(&max_index_key, &payload.index, Some(60)) {
+            error!("Failed to set max index in cache: {}", e);
+        }
+    }
 
-    // check duration on the most heavy payload
-    if payload.index == 0 {
+    if payload.index == 0 && block_number > 1 {
+        let prev_block = block_number - 1;
+        let prev_max_index_key = format!("max_index:{}", prev_block);
+        if let Some(max_index) = cache.get::<u64>(&prev_max_index_key) {
+            metrics.flashblocks_per_block.record((max_index + 1) as f64);
+        }
+        metrics.flashblock_created.set(0);
+        
         println!(
             "block processing time: {:?}",
             msg_processing_start_time.elapsed()
         );
     }
+    
+    // Increment the flashblock counter
+    metrics.flashblock_created.increment(1);
 }
 
 fn get_and_set_transactions(
@@ -593,5 +611,86 @@ mod tests {
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>("pending").is_none());
+    }
+
+    #[test]
+    fn test_flashblock_metrics() {
+        // Create a cache that will be used to track flashblock metrics
+        let cache = Arc::new(Cache::new());
+
+        // Create series of payloads for block 1
+        // First payload for block 1 (index 0)
+        let payload1_0 = create_test_payload(1, 0);
+        
+        // Second payload for block 1 (index 1)
+        let payload1_1 = create_test_payload(1, 1);
+        
+        // Third payload for block 1 (index 2)
+        let payload1_2 = create_test_payload(1, 2);
+
+        // Process the payloads for block 1
+        process_payload(payload1_0, cache.clone());
+        process_payload(payload1_1, cache.clone());
+        process_payload(payload1_2, cache.clone());
+
+        // Verify max index for block 1 is correctly stored
+        let max_index_key = format!("max_index:{}", 1);
+        let max_index = cache.get::<u64>(&max_index_key).unwrap();
+        assert_eq!(max_index, 2, "Max index for block 1 should be 2");
+
+        // Now create first payload for block 2 (index 0)
+        // This should trigger recording of metrics for block 1
+        let payload2_0 = create_test_payload(2, 0);
+        
+        // Process it
+        process_payload(payload2_0, cache.clone());
+
+        // Second payload for block 2 (index 1)
+        let payload2_1 = create_test_payload(2, 1);
+        process_payload(payload2_1, cache.clone());
+
+        // Verify max index for block 2 is 1
+        let max_index_key = format!("max_index:{}", 2);
+        let max_index = cache.get::<u64>(&max_index_key).unwrap();
+        assert_eq!(max_index, 1, "Max index for block 2 should be 1");
+    }
+
+    // Helper function to create test payloads with specified block number and index
+    fn create_test_payload(block_number: u64, index: u64) -> FlashblocksPayloadV1 {
+        let base = ExecutionPayloadBaseV1 {
+            parent_hash: Default::default(),
+            parent_beacon_block_root: Default::default(),
+            fee_recipient: Address::from_str("0x1234567890123456789012345678901234567890").unwrap(),
+            block_number,
+            gas_limit: 1000000,
+            timestamp: 1234567890,
+            prev_randao: Default::default(),
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::from(1000),
+        };
+
+        let delta = ExecutionPayloadFlashblockDeltaV1 {
+            transactions: vec![],
+            withdrawals: vec![],
+            state_root: Default::default(),
+            receipts_root: Default::default(),
+            logs_bloom: Default::default(),
+            gas_used: 0,
+            block_hash: Default::default(),
+        };
+
+        let metadata = Metadata {
+            block_number,
+            receipts: HashMap::default(),
+            new_account_balances: HashMap::default(),
+        };
+
+        FlashblocksPayloadV1 {
+            index,
+            payload_id: PayloadId::new([0; 8]),
+            base: if index == 0 { Some(base) } else { None },
+            diff: delta,
+            metadata: serde_json::to_value(metadata).unwrap(),
+        }
     }
 }
