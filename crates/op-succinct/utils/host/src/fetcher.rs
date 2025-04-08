@@ -1,22 +1,17 @@
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{keccak256, map::HashMap, Address, Bytes, B256, U256, U64};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
+use anyhow::bail;
 use anyhow::Result;
-use anyhow::{anyhow, bail};
 use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
-use kona_protocol::calculate_tx_l1_cost_fjord;
 use kona_protocol::L2BlockInfo;
 use kona_rpc::{OutputResponse, SafeHeadResponse};
 use op_alloy_consensus::OpBlock;
-use op_alloy_network::{
-    primitives::{BlockTransactions, HeaderResponse},
-    BlockResponse, Network, Optimism,
-};
-use op_alloy_rpc_types::OpTransactionReceipt;
+use op_alloy_network::{primitives::HeaderResponse, BlockResponse, Network, Optimism};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -150,123 +145,6 @@ impl OPSuccinctDataFetcher {
         } else {
             bail!("Failed to get L2 head");
         }
-    }
-
-    /// Manually calculate the L1 fee data for a range of blocks. Allows for modifying the L1 fee scalar.
-    pub async fn get_l2_fee_data_with_modified_l1_fee_scalar(
-        &self,
-        start: u64,
-        end: u64,
-        custom_l1_fee_scalar: Option<U256>,
-    ) -> Result<Vec<FeeData>> {
-        use futures::stream::{self, StreamExt};
-
-        // Fetch all tranasctions in parallel.
-        // Return a tuple of the block number and the transactions.
-        let transactions: Vec<(u64, Vec<B256>)> = stream::iter(start..=end)
-            .map(|block_number| async move {
-                let block = self.l2_provider.get_block(block_number.into()).await?;
-                if let Some(block) = block {
-                    match block.transactions {
-                        BlockTransactions::Hashes(txs) => Ok((block_number, txs)),
-                        _ => Err(anyhow::anyhow!("Unsupported transaction type")),
-                    }
-                } else {
-                    bail!("Failed to get L2 block for block {block_number}");
-                }
-            })
-            .buffered(100)
-            .collect::<Vec<Result<(u64, Vec<B256>)>>>()
-            .await
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect();
-
-        // Create a map of the block number to the transactions.
-        let block_number_to_transactions: HashMap<u64, Vec<B256>> =
-            transactions.into_iter().collect();
-
-        // Fetch all of the L1 block receipts in parallel.
-        let block_receipts: Vec<(u64, Vec<OpTransactionReceipt>)> = stream::iter(start..=end)
-            .map(|block_number| async move {
-                let receipts = self
-                    .l2_provider
-                    .get_block_receipts(block_number.into())
-                    .await?;
-                if let Some(receipts) = receipts {
-                    Ok((block_number, receipts))
-                } else {
-                    bail!("Failed to get L2 receipts for block {block_number}");
-                }
-            })
-            .buffered(100)
-            .collect::<Vec<Result<(u64, Vec<OpTransactionReceipt>), anyhow::Error>>>()
-            .await
-            .into_iter()
-            .filter_map(Result::ok)
-            .collect();
-
-        // Get all the encoded transactions for each block number in parallel.
-        let block_number_to_encoded_transactions = stream::iter(block_number_to_transactions)
-            .map(|(block_number, transactions)| async move {
-                let encoded_transactions = stream::iter(transactions)
-                    .map(|tx_hash| async move {
-                        self.l2_provider
-                            .client()
-                            .request::<&[B256; 1], Bytes>("debug_getRawTransaction", &[tx_hash])
-                            .await
-                            .map_err(|e| anyhow!("Error fetching transaction: {e}"))
-                            .unwrap()
-                    })
-                    .buffered(100)
-                    .collect::<Vec<Bytes>>()
-                    .await;
-                (block_number, encoded_transactions)
-            })
-            .buffered(100)
-            .collect::<HashMap<u64, Vec<Bytes>>>()
-            .await;
-
-        // Zip the block number to encoded transactions with the block number to receipts.
-        let block_number_to_receipts_and_transactions: HashMap<
-            u64,
-            (Vec<OpTransactionReceipt>, Vec<Bytes>),
-        > = block_receipts
-            .into_iter()
-            .filter_map(|(block_number, receipts)| {
-                block_number_to_encoded_transactions
-                    .get(&block_number)
-                    .map(|transactions| (block_number, (receipts, transactions.clone())))
-            })
-            .collect();
-
-        let mut fee_data = Vec::new();
-        for (block_number, (receipts, transactions)) in block_number_to_receipts_and_transactions {
-            for (transaction, receipt) in transactions.iter().zip(receipts) {
-                let l1_fee_scalar = if let Some(custom_l1_fee_scalar) = custom_l1_fee_scalar {
-                    custom_l1_fee_scalar
-                } else {
-                    U256::from(receipt.l1_block_info.l1_base_fee_scalar.unwrap_or(0))
-                };
-                // Get the Fjord L1 cost of the transaction.
-                let l1_gas_cost = calculate_tx_l1_cost_fjord(
-                    transaction.as_ref(),
-                    U256::from(receipt.l1_block_info.l1_gas_price.unwrap_or(0)),
-                    l1_fee_scalar,
-                    U256::from(receipt.l1_block_info.l1_blob_base_fee.unwrap_or(0)),
-                    U256::from(receipt.l1_block_info.l1_blob_base_fee_scalar.unwrap_or(0)),
-                );
-
-                fee_data.push(FeeData {
-                    block_number,
-                    tx_index: receipt.inner.transaction_index.unwrap(),
-                    tx_hash: receipt.inner.transaction_hash,
-                    l1_gas_cost,
-                    tx_fee: receipt.inner.effective_gas_price * receipt.inner.gas_used as u128,
-                });
-            }
-        }
-        Ok(fee_data)
     }
 
     /// Get the fee data for a range of blocks. Extracts the l1 fee data from the receipts.

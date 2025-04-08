@@ -18,7 +18,7 @@ spin = { version = "0.9.8" }
 lru = "0.12.3"
 async-trait = "0.1.80"
 sha2 = "0.10.8"
-tokio = { version = "1.40.0", features = ["full"] }
+tokio = { version = "1.44.2", features = ["full"] }
 clap = "4.5.9"
 cargo_metadata = "0.18.1"
 dotenv = "0.15.0"
@@ -45,25 +45,25 @@ strum = "0.27.1"
 strum_macros = "0.27.1"
 
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14" }
-kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false, features = [
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15" }
+kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", default-features = false, features = [
     "serde",
 ] }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.14", default-features = false }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.15", default-features = false }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
