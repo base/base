@@ -8,16 +8,16 @@ repository = "https://github.com/base-org/reth-flashblocks"
 
 [dependencies]
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.8" }
 
 # revm
 revm = { version = "21.0.0", default-features = false }
@@ -46,8 +46,8 @@ rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "e92ac2
 rustls = "0.23.23"
 
 # tokio
-tokio = { version = "1.0", features = ["full"] }
-tokio-stream = "0.1"
+tokio = { version = "1.44.2", features = ["full"] }
+tokio-stream = "0.1.11"
 tokio-tungstenite = { version = "0.26.2", features = ["native-tls"] }
 
 # async
