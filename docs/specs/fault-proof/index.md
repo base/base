@@ -29,11 +29,11 @@
     - [`l1-transactions <blockhash>`](#l1-transactions-blockhash)
     - [`l1-receipts <blockhash>`](#l1-receipts-blockhash)
     - [`l1-precompile <precompile ++ inputbytes>`](#l1-precompile-precompile--inputbytes)
-    - [`l2-block-header <blockhash>`](#l2-block-header-blockhash)
-    - [`l2-transactions <blockhash>`](#l2-transactions-blockhash)
-    - [`l2-code <codehash>`](#l2-code-codehash)
-    - [`l2-state-node <nodehash>`](#l2-state-node-nodehash)
-    - [`l2-output <outputroot>`](#l2-output-outputroot)
+    - [`l2-block-header <blockhash> <chainID>?`](#l2-block-header-blockhash-chainid)
+    - [`l2-transactions <blockhash> <chainID>?`](#l2-transactions-blockhash-chainid)
+    - [`l2-code <codehash> <chainID>?`](#l2-code-codehash-chainid)
+    - [`l2-state-node <nodehash> <chainID>?`](#l2-state-node-nodehash-chainid)
+    - [`l2-output <outputroot> <chainID>?`](#l2-output-outputroot-chainid)
     - [`l2-payload-witness <payload_attributes>`](#l2-payload-witness-payload_attributes)
     - [`l2-account-proof <blockhash_and_address>`](#l2-account-proof-blockhash_and_address)
   - [Precompile Accelerators](#precompile-accelerators)
@@ -417,38 +417,54 @@ Requests the host to prepare the result of an L1 call to the `precompile` addres
 `<inputbytes>` as the input. The host also prepares a [global keccak256 preimage](#type-2-global-keccak256-key)
 of the hint data `<precompile ++ inputbytes>`.
 
-#### `l2-block-header <blockhash>`
+#### `l2-block-header <blockhash> <chainID>?`
 
 Requests the host to prepare the L2 block header RLP pre-image of the block `<blockhash>`.
 
-#### `l2-transactions <blockhash>`
+The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
+
+#### `l2-transactions <blockhash> <chainID>?`
 
 Requests the host to prepare the list of transactions of the L2 block with `<blockhash>`:
 prepare the RLP pre-images of each of them, including transactions-list MPT nodes.
 
-#### `l2-code <codehash>`
+The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
+
+#### `l2-code <codehash> <chainID>?`
 
 Requests the host to prepare the L2 smart-contract code with the given `<codehash>`.
 
-#### `l2-state-node <nodehash>`
+The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
+
+#### `l2-state-node <nodehash> <chainID>?`
 
 Requests the host to prepare the L2 MPT node preimage with the given `<nodehash>`.
 
-#### `l2-output <outputroot>`
+The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
+
+#### `l2-output <outputroot> <chainID>?`
 
 Requests the host to prepare the L2 Output at the l2 output root `<outputroot>`.
 The L2 Output is the preimage of a
 [computed output root](../protocol/proposals.md#l2-output-commitment-construction).
 
+The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
+chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
+
 #### `l2-payload-witness <payload_attributes>`
 
 Requests the host to prepare all preimages used in the building of the payload specified by `<payload_attributes>`.
-`<payload_attributes>` is a JSON object with the fields `parentBlockHash` and `payloadAttributes`.
+`<payload_attributes>` is a JSON object with the fields `parentBlockHash`, `payloadAttributes` and optionally `chainID`.
+The `chainID` must be specific when the interop hard fork is active.
 
 #### `l2-account-proof <blockhash_and_address>`
 
 Requests the host send account proof for a certain block hash and address. `<blockhash_and_address>` is hex
-encoded: 32-byte block hash + 20-byte address.
+encoded: 32-byte block hash + 20-byte address + 8 byte big endian chain ID.
 
 `l2-payload-witness` and `l2-account-proof` hints are preferred over the more granular `l2-code` and `l2-state-node`,
 and they should be sent before the more granular hints to ensure proper handling.
