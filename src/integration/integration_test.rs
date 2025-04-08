@@ -13,7 +13,7 @@ mod tests {
     use op_alloy_network::Optimism;
     use op_alloy_network::ReceiptResponse;
     use reth_optimism_primitives::OpReceipt;
-    use rollup_boost::{
+    use rollup_boost::primitives::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
     };
     use serde_json;
