@@ -232,8 +232,8 @@ Where:
 Note that the operator fee's maximum value has 77 bits, which can be calculated from the maximum input parameters:
 
 $$
-\text{operatorFee}\_{max} = (\text{uint64}\_{max} \times \text{uint32}\_{max} \div 10^6) + \text{uint64}\_{max}
-\approx 7.924660923989131 \times 10^{22}
+\text{operatorFee}_{\text{max}} = (\text{uint64}_{\text{max}} \times \text{uint32}_{\text{max}} \div 10^6) +
+\text{uint64}_{\text{max}} \approx 7.924660923989131 \times 10^{22}
 $$
 
 So implementations don't need to check for overflows if they perform the calculations with `uint256` types.
