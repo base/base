@@ -4,7 +4,7 @@ use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPa
 use futures_util::StreamExt;
 use reth::core::primitives::SignedTransaction;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use rollup_boost::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
+use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -441,7 +441,7 @@ mod tests {
     use alloy_consensus::{Receipt, TxReceipt};
     use alloy_primitives::{Address, B256};
     use alloy_rpc_types_engine::PayloadId;
-    use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
+    use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {

@@ -8,41 +8,41 @@ repository = "https://github.com/base-org/reth-flashblocks"
 
 [dependencies]
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.4" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.7" }
 
 # revm
-revm = { version = "20.0.0-alpha.7", default-features = false }
-revm-bytecode = { version = "1.0.0-alpha.5", default-features = false }
+revm = { version = "21.0.0", default-features = false }
+revm-bytecode = { version = "2.0.0", default-features = false }
 
 # alloy
-alloy-primitives = { version = "0.8.20", default-features = false, features = ["map-foldhash"] }
-alloy-eips = { version = "0.12.6", default-features = false }
-alloy-rpc-types = { version = "0.12.6", default-features = false }
-alloy-rpc-types-engine = { version = "0.12.6", default-features = false }
-alloy-rpc-types-eth = { version = "0.12.6" }
-alloy-consensus = { version = "0.12.6" }
+alloy-primitives = { version = "0.8.25", default-features = false, features = ["map-foldhash"] }
+alloy-eips = { version = "0.13.0", default-features = false }
+alloy-rpc-types = { version = "0.13.0", default-features = false }
+alloy-rpc-types-engine = { version = "0.13.0", default-features = false }
+alloy-rpc-types-eth = { version = "0.13.0" }
+alloy-consensus = { version = "0.13.0" }
 alloy-trie = { version = "0.7.9", default-features = false }
-alloy-provider = { version = "0.12.6" }
-alloy-hardforks = "0.1.1"
+alloy-provider = { version = "0.13.0" }
+alloy-hardforks = "0.1.2"
 
 # op-alloy
-op-alloy-rpc-types = { version = "0.11.2", default-features = false }
-op-alloy-rpc-types-engine = { version =  "0.11.2", default-features = false }
-op-alloy-rpc-jsonrpsee = { version =  "0.11.2", default-features = false }
-op-alloy-network = { version =  "0.11.2", default-features = false }
-op-alloy-consensus = { version =  "0.11.1", default-features = false }
+op-alloy-rpc-types = { version = "0.12.0", default-features = false }
+op-alloy-rpc-types-engine = { version =  "0.12.0", default-features = false }
+op-alloy-rpc-jsonrpsee = { version =  "0.12.0", default-features = false }
+op-alloy-network = { version =  "0.12.0", default-features = false }
+op-alloy-consensus = { version =  "0.12.0", default-features = false }
 
 # rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "67f5974cad17b9fef257e27f0a4ff6a097e75d5d" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "e92ac27454f38e87b513b3dbabbc7c9583bff700" }
 rustls = "0.23.23"
 
 # tokio
