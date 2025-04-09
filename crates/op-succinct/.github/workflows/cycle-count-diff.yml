@@ -1,0 +1,50 @@
+name: Cycle Count Diff
+
+on:
+  pull_request:
+    paths:
+      - 'elf/range-elf-embedded'
+
+jobs:
+  cycle-count-diff:
+    runs-on:
+      - runs-on
+      - cpu=32
+      - ram=128
+      - family=m7a+m7i-flex
+      - image=ubuntu22-full-x64
+      - run-id=${{ github.run_id }}
+    steps:
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Setup CI
+        uses: ./.github/actions/setup
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Run Test
+        run: |
+          RUST_LOG=info cargo test test_cycle_count_diff -- --exact --nocapture
+        env:
+          L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+          L1_RPC: ${{ secrets.L1_RPC }}
+          L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+          L2_RPC: ${{ secrets.L2_RPC }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_TO_GITHUB: ${{ github.event_name == 'pull_request' }}
+
+      - name: Push Changes
+        run: |
+          git push origin ${{ github.head_ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
