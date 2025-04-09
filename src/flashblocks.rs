@@ -78,6 +78,8 @@ impl FlashblocksClient {
                         // Handle incoming messages
                         while let Some(msg) = read.next().await {
                             metrics.upstream_messages.increment(1);
+                            let msg_start_time = Instant::now();
+
                             match msg {
                                 Ok(Message::Binary(bytes)) => {
                                     // Decode binary message to string first
@@ -101,6 +103,9 @@ impl FlashblocksClient {
 
                                     let _ =
                                         sender.send(ActorMessage::BestPayload { payload }).await;
+                                    metrics
+                                        .websocket_processing_duration
+                                        .record(msg_start_time.elapsed());
                                 }
                                 Ok(Message::Close(_)) => break,
                                 Err(e) => {
