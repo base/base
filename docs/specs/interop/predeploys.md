@@ -19,9 +19,11 @@
 - [L2ToL2CrossDomainMessenger](#l2tol2crossdomainmessenger)
   - [`relayMessage` Invariants](#relaymessage-invariants)
   - [`sendMessage` Invariants](#sendmessage-invariants)
+  - [`resendMessage` Invariants](#resendmessage-invariants)
   - [Message Versioning](#message-versioning)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
+  - [Re-sending Messages](#re-sending-messages)
     - [Relaying Messages](#relaying-messages)
 - [OptimismSuperchainERC20Factory](#optimismsuperchainerc20factory)
   - [OptimismSuperchainERC20](#optimismsuperchainerc20)
@@ -307,7 +309,13 @@ as well as domain binding, i.e. the executing transaction can only be valid on a
 ### `sendMessage` Invariants
 
 - Sent Messages MUST be uniquely identifiable
-- It must emit the `SentMessage` event
+- It MUST store the message hash in the `sentMessages` mapping
+- It MUST emit the `SentMessage` event
+
+### `resendMessage` Invariants
+
+- It MUST NOT be possible to re-emit a `SentMessage` event that has not been sent
+- It MUST emit the `SentMessage` event
 
 ### Message Versioning
 
@@ -356,6 +364,23 @@ The `_destination` MUST NOT be the chain-ID of the local chain and a locally def
 every call to `sendMessage`.
 
 Note that `sendMessage` is not `payable`.
+
+### Re-sending Messages
+
+The `resendMessage` function is used to re-emit a `SentMessage` event for a message that has already been sent.
+It will calculate the message hash using the inputs, and check that the message hash is stored in the `sentMessages`
+mapping prior to emitting the `SentMessage` event.
+
+```solidity
+    function resendMessage(
+        uint256 _destination,
+        uint256 _nonce,
+        address _sender,
+        address _target,
+        bytes calldata _message
+    )
+        external;
+```
 
 #### Relaying Messages
 
