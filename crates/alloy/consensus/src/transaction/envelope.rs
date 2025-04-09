@@ -1,7 +1,7 @@
-use crate::{OpTxType, OpTypedTransaction, TxDeposit};
+use crate::{OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
     Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
-    Typed2718, transaction::RlpEcdsaDecodableTx,
+    Typed2718, error::ValueError, transaction::RlpEcdsaDecodableTx,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
@@ -345,6 +345,32 @@ impl OpTxEnvelope {
             Self::Deposit(tx) => tx.inner().is_system_transaction,
             _ => false,
         }
+    }
+
+    /// Attempts to convert the envelope into the pooled variant.
+    ///
+    /// Returns an error if the envelope's variant is incompatible with the pooled format:
+    /// [`TxDeposit`].
+    pub fn try_into_pooled(self) -> Result<OpPooledTransaction, ValueError<Self>> {
+        match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip7702(tx) => Ok(tx.into()),
+            Self::Deposit(tx) => {
+                Err(ValueError::new(tx.into(), "Deposit transactions cannot be pooled"))
+            }
+        }
+    }
+
+    /// Attempts to convert the envelope into the ethereum pooled variant.
+    ///
+    /// Returns an error if the envelope's variant is incompatible with the pooled format:
+    /// [`TxDeposit`].
+    pub fn try_into_eth_pooled(
+        self,
+    ) -> Result<alloy_consensus::transaction::PooledTransaction, ValueError<Self>> {
+        self.try_into_pooled().map(Into::into)
     }
 
     /// Attempts to convert the optimism variant into an ethereum [`TxEnvelope`].

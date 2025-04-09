@@ -4,6 +4,7 @@
 use crate::{OpTxEnvelope, OpTxType};
 use alloy_consensus::{
     SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
+    error::ValueError,
     transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxLegacy},
 };
 use alloy_eips::{
@@ -178,6 +179,17 @@ impl From<Signed<TxEip1559>> for OpPooledTransaction {
 impl From<Signed<TxEip7702>> for OpPooledTransaction {
     fn from(v: Signed<TxEip7702>) -> Self {
         Self::Eip7702(v)
+    }
+}
+
+impl From<OpPooledTransaction> for alloy_consensus::transaction::PooledTransaction {
+    fn from(value: OpPooledTransaction) -> Self {
+        match value {
+            OpPooledTransaction::Legacy(tx) => tx.into(),
+            OpPooledTransaction::Eip2930(tx) => tx.into(),
+            OpPooledTransaction::Eip1559(tx) => tx.into(),
+            OpPooledTransaction::Eip7702(tx) => tx.into(),
+        }
     }
 }
 
@@ -438,6 +450,14 @@ impl From<OpPooledTransaction> for TxEnvelope {
 impl From<OpPooledTransaction> for OpTxEnvelope {
     fn from(tx: OpPooledTransaction) -> Self {
         tx.into_op_envelope()
+    }
+}
+
+impl TryFrom<OpTxEnvelope> for OpPooledTransaction {
+    type Error = ValueError<OpTxEnvelope>;
+
+    fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
+        value.try_into_pooled()
     }
 }
 
