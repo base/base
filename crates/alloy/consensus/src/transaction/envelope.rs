@@ -649,7 +649,6 @@ pub mod serde_bincode_compat {
             /// Transaction signature.
             signature: Signature,
             /// Borrowed legacy transaction data.
-            #[serde(borrow)]
             transaction: TxLegacy<'a>,
         },
         /// EIP-2930 variant.
@@ -657,7 +656,6 @@ pub mod serde_bincode_compat {
             /// Transaction signature.
             signature: Signature,
             /// Borrowed EIP-2930 transaction data.
-            #[serde(borrow)]
             transaction: TxEip2930<'a>,
         },
         /// EIP-1559 variant.
@@ -665,7 +663,6 @@ pub mod serde_bincode_compat {
             /// Transaction signature.
             signature: Signature,
             /// Borrowed EIP-1559 transaction data.
-            #[serde(borrow)]
             transaction: TxEip1559<'a>,
         },
         /// EIP-7702 variant.
@@ -673,7 +670,6 @@ pub mod serde_bincode_compat {
             /// Transaction signature.
             signature: Signature,
             /// Borrowed EIP-7702 transaction data.
-            #[serde(borrow)]
             transaction: TxEip7702<'a>,
         },
         /// Deposit variant.
@@ -681,7 +677,6 @@ pub mod serde_bincode_compat {
             /// Precomputed hash.
             hash: B256,
             /// Borrowed deposit transaction data.
-            #[serde(borrow)]
             transaction: TxDeposit<'a>,
         },
     }
