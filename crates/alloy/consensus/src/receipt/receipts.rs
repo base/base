@@ -321,8 +321,12 @@ pub(crate) mod serde_bincode_compat {
             // ensure we don't have an invalid poststate variant
             data.transaction.inner.status = data.transaction.inner.status.coerce_status().into();
 
-            let encoded = bincode::serialize(&data).unwrap();
-            let decoded: Data<Log> = bincode::deserialize(&encoded).unwrap();
+            let encoded = bincode::serde::encode_to_vec(&data, bincode::config::legacy()).unwrap();
+            let (decoded, _) = bincode::serde::decode_from_slice::<Data<Log>, _>(
+                &encoded,
+                bincode::config::legacy(),
+            )
+            .unwrap();
             assert_eq!(decoded, data);
         }
     }
