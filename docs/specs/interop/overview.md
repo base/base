@@ -47,6 +47,8 @@ The proof system is able to check the validity of all executing messages.
 - [Supervisor](./supervisor.md): API for validating messages.
 - [Fault Proof](./fault-proof.md): modifications to prove interop functionality in the fault-proof.
 - [Token Bridging](./token-bridging.md): sending ERC20 tokens between chains
-- [Superchain WETH](./superchain-weth.md): Making ETH interoperable.
+- [ETH Liquidity](./eth-liquidity.md): ETH liquidity management.
+- [Superchain ETH Bridge](./superchain-eth-bridge.md): sending ETH between chains.
+- [ETH Bridging](./eth-bridging.md): sending ETH between chains.
 - [Derivation](./derivation.md): Changes to derivation of block-attributes.
 - [Transaction Pool](./tx-pool.md): Transaction-pool validation of transactions.

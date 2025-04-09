@@ -20,7 +20,6 @@
   - [`relayMessage` Invariants](#relaymessage-invariants)
   - [`sendMessage` Invariants](#sendmessage-invariants)
   - [Message Versioning](#message-versioning)
-  - [No Native Support for Cross Chain Ether Sends](#no-native-support-for-cross-chain-ether-sends)
   - [Interfaces](#interfaces)
     - [Sending Messages](#sending-messages)
     - [Relaying Messages](#relaying-messages)
@@ -53,6 +52,8 @@
     - [`Converted`](#converted)
   - [Invariants](#invariants)
   - [Conversion Flow](#conversion-flow)
+- [SuperchainETHBridge](#superchainethbridge)
+- [ETHLiquidity](#ethliquidity)
 - [SuperchainTokenBridge](#superchaintokenbridge)
   - [Overview](#overview-3)
   - [Functions](#functions-3)
@@ -318,12 +319,6 @@ function messageNonce() public view returns (uint256) {
     return Encoding.encodeVersionedNonce(nonce, MESSAGE_VERSION);
 }
 ```
-
-### No Native Support for Cross Chain Ether Sends
-
-To enable interoperability between chains that use a custom gas token, there is no native support for
-sending `ether` between chains. `ether` must first be wrapped into WETH before sending between chains.
-See [SuperchainWETH](./superchain-weth.md) for more information.
 
 ### Interfaces
 
@@ -723,6 +718,22 @@ sequenceDiagram
   L2StandardBridge->>SuperERC20: IERC20(to).mint(Alice, amount)
   L2StandardBridge-->L2StandardBridge: emit Converted(from, to, Alice, amount)
 ```
+
+## SuperchainETHBridge
+
+| Constant | Value                                        |
+| -------- | -------------------------------------------- |
+| Address  | `0x4200000000000000000000000000000000000024` |
+
+See the [SuperchainETHBridge](./superchain-eth-bridge.md) spec for the design of the `SuperchainETHBridge` predeploy.
+
+## ETHLiquidity
+
+| Constant | Value                                        |
+| -------- | -------------------------------------------- |
+| Address  | `0x4200000000000000000000000000000000000025` |
+
+See the [ETHLiquidity](./eth-liquidity.md) spec for the design of the `ETHLiquidity` contract.
 
 ## SuperchainTokenBridge
 
