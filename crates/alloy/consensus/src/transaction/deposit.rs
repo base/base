@@ -7,9 +7,7 @@ use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
 };
-use alloy_primitives::{
-    Address, B256, Bytes, ChainId, PrimitiveSignature as Signature, TxHash, TxKind, U256, keccak256,
-};
+use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
 use alloy_rlp::{
     Buf, BufMut, Decodable, EMPTY_STRING_CODE, Encodable, Error as DecodeError, Header,
 };
