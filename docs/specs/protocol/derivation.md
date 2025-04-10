@@ -1028,7 +1028,7 @@ entries.
 [deposit-contract-spec]: deposits.md#deposit-contract
 
 Logs are derived from transactions following the future-proof best-effort process described in
-[On Future-Proof Transaction Log Derivation][#on-future-proof-transaction-log-derivation]
+[On Future Proof Transaction Log Derivation](#on-future-proof-transaction-log-derivation)
 
 ### Network upgrade automation transactions
 

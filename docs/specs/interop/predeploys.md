@@ -140,9 +140,9 @@ for verification of the `checksum` and is not verified in the protocol state-tra
 0..1: type byte, always 0x01
 1..4: reserved, zeroed by default
 4..12: big-endian uint64 chain ID
-12..16: big-endian uint64, block number
-16..24: big-endian uint64, timestamp
-24..32: big-endian uint32, log index
+12..20: big-endian uint64, block number
+20..28: big-endian uint64, timestamp
+28..32: big-endian uint32, log index
 ```
 
 Chain IDs larger than `uint64` are supported, with an additional chain-ID-extension entry.

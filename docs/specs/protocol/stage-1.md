@@ -22,7 +22,7 @@
   - [Pause Deputy](#pause-deputy-1)
   - [Architecture Diagram](#architecture-diagram)
 - [Invariants](#invariants)
-  - [iS1-001: A permanent Withdrawal Liveness or Withdrawal Safety failure requires 75% of the Security Council (w/o bugs)](#is1-001-a-permanent-withdrawal-liveness-or-withdrawal-safety-failure-requires-75%25-of-the-security-council-wo-bugs)
+  - [iS1-001](#is1-001)
   - [Impact](#impact)
   - [iS1-002: The Pause Deputy can only cause a temporary Withdrawal Liveness failure](#is1-002-the-pause-deputy-can-only-cause-a-temporary-withdrawal-liveness-failure)
     - [Impact](#impact-1)
@@ -258,7 +258,9 @@ optional. It is included here for completeness, but it does not impact
 
 ## Invariants
 
-### iS1-001: A permanent Withdrawal Liveness or Withdrawal Safety failure requires 75% of the Security Council (w/o bugs)
+### iS1-001
+
+A permanent Withdrawal Liveness or Withdrawal Safety failure requires 75% of the Security Council (w/o bugs).
 
 This is the core invariant for Stage 1 and aligns with [the definition by L2BEAT][stage-1] from
 January 2025. We can define additional properties about roles specific to the OP Stack as long as

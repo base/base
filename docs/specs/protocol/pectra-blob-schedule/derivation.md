@@ -6,7 +6,7 @@
 
 - [If enabled](#if-enabled)
 - [If disabled (default)](#if-disabled-default)
-- [Motivation and Rationale](#motivation-and%C2%A0rationale)
+- [Motivation and Rationale](#motivation-and-rationale)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -26,7 +26,7 @@ For L2 blocks with an L1 origin less than the hard fork timestamp, the Cancun bl
 If the hardfork activation timestamp is nil, the blob base fee update rules which are active
 at any given L1 block will apply to the L1 Attributes Deposited Transaction.
 
-## Motivation and Rationale
+## Motivation and Rationale
 
 Due to a consensus layer bug, OPStack chains on Holesky and Sepolia running officially released op-node software
 did not update their blob base fee update fraction (for L1 Attributes Deposited Transaction)

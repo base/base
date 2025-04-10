@@ -5,7 +5,7 @@
 **Table of Contents**
 
 - [Overview](#overview)
-- [Constants](#constants)
+- [Chain Constants on L1](#chain-constants-on-l1)
   - [`ConfigType`](#configtype)
 - [`SystemConfig`](#systemconfig)
   - [`ConfigUpdate`](#configupdate)
@@ -20,12 +20,12 @@
     - [`setConfig`](#setconfig)
     - [`upgrade`](#upgrade)
 - [SuperchainConfig](#superchainconfig)
-  - [Constants](#constants-1)
+  - [SuperchainConfig Constants](#superchainconfig-constants)
   - [Interface](#interface-2)
   - [Initialization](#initialization-1)
+- [Deterministic genesis state](#deterministic-genesis-state)
+- [Chain Constants on L2](#chain-constants-on-l2)
 - [Predeploys](#predeploys)
-- [Constants](#constants-2)
-- [Predeploys](#predeploys-1)
   - [ProxyAdmin](#proxyadmin)
     - [Rationale](#rationale)
   - [L1Block](#l1block)
@@ -54,7 +54,7 @@
 The `SystemConfig` and `OptimismPortal` are updated with a new flow for chain
 configurability.
 
-## Constants
+## Chain Constants on L1
 
 ### `ConfigType`
 
@@ -191,7 +191,7 @@ The `SuperchainConfig` contract is updated with a new role that has the ability
 to issue deposit transactions from the identity of the `DEPOSITOR_ACCOUNT`
 that call the L2 `ProxyAdmin`.
 
-### Constants
+### SuperchainConfig Constants
 
 | Name | Value | Definition |
 | --------- | ------------------------- | -- |
@@ -207,14 +207,14 @@ function upgrader() public view returns (address)
 
 The `upgrader` can only be set during initialization.
 
-## Predeploys
+## Deterministic genesis state
 
 This upgrade enables a deterministic L2 genesis state by moving all network
 specific configuration out of the initial L2 genesis state. All network specific
 configuration is sourced from deposit transactions during the initialization
 of the `SystemConfig`.
 
-## Constants
+## Chain Constants on L2
 
 | Name | Value | Definition |
 | --------- | ------------------------- | -- |
