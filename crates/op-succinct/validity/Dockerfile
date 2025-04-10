@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y \
     git \
     libclang-dev \
     llvm-dev \
+    jq \
     && rm -rf /var/lib/apt/lists/*
 
 # Install SP1
