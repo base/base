@@ -41,54 +41,23 @@ pub struct ExecutionStats {
 
 /// Write a statistic to the formatter.
 fn write_stat(f: &mut fmt::Formatter<'_>, label: &str, value: u64) -> fmt::Result {
-    writeln!(
-        f,
-        "| {:<30} | {:>25} |",
-        label,
-        value.to_formatted_string(&Locale::en)
-    )
+    writeln!(f, "| {:<30} | {:>25} |", label, value.to_formatted_string(&Locale::en))
 }
 
 impl fmt::Display for ExecutionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(
-            f,
-            "+--------------------------------+---------------------------+"
-        )?;
+        writeln!(f, "+--------------------------------+---------------------------+")?;
         writeln!(f, "| {:<30} | {:<25} |", "Metric", "Value")?;
-        writeln!(
-            f,
-            "+--------------------------------+---------------------------+"
-        )?;
+        writeln!(f, "+--------------------------------+---------------------------+")?;
         write_stat(f, "Batch Start", self.batch_start)?;
         write_stat(f, "Batch End", self.batch_end)?;
-        write_stat(
-            f,
-            "Witness Generation (seconds)",
-            self.witness_generation_time_sec,
-        )?;
-        write_stat(
-            f,
-            "Execution Duration (seconds)",
-            self.total_execution_time_sec,
-        )?;
+        write_stat(f, "Witness Generation (seconds)", self.witness_generation_time_sec)?;
+        write_stat(f, "Execution Duration (seconds)", self.total_execution_time_sec)?;
         write_stat(f, "Total Instruction Count", self.total_instruction_count)?;
-        write_stat(
-            f,
-            "Oracle Verify Cycles",
-            self.oracle_verify_instruction_count,
-        )?;
+        write_stat(f, "Oracle Verify Cycles", self.oracle_verify_instruction_count)?;
         write_stat(f, "Derivation Cycles", self.derivation_instruction_count)?;
-        write_stat(
-            f,
-            "Block Execution Cycles",
-            self.block_execution_instruction_count,
-        )?;
-        write_stat(
-            f,
-            "Blob Verification Cycles",
-            self.blob_verification_instruction_count,
-        )?;
+        write_stat(f, "Block Execution Cycles", self.block_execution_instruction_count)?;
+        write_stat(f, "Blob Verification Cycles", self.blob_verification_instruction_count)?;
         write_stat(f, "Total SP1 Gas", self.total_sp1_gas)?;
         write_stat(f, "Number of Blocks", self.nb_blocks)?;
         write_stat(f, "Number of Transactions", self.nb_transactions)?;
@@ -104,10 +73,7 @@ impl fmt::Display for ExecutionStats {
         write_stat(f, "KZG Eval Cycles", self.kzg_eval_cycles)?;
         write_stat(f, "EC Recover Cycles", self.ec_recover_cycles)?;
         write_stat(f, "P256 Verify Cycles", self.p256_verify_cycles)?;
-        writeln!(
-            f,
-            "+--------------------------------+---------------------------+"
-        )
+        writeln!(f, "+--------------------------------+---------------------------+")
     }
 }
 
@@ -132,8 +98,9 @@ impl ExecutionStats {
 
         Self {
             l1_head,
-            // The "block data" does not include the first block (as it's not executed), so we need to subtract 1 to give the user back the
-            // block corresponding to the blockhash they're proving from.
+            // The "block data" does not include the first block (as it's not executed), so we need
+            // to subtract 1 to give the user back the block corresponding to the
+            // blockhash they're proving from.
             batch_start: block_data[0].block_number - 1,
             batch_end: block_data[block_data.len() - 1].block_number,
             total_instruction_count: report.total_instruction_count(),
@@ -177,39 +144,16 @@ impl MarkdownExecutionStats {
 impl fmt::Display for MarkdownExecutionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "| {:<30} | {:<25} |", "Metric", "Value")?;
-        writeln!(
-            f,
-            "|--------------------------------|---------------------------|"
-        )?;
+        writeln!(f, "|--------------------------------|---------------------------|")?;
         write_stat(f, "Batch Start", self.0.batch_start)?;
         write_stat(f, "Batch End", self.0.batch_end)?;
-        write_stat(
-            f,
-            "Witness Generation (seconds)",
-            self.0.witness_generation_time_sec,
-        )?;
-        write_stat(
-            f,
-            "Execution Duration (seconds)",
-            self.0.total_execution_time_sec,
-        )?;
+        write_stat(f, "Witness Generation (seconds)", self.0.witness_generation_time_sec)?;
+        write_stat(f, "Execution Duration (seconds)", self.0.total_execution_time_sec)?;
         write_stat(f, "Total Instruction Count", self.0.total_instruction_count)?;
-        write_stat(
-            f,
-            "Oracle Verify Cycles",
-            self.0.oracle_verify_instruction_count,
-        )?;
+        write_stat(f, "Oracle Verify Cycles", self.0.oracle_verify_instruction_count)?;
         write_stat(f, "Derivation Cycles", self.0.derivation_instruction_count)?;
-        write_stat(
-            f,
-            "Block Execution Cycles",
-            self.0.block_execution_instruction_count,
-        )?;
-        write_stat(
-            f,
-            "Blob Verification Cycles",
-            self.0.blob_verification_instruction_count,
-        )?;
+        write_stat(f, "Block Execution Cycles", self.0.block_execution_instruction_count)?;
+        write_stat(f, "Blob Verification Cycles", self.0.blob_verification_instruction_count)?;
         write_stat(f, "Total SP1 Gas", self.0.total_sp1_gas)?;
         write_stat(f, "Number of Blocks", self.0.nb_blocks)?;
         write_stat(f, "Number of Transactions", self.0.nb_transactions)?;
@@ -218,11 +162,7 @@ impl fmt::Display for MarkdownExecutionStats {
         write_stat(f, "Cycles per Transaction", self.0.cycles_per_transaction)?;
         write_stat(f, "Transactions per Block", self.0.transactions_per_block)?;
         write_stat(f, "Gas Used per Block", self.0.gas_used_per_block)?;
-        write_stat(
-            f,
-            "Gas Used per Transaction",
-            self.0.gas_used_per_transaction,
-        )?;
+        write_stat(f, "Gas Used per Transaction", self.0.gas_used_per_transaction)?;
         write_stat(f, "BN Pair Cycles", self.0.bn_pair_cycles)?;
         write_stat(f, "BN Add Cycles", self.0.bn_add_cycles)?;
         write_stat(f, "BN Mul Cycles", self.0.bn_mul_cycles)?;

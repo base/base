@@ -67,32 +67,12 @@ impl std::fmt::Display for AggregatedBlockData {
             self.transaction_count - self.nb_blocks
         )?;
         writeln!(f, "Total Gas Used: {}", self.gas_used)?;
-        writeln!(
-            f,
-            "Total L1 Fees: {:.6} ETH",
-            self.total_l1_fees as f64 / 1e18
-        )?;
-        writeln!(
-            f,
-            "Total TX Fees: {:.6} ETH",
-            self.total_tx_fees as f64 / 1e18
-        )?;
-        writeln!(
-            f,
-            "Avg Txns/Block (excluding system txns): {:.5}",
-            self.avg_txns_per_block
-        )?;
+        writeln!(f, "Total L1 Fees: {:.6} ETH", self.total_l1_fees as f64 / 1e18)?;
+        writeln!(f, "Total TX Fees: {:.6} ETH", self.total_tx_fees as f64 / 1e18)?;
+        writeln!(f, "Avg Txns/Block (excluding system txns): {:.5}", self.avg_txns_per_block)?;
         writeln!(f, "Avg Gas/Block: {:.2}", self.avg_gas_per_block)?;
-        writeln!(
-            f,
-            "Avg L1 Fees/Block: {:.6} ETH",
-            self.avg_l1_fees_per_block / 1e18
-        )?;
-        writeln!(
-            f,
-            "Avg TX Fees/Block: {:.6} ETH",
-            self.avg_tx_fees_per_block / 1e18
-        )
+        writeln!(f, "Avg L1 Fees/Block: {:.6} ETH", self.avg_l1_fees_per_block / 1e18)?;
+        writeln!(f, "Avg TX Fees/Block: {:.6} ETH", self.avg_tx_fees_per_block / 1e18)
     }
 }
 
@@ -113,9 +93,7 @@ async fn write_block_data_to_csv(
     while current_start <= args.end {
         let chunk_end = (current_start + CHUNK_SIZE - 1).min(args.end);
 
-        let chunk_data = fetcher
-            .get_l2_block_data_range(current_start, chunk_end)
-            .await?;
+        let chunk_data = fetcher.get_l2_block_data_range(current_start, chunk_end).await?;
 
         // Write the data for each block in the chunk to the CSV file.
         for block in chunk_data {

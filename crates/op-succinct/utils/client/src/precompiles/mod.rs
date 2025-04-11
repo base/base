@@ -38,18 +38,9 @@ macro_rules! create_annotated_precompile {
 /// Tuples of the original and annotated precompiles.
 // TODO: Add kzg_point_evaluation once it has standard precompile support in revm-precompile 0.17.0.
 const PRECOMPILES: &[(PrecompileWithAddress, PrecompileWithAddress)] = &[
-    (
-        bn128::add::ISTANBUL,
-        create_annotated_precompile!(bn128::add::ISTANBUL, "bn-add"),
-    ),
-    (
-        bn128::mul::ISTANBUL,
-        create_annotated_precompile!(bn128::mul::ISTANBUL, "bn-mul"),
-    ),
-    (
-        bn128::pair::ISTANBUL,
-        create_annotated_precompile!(bn128::pair::ISTANBUL, "bn-pair"),
-    ),
+    (bn128::add::ISTANBUL, create_annotated_precompile!(bn128::add::ISTANBUL, "bn-add")),
+    (bn128::mul::ISTANBUL, create_annotated_precompile!(bn128::mul::ISTANBUL, "bn-mul")),
+    (bn128::pair::ISTANBUL, create_annotated_precompile!(bn128::pair::ISTANBUL, "bn-pair")),
     (
         revm::precompile::secp256k1::ECRECOVER,
         create_annotated_precompile!(revm::precompile::secp256k1::ECRECOVER, "ec-recover"),

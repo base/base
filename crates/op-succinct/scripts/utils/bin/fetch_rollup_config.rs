@@ -39,7 +39,8 @@ struct L2OOConfig {
 
 /// Returns an address based on environment variables and private key settings:
 /// - If env_var exists, returns that address
-/// - Otherwise if private_key_by_default=true and PRIVATE_KEY exists, returns address derived from private key
+/// - Otherwise if private_key_by_default=true and PRIVATE_KEY exists, returns address derived from
+///   private key
 /// - Otherwise returns zero address
 fn get_address(env_var: &str, private_key_by_default: bool) -> String {
     // First try to get address directly from env var
@@ -59,12 +60,14 @@ fn get_address(env_var: &str, private_key_by_default: bool) -> String {
     Address::ZERO.to_string()
 }
 
-/// Update the L2OO config with the rollup config hash and other relevant data before the contract is deployed.
+/// Update the L2OO config with the rollup config hash and other relevant data before the contract
+/// is deployed.
 ///
 /// Specifically, updates the following fields in `opsuccinctl2ooconfig.json`:
 /// - rollup_config_hash: Get the hash of the rollup config from the rollup config file.
 /// - l2_block_time: Get the block time from the rollup config.
-/// - starting_block_number: If `STARTING_BLOCK_NUMBER` is not set, set starting_block_number to the latest finalized block on L2.
+/// - starting_block_number: If `STARTING_BLOCK_NUMBER` is not set, set starting_block_number to the
+///   latest finalized block on L2.
 /// - starting_output_root: Set to the output root of the starting block number.
 /// - starting_timestamp: Set to the timestamp of the starting block number.
 /// - chain_id: Get the chain id from the rollup config.
@@ -73,9 +76,7 @@ fn get_address(env_var: &str, private_key_by_default: bool) -> String {
 async fn update_l2oo_config() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let workspace_root = cargo_metadata::MetadataCommand::new()
-        .exec()?
-        .workspace_root;
+    let workspace_root = cargo_metadata::MetadataCommand::new().exec()?.workspace_root;
 
     // Set the verifier address
     let verifier = env::var("VERIFIER_ADDRESS").unwrap_or_else(|_| {
@@ -86,13 +87,7 @@ async fn update_l2oo_config() -> Result<()> {
 
     let starting_block_number = match env::var("STARTING_BLOCK_NUMBER") {
         Ok(n) => n.parse().unwrap(),
-        Err(_) => {
-            data_fetcher
-                .get_l2_header(BlockId::finalized())
-                .await
-                .unwrap()
-                .number
-        }
+        Err(_) => data_fetcher.get_l2_header(BlockId::finalized()).await.unwrap().number,
     };
 
     let starting_block_number_hex = format!("0x{:x}", starting_block_number);
@@ -104,30 +99,25 @@ async fn update_l2oo_config() -> Result<()> {
         )
         .await?;
 
-    let starting_output_root = optimism_output_data["outputRoot"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let starting_timestamp = optimism_output_data["blockRef"]["timestamp"]
-        .as_u64()
-        .unwrap();
+    let starting_output_root = optimism_output_data["outputRoot"].as_str().unwrap().to_string();
+    let starting_timestamp = optimism_output_data["blockRef"]["timestamp"].as_u64().unwrap();
 
     let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();
     let rollup_config_hash = format!("0x{:x}", hash_rollup_config(rollup_config));
     let l2_block_time = rollup_config.block_time;
 
-    let submission_interval = env::var("SUBMISSION_INTERVAL")
-        .map(|p| p.parse().unwrap())
-        .unwrap_or(10);
+    let submission_interval =
+        env::var("SUBMISSION_INTERVAL").map(|p| p.parse().unwrap()).unwrap_or(10);
 
-    // Default finalization period of 1 hour. Gives the challenger enough time to dispute the output.
-    // Docs: https://docs.optimism.io/builders/chain-operators/configuration/rollup#finalizationperiodseconds
+    // Default finalization period of 1 hour. Gives the challenger enough time to dispute the
+    // output. Docs: https://docs.optimism.io/builders/chain-operators/configuration/rollup#finalizationperiodseconds
     const DEFAULT_FINALIZATION_PERIOD_SECS: u64 = 60 * 60;
     let finalization_period = env::var("FINALIZATION_PERIOD_SECS")
         .map(|p| p.parse().unwrap())
         .unwrap_or(DEFAULT_FINALIZATION_PERIOD_SECS);
 
-    // Default to the address associated with the private key if the environment variable is not set. If private key is not set, default to zero address.
+    // Default to the address associated with the private key if the environment variable is not
+    // set. If private key is not set, default to zero address.
     let proposer = get_address("PROPOSER", true);
     let owner = get_address("OWNER", true);
     let challenger = get_address("CHALLENGER", true);
@@ -173,10 +163,7 @@ fn write_l2oo_config(config: L2OOConfig, workspace_root: &Path) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     // Write the L2OO rollup config to the opsuccinctl2ooconfig.json file
-    fs::write(
-        &opsuccinct_config_path,
-        serde_json::to_string_pretty(&config)?,
-    )?;
+    fs::write(&opsuccinct_config_path, serde_json::to_string_pretty(&config)?)?;
     Ok(())
 }
 
@@ -204,15 +191,12 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // This fetches the .env file from the project root. If the command is invoked in the contracts/ directory,
-    // the .env file in the root of the repo is used.
+    // This fetches the .env file from the project root. If the command is invoked in the contracts/
+    // directory, the .env file in the root of the repo is used.
     if let Some(root) = find_project_root() {
         dotenv::from_path(root.join(args.env_file)).ok();
     } else {
-        eprintln!(
-            "Warning: Could not find project root. {} file not loaded.",
-            args.env_file
-        );
+        eprintln!("Warning: Could not find project root. {} file not loaded.", args.env_file);
     }
 
     update_l2oo_config().await?;

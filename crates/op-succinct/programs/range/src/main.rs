@@ -26,12 +26,8 @@ fn main() {
         use anyhow::anyhow;
         use tracing::Level;
 
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(Level::INFO)
-            .finish();
-        tracing::subscriber::set_global_default(subscriber)
-            .map_err(|e| anyhow!(e))
-            .unwrap();
+        let subscriber = tracing_subscriber::fmt().with_max_level(Level::INFO).finish();
+        tracing::subscriber::set_global_default(subscriber).map_err(|e| anyhow!(e)).unwrap();
     }
 
     kona_proof::block_on(async move {

@@ -1,15 +1,14 @@
-use std::env;
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_transport_http::reqwest::Url;
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use op_alloy_network::EthereumWallet;
-use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
-use op_succinct_host_utils::hosts::default::SingleChainOPSuccinctHost;
+use op_succinct_host_utils::{
+    fetcher::OPSuccinctDataFetcher, hosts::default::SingleChainOPSuccinctHost,
+};
 use tokio::time::Duration;
 
 use fault_proof::{
@@ -50,9 +49,7 @@ async fn test_proposer_defends_successfully() -> Result<()> {
         wallet.default_signer().address(),
         l1_provider_with_wallet.clone(),
         factory.clone(),
-        Arc::new(SingleChainOPSuccinctHost {
-            fetcher: Arc::new(fetcher),
-        }),
+        Arc::new(SingleChainOPSuccinctHost { fetcher: Arc::new(fetcher) }),
     )
     .await
     .unwrap();
@@ -61,9 +58,7 @@ async fn test_proposer_defends_successfully() -> Result<()> {
     // Malicious challenger challenging a valid game
     tracing::info!("Malicious challenger challenging a valid game");
     let game = OPSuccinctFaultDisputeGame::new(game_address, l1_provider_with_wallet.clone());
-    let challenger_bond = factory
-        .fetch_challenger_bond(proposer.config.game_type)
-        .await?;
+    let challenger_bond = factory.fetch_challenger_bond(proposer.config.game_type).await?;
     let challenge_receipt = game
         .challenge()
         .value(challenger_bond)

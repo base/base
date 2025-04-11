@@ -24,10 +24,7 @@ async fn main() -> Result<()> {
 
     // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
     let range_vk_hash = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
-    println!(
-        "{:?} Range Verification Key Hash: {}",
-        args.da_config, range_vk_hash
-    );
+    println!("{:?} Range Verification Key Hash: {}", args.da_config, range_vk_hash);
 
     let (_, agg_vk) = prover.setup(AGGREGATION_ELF);
     println!("Aggregation Verification Key Hash: {}", agg_vk.bytes32());
@@ -40,10 +37,7 @@ async fn main() -> Result<()> {
         let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
         let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();
-        println!(
-            "Rollup Config Hash: 0x{:x}",
-            hash_rollup_config(rollup_config)
-        );
+        println!("Rollup Config Hash: 0x{:x}", hash_rollup_config(rollup_config));
     }
 
     Ok(())

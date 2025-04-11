@@ -1,5 +1,4 @@
-use std::collections::HashSet;
-use std::env;
+use std::{collections::HashSet, env};
 
 use alloy_primitives::{Address, FixedBytes, U256};
 use alloy_provider::ProviderBuilder;
@@ -37,9 +36,8 @@ async fn test_e2e_proposer_wins() -> Result<()> {
             .unwrap(),
     );
 
-    let l1_provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .on_http(proposer_config.l1_rpc.clone());
+    let l1_provider_with_wallet =
+        ProviderBuilder::new().wallet(wallet.clone()).on_http(proposer_config.l1_rpc.clone());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")
@@ -64,10 +62,7 @@ async fn test_e2e_proposer_wins() -> Result<()> {
     // Collect the game addresses and indexes created by the proposer.
     let mut game_addresses_and_indexes = Vec::new();
     while game_addresses_and_indexes.len() < NUM_GAMES {
-        let latest_game_index = factory
-            .fetch_latest_game_index()
-            .await?
-            .unwrap_or(U256::ZERO);
+        let latest_game_index = factory.fetch_latest_game_index().await?.unwrap_or(U256::ZERO);
         if latest_game_index < start_game_index + U256::from(NUM_GAMES) {
             sleep(Duration::from_secs(10)).await;
             continue;
@@ -86,23 +81,12 @@ async fn test_e2e_proposer_wins() -> Result<()> {
     }
 
     let game_impl = OPSuccinctFaultDisputeGame::new(
-        factory
-            .gameImpls(proposer_config.game_type)
-            .call()
-            .await?
-            ._0,
+        factory.gameImpls(proposer_config.game_type).call().await?._0,
         l1_provider_with_wallet.clone(),
     );
-    let max_challenge_duration = game_impl
-        .maxChallengeDuration()
-        .call()
-        .await?
-        .maxChallengeDuration_
-        .to::<u64>();
-    tracing::info!(
-        "Sleeping for {:?} seconds to pass challenge deadline",
-        max_challenge_duration
-    );
+    let max_challenge_duration =
+        game_impl.maxChallengeDuration().call().await?.maxChallengeDuration_.to::<u64>();
+    tracing::info!("Sleeping for {:?} seconds to pass challenge deadline", max_challenge_duration);
     sleep(Duration::from_secs(max_challenge_duration)).await;
 
     // Wait for games to be resolved.
@@ -134,16 +118,10 @@ async fn test_e2e_proposer_wins() -> Result<()> {
     }
 
     // Kill the proposer process
-    proposer_process
-        .kill()
-        .await
-        .expect("Failed to kill proposer process");
+    proposer_process.kill().await.expect("Failed to kill proposer process");
     tracing::info!("Proposer process killed");
 
-    assert!(
-        done,
-        "Timed out waiting for PROPOSER_WINS. Games were not resolved in time."
-    );
+    assert!(done, "Timed out waiting for PROPOSER_WINS. Games were not resolved in time.");
 
     Ok(())
 }
@@ -158,21 +136,14 @@ async fn test_e2e_challenger_wins() -> Result<()> {
 
     let proposer_config = ProposerConfig::from_env()?;
 
-    let wallet = EthereumWallet::from(
-        env::var("PRIVATE_KEY")
-            .unwrap()
-            .parse::<PrivateKeySigner>()
-            .unwrap(),
-    );
+    let wallet =
+        EthereumWallet::from(env::var("PRIVATE_KEY").unwrap().parse::<PrivateKeySigner>().unwrap());
 
-    let l1_provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .on_http(proposer_config.l1_rpc.clone());
+    let l1_provider_with_wallet =
+        ProviderBuilder::new().wallet(wallet.clone()).on_http(proposer_config.l1_rpc.clone());
 
-    let factory = DisputeGameFactory::new(
-        proposer_config.factory_address,
-        l1_provider_with_wallet.clone(),
-    );
+    let factory =
+        DisputeGameFactory::new(proposer_config.factory_address, l1_provider_with_wallet.clone());
 
     let game_type = proposer_config.game_type;
     let init_bond = factory.initBonds(game_type).call().await?._0;
@@ -189,8 +160,8 @@ async fn test_e2e_challenger_wins() -> Result<()> {
         .expect("Failed to spawn challenger");
 
     // Create games in background
-    let mut l2_block_number = factory.get_anchor_l2_block_number(game_type).await?
-        + U256::from(proposer_config.proposal_interval_in_blocks);
+    let mut l2_block_number = factory.get_anchor_l2_block_number(game_type).await? +
+        U256::from(proposer_config.proposal_interval_in_blocks);
     let parent_game_index = u32::MAX;
 
     for i in 0..NUM_GAMES {
@@ -217,10 +188,7 @@ async fn test_e2e_challenger_wins() -> Result<()> {
     let start = tokio::time::Instant::now();
 
     while !done && (tokio::time::Instant::now() - start) < max_wait {
-        let latest_game_index = factory
-            .fetch_latest_game_index()
-            .await?
-            .unwrap_or(U256::ZERO);
+        let latest_game_index = factory.fetch_latest_game_index().await?.unwrap_or(U256::ZERO);
 
         if latest_game_index >= start_game_index + U256::from(NUM_GAMES) {
             // Get latest game addresses
@@ -266,10 +234,7 @@ async fn test_e2e_challenger_wins() -> Result<()> {
     }
 
     // Kill the challenger process properly
-    challenger_process
-        .kill()
-        .await
-        .expect("Failed to kill challenger process");
+    challenger_process.kill().await.expect("Failed to kill challenger process");
 
     assert!(
         done,

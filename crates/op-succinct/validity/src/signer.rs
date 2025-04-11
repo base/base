@@ -37,10 +37,7 @@ struct SignTransactionParams {
 
 impl Web3Signer {
     pub fn new(address: Address, url: Url) -> Self {
-        Web3Signer {
-            client: ClientBuilder::default().http(url),
-            address,
-        }
+        Web3Signer { client: ClientBuilder::default().http(url), address }
     }
 }
 

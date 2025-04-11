@@ -70,14 +70,15 @@ impl From<String> for UnclaimDescription {
 #[derive(Serialize, Deserialize)]
 /// The status of a proof request.
 pub struct ProofStatus {
-    // Note: Can't use `FulfillmentStatus`/`ExecutionStatus` directly because `Serialize_repr` and `Deserialize_repr` aren't derived on it.
+    // Note: Can't use `FulfillmentStatus`/`ExecutionStatus` directly because `Serialize_repr` and
+    // `Deserialize_repr` aren't derived on it.
     pub fulfillment_status: i32,
     pub execution_status: i32,
     pub proof: Vec<u8>,
 }
 
-/// Configuration of the L2 Output Oracle contract. Created once at server start-up, monitors if there are any changes
-/// to the contract's configuration.
+/// Configuration of the L2 Output Oracle contract. Created once at server start-up, monitors if
+/// there are any changes to the contract's configuration.
 #[derive(Clone)]
 pub struct SuccinctProposerConfig {
     pub range_vk: Arc<SP1VerifyingKey>,
@@ -102,9 +103,7 @@ where
     let s: Vec<String> = Deserialize::deserialize(deserializer)?;
     s.into_iter()
         .map(|base64_str| {
-            general_purpose::STANDARD
-                .decode(base64_str)
-                .map_err(serde::de::Error::custom)
+            general_purpose::STANDARD.decode(base64_str).map_err(serde::de::Error::custom)
         })
         .collect()
 }

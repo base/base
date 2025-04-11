@@ -1,8 +1,9 @@
 use alloy_provider::{network::EthereumWallet, Provider, ProviderBuilder};
 use anyhow::Result;
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, hosts::initialize_host, metrics::init_metrics,
-    metrics::MetricsGauge,
+    fetcher::OPSuccinctDataFetcher,
+    hosts::initialize_host,
+    metrics::{init_metrics, MetricsGauge},
 };
 use op_succinct_validity::{
     read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
@@ -61,8 +62,8 @@ async fn main() -> Result<()> {
         safe_db_fallback: env_config.safe_db_fallback,
     };
 
-    // Read all config from env vars. If both signer_url and signer_address are provided, use Web3Signer.
-    // Otherwise, use the private key.
+    // Read all config from env vars. If both signer_url and signer_address are provided, use
+    // Web3Signer. Otherwise, use the private key.
     let wallet = match (env_config.signer_url, env_config.signer_address) {
         (Some(url), Some(address)) => EthereumWallet::new(Web3Signer::new(address, url)),
         _ => EthereumWallet::new(env_config.private_key),

@@ -36,9 +36,9 @@ where
     T::Err: std::fmt::Debug,
 {
     match env::var(key) {
-        Ok(value) => value
-            .parse::<T>()
-            .map_err(|e| anyhow::anyhow!("Failed to parse {}: {:?}", key, e)),
+        Ok(value) => {
+            value.parse::<T>().map_err(|e| anyhow::anyhow!("Failed to parse {}: {:?}", key, e))
+        }
         Err(_) => match default {
             Some(default_val) => Ok(default_val),
             None => anyhow::bail!("{} is not set", key),
@@ -53,8 +53,8 @@ pub fn read_proposer_env() -> Result<EnvironmentConfig> {
 
     // Parse strategy values
     let range_proof_strategy = if get_env_var("RANGE_PROOF_STRATEGY", Some("reserved".to_string()))?
-        .to_lowercase()
-        == "hosted"
+        .to_lowercase() ==
+        "hosted"
     {
         FulfillmentStrategy::Hosted
     } else {
@@ -62,8 +62,8 @@ pub fn read_proposer_env() -> Result<EnvironmentConfig> {
     };
 
     let agg_proof_strategy = if get_env_var("AGG_PROOF_STRATEGY", Some("reserved".to_string()))?
-        .to_lowercase()
-        == "hosted"
+        .to_lowercase() ==
+        "hosted"
     {
         FulfillmentStrategy::Hosted
     } else {
@@ -83,9 +83,8 @@ pub fn read_proposer_env() -> Result<EnvironmentConfig> {
         .ok()
         .map(|v| v.parse::<u64>().expect("Failed to parse LOOP_INTERVAL"));
 
-    let signer_url = env::var("SIGNER_URL")
-        .ok()
-        .map(|v| Url::parse(&v).expect("Failed to parse SIGNER_URL"));
+    let signer_url =
+        env::var("SIGNER_URL").ok().map(|v| Url::parse(&v).expect("Failed to parse SIGNER_URL"));
 
     let signer_address = env::var("SIGNER_ADDRESS")
         .ok()

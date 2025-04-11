@@ -47,11 +47,8 @@ pub fn main() {
     });
 
     // Create a map of each l1 head in the [`BootInfoStruct`]'s to booleans
-    let mut l1_heads_map: HashMap<B256, bool> = agg_inputs
-        .boot_infos
-        .iter()
-        .map(|boot_info| (boot_info.l1Head, false))
-        .collect();
+    let mut l1_heads_map: HashMap<B256, bool> =
+        agg_inputs.boot_infos.iter().map(|boot_info| (boot_info.l1Head, false)).collect();
 
     // Iterate through the headers in reverse order. The headers should be sequentially linked and
     // include the l1 head of each boot info.
@@ -69,11 +66,7 @@ pub fn main() {
 
     // Check if all l1 heads were found in the chain.
     for (l1_head, found) in l1_heads_map.iter() {
-        assert!(
-            *found,
-            "l1 head {:?} not found in the provided header chain",
-            l1_head
-        );
+        assert!(*found, "l1 head {:?} not found in the provided header chain", l1_head);
     }
 
     let first_boot_info = &agg_inputs.boot_infos[0];
