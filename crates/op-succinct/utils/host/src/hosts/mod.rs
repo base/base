@@ -6,9 +6,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use default::SingleChainOPSuccinctHost;
 use kona_preimage::{HintWriter, NativeChannel, OracleReader};
-use op_succinct_client_utils::client::run_opsuccinct_client;
-use op_succinct_client_utils::precompiles::zkvm_handle_register;
-use op_succinct_client_utils::{InMemoryOracle, StoreOracle};
+use op_succinct_client_utils::{
+    client::run_opsuccinct_client, precompiles::zkvm_handle_register, InMemoryOracle, StoreOracle,
+};
 use std::sync::Arc;
 
 #[async_trait]
@@ -40,8 +40,9 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
     /// - `l2_start_block`: The starting L2 block number
     /// - `l2_end_block`: The ending L2 block number
     /// - `l1_head_hash`: Optionally supplied L1 head block hash used as the L1 origin.
-    /// - `safe_db_fallback`: Optionally supplied flag to indicate whether to fallback to timestamp-based L1 head estimation
-    ///   when SafeDB is not available. This is optional to support abstraction across different node implementations.
+    /// - `safe_db_fallback`: Optionally supplied flag to indicate whether to fallback to
+    ///   timestamp-based L1 head estimation when SafeDB is not available. This is optional to
+    ///   support abstraction across different node implementations.
     async fn fetch(
         &self,
         l2_start_block: u64,

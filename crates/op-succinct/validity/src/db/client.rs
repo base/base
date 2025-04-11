@@ -1,9 +1,10 @@
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
 use serde_json::Value;
-use sqlx::postgres::types::PgInterval;
-use sqlx::Error;
-use sqlx::{postgres::PgQueryResult, PgPool};
+use sqlx::{
+    postgres::{types::PgInterval, PgQueryResult},
+    Error, PgPool,
+};
 use std::time::Duration;
 use tracing::info;
 
@@ -149,7 +150,8 @@ impl DriverDBClient {
 
     /// Fetch all requests with a specific block range and status FAILED or CANCELLED.
     ///
-    /// Checks that the request has the same range vkey commitment and rollup config hash as the commitment.
+    /// Checks that the request has the same range vkey commitment and rollup config hash as the
+    /// commitment.
     pub async fn fetch_failed_request_count_by_block_range(
         &self,
         start_block: i64,
@@ -197,8 +199,8 @@ impl DriverDBClient {
         Ok(result.map(|r| r.end_block))
     }
 
-    /// Fetch all range requests that have one of the given statuses and start block >= latest_contract_l2_block.
-    /// Returns only the start and end block as tuples.
+    /// Fetch all range requests that have one of the given statuses and start block >=
+    /// latest_contract_l2_block. Returns only the start and end block as tuples.
     pub async fn fetch_ranges_after_block(
         &self,
         statuses: &[RequestStatus],
@@ -221,10 +223,7 @@ impl DriverDBClient {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(ranges
-            .into_iter()
-            .map(|r| (r.start_block, r.end_block))
-            .collect())
+        Ok(ranges.into_iter().map(|r| (r.start_block, r.end_block)).collect())
     }
 
     /// Fetch the number of requests with a specific status.
@@ -269,7 +268,8 @@ impl DriverDBClient {
         Ok(requests)
     }
 
-    /// Get the consecutive range proofs for a given start block and end block that are complete with the same range vkey commitment.
+    /// Get the consecutive range proofs for a given start block and end block that are complete
+    /// with the same range vkey commitment.
     pub async fn get_consecutive_complete_range_proofs(
         &self,
         start_block: i64,
@@ -295,7 +295,8 @@ impl DriverDBClient {
         Ok(requests)
     }
 
-    /// Fetch the checkpointed block hash and number for an aggregation request with the same start block, end block, and commitment config.
+    /// Fetch the checkpointed block hash and number for an aggregation request with the same start
+    /// block, end block, and commitment config.
     pub async fn fetch_failed_agg_request_with_checkpointed_block_hash(
         &self,
         start_block: i64,
@@ -320,13 +321,11 @@ impl DriverDBClient {
         .await?;
 
         Ok(result.map(|r| {
-            (
-                r.checkpointed_l1_block_hash.unwrap(),
-                r.checkpointed_l1_block_number.unwrap(),
-            )
+            (r.checkpointed_l1_block_hash.unwrap(), r.checkpointed_l1_block_number.unwrap())
         }))
     }
-    /// Fetch the count of active (non-failed, non-cancelled) Aggregation proofs with the same start block, range vkey commitment, and aggregation vkey.
+    /// Fetch the count of active (non-failed, non-cancelled) Aggregation proofs with the same start
+    /// block, range vkey commitment, and aggregation vkey.
     pub async fn fetch_active_agg_proofs_count(
         &self,
         start_block: i64,
@@ -341,7 +340,8 @@ impl DriverDBClient {
             RequestStatus::Prove as i16,
             RequestStatus::Complete as i16,
         ];
-        // Note: Relayed is not included in the status list in case the user re-starts the proposer with the same DB and a different contract at the same starting block.
+        // Note: Relayed is not included in the status list in case the user re-starts the proposer
+        // with the same DB and a different contract at the same starting block.
         let result = sqlx::query!(
             "SELECT COUNT(*) as count FROM requests WHERE range_vkey_commitment = $1 AND rollup_config_hash = $2 AND aggregation_vkey_hash = $3 AND status = ANY($4) AND req_type = $5 AND start_block = $6 AND l1_chain_id = $7 AND l2_chain_id = $8",
             &commitment.range_vkey_commitment[..],
@@ -358,11 +358,14 @@ impl DriverDBClient {
         Ok(result.count.unwrap_or(0))
     }
 
-    /// Fetch the sorted list of Aggregation proofs with status Unrequested that have a start_block >= latest_contract_l2_block.
+    /// Fetch the sorted list of Aggregation proofs with status Unrequested that have a start_block
+    /// >= latest_contract_l2_block.
     ///
-    /// Checks that the request has the same range vkey commitment, aggregation vkey, and rollup config hash as the commitment.
+    /// Checks that the request has the same range vkey commitment, aggregation vkey, and rollup
+    /// config hash as the commitment.
     ///
-    /// NOTE: There should only be one "pending" Unrequested agg proof at a time for a specific start block.
+    /// NOTE: There should only be one "pending" Unrequested agg proof at a time for a specific
+    /// start block.
     pub async fn fetch_unrequested_agg_proof(
         &self,
         latest_contract_l2_block: i64,
@@ -388,7 +391,8 @@ impl DriverDBClient {
         Ok(request)
     }
 
-    /// Fetch the first Range proof with status Unrequested that has a start_block >= latest_contract_l2_block.
+    /// Fetch the first Range proof with status Unrequested that has a start_block >=
+    /// latest_contract_l2_block.
     pub async fn fetch_first_unrequested_range_proof(
         &self,
         latest_contract_l2_block: i64,
@@ -412,7 +416,8 @@ impl DriverDBClient {
         Ok(request)
     }
 
-    /// Fetch start and end blocks of all completed range proofs with matching range_vkey_commitment and start_block >= latest_contract_l2_block
+    /// Fetch start and end blocks of all completed range proofs with matching range_vkey_commitment
+    /// and start_block >= latest_contract_l2_block
     pub async fn fetch_completed_ranges(
         &self,
         commitment: &CommitmentConfig,
@@ -433,10 +438,7 @@ impl DriverDBClient {
         .fetch_all(&self.pool)
         .await?;
 
-        Ok(blocks
-            .iter()
-            .map(|block| (block.start_block, block.end_block))
-            .collect())
+        Ok(blocks.iter().map(|block| (block.start_block, block.end_block)).collect())
     }
 
     /// Update the l1_head_block_number for a request.

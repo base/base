@@ -79,48 +79,18 @@ fn create_diff_report(
         base.blob_verification_instruction_count,
         current.blob_verification_instruction_count,
     );
-    write_metric(
-        &mut report,
-        "Total SP1 Gas",
-        base.total_sp1_gas,
-        current.total_sp1_gas,
-    );
-    write_metric(
-        &mut report,
-        "Cycles per Block",
-        base.cycles_per_block,
-        current.cycles_per_block,
-    );
+    write_metric(&mut report, "Total SP1 Gas", base.total_sp1_gas, current.total_sp1_gas);
+    write_metric(&mut report, "Cycles per Block", base.cycles_per_block, current.cycles_per_block);
     write_metric(
         &mut report,
         "Cycles per Transaction",
         base.cycles_per_transaction,
         current.cycles_per_transaction,
     );
-    write_metric(
-        &mut report,
-        "BN Pair Cycles",
-        base.bn_pair_cycles,
-        current.bn_pair_cycles,
-    );
-    write_metric(
-        &mut report,
-        "BN Add Cycles",
-        base.bn_add_cycles,
-        current.bn_add_cycles,
-    );
-    write_metric(
-        &mut report,
-        "BN Mul Cycles",
-        base.bn_mul_cycles,
-        current.bn_mul_cycles,
-    );
-    write_metric(
-        &mut report,
-        "KZG Eval Cycles",
-        base.kzg_eval_cycles,
-        current.kzg_eval_cycles,
-    );
+    write_metric(&mut report, "BN Pair Cycles", base.bn_pair_cycles, current.bn_pair_cycles);
+    write_metric(&mut report, "BN Add Cycles", base.bn_add_cycles, current.bn_add_cycles);
+    write_metric(&mut report, "BN Mul Cycles", base.bn_mul_cycles, current.bn_mul_cycles);
+    write_metric(&mut report, "KZG Eval Cycles", base.kzg_eval_cycles, current.kzg_eval_cycles);
     write_metric(
         &mut report,
         "EC Recover Cycles",
@@ -143,41 +113,26 @@ async fn test_cycle_count_diff() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let host = SingleChainOPSuccinctHost {
-        fetcher: Arc::new(data_fetcher.clone()),
-    };
+    let host = SingleChainOPSuccinctHost { fetcher: Arc::new(data_fetcher.clone()) };
 
     let base_stats =
         serde_json::from_reader::<_, ExecutionStats>(File::open("base_cycle_stats.json")?)?;
     let l2_start_block = base_stats.batch_start;
     let l2_end_block = base_stats.batch_end;
 
-    let host_args = host
-        .fetch(l2_start_block, l2_end_block, None, Some(false))
-        .await?;
+    let host_args = host.fetch(l2_start_block, l2_end_block, None, Some(false)).await?;
 
     let oracle = host.run(&host_args).await?;
     let sp1_stdin = get_proof_stdin(oracle)?;
     let (block_data, report, execution_duration) =
         execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
-    let l1_block_number = data_fetcher
-        .get_l1_header(host_args.l1_head.into())
-        .await
-        .unwrap()
-        .number;
-    let new_stats = ExecutionStats::new(
-        l1_block_number,
-        &block_data,
-        &report,
-        0,
-        execution_duration.as_secs(),
-    );
+    let l1_block_number =
+        data_fetcher.get_l1_header(host_args.l1_head.into()).await.unwrap().number;
+    let new_stats =
+        ExecutionStats::new(l1_block_number, &block_data, &report, 0, execution_duration.as_secs());
 
-    println!(
-        "Execution Stats:\n{}",
-        MarkdownExecutionStats::new(new_stats.clone())
-    );
+    println!("Execution Stats:\n{}", MarkdownExecutionStats::new(new_stats.clone()));
 
     let report = create_diff_report(&base_stats, &new_stats, (l2_start_block, l2_end_block));
 
@@ -186,10 +141,8 @@ async fn test_cycle_count_diff() -> Result<()> {
     serde_json::to_writer_pretty(&mut file, &new_stats)?;
 
     // Commit the changes to base_cycle_stats.json
-    let git_add = std::process::Command::new("git")
-        .arg("add")
-        .arg("base_cycle_stats.json")
-        .output()?;
+    let git_add =
+        std::process::Command::new("git").arg("add").arg("base_cycle_stats.json").output()?;
     if !git_add.status.success() {
         eprintln!(
             "Failed to git add base_cycle_stats.json: {}",
@@ -212,10 +165,7 @@ async fn test_cycle_count_diff() -> Result<()> {
         );
     }
 
-    if std::env::var("POST_TO_GITHUB")
-        .ok()
-        .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or_default()
+    if std::env::var("POST_TO_GITHUB").ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or_default()
     {
         if let (Ok(owner), Ok(repo), Ok(pr_number), Ok(token)) = (
             std::env::var("REPO_OWNER"),
@@ -223,9 +173,7 @@ async fn test_cycle_count_diff() -> Result<()> {
             std::env::var("PR_NUMBER"),
             std::env::var("GITHUB_TOKEN"),
         ) {
-            post_to_github_pr(&owner, &repo, &pr_number, &token, &report)
-                .await
-                .unwrap();
+            post_to_github_pr(&owner, &repo, &pr_number, &token, &report).await.unwrap();
         }
     }
 

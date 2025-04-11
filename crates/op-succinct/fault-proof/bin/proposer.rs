@@ -49,7 +49,8 @@ async fn main() -> Result<()> {
         l1_provider_with_wallet.clone(),
     );
 
-    // Use PROVER_ADDRESS from env if available, otherwise use wallet's default signer address from the private key.
+    // Use PROVER_ADDRESS from env if available, otherwise use wallet's default signer address from
+    // the private key.
     let prover_address = env::var("PROVER_ADDRESS")
         .ok()
         .and_then(|addr| addr.parse::<Address>().ok())
@@ -60,9 +61,7 @@ async fn main() -> Result<()> {
         prover_address,
         l1_provider_with_wallet,
         factory,
-        Arc::new(SingleChainOPSuccinctHost {
-            fetcher: Arc::new(fetcher),
-        }),
+        Arc::new(SingleChainOPSuccinctHost { fetcher: Arc::new(fetcher) }),
     )
     .await
     .unwrap();

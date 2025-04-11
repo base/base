@@ -3,10 +3,8 @@ use anyhow::Result;
 use chrono::{Local, NaiveDateTime};
 use op_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
 use serde_json::Value;
-use sqlx::types::BigDecimal;
-use sqlx::{FromRow, PgPool};
-use std::fmt::Debug;
-use std::sync::Arc;
+use sqlx::{types::BigDecimal, FromRow, PgPool};
+use std::{fmt::Debug, sync::Arc};
 
 #[derive(sqlx::Type, Debug, Copy, Clone, PartialEq, Eq, Default)]
 #[sqlx(type_name = "smallint")]
@@ -124,9 +122,8 @@ impl OPSuccinctRequest {
         l2_chain_id: i64,
         fetcher: Arc<OPSuccinctDataFetcher>,
     ) -> Result<Self> {
-        let block_data = fetcher
-            .get_l2_block_data_range(start_block as u64, end_block as u64)
-            .await?;
+        let block_data =
+            fetcher.get_l2_block_data_range(start_block as u64, end_block as u64).await?;
 
         Ok(Self::new_range_request(
             mode,

@@ -43,11 +43,7 @@ where
     ///
     /// [OracleReader]: kona_preimage::OracleReader
     pub fn new(oracle_reader: OR, hint_writer: HW) -> Self {
-        Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
-            oracle_reader,
-            hint_writer,
-        }
+        Self { cache: Arc::new(Mutex::new(HashMap::new())), oracle_reader, hint_writer }
     }
 }
 

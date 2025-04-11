@@ -39,15 +39,9 @@ pub enum ValidityGauge {
         message = "Latest L2 block number from the contract"
     )]
     LatestContractL2Block,
-    #[strum(
-        serialize = "succinct_l2_unsafe_head_block",
-        message = "L2 unsafe head block number"
-    )]
+    #[strum(serialize = "succinct_l2_unsafe_head_block", message = "L2 unsafe head block number")]
     L2UnsafeHeadBlock,
-    #[strum(
-        serialize = "succinct_l2_finalized_block",
-        message = "L2 finalized block number"
-    )]
+    #[strum(serialize = "succinct_l2_finalized_block", message = "L2 finalized block number")]
     L2FinalizedBlock,
     #[strum(
         serialize = "succinct_min_block_to_prove_to_agg",
@@ -61,30 +55,21 @@ pub enum ValidityGauge {
     ProofRequestRetryCount,
 
     // Error gauges
-    #[strum(
-        serialize = "succinct_total_error_count",
-        message = "Number of total errors"
-    )]
+    #[strum(serialize = "succinct_total_error_count", message = "Number of total errors")]
     TotalErrorCount,
     #[strum(
         serialize = "succinct_proof_request_timeout_error_count",
         message = "Number of proof request timeout errors"
     )]
     ProofRequestTimeoutErrorCount,
-    #[strum(
-        serialize = "succinct_retry_error_count",
-        message = "Number of retry errors"
-    )]
+    #[strum(serialize = "succinct_retry_error_count", message = "Number of retry errors")]
     RetryErrorCount,
     #[strum(
         serialize = "succinct_witnessgen_error_count",
         message = "Number of witness generation errors"
     )]
     WitnessgenErrorCount,
-    #[strum(
-        serialize = "succinct_execution_error_count",
-        message = "Number of execution errors"
-    )]
+    #[strum(serialize = "succinct_execution_error_count", message = "Number of execution errors")]
     ExecutionErrorCount,
     #[strum(
         serialize = "succinct_range_proof_request_error_count",

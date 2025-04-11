@@ -15,7 +15,6 @@
 /// let gaps = find_gaps(overall_start, overall_end, &ranges);
 /// assert_eq!(gaps, [(1, 2), (5, 7), (9, 10)]);
 /// ```
-///
 pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) -> Vec<(i64, i64)> {
     let mut gaps = Vec::new();
     let mut current_start = overall_start;
@@ -36,10 +35,10 @@ pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) ->
 
 /// Determines the block ranges to be proven based on a set of ranges and a specified interval.
 ///
-/// Given a set block ranges that overlap at most on the boundaries and a range proof interval, this function calculates
-/// and returns the specific block ranges that need to be proven. Ensures that all disjoint ranges
-/// are fully covered by conditionally inserting a single range smaller than the range proof interval
-/// if necessary.
+/// Given a set block ranges that overlap at most on the boundaries and a range proof interval, this
+/// function calculates and returns the specific block ranges that need to be proven. Ensures that
+/// all disjoint ranges are fully covered by conditionally inserting a single range smaller than the
+/// range proof interval if necessary.
 ///
 /// # Example
 ///
@@ -50,7 +49,10 @@ pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) ->
 /// let range_proof_interval = 25;
 ///
 /// let ranges_to_prove = get_ranges_to_prove(&disjoint_ranges, range_proof_interval);
-/// assert_eq!(ranges_to_prove, [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]);
+/// assert_eq!(
+///     ranges_to_prove,
+///     [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]
+/// );
 /// ```
 pub fn get_ranges_to_prove(
     disjoint_ranges: &[(i64, i64)],
@@ -67,8 +69,9 @@ pub fn get_ranges_to_prove(
         }
     }
 
-    // For the last range, remove it if it's less than range_proof_interval. This is to ensure when inserting the ranges
-    // near the tip, only requests of size range_proof_interval are inserted.
+    // For the last range, remove it if it's less than range_proof_interval. This is to ensure when
+    // inserting the ranges near the tip, only requests of size range_proof_interval are
+    // inserted.
     if let Some(&(start, end)) = ranges.last() {
         if end - start < range_proof_interval {
             ranges.pop();
@@ -100,22 +103,10 @@ mod tests {
         &[(1, 2), (4, 5), (7, 8)],
         &[(2, 4), (5, 7), (8, 10)]
     );
-    test_find_gaps!(
-        test_find_gaps_at_start,
-        1,
-        6,
-        &[(3, 4), (5, 6)],
-        &[(1, 3), (4, 5)]
-    );
+    test_find_gaps!(test_find_gaps_at_start, 1, 6, &[(3, 4), (5, 6)], &[(1, 3), (4, 5)]);
     test_find_gaps!(test_find_gaps_at_end, 1, 5, &[(1, 2), (2, 3)], &[(3, 5)]);
     test_find_gaps!(test_find_gaps_empty_ranges, 1, 5, &[], &[(1, 5)]);
-    test_find_gaps!(
-        test_find_gaps_single_range,
-        1,
-        5,
-        &[(2, 4)],
-        &[(1, 2), (4, 5)]
-    );
+    test_find_gaps!(test_find_gaps_single_range, 1, 5, &[(2, 4)], &[(1, 2), (4, 5)]);
 
     macro_rules! test_get_ranges_to_prove {
         ($name:ident, $disjoint_ranges:expr, $range_proof_interval:expr, $expected:expr) => {
@@ -131,14 +122,7 @@ mod tests {
         test_get_ranges_to_prove_case_1,
         &[(0, 50), (100, 200), (200, 210)],
         25,
-        &[
-            (0, 25),
-            (25, 50),
-            (100, 125),
-            (125, 150),
-            (150, 175),
-            (175, 200)
-        ]
+        &[(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]
     );
 
     test_get_ranges_to_prove!(

@@ -47,7 +47,8 @@ where
     F: TxFiller<Ethereum>,
     P: Provider<Ethereum> + Clone,
 {
-    /// Creates a new challenger instance with the provided L1 provider with wallet and factory contract instance.
+    /// Creates a new challenger instance with the provided L1 provider with wallet and factory
+    /// contract instance.
     pub async fn new(
         challenger_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
@@ -177,13 +178,15 @@ where
         }
     }
 
-    /// Runs the challenger in an infinite loop, periodically checking for games to challenge and resolve.
+    /// Runs the challenger in an infinite loop, periodically checking for games to challenge and
+    /// resolve.
     async fn run(&mut self) -> Result<()> {
         tracing::info!("OP Succinct Challenger running...");
         let mut interval = time::interval(Duration::from_secs(self.config.fetch_interval));
 
         // Each loop, check the oldest challengeable game and challenge it if it exists.
-        // Eventually, all games will be challenged (as long as the rate at which games are being created is slower than the fetch interval).
+        // Eventually, all games will be challenged (as long as the rate at which games are being
+        // created is slower than the fetch interval).
         loop {
             interval.tick().await;
 

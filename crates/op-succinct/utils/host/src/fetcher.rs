@@ -4,8 +4,7 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use anyhow::bail;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
 use kona_protocol::L2BlockInfo;
@@ -16,11 +15,10 @@ use op_succinct_client_utils::boot::BootInfoStruct;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::{
     cmp::{min, Ordering},
     env, fs,
-    path::Path,
+    path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
 };
@@ -136,10 +134,7 @@ impl OPSuccinctDataFetcher {
     }
 
     pub async fn get_l2_head(&self) -> Result<Header> {
-        let block = self
-            .l2_provider
-            .get_block_by_number(BlockNumberOrTag::Latest)
-            .await?;
+        let block = self.l2_provider.get_block_by_number(BlockNumberOrTag::Latest).await?;
         if let Some(block) = block {
             Ok(block.header.inner)
         } else {
@@ -158,10 +153,8 @@ impl OPSuccinctDataFetcher {
             .map(|block_number| {
                 let l2_provider = l2_provider.clone();
                 async move {
-                    let receipt = l2_provider
-                        .get_block_receipts(block_number.into())
-                        .await
-                        .unwrap();
+                    let receipt =
+                        l2_provider.get_block_receipts(block_number.into()).await.unwrap();
                     let transactions = receipt.unwrap();
                     let block_fee_data: Vec<FeeData> = transactions
                         .iter()
@@ -189,35 +182,28 @@ impl OPSuccinctDataFetcher {
     /// Get the aggregate block statistics for a range of blocks exclusive of the start block.
     ///
     /// When proving a range in OP Succinct, we are proving the transition from the block hash
-    /// of the start block to the block hash of the end block. This means that we don't expend resources
-    /// to "prove" the start block. This is why the start block is not included in the range for which
-    /// we fetch block data.
+    /// of the start block to the block hash of the end block. This means that we don't expend
+    /// resources to "prove" the start block. This is why the start block is not included in the
+    /// range for which we fetch block data.
     pub async fn get_l2_block_data_range(&self, start: u64, end: u64) -> Result<Vec<BlockInfo>> {
         use futures::stream::{self, StreamExt};
 
         let block_data = stream::iter(start + 1..=end)
             .map(|block_number| async move {
-                let block = self
-                    .l2_provider
-                    .get_block_by_number(block_number.into())
-                    .await?
-                    .unwrap();
-                let receipts = self
-                    .l2_provider
-                    .get_block_receipts(block_number.into())
-                    .await?
-                    .unwrap();
-                let total_l1_fees: u128 = receipts
-                    .iter()
-                    .map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0))
-                    .sum();
+                let block =
+                    self.l2_provider.get_block_by_number(block_number.into()).await?.unwrap();
+                let receipts =
+                    self.l2_provider.get_block_receipts(block_number.into()).await?.unwrap();
+                let total_l1_fees: u128 =
+                    receipts.iter().map(|tx| tx.l1_block_info.l1_fee.unwrap_or(0)).sum();
                 let total_tx_fees: u128 = receipts
                     .iter()
                     .map(|tx| {
-                        // tx.inner.effective_gas_price * tx.inner.gas_used + tx.l1_block_info.l1_fee is the total fee for the transaction.
+                        // tx.inner.effective_gas_price * tx.inner.gas_used +
+                        // tx.l1_block_info.l1_fee is the total fee for the transaction.
                         // tx.inner.effective_gas_price * tx.inner.gas_used is the tx fee on L2.
-                        tx.inner.effective_gas_price * tx.inner.gas_used as u128
-                            + tx.l1_block_info.l1_fee.unwrap_or(0)
+                        tx.inner.effective_gas_price * tx.inner.gas_used as u128 +
+                            tx.l1_block_info.l1_fee.unwrap_or(0)
                     })
                     .sum();
 
@@ -258,14 +244,12 @@ impl OPSuccinctDataFetcher {
 
     /// Finds the L1 block at the provided timestamp.
     pub async fn find_l1_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l1_provider, target_timestamp)
-            .await
+        self.find_block_by_timestamp(&self.l1_provider, target_timestamp).await
     }
 
     /// Finds the L2 block at the provided timestamp.
     pub async fn find_l2_block_by_timestamp(&self, target_timestamp: u64) -> Result<(B256, u64)> {
-        self.find_block_by_timestamp(&self.l2_provider, target_timestamp)
-            .await
+        self.find_block_by_timestamp(&self.l2_provider, target_timestamp).await
     }
 
     /// Finds the block at the provided timestamp, using the provided provider.
@@ -453,24 +437,21 @@ impl OPSuccinctDataFetcher {
         let latest_header = self.get_l1_header(checkpoint_block_hash.into()).await?;
 
         // Create a vector of futures for fetching all headers
-        let headers = self
-            .fetch_headers_in_range(start_header.number, latest_header.number)
-            .await?;
+        let headers =
+            self.fetch_headers_in_range(start_header.number, latest_header.number).await?;
 
         Ok(headers)
     }
 
-    /// Get the data directory path. Note: This path is relative to the location from which the program is run.
+    /// Get the data directory path. Note: This path is relative to the location from which the
+    /// program is run.
     pub fn get_data_directory(
         &self,
         l2_chain_id: u64,
         l2_start_block: u64,
         l2_end_block: u64,
     ) -> Result<String> {
-        Ok(format!(
-            "data/{}/{}-{}",
-            l2_chain_id, l2_start_block, l2_end_block
-        ))
+        Ok(format!("data/{}/{}-{}", l2_chain_id, l2_start_block, l2_end_block))
     }
 
     pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
@@ -537,8 +518,8 @@ impl OPSuccinctDataFetcher {
         })
     }
 
-    /// If the safeDB is activated, use it to fetch the L1 block where the batch including the data for the end L2 block was posted.
-    /// If the safeDB is not activated:
+    /// If the safeDB is activated, use it to fetch the L1 block where the batch including the data
+    /// for the end L2 block was posted. If the safeDB is not activated:
     ///   - If `safe_db_fallback` is `true`, estimate the L1 head based on the L2 block timestamp.
     ///   - Else, return an error.
     async fn get_l1_head(&self, l2_end_block: u64, safe_db_fallback: bool) -> Result<(B256, u64)> {
@@ -647,19 +628,14 @@ impl OPSuccinctDataFetcher {
         let l2_provider = self.l2_provider.clone();
 
         // Get L2 output data.
-        let l2_output_block = l2_provider
-            .get_block_by_number(l2_start_block.into())
-            .await?
-            .ok_or_else(|| {
+        let l2_output_block =
+            l2_provider.get_block_by_number(l2_start_block.into()).await?.ok_or_else(|| {
                 anyhow::anyhow!("Block not found for block number {}", l2_start_block)
             })?;
         let l2_output_state_root = l2_output_block.header.state_root;
         let agreed_l2_head_hash = l2_output_block.header.hash;
         let l2_output_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
+            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_start_block.into())
             .await?
             .storage_hash;
@@ -673,17 +649,11 @@ impl OPSuccinctDataFetcher {
         let agreed_l2_output_root = keccak256(l2_output_encoded.abi_encode());
 
         // Get L2 claim data.
-        let l2_claim_block = l2_provider
-            .get_block_by_number(l2_end_block.into())
-            .await?
-            .unwrap();
+        let l2_claim_block = l2_provider.get_block_by_number(l2_end_block.into()).await?.unwrap();
         let l2_claim_state_root = l2_claim_block.header.state_root;
         let l2_claim_hash = l2_claim_block.header.hash;
         let l2_claim_storage_hash = l2_provider
-            .get_proof(
-                Address::from_str("0x4200000000000000000000000000000000000016")?,
-                Vec::new(),
-            )
+            .get_proof(Address::from_str("0x4200000000000000000000000000000000000016")?, Vec::new())
             .block_id(l2_end_block.into())
             .await?
             .storage_hash;
@@ -701,16 +671,17 @@ impl OPSuccinctDataFetcher {
             None => {
                 let (_, l1_head_number) = self.get_l1_head(l2_end_block, safe_db_fallback).await?;
 
-                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with safe head > L2 end block.
+                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with
+                // safe head > L2 end block.
                 let l1_head_number = l1_head_number + 20;
-                // The new L1 header requested should not be greater than the finalized L1 header minus 10 blocks.
+                // The new L1 header requested should not be greater than the finalized L1 header
+                // minus 10 blocks.
                 let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
                 match l1_head_number > finalized_l1_header.number {
-                    true => self
-                        .get_l1_header(finalized_l1_header.number.into())
-                        .await?
-                        .hash_slow(),
+                    true => {
+                        self.get_l1_header(finalized_l1_header.number.into()).await?.hash_slow()
+                    }
                     false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
                 }
             }
@@ -736,25 +707,13 @@ impl OPSuccinctDataFetcher {
             l2_chain_id: None,
             // Trim the trailing slash to avoid double slashes in the URL.
             l2_node_address: Some(
-                self.rpc_config
-                    .l2_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
+                self.rpc_config.l2_rpc.as_str().trim_end_matches('/').to_string(),
             ),
             l1_node_address: Some(
-                self.rpc_config
-                    .l1_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
+                self.rpc_config.l1_rpc.as_str().trim_end_matches('/').to_string(),
             ),
             l1_beacon_address: Some(
-                self.rpc_config
-                    .l1_beacon_rpc
-                    .as_str()
-                    .trim_end_matches('/')
-                    .to_string(),
+                self.rpc_config.l1_beacon_rpc.as_str().trim_end_matches('/').to_string(),
             ),
             data_dir: Some(data_directory.into()),
             native: false,

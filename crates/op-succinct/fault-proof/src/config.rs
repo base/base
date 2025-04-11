@@ -47,7 +47,8 @@ pub struct ProposerConfig {
     /// The maximum number of games to check for bond claiming.
     pub max_games_to_check_for_bond_claiming: u64,
 
-    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node.
+    /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not
+    /// activated for op-node.
     pub safe_db_fallback: bool,
 
     /// The metrics port.
@@ -59,18 +60,14 @@ impl ProposerConfig {
         Ok(Self {
             l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
             l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
-            factory_address: env::var("FACTORY_ADDRESS")?
-                .parse()
-                .expect("FACTORY_ADDRESS not set"),
+            factory_address: env::var("FACTORY_ADDRESS")?.parse().expect("FACTORY_ADDRESS not set"),
             fast_finality_mode: env::var("FAST_FINALITY_MODE")
                 .unwrap_or("false".to_string())
                 .parse()?,
             proposal_interval_in_blocks: env::var("PROPOSAL_INTERVAL_IN_BLOCKS")
                 .unwrap_or("1800".to_string())
                 .parse()?,
-            fetch_interval: env::var("FETCH_INTERVAL")
-                .unwrap_or("30".to_string())
-                .parse()?,
+            fetch_interval: env::var("FETCH_INTERVAL").unwrap_or("30".to_string()).parse()?,
             game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
             max_games_to_check_for_defense: env::var("MAX_GAMES_TO_CHECK_FOR_DEFENSE")
                 .unwrap_or("100".to_string())
@@ -107,7 +104,8 @@ pub struct ChallengerConfig {
     pub game_type: u32,
 
     /// The number of games to check for challenges.
-    /// The challenger will check for challenges up to `max_games_to_check_for_challenge` games behind the latest game.
+    /// The challenger will check for challenges up to `max_games_to_check_for_challenge` games
+    /// behind the latest game.
     pub max_games_to_check_for_challenge: u64,
 
     /// Whether to enable game resolution.
@@ -131,13 +129,9 @@ impl ChallengerConfig {
         Ok(Self {
             l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
             l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
-            factory_address: env::var("FACTORY_ADDRESS")?
-                .parse()
-                .expect("FACTORY_ADDRESS not set"),
+            factory_address: env::var("FACTORY_ADDRESS")?.parse().expect("FACTORY_ADDRESS not set"),
             game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
-            fetch_interval: env::var("FETCH_INTERVAL")
-                .unwrap_or("30".to_string())
-                .parse()?,
+            fetch_interval: env::var("FETCH_INTERVAL").unwrap_or("30".to_string()).parse()?,
             max_games_to_check_for_challenge: env::var("MAX_GAMES_TO_CHECK_FOR_CHALLENGE")
                 .unwrap_or("100".to_string())
                 .parse()?,

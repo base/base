@@ -6,8 +6,7 @@ use kona_host::single::SingleChainHost;
 use kona_preimage::BidirectionalChannel;
 use op_succinct_client_utils::InMemoryOracle;
 
-use crate::fetcher::OPSuccinctDataFetcher;
-use crate::hosts::OPSuccinctHost;
+use crate::{fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost};
 use anyhow::Result;
 
 #[derive(Clone)]
@@ -26,7 +25,8 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
         let server_task = args.start_server(hint.host, preimage.host).await?;
 
         let in_memory_oracle = Self::run_witnessgen_client(preimage.client, hint.client).await?;
-        // Unlike the upstream, manually abort the server task, as it will hang if you wait for both tasks to complete.
+        // Unlike the upstream, manually abort the server task, as it will hang if you wait for both
+        // tasks to complete.
         server_task.abort();
 
         Ok(in_memory_oracle)

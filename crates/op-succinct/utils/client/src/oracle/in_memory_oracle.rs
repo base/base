@@ -1,7 +1,6 @@
 use crate::BytesHasherBuilder;
 use alloy_primitives::{keccak256, FixedBytes};
-use anyhow::Result;
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::{anyhow, Result, Result as AnyhowResult};
 use async_trait::async_trait;
 use itertools::Itertools;
 use kona_preimage::{
@@ -67,10 +66,7 @@ impl InMemoryOracle {
 impl PreimageOracleClient for InMemoryOracle {
     async fn get(&self, key: PreimageKey) -> Result<Vec<u8>, PreimageOracleError> {
         let key_bytes: [u8; 32] = key.into();
-        self.cache
-            .get(&key_bytes)
-            .cloned()
-            .ok_or_else(|| PreimageOracleError::KeyNotFound)
+        self.cache.get(&key_bytes).cloned().ok_or_else(|| PreimageOracleError::KeyNotFound)
     }
 
     async fn get_exact(&self, key: PreimageKey, buf: &mut [u8]) -> Result<(), PreimageOracleError> {
@@ -142,11 +138,7 @@ impl InMemoryOracle {
 
                     // Blob is stored as one 48 byte element.
                     if element_idx == 4096 {
-                        blobs
-                            .entry(commitment)
-                            .or_default()
-                            .kzg_proof
-                            .copy_from_slice(value);
+                        blobs.entry(commitment).or_default().kzg_proof.copy_from_slice(value);
                         continue;
                     }
 
@@ -171,19 +163,14 @@ impl InMemoryOracle {
         }
 
         println!("cycle-tracker-report-start: blob-verification");
-        let commitments: Vec<Bytes48> = blobs
-            .keys()
-            .cloned()
-            .map(|blob| Bytes48::from_slice(&blob.0).unwrap())
-            .collect_vec();
+        let commitments: Vec<Bytes48> =
+            blobs.keys().cloned().map(|blob| Bytes48::from_slice(&blob.0).unwrap()).collect_vec();
         let kzg_proofs: Vec<Bytes48> = blobs
             .values()
             .map(|blob| Bytes48::from_slice(&blob.kzg_proof.0).unwrap())
             .collect_vec();
-        let blob_datas: Vec<KzgRsBlob> = blobs
-            .values()
-            .map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap())
-            .collect_vec();
+        let blob_datas: Vec<KzgRsBlob> =
+            blobs.values().map(|blob| KzgRsBlob::from_slice(&blob.data.0).unwrap()).collect_vec();
         info!("Verifying {} blobs", blob_datas.len());
         // Verify reconstructed blobs.
         kzg_rs::KzgProof::verify_blob_kzg_proof_batch(

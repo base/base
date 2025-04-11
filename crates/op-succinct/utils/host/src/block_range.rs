@@ -24,10 +24,7 @@ pub async fn get_validated_block_range(
     // Failure error.
     // L2 Block Validation Failure error might still occur. See
     // [Troubleshooting](../troubleshooting.md#l2-block-validation-failure) for more details.
-    let end_number = data_fetcher
-        .get_l2_header(BlockId::finalized())
-        .await?
-        .number;
+    let end_number = data_fetcher.get_l2_header(BlockId::finalized()).await?.number;
 
     // If end block not provided, use latest finalized block
     let l2_end_block = match end {
@@ -51,11 +48,7 @@ pub async fn get_validated_block_range(
     };
 
     if l2_start_block >= l2_end_block {
-        bail!(
-            "Start block ({}) must be less than end block ({})",
-            l2_start_block,
-            l2_end_block
-        );
+        bail!("Start block ({}) must be less than end block ({})", l2_start_block, l2_end_block);
     }
 
     Ok((l2_start_block, l2_end_block))
@@ -69,9 +62,7 @@ pub async fn get_rolling_block_range(
 ) -> Result<(u64, u64)> {
     let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
     let start_timestamp = header.timestamp - (header.timestamp % interval.as_secs());
-    let (_, l2_start_block) = data_fetcher
-        .find_l2_block_by_timestamp(start_timestamp)
-        .await?;
+    let (_, l2_start_block) = data_fetcher.find_l2_block_by_timestamp(start_timestamp).await?;
 
     Ok((l2_start_block, l2_start_block + range))
 }
@@ -91,10 +82,7 @@ pub fn split_range_basic(start: u64, end: u64, max_range_size: u64) -> Vec<SpanB
 
     while current_start < end {
         let current_end = min(current_start + max_range_size, end);
-        ranges.push(SpanBatchRange {
-            start: current_start,
-            end: current_end,
-        });
+        ranges.push(SpanBatchRange { start: current_start, end: current_end });
         current_start = current_end;
     }
 
@@ -103,11 +91,13 @@ pub fn split_range_basic(start: u64, end: u64, max_range_size: u64) -> Vec<SpanB
 
 /// Split a range of blocks into a list of span batch ranges based on L2 safeHeads.
 ///
-/// 1. Get the L1 block range [L1 origin of l2_start, L1Head] where L1Head is the block from which l2_end can be derived
+/// 1. Get the L1 block range [L1 origin of l2_start, L1Head] where L1Head is the block from which
+///    l2_end can be derived
 /// 2. Loop over L1 blocks to get safeHead increases (batch posts) which form a step function
 /// 3. Split ranges based on safeHead increases and max batch size
 ///
-/// Example: If safeHeads are [27,49,90] and max_size=30, ranges will be [(0,27), (27,49), (49,69), (69,90)]
+/// Example: If safeHeads are [27,49,90] and max_size=30, ranges will be [(0,27), (27,49), (49,69),
+/// (69,90)]
 pub async fn split_range_based_on_safe_heads(
     l2_start: u64,
     l2_end: u64,
@@ -159,16 +149,11 @@ pub async fn split_range_based_on_safe_heads(
         if safe_head > current_l2_start && current_l2_start < l2_end {
             let mut range_start = current_l2_start;
             while range_start + max_range_size < min(l2_end, safe_head) {
-                ranges.push(SpanBatchRange {
-                    start: range_start,
-                    end: range_start + max_range_size,
-                });
+                ranges
+                    .push(SpanBatchRange { start: range_start, end: range_start + max_range_size });
                 range_start += max_range_size;
             }
-            ranges.push(SpanBatchRange {
-                start: range_start,
-                end: min(l2_end, safe_head),
-            });
+            ranges.push(SpanBatchRange { start: range_start, end: min(l2_end, safe_head) });
             current_l2_start = safe_head;
         }
     }

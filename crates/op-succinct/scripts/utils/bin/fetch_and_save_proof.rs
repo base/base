@@ -38,12 +38,8 @@ async fn main() -> Result<()> {
 
     let request_id = hex::decode(&args.request_id)?;
     // Fetch the proof
-    let (status, proof): (
-        GetProofRequestStatusResponse,
-        Option<SP1ProofWithPublicValues>,
-    ) = prover
-        .get_proof_status(B256::from_slice(&request_id))
-        .await?;
+    let (status, proof): (GetProofRequestStatusResponse, Option<SP1ProofWithPublicValues>) =
+        prover.get_proof_status(B256::from_slice(&request_id)).await?;
     let fulfillment_status = FulfillmentStatus::try_from(status.fulfillment_status).unwrap();
     let _ = ExecutionStatus::try_from(status.execution_status).unwrap();
 
@@ -85,10 +81,7 @@ async fn main() -> Result<()> {
         // Save the proof
         proof.save(&file_path).expect("Failed to save proof");
 
-        println!(
-            "Proof saved successfully to path: {}",
-            file_path.to_str().unwrap()
-        );
+        println!("Proof saved successfully to path: {}", file_path.to_str().unwrap());
     }
 
     Ok(())
