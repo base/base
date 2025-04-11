@@ -19,7 +19,7 @@ jobs:
       
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
+
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
       

@@ -26,3 +26,4 @@ tracing-subscriber = { workspace = true, optional = true }
 [features]
 embedded = ["sp1-zkvm/embedded"]
 tracing-subscriber = ["dep:tracing-subscriber"]
+celestia = ["op-succinct-client-utils/celestia"]

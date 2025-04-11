@@ -11,10 +11,11 @@ use anyhow::{anyhow, Context, Result};
 use futures_util::{stream, StreamExt, TryStreamExt};
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost, metrics::MetricsGauge,
+    fetcher::OPSuccinctDataFetcher, get_range_elf_embedded, hosts::OPSuccinctHost,
+    metrics::MetricsGauge,
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
-    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    AGGREGATION_ELF,
 };
 use sp1_sdk::{
     network::proto::network::{ExecutionStatus, FulfillmentStatus},
@@ -86,7 +87,9 @@ where
             .await?;
 
         let network_prover = Arc::new(ProverClient::builder().network().build());
-        let (range_pk, range_vk) = network_prover.setup(RANGE_ELF_EMBEDDED);
+
+        let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
+
         let (agg_pk, agg_vk) = network_prover.setup(AGGREGATION_ELF);
         let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
         let range_vkey_commitment = B256::from(multi_block_vkey_u8);
@@ -160,8 +163,24 @@ where
         )
         .await?;
 
-        let finalized_block_number =
-            self.driver_config.fetcher.get_l2_header(BlockId::finalized()).await?.number;
+        let finalized_block_number = match self
+            .proof_requester
+            .host
+            .get_finalized_l2_block_number(
+                self.driver_config.fetcher.as_ref(),
+                latest_proposed_block_number,
+            )
+            .await?
+        {
+            Some(block_number) => {
+                tracing::debug!("Found finalized block number: {}", block_number);
+                block_number
+            }
+            None => {
+                tracing::debug!("No new finalized block number found since last proposed block. No new range proof requests will be added.");
+                return Ok(());
+            }
+        };
 
         // Get all active (non-failed) requests with the same commitment config and start block >=
         // latest_proposed_block_number. These requests are non-overlapping.

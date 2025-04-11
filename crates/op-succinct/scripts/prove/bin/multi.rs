@@ -3,10 +3,9 @@ use clap::Parser;
 use op_succinct_host_utils::{
     block_range::get_validated_block_range,
     fetcher::OPSuccinctDataFetcher,
-    get_proof_stdin,
-    hosts::{default::SingleChainOPSuccinctHost, OPSuccinctHost},
+    get_proof_stdin, get_range_elf_embedded,
+    hosts::{initialize_host, OPSuccinctHost},
     stats::ExecutionStats,
-    RANGE_ELF_EMBEDDED,
 };
 use op_succinct_prove::{execute_multi, DEFAULT_RANGE};
 use op_succinct_scripts::HostExecutorArgs;
@@ -30,7 +29,7 @@ async fn main() -> Result<()> {
     let (l2_start_block, l2_end_block) =
         get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
 
-    let host = SingleChainOPSuccinctHost { fetcher: Arc::new(data_fetcher.clone()) };
+    let host = initialize_host(Arc::new(data_fetcher.clone()));
     let host_args =
         host.fetch(l2_start_block, l2_end_block, None, Some(args.safe_db_fallback)).await?;
 
@@ -47,8 +46,7 @@ async fn main() -> Result<()> {
 
     if args.prove {
         // If the prove flag is set, generate a proof.
-        let (pk, _) = prover.setup(RANGE_ELF_EMBEDDED);
-
+        let (pk, _) = prover.setup(get_range_elf_embedded());
         // Generate proofs in compressed mode for aggregation verification.
         let proof = prover.prove(&pk, &sp1_stdin).compressed().run().unwrap();
 
@@ -67,10 +65,8 @@ async fn main() -> Result<()> {
         let (block_data, report, execution_duration) =
             execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 
-        let l1_block_number =
-            data_fetcher.get_l1_header(host_args.l1_head.into()).await.unwrap().number;
         let stats = ExecutionStats::new(
-            l1_block_number,
+            0,
             &block_data,
             &report,
             witness_generation_duration.as_secs(),

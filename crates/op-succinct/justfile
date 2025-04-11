@@ -92,12 +92,17 @@ deploy-mock-verifier env_file=".env":
     $VERIFY
 
 # Deploy the OPSuccinct L2 Output Oracle
-deploy-oracle env_file=".env":
+deploy-oracle env_file=".env" *features='':
     #!/usr/bin/env bash
     set -euo pipefail
     
     # First fetch rollup config using the env file
-    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    if [ -z "{{features}}" ]; then
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    else
+        echo "Fetching rollup config with features: {{features}}"
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+    fi
     
     # Load environment variables
     source {{env_file}}
@@ -122,12 +127,17 @@ deploy-oracle env_file=".env":
         $VERIFY
 
 # Upgrade the OPSuccinct L2 Output Oracle
-upgrade-oracle env_file=".env":
+upgrade-oracle env_file=".env" *features='':
     #!/usr/bin/env bash
     set -euo pipefail
     
     # First fetch rollup config using the env file
-    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    if [ -z "{{features}}" ]; then
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    else
+        echo "Fetching rollup config with features: {{features}}"
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+    fi
     
     # Load environment variables
     source {{env_file}}
@@ -161,12 +171,16 @@ upgrade-oracle env_file=".env":
     fi
 
 # Update the parameters of the OPSuccinct L2 Output Oracle
-update-parameters env_file=".env":
+update-parameters env_file=".env" *features='':
     #!/usr/bin/env bash
     set -euo pipefail
     
     # First fetch rollup config using the env file
-    RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    if [ -z "{{features}}" ]; then
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    else
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+    fi
     
     # Load environment variables
     source {{env_file}}
