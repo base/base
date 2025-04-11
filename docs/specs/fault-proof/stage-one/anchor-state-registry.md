@@ -337,9 +337,11 @@ all Truly Valid Claims are Valid Claims, this invariant does not imply that the 
 Valid Claim.
 
 We allow retired games to be used as the Anchor Game because the retirement mechanism is broad in a
-way that commonly causes Truly Valid Claims to no longer be considered Valid Claims. However, we
-explicitly disallow blacklisted games from being used as the Anchor Game. If a game is blacklisted,
-it should no longer be used as the Anchor Game.
+way that commonly causes Truly Valid Claims to no longer be considered Valid Claims. We allow both
+blacklisted games and retired games to remain the Anchor Game if they are already the Anchor Game.
+This is because we assume games that become the Anchor Game would be invalidated *before* becoming
+the Anchor Game. After the game becomes the Anchor Game, it would be possible to use that game to
+execute withdrawals from the system, which would already be a critical bug in the system.
 
 #### Impact
 
