@@ -98,3 +98,10 @@ sol! {
         bytes32 l2_claim_hash;
     }
 }
+
+sol! {
+    #[sol(rpc)]
+    contract SP1Blobstream {
+        uint64 public latestBlock;
+    }
+}

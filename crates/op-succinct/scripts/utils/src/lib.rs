@@ -1,5 +1,4 @@
 use clap::Parser;
-use op_succinct_host_utils::DAConfig;
 use std::path::PathBuf;
 
 /// The arguments for the host executable.
@@ -40,7 +39,4 @@ pub struct ConfigArgs {
     /// The environment file to use.
     #[arg(long)]
     pub env_file: Option<PathBuf>,
-    /// The DA configuration to use.
-    #[arg(long, value_enum, default_value_t = DAConfig::Default)]
-    pub da_config: DAConfig,
 }

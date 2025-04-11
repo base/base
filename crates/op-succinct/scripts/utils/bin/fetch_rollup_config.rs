@@ -5,7 +5,7 @@ use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
 use op_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
-    AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    get_range_elf_embedded, AGGREGATION_ELF,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -129,7 +129,8 @@ async fn update_l2oo_config() -> Result<()> {
     let (_, agg_vkey) = prover.setup(AGGREGATION_ELF);
     let aggregation_vkey = agg_vkey.vk.bytes32();
 
-    let (_, range_vkey) = prover.setup(RANGE_ELF_EMBEDDED);
+    let (_, range_vkey) = prover.setup(get_range_elf_embedded());
+
     let range_vkey_commitment = format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
     let l2oo_config = L2OOConfig {

@@ -30,6 +30,15 @@ jobs:
             type=ref,event=tag
             type=sha
 
+      - name: Docker meta for op-succinct-celestia
+        id: meta-succinct-celestia
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/op-succinct-celestia
+          tags: |
+            type=ref,event=tag
+            type=sha
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -45,5 +54,16 @@ jobs:
           push: true
           tags: ${{ steps.meta-succinct.outputs.tags }}
           labels: ${{ steps.meta-succinct.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push op-succinct-celestia
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: validity/Dockerfile.celestia
+          push: true
+          tags: ${{ steps.meta-succinct-celestia.outputs.tags }}
+          labels: ${{ steps.meta-succinct-celestia.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

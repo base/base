@@ -60,3 +60,7 @@ sp1-sdk.workspace = true
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true
+
+[features]
+default = []
+celestia = ["op-succinct-host-utils/celestia", "op-succinct-client-utils/celestia"]

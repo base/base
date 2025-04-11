@@ -24,6 +24,9 @@ kona-rpc.workspace = true
 kona-host.workspace = true
 kona-preimage.workspace = true
 
+# hana
+hana-host = { workspace = true, optional = true }
+
 # alloy
 alloy-provider.workspace = true
 alloy-rlp.workspace = true
@@ -51,5 +54,8 @@ strum.workspace = true
 metrics.workspace = true
 metrics-process.workspace = true
 metrics-exporter-prometheus.workspace = true
+cfg-if.workspace = true
 
 [features]
+default = []
+celestia = ["hana-host"]

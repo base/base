@@ -13,7 +13,7 @@ use fault_proof::{
 use op_alloy_network::EthereumWallet;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
-    hosts::default::SingleChainOPSuccinctHost,
+    hosts::initialize_host,
     metrics::{init_metrics, MetricsGauge},
 };
 
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         prover_address,
         l1_provider_with_wallet,
         factory,
-        Arc::new(SingleChainOPSuccinctHost { fetcher: Arc::new(fetcher) }),
+        initialize_host(Arc::new(fetcher)),
     )
     .await
     .unwrap();

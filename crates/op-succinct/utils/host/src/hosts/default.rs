@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use kona_host::single::SingleChainHost;
@@ -53,6 +54,15 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
 
     fn get_l1_head_hash(&self, args: &Self::Args) -> Option<B256> {
         Some(args.l1_head)
+    }
+
+    async fn get_finalized_l2_block_number(
+        &self,
+        fetcher: &OPSuccinctDataFetcher,
+        _: u64,
+    ) -> Result<Option<u64>> {
+        let finalized_l2_block_number = fetcher.get_l2_header(BlockId::finalized()).await?;
+        Ok(Some(finalized_l2_block_number.number))
     }
 }
 

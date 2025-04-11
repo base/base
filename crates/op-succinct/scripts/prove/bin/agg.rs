@@ -4,7 +4,7 @@ use cargo_metadata::MetadataCommand;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, types::u32_to_u8};
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_range_elf_embedded, AGGREGATION_ELF,
 };
 use sp1_sdk::{
     utils, HashableKey, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues, SP1VerifyingKey,
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
     let prover = ProverClient::from_env();
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let (_, vkey) = prover.setup(RANGE_ELF_EMBEDDED);
+    let (_, vkey) = prover.setup(get_range_elf_embedded());
 
     let (proofs, boot_infos) = load_aggregation_proof_data(args.proofs, &vkey);
 

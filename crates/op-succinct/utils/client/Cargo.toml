@@ -25,6 +25,9 @@ kona-rpc.workspace = true
 kona-protocol.workspace = true
 kona-genesis.workspace = true
 
+# hana
+hana-oracle = { workspace = true, optional = true }
+
 # general
 anyhow.workspace = true
 async-trait.workspace = true
@@ -38,3 +41,8 @@ spin.workspace = true
 
 # kzg
 kzg-rs.workspace = true
+cfg-if.workspace = true
+
+[features]
+default = []
+celestia = ["hana-oracle"]
