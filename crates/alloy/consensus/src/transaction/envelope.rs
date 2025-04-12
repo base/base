@@ -414,8 +414,8 @@ impl OpTxEnvelope {
             Self::Deposit(tx) => Ok(tx.inner().from),
         }
     }
-    /// Recover the signer and return a new [`Recovered`] instance containing both
-    /// the transaction and the recovered signer address.
+    /// Recover the signer and return a new [`alloy_consensus::transaction::Recovered`] instance
+    /// containing both the transaction and the recovered signer address.
     ///
     /// If this transaction is a [`TxDeposit`] transaction this returns the deposit transaction's
     /// `from` address.

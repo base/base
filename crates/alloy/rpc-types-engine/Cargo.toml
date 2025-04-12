@@ -22,6 +22,7 @@ op-alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types-engine.workspace = true
+alloy-rlp.workspace = true
 alloy-consensus.workspace = true
 
 # Encoding
@@ -60,9 +61,11 @@ serde = [
 	"alloy-rpc-types-engine/serde",
 	"op-alloy-consensus/serde"
 ]
+k256 = ["op-alloy-consensus/k256"]
 arbitrary = [
   "std",
   "dep:arbitrary",
   "alloy-primitives/arbitrary",
   "alloy-primitives/rand",
+  "op-alloy-consensus/arbitrary"
 ]

@@ -1,10 +1,17 @@
 //! Optimism-specific payload attributes.
 
 use alloc::vec::Vec;
-use alloy_eips::eip1559::BaseFeeParams;
+use alloy_eips::{
+    Decodable2718,
+    eip1559::BaseFeeParams,
+    eip2718::{Eip2718Result, WithEncoded},
+};
 use alloy_primitives::{B64, Bytes};
+use alloy_rlp::Result;
 use alloy_rpc_types_engine::PayloadAttributes;
-use op_alloy_consensus::{EIP1559ParamError, decode_eip_1559_params, encode_holocene_extra_data};
+use op_alloy_consensus::{
+    EIP1559ParamError, OpTxEnvelope, decode_eip_1559_params, encode_holocene_extra_data,
+};
 
 /// Optimism Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -51,6 +58,73 @@ impl OpPayloadAttributes {
     /// Returns (`elasticity`, `denominator`)
     pub fn decode_eip_1559_params(&self) -> Option<(u32, u32)> {
         self.eip_1559_params.map(decode_eip_1559_params)
+    }
+
+    /// Returns an iterator over the decoded [`OpTxEnvelope`] in this attributes.
+    ///
+    /// This iterator will be empty if there are no transactions in the attributes.
+    pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<OpTxEnvelope>> + '_ {
+        self.transactions
+            .iter()
+            .flatten()
+            .map(|tx_bytes| OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref()))
+    }
+
+    /// Returns iterator over decoded transactions with their original encoded bytes.
+    ///
+    /// This iterator will be empty if there are no transactions in the attributes.
+    pub fn decoded_transactions_with_encoded(
+        &self,
+    ) -> impl Iterator<Item = Eip2718Result<WithEncoded<OpTxEnvelope>>> + '_ {
+        self.transactions
+            .iter()
+            .flatten()
+            .cloned()
+            .zip(self.decoded_transactions())
+            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
+    }
+
+    /// Returns an iterator over the recovered [`OpTxEnvelope`] in this attributes.
+    ///
+    /// This iterator will be empty if there are no transactions in the attributes.
+    #[cfg(feature = "k256")]
+    pub fn recovered_transactions(
+        &self,
+    ) -> impl Iterator<
+        Item = Result<
+            alloy_consensus::transaction::Recovered<OpTxEnvelope>,
+            alloy_primitives::SignatureError,
+        >,
+    > + '_ {
+        self.decoded_transactions().map(|res| {
+            res.map_err(|_| {
+                alloy_primitives::SignatureError::FromBytes(
+                    "Failed to decode 2718 transaction envelope",
+                )
+            })
+            .and_then(|tx| tx.try_into_recovered())
+        })
+    }
+
+    /// Returns an iterator over the recovered [`OpTxEnvelope`] in this attributes with their
+    /// original encoded bytes.
+    ///
+    /// This iterator will be empty if there are no transactions in the attributes.
+    #[cfg(feature = "k256")]
+    pub fn recovered_transactions_with_encoded(
+        &self,
+    ) -> impl Iterator<
+        Item = Result<
+            WithEncoded<alloy_consensus::transaction::Recovered<OpTxEnvelope>>,
+            alloy_primitives::SignatureError,
+        >,
+    > + '_ {
+        self.transactions
+            .iter()
+            .flatten()
+            .cloned()
+            .zip(self.recovered_transactions())
+            .map(|(tx_bytes, result)| result.map(|op_tx| WithEncoded::new(tx_bytes, op_tx)))
     }
 }
 
