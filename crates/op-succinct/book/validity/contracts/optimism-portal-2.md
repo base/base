@@ -16,7 +16,13 @@ To use OP Succinct with `OptimismPortal2`, you must set the canonical dispute ga
 
 If you don't have a `DisputeGameFactory` contract or `OptimismPortal2` setup and want to test OP Succinct with the `DisputeGameFactory` contract, follow these steps:
 
-After deploying the `OPSuccinctL2OutputOracle` [contract](./deploy.md), set the `L2OO_ADDRESS` environment variable with the address of the `OPSuccinctL2OutputOracle` contract in your `.env` file.
+After deploying the `OPSuccinctL2OutputOracle` [contract](./deploy.md), set the following environment variables in your `.env` file:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `L2OO_ADDRESS` | Address of the `OPSuccinctL2OutputOracle` contract | `0x123...` |
+| `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. | `0x123...,0x456...` |
+
 
 Run the following command to deploy the `OPSuccinctDisputeGame` contract:
 
@@ -50,9 +56,9 @@ If you already have a `DisputeGameFactory` contract, you must call the `setImple
     // Set the canonical dispute game implementation.
     gameFactory.setImplementation(gameType, IDisputeGame(address(game)));
 ```
-
 ## Use OP Succinct with `OptimismPortal2`
 
 Once you have a `DisputeGameFactory` contract, you can use OP Succinct with `OptimismPortal2` by setting the `DGF_ADDRESS` environment variable with the address of the `DisputeGameFactory` contract in your `.env` file.
 
 With this environment variable set, the proposer will create, initialize and finalize a new `OPSuccinctDisputeGame` contract on the `DisputeGameFactory` contract with every aggregation proof.
+

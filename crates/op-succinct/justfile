@@ -219,6 +219,16 @@ deploy-dispute-game-factory env_file=".env":
     # Load environment variables
     source {{env_file}}
 
+    # Check if required environment variables are set.
+    if [ -z "${L2OO_ADDRESS:-}" ]; then
+        echo "Error: L2OO_ADDRESS environment variable is not set"
+        exit 1
+    fi
+    if [ -z "${PROPOSER_ADDRESSES:-}" ]; then
+        echo "Error: PROPOSER_ADDRESSES environment variable is not set"
+        exit 1
+    fi
+
     # cd into contracts directory
     cd contracts
 
@@ -231,7 +241,9 @@ deploy-dispute-game-factory env_file=".env":
     fi
     
     # Run the forge deployment script
-    L2OO_ADDRESS=$L2OO_ADDRESS forge script script/validity/OPSuccinctDGFDeployer.s.sol:OPSuccinctDFGDeployer \
+    env L2OO_ADDRESS=$L2OO_ADDRESS \
+        PROPOSER_ADDRESSES=$PROPOSER_ADDRESSES \
+        forge script script/validity/OPSuccinctDGFDeployer.s.sol:OPSuccinctDFGDeployer \
         --rpc-url $L1_RPC \
         --private-key $PRIVATE_KEY \
         --broadcast \
