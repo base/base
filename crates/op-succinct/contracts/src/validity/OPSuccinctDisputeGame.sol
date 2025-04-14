@@ -14,7 +14,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     ////////////////////////////////////////////////////////////////
 
     /// @notice The address of the L2 output oracle proxy contract.
-    address internal immutable l2OutputOracle;
+    address internal immutable L2_OUTPUT_ORACLE;
 
     /// @notice The timestamp of the game's global creation.
     Timestamp public createdAt;
@@ -33,7 +33,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     string public constant version = "v2.0.0-beta";
 
     constructor(address _l2OutputOracle) {
-        l2OutputOracle = _l2OutputOracle;
+        L2_OUTPUT_ORACLE = _l2OutputOracle;
     }
 
     ////////////////////////////////////////////////////////////
@@ -45,7 +45,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         status = GameStatus.IN_PROGRESS;
         wasRespectedGameTypeWhenCreated = true;
 
-        OPSuccinctL2OutputOracle(l2OutputOracle).proposeL2Output(
+        OPSuccinctL2OutputOracle(L2_OUTPUT_ORACLE).proposeL2Output(
             rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
         );
 
@@ -151,5 +151,15 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         gameType_ = gameType();
         rootClaim_ = rootClaim();
         extraData_ = extraData();
+    }
+
+    ////////////////////////////////////////////////////////////////
+    //                     IMMUTABLE GETTERS                      //
+    ////////////////////////////////////////////////////////////////
+
+    /// @notice Getter for the L2OutputOracle.
+    /// @return l2OutputOracle_ The address of the L2OutputOracle.
+    function l2OutputOracle() external view returns (address l2OutputOracle_) {
+        l2OutputOracle_ = L2_OUTPUT_ORACLE;
     }
 }

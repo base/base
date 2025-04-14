@@ -309,10 +309,21 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param _l2BlockNumber The L2 block number that resulted in _outputRoot.
     /// @param _l1BlockNumber The block number with the specified block hash.
     /// @param _proof The aggregation proof that proves the transition from the latest L2 output to the new L2 output.
-    /// @param _proverAddress The address of the prover that submitted the proof. Note: proverAddress is not required to be the msg.sender as there is no reason to front-run the prover.
-    /// in the full validity setting.
+    /// @param _proverAddress The address of the prover that submitted the proof. Note: proverAddress is not required to be the tx.origin as there is no reason to front-run the prover in the full validity setting.
     /// @dev Modified the function signature to exclude the `_l1BlockHash` parameter, as it's redundant
-    /// for OP Succinct given the `_l1BlockNumber` parameter.
+    ///      for OP Succinct given the `_l1BlockNumber` parameter.
+    /// @dev Security Note: This contract uses `tx.origin` for proposer permission control due to usage of this contract
+    ///      in the OPSuccinctDisputeGame, created via DisputeGameFactory using the Clone With Immutable Arguments (CWIA) pattern.
+    ///
+    ///      In this setup:
+    ///      - `msg.sender` is the newly created game contract, not an approved proposer.
+    ///      - `tx.origin` identifies the actual user initiating the transaction.
+    ///
+    ///      While `tx.origin` can be vulnerable in general, it is safe here because:
+    ///      - Only trusted proposers/relayers call this contract.
+    ///      - Proposers are expected to interact solely with trusted contracts.
+    ///
+    ///      As long as proposers avoid untrusted contracts, `tx.origin` is as secure as `msg.sender` in this context.
     function proposeL2Output(
         bytes32 _outputRoot,
         uint256 _l2BlockNumber,
@@ -322,7 +333,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     ) external payable whenNotOptimistic {
         // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
         require(
-            approvedProposers[msg.sender] || approvedProposers[address(0)],
+            approvedProposers[tx.origin] || approvedProposers[address(0)],
             "L2OutputOracle: only approved proposers can propose new outputs"
         );
 
@@ -374,6 +385,9 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param _l1BlockHash   A block hash which must be included in the current chain.
     /// @param _l1BlockNumber The block number with the specified block hash.
     /// @dev This function is sourced from the original L2OutputOracle contract. The only modification is that the proposer address must be in the approvedProposers mapping, or permissionless proposing is enabled.
+    /// @dev This function is not compatible with the `OPSuccinctDisputeGame` contract as it uses `msg.sender` for proposer permission control.
+    ///      See `whenNotOptimistic` implementation of `proposeL2Output` for more details.
+    ///      If the functionality for optimistic mode is needed in the `OPSuccinctDisputeGame` contract, use mock mode instead.
     function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, bytes32 _l1BlockHash, uint256 _l1BlockNumber)
         external
         payable
