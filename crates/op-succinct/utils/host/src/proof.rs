@@ -1,19 +1,21 @@
 use alloy_consensus::Header;
 use alloy_primitives::{Address, B256};
 use anyhow::Result;
-use op_succinct_client_utils::{boot::BootInfoStruct, types::AggregationInputs, InMemoryOracle};
+use op_succinct_client_utils::{
+    boot::BootInfoStruct, types::AggregationInputs, witness::WitnessData,
+};
 use rkyv::to_bytes;
 use sp1_sdk::{HashableKey, SP1Proof, SP1Stdin};
 
 /// Get the stdin to generate a proof for the given L2 claim.
-pub fn get_proof_stdin(oracle: InMemoryOracle) -> Result<SP1Stdin> {
+pub fn get_proof_stdin(witness: WitnessData) -> Result<SP1Stdin> {
     let mut stdin = SP1Stdin::new();
 
-    // Serialize the underlying KV store.
-    let buffer = to_bytes::<rkyv::rancor::Error>(&oracle)?;
+    // Convert the witness data to bytes.
+    let buffer = to_bytes::<rkyv::rancor::Error>(&witness)?;
 
-    let kv_store_bytes = buffer.into_vec();
-    stdin.write_slice(&kv_store_bytes);
+    // Write the witness data to the stdin.
+    stdin.write_slice(&buffer);
 
     Ok(stdin)
 }

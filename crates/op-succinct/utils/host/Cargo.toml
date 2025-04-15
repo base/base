@@ -23,6 +23,8 @@ kona-protocol.workspace = true
 kona-rpc.workspace = true
 kona-host.workspace = true
 kona-preimage.workspace = true
+kona-proof.workspace = true
+kona-derive.workspace = true
 
 # hana
 hana-host = { workspace = true, optional = true }
@@ -55,6 +57,9 @@ metrics.workspace = true
 metrics-process.workspace = true
 metrics-exporter-prometheus.workspace = true
 cfg-if.workspace = true
+
+kzg-rs.workspace = true
+c-kzg = "1.0.3"
 
 [features]
 default = []
