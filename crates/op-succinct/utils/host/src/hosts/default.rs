@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use kona_host::single::SingleChainHost;
 use kona_preimage::BidirectionalChannel;
-use op_succinct_client_utils::InMemoryOracle;
+use op_succinct_client_utils::witness::WitnessData;
 
 use crate::{fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost};
 use anyhow::Result;
@@ -19,18 +19,18 @@ pub struct SingleChainOPSuccinctHost {
 impl OPSuccinctHost for SingleChainOPSuccinctHost {
     type Args = SingleChainHost;
 
-    async fn run(&self, args: &Self::Args) -> Result<InMemoryOracle> {
+    async fn run(&self, args: &Self::Args) -> Result<WitnessData> {
         let hint = BidirectionalChannel::new()?;
         let preimage = BidirectionalChannel::new()?;
 
         let server_task = args.start_server(hint.host, preimage.host).await?;
 
-        let in_memory_oracle = Self::run_witnessgen_client(preimage.client, hint.client).await?;
+        let witness = Self::run_witnessgen_client(preimage.client, hint.client).await?;
         // Unlike the upstream, manually abort the server task, as it will hang if you wait for both
         // tasks to complete.
         server_task.abort();
 
-        Ok(in_memory_oracle)
+        Ok(witness)
     }
 
     async fn fetch(

@@ -9,16 +9,10 @@
 #![no_main]
 sp1_zkvm::entrypoint!(main);
 
-extern crate alloc;
-
-use alloc::sync::Arc;
-
 use op_succinct_client_utils::{
-    boot::BootInfoStruct, client::run_opsuccinct_client, precompiles::zkvm_handle_register,
+    boot::BootInfoStruct, client::run_witness_client, witness::WitnessData,
 };
-
-use alloc::vec::Vec;
-use op_succinct_client_utils::InMemoryOracle;
+use rkyv::rancor::Error;
 
 fn main() {
     #[cfg(feature = "tracing-subscriber")]
@@ -34,16 +28,13 @@ fn main() {
         ////////////////////////////////////////////////////////////////
         //                          PROLOGUE                          //
         ////////////////////////////////////////////////////////////////
-        let in_memory_oracle_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
-        let oracle = Arc::new(InMemoryOracle::from_raw_bytes(in_memory_oracle_bytes));
+        let witness_rkyv_bytes: Vec<u8> = sp1_zkvm::io::read_vec();
+        let witness_data = rkyv::from_bytes::<WitnessData, Error>(&witness_rkyv_bytes)
+            .expect("Failed to deserialize witness data.");
 
-        println!("cycle-tracker-report-start: oracle-verify");
-        oracle.verify().expect("key value verification failed");
-        println!("cycle-tracker-report-end: oracle-verify");
-
-        let boot_info = run_opsuccinct_client(oracle, Some(zkvm_handle_register))
+        let boot_info = run_witness_client(witness_data)
             .await
-            .expect("failed to run client");
+            .expect("Failed to run client with witness data.");
 
         sp1_zkvm::io::commit(&BootInfoStruct::from(boot_info));
     });

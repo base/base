@@ -1,11 +1,10 @@
-use crate::fetcher::OPSuccinctDataFetcher;
+use crate::{fetcher::OPSuccinctDataFetcher, witness_generation::generate_opsuccinct_witness};
 use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use kona_preimage::{HintWriter, NativeChannel, OracleReader};
-use op_succinct_client_utils::{
-    client::run_opsuccinct_client, precompiles::zkvm_handle_register, InMemoryOracle, StoreOracle,
-};
+use kona_proof::{l1::OracleBlobProvider, CachingOracle};
+use op_succinct_client_utils::witness::WitnessData;
 use std::sync::Arc;
 
 #[async_trait]
@@ -14,21 +13,26 @@ pub trait OPSuccinctHost: Send + Sync + 'static {
 
     /// Run the host and client program.
     ///
-    /// Returns the in-memory oracle which can be supplied to the zkVM.
-    async fn run(&self, args: &Self::Args) -> Result<InMemoryOracle>;
+    /// Returns the witness which can be supplied to the zkVM.
+    async fn run(&self, args: &Self::Args) -> Result<WitnessData>;
 
     /// Run the witness generation client.
     async fn run_witnessgen_client(
         preimage_chan: NativeChannel,
         hint_chan: NativeChannel,
-    ) -> Result<InMemoryOracle> {
-        let oracle = Arc::new(StoreOracle::new(
+    ) -> Result<WitnessData> {
+        // Instantiate oracles
+        let preimage_oracle = Arc::new(CachingOracle::new(
+            2048,
             OracleReader::new(preimage_chan),
             HintWriter::new(hint_chan),
         ));
-        run_opsuccinct_client(oracle.clone(), Some(zkvm_handle_register)).await?;
-        let in_memory_oracle = InMemoryOracle::populate_from_store(oracle.as_ref())?;
-        Ok(in_memory_oracle)
+        let blob_provider = OracleBlobProvider::new(preimage_oracle.clone());
+
+        let (_, witness) =
+            generate_opsuccinct_witness(preimage_oracle.clone(), blob_provider).await?;
+
+        Ok(witness)
     }
 
     /// Fetch the host arguments.

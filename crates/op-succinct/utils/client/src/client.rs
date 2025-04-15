@@ -4,11 +4,11 @@ use alloy_rlp::Decodable;
 use anyhow::{anyhow, Result};
 use kona_derive::{
     errors::{PipelineError, PipelineErrorKind},
-    traits::{Pipeline, SignalReceiver},
+    traits::{BlobProvider, Pipeline, SignalReceiver},
     types::Signal,
 };
 use kona_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, TipCursor};
-use kona_executor::{KonaHandleRegister, TrieDBProvider};
+use kona_executor::TrieDBProvider;
 use kona_genesis::RollupConfig;
 use kona_preimage::{CommsClient, PreimageKey};
 use kona_proof::{
@@ -21,6 +21,8 @@ use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, warn};
 
+use crate::{precompiles::zkvm_handle_register, witness::WitnessData, BlobStore};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "celestia")] {
         use hana_oracle::{
@@ -31,15 +33,31 @@ cfg_if::cfg_if! {
     }
 }
 
-use crate::oracle::OPSuccinctOracleBlobProvider;
+/// Runs the OP Succinct client using the given witness data.
+pub async fn run_witness_client(witness: WitnessData) -> Result<BootInfo> {
+    println!("cycle-tracker-report-start: oracle-verify");
+    // Check the preimages in the witness are valid.
+    witness.preimage_store.check_preimages().expect("Failed to validate preimages");
+    println!("cycle-tracker-report-end: oracle-verify");
+
+    // Create an Arc of the preimage store.
+    let oracle = Arc::new(witness.preimage_store);
+
+    // Create a BlobStore from the blobs in the witness and verifies them for correctness.
+    println!("cycle-tracker-report-start: blob-verification");
+    let beacon = BlobStore::from(witness.blob_data);
+    println!("cycle-tracker-report-end: blob-verification");
+
+    // Run the client.
+    run_opsuccinct_client(oracle, beacon).await
+}
 
 // Sourced from https://github.com/op-rs/kona/tree/main/bin/client/src/single.rs
-pub async fn run_opsuccinct_client<O>(
-    oracle: Arc<O>,
-    handle_register: Option<KonaHandleRegister<OracleL2ChainProvider<O>, OracleL2ChainProvider<O>>>,
-) -> Result<BootInfo>
+/// Runs the OP Succinct client using the given oracle and blob provider.
+pub async fn run_opsuccinct_client<O, B>(oracle: Arc<O>, beacon: B) -> Result<BootInfo>
 where
-    O: CommsClient + FlushableCache + Send + Sync + Debug + Clone,
+    O: CommsClient + FlushableCache + Send + Sync + Debug,
+    B: BlobProvider + Send + Sync + Debug + Clone,
 {
     ////////////////////////////////////////////////////////////////
     //                          PROLOGUE                          //
@@ -60,9 +78,6 @@ where
     let mut l1_provider = OracleL1ChainProvider::new(boot.l1_head, oracle.clone());
     let mut l2_provider =
         OracleL2ChainProvider::new(safe_head_hash, rollup_config.clone(), oracle.clone());
-    let beacon = OPSuccinctOracleBlobProvider::new(oracle.clone());
-    #[cfg(feature = "celestia")]
-    let celestia_provider = OracleCelestiaProvider::new(oracle.clone());
 
     // Fetch the safe head's block header.
     let safe_head = l2_provider
@@ -108,7 +123,7 @@ where
                 beacon,
                 l1_provider.clone(),
                 l2_provider.clone(),
-                celestia_provider,
+                OracleCelestiaProvider::new(oracle.clone()),
             )
             .await?
         }
@@ -125,8 +140,13 @@ where
             .await?
         }
     };
-    let executor =
-        KonaExecutor::new(&rollup_config, l2_provider.clone(), l2_provider, handle_register, None);
+    let executor = KonaExecutor::new(
+        &rollup_config,
+        l2_provider.clone(),
+        l2_provider,
+        Some(zkvm_handle_register),
+        None,
+    );
     let mut driver = Driver::new(cursor, executor, pipeline);
     // Run the derivation pipeline until we are able to produce the output root of the claimed
     // L2 block.

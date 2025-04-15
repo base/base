@@ -200,7 +200,7 @@ dependencies = [
  "itoa",
  "serde",
  "serde_json",
- "winnow 0.7.4",
+ "winnow 0.7.6",
 ]
 
 [[package]]
@@ -411,7 +411,7 @@ dependencies = [
  "derive_more 2.0.1",
  "foldhash",
  "hashbrown 0.15.2",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itoa",
  "k256",
  "keccak-asm",
@@ -757,7 +757,7 @@ dependencies = [
  "alloy-sol-macro-input",
  "const-hex",
  "heck 0.5.0",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "proc-macro-error2",
  "proc-macro2",
  "quote",
@@ -789,7 +789,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d162f8524adfdfb0e4bd0505c734c985f3e2474eb022af32eef0d52a4f3935c"
 dependencies = [
  "serde",
- "winnow 0.7.4",
+ "winnow 0.7.6",
 ]
 
 [[package]]
@@ -972,9 +972,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.97"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcfed56ad506cb2c684a14971b8861fdc3baaaae314b9e5f9bb532cbe3ba7a4f"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
 
 [[package]]
 name = "ark-ff"
@@ -1198,9 +1198,9 @@ dependencies = [
 
 [[package]]
 name = "auto_impl"
-version = "1.2.1"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e12882f59de5360c748c4cbf569a042d5fb0eb515f7bea9c1f470b47f6ffbd73"
+checksum = "ffdcb70bdbc4d478427380519163274ac86e52916e10f0a8889adf0f96d3fee7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1733,7 +1733,7 @@ checksum = "3fce8dd7fcfcbf3a0a87d8f515194b49d6135acab73e18bd380d1d93bb1a15eb"
 dependencies = [
  "clap",
  "heck 0.4.1",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "log",
  "proc-macro2",
  "quote",
@@ -1746,9 +1746,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.17"
+version = "1.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fcb57c740ae1daf453ae85f16e37396f672b039e00d9d866e07ddb24e328e3a"
+checksum = "8e3a13707ac958681c13b39b458c073d0d9bc8a22cb1b2f4c8e55eb72c13f362"
 dependencies = [
  "jobserver",
  "libc",
@@ -1943,9 +1943,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.35"
+version = "4.5.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8aa86934b44c19c50f87cc2790e19f54f7a67aedb64101c2e1a2e5ecfb73944"
+checksum = "2df961d8c8a0d08aa9945718ccf584145eee3f3aa06cddbeac12933781102e04"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -1953,9 +1953,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.35"
+version = "4.5.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2414dbb2dd0695280da6ea9261e327479e9d37b0630f6b53ba2a11c60c679fd9"
+checksum = "132dbda40fb6753878316a489d5a1242a8ef2f0d9e47ba01c951ea8aa7d013a5"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2146,9 +2146,9 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06ba6d68e24814cb8de6bb986db8222d3a027d15872cabc0d18817bc3c0e4471"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -2238,9 +2238,9 @@ dependencies = [
 
 [[package]]
 name = "ctrlc"
-version = "3.4.5"
+version = "3.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
+checksum = "697b5419f348fd5ae2478e8018cb016c00a5881c7f46c717de98ffd135a5651c"
 dependencies = [
  "nix",
  "windows-sys 0.59.0",
@@ -2388,15 +2388,15 @@ dependencies = [
 
 [[package]]
 name = "data-encoding"
-version = "2.8.0"
+version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "575f75dfd25738df5b91b8e43e14d44bda14637a58fae779fd2b064f8bf3e010"
+checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 
 [[package]]
 name = "data-encoding-macro"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f9724adfcf41f45bf652b3995837669d73c4d49a1b5ac1ff82905ac7d9b5558"
+checksum = "47ce6c96ea0102f01122a185683611bd5ac8d99e62bc59dd12e6bda344ee673d"
 dependencies = [
  "data-encoding",
  "data-encoding-macro-internal",
@@ -2404,12 +2404,12 @@ dependencies = [
 
 [[package]]
 name = "data-encoding-macro-internal"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18e4fdb82bd54a12e42fb58a800dcae6b9e13982238ce2296dc3570b92148e1f"
+checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.100",
 ]
 
 [[package]]
@@ -2425,9 +2425,9 @@ dependencies = [
 
 [[package]]
 name = "deranged"
-version = "0.4.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28cfac68e08048ae1883171632c2aef3ebc555621ae56fbccce1cbf22dd7f058"
+checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
  "serde",
@@ -2741,9 +2741,9 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "errno"
-version = "0.3.10"
+version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
+checksum = "976dd42dc7e85965fe702eb8164f21f450704bdde31faefd6471dba214cb594e"
 dependencies = [
  "libc",
  "windows-sys 0.59.0",
@@ -3153,9 +3153,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5017294ff4bb30944501348f6f8e42e6ad28f42c8bbef7a74029aff064a4e3c2"
+checksum = "75249d144030531f8dee69fe9cea04d3edf809a017ae445e2abdff6629e86633"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3163,7 +3163,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "http",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "slab",
  "tokio",
  "tokio-util",
@@ -3202,7 +3202,7 @@ dependencies = [
 [[package]]
 name = "hana-blobstream"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -3216,7 +3216,7 @@ dependencies = [
 [[package]]
 name = "hana-celestia"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -3229,7 +3229,7 @@ dependencies = [
 [[package]]
 name = "hana-client"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-primitives",
@@ -3249,7 +3249,7 @@ dependencies = [
 [[package]]
 name = "hana-host"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -3279,7 +3279,7 @@ dependencies = [
 [[package]]
 name = "hana-oracle"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-primitives",
  "async-trait",
@@ -3302,7 +3302,7 @@ dependencies = [
 [[package]]
 name = "hana-proofs"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.7#a9ff1acb622b03c8d8caa1140bb027d19261b43b"
+source = "git+https://github.com/celestiaorg/hana?tag=v0.1.0-beta.8#47da5c02374ed8072fb41b37ee201924ca2bc5d5"
 dependencies = [
  "alloy-primitives",
  "alloy-provider",
@@ -3751,9 +3751,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.8.0"
+version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3954d50fe15b02142bf25d3b8bdadb634ec3948f103d04ffe3031bc8fe9d7058"
+checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
@@ -4069,7 +4069,7 @@ dependencies = [
 [[package]]
 name = "kona-cli"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "clap",
  "libc",
@@ -4081,7 +4081,7 @@ dependencies = [
 [[package]]
 name = "kona-client"
 version = "0.1.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4117,7 +4117,7 @@ dependencies = [
 [[package]]
 name = "kona-derive"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4137,7 +4137,7 @@ dependencies = [
 [[package]]
 name = "kona-driver"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-primitives",
@@ -4158,7 +4158,7 @@ dependencies = [
 [[package]]
 name = "kona-executor"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4177,7 +4177,7 @@ dependencies = [
 [[package]]
 name = "kona-genesis"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4194,7 +4194,7 @@ dependencies = [
 [[package]]
 name = "kona-hardforks"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-eips 0.12.6",
  "alloy-primitives",
@@ -4204,7 +4204,7 @@ dependencies = [
 [[package]]
 name = "kona-host"
 version = "0.1.1"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4251,7 +4251,7 @@ dependencies = [
 [[package]]
 name = "kona-interop"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4271,7 +4271,7 @@ dependencies = [
 [[package]]
 name = "kona-mpt"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-primitives",
  "alloy-rlp",
@@ -4284,7 +4284,7 @@ dependencies = [
 [[package]]
 name = "kona-preimage"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-primitives",
  "async-channel",
@@ -4298,7 +4298,7 @@ dependencies = [
 [[package]]
 name = "kona-proof"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4329,7 +4329,7 @@ dependencies = [
 [[package]]
 name = "kona-proof-interop"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4356,7 +4356,7 @@ dependencies = [
 [[package]]
 name = "kona-protocol"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloc-no-stdlib",
  "alloy-consensus 0.12.6",
@@ -4382,7 +4382,7 @@ dependencies = [
 [[package]]
 name = "kona-providers-alloy"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-consensus 0.12.6",
  "alloy-eips 0.12.6",
@@ -4407,7 +4407,7 @@ dependencies = [
 [[package]]
 name = "kona-registry"
 version = "0.3.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -4421,7 +4421,7 @@ dependencies = [
 [[package]]
 name = "kona-rpc"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-eips 0.12.6",
  "alloy-primitives",
@@ -4437,7 +4437,7 @@ dependencies = [
 [[package]]
 name = "kona-serde"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "alloy-primitives",
  "serde",
@@ -4447,7 +4447,7 @@ dependencies = [
 [[package]]
 name = "kona-std-fpvm"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "async-trait",
  "cfg-if",
@@ -4459,7 +4459,7 @@ dependencies = [
 [[package]]
 name = "kona-std-fpvm-proc"
 version = "0.2.0"
-source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.15#1d4c2fca60b75e2418239358e86b9e2e09b1035d"
+source = "git+https://github.com/op-rs/kona?tag=kona-client%2Fv0.1.0-beta.16#d8dbf5156edc0acf9646c1b002eda62be7228bae"
 dependencies = [
  "cfg-if",
  "kona-std-fpvm",
@@ -4470,12 +4470,15 @@ dependencies = [
 
 [[package]]
 name = "kzg-rs"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6efe7b9aea4a6b9454dc95a67f2de13505f6b4fbea885bc7a5c09bda48a85b18"
+checksum = "ffd8d5f2e17b33192c9e9d748a2b00200896727882b6410fc5ed1efd4667ce20"
 dependencies = [
  "ff 0.13.1",
  "hex",
+ "rkyv",
+ "serde",
+ "serde_arrays",
  "sha2 0.10.8",
  "sp1_bls12_381",
  "spin 0.9.8",
@@ -4509,9 +4512,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.171"
+version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
+checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 
 [[package]]
 name = "libloading"
@@ -4616,9 +4619,9 @@ checksum = "d26c52dbd32dccf2d10cac7725f8eae5296885fb5703b261f7d0a0739ec807ab"
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.9.3"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe7db12097d22ec582439daf8618b8fdd1a7bef6270e9af3b1ebcd30893cf413"
+checksum = "cd945864f07fe9f5371a27ad7b52a172b4b499999f1d97574c9fa68373937e12"
 
 [[package]]
 name = "litemap"
@@ -4771,7 +4774,7 @@ dependencies = [
  "hyper",
  "hyper-rustls",
  "hyper-util",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "ipnet",
  "metrics",
  "metrics-util",
@@ -4850,9 +4853,9 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.5"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e3e04debbb59698c15bacbb6d93584a8c0ca9cc3213cb423d31f760d8843ce5"
+checksum = "3be647b768db090acb35d5ec5db2b0e1f1de11133ca123b9eacf5137868f892a"
 dependencies = [
  "adler2",
 ]
@@ -5384,15 +5387,19 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "async-trait",
+ "c-kzg",
  "cfg-if",
  "clap",
  "futures",
  "hana-host",
+ "kona-derive",
  "kona-genesis",
  "kona-host",
  "kona-preimage",
+ "kona-proof",
  "kona-protocol",
  "kona-rpc",
+ "kzg-rs",
  "metrics",
  "metrics-exporter-prometheus",
  "metrics-process",
@@ -5511,9 +5518,9 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
 name = "openssl"
-version = "0.10.71"
+version = "0.10.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e14130c6a98cd258fdcb0fb6d744152343ff729cbfcb28c656a9d12b999fbcd"
+checksum = "fedfea7d58a1f73118430a55da6a286e7b044961736ce96a16a17068ea25e5da"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -5543,9 +5550,9 @@ checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.106"
+version = "0.9.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bb61ea9811cc39e3c2069f40b8b8e2e70d8569b361f879786cc7ed48b777cdd"
+checksum = "8288979acd84749c744a9014b4382d42b8f7b2592847b5afb2ed29e5d16ede07"
 dependencies = [
  "cc",
  "libc",
@@ -5976,7 +5983,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
 dependencies = [
  "fixedbitset",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
 ]
 
 [[package]]
@@ -6071,9 +6078,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.31"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5316f57387668042f561aae71480de936257848f9c43ce528e311d89a07cadeb"
+checksum = "664ec5419c51e34154eec046ebcba56312d5a2fc3b09a06da188e1ad21afadf6"
 dependencies = [
  "proc-macro2",
  "syn 2.0.100",
@@ -6206,8 +6213,8 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.4.1",
- "itertools 0.10.5",
+ "heck 0.5.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -6502,6 +6509,7 @@ dependencies = [
  "anyhow",
  "kona-proof",
  "op-succinct-client-utils",
+ "rkyv",
  "sp1-zkvm",
  "tracing",
  "tracing-subscriber",
@@ -6565,9 +6573,9 @@ checksum = "d3edd4d5d42c92f0a659926464d4cce56b562761267ecf0f469d85b7de384175"
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.10"
+version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b8c0c260b63a8219631167be35e6a988e9554dbd323f8bd08439c8ed1302bd1"
+checksum = "d2f103c6d277498fbceb16e84d317e2a400f160f46904d5f5410848c829511a3"
 dependencies = [
  "bitflags",
 ]
@@ -6811,7 +6819,7 @@ dependencies = [
  "bytecheck",
  "bytes",
  "hashbrown 0.15.2",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "munge",
  "ptr_meta",
  "rancor",
@@ -7001,15 +7009,15 @@ dependencies = [
  "bitflags",
  "errno",
  "libc",
- "linux-raw-sys 0.9.3",
+ "linux-raw-sys 0.9.4",
  "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "rustls"
-version = "0.23.25"
+version = "0.23.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "822ee9188ac4ec04a2f0531e55d035fb2de73f18b41a63c70c2712503b6fb13c"
+checksum = "df51b5869f3a441595eac5e8ff14d486ff285f7b8c0df8770e49c3b56351f0f0"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -7069,7 +7077,7 @@ dependencies = [
  "security-framework 3.2.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7290,6 +7298,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_arrays"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94a16b99c5ea4fe3daccd14853ad260ec00ea043b2708d1fd1da3106dcd8d9df"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7325,7 +7342,7 @@ version = "1.0.140"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "itoa",
  "memchr",
  "ryu",
@@ -7384,7 +7401,7 @@ dependencies = [
  "chrono",
  "hex",
  "indexmap 1.9.3",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "serde",
  "serde_derive",
  "serde_json",
@@ -7555,9 +7572,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.14.0"
+version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
+checksum = "8917285742e9f3e1683f0a9c4e6b57960b7314d0b08d30d1ecd426713ee2eee9"
 dependencies = [
  "serde",
 ]
@@ -8120,9 +8137,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4410e73b3c0d8442c5f99b425d7a435b5ee0ae4167b3196771dd3f7a01be745f"
+checksum = "14e22987355fbf8cfb813a0cf8cd97b1b4ec834b94dbd759a9e8679d41fabe83"
 dependencies = [
  "sqlx-core",
  "sqlx-macros",
@@ -8133,10 +8150,11 @@ dependencies = [
 
 [[package]]
 name = "sqlx-core"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a007b6936676aa9ab40207cde35daab0a04b823be8ae004368c0793b96a61e0"
+checksum = "55c4720d7d4cd3d5b00f61d03751c685ad09c33ae8290c8a2c11335e0604300b"
 dependencies = [
+ "base64 0.22.1",
  "bigdecimal",
  "bytes",
  "chrono",
@@ -8150,7 +8168,7 @@ dependencies = [
  "futures-util",
  "hashbrown 0.15.2",
  "hashlink",
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "log",
  "memchr",
  "native-tls",
@@ -8169,9 +8187,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-macros"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3112e2ad78643fef903618d78cf0aec1cb3134b019730edb039b69eaf531f310"
+checksum = "175147fcb75f353ac7675509bc58abb2cb291caf0fd24a3623b8f7e3eb0a754b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8182,9 +8200,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-macros-core"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e9f90acc5ab146a99bf5061a7eb4976b573f560bc898ef3bf8435448dd5e7ad"
+checksum = "1cde983058e53bfa75998e1982086c5efe3c370f3250bf0357e344fa3352e32b"
 dependencies = [
  "dotenvy",
  "either",
@@ -8208,9 +8226,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-mysql"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4560278f0e00ce64938540546f59f590d60beee33fffbd3b9cd47851e5fff233"
+checksum = "847d2e5393a4f39e47e4f36cab419709bc2b83cbe4223c60e86e1471655be333"
 dependencies = [
  "atoi",
  "base64 0.22.1",
@@ -8252,9 +8270,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-postgres"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5b98a57f363ed6764d5b3a12bfedf62f07aa16e1856a7ddc2a0bb190a959613"
+checksum = "cc35947a541b9e0a2e3d85da444f1c4137c13040267141b208395a0d0ca4659f"
 dependencies = [
  "atoi",
  "base64 0.22.1",
@@ -8292,9 +8310,9 @@ dependencies = [
 
 [[package]]
 name = "sqlx-sqlite"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f85ca71d3a5b24e64e1d08dd8fe36c6c95c339a896cc33068148906784620540"
+checksum = "6c48291dac4e5ed32da0927a0b981788be65674aeb62666d19873ab4289febde"
 dependencies = [
  "atoi",
  "chrono",
@@ -8310,6 +8328,7 @@ dependencies = [
  "serde",
  "serde_urlencoded",
  "sqlx-core",
+ "thiserror 2.0.12",
  "tracing",
  "url",
 ]
@@ -8865,7 +8884,7 @@ version = "0.19.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "toml_datetime",
  "winnow 0.5.40",
 ]
@@ -8876,11 +8895,11 @@ version = "0.22.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17b4795ff5edd201c7cd6dca065ae59972ce77d1b80fa0a84d94950ece7d1474"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
  "serde",
  "serde_spanned",
  "toml_datetime",
- "winnow 0.7.4",
+ "winnow 0.7.6",
 ]
 
 [[package]]
@@ -9501,7 +9520,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9961,9 +9980,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e97b544156e9bebe1a0ffbc03484fc1ffe3100cbce3ffb17eac35f7cdd7ab36"
+checksum = "63d3fcd9bba44b03821e7d699eeee959f3126dcc4aa8e4ae18ec617c2a5cea10"
 dependencies = [
  "memchr",
 ]

@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 tracing.workspace = true
 anyhow.workspace = true
+rkyv.workspace = true
 
 # kona
 kona-proof.workspace = true
