@@ -1,35 +1,29 @@
 use crate::tx_signer::Signer;
-use alloy_eips::eip2718::Encodable2718;
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::address;
-use alloy_primitives::Address;
-use alloy_primitives::Bytes;
-use alloy_primitives::TxKind;
-use alloy_primitives::B256;
-use alloy_primitives::{hex, U256};
-use alloy_rpc_types_engine::ExecutionPayloadV1;
-use alloy_rpc_types_engine::ExecutionPayloadV2;
-use alloy_rpc_types_engine::PayloadAttributes;
-use alloy_rpc_types_engine::PayloadStatusEnum;
-use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
+use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
+use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
+use alloy_rpc_types_engine::{
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ForkchoiceUpdated,
+    PayloadAttributes, PayloadStatus, PayloadStatusEnum,
+};
 use alloy_rpc_types_eth::Block;
-use jsonrpsee::core::RpcResult;
-use jsonrpsee::http_client::{transport::HttpBackend, HttpClient};
-use jsonrpsee::proc_macros::rpc;
-use op_alloy_consensus::OpTypedTransaction;
-use op_alloy_consensus::TxDeposit;
+use jsonrpsee::{
+    core::RpcResult,
+    http_client::{transport::HttpBackend, HttpClient},
+    proc_macros::rpc,
+};
+use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::rpc::{api::EngineApiClient, types::engine::ForkchoiceState};
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
-use rollup_boost::flashblocks::FlashblocksService;
-use rollup_boost::Flashblocks;
+use rollup_boost::{Flashblocks, FlashblocksService};
 use serde_json::Value;
-use std::str::FromStr;
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Helper for engine api operations
 pub struct EngineApi {
