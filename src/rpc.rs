@@ -15,7 +15,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
-use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::HeaderProvider};
+use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
