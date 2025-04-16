@@ -21,7 +21,7 @@ use sp1_sdk::{
     network::proto::network::{ExecutionStatus, FulfillmentStatus},
     HashableKey, NetworkProver, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues,
 };
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, env, str::FromStr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -86,7 +86,16 @@ where
             .add_chain_lock(requester_config.l1_chain_id, requester_config.l2_chain_id)
             .await?;
 
-        let network_prover = Arc::new(ProverClient::builder().network().build());
+        // Set a default network private key to avoid an error in mock mode.
+        let private_key = env::var("NETWORK_PRIVATE_KEY").unwrap_or_else(|_| {
+            tracing::warn!(
+                "Using default NETWORK_PRIVATE_KEY of 0x01. This is only valid in mock mode."
+            );
+            "0x0000000000000000000000000000000000000000000000000000000000000001".to_string()
+        });
+
+        let network_prover =
+            Arc::new(ProverClient::builder().network().private_key(&private_key).build());
 
         let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
 

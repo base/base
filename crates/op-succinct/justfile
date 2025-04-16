@@ -43,13 +43,6 @@ cost-estimator *args='':
 
 upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   #!/usr/bin/env bash
-
-  CHAIN_ID=$(jq -r '.chainId' contracts/opsuccinctl2ooconfig.json)
-  if [ "$CHAIN_ID" = "0" ] || [ -z "$CHAIN_ID" ]; then
-    echo "Are you sure you've filled out your opsuccinctl2ooconfig.json? Your chain ID is currently set to 0."
-    exit 1
-  fi
-
   VERIFY=""
   ETHERSCAN_API_KEY="{{etherscan_api_key}}"
   if [ $ETHERSCAN_API_KEY != "" ]; then
@@ -111,7 +104,7 @@ deploy-oracle env_file=".env" *features='':
     cd contracts
 
     VERIFY=""
-    if [ $ETHERSCAN_API_KEY != "" ]; then
+    if [ "$ETHERSCAN_API_KEY" != "" ]; then
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     

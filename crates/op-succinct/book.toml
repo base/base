@@ -12,9 +12,14 @@ build-dir = "target/book"
 [output.html]
 git-repository-url = "https://github.com/succinctlabs/op-succinct"
 additional-js = ["book/mermaid/mermaid.min.js", "book/mermaid/mermaid-init.js"]
+additional-css = ["./mdbook-admonish.css"]
 
 [preprocessor.template]
 before = ["links"]
+
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.0.3" # do not edit: managed by `mdbook-admonish install`
 
 [preprocessor.index]
 
