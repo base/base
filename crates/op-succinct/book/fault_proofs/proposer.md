@@ -44,6 +44,7 @@ To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill ou
 
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
+| `MOCK_MODE` | Whether to use mock mode | `false` |
 | `FAST_FINALITY_MODE` | Whether to use fast finality mode | `false` |
 | `PROPOSAL_INTERVAL_IN_BLOCKS` | Number of L2 blocks between proposals | `1800` |
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
@@ -66,6 +67,7 @@ GAME_TYPE=               # Type identifier for the dispute game (must match fact
 PRIVATE_KEY=             # Private key for transaction signing
 
 # Optional Configuration
+MOCK_MODE=false                          # Whether to use mock mode
 FAST_FINALITY_MODE=false                 # Whether to use fast finality mode
 PROPOSAL_INTERVAL_IN_BLOCKS=1800         # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                        # Polling interval in seconds
@@ -99,6 +101,7 @@ The proposer will run indefinitely, creating new games and optionally resolving 
 - Computes L2 output roots for game proposals.
 - Ensures proper game sequencing with parent-child relationships.
 - Handles bond requirements for game creation.
+- Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
 - Supports fast finality mode with proofs. (Set `FAST_FINALITY_MODE=true` in `.env.proposer`)
 
 ### Game Defense
@@ -110,7 +113,7 @@ The proposer will run indefinitely, creating new games and optionally resolving 
   - Are within their proof submission window
   - Have valid output root claims
 - Generates and submits proofs using the Succinct Prover Network
-
+- Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
 ### Game Resolution
 When enabled (`ENABLE_GAME_RESOLUTION=true`), the proposer:
 - Monitors unchallenged games
