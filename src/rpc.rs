@@ -15,7 +15,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
-use reth::{api::BlockBody, core::primitives::SignedTransaction, providers::HeaderProvider};
+use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
@@ -88,7 +88,7 @@ impl<E> EthApiExt<E> {
                 .map(|(idx, (tx, sender))| {
                     let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
                     let tx_info = TransactionInfo {
-                        hash: Some(*tx.tx_hash()),
+                        hash: Some(tx.tx_hash()),
                         block_hash: None,
                         block_number: Some(block.number),
                         index: Some(idx as u64),
@@ -104,7 +104,7 @@ impl<E> EthApiExt<E> {
                 withdrawals: None,
             }
         } else {
-            let tx_hashes = transactions.into_iter().map(|tx| *tx.tx_hash()).collect();
+            let tx_hashes = transactions.into_iter().map(|tx| tx.tx_hash()).collect();
             RpcBlock::<Optimism> {
                 header: Header::from_consensus(header.seal_slow(), None, None),
                 transactions: BlockTransactions::Hashes(tx_hashes),
