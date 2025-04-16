@@ -441,8 +441,16 @@ function relayMessage(ICrossL2Inbox.Identifier calldata _id, bytes calldata _sen
     (success, returnData_) = _target.call(_target, msg.value, _message);
     require(success);
     successfulMessages[messageHash] = true;
-    emit RelayedMessage(_source, _nonce, messageHash);
+    emit RelayedMessage(_source, _nonce, messageHash, keccack256(returnData_));
 }
+```
+
+Upon successful delivery, an event is emitted with useful information. Notably the hash of the `returnData` that
+can be used to continue execution for anyone that depends on it without needing an explicit callback message to
+be sent back.
+
+```solidity
+event RelayedMessage(uint256 indexed source, uint256 indexed messageNonce, bytes32 indexed messageHash, bytes32 returnDataHash);
 ```
 
 Note that the `relayMessage` function is `payable` to enable relayers to earn in the gas paying asset.
