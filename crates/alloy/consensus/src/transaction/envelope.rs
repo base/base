@@ -1,14 +1,14 @@
 use crate::{OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
-    Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
-    Typed2718, error::ValueError, transaction::RlpEcdsaDecodableTx,
+    Sealable, Sealed, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702,
+    TxEnvelope, TxLegacy, Typed2718, error::ValueError, transaction::RlpEcdsaDecodableTx,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
 use alloy_rlp::{Decodable, Encodable};
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
@@ -100,6 +100,12 @@ impl From<Signed<OpTypedTransaction>> for OpTxEnvelope {
             }
             OpTypedTransaction::Deposit(tx) => Self::Deposit(Sealed::new_unchecked(tx, hash)),
         }
+    }
+}
+
+impl From<(OpTypedTransaction, Signature)> for OpTxEnvelope {
+    fn from(value: (OpTypedTransaction, Signature)) -> Self {
+        Self::new_unhashed(value.0, value.1)
     }
 }
 
@@ -320,6 +326,14 @@ impl Transaction for OpTxEnvelope {
 }
 
 impl OpTxEnvelope {
+    /// Creates a new signed transaction from the given typed transaction and signature without the
+    /// hash.
+    ///
+    /// Note: this only calculates the hash on the first [`OpTxEnvelope::hash`] call.
+    pub fn new_unhashed(transaction: OpTypedTransaction, signature: Signature) -> Self {
+        transaction.into_signed(signature).into()
+    }
+
     /// Returns true if the transaction is a legacy transaction.
     #[inline]
     pub const fn is_legacy(&self) -> bool {
