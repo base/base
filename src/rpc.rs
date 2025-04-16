@@ -88,7 +88,7 @@ impl<E> EthApiExt<E> {
                 .map(|(idx, (tx, sender))| {
                     let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
                     let tx_info = TransactionInfo {
-                        hash: Some(*tx.tx_hash()),
+                        hash: Some(tx.tx_hash()),
                         block_hash: None,
                         block_number: Some(block.number),
                         index: Some(idx as u64),
@@ -104,7 +104,7 @@ impl<E> EthApiExt<E> {
                 withdrawals: None,
             }
         } else {
-            let tx_hashes = transactions.into_iter().map(|tx| *tx.tx_hash()).collect();
+            let tx_hashes = transactions.into_iter().map(|tx| tx.tx_hash()).collect();
             RpcBlock::<Optimism> {
                 header: Header::from_consensus(header.seal_slow(), None, None),
                 transactions: BlockTransactions::Hashes(tx_hashes),
