@@ -7,8 +7,8 @@ use alloy_provider::{fillers::TxFiller, Provider, ProviderBuilder};
 use alloy_sol_types::SolValue;
 use anyhow::{Context, Result};
 use sp1_sdk::{
-    network::FulfillmentStrategy, NetworkProver, Prover, ProverClient, SP1ProvingKey,
-    SP1VerifyingKey,
+    network::FulfillmentStrategy, NetworkProver, Prover, ProverClient, SP1ProofMode,
+    SP1ProofWithPublicValues, SP1ProvingKey, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 use tokio::time;
 
@@ -21,8 +21,8 @@ use crate::{
 };
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, hosts::OPSuccinctHost,
-    metrics::MetricsGauge, AGGREGATION_ELF, RANGE_ELF_EMBEDDED,
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, get_proof_stdin, get_range_elf_embedded,
+    hosts::OPSuccinctHost, metrics::MetricsGauge, AGGREGATION_ELF,
 };
 
 struct SP1Prover {
@@ -76,7 +76,7 @@ where
 
         let network_prover =
             Arc::new(ProverClient::builder().network().private_key(&private_key).build());
-        let (range_pk, range_vk) = network_prover.setup(RANGE_ELF_EMBEDDED);
+        let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
         let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
 
         Ok(Self {
@@ -134,16 +134,29 @@ where
         };
 
         tracing::info!("Generating Range Proof");
-        let range_proof = self
-            .prover
-            .network_prover
-            .prove(&self.prover.range_pk, &sp1_stdin)
-            .compressed()
-            .strategy(FulfillmentStrategy::Hosted)
-            .skip_simulation(true)
-            .cycle_limit(1_000_000_000_000)
-            .run_async()
-            .await?;
+        let range_proof = if self.config.mock_mode {
+            tracing::info!("Using mock mode for range proof generation");
+            let (public_values, _) =
+                self.prover.network_prover.execute(get_range_elf_embedded(), &sp1_stdin).run()?;
+
+            // Create a mock range proof with the public values.
+            SP1ProofWithPublicValues::create_mock_proof(
+                &self.prover.range_pk,
+                public_values,
+                SP1ProofMode::Compressed,
+                SP1_CIRCUIT_VERSION,
+            )
+        } else {
+            self.prover
+                .network_prover
+                .prove(&self.prover.range_pk, &sp1_stdin)
+                .compressed()
+                .strategy(FulfillmentStrategy::Hosted)
+                .skip_simulation(true)
+                .cycle_limit(1_000_000_000_000)
+                .run_async()
+                .await?
+        };
 
         tracing::info!("Preparing Stdin for Agg Proof");
         let proof = range_proof.proof.clone();
@@ -177,13 +190,30 @@ where
         };
 
         tracing::info!("Generating Agg Proof");
-        let agg_proof = self
-            .prover
-            .network_prover
-            .prove(&self.prover.agg_pk, &sp1_stdin)
-            .groth16()
-            .run_async()
-            .await?;
+        let agg_proof = if self.config.mock_mode {
+            tracing::info!("Using mock mode for aggregation proof generation");
+            let (public_values, _) = self
+                .prover
+                .network_prover
+                .execute(AGGREGATION_ELF, &sp1_stdin)
+                .deferred_proof_verification(false)
+                .run()?;
+
+            // Create a mock aggregation proof with the public values.
+            SP1ProofWithPublicValues::create_mock_proof(
+                &self.prover.agg_pk,
+                public_values,
+                SP1ProofMode::Groth16,
+                SP1_CIRCUIT_VERSION,
+            )
+        } else {
+            self.prover
+                .network_prover
+                .prove(&self.prover.agg_pk, &sp1_stdin)
+                .groth16()
+                .run_async()
+                .await?
+        };
 
         let receipt = game.prove(agg_proof.bytes().into()).send().await?.get_receipt().await?;
 

@@ -15,6 +15,9 @@ pub struct ProposerConfig {
     /// The address of the factory contract.
     pub factory_address: Address,
 
+    /// Whether to use mock mode.
+    pub mock_mode: bool,
+
     /// Whether to use fast finality mode.
     pub fast_finality_mode: bool,
 
@@ -61,6 +64,7 @@ impl ProposerConfig {
             l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
             l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
             factory_address: env::var("FACTORY_ADDRESS")?.parse().expect("FACTORY_ADDRESS not set"),
+            mock_mode: env::var("MOCK_MODE").unwrap_or("false".to_string()).parse()?,
             fast_finality_mode: env::var("FAST_FINALITY_MODE")
                 .unwrap_or("false".to_string())
                 .parse()?,

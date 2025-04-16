@@ -2,6 +2,12 @@
 
 This document covers best practices for OP Succinct Lite deployment setup.
 
+## Mock Mode
+
+When using mock mode, the proposer will not use the Succinct Prover Network to generate proofs. Instead, it will generate mock proofs using the public values from execution. This is useful for testing since it is much faster than generating real proofs from the Succinct Prover Network.
+
+To enable mock mode, set the `MOCK_MODE` environment variable to `true` in the `.env.proposer` file.
+
 ## SafeDB Configuration
 
 ### Enabling SafeDB in op-node

@@ -50,6 +50,7 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
 ## Step 2: Run the Proposer
 
 1. Create a `.env.proposer` file in the project root directory:
+
     ```env
     # Required Configuration
     L1_RPC=<YOUR_L1_RPC_URL>
@@ -57,7 +58,7 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
     FACTORY_ADDRESS=<FACTORY_ADDRESS_FROM_DEPLOYMENT>
     GAME_TYPE=42
     PRIVATE_KEY=<YOUR_PRIVATE_KEY>
-    NETWORK_PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001
+    MOCK_MODE=true # Set to true for mock mode
     ```
 
 2. Run the proposer:
