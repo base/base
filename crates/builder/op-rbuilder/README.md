@@ -14,7 +14,7 @@ To run op-rbuilder with the op-stack, you need:
 To run the op-rbuilder, run:
 
 ```bash
-cargo run -p op-rbuilder --bin op-rbuilder --features optimism -- node \
+cargo run -p op-rbuilder --bin op-rbuilder --features flashblocks -- node \
     --chain /path/to/chain-config.json \
     --http \
     --authrpc.port 9551 \
@@ -61,14 +61,12 @@ cargo run -p op-rbuilder --bin tester --features optimism -- run
 
 ## Local Devnet
 
-To run a local devnet, you can use the optimism docker compose tool and send test transactions with `mev-flood`.
-
-1. Clone [flashbots/optimism](https://github.com/flashbots/optimism) and checkout the `op-rbuilder` branch.
+1. Clone [flashbots/builder-playground](https://github.com/flashbots/builder-playground) and start an OPStack chain.
 
 ```bash
-git clone https://github.com/flashbots/optimism.git
-cd optimism
-git checkout op-rbuilder
+git clone https://github.com/flashbots/builder-playground.git
+cd builder-playground
+go run main.go cook opstack --external-builder http://host.docker.internal:4444
 ```
 
 2. Remove any existing `reth` chain db. The following are the default data directories:
@@ -77,34 +75,31 @@ git checkout op-rbuilder
 - Windows: `{FOLDERID_RoamingAppData}/reth/`
 - macOS: `$HOME/Library/Application Support/reth/`
 
-3. Run a clean OP stack in the `optimism` repo:
+3. Run `op-rbuilder` in the `rbuilder` repo on port 4444:
 
 ```bash
-make devnet-clean && make devnet-down && make devnet-up
-```
-
-4. Run `op-rbuilder` in the `rbuilder` repo on port 8547:
-
-```bash
-cargo run -p op-rbuilder --bin op-rbuilder --features optimism -- node \
-    --chain ../optimism/.devnet/genesis-l2.json \
-    --http \
-    --http.port 8547 \
-    --authrpc.jwtsecret ../optimism/ops-bedrock/test-jwt-secret.txt \
+cargo run -p op-rbuilder --bin op-rbuilder -- node \
+    --chain $HOME/.playground/devnet/l2-genesis.json \
+    --http --http.port 2222 \
+    --authrpc.port 4444 --authrpc.jwtsecret $HOME/.playground/devnet/jwtsecret \
+    --port 30333 --disable-discovery \
     --metrics 127.0.0.1:9001 \
-    --rollup.builder-secret-key ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    --rollup.builder-secret-key ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    --trusted-peers enode://3479db4d9217fb5d7a8ed4d61ac36e120b05d36c2eefb795dc42ff2e971f251a2315f5649ea1833271e020b9adc98d5db9973c7ed92d6b2f1f2223088c3d852f@127.0.0.1:30304
 ```
 
-5. Init `mev-flood`:
+4. Init `contender`:
 
 ```bash
-docker run mevflood init -r http://host.docker.internal:8547 -s local.json
+git clone https://github.com/flashbots/contender
+cd contender
+cargo run -- setup ./scenarios/simple.toml http://localhost:2222
 ```
 
-6. Run `mev-flood`:
+6. Run `contender`:
 
 ```bash
-docker run --init -v ${PWD}:/app/cli/deployments mevflood spam -p 3 -t 5 -r http://host.docker.internal:8547 -l local.json
+cargo run -- spam ./scenarios/simple.toml http://localhost:2222 --tpb 10 --duration 10
 ```
 
-And you should start to see blocks being built and landed on-chain with `mev-flood` transactions.
+And you should start to see blocks being built and landed on-chain with `contender` transactions.
