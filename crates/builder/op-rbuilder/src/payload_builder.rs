@@ -8,7 +8,7 @@ use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, Eip658Value, Header, Transaction, Typed2718,
     EMPTY_OMMER_ROOT_HASH,
 };
-use alloy_eips::{merge::BEACON_NONCE, Encodable2718};
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Encodable2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{map::HashMap, Address, Bytes, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
@@ -667,10 +667,14 @@ where
         .state_root_calculation_duration
         .record(state_root_start_time.elapsed());
 
+    let mut requests_hash = None;
     let withdrawals_root = if ctx
         .chain_spec
         .is_isthmus_active_at_timestamp(ctx.attributes().timestamp())
     {
+        // always empty requests hash post isthmus
+        requests_hash = Some(EMPTY_REQUESTS_HASH);
+
         // withdrawals root field in block header is used for storage root of L2 predeploy
         // `l2tol1-message-passer`
         Some(
@@ -716,7 +720,7 @@ where
         parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
         blob_gas_used,
         excess_blob_gas,
-        requests_hash: None,
+        requests_hash,
     };
 
     // seal the block
@@ -748,7 +752,7 @@ where
     let receipts_with_hash = new_transactions
         .iter()
         .zip(new_receipts.iter())
-        .map(|(tx, receipt)| (*tx.tx_hash(), receipt.clone()))
+        .map(|(tx, receipt)| (tx.tx_hash(), receipt.clone()))
         .collect::<HashMap<B256, OpReceipt>>();
     let new_account_balances = new_bundle
         .state
@@ -1190,7 +1194,7 @@ where
                 num_txs_simulated_fail += 1;
                 trace!(target: "payload_builder", ?tx, "skipping reverted transaction");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
-                info.invalid_tx_hashes.insert(*tx.tx_hash());
+                info.invalid_tx_hashes.insert(tx.tx_hash());
                 continue;
             }
 

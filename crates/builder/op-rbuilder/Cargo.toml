@@ -85,11 +85,11 @@ time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 tokio-tungstenite = "0.26.2"
-rand = "0.8.5"
+rand = "0.9.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
 
 # `flashblocks` branch
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "e20dbc5c3d7b5223fc2a3a6cfe4c99ed9692caf7" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "60885346d4cf7f241de82790478195747433d472" }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
