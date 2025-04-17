@@ -10,6 +10,10 @@
     - [type 1: Lookup identity](#type-1-lookup-identity)
     - [type 2: Chain-ID extension](#type-2-chain-id-extension)
     - [type 3: Checksum](#type-3-checksum)
+  - [Assumptions](#assumptions)
+    - [Gas Schedule Dependencies](#gas-schedule-dependencies)
+    - [Storage Slot Calculation](#storage-slot-calculation)
+    - [EVM Warming Behavior](#evm-warming-behavior)
   - [Functions](#functions)
     - [validateMessage](#validatemessage)
   - [`ExecutingMessage` Event](#executingmessage-event)
@@ -186,6 +190,45 @@ bareChecksum = H(idLogHash ++ idChainID)
 typeByte = 0x03
 checksum = typeByte ++ bareChecksum[1:]
 ```
+
+### Assumptions
+
+#### Gas Schedule Dependencies
+
+The `CrossL2Inbox` contract's validation mechanism relies on precise gas cost calculations for storage operations.
+
+`SLOAD` operations cost 2100 gas for cold access and 100 gas for warm access.
+
+The contract uses these gas costs to implement its validation mechanism through gas introspection.
+The `WARM_READ_THRESHOLD` is set to 1000 gas, providing a safe buffer between warm (100 gas) and cold (2100 gas) access costs.
+
+#### Storage Slot Calculation
+
+Storage slots are calculated using a 248-bit hash space (31 bytes), providing cryptographically secure collision resistance.
+The slot calculation follows this process:
+
+1. The checksum is derived from the message identifier and content
+2. The first byte is reserved for the type (0x03)
+3. The remaining 31 bytes form the storage slot key
+
+This design ensures there are no collisions between different message types, provides deterministic slot assignment,
+enables efficient slot lookup, and guarantees secure message validation.
+
+#### EVM Warming Behavior
+
+The `CrossL2Inbox` contract relies on specific EVM behavior regarding storage slot warming.
+
+- Per-transaction warming ensures storage warming is scoped to individual transactions.
+  Warm slots from previous transactions do not affect the current transaction,
+  and each transaction's access list operates independently.
+
+- When a transaction reverts, all warm slots are rolled back.
+  Failed transactions do not persist any warm slots,
+  and all access list entries are cleared on revert.
+
+- The access list is the exclusive mechanism for warming slots.
+  No other contract function may warm up storage without message validation,
+  and warm slots cannot be created through alternative means.
 
 ### Functions
 
@@ -672,14 +715,14 @@ event StandardL2TokenCreated(address indexed remoteToken, address indexed localT
 
 ### Updates
 
-The `OptimismMintableERC20` and `L2StandardToken` tokens (_legacy tokens_),
+The `OptimismMintableERC20` and `L2StandardToken` tokens (_legacy tokens_),
 which correspond to locked liquidity in L1, are incompatible with interop.
 Legacy token owners must convert into a `OptimismSuperchainERC20` representation that implements the [standard](token-bridging.md),
 to move across the Superchain.
 
-The conversion method uses the `L2StandardBridge` mint/burn rights
+The conversion method uses the `L2StandardBridge` mint/burn rights
 over the legacy tokens to allow easy migration to and from the
-corresponding `OptimismSuperchainERC20`.
+corresponding `OptimismSuperchainERC20`.
 
 #### convert
 
