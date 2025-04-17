@@ -71,7 +71,7 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
     }
 
     /// Converts the latest Celestia block height in Blobstream to the highest L2 block that can be
-    /// included in a rnage proof.
+    /// included in a range proof.
     ///
     /// 1. Get the latest Celestia block included in a Blobstream commitment.
     /// 2. Loop over the `BatchInbox` from the l1 origin of the latest proposed block number to the
@@ -137,20 +137,19 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
                     if to_addr == batch_inbox_address {
                         let calldata = tx.input();
 
-                        // Check that the DA layer byte prefix is correct.
-                        // https://github.com/ethereum-optimism/specs/discussions/135.
-                        if calldata[2] != 0x0c {
-                            return Err(anyhow!("Invalid prefix for Celestia batch transaction"));
-                        }
-
-                        // The encoding of the commitment is the Celestia block height followed by
-                        // the Celestia commitment.
-                        let height_bytes = &calldata[3..11];
-                        let celestia_height = u64::from_le_bytes(height_bytes.try_into().unwrap());
-
-                        if celestia_height < latest_celestia_block {
-                            found_valid_tx = true;
-                            l2_block_number = Some(l2_safe_head_number);
+                        match extract_celestia_height(calldata)? {
+                            None => {
+                                // ETH DA transaction.
+                                found_valid_tx = true;
+                                l2_block_number =
+                                    Some(fetcher.get_l2_header(BlockId::finalized()).await?.number);
+                            }
+                            Some(celestia_height) => {
+                                if celestia_height < latest_celestia_block {
+                                    found_valid_tx = true;
+                                    l2_block_number = Some(l2_safe_head_number);
+                                }
+                            }
                         }
                     }
                 }
@@ -190,5 +189,34 @@ fn get_blobstream_address(l1_chain_id: u64) -> Address {
         421614 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
         84532 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
         _ => panic!("Unsupported L1 chain ID: {}", l1_chain_id),
+    }
+}
+
+/// Extract the Celestia height from batcher transaction calldata based on the version byte.
+///
+/// Returns:
+/// - Some(height) if the transaction is a valid Celestia batcher transaction.
+/// - None if the transaction is an ETH DA transaction.
+/// - Err if the version byte is invalid or the da layer byte is incorrect.
+fn extract_celestia_height(calldata: &[u8]) -> Result<Option<u64>> {
+    // Check version byte to determine if it is ETH DA or Alt DA.
+    // https://specs.optimism.io/protocol/derivation.html#batcher-transaction-format.
+    match calldata[0] {
+        0x00 => Ok(None), // ETH DA transaction.
+        0x01 => {
+            // Check that the DA layer byte prefix is correct.
+            // https://github.com/ethereum-optimism/specs/discussions/135.
+            if calldata[2] != 0x0c {
+                return Err(anyhow!("Invalid prefix for Celestia batcher transaction"));
+            }
+
+            // The encoding of the commitment is the Celestia block height followed
+            // by the Celestia commitment.
+            let height_bytes = &calldata[3..11];
+            let celestia_height = u64::from_le_bytes(height_bytes.try_into().unwrap());
+
+            Ok(Some(celestia_height))
+        }
+        _ => Err(anyhow!("Invalid version byte for batcher transaction")),
     }
 }
