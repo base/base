@@ -3,23 +3,20 @@ use std::{fmt::Write as _, fs::File, sync::Arc};
 
 use common::post_to_github_pr;
 use op_succinct_host_utils::{
+    block_range::get_rolling_block_range,
     fetcher::OPSuccinctDataFetcher,
     get_proof_stdin,
     hosts::{initialize_host, OPSuccinctHost},
     stats::{ExecutionStats, MarkdownExecutionStats},
 };
-use op_succinct_prove::execute_multi;
+use op_succinct_prove::{execute_multi, DEFAULT_RANGE, ONE_HOUR};
 
 mod common;
 
-fn create_diff_report(
-    base: &ExecutionStats,
-    current: &ExecutionStats,
-    range: (u64, u64),
-) -> String {
+fn create_diff_report(base: &ExecutionStats, current: &ExecutionStats) -> String {
     let mut report = String::new();
     writeln!(report, "## Performance Comparison\n").unwrap();
-    writeln!(report, "Range {}~{}\n", range.0, range.1).unwrap();
+    writeln!(report, "Range {}~{}\n", base.batch_start, base.batch_end).unwrap();
     writeln!(
         report,
         "| {:<30} | {:<25} | {:<25} | {:<10} |",
@@ -114,11 +111,18 @@ async fn test_cycle_count_diff() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let host = initialize_host(Arc::new(data_fetcher.clone()));
-
-    let base_stats =
-        serde_json::from_reader::<_, ExecutionStats>(File::open("base_cycle_stats.json")?)?;
-    let l2_start_block = base_stats.batch_start;
-    let l2_end_block = base_stats.batch_end;
+    let (l2_start_block, l2_end_block) = match std::env::var("NEW_BRANCH")
+        .expect("NEW_BRANCH must be set")
+        .parse::<bool>()
+        .unwrap_or_default()
+    {
+        true => get_rolling_block_range(&data_fetcher, ONE_HOUR, DEFAULT_RANGE).await?,
+        false => {
+            let base_stats =
+                serde_json::from_reader::<_, ExecutionStats>(File::open("new_cycle_stats.json")?)?;
+            (base_stats.batch_start, base_stats.batch_end)
+        }
+    };
 
     let host_args = host.fetch(l2_start_block, l2_end_block, None, Some(false)).await?;
 
@@ -130,37 +134,26 @@ async fn test_cycle_count_diff() -> Result<()> {
     let new_stats = ExecutionStats::new(0, &block_data, &report, 0, execution_duration.as_secs());
 
     println!("Execution Stats:\n{}", MarkdownExecutionStats::new(new_stats.clone()));
-
-    let report = create_diff_report(&base_stats, &new_stats, (l2_start_block, l2_end_block));
-
-    // Update base_cycle_stats.json with new stats.
-    let mut file = File::create("base_cycle_stats.json")?;
+    let mut file = match std::env::var("NEW_BRANCH")
+        .expect("NEW_BRANCH must be set")
+        .parse::<bool>()
+        .unwrap_or_default()
+    {
+        true => File::create("new_cycle_stats.json")?,
+        false => File::create("old_cycle_stats.json")?,
+    };
     serde_json::to_writer_pretty(&mut file, &new_stats)?;
 
-    // Commit the changes to base_cycle_stats.json
-    let git_add =
-        std::process::Command::new("git").arg("add").arg("base_cycle_stats.json").output()?;
-    if !git_add.status.success() {
-        eprintln!(
-            "Failed to git add base_cycle_stats.json: {}",
-            String::from_utf8_lossy(&git_add.stderr)
-        );
-    }
+    Ok(())
+}
 
-    let git_commit = std::process::Command::new("git")
-        .arg("commit")
-        .arg("-m")
-        .arg(format!(
-            "chore: update base cycle stats for blocks {}~{}",
-            l2_start_block, l2_end_block
-        ))
-        .output()?;
-    if !git_commit.status.success() {
-        eprintln!(
-            "Failed to git commit base_cycle_stats.json: {}",
-            String::from_utf8_lossy(&git_commit.stderr)
-        );
-    }
+#[tokio::test]
+async fn test_post_to_github() -> Result<()> {
+    let old_stats =
+        serde_json::from_reader::<_, ExecutionStats>(File::open("old_cycle_stats.json")?)?;
+    let new_stats =
+        serde_json::from_reader::<_, ExecutionStats>(File::open("new_cycle_stats.json")?)?;
+    let report = create_diff_report(&old_stats, &new_stats);
 
     if std::env::var("POST_TO_GITHUB").ok().and_then(|v| v.parse::<bool>().ok()).unwrap_or_default()
     {
