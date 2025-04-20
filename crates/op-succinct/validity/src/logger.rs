@@ -24,6 +24,7 @@ pub fn setup_proposer_logger() {
                 .add_directive("channel-assembler=error".parse().unwrap())
                 .add_directive("attributes-queue=error".parse().unwrap())
                 .add_directive("batch-validator=error".parse().unwrap())
+                .add_directive("batch-queue=error".parse().unwrap())
                 .add_directive("client-derivation-driver=error".parse().unwrap())
                 .add_directive("host-server=error".parse().unwrap())
                 .add_directive("kona_protocol=error".parse().unwrap())
