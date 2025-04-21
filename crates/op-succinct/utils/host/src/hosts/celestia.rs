@@ -135,9 +135,7 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
             for tx in block.transactions.txns() {
                 if let Some(to_addr) = tx.to() {
                     if to_addr == batch_inbox_address {
-                        let calldata = tx.input();
-
-                        match extract_celestia_height(calldata)? {
+                        match extract_celestia_height(tx)? {
                             None => {
                                 // ETH DA transaction.
                                 found_valid_tx = true;
@@ -192,31 +190,39 @@ fn get_blobstream_address(l1_chain_id: u64) -> Address {
     }
 }
 
-/// Extract the Celestia height from batcher transaction calldata based on the version byte.
+/// Extract the Celestia height from batcher transaction based on the version byte.
 ///
 /// Returns:
 /// - Some(height) if the transaction is a valid Celestia batcher transaction.
-/// - None if the transaction is an ETH DA transaction.
-/// - Err if the version byte is invalid or the da layer byte is incorrect.
-fn extract_celestia_height(calldata: &[u8]) -> Result<Option<u64>> {
-    // Check version byte to determine if it is ETH DA or Alt DA.
-    // https://specs.optimism.io/protocol/derivation.html#batcher-transaction-format.
-    match calldata[0] {
-        0x00 => Ok(None), // ETH DA transaction.
-        0x01 => {
-            // Check that the DA layer byte prefix is correct.
-            // https://github.com/ethereum-optimism/specs/discussions/135.
-            if calldata[2] != 0x0c {
-                return Err(anyhow!("Invalid prefix for Celestia batcher transaction"));
+/// - None if the transaction is an ETH DA transaction (EIP4844 transaction or non-EIP4844
+///   transaction with version byte 0x00).
+/// - Err if the version byte is invalid or the da layer byte is incorrect for non-EIP4844
+///   transactions.
+fn extract_celestia_height(tx: &alloy_rpc_types::eth::Transaction) -> Result<Option<u64>> {
+    // Skip calldata parsing for EIP4844 transactions since there is no calldata.
+    if tx.inner.is_eip4844() {
+        Ok(None)
+    } else {
+        let calldata = tx.input();
+        // Check version byte to determine if it is ETH DA or Alt DA.
+        // https://specs.optimism.io/protocol/derivation.html#batcher-transaction-format.
+        match calldata[0] {
+            0x00 => Ok(None), // ETH DA transaction.
+            0x01 => {
+                // Check that the DA layer byte prefix is correct.
+                // https://github.com/ethereum-optimism/specs/discussions/135.
+                if calldata[2] != 0x0c {
+                    return Err(anyhow!("Invalid prefix for Celestia batcher transaction"));
+                }
+
+                // The encoding of the commitment is the Celestia block height followed
+                // by the Celestia commitment.
+                let height_bytes = &calldata[3..11];
+                let celestia_height = u64::from_le_bytes(height_bytes.try_into().unwrap());
+
+                Ok(Some(celestia_height))
             }
-
-            // The encoding of the commitment is the Celestia block height followed
-            // by the Celestia commitment.
-            let height_bytes = &calldata[3..11];
-            let celestia_height = u64::from_le_bytes(height_bytes.try_into().unwrap());
-
-            Ok(Some(celestia_height))
+            _ => Err(anyhow!("Invalid version byte for batcher transaction")),
         }
-        _ => Err(anyhow!("Invalid version byte for batcher transaction")),
     }
 }
