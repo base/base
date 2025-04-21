@@ -45,7 +45,7 @@ fn main() {
                 )))
                 .with_add_ons(
                     OpAddOnsBuilder::default()
-                        .with_sequencer(rollup_args.sequencer_http.clone())
+                        .with_sequencer(rollup_args.sequencer.clone())
                         .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
                         .build(),
                 )

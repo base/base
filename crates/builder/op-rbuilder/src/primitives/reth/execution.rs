@@ -12,6 +12,8 @@ pub struct ExecutedPayload<N: NodePrimitives> {
     pub info: ExecutionInfo<N>,
     /// Withdrawal hash.
     pub withdrawals_root: Option<B256>,
+    /// Requests hash.
+    pub requests_hash: Option<B256>,
 }
 
 #[derive(Default, Debug)]

@@ -8,7 +8,7 @@ use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, transaction::Recovered, Eip658Value, Header, Transaction,
     TxEip1559, Typed2718, EMPTY_OMMER_ROOT_HASH,
 };
-use alloy_eips::merge::BEACON_NONCE;
+use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxHash, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
@@ -70,6 +70,9 @@ use revm::{
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::*;
+
+// From https://eips.ethereum.org/EIPS/eip-7623
+const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -543,19 +546,22 @@ impl<Txs> OpBuilder<'_, Txs> {
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
 
-        let withdrawals_root = if ctx.is_isthmus_active() {
+        let (withdrawals_root, requests_hash) = if ctx.is_isthmus_active() {
             // withdrawals root field in block header is used for storage root of L2 predeploy
             // `l2tol1-message-passer`
-            Some(
-                state
-                    .database
-                    .as_ref()
-                    .storage_root(ADDRESS_L2_TO_L1_MESSAGE_PASSER, Default::default())?,
+            (
+                Some(
+                    state
+                        .database
+                        .as_ref()
+                        .storage_root(ADDRESS_L2_TO_L1_MESSAGE_PASSER, Default::default())?,
+                ),
+                Some(EMPTY_REQUESTS_HASH),
             )
         } else if ctx.is_canyon_active() {
-            Some(EMPTY_WITHDRAWALS)
+            (Some(EMPTY_WITHDRAWALS), None)
         } else {
-            None
+            (None, None)
         };
 
         remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
@@ -563,6 +569,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         let payload = ExecutedPayload {
             info,
             withdrawals_root,
+            requests_hash,
         };
 
         Ok(BuildOutcomeKind::Better { payload })
@@ -583,6 +590,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         let ExecutedPayload {
             info,
             withdrawals_root,
+            requests_hash,
         } = match self.execute(&mut state, &ctx)? {
             BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
             BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
@@ -662,7 +670,7 @@ impl<Txs> OpBuilder<'_, Txs> {
             parent_beacon_block_root: ctx.attributes().payload_attributes.parent_beacon_block_root,
             blob_gas_used,
             excess_blob_gas,
-            requests_hash: None,
+            requests_hash,
         };
 
         // seal the block
@@ -1292,5 +1300,9 @@ fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
     let zero_cost = zero_bytes * 4;
     let nonzero_cost = nonzero_bytes * 16;
 
-    zero_cost + nonzero_cost + 21_000
+    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
+    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
+    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
+
+    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
 }

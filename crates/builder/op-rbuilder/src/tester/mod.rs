@@ -18,8 +18,7 @@ use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
-use rollup_boost::Flashblocks;
-use rollup_boost::FlashblocksService;
+use rollup_boost::{Flashblocks, FlashblocksService};
 use serde_json::Value;
 use std::{
     str::FromStr,
@@ -190,7 +189,6 @@ pub struct BlockGenerator<'a> {
     latest_hash: B256,
     no_tx_pool: bool,
     block_time_secs: u64,
-
     // flashblocks service
     flashblocks_endpoint: Option<String>,
     flashblocks_service: Option<FlashblocksService>,
