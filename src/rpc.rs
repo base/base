@@ -6,8 +6,8 @@ use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
-use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types::{BlockTransactions, Header};
+use alloy_rpc_types::{Bundle, StateContext, TransactionRequest, TransactionTrait};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -19,7 +19,7 @@ use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
-use reth_rpc_eth_api::helpers::EthTransactions;
+use reth_rpc_eth_api::helpers::{EthCall, EthTransactions};
 use reth_rpc_eth_api::RpcReceipt;
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{
@@ -54,6 +54,13 @@ pub trait EthApiOverride {
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256>;
+
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        transaction: TransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes>;
 }
 
 #[derive(Debug)]
@@ -338,6 +345,52 @@ where
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn call(
+        &self,
+        transaction: TransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes> {
+        // Check if this is a call to the pending block
+        let block_id = block_number.unwrap_or_default();
+
+        if block_id.is_pending() {
+            self.metrics.call.increment(1);
+
+            let mut transaction_requests = self
+                .cache
+                .get::<OpBlock>("pending")
+                .unwrap_or_default()
+                .body
+                .transactions
+                .iter()
+                .map(|tx| TransactionRequest::from_transaction(tx.clone()))
+                .collect::<Vec<TransactionRequest>>();
+
+            transaction_requests.push(transaction);
+            let bundles = vec![Bundle::from(transaction_requests)];
+
+            let context = StateContext {
+                block_number: Some(BlockId::Number(BlockNumberOrTag::Pending)),
+                transaction_index: None,
+            };
+            return EthCall::call_many(&self.eth_api, bundles, Some(context), None)
+                .await
+                .map_err(Into::into)
+                .map(|responses| {
+                    responses
+                        .first()
+                        .map_or_else(alloy_primitives::Bytes::default, |r| {
+                            r.clone().value.unwrap_or_default()
+                        })
+                });
+        }
+        let overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        // Delegate to the underlying eth_api
+        EthCall::call(&self.eth_api, transaction, block_number, overrides)
             .await
             .map_err(Into::into)
     }
