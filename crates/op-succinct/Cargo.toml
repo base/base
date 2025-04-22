@@ -43,6 +43,7 @@ metrics-exporter-prometheus = "0.16.2"
 metrics-process = "2.4.0"
 strum = "0.27.1"
 strum_macros = "0.27.1"
+tempfile = "3.10.1"
 
 # kona
 kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v0.1.0-beta.16" }
@@ -124,10 +125,7 @@ sp1-zkvm = { version = "4.1.7", features = ["verify"] }
 sp1-build = { version = "4.1.7" }
 
 # kzg-rs
-kzg-rs = { version = "0.2.6", features = [
-    "rkyv",
-    "serde",
-] }
+kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }
 
 [profile.release-client-lto]
 inherits = "release"
