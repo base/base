@@ -1,4 +1,4 @@
-FROM rust:1.84 AS build
+FROM rust:1.85 AS build
 
 WORKDIR /app
 
@@ -6,7 +6,7 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y git libclang-dev 
 
 COPY ./ .
 
-RUN cargo build
+RUN cargo build --bin base-reth-node
 
 FROM ubuntu:22.04
 
@@ -16,4 +16,4 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY --from=build /app/target/debug/reth-flashblocks ./
+COPY --from=build /app/target/debug/base-reth-node ./
