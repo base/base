@@ -1,16 +1,8 @@
-mod cache;
-mod flashblocks;
-#[cfg(test)]
-mod integration;
-mod metrics;
-mod rpc;
-
+use base_reth_flashblocks_rpc::{cache::Cache, flashblocks::FlashblocksClient, rpc::EthApiExt};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cache::Cache;
-use crate::flashblocks::FlashblocksClient;
-use crate::rpc::{EthApiExt, EthApiOverrideServer};
+use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
