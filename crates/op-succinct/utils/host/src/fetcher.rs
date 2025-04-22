@@ -18,9 +18,10 @@ use serde_json::{json, Value};
 use std::{
     cmp::{min, Ordering},
     env, fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     str::FromStr,
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::L2Output;
@@ -119,6 +120,12 @@ impl OPSuccinctDataFetcher {
 
         let (rollup_config, rollup_config_path) =
             Self::fetch_and_save_rollup_config(&rpc_config).await?;
+
+        // Add warning if the chain is pre-Holocene, as derivation is significantly slower.
+        let unix_timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        if !rollup_config.is_holocene_active(unix_timestamp) {
+            tracing::warn!("WARNING: Chain is not using Holocene hard fork. This will cause significant performance degradation compared to chains that have activated Holocene.");
+        }
 
         Ok(OPSuccinctDataFetcher {
             rpc_config,
@@ -443,17 +450,6 @@ impl OPSuccinctDataFetcher {
         Ok(headers)
     }
 
-    /// Get the data directory path. Note: This path is relative to the location from which the
-    /// program is run.
-    pub fn get_data_directory(
-        &self,
-        l2_chain_id: u64,
-        l2_start_block: u64,
-        l2_end_block: u64,
-    ) -> Result<String> {
-        Ok(format!("data/{}/{}-{}", l2_chain_id, l2_start_block, l2_end_block))
-    }
-
     pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
         let block_number_hex = format!("0x{:x}", block_number);
         let l2_output_data: OutputResponse = self
@@ -615,7 +611,6 @@ impl OPSuccinctDataFetcher {
         if self.rollup_config.is_none() {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
         }
-        let l2_chain_id = self.rollup_config.as_ref().unwrap().l2_chain_id;
 
         if l2_start_block >= l2_end_block {
             return Err(anyhow::anyhow!(
@@ -687,17 +682,6 @@ impl OPSuccinctDataFetcher {
             }
         };
 
-        // Get the workspace root, which is where the data directory is.
-        let data_directory = self.get_data_directory(l2_chain_id, l2_start_block, l2_end_block)?;
-
-        if Path::new(&data_directory).exists() {
-            fs::remove_dir_all(&data_directory)?;
-        }
-
-        // Creates the data directory if it doesn't exist, or no-ops if it does. Used to store the
-        // witness data.
-        fs::create_dir_all(&data_directory).expect("Failed to create data directory");
-
         Ok(SingleChainHost {
             l1_head: l1_head_hash,
             agreed_l2_output_root,
@@ -715,7 +699,7 @@ impl OPSuccinctDataFetcher {
             l1_beacon_address: Some(
                 self.rpc_config.l1_beacon_rpc.as_str().trim_end_matches('/').to_string(),
             ),
-            data_dir: Some(data_directory.into()),
+            data_dir: None, // Use in-memory key-value store.
             native: false,
             server: true,
             rollup_config_path: self.rollup_config_path.clone(),

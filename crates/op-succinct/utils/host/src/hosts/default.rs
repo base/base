@@ -1,11 +1,10 @@
-use std::sync::Arc;
-
 use alloy_eips::BlockId;
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use kona_host::single::SingleChainHost;
 use kona_preimage::BidirectionalChannel;
 use op_succinct_client_utils::witness::WitnessData;
+use std::sync::Arc;
 
 use crate::{fetcher::OPSuccinctDataFetcher, hosts::OPSuccinctHost};
 use anyhow::Result;
