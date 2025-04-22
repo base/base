@@ -65,7 +65,7 @@ impl OpRethConfig {
 impl Service for OpRethConfig {
     fn command(&self) -> Command {
         let mut bin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        bin_path.push("./target/debug/base-reth-node");
+        bin_path.push("../../target/debug/base-reth-node");
 
         println!("bin_path: {}", bin_path.display());
 
