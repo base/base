@@ -24,9 +24,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build reth-flashblocks
-        run: cargo build --bin reth-flashblocks
-      - run: cargo test --all-features
+      - name: Build reth-node
+        run: cargo build --bin base-reth-node
+      - name: Run tests
+        run: cargo test --workspace --all-features
 
   fmt:
     name: Format
