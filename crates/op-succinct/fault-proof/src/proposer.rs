@@ -1,6 +1,5 @@
 use std::{env, sync::Arc, time::Duration};
 
-use alloy_eips::BlockNumberOrTag;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::{fillers::TxFiller, Provider, ProviderBuilder};
@@ -48,6 +47,7 @@ where
     pub init_bond: U256,
     pub safe_db_fallback: bool,
     prover: SP1Prover,
+    fetcher: Arc<OPSuccinctDataFetcher>,
     host: Arc<H>,
 }
 
@@ -62,6 +62,7 @@ where
         prover_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
         factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
+        fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
         let config = ProposerConfig::from_env()?;
@@ -93,6 +94,7 @@ where
                 range_vk: Arc::new(range_vk),
                 agg_pk: Arc::new(agg_pk),
             },
+            fetcher: fetcher.clone(),
             host,
         })
     }
@@ -280,15 +282,6 @@ where
     pub async fn handle_game_creation(&self) -> Result<Option<Address>> {
         let _span = tracing::info_span!("[[Proposing]]").entered();
 
-        // Get the finalized L2 head block number.
-        let finalized_l2_head_block_number = self
-            .l2_provider
-            .get_l2_block_by_number(BlockNumberOrTag::Finalized)
-            .await?
-            .header
-            .number;
-        tracing::debug!("Finalized L2 head block number: {:?}", finalized_l2_head_block_number);
-
         // Get the latest valid proposal.
         let latest_valid_proposal =
             self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await?;
@@ -303,35 +296,48 @@ where
         // 2. Without valid proposal (first game or all existing games being faulty):
         //    - Block number = anchor L2 block number + proposal interval.
         //    - Parent = u32::MAX (special value indicating no parent).
-        let (next_l2_block_number_for_proposal, parent_game_index) = match latest_valid_proposal {
-            Some((latest_block, latest_game_idx)) => (
-                latest_block + U256::from(self.config.proposal_interval_in_blocks),
-                latest_game_idx.to::<u32>(),
-            ),
-            None => {
-                let anchor_l2_block_number =
-                    self.factory.get_anchor_l2_block_number(self.config.game_type).await?;
-                tracing::info!("Anchor L2 block number: {:?}", anchor_l2_block_number);
-                (
-                    anchor_l2_block_number
-                        .checked_add(U256::from(self.config.proposal_interval_in_blocks))
-                        .unwrap(),
-                    u32::MAX,
-                )
-            }
-        };
+        let (latest_proposed_block_number, next_l2_block_number_for_proposal, parent_game_index) =
+            match latest_valid_proposal {
+                Some((latest_block, latest_game_idx)) => (
+                    latest_block,
+                    latest_block + U256::from(self.config.proposal_interval_in_blocks),
+                    latest_game_idx.to::<u32>(),
+                ),
+                None => {
+                    let anchor_l2_block_number =
+                        self.factory.get_anchor_l2_block_number(self.config.game_type).await?;
+                    tracing::info!("Anchor L2 block number: {:?}", anchor_l2_block_number);
+                    (
+                        anchor_l2_block_number,
+                        anchor_l2_block_number
+                            .checked_add(U256::from(self.config.proposal_interval_in_blocks))
+                            .unwrap(),
+                        u32::MAX,
+                    )
+                }
+            };
+
+        let finalized_l2_head_block_number = self
+            .host
+            .get_finalized_l2_block_number(&self.fetcher, latest_proposed_block_number.to::<u64>())
+            .await?;
 
         // There's always a new game to propose, as the chain is always moving forward from the
         // genesis block set for the game type. Only create a new game if the finalized L2
         // head block number is greater than the next L2 block number for proposal.
-        if U256::from(finalized_l2_head_block_number) > next_l2_block_number_for_proposal {
-            let game_address =
-                self.create_game(next_l2_block_number_for_proposal, parent_game_index).await?;
+        if let Some(finalized_block) = finalized_l2_head_block_number {
+            if U256::from(finalized_block) > next_l2_block_number_for_proposal {
+                let game_address =
+                    self.create_game(next_l2_block_number_for_proposal, parent_game_index).await?;
 
-            Ok(Some(game_address))
+                Ok(Some(game_address))
+            } else {
+                tracing::info!("No new game to propose since proposal interval has not elapsed");
+
+                Ok(None)
+            }
         } else {
-            tracing::info!("No new game to propose since proposal interval has not elapsed");
-
+            tracing::info!("No new finalized block number found since last proposed block");
             Ok(None)
         }
     }
@@ -429,30 +435,31 @@ where
 
     /// Fetch the proposer metrics.
     async fn fetch_proposer_metrics(&self) -> Result<()> {
-        let finalized_l2_block_number = self
-            .l2_provider
-            .get_l2_block_by_number(BlockNumberOrTag::Finalized)
-            .await?
-            .header
-            .number;
-
-        ProposerGauge::FinalizedL2BlockNumber.set(finalized_l2_block_number as f64);
-
         // Get the latest valid proposal.
-        match self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await? {
-            Some((l2_block_number, _game_index)) => {
-                // Update metrics for latest game block number
-                ProposerGauge::LatestGameL2BlockNumber.set(l2_block_number.to::<u64>() as f64);
-            }
-            None => {
-                tracing::debug!("No valid proposals found for metrics");
-                return Ok(());
-            }
-        };
+        let latest_proposed_block_number =
+            match self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await? {
+                Some((l2_block_number, _game_index)) => l2_block_number,
+                None => {
+                    tracing::debug!("No valid proposals found for metrics");
+                    self.factory.get_anchor_l2_block_number(self.config.game_type).await?
+                }
+            };
 
+        // Update metrics for latest game block number.
+        ProposerGauge::LatestGameL2BlockNumber.set(latest_proposed_block_number.to::<u64>() as f64);
+
+        // Update metrics for finalized L2 block number.
+        if let Some(finalized_l2_block_number) = self
+            .host
+            .get_finalized_l2_block_number(&self.fetcher, latest_proposed_block_number.to::<u64>())
+            .await?
+        {
+            ProposerGauge::FinalizedL2BlockNumber.set(finalized_l2_block_number as f64);
+        }
+
+        // Update metrics for anchor game block number.
         let anchor_game_l2_block_number =
             self.factory.get_anchor_l2_block_number(self.config.game_type).await?;
-
         ProposerGauge::AnchorGameL2BlockNumber.set(anchor_game_l2_block_number.to::<u64>() as f64);
 
         Ok(())

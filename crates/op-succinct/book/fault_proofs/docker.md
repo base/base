@@ -1,6 +1,6 @@
-# OP Succinct Fault Proof Docker Setup
+# OP Succinct Lite Docker Setup
 
-This guide explains how to run the OP Succinct fault proof system using Docker Compose.
+This guide explains how to run the OP Succinct Lite using Docker Compose.
 
 ## Prerequisites
 
@@ -59,15 +59,15 @@ MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100 # Maximum number of games to check for res
 2. Start the services:
 
 ```bash
-# Navigate to the fault_proof directory
-cd fault_proof
+# Navigate to the fault-proof directory
+cd fault-proof
 
 # Start both proposer and challenger
 docker compose up -d
 
 # Or start them individually
-docker compose up -d proposer
-docker compose up -d challenger
+docker compose up -d op-succinct-lite-proposer
+docker compose up -d op-succinct-lite-challenger
 ```
 
 ## Monitoring
@@ -86,8 +86,8 @@ View logs for the services:
 docker compose logs -f
 
 # View logs for a specific service
-docker logs -f op-succinct-fp-proposer
-docker logs -f op-succinct-fp-challenger
+docker logs -f op-succinct-lite-proposer
+docker logs -f op-succinct-lite-challenger
 ```
 
 ## Stopping the Services
@@ -114,14 +114,14 @@ To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill ou
 If you need to build the Docker images manually:
 
 ```bash
-# Navigate to the fault_proof directory
-cd fault_proof
+# Navigate to the fault-proof directory
+cd fault-proof
 
 # Build the proposer image
-docker build -f Dockerfile.proposer -t op-succinct-fp-proposer:latest ..
+docker build -f Dockerfile.proposer -t op-succinct-lite-proposer:latest ..
 
 # Build the challenger image
-docker build -f Dockerfile.challenger -t op-succinct-fp-challenger:latest ..
+docker build -f Dockerfile.challenger -t op-succinct-lite-challenger:latest ..
 ```
 
 ## Troubleshooting
