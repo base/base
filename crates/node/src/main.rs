@@ -28,7 +28,7 @@ fn main() {
     Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
         .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
-            let cache = Arc::new(Cache::new());
+            let cache = Arc::new(Cache::default());
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
             let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
 

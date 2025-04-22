@@ -550,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_process_payload() {
-        let cache = Arc::new(Cache::new());
+        let cache = Arc::new(Cache::default());
 
         let payload = create_first_payload();
 
@@ -593,7 +593,7 @@ mod tests {
 
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
-        let cache = Arc::new(Cache::new());
+        let cache = Arc::new(Cache::default());
 
         let metadata = Metadata {
             block_number: 1,
