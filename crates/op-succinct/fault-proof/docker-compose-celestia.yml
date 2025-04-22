@@ -1,21 +1,21 @@
 services:
-  op-succinct-lite-proposer:
+  op-succinct-lite-proposer-celestia:
     build:
       context: ..
-      dockerfile: fault-proof/Dockerfile.proposer
-    image: op-succinct-lite-proposer:latest
-    container_name: op-succinct-lite-proposer
+      dockerfile: fault-proof/Dockerfile.proposer.celestia
+    image: op-succinct-lite-proposer-celestia:latest
+    container_name: op-succinct-lite-proposer-celestia
     restart: unless-stopped
     env_file:
       - .env.proposer
     command: ["proposer"]
 
-  op-succinct-lite-challenger:
+  op-succinct-lite-challenger-celestia:
     build:
       context: ..
       dockerfile: fault-proof/Dockerfile.challenger
-    image: op-succinct-lite-challenger:latest
-    container_name: op-succinct-lite-challenger
+    image: op-succinct-lite-challenger-celestia:latest
+    container_name: op-succinct-lite-challenger-celestia
     restart: unless-stopped
     env_file:
       - .env.challenger

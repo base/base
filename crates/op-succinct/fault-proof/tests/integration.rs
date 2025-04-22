@@ -43,11 +43,13 @@ async fn test_proposer_defends_successfully() -> Result<()> {
     );
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let host = initialize_host(Arc::new(fetcher.clone()));
     let proposer = OPSuccinctProposer::new(
         wallet.default_signer().address(),
         l1_provider_with_wallet.clone(),
         factory.clone(),
-        initialize_host(Arc::new(fetcher)),
+        Arc::new(fetcher),
+        host,
     )
     .await
     .unwrap();

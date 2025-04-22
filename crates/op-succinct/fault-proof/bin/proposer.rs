@@ -57,11 +57,13 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| wallet.default_signer().address());
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
+    let host = initialize_host(Arc::new(fetcher.clone()));
     let proposer = OPSuccinctProposer::new(
         prover_address,
         l1_provider_with_wallet,
         factory,
-        initialize_host(Arc::new(fetcher)),
+        Arc::new(fetcher),
+        host,
     )
     .await
     .unwrap();
