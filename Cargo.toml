@@ -1,12 +1,27 @@
-[package]
-name = "reth-flashblocks"
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 license = "MIT"
-homepage = "https://github.com/base-org/reth-flashblocks"
-repository = "https://github.com/base-org/reth-flashblocks"
+homepage = "https://github.com/base/reth"
+repository = "https://github.com/base/reth"
 
-[dependencies]
+[workspace]
+resolver = "2"
+members = [
+    "crates/flashblocks-rpc",
+    "crates/node"
+]
+
+default-members = ["crates/node"]
+
+[workspace.lints]
+
+[workspace.dependencies]
+# internal
+base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
+base-reth-node = { path = "crates/node" }
+
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
@@ -71,14 +86,3 @@ eyre = { version = "0.6.12" }
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
-
-[features]
-default = ["optimism"]
-
-optimism = []
-
-integration = []
-
-[[bin]]
-name = "reth-flashblocks"
-path = "./src/main.rs"
