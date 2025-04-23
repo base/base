@@ -1,16 +1,8 @@
-mod cache;
-mod flashblocks;
-#[cfg(test)]
-mod integration;
-mod metrics;
-mod rpc;
-
+use base_reth_flashblocks_rpc::{cache::Cache, flashblocks::FlashblocksClient, rpc::EthApiExt};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cache::Cache;
-use crate::flashblocks::FlashblocksClient;
-use crate::rpc::{EthApiExt, EthApiOverrideServer};
+use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
@@ -36,7 +28,7 @@ fn main() {
     Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
         .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
-            let cache = Arc::new(Cache::new());
+            let cache = Arc::new(Cache::default());
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
             let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
 

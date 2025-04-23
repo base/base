@@ -14,13 +14,15 @@ pub struct Cache {
     store: Arc<RwLock<HashMap<String, CacheEntry<Vec<u8>>>>>,
 }
 
-impl Cache {
-    pub fn new() -> Self {
+impl Default for Cache {
+    fn default() -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
+}
 
+impl Cache {
     pub fn set<T: Serialize>(
         &self,
         key: &str,
