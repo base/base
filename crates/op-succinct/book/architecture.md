@@ -15,7 +15,7 @@ In the specification of the [standard OP Stack design](https://specs.optimism.io
 3. OP Node: Reads batch data from L1, and passes to OP Geth to perform state transitions.
 4. OP Proposer: Posts state roots from OP Node to L1. Enables withdrawal processing.
 
-![OP Stack Architecture](./assets/orig_op_succinct_arch.png)
+![OP Stack Architecture](./assets/opstack_architecture_0424.png)
 
 
 ## OP Succinct Design
@@ -24,7 +24,7 @@ In the specification of the [standard OP Stack design](https://specs.optimism.io
 
 OP Succinct is a lightweight upgrade to the OP Stack that enables ZK-based finality. Specifically, it upgrades a single on-chain contract and the `op-proposer` component. No changes are needed to `op-geth`, `op-batcher`, or `op-node`.
 
-![OP Succinct Design](./assets/op_succinct_design.png)
+![OP Succinct Design](./assets/opsuccinct_architecture_0424.png)
 
 ### Service Architecture
 
