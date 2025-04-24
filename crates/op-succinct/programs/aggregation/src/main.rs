@@ -66,7 +66,7 @@ pub fn main() {
 
     // Check if all l1 heads were found in the chain.
     for (l1_head, found) in l1_heads_map.iter() {
-        assert!(*found, "l1 head {:?} not found in the provided header chain", l1_head);
+        assert!(*found, "l1 head {l1_head:?} not found in the provided header chain");
     }
 
     let first_boot_info = &agg_inputs.boot_infos[0];

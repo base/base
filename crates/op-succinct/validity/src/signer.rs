@@ -56,7 +56,7 @@ impl TxSigner<Signature> for Web3Signer {
             to: tx.to().into(),
             value: tx.value(),
             gas: format!("0x{:x}", tx.gas_limit()),
-            gas_price: tx.gas_price().map(|price| format!("0x{:x}", price)),
+            gas_price: tx.gas_price().map(|price| format!("0x{price:x}")),
             nonce: format!("0x{:x}", tx.nonce()),
             data: Bytes::copy_from_slice(tx.input()).to_string(),
         };

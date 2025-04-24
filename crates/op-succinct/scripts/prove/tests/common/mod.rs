@@ -10,13 +10,13 @@ pub async fn post_to_github_pr(
     message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
-    let base_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+    let base_url = format!("https://api.github.com/repos/{owner}/{repo}");
 
     // Get all comments on the PR
-    let comments_url = format!("{}/issues/{}/comments", base_url, pr_number);
+    let comments_url = format!("{base_url}/issues/{pr_number}/comments");
     let comments_response = client
         .get(&comments_url)
-        .header("Authorization", format!("token {}", token))
+        .header("Authorization", format!("token {token}"))
         .header("User-Agent", "sp1-perf-bot")
         .send()
         .await?;
@@ -36,7 +36,7 @@ pub async fn post_to_github_pr(
         let comment_url = existing_comment["url"].as_str().unwrap();
         let response = client
             .patch(comment_url)
-            .header("Authorization", format!("token {}", token))
+            .header("Authorization", format!("token {token}"))
             .header("User-Agent", "sp1-perf-bot")
             .json(&json!({
                 "body": message
@@ -51,7 +51,7 @@ pub async fn post_to_github_pr(
         // Create a new comment
         let response = client
             .post(&comments_url)
-            .header("Authorization", format!("token {}", token))
+            .header("Authorization", format!("token {token}"))
             .header("User-Agent", "sp1-perf-bot")
             .json(&json!({
                 "body": message

@@ -1,6 +1,6 @@
 # Proposer Lifecycle
 
-The proposer service monitors the state of the L2 chain, requests proofs and submits them to the L1. Proofs are submitted to the [Succinct Prover Network](https://docs.succinct.xyz/docs/sp1/generating-proofs/prover-network). Here's how the proposer service decides when to request range and aggregation proofs.
+The proposer service monitors the state of the L2 chain, requests proofs and submits them to the L1. Proofs are submitted to the [Succinct Prover Network](https://docs.succinct.xyz/docs/network/introduction). Here's how the proposer service decides when to request range and aggregation proofs.
 
 ## Range Proof Lifecycle
 

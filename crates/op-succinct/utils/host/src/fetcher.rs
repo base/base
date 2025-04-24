@@ -451,7 +451,7 @@ impl OPSuccinctDataFetcher {
     }
 
     pub async fn get_l2_output_at_block(&self, block_number: u64) -> Result<OutputResponse> {
-        let block_number_hex = format!("0x{:x}", block_number);
+        let block_number_hex = format!("0x{block_number:x}");
         let l2_output_data: OutputResponse = self
             .fetch_rpc_data_with_mode(
                 RPCMode::L2Node,
@@ -469,7 +469,7 @@ impl OPSuccinctDataFetcher {
         let latest_l1_header = self.get_l1_header(BlockId::finalized()).await?;
 
         // Get the l1 origin of the l2 end block.
-        let l2_end_block_hex = format!("0x{:x}", l2_end_block);
+        let l2_end_block_hex = format!("0x{l2_end_block:x}");
         let optimism_output_data: OutputResponse = self
             .fetch_rpc_data_with_mode(
                 RPCMode::L2Node,
@@ -487,7 +487,7 @@ impl OPSuccinctDataFetcher {
 
         while low <= high {
             let mid = low + (high - low) / 2;
-            let l1_block_number_hex = format!("0x{:x}", mid);
+            let l1_block_number_hex = format!("0x{mid:x}");
             let result: SafeHeadResponse = self
                 .fetch_rpc_data_with_mode(
                     RPCMode::L2Node,
@@ -572,7 +572,7 @@ impl OPSuccinctDataFetcher {
 
     /// Get the L2 safe head corresponding to the L1 block number using optimism_safeHeadAtL1Block.
     pub async fn get_l2_safe_head_from_l1_block_number(&self, l1_block_number: u64) -> Result<u64> {
-        let l1_block_number_hex = format!("0x{:x}", l1_block_number);
+        let l1_block_number_hex = format!("0x{l1_block_number:x}");
         let result: SafeHeadResponse = self
             .fetch_rpc_data_with_mode(
                 RPCMode::L2Node,

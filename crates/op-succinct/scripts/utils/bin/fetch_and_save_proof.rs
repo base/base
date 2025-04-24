@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
 
         let proof_bytes = proof.bytes();
         println!("Proof bytes: {:?}", hex::encode(proof_bytes));
-        println!("Boot info: {:?}", boot_info);
+        println!("Boot info: {boot_info:?}");
     } else {
         // Read the BootInfoStruct from the proof
         let _boot_info: BootInfoStruct = proof.public_values.read();
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
         let filename: String = if args.start.is_some() && args.end.is_some() {
             let start = args.start.unwrap();
             let end = args.end.unwrap();
-            format!("{}_{}.bin", start, end)
+            format!("{start}_{end}.bin")
         } else {
             // Generate the filename
             format!("{}.bin", args.request_id)

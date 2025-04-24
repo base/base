@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
 
     // Get the 32 byte commitment to the vkey from vkey.vk.hash_u32()
     let range_vk_hash = B256::from(u32_to_u8(range_vk.vk.hash_u32()));
-    println!("Range Verification Key Hash: {}", range_vk_hash);
+    println!("Range Verification Key Hash: {range_vk_hash}");
 
     let (_, agg_vk) = prover.setup(AGGREGATION_ELF);
     println!("Aggregation Verification Key Hash: {}", agg_vk.bytes32());

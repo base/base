@@ -38,7 +38,7 @@ fn load_aggregation_proof_data(
 ) -> (Vec<SP1Proof>, Vec<BootInfoStruct>) {
     let metadata = MetadataCommand::new().exec().unwrap();
     let workspace_root = metadata.workspace_root;
-    let proof_directory = format!("{}/data/fetched_proofs", workspace_root);
+    let proof_directory = format!("{workspace_root}/data/fetched_proofs");
 
     let mut proofs = Vec::with_capacity(proof_names.len());
     let mut boot_infos = Vec::with_capacity(proof_names.len());
@@ -46,9 +46,9 @@ fn load_aggregation_proof_data(
     let prover = ProverClient::builder().cpu().build();
 
     for proof_name in proof_names.iter() {
-        let proof_path = format!("{}/{}.bin", proof_directory, proof_name);
+        let proof_path = format!("{proof_directory}/{proof_name}.bin");
         if fs::metadata(&proof_path).is_err() {
-            panic!("Proof file not found: {}", proof_path);
+            panic!("Proof file not found: {proof_path}");
         }
         let mut deserialized_proof =
             SP1ProofWithPublicValues::load(proof_path).expect("loading proof failed");
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     let headers = fetcher.get_header_preimages(&boot_infos, header.hash_slow()).await?;
     let multi_block_vkey_u8 = u32_to_u8(vkey.vk.hash_u32());
     let multi_block_vkey_b256 = B256::from(multi_block_vkey_u8);
-    println!("Range ELF Verification Key Commitment: {}", multi_block_vkey_b256);
+    println!("Range ELF Verification Key Commitment: {multi_block_vkey_b256}");
     let stdin =
         get_agg_proof_stdin(proofs, boot_infos, headers, &vkey, header.hash_slow(), args.prover)
             .expect("Failed to get agg proof stdin");
@@ -95,7 +95,7 @@ async fn main() -> Result<()> {
         prover.prove(&agg_pk, &stdin).groth16().run().expect("proving failed");
     } else {
         let (_, report) = prover.execute(AGGREGATION_ELF, &stdin).run().unwrap();
-        println!("report: {:?}", report);
+        println!("report: {report:?}");
     }
 
     Ok(())
