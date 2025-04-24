@@ -106,7 +106,7 @@ pub async fn split_range_based_on_safe_heads(
     let data_fetcher = OPSuccinctDataFetcher::default();
 
     // Get the L1 origin of l2_start
-    let l2_start_hex = format!("0x{:x}", l2_start);
+    let l2_start_hex = format!("0x{l2_start:x}");
     let start_output: OutputResponse = data_fetcher
         .fetch_rpc_data_with_mode(
             RPCMode::L2Node,
@@ -124,7 +124,7 @@ pub async fn split_range_based_on_safe_heads(
     let mut current_l2_start = l2_start;
     let safe_heads = futures::stream::iter(l1_start..=l1_head_number)
         .map(|block| async move {
-            let l1_block_hex = format!("0x{:x}", block);
+            let l1_block_hex = format!("0x{block:x}");
             let data_fetcher = OPSuccinctDataFetcher::default();
             let result: SafeHeadResponse = data_fetcher
                 .fetch_rpc_data_with_mode(

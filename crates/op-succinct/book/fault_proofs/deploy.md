@@ -71,7 +71,7 @@ For production, remove the `USE_SP1_MOCK_VERIFIER` environment variable and set 
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `VERIFIER_ADDRESS` | Address of the SP1 verifier ([see contract addresses](https://docs.succinct.xyz/docs/sp1/verification/onchain/contract-addresses)) | `0x...` |
+| `VERIFIER_ADDRESS` | Address of the SP1 verifier ([see contract addresses](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses)) | `0x...` |
 | `ROLLUP_CONFIG_HASH` | Hash of the rollup configuration | `0x...` |
 | `AGGREGATION_VKEY` | Verification key for aggregation | `0x...` |
 | `RANGE_VKEY_COMMITMENT` | Commitment to range verification key | `0x...` |

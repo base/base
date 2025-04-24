@@ -32,7 +32,7 @@ impl From<i16> for RequestStatus {
             5 => RequestStatus::Relayed,
             6 => RequestStatus::Failed,
             7 => RequestStatus::Cancelled,
-            _ => panic!("Invalid request status: {}", value),
+            _ => panic!("Invalid request status: {value}"),
         }
     }
 }
@@ -51,7 +51,7 @@ impl From<i16> for RequestType {
         match value {
             0 => RequestType::Range,
             1 => RequestType::Aggregation,
-            _ => panic!("Invalid request type: {}", value),
+            _ => panic!("Invalid request type: {value}"),
         }
     }
 }
@@ -70,7 +70,7 @@ impl From<i16> for RequestMode {
         match value {
             0 => RequestMode::Real,
             1 => RequestMode::Mock,
-            _ => panic!("Invalid request mode: {}", value),
+            _ => panic!("Invalid request mode: {value}"),
         }
     }
 }

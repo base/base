@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
         }
         // Save the proof to the proof directory corresponding to the chain ID.
         proof
-            .save(format!("{}/{}-{}.bin", proof_dir, l2_start_block, l2_end_block))
+            .save(format!("{proof_dir}/{l2_start_block}-{l2_end_block}.bin"))
             .expect("saving proof failed");
     } else {
         let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
@@ -73,18 +73,16 @@ async fn main() -> Result<()> {
             execution_duration.as_secs(),
         );
 
-        println!("Execution Stats: \n{:?}", stats);
+        println!("Execution Stats: \n{stats:?}");
 
         // Create the report directory if it doesn't exist.
-        let report_dir = format!("execution-reports/multi/{}", l2_chain_id);
+        let report_dir = format!("execution-reports/multi/{l2_chain_id}");
         if !std::path::Path::new(&report_dir).exists() {
             fs::create_dir_all(&report_dir)?;
         }
 
-        let report_path = format!(
-            "execution-reports/multi/{}/{}-{}.csv",
-            l2_chain_id, l2_start_block, l2_end_block
-        );
+        let report_path =
+            format!("execution-reports/multi/{l2_chain_id}/{l2_start_block}-{l2_end_block}.csv");
 
         // Write to CSV.
         let mut csv_writer = csv::Writer::from_path(report_path)?;

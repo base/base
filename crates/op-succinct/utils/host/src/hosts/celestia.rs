@@ -109,7 +109,7 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
         // height in the latest Blobstream commitment.
         while low <= high {
             let mid = (high + low) / 2;
-            let l1_block_hex = format!("0x{:x}", mid);
+            let l1_block_hex = format!("0x{mid:x}");
 
             // Get the safe head for the chain at the midpoint. This will return the latest
             // transaction with a batch.
@@ -186,7 +186,7 @@ fn get_blobstream_address(l1_chain_id: u64) -> Address {
         11155111 => address!("f0c6429ebab2e7dc6e05dafb61128be21f13cb1e"),
         421614 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
         84532 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
-        _ => panic!("Unsupported L1 chain ID: {}", l1_chain_id),
+        _ => panic!("Unsupported L1 chain ID: {l1_chain_id}"),
     }
 }
 

@@ -54,7 +54,7 @@ async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
     let cargo_metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
     let report_path =
-        root_dir.join(format!("execution-reports/{}/{}-{}-report.csv", l2_chain_id, start, end));
+        root_dir.join(format!("execution-reports/{l2_chain_id}/{start}-{end}-report.csv"));
     // Create the parent directory if it doesn't exist
     if let Some(parent) = report_path.parent() {
         if !parent.exists() {
@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
         split_range_basic(l2_start_block, l2_end_block, args.batch_size)
     };
 
-    info!("The span batch ranges which will be executed: {:?}", split_ranges);
+    info!("The span batch ranges which will be executed: {split_ranges:?}");
 
     // Get the host CLIs in order, in parallel.
     let host = initialize_host(Arc::new(data_fetcher));
@@ -238,8 +238,7 @@ async fn main() -> Result<()> {
     let cargo_metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
     let root_dir = PathBuf::from(cargo_metadata.workspace_root);
     let report_path = root_dir.join(format!(
-        "execution-reports/{}/{}-{}-report.csv",
-        l2_chain_id, l2_start_block, l2_end_block
+        "execution-reports/{l2_chain_id}/{l2_start_block}-{l2_end_block}-report.csv"
     ));
 
     // Read the execution stats from the CSV file and aggregate them to output to the user.

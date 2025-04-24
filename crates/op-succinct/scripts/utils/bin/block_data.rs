@@ -102,7 +102,7 @@ async fn write_block_data_to_csv(
         }
         csv_writer.flush()?;
 
-        info!("Processed blocks {} to {}", current_start, chunk_end);
+        info!("Processed blocks {current_start} to {chunk_end}");
         current_start = chunk_end + 1;
     }
 
@@ -136,6 +136,6 @@ async fn main() -> Result<()> {
 
     // Calculate aggregate statistics.
     let aggregated_data = AggregatedBlockData::new(&l2_block_data);
-    println!("{}", aggregated_data);
+    println!("{aggregated_data}");
     Ok(())
 }
