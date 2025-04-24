@@ -90,5 +90,4 @@
     - [ETH Lockbox](./interop/eth-lockbox.md)
   - [OP Contracts Manager](./experimental/op-contracts-manager.md)
   - [Governance Token](./experimental/gov-token.md)
-  - [Multithreaded Cannon FPVM](./experimental/cannon-fault-proof-vm-mt.md)
 - [Glossary](./glossary.md)
