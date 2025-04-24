@@ -1,6 +1,6 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_consensus::Transaction;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, TxHash, B256, U256};
+use alloy_primitives::{private::alloy_rlp::Encodable, Address, TxHash, U256};
 use reth_node_api::NodePrimitives;
 use reth_optimism_primitives::OpReceipt;
 use std::collections::HashSet;
@@ -10,10 +10,6 @@ use std::collections::HashSet;
 pub struct ExecutedPayload<N: NodePrimitives> {
     /// Tracked execution info
     pub info: ExecutionInfo<N>,
-    /// Withdrawal hash.
-    pub withdrawals_root: Option<B256>,
-    /// Requests hash.
-    pub requests_hash: Option<B256>,
 }
 
 #[derive(Default, Debug)]

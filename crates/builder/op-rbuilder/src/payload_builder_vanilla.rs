@@ -36,7 +36,7 @@ use reth_evm::{
 use reth_execution_types::ExecutionOutcome;
 use reth_node_api::{NodePrimitives, NodeTypes, TxTy};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_consensus::calculate_receipt_root_no_memo_optimism;
+use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpEngineTypes;
@@ -46,9 +46,7 @@ use reth_optimism_payload_builder::{
     payload::{OpBuiltPayload, OpPayloadBuilderAttributes},
     OpPayloadPrimitives,
 };
-use reth_optimism_primitives::{
-    OpPrimitives, OpReceipt, OpTransactionSigned, ADDRESS_L2_TO_L1_MESSAGE_PASSER,
-};
+use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::OpPooledTx;
 use reth_payload_builder::PayloadBuilderService;
 use reth_payload_builder_primitives::PayloadBuilderError;
@@ -546,31 +544,9 @@ impl<Txs> OpBuilder<'_, Txs> {
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
 
-        let (withdrawals_root, requests_hash) = if ctx.is_isthmus_active() {
-            // withdrawals root field in block header is used for storage root of L2 predeploy
-            // `l2tol1-message-passer`
-            (
-                Some(
-                    state
-                        .database
-                        .as_ref()
-                        .storage_root(ADDRESS_L2_TO_L1_MESSAGE_PASSER, Default::default())?,
-                ),
-                Some(EMPTY_REQUESTS_HASH),
-            )
-        } else if ctx.is_canyon_active() {
-            (Some(EMPTY_WITHDRAWALS), None)
-        } else {
-            (None, None)
-        };
-
         remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
 
-        let payload = ExecutedPayload {
-            info,
-            withdrawals_root,
-            requests_hash,
-        };
+        let payload = ExecutedPayload { info };
 
         Ok(BuildOutcomeKind::Better { payload })
     }
@@ -587,11 +563,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
-        let ExecutedPayload {
-            info,
-            withdrawals_root,
-            requests_hash,
-        } = match self.execute(&mut state, &ctx)? {
+        let ExecutedPayload { info } = match self.execute(&mut state, &ctx)? {
             BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
             BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
             BuildOutcomeKind::Aborted { fees } => return Ok(BuildOutcomeKind::Aborted { fees }),
@@ -639,6 +611,22 @@ impl<Txs> OpBuilder<'_, Txs> {
         ctx.metrics
             .state_root_calculation_duration
             .record(state_root_start_time.elapsed());
+
+        let (withdrawals_root, requests_hash) = if ctx.is_isthmus_active() {
+            // withdrawals root field in block header is used for storage root of L2 predeploy
+            // `l2tol1-message-passer`
+            (
+                Some(
+                    isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                        .map_err(PayloadBuilderError::other)?,
+                ),
+                Some(EMPTY_REQUESTS_HASH),
+            )
+        } else if ctx.is_canyon_active() {
+            (Some(EMPTY_WITHDRAWALS), None)
+        } else {
+            (None, None)
+        };
 
         // create the block header
         let transactions_root = proofs::calculate_transaction_root(&info.executed_transactions);
