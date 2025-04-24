@@ -71,11 +71,11 @@ Prior to isthmus activation:
 After Isthmus activation, an L2 block header is valid iff:
 
 1. The `withdrawalsRoot` field
-    1. Is 32 bytes in length.
-    1. Matches the [`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root,
-    as committed to in the `storageRoot` within the block header
+   1. Is 32 bytes in length.
+   1. Matches the [`L2ToL1MessagePasser`][l2-to-l1-mp] account storage root,
+      as committed to in the `storageRoot` within the block header
 1. The `requestsHash` field is equal to `sha256('') = 0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
-indicating no requests in the block.
+   indicating no requests in the block.
 
 ### Header Withdrawals Root
 
@@ -122,8 +122,10 @@ they are not reflected in the `withdrawalsRoot`. Hence, prior to Isthmus activat
 even if a `withdrawalsRoot` is present and a MPT root is present in the header, it should not be used.
 Any implementation that calculates output root should be careful not to use the header `withdrawalsRoot`.
 
-After Isthmus activation, if there was never any withdrawal contract storage, a MPT root of an empty list
-can be set as the `withdrawalsRoot`
+Note that there is always nonzero storage in the [`L2ToL1MessagePasser`][l2-to-l1-mp],
+because it is a [proxied predeploy](../../protocol/predeploys.md) -- from genesis it
+stores an implementation address and owner address. So from Isthmus,
+the `withdrawalsRoot` will always be non-nil and never be the MPT root of an empty list.
 
 #### Forwards Compatibility Considerations
 
@@ -247,6 +249,7 @@ refunds, since they never buy the operator fee gas to begin with.
 #### EVM Fee Semantics
 
 Like other fees in the EVM, the operator fee should be charged following the pattern below:
+
 1. During pre-execution validation, the account must have enough ETH to cover the existing worst-case gas + L1 data fees
    _as well as_ the worst-case operator fee (for deposits, the worst-case fee is `0`). To compute this value, use the
    [fee formula](#fee-formula) with `gas` set to the `gas_limit` of the transaction, and add it to the existing
@@ -256,10 +259,10 @@ Like other fees in the EVM, the operator fee should be charged following the pat
 1. After execution, when issuing refunds, transactions that bought operator fee gas should be refunded the operator fee
    gas that was unused (i.e., the caller should only be charged the _effective_ operator fee.) The refund should be
    calculated as $\text{opFeeRefund} = \text{opFeeWorstCase} - \text{opFeeActual}$, where:
-    - $\text{opFeeWorstCase}$ is as described in #1 + #2.
-    - $\text{opFeeActual}$ is the amount of the operator fee that was actually used. This value is computed using the
-      [fee formula](#fee-formula) with `gas` set to the `gas_limit - gas_used + refunded_gas`. `refunded_gas` is as
-      described in [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529).
+   - $\text{opFeeWorstCase}$ is as described in #1 + #2.
+   - $\text{opFeeActual}$ is the amount of the operator fee that was actually used. This value is computed using the
+     [fee formula](#fee-formula) with `gas` set to the `gas_limit - gas_used + refunded_gas`. `refunded_gas` is as
+     described in [EIP-3529](https://eips.ethereum.org/EIPS/eip-3529).
 1. After execution, when rewarding the fee beneficiaries, send the _spent operator fee_ to the
    [operator fee vault](#fee-vaults). This value is exactly $\text{opFeeActual}$ as described above.
 
