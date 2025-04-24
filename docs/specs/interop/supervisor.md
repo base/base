@@ -35,6 +35,32 @@
       - [Access-list execution context](#access-list-execution-context)
       - [Access-list checks](#access-list-checks)
       - [`supervisor_checkAccessList` contents](#supervisor_checkaccesslist-contents)
+  - [Errors](#errors)
+    - [JSON-RPC Error Codes](#json-rpc-error-codes)
+    - [Error Code Structure](#error-code-structure)
+    - [Protocol Specific Error Codes](#protocol-specific-error-codes)
+      - [`-3204XX` `DEADLINE_EXCEEDED` errors](#-3204xx-deadline_exceeded-errors)
+        - [`-320400` `UNINITIALIZED_CHAIN_DATABASE`](#-320400-uninitialized_chain_database)
+      - [`-3205XX` `NOT_FOUND` errors](#-3205xx-not_found-errors)
+        - [`-320500` `SKIPPED_DATA`](#-320500-skipped_data)
+        - [`-320501` `UNKNOWN_CHAIN`](#-320501-unknown_chain)
+      - [`-3206XX` `ALREADY_EXISTS` errors](#-3206xx-already_exists-errors)
+        - [`-320600` `CONFLICTING_DATA`](#-320600-conflicting_data)
+        - [`-320601` `INEFFECTIVE_DATA`](#-320601-ineffective_data)
+      - [`-3209XX` `FAILED_PRECONDITION` errors](#-3209xx-failed_precondition-errors)
+        - [`-320900` `OUT_OF_ORDER`](#-320900-out_of_order)
+        - [`-320901` `AWAITING_REPLACEMENT_BLOCK`](#-320901-awaiting_replacement_block)
+      - [`-3210XX` `ABORTED` errors](#-3210xx-aborted-errors)
+        - [`-321000` `ITER_STOP`](#-321000-iter_stop)
+      - [`-3211XX` `OUT_OF_RANGE` errors](#-3211xx-out_of_range-errors)
+        - [`-321100` `OUT_OF_SCOPE`](#-321100-out_of_scope)
+      - [`-3212XX` `UNIMPLEMENTED` errors](#-3212xx-unimplemented-errors)
+        - [`-321200` `CANNOT_GET_PARENT_OF_FIRST_BLOCK_IN_DB`](#-321200-cannot_get_parent_of_first_block_in_db)
+      - [`-3214XX` `UNAVAILABLE` errors](#-3214xx-unavailable-errors)
+        - [`-321401` `FUTURE_DATA`](#-321401-future_data)
+      - [`-3215XX` `DATA_LOSS` errors](#-3215xx-data_loss-errors)
+        - [`-321500` `MISSED_DATA`](#-321500-missed_data)
+        - [`-321501` `DATA_CORRUPTION`](#-321501-data_corruption)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -280,3 +306,101 @@ Returns: RPC error if the `minSafety` is not met by one or more of the access en
 
 The access-list entries represent messages, and may be incomplete or malformed.
 Malformed access-lists result in an RPC error.
+
+### Errors
+
+The Supervisor RPC API uses a 6-digit error code system that extends standard JSON-RPC error codes
+while providing additional categorization based on gRPC status codes.
+
+For standard JSON-RPC error codes, refer to [Ethereum JSON-RPC Error Reference](https://ethereum-json-rpc.com/errors).
+
+#### JSON-RPC Error Codes
+
+#### Error Code Structure
+
+Supervisor error codes follow this structure:
+
+- First 2 digits: `32` (indicating server error, matching JSON-RPC conventions)
+- Middle 2 digits: gRPC status code category (01-16, zero-padded)
+- Last 2 digits: Specific error index within that category (00-99)
+
+For gRPC status codes reference, see [gRPC Status Codes](https://grpc.io/docs/guides/status-codes/).
+
+#### Protocol Specific Error Codes
+
+##### `-3204XX` `DEADLINE_EXCEEDED` errors
+
+###### `-320400` `UNINITIALIZED_CHAIN_DATABASE`
+
+Happens when a chain database is not initialized yet.
+
+##### `-3205XX` `NOT_FOUND` errors
+
+###### `-320500` `SKIPPED_DATA`
+
+Happens when we try to retrieve data that is not available (pruned).
+It may also happen if we erroneously skip data, that was not considered a conflict, if the DB is corrupted.
+
+###### `-320501` `UNKNOWN_CHAIN`
+
+Happens when a chain is unknown, not in the dependency set.
+
+##### `-3206XX` `ALREADY_EXISTS` errors
+
+###### `-320600` `CONFLICTING_DATA`
+
+Happens when we know for sure that there is different canonical data.
+
+###### `-320601` `INEFFECTIVE_DATA`
+
+Happens when data is accepted as compatible, but did not change anything.
+This happens when a node is deriving an L2 block we already know of being derived from the given source,
+but without path to skip forward to newer source blocks without doing the known derivation work first.
+
+##### `-3209XX` `FAILED_PRECONDITION` errors
+
+###### `-320900` `OUT_OF_ORDER`
+
+Happens when you try to add data to the DB, but it does not actually fit onto the latest data
+(by being too old or new).
+
+###### `-320901` `AWAITING_REPLACEMENT_BLOCK`
+
+Happens when we know for sure that a replacement block is needed before progress can be made.
+
+##### `-3210XX` `ABORTED` errors
+
+###### `-321000` `ITER_STOP`
+
+Happens in iterator to indicate iteration has to stop.
+This error might only be used internally and not sent over the network.
+
+##### `-3211XX` `OUT_OF_RANGE` errors
+
+###### `-321100` `OUT_OF_SCOPE`
+
+Happens when data is accessed, but access is not allowed, because of a limited scope.
+E.g. when limiting scope to L2 blocks derived from a specific subset of the L1 chain.
+
+##### `-3212XX` `UNIMPLEMENTED` errors
+
+###### `-321200` `CANNOT_GET_PARENT_OF_FIRST_BLOCK_IN_DB`
+
+Happens when you try to get the previous block of the first block.
+E.g. when trying to determine the previous source block for the first L1 block in the database.
+
+##### `-3214XX` `UNAVAILABLE` errors
+
+###### `-321401` `FUTURE_DATA`
+
+Happens when data is just not yet available.
+
+##### `-3215XX` `DATA_LOSS` errors
+
+###### `-321500` `MISSED_DATA`
+
+Happens when we search the DB, know the data may be there, but is not (e.g. different revision).
+
+###### `-321501` `DATA_CORRUPTION`
+
+Happens when the underlying DB has some I/O issue.
