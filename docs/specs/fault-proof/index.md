@@ -31,11 +31,13 @@
     - [`l1-precompile <precompile ++ inputbytes>`](#l1-precompile-precompile--inputbytes)
     - [`l2-block-header <blockhash> <chainID>?`](#l2-block-header-blockhash-chainid)
     - [`l2-transactions <blockhash> <chainID>?`](#l2-transactions-blockhash-chainid)
+    - [`l2-receipts <blockhash> <chainID>`](#l2-receipts-blockhash-chainid)
     - [`l2-code <codehash> <chainID>?`](#l2-code-codehash-chainid)
     - [`l2-state-node <nodehash> <chainID>?`](#l2-state-node-nodehash-chainid)
     - [`l2-output <outputroot> <chainID>?`](#l2-output-outputroot-chainid)
     - [`l2-payload-witness <payload_attributes>`](#l2-payload-witness-payload_attributes)
     - [`l2-account-proof <blockhash_and_address>`](#l2-account-proof-blockhash_and_address)
+    - [`l2-block-data <blockhash>`](#l2-block-data-blockhash)
   - [Precompile Accelerators](#precompile-accelerators)
 - [Fault Proof VM](#fault-proof-vm)
 - [Fault Proof Interactive Dispute Game](#fault-proof-interactive-dispute-game)
@@ -432,6 +434,13 @@ prepare the RLP pre-images of each of them, including transactions-list MPT node
 The `<chainID>` is optionally concatenated after the `<blockHash>` as a big endian uint64 value to specify which L2
 chain to retrieve data from. `<chainID>` must be specified when the interop hard fork is active.
 
+#### `l2-receipts <blockhash> <chainID>`
+
+Requests the host to prepare the list of receipts of the L2 block with `<blockhash>` for the specified `<chainID>`:
+prepare the RLP pre-images of each of them, including receipts-list MPT nodes.
+
+This hint is used only when the interop hard fork is active.
+
 #### `l2-code <codehash> <chainID>?`
 
 Requests the host to prepare the L2 smart-contract code with the given `<codehash>`.
@@ -468,6 +477,17 @@ encoded: 32-byte block hash + 20-byte address + 8 byte big endian chain ID.
 
 `l2-payload-witness` and `l2-account-proof` hints are preferred over the more granular `l2-code` and `l2-state-node`,
 and they should be sent before the more granular hints to ensure proper handling.
+
+#### `l2-block-data <blockhash>`
+
+Requests the host to prepare all preimages used in the building of the block specified by `<blockhash>`.
+`<blockhash>` is a hex encoded concatenation of the following:
+
+- 32-byte parent block hash
+- 32-byte block hash of the block to be prepared
+- 8-byte big-endian chain ID
+
+This hint is used only when the interop hard fork is active.
 
 ### Precompile Accelerators
 
