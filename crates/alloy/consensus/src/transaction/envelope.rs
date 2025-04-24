@@ -326,6 +326,17 @@ impl Transaction for OpTxEnvelope {
 }
 
 impl OpTxEnvelope {
+    /// Creates a new enveloped transaction from the given transaction, signature and hash.
+    ///
+    /// Caution: This assumes the given hash is the correct transaction hash.
+    pub fn new_unchecked(
+        transaction: OpTypedTransaction,
+        signature: Signature,
+        hash: B256,
+    ) -> Self {
+        Signed::new_unchecked(transaction, signature, hash).into()
+    }
+
     /// Creates a new signed transaction from the given typed transaction and signature without the
     /// hash.
     ///
