@@ -344,6 +344,10 @@ fn get_and_set_txs_and_receipts(
         // check if exists, if not update
         let existing_tx = cache.get::<OpTransactionSigned>(&transaction.tx_hash().to_string());
         if existing_tx.is_none() {
+            println!(
+                "setting transaction in cache: {:?}",
+                transaction.tx_hash().to_string()
+            );
             if let Err(e) = cache.set(&transaction.tx_hash().to_string(), &transaction, Some(10)) {
                 error!("Failed to set transaction in cache: {}", e);
                 continue;
@@ -368,6 +372,15 @@ fn get_and_set_txs_and_receipts(
                     Some(10),
                 ) {
                     error!("Failed to set transaction count in cache: {}", e);
+                }
+
+                // also keep track of sender of each transaction
+                if let Err(e) = cache.set(
+                    &format!("tx_sender:{}", transaction.tx_hash()),
+                    &from,
+                    Some(10),
+                ) {
+                    error!("Failed to set transaction sender in cache: {}", e);
                 }
             }
         }
