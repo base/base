@@ -49,14 +49,20 @@ op-rbuilder has an integration test framework that runs the builder against mock
 To run the integration tests, run:
 
 ```bash
+# Ensure you have op-reth installed in your path,
+# you can download it with the command below and move it to a location in your path
+./scripts/ci/download-op-reth.sh
+
 # Generate a genesis file
-cargo run -p op-rbuilder --bin tester --features optimism -- genesis --output genesis.json
+cargo run -p op-rbuilder --bin tester -- genesis --output genesis.json
 
 # Build the op-rbuilder binary
-cargo build -p op-rbuilder --bin op-rbuilder --features optimism
+# To test flashblocks add flashblocks as a feature
+cargo build -p op-rbuilder --bin op-rbuilder
 
 # Run the integration tests
-cargo run -p op-rbuilder --bin tester --features optimism -- run
+# To test flashblocks add flashblocks as a feature
+cargo test --package op-rbuilder --lib --features integration -- integration::integration_test::tests
 ```
 
 ## Local Devnet
