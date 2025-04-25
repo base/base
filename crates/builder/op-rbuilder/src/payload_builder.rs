@@ -232,6 +232,8 @@ pub struct OpPayloadBuilder<Pool, Client> {
     pub chain_block_time: u64,
     /// Flashblock block time
     pub flashblock_block_time: u64,
+    /// Number of flashblocks per block
+    pub flashblocks_per_block: u64,
     /// The metrics for the builder
     pub metrics: OpRBuilderMetrics,
 }
@@ -262,6 +264,7 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
             tx,
             chain_block_time,
             flashblock_block_time,
+            flashblocks_per_block: chain_block_time / flashblock_block_time,
             metrics: Default::default(),
         }
     }
@@ -423,8 +426,8 @@ where
             return Ok(());
         }
 
-        let gas_per_batch =
-            ctx.block_gas_limit() / (self.chain_block_time / self.flashblock_block_time);
+        let gas_per_batch = ctx.block_gas_limit() / self.flashblocks_per_block;
+
         let mut total_gas_per_batch = gas_per_batch;
 
         let mut flashblock_count = 0;
@@ -482,11 +485,22 @@ where
             // Exit loop if channel closed or cancelled
             match received {
                 Some(()) => {
+                    if flashblock_count >= self.flashblocks_per_block {
+                        tracing::info!(
+                            target: "payload_builder",
+                            "Skipping flashblock reached target={} idx={}",
+                            self.flashblocks_per_block,
+                            flashblock_count
+                        );
+                        continue;
+                    }
+
                     // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock {}",
+                        "Building flashblock {} {}",
                         flashblock_count,
+                        total_gas_per_batch,
                     );
 
                     let flashblock_build_start_time = Instant::now();
@@ -512,7 +526,7 @@ where
                         &mut info,
                         &mut db,
                         best_txs,
-                        total_gas_per_batch,
+                        total_gas_per_batch.min(ctx.block_gas_limit()),
                     )?;
                     ctx.metrics
                         .payload_tx_simulation_duration

@@ -133,7 +133,7 @@ impl ServiceInstance {
         if contents.contains(pattern) {
             Ok(())
         } else {
-            Err(eyre::eyre!("Pattern not found in log file"))
+            Err(eyre::eyre!("Pattern not found in log file: {}", pattern))
         }
     }
 }

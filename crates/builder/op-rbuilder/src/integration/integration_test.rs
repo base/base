@@ -490,4 +490,92 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[cfg(feature = "flashblocks")]
+    async fn integration_test_flashblocks_respects_gas_limit() -> eyre::Result<()> {
+        // This is a simple test using the integration framework to test that the chain
+        // produces blocks.
+        let mut framework =
+            IntegrationFramework::new("integration_test_flashblocks_respects_gas_limit").unwrap();
+
+        // we are going to use a genesis file pre-generated before the test
+        let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        genesis_path.push("../../genesis.json");
+        assert!(genesis_path.exists());
+
+        let block_time_ms = 1000;
+        let flashblock_time_ms = 100;
+
+        // create the builder
+        let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let op_rbuilder_config = OpRbuilderConfig::new()
+            .chain_config_path(genesis_path.clone())
+            .data_dir(builder_data_dir)
+            .auth_rpc_port(1244)
+            .network_port(1245)
+            .http_port(1248)
+            .with_builder_private_key(BUILDER_PRIVATE_KEY)
+            .with_flashblocks_ws_url("localhost:1249")
+            .with_chain_block_time(block_time_ms)
+            .with_flashbots_block_time(flashblock_time_ms);
+
+        // create the validation reth node
+        let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let reth = OpRethConfig::new()
+            .chain_config_path(genesis_path)
+            .data_dir(reth_data_dir)
+            .auth_rpc_port(1246)
+            .network_port(1247);
+
+        framework.start("op-reth", &reth).await.unwrap();
+
+        let op_rbuilder = framework
+            .start("op-rbuilder", &op_rbuilder_config)
+            .await
+            .unwrap();
+
+        let engine_api = EngineApi::new("http://localhost:1244").unwrap();
+        let validation_api = EngineApi::new("http://localhost:1246").unwrap();
+
+        let mut generator = BlockGenerator::new(
+            &engine_api,
+            Some(&validation_api),
+            false,
+            block_time_ms / 1000,
+            None,
+        );
+        generator.init().await?;
+
+        let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
+            .on_http("http://localhost:1248".parse()?);
+
+        // Delay the payload building by 4s, ensure that the correct number of flashblocks are built
+        let block_hash = generator.generate_block_with_delay(4).await?;
+
+        // query the block and the transactions inside the block
+        let block = provider
+            .get_block_by_hash(block_hash)
+            .await?
+            .expect("block");
+
+        for hash in block.transactions.hashes() {
+            let _ = provider
+                .get_transaction_receipt(hash)
+                .await?
+                .expect("receipt");
+        }
+
+        op_rbuilder
+            .find_log_line("Processing new chain commit") // no builder tx for flashblocks builder
+            .await?;
+
+        // check there's no more than 10 flashblocks log lines (2000ms / 200ms)
+        op_rbuilder.find_log_line("Building flashblock 9").await?;
+        op_rbuilder
+            .find_log_line("Skipping flashblock reached target=10 idx=10")
+            .await?;
+
+        Ok(())
+    }
 }

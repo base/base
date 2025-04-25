@@ -321,7 +321,11 @@ impl<'a> BlockGenerator<'a> {
     }
 
     /// Helper function to submit a payload and update chain state
-    async fn submit_payload(&mut self, transactions: Option<Vec<Bytes>>) -> eyre::Result<B256> {
+    async fn submit_payload(
+        &mut self,
+        transactions: Option<Vec<Bytes>>,
+        block_building_delay_secs: u64,
+    ) -> eyre::Result<B256> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -395,7 +399,8 @@ impl<'a> BlockGenerator<'a> {
         }
 
         if !self.no_tx_pool {
-            tokio::time::sleep(tokio::time::Duration::from_secs(self.block_time_secs)).await;
+            let sleep_time = self.block_time_secs + block_building_delay_secs;
+            tokio::time::sleep(tokio::time::Duration::from_secs(sleep_time)).await;
         }
 
         let payload = if let Some(flashblocks_service) = &self.flashblocks_service {
@@ -450,7 +455,11 @@ impl<'a> BlockGenerator<'a> {
 
     /// Generate a single new block and return its hash
     pub async fn generate_block(&mut self) -> eyre::Result<B256> {
-        self.submit_payload(None).await
+        self.submit_payload(None, 0).await
+    }
+
+    pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<B256> {
+        self.submit_payload(None, delay).await
     }
 
     /// Submit a deposit transaction to seed an account with ETH
@@ -473,7 +482,8 @@ impl<'a> BlockGenerator<'a> {
         let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
 
-        self.submit_payload(Some(vec![signed_tx_rlp.into()])).await
+        self.submit_payload(Some(vec![signed_tx_rlp.into()]), 0)
+            .await
     }
 }
 
