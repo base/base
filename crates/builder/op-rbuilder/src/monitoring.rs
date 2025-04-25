@@ -17,7 +17,6 @@ const OP_BUILDER_TX_PREFIX: &[u8] = b"Block Number:";
 pub struct Monitoring {
     builder_signer: Option<Signer>,
     metrics: OpRBuilderMetrics,
-    execution_outcome: ExecutionOutcome<OpReceipt>,
 }
 
 impl Monitoring {
@@ -25,7 +24,6 @@ impl Monitoring {
         Self {
             builder_signer,
             metrics: Default::default(),
-            execution_outcome: Default::default(),
         }
     }
 
@@ -88,10 +86,8 @@ impl Monitoring {
         let num_reverted_tx = decode_chain_into_reverted_txs(chain);
         self.metrics.inc_num_reverted_tx(num_reverted_tx);
 
-        self.execution_outcome
-            .extend(chain.execution_outcome().clone());
         let builder_balance =
-            decode_state_into_builder_balance(&self.execution_outcome, self.builder_signer)
+            decode_state_into_builder_balance(chain.execution_outcome(), self.builder_signer)
                 .and_then(|balance| {
                     balance
                         .to_string()
@@ -114,7 +110,6 @@ impl Monitoring {
     /// This function decodes all transactions in the block, updates the metrics for builder built blocks
     async fn revert(&mut self, chain: &Chain<OpPrimitives>) -> eyre::Result<()> {
         info!("Processing new chain revert");
-        self.execution_outcome.revert_to(chain.first().number - 1);
         let mut blocks = decode_chain_into_builder_txs(chain, self.builder_signer);
         // Reverse the order of txs to start reverting from the tip
         blocks.reverse();
