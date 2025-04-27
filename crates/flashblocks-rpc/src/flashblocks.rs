@@ -344,10 +344,6 @@ fn get_and_set_txs_and_receipts(
         // check if exists, if not update
         let existing_tx = cache.get::<OpTransactionSigned>(&transaction.tx_hash().to_string());
         if existing_tx.is_none() {
-            println!(
-                "setting transaction in cache: {:?}",
-                transaction.tx_hash().to_string()
-            );
             if let Err(e) = cache.set(&transaction.tx_hash().to_string(), &transaction, Some(10)) {
                 error!("Failed to set transaction in cache: {}", e);
                 continue;
@@ -378,6 +374,15 @@ fn get_and_set_txs_and_receipts(
                 if let Err(e) = cache.set(
                     &format!("tx_sender:{}", transaction.tx_hash()),
                     &from,
+                    Some(10),
+                ) {
+                    error!("Failed to set transaction sender in cache: {}", e);
+                }
+
+                // also keep track of the block number of each transaction
+                if let Err(e) = cache.set(
+                    &format!("tx_block_number:{}", transaction.tx_hash()),
+                    &block_number,
                     Some(10),
                 ) {
                     error!("Failed to set transaction sender in cache: {}", e);
@@ -602,6 +607,61 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(tx2_receipt.cumulative_gas_used(), 42000);
+
+        // verify tx_sender, tx_block_number, tx_idx
+        let tx_sender = cache
+            .get::<Address>(&format!(
+                "tx_sender:{}",
+                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            ))
+            .unwrap();
+        assert_eq!(
+            tx_sender,
+            Address::from_str("0xb63d5fd2e6c53fe06680c47736aba771211105e4").unwrap()
+        );
+
+        let tx_block_number = cache
+            .get::<u64>(&format!(
+                "tx_block_number:{}",
+                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            ))
+            .unwrap();
+        assert_eq!(tx_block_number, 1);
+
+        let tx_idx = cache
+            .get::<u64>(&format!(
+                "tx_idx:{}",
+                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            ))
+            .unwrap();
+        assert_eq!(tx_idx, 0);
+
+        let tx_sender2 = cache
+            .get::<Address>(&format!(
+                "tx_sender:{}",
+                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            ))
+            .unwrap();
+        assert_eq!(
+            tx_sender2,
+            Address::from_str("0x6e5e56b972374e4fde8390df0033397df931a49d").unwrap()
+        );
+
+        let tx_block_number2 = cache
+            .get::<u64>(&format!(
+                "tx_block_number:{}",
+                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            ))
+            .unwrap();
+        assert_eq!(tx_block_number2, 1);
+
+        let tx_idx2 = cache
+            .get::<u64>(&format!(
+                "tx_idx:{}",
+                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            ))
+            .unwrap();
+        assert_eq!(tx_idx2, 1);
     }
 
     #[test]

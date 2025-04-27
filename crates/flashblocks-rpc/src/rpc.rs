@@ -100,7 +100,7 @@ impl<E> EthApiExt<E> {
                         block_hash: Some(block.header.hash_slow()),
                         block_number: Some(block.number),
                         index: Some(idx as u64),
-                        base_fee: None,
+                        base_fee: block.base_fee_per_gas,
                     };
                     self.transform_tx(signed_tx_ec_recovered, tx_info)
                 })
@@ -397,12 +397,24 @@ where
                     .cache
                     .get::<Address>(&format!("tx_sender:{}", tx_hash))
                     .unwrap();
+                let block_number = self
+                    .cache
+                    .get::<u64>(&format!("tx_block_number:{}", tx_hash))
+                    .unwrap();
+                let block = self
+                    .cache
+                    .get::<OpBlock>(&format!("block:{:?}", block_number))
+                    .unwrap();
+                let index = self
+                    .cache
+                    .get::<u64>(&format!("tx_idx:{}", &tx_hash.to_string()))
+                    .unwrap();
                 let tx_info = TransactionInfo {
                     hash: Some(tx.tx_hash()),
-                    index: None,
-                    block_hash: None,
-                    block_number: None,
-                    base_fee: None,
+                    block_hash: Some(block.header.hash_slow()),
+                    block_number: Some(block.number),
+                    index: Some(index),
+                    base_fee: block.base_fee_per_gas,
                 };
                 let tx = Recovered::new_unchecked(tx, sender);
                 Ok(Some(self.transform_tx(tx, tx_info)))
