@@ -165,7 +165,7 @@ mod tests {
             .http_port(1238)
             .websocket_url("ws://localhost:1239");
 
-        framework.start("reth-flashblocks", &reth).await.unwrap();
+        framework.start("base-reth-node", &reth).await.unwrap();
 
         // Wait for some time to allow messages to be processed
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -223,6 +223,27 @@ mod tests {
             .await?;
         assert!(receipt.is_some());
         assert_eq!(receipt.unwrap().gas_used(), 24000); // 45000 - 21000
+
+        // check transaction by hash
+        let tx = provider
+            .get_transaction_by_hash(
+                B256::from_str(
+                    "0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548",
+                )
+                .unwrap(),
+            )
+            .await?;
+        assert!(tx.is_some());
+
+        let tx = provider
+            .get_transaction_by_hash(
+                B256::from_str(
+                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                )
+                .unwrap(),
+            )
+            .await?;
+        assert!(tx.is_some());
 
         // check balance
         // use curl command to get balance with pending tag, since alloy provider doesn't support pending tag
