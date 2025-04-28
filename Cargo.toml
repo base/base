@@ -23,16 +23,16 @@ base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-node = { path = "crates/node" }
 
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.11" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 
 # revm
 revm = { version = "22.0.1", default-features = false }
