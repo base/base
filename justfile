@@ -31,3 +31,12 @@ watch-test:
 
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+
+mempool-db:
+    docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres -d
+
+mempool-db-migrate:
+    sea-orm-cli migrate refresh --database-url postgres://postgres:postgres@localhost:5432/postgres --migration-dir ./crates/mempool-tracer/migration
+
+mempool-db-entities:
+    sea-orm-cli generate entity --database-url postgres://postgres:postgres@localhost:5432/postgres -o ./crates/mempool-tracer/entity/src/ -l --expanded-format

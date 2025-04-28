@@ -1,0 +1,33 @@
+[package]
+name = "base-reth-mempool-tracer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+integration = []
+
+[dependencies]
+entity = { path = "entity" }
+migration = { path = "migration" }
+tracing.workspace = true
+alloy-primitives.workspace = true
+tokio.workspace = true
+sea-orm.workspace = true
+clap.workspace = true
+reth-transaction-pool.workspace = true
+alloy-consensus.workspace = true
+tokio-stream.workspace = true
+
+
+[dev-dependencies]
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+tokio-test.workspace = true
+async-trait.workspace = true
+
+[lints]
+workspace = true
