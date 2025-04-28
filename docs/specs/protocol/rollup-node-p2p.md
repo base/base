@@ -35,6 +35,7 @@
   - [Block signatures](#block-signatures)
   - [Block validation](#block-validation)
     - [Block processing](#block-processing)
+    - [Branch selection](#branch-selection)
     - [Block topic scoring parameters](#block-topic-scoring-parameters)
 - [Req-Resp](#req-resp)
   - [`payload_by_number`](#payload_by_number)
@@ -347,6 +348,16 @@ A node may apply the block to their local engine ahead of L1 availability, if it
 - The application of the block is reversible, in case of a conflict with delayed L1 information
 - The subsequent forkchoice-update ensures this block is recognized as "unsafe"
   (see [fork choice updated](derivation.md#engine-api-usage))
+
+#### Branch selection
+
+Nodes expect that the sequencer will not equivocate, and therefore the fork choice rule for unsafe blocks
+is a "first block wins" model, where the unsafe chain will not change once it has been extended, unless
+invalidated by safe data published to the L1.
+
+Nodes who see a different initial unsafe block will not reach consensus until the L1 is published,
+which resolves the disagreement. Because the L1 published data depends on the batcher's view of the data,
+the safe head will be based on whatever the batcher's source's unsafe head is.
 
 #### Block topic scoring parameters
 
