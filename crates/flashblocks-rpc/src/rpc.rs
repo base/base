@@ -15,17 +15,19 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
+use reth::providers::TransactionsProvider;
+use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_eth_api::helpers::EthTransactions;
-use reth_rpc_eth_api::RpcReceipt;
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
     RpcNodeCore,
 };
+use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tracing::{debug, info};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -54,6 +56,12 @@ pub trait EthApiOverride {
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256>;
+
+    #[method(name = "getTransactionByHash")]
+    async fn transaction_by_hash(
+        &self,
+        tx_hash: TxHash,
+    ) -> RpcResult<Option<RpcTransaction<Optimism>>>;
 }
 
 #[derive(Debug)]
@@ -89,10 +97,10 @@ impl<E> EthApiExt<E> {
                     let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
                     let tx_info = TransactionInfo {
                         hash: Some(tx.tx_hash()),
-                        block_hash: None,
+                        block_hash: Some(block.header.hash_slow()),
                         block_number: Some(block.number),
                         index: Some(idx as u64),
-                        base_fee: None,
+                        base_fee: block.base_fee_per_gas,
                     };
                     self.transform_tx(signed_tx_ec_recovered, tx_info)
                 })
@@ -226,12 +234,14 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     Eth: RpcNodeCore,
     <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
+    <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
 {
     async fn block_by_number(
         &self,
         number: BlockNumberOrTag,
         _full: bool,
     ) -> RpcResult<Option<RpcBlock<Optimism>>> {
+        debug!("block_by_number: {:?}", number);
         match number {
             BlockNumberOrTag::Pending => {
                 debug!("pending block by number, delegating to flashblocks");
@@ -255,6 +265,7 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+        debug!("get_transaction_receipt: {:?}", tx_hash);
         let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
 
         // check if receipt is none
@@ -285,6 +296,7 @@ where
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256> {
+        debug!("get_balance: {:?}", address);
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_balance.increment(1);
@@ -304,6 +316,7 @@ where
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256> {
+        debug!("get_transaction_count: {:?}", address);
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_transaction_count.increment(1);
@@ -340,5 +353,74 @@ where
         EthState::transaction_count(&self.eth_api, address, block_number)
             .await
             .map_err(Into::into)
+    }
+
+    async fn transaction_by_hash(
+        &self,
+        tx_hash: TxHash,
+    ) -> RpcResult<Option<RpcTransaction<Optimism>>> {
+        debug!("transaction_by_hash: {:?}", tx_hash);
+        let tx = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
+            .await
+            .map_err(Into::into)?;
+
+        // Process the result without using map() and transpose()
+        if let Some(tx_source) = tx {
+            match tx_source {
+                TransactionSource::Pool(tx) => {
+                    // Convert the pool transaction
+                    let tx_info = TransactionInfo::default();
+                    Ok(Some(self.transform_tx(tx, tx_info)))
+                }
+                TransactionSource::Block {
+                    transaction,
+                    index,
+                    block_hash,
+                    block_number,
+                    base_fee,
+                } => {
+                    // Convert the block transaction
+                    let tx_info = TransactionInfo {
+                        hash: Some(tx_hash),
+                        index: Some(index),
+                        block_hash: Some(block_hash),
+                        block_number: Some(block_number),
+                        base_fee,
+                    };
+                    Ok(Some(self.transform_tx(transaction, tx_info)))
+                }
+            }
+        } else {
+            // Handle cache lookup for transactions not found in the main lookup
+            if let Some(tx) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
+                let sender = self
+                    .cache
+                    .get::<Address>(&format!("tx_sender:{}", tx_hash))
+                    .unwrap();
+                let block_number = self
+                    .cache
+                    .get::<u64>(&format!("tx_block_number:{}", tx_hash))
+                    .unwrap();
+                let block = self
+                    .cache
+                    .get::<OpBlock>(&format!("block:{:?}", block_number))
+                    .unwrap();
+                let index = self
+                    .cache
+                    .get::<u64>(&format!("tx_idx:{}", &tx_hash.to_string()))
+                    .unwrap();
+                let tx_info = TransactionInfo {
+                    hash: Some(tx.tx_hash()),
+                    block_hash: Some(block.header.hash_slow()),
+                    block_number: Some(block.number),
+                    index: Some(index),
+                    base_fee: block.base_fee_per_gas,
+                };
+                let tx = Recovered::new_unchecked(tx, sender);
+                Ok(Some(self.transform_tx(tx, tx_info)))
+            } else {
+                Ok(None)
+            }
+        }
     }
 }
