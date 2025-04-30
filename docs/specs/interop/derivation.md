@@ -34,7 +34,7 @@ executing messages.
 - An executing message MUST have a corresponding initiating message
 - The initiating message referenced in an executing message MUST come from a chain in its dependency set
 - A block MUST be considered invalid if it is built with any invalid executing messages
-- The timestamp of the identifier MUST be greater than or equal to the interop network upgrade timestamp
+- The timestamp of the identifier MUST be greater than the interop network upgrade timestamp
 - The timestamp of the identifier MUST be less than or equal to the timestamp of the block that includes it
 - The timestamp of the identifier MUST be greater than timestamp of the block that includes it minus the expiry window
 

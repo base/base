@@ -122,17 +122,27 @@ do not count as executing messages.
 ## Messaging Invariants
 
 - [Timestamp Invariant](#timestamp-invariant): The timestamp at the time of inclusion of the initiating message MUST
-  be less than or equal to the timestamp of the executing message as well as greater than or equal to the Interop Start Timestamp.
+  be less than or equal to the timestamp of the executing message as well as greater than the Interop Start Timestamp.
 - [ChainID Invariant](#chainid-invariant): The chain id of the initiating message MUST be in the dependency set
 - [Message Expiry Invariant](#message-expiry-invariant): The timestamp at the time of inclusion of the executing
   message MUST be lower than the initiating message timestamp (as defined in the [`Identifier`]) + `EXPIRY_TIME`.
 
 ### Timestamp Invariant
 
-The timestamp invariant ensures that initiating messages have at least the same timestamp as the Interop upgrade timestamp
-and cannot come from a future block than the block of its executing message. Note that since
-all transactions in a block have the same timestamp, it is possible for an executing transaction to be
-ordered before the initiating message in the same block.
+The timestamp invariant ensures that initiating messages have a timestamp greater than the Interop upgrade timestamp
+and cannot come from a future block than the block of its executing message.
+
+This means that messages can only be initiated in blocks that come after the block with the Interop upgrade timestamp.
+Contract log events in the block with the upgrade timestamp are thus not valid initiating messages.
+
+This same block with the upgrade timestamp only includes deposit-type transactions
+(from the system, and possibly from L1): this block can thus not include executing messages,
+even if only executing the initiating messages of previously Interop-activated chains.
+
+Note that since all transactions in a block have the same timestamp, it is possible for an executing transaction
+to be ordered before the initiating message in the same block.
+However, cyclic message dependencies are not allowed and
+this is verified with rules complementary to the timestamp invariant.
 
 ### ChainID Invariant
 
