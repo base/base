@@ -1206,10 +1206,7 @@ where
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
-                trace!(target: "payload_builder", ?tx, "skipping reverted transaction");
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                info.invalid_tx_hashes.insert(tx.tx_hash());
-                continue;
+                trace!(target: "payload_builder", ?tx, "reverted transaction");
             }
 
             // add gas used by the transaction to cumulative gas used, before creating the receipt
