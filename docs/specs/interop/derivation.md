@@ -46,14 +46,14 @@ the same block in the proof system is not possible.
 
 ## Omit User Transactions in Fork Activation Block
 
-With the interop hardfork, fork activation blocks no longer include any user transactions. Sequencers, when building
+With the interop upgrade, fork activation blocks no longer include any user transactions. Sequencers, when building
 the fork activation block, MUST set `noTxPool` to `true` in the execution payload attributes for this block, instructing
 the builder to exclude user transactions.
 
 The derivation pipeline MUST enforce that the sequencer has not included any user transactions in the batch covering
-the hardfork's activation block. If the sequencer does include any user transactions within the hardfork activation
-block, that batch, and the remaining span batch it originated from, MUST be dropped per the
-[rules defined in the holocene hardfork](../protocol/holocene/derivation.md).
+the upgrade's activation block. If the sequencer does include any user transactions within the upgrade activation
+block, that batch, and the remaining span batch it originated from, MUST be dropped following the
+batch-dropping rules introduced in the [Holocene upgrade](../protocol/holocene/derivation.md#span-batches).
 
 ## Replacing Invalid Blocks
 
