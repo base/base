@@ -132,10 +132,10 @@ do not count as executing messages.
 The timestamp invariant ensures that initiating messages have a timestamp greater than the Interop upgrade timestamp
 and cannot come from a future block than the block of its executing message.
 
-This means that messages can only be initiated in blocks that come after the block with the Interop upgrade timestamp.
-Contract log events in the block with the upgrade timestamp are thus not valid initiating messages.
+This means that messages can only be initiated in blocks that come after the [activation block](./derivation.md#activation-block).
+Contract log events in the activation block are not valid initiating messages.
 
-This same block with the upgrade timestamp only includes deposit-type transactions
+This same activation block only includes deposit-type transactions
 (from the system, and possibly from L1): this block can thus not include executing messages,
 even if only executing the initiating messages of previously Interop-activated chains.
 
