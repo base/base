@@ -33,6 +33,7 @@ reth-rpc-types-compat = { git = "https://github.com/paradigmxyz/reth", tag = "v1
 reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.3.12" }
 
 # revm
 revm = { version = "22.0.1", default-features = false }

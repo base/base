@@ -29,4 +29,16 @@ pub struct Metrics {
 
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
+
+    #[metric(describe = "Count of successful block verifications")]
+    pub block_verification_success: Counter,
+
+    #[metric(describe = "Count of failed block verifications")]
+    pub block_verification_failure: Counter,
+
+    #[metric(describe = "Count of blocks not found in cache during verification")]
+    pub block_verification_not_found: Counter,
+
+    #[metric(describe = "Count of transaction count mismatches during verification")]
+    pub block_verification_tx_count_mismatch: Counter,
 }

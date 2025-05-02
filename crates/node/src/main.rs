@@ -1,3 +1,4 @@
+use base_reth_flashblocks_rpc::verification::flashblocks_verification_exex;
 use base_reth_flashblocks_rpc::{cache::Cache, flashblocks::FlashblocksClient, rpc::EthApiExt};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,12 +34,19 @@ fn main() {
             let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
 
             let cache_clone = Arc::clone(&cache);
+            let verification_cache_clone = Arc::clone(&cache);
             let chain_spec = builder.config().chain.clone();
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
+                .install_exex("flashblocks-verification", async move |ctx| {
+                    Ok(flashblocks_verification_exex(
+                        ctx,
+                        Arc::clone(&verification_cache_clone),
+                    ))
+                })
                 .extend_rpc_modules(move |ctx| {
                     let api_ext = EthApiExt::new(
                         ctx.registry.eth_api().clone(),

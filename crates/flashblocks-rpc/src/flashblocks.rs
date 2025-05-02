@@ -368,29 +368,37 @@ fn get_and_set_txs_and_receipts(
     metadata: Metadata,
 ) -> Result<Vec<OpReceipt>, Box<dyn std::error::Error>> {
     let mut diff_receipts: Vec<OpReceipt> = vec![];
-    // Store tx transaction signed
+    let mut tx_hashes: Vec<String> = vec![];
+
+    if let Some(existing_hashes) = cache.get::<Vec<String>>(&format!("tx_hashes:{}", block_number))
+    {
+        tx_hashes = existing_hashes;
+    }
+
     for (idx, transaction) in block.body.transactions.iter().enumerate() {
-        // check if exists, if not update
-        let existing_tx = cache.get::<OpTransactionSigned>(&transaction.tx_hash().to_string());
+        let tx_hash = transaction.tx_hash().to_string();
+
+        // Add transaction hash to the ordered list if not already present
+        if !tx_hashes.contains(&tx_hash) {
+            tx_hashes.push(tx_hash.clone());
+        }
+
+        let existing_tx = cache.get::<OpTransactionSigned>(&tx_hash);
         if existing_tx.is_none() {
-            if let Err(e) = cache.set(&transaction.tx_hash().to_string(), &transaction, Some(10)) {
+            if let Err(e) = cache.set(&tx_hash, &transaction, Some(10)) {
                 error!("Failed to set transaction in cache: {}", e);
                 continue;
             }
-            // update tx index
             if let Err(e) = cache.set(&format!("tx_idx:{}", transaction.tx_hash()), &idx, Some(10))
             {
                 error!("Failed to set transaction index in cache: {}", e);
                 continue;
             }
 
-            // update tx count for each from address
             if let Ok(from) = transaction.recover_signer() {
-                // Get current tx count, default to 0 if not found
                 let current_count = cache
                     .get::<u64>(&format!("tx_count:{}:{}", from, block_number))
                     .unwrap_or(0);
-                // Increment tx count by 1
                 if let Err(e) = cache.set(
                     &format!("tx_count:{}:{}", from, block_number),
                     &(current_count + 1),
@@ -399,7 +407,6 @@ fn get_and_set_txs_and_receipts(
                     error!("Failed to set transaction count in cache: {}", e);
                 }
 
-                // also keep track of sender of each transaction
                 if let Err(e) = cache.set(
                     &format!("tx_sender:{}", transaction.tx_hash()),
                     &from,
@@ -408,7 +415,6 @@ fn get_and_set_txs_and_receipts(
                     error!("Failed to set transaction sender in cache: {}", e);
                 }
 
-                // also keep track of the block number of each transaction
                 if let Err(e) = cache.set(
                     &format!("tx_block_number:{}", transaction.tx_hash()),
                     &block_number,
@@ -420,26 +426,16 @@ fn get_and_set_txs_and_receipts(
         }
 
         // TODO: move this into the transaction check
-        if metadata
-            .receipts
-            .contains_key(&transaction.tx_hash().to_string())
-        {
+        if metadata.receipts.contains_key(&tx_hash) {
             // find receipt in metadata and set it in cache
-            let receipt = metadata
-                .receipts
-                .get(&transaction.tx_hash().to_string())
-                .unwrap();
-            if let Err(e) = cache.set(
-                &format!("receipt:{:?}", transaction.tx_hash().to_string()),
-                receipt,
-                Some(10),
-            ) {
+            let receipt = metadata.receipts.get(&tx_hash).unwrap();
+            if let Err(e) = cache.set(&format!("receipt:{:?}", tx_hash), receipt, Some(10)) {
                 error!("Failed to set receipt in cache: {}", e);
                 continue;
             }
             // map receipt's block number as well
             if let Err(e) = cache.set(
-                &format!("receipt_block:{:?}", transaction.tx_hash().to_string()),
+                &format!("receipt_block:{:?}", tx_hash),
                 &block_number,
                 Some(10),
             ) {
@@ -449,6 +445,10 @@ fn get_and_set_txs_and_receipts(
 
             diff_receipts.push(receipt.clone());
         }
+    }
+
+    if let Err(e) = cache.set(&format!("tx_hashes:{}", block_number), &tx_hashes, Some(10)) {
+        error!("Failed to update transaction hashes list in cache: {}", e);
     }
 
     Ok(diff_receipts)
@@ -635,7 +635,7 @@ mod tests {
             payload_id: PayloadId::new([0; 8]),
             base: None,
             diff: delta2,
-            metadata: serde_json::to_value(metadata2).unwrap(),
+            metadata: serde_json::to_value(metadata2.clone()).unwrap(),
         }
     }
 
@@ -832,5 +832,163 @@ mod tests {
         // Also verify metric would have been recorded (though we can't directly check the metric's value)
         let highest = cache.get::<u64>("highest_payload_index").unwrap();
         assert_eq!(highest, 0);
+    }
+
+    #[test]
+    fn test_tx_hash_list_storage_and_deduplication() {
+        let cache = Arc::new(Cache::default());
+        let block_number = 1;
+
+        let base = ExecutionPayloadBaseV1 {
+            parent_hash: Default::default(),
+            parent_beacon_block_root: Default::default(),
+            fee_recipient: Address::from_str("0x1234567890123456789012345678901234567890").unwrap(),
+            block_number,
+            gas_limit: 1000000,
+            timestamp: 1234567890,
+            prev_randao: Default::default(),
+            extra_data: Default::default(),
+            base_fee_per_gas: U256::from(1000),
+        };
+
+        let tx1 = Bytes::from_str("0x02f87483014a3482017e8459682f0084596830a98301f1d094b01866f195533de16eb929b73f87280693ca0cb480844e71d92dc001a0a658c18bdba29dd4022ee6640fdd143691230c12b3c8c86cf5c1a1f1682cc1e2a0248a28763541ebed2b87ecea63a7024b5c2b7de58539fa64c887b08f5faf29c1").unwrap();
+
+        let delta1 = ExecutionPayloadFlashblockDeltaV1 {
+            transactions: vec![tx1.clone()],
+            withdrawals: vec![],
+            state_root: Default::default(),
+            receipts_root: Default::default(),
+            logs_bloom: Default::default(),
+            gas_used: 21000,
+            block_hash: Default::default(),
+        };
+
+        let tx1_hash =
+            "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c".to_string();
+
+        let metadata1 = Metadata {
+            block_number,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    tx1_hash.clone(),
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 21000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        };
+
+        let payload1 = FlashblocksPayloadV1 {
+            index: 0,
+            payload_id: PayloadId::new([0; 8]),
+            base: Some(base),
+            diff: delta1,
+            metadata: serde_json::to_value(metadata1).unwrap(),
+        };
+
+        process_payload(payload1, cache.clone());
+
+        let tx_hashes1 = cache
+            .get::<Vec<String>>(&format!("tx_hashes:{}", block_number))
+            .unwrap();
+        assert_eq!(tx_hashes1.len(), 1);
+        assert_eq!(tx_hashes1[0], tx1_hash);
+
+        let tx2 = Bytes::from_str("0xf8cd82016d8316e5708302c01c94f39635f2adf40608255779ff742afe13de31f57780b8646e530e9700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000156ddc81eed2a36d68302948ba0a608703e79b22164f74523d188a11f81c25a65dd59535bab1cd1d8b30d115f3ea07f4cfbbad77a139c9209d3bded89091867ff6b548dd714109c61d1f8e7a84d14").unwrap();
+
+        let tx2_hash =
+            "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8".to_string();
+
+        let delta2 = ExecutionPayloadFlashblockDeltaV1 {
+            transactions: vec![tx1.clone(), tx2.clone()], // Note tx1 is repeated
+            withdrawals: vec![],
+            state_root: B256::repeat_byte(0x1),
+            receipts_root: B256::repeat_byte(0x2),
+            logs_bloom: Default::default(),
+            gas_used: 42000,
+            block_hash: B256::repeat_byte(0x3),
+        };
+
+        let metadata2 = Metadata {
+            block_number,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    tx1_hash.clone(),
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 21000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    tx2_hash.clone(),
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 42000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        };
+
+        let payload2 = FlashblocksPayloadV1 {
+            index: 1,
+            payload_id: PayloadId::new([0; 8]),
+            base: None,
+            diff: delta2,
+            metadata: serde_json::to_value(metadata2.clone()).unwrap(),
+        };
+
+        process_payload(payload2, cache.clone());
+
+        let tx_hashes2 = cache
+            .get::<Vec<String>>(&format!("tx_hashes:{}", block_number))
+            .unwrap();
+        assert_eq!(
+            tx_hashes2.len(),
+            2,
+            "Should have 2 unique transaction hashes"
+        );
+        assert_eq!(tx_hashes2[0], tx1_hash, "First hash should be tx1");
+        assert_eq!(tx_hashes2[1], tx2_hash, "Second hash should be tx2");
+
+        let delta3 = ExecutionPayloadFlashblockDeltaV1 {
+            transactions: vec![tx2.clone(), tx1.clone()], // Different order
+            withdrawals: vec![],
+            state_root: B256::repeat_byte(0x1),
+            receipts_root: B256::repeat_byte(0x2),
+            logs_bloom: Default::default(),
+            gas_used: 42000,
+            block_hash: B256::repeat_byte(0x3),
+        };
+
+        let payload3 = FlashblocksPayloadV1 {
+            index: 2,
+            payload_id: PayloadId::new([0; 8]),
+            base: None,
+            diff: delta3,
+            metadata: serde_json::to_value(metadata2).unwrap(), // Same metadata
+        };
+
+        process_payload(payload3, cache.clone());
+
+        let tx_hashes3 = cache
+            .get::<Vec<String>>(&format!("tx_hashes:{}", block_number))
+            .unwrap();
+        assert_eq!(
+            tx_hashes3.len(),
+            2,
+            "Should still have 2 unique transaction hashes"
+        );
+        assert_eq!(tx_hashes3[0], tx1_hash, "First hash should be tx1");
+        assert_eq!(tx_hashes3[1], tx2_hash, "Second hash should be tx2");
     }
 }

@@ -26,6 +26,7 @@ reth-rpc-types-compat.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
+reth-exex.workspace = true
 
 # revm
 revm.workspace = true
