@@ -7,7 +7,8 @@ use alloy_rpc_types_engine::{
 };
 use alloy_transport::{Transport, TransportResult};
 use op_alloy_rpc_types_engine::{
-    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpPayloadAttributes,
+    OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
+    OpPayloadAttributes,
 };
 
 /// Extension trait that gives access to Optimism engine API RPC methods.
@@ -52,7 +53,7 @@ pub trait OpEngineApi<N, T> {
     /// OP modifications: TODO
     async fn new_payload_v4(
         &self,
-        payload: ExecutionPayloadV3,
+        payload: OpExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus>;
 
@@ -208,7 +209,7 @@ where
 
     async fn new_payload_v4(
         &self,
-        payload: ExecutionPayloadV3,
+        payload: OpExecutionPayloadV4,
         parent_beacon_block_root: B256,
     ) -> TransportResult<PayloadStatus> {
         // Note: The `versioned_hashes`, `execution_requests` parameters are always an empty array
