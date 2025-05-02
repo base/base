@@ -161,7 +161,7 @@ The expiry invariant invalidates inclusion of any executing message with
 
 - `id` is the [`Identifier`] encoded in the executing message, matching the block attributes of the initiating message.
 - `executing_block` is the block where the executing message was included in.
-- `EXPIRY_TIME = 30 * 24 * 60 * 60 = 15552000` seconds, i.e. 30 days.
+- `EXPIRY_TIME = 7 * 24 * 60 * 60 = 604800` seconds, i.e. 7 days.
 
 ## Message Graph
 
