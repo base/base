@@ -4,7 +4,7 @@ use super::OpTxType;
 use alloc::vec::Vec;
 use alloy_consensus::{Sealable, Transaction, Typed2718};
 use alloy_eips::{
-    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
+    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
 };
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxHash, TxKind, U256, keccak256};
@@ -207,6 +207,12 @@ impl TxDeposit {
 impl Typed2718 for TxDeposit {
     fn ty(&self) -> u8 {
         OpTxType::Deposit as u8
+    }
+}
+
+impl IsTyped2718 for TxDeposit {
+    fn is_type(ty: u8) -> bool {
+        OpTxType::Deposit as u8 == ty
     }
 }
 

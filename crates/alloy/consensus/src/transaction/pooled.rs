@@ -8,7 +8,7 @@ use alloy_consensus::{
     transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxLegacy},
 };
 use alloy_eips::{
-    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
+    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
@@ -436,6 +436,13 @@ impl Typed2718 for OpPooledTransaction {
             Self::Eip1559(tx) => tx.tx().ty(),
             Self::Eip7702(tx) => tx.tx().ty(),
         }
+    }
+}
+
+impl IsTyped2718 for OpPooledTransaction {
+    fn is_type(type_id: u8) -> bool {
+        // legacy | eip2930 | eip1559 | eip7702
+        matches!(type_id, 0 | 1 | 2 | 4)
     }
 }
 
