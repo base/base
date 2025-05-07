@@ -174,6 +174,9 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
         return;
     }
 
+    // Track flashblock indices and record metrics
+    update_flashblocks_index(payload.index, &cache, &metrics);
+
     // Prevent updating to older blocks
     let current_block = cache.get::<OpBlock>("pending");
     if current_block.is_some() && current_block.unwrap().number > block_number {
@@ -299,6 +302,32 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
             "block processing time: {:?}",
             msg_processing_start_time.elapsed()
         );
+    }
+}
+
+fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
+    if index == 0 {
+        // Get highest index from previous block
+        if let Some(prev_highest_index) = cache.get::<u64>("highest_payload_index") {
+            // Record metric: total flash blocks = highest_index + 1 (since it's 0-indexed)
+            metrics
+                .flashblocks_in_block
+                .record((prev_highest_index + 1) as f64);
+            println!("Previous block had {} flash blocks", prev_highest_index + 1);
+        }
+
+        // Reset highest index to 0 for new block
+        if let Err(e) = cache.set("highest_payload_index", &0u64, Some(10)) {
+            error!("Failed to reset highest flash index: {}", e);
+        }
+    } else {
+        // Update highest index if current index is higher
+        let current_highest = cache.get::<u64>("highest_payload_index").unwrap_or(0);
+        if index > current_highest {
+            if let Err(e) = cache.set("highest_payload_index", &index, Some(10)) {
+                error!("Failed to update highest flash index: {}", e);
+            }
+        }
     }
 }
 
@@ -506,6 +535,50 @@ mod tests {
         }
     }
 
+    // Create payload with specific index and block number
+    fn create_payload_with_index(index: u64, block_number: u64) -> FlashblocksPayloadV1 {
+        let base = if index == 0 {
+            Some(ExecutionPayloadBaseV1 {
+                parent_hash: Default::default(),
+                parent_beacon_block_root: Default::default(),
+                fee_recipient: Address::from_str("0x1234567890123456789012345678901234567890")
+                    .unwrap(),
+                block_number,
+                gas_limit: 1000000,
+                timestamp: 1234567890,
+                prev_randao: Default::default(),
+                extra_data: Default::default(),
+                base_fee_per_gas: U256::from(1000),
+            })
+        } else {
+            None
+        };
+
+        let delta = ExecutionPayloadFlashblockDeltaV1 {
+            transactions: vec![],
+            withdrawals: vec![],
+            state_root: B256::repeat_byte(index as u8),
+            receipts_root: B256::repeat_byte((index + 1) as u8),
+            logs_bloom: Default::default(),
+            gas_used: 21000 * index,
+            block_hash: B256::repeat_byte((index + 2) as u8),
+        };
+
+        let metadata = Metadata {
+            block_number,
+            receipts: HashMap::default(),
+            new_account_balances: HashMap::default(),
+        };
+
+        FlashblocksPayloadV1 {
+            index,
+            payload_id: PayloadId::new([0; 8]),
+            base,
+            diff: delta,
+            metadata: serde_json::to_value(metadata).unwrap(),
+        }
+    }
+
     fn create_second_payload() -> FlashblocksPayloadV1 {
         // Create second payload (index 1) with transactions
         // tx1 hash: 0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c
@@ -687,5 +760,77 @@ mod tests {
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>("pending").is_none());
+    }
+
+    #[test]
+    fn test_flash_block_tracking() {
+        // Create cache
+        let cache = Arc::new(Cache::default());
+
+        // Process first block with 3 flash blocks
+        // Block 1, payload 0 (starts a new block)
+        let payload1_0 = create_payload_with_index(0, 1);
+        process_payload(payload1_0, cache.clone());
+
+        // Check that highest_payload_index was set to 0
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 0);
+
+        // Block 1, payload 1
+        let payload1_1 = create_payload_with_index(1, 1);
+        process_payload(payload1_1, cache.clone());
+
+        // Check that highest_payload_index was updated
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 1);
+
+        // Block 1, payload 2
+        let payload1_2 = create_payload_with_index(2, 1);
+        process_payload(payload1_2, cache.clone());
+
+        // Check that highest_payload_index was updated
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 2);
+
+        // Now start a new block (block 2, payload 0)
+        let payload2_0 = create_payload_with_index(0, 2);
+        process_payload(payload2_0, cache.clone());
+
+        // Check that highest_payload_index was reset to 0
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 0);
+
+        // Block 2, payload 1 (out of order with payload 3)
+        let payload2_1 = create_payload_with_index(1, 2);
+        process_payload(payload2_1, cache.clone());
+
+        // Check that highest_payload_index was updated
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 1);
+
+        // Block 2, payload 3 (skipping 2)
+        let payload2_3 = create_payload_with_index(3, 2);
+        process_payload(payload2_3, cache.clone());
+
+        // Check that highest_payload_index was updated
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 3);
+
+        // Block 2, payload 2 (out of order, should not change highest)
+        let payload2_2 = create_payload_with_index(2, 2);
+        process_payload(payload2_2, cache.clone());
+
+        // Check that highest_payload_index is still 3
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 3);
+
+        // Start block 3, payload 0
+        let payload3_0 = create_payload_with_index(0, 3);
+        process_payload(payload3_0, cache.clone());
+
+        // Check that highest_payload_index was reset to 0
+        // Also verify metric would have been recorded (though we can't directly check the metric's value)
+        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        assert_eq!(highest, 0);
     }
 }
