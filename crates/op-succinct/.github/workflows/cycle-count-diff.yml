@@ -27,7 +27,7 @@ jobs:
 
       - name: Run Test On New Branch
         run: |
-          RUST_LOG=info NEW_BRANCH=true cargo test test_cycle_count_diff -- --exact --nocapture
+          RUST_LOG=info NEW_BRANCH=true cargo test test_cycle_count_diff --release -- --exact --nocapture
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
@@ -40,7 +40,7 @@ jobs:
 
       - name: Run Test On Old Branch
         run: |
-          RUST_LOG=info NEW_BRANCH=false cargo test test_cycle_count_diff -- --exact --nocapture
+          RUST_LOG=info NEW_BRANCH=false cargo test test_cycle_count_diff --release -- --exact --nocapture
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
