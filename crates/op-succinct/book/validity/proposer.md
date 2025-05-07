@@ -1,6 +1,6 @@
 # Proposer
 
-The `op-succinct` service monitors the state of the L2 chain, requests proofs from the Succinct Prover Network[https://docs.succinct.xyz/docs/network/introduction] and submits them to the L1.
+The `op-succinct` service monitors the state of the L2 chain, requests proofs from the [Succinct Prover Network](https://docs.succinct.xyz/docs/network/introduction) and submits them to the L1.
 
 ## RPC Requirements
 
