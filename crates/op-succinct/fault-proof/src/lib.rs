@@ -254,7 +254,7 @@ where
 }
 
 #[async_trait]
-impl<F, P> FactoryTrait<F, P> for DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>
+impl<F, P> FactoryTrait<F, P> for DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>
 where
     F: TxFiller,
     P: Provider + Clone,
@@ -262,27 +262,27 @@ where
     /// Fetches the bond required to create a game.
     async fn fetch_init_bond(&self, game_type: u32) -> Result<U256> {
         let init_bond = self.initBonds(game_type).call().await?;
-        Ok(init_bond._0)
+        Ok(init_bond)
     }
 
     /// Fetches the challenger bond required to challenge a game.
     async fn fetch_challenger_bond(&self, game_type: u32) -> Result<U256> {
-        let game_impl_address = self.gameImpls(game_type).call().await?._0;
+        let game_impl_address = self.gameImpls(game_type).call().await?;
         let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
         let challenger_bond = game_impl.challengerBond().call().await?;
-        Ok(challenger_bond.challengerBond_)
+        Ok(challenger_bond)
     }
 
     /// Fetches the latest game index.
     async fn fetch_latest_game_index(&self) -> Result<Option<U256>> {
         let game_count = self.gameCount().call().await?;
 
-        if game_count.gameCount_ == U256::ZERO {
+        if game_count == U256::ZERO {
             tracing::debug!("No games exist yet");
             return Ok(None);
         }
 
-        let latest_game_index = game_count.gameCount_ - U256::from(1);
+        let latest_game_index = game_count - U256::from(1);
         tracing::debug!("Latest game index: {:?}", latest_game_index);
 
         Ok(Some(latest_game_index))
@@ -290,8 +290,8 @@ where
 
     /// Fetches the game address by index.
     async fn fetch_game_address_by_index(&self, game_index: U256) -> Result<Address> {
-        let game = self.gameAtIndex(game_index).call().await?;
-        Ok(game.proxy)
+        let game = self.gameAtIndex(game_index).call().await?.proxy;
+        Ok(game)
     }
 
     /// Get the latest valid proposal.
@@ -318,7 +318,7 @@ where
             let game = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
 
             // Get the L2 block number the game is proposing output for.
-            block_number = game.l2BlockNumber().call().await?.l2BlockNumber_;
+            block_number = game.l2BlockNumber().call().await?;
             tracing::debug!(
                 "Checking if game {:?} at block {:?} is valid",
                 game_address,
@@ -326,7 +326,7 @@ where
             );
 
             // Get the output root the game is proposing.
-            let game_claim = game.rootClaim().call().await?.rootClaim_;
+            let game_claim = game.rootClaim().call().await?;
 
             // Compute the actual output root at the L2 block number.
             let output_root = l2_provider.compute_output_root_at_block(block_number).await?;
@@ -365,9 +365,9 @@ where
 
     /// Get the anchor state registry address.
     async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address> {
-        let game_impl_address = self.gameImpls(game_type).call().await?._0;
+        let game_impl_address = self.gameImpls(game_type).call().await?;
         let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
-        let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?.registry_;
+        let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?;
         Ok(anchor_state_registry_address)
     }
 
@@ -390,7 +390,7 @@ where
         let anchor_state_registry =
             AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
         let is_finalized = anchor_state_registry.isGameFinalized(game_address).call().await?;
-        Ok(is_finalized._0)
+        Ok(is_finalized)
     }
 
     /// Check if a game is claimable.
@@ -401,7 +401,7 @@ where
         claimant: Address,
     ) -> Result<bool> {
         let game = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
-        let claim_data = game.claimData().call().await?.claimData_;
+        let claim_data = game.claimData().call().await?;
 
         // NOTE(fakedev9999): This is a redundant check with the is_game_finalized check below,
         // but is useful for better logging.
@@ -417,7 +417,7 @@ where
         }
 
         // Claimant must have credit left to claim.
-        if game.credit(claimant).call().await?.credit_ == U256::ZERO {
+        if game.credit(claimant).call().await? == U256::ZERO {
             tracing::info!(
                 "Claimant {:?} has no credit to claim from game {:?}",
                 claimant,
@@ -451,7 +451,7 @@ where
         while game_index <= latest_game_index {
             let game_address = self.fetch_game_address_by_index(game_index).await?;
             let game = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
-            let claim_data = game.claimData().call().await?.claimData_;
+            let claim_data = game.claimData().call().await?;
 
             if !status_check(claim_data.status) {
                 tracing::info!(
@@ -480,8 +480,8 @@ where
                 continue;
             }
 
-            let block_number = game.l2BlockNumber().call().await?.l2BlockNumber_;
-            let game_claim = game.rootClaim().call().await?.rootClaim_;
+            let block_number = game.l2BlockNumber().call().await?;
+            let game_claim = game.rootClaim().call().await?;
             let output_root = l2_provider.compute_output_root_at_block(block_number).await?;
 
             if output_root_check(output_root, game_claim) {
@@ -582,7 +582,7 @@ where
     async fn should_attempt_resolution(&self, oldest_game_index: U256) -> Result<(bool, Address)> {
         let oldest_game_address = self.fetch_game_address_by_index(oldest_game_index).await?;
         let oldest_game = OPSuccinctFaultDisputeGame::new(oldest_game_address, self.provider());
-        let parent_game_index = oldest_game.claimData().call().await?.claimData_.parentIndex;
+        let parent_game_index = oldest_game.claimData().call().await?.parentIndex;
 
         // Always attempt resolution for first games (those with parent_game_index == u32::MAX).
         // For other games, only attempt if the oldest game's parent game is resolved.
@@ -593,10 +593,7 @@ where
                 self.fetch_game_address_by_index(U256::from(parent_game_index)).await?;
             let parent_game = OPSuccinctFaultDisputeGame::new(parent_game_address, self.provider());
 
-            Ok((
-                parent_game.status().call().await?.status_ != GameStatus::IN_PROGRESS,
-                oldest_game_address,
-            ))
+            Ok((parent_game.status().call().await? != GameStatus::IN_PROGRESS, oldest_game_address))
         }
     }
 
@@ -613,7 +610,7 @@ where
     ) -> Result<Action> {
         let game_address = self.fetch_game_address_by_index(index).await?;
         let game = OPSuccinctFaultDisputeGame::new(game_address, l1_provider_with_wallet.clone());
-        if game.status().call().await?.status_ != GameStatus::IN_PROGRESS {
+        if game.status().call().await? != GameStatus::IN_PROGRESS {
             tracing::info!(
                 "Game {:?} at index {:?} is not in progress, not attempting resolution",
                 game_address,
@@ -622,7 +619,7 @@ where
             return Ok(Action::Skipped);
         }
 
-        let claim_data = game.claimData().call().await?.claimData_;
+        let claim_data = game.claimData().call().await?;
         match mode {
             Mode::Proposer => {
                 if claim_data.status != ProposalStatus::Unchallenged {

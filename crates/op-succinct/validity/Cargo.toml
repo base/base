@@ -32,8 +32,7 @@ alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
 alloy-consensus = { workspace = true }
 alloy-network = { workspace = true }
-alloy-rpc-client = { workspace = true }
-alloy-signer = { workspace = true }
+alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 
 anyhow.workspace = true
 dotenv.workspace = true
@@ -41,7 +40,6 @@ op-succinct-client-utils.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
-async-trait.workspace = true
 
 # server
 bincode.workspace = true
@@ -62,14 +60,6 @@ rustls = "0.23.23"
 url = "2.5.4"
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
-
-# kona
-kona-derive.workspace = true
-kona-rpc.workspace = true
-
-# celestia
-celestia-rpc = { git = "https://github.com/eigerco/lumina", tag = "lumina-utils-v0.1.0" }
-celestia-types = { git = "https://github.com/eigerco/lumina", tag = "lumina-utils-v0.1.0" }
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true

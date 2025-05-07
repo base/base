@@ -1,4 +1,5 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
+use alloy_signer_local::PrivateKeySigner;
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -7,6 +8,7 @@ use sp1_sdk::{
     SP1VerifyingKey,
 };
 use std::sync::Arc;
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ValidateConfigRequest {
@@ -141,6 +143,24 @@ impl RequestExecutionStatistics {
             kzg_eval_cycles: get_cycles("precompile-kzg-eval"),
             ec_recover_cycles: get_cycles("precompile-ec-recover"),
             p256_verify_cycles: get_cycles("precompile-p256-verify"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+/// The type of signer to use for the proposer.
+pub enum ProposerSigner {
+    /// The signer URL and address.
+    Web3Signer(Url, Address),
+    /// The local signer.
+    LocalSigner(PrivateKeySigner),
+}
+
+impl ProposerSigner {
+    pub fn address(&self) -> Address {
+        match self {
+            ProposerSigner::Web3Signer(_, address) => *address,
+            ProposerSigner::LocalSigner(signer) => signer.address(),
         }
     }
 }

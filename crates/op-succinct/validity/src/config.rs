@@ -14,8 +14,8 @@ where
 {
     pub l2oo_address: Address,
     pub dgf_address: Address,
-    pub l2oo_contract: OPSuccinctL2OOContract<(), P, N>,
-    pub dgf_contract: DisputeGameFactoryContract<(), P, N>,
+    pub l2oo_contract: OPSuccinctL2OOContract<P, N>,
+    pub dgf_contract: DisputeGameFactoryContract<P, N>,
 }
 
 #[derive(Debug, Clone)]

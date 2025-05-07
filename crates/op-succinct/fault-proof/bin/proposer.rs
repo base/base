@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
 
     let l1_provider_with_wallet = ProviderBuilder::new()
         .wallet(wallet.clone())
-        .on_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
+        .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")

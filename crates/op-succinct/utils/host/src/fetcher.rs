@@ -99,8 +99,10 @@ impl OPSuccinctDataFetcher {
     pub fn new() -> Self {
         let rpc_config = get_rpcs();
 
-        let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
-        let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
+        let l1_provider =
+            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
+        let l2_provider =
+            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l2_rpc.clone()));
 
         OPSuccinctDataFetcher {
             rpc_config,
@@ -115,8 +117,10 @@ impl OPSuccinctDataFetcher {
     pub async fn new_with_rollup_config() -> Result<Self> {
         let rpc_config = get_rpcs();
 
-        let l1_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l1_rpc.clone()));
-        let l2_provider = Arc::new(ProviderBuilder::default().on_http(rpc_config.l2_rpc.clone()));
+        let l1_provider =
+            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
+        let l2_provider =
+            Arc::new(ProviderBuilder::default().connect_http(rpc_config.l2_rpc.clone()));
 
         let (rollup_config, rollup_config_path) =
             Self::fetch_and_save_rollup_config(&rpc_config).await?;
@@ -703,6 +707,7 @@ impl OPSuccinctDataFetcher {
             native: false,
             server: true,
             rollup_config_path: self.rollup_config_path.clone(),
+            enable_experimental_witness_endpoint: false,
         })
     }
 }

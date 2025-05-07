@@ -43,7 +43,7 @@ where
     pub prover_address: Address,
     pub l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
     pub l2_provider: L2Provider,
-    pub factory: Arc<DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>>,
+    pub factory: Arc<DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>>,
     pub init_bond: U256,
     pub safe_db_fallback: bool,
     prover: SP1Prover,
@@ -61,7 +61,7 @@ where
     pub async fn new(
         prover_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-        factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
+        factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
@@ -84,7 +84,7 @@ where
             config: config.clone(),
             prover_address,
             l1_provider_with_wallet: l1_provider_with_wallet.clone(),
-            l2_provider: ProviderBuilder::default().on_http(config.l2_rpc),
+            l2_provider: ProviderBuilder::default().connect_http(config.l2_rpc),
             factory: Arc::new(factory.clone()),
             init_bond: factory.fetch_init_bond(config.game_type).await?,
             safe_db_fallback: config.safe_db_fallback,
@@ -110,16 +110,16 @@ where
 
         let game =
             OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
-        let l1_head_hash = game.l1Head().call().await?.l1Head_;
+        let l1_head_hash = game.l1Head().call().await?.0;
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
-        let l2_block_number = game.l2BlockNumber().call().await?.l2BlockNumber_;
+        let l2_block_number = game.l2BlockNumber().call().await?;
 
         let host_args = self
             .host
             .fetch(
                 l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks,
                 l2_block_number.to::<u64>(),
-                Some(l1_head_hash),
+                Some(l1_head_hash.into()),
                 Some(self.config.safe_db_fallback),
             )
             .await

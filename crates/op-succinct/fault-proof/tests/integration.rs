@@ -32,7 +32,7 @@ async fn test_proposer_defends_successfully() -> Result<()> {
 
     let l1_provider_with_wallet = ProviderBuilder::new()
         .wallet(wallet.clone())
-        .on_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
+        .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")
@@ -85,7 +85,7 @@ async fn test_proposer_defends_successfully() -> Result<()> {
         tx_hash
     );
 
-    let status = game.claimData().call().await?.claimData_.status;
+    let status = game.claimData().call().await?.status;
     assert_eq!(
         status,
         ProposalStatus::ChallengedAndValidProofProvided,

@@ -13,7 +13,6 @@ sp1-sdk.workspace = true
 op-succinct-client-utils.workspace = true
 
 # op-alloy
-op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 
@@ -30,6 +29,7 @@ kona-derive.workspace = true
 hana-host = { workspace = true, optional = true }
 
 # alloy
+alloy-contract.workspace = true
 alloy-provider.workspace = true
 alloy-rlp.workspace = true
 alloy-primitives.workspace = true
@@ -37,7 +37,6 @@ alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
-alloy-contract.workspace = true
 
 # general
 rkyv.workspace = true
@@ -50,17 +49,14 @@ serde.workspace = true
 reqwest.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
-clap.workspace = true
-strum_macros.workspace = true
 strum.workspace = true
 metrics.workspace = true
 metrics-process.workspace = true
 metrics-exporter-prometheus.workspace = true
 cfg-if.workspace = true
-tempfile.workspace = true
 
 kzg-rs.workspace = true
-c-kzg = "1.0.3"
+c-kzg.workspace = true
 
 [features]
 default = []

@@ -38,7 +38,7 @@ where
     challenger_address: Address,
     l2_provider: L2Provider,
     l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-    factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
+    factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
     challenger_bond: U256,
 }
 
@@ -52,14 +52,14 @@ where
     pub async fn new(
         challenger_address: Address,
         l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-        factory: DisputeGameFactoryInstance<(), L1ProviderWithWallet<F, P>>,
+        factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
     ) -> Result<Self> {
         let config = ChallengerConfig::from_env()?;
 
         Ok(Self {
             config: config.clone(),
             challenger_address,
-            l2_provider: ProviderBuilder::default().on_http(config.l2_rpc.clone()),
+            l2_provider: ProviderBuilder::default().connect_http(config.l2_rpc.clone()),
             l1_provider_with_wallet: l1_provider_with_wallet.clone(),
             factory: factory.clone(),
             challenger_bond: factory.fetch_challenger_bond(config.game_type).await?,
@@ -241,7 +241,7 @@ async fn main() -> Result<()> {
 
     let l1_provider_with_wallet = ProviderBuilder::new()
         .wallet(wallet.clone())
-        .on_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
+        .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")
