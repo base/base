@@ -92,7 +92,7 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
             fetcher.l1_provider.clone(),
         );
         // Get the latest Celestia block included in a Blobstream commitment.
-        let latest_celestia_block = blobstream_contract.latestBlock().call().await?.latestBlock;
+        let latest_celestia_block = blobstream_contract.latestBlock().call().await?;
 
         let mut low = fetcher.get_safe_l1_block_for_l2_block(latest_proposed_block_number).await?.1;
         let mut high = fetcher.get_l1_header(BlockId::finalized()).await?.number;

@@ -21,7 +21,7 @@ use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use std::{fmt::Debug, sync::Arc};
 use tracing::{error, info, warn};
 
-use crate::{precompiles::zkvm_handle_register, witness::WitnessData, BlobStore};
+use crate::{precompiles::ZkvmOpEvmFactory, witness::WitnessData, BlobStore};
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "celestia")] {
@@ -144,7 +144,7 @@ where
         &rollup_config,
         l2_provider.clone(),
         l2_provider,
-        Some(zkvm_handle_register),
+        ZkvmOpEvmFactory::new(),
         None,
     );
     let mut driver = Driver::new(cursor, executor, pipeline);
@@ -330,7 +330,7 @@ where
 
         // Construct the block.
         let block = OpBlock {
-            header: execution_result.block_header.inner().clone(),
+            header: execution_result.header.inner().clone(),
             body: BlockBody {
                 transactions: attributes
                     .transactions
@@ -349,7 +349,7 @@ where
             L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
         let tip_cursor = TipCursor::new(
             l2_info,
-            execution_result.block_header,
+            execution_result.header,
             driver.executor.compute_output_root().map_err(DriverError::Executor)?,
         );
 

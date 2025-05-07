@@ -11,6 +11,6 @@ pub async fn get_latest_proposed_block_number(
     let block_number = l2_output_oracle.latestBlockNumber().call().await?;
 
     // Convert the block number to a u64.
-    let block_number = block_number._0.try_into().unwrap();
+    let block_number = block_number.to::<u64>();
     Ok(block_number)
 }

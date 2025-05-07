@@ -14,6 +14,7 @@ jobs:
       - family=m7a+m7i-flex
       - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}
+      - disk=large
     steps:
       - name: Checkout PR Branch
         uses: actions/checkout@v4

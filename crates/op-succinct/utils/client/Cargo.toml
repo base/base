@@ -12,11 +12,15 @@ alloy-rlp.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+
+# Execution
+alloy-evm.workspace = true
+alloy-op-evm.workspace = true
+op-revm.workspace = true
 revm.workspace = true
 
 # kona
 kona-preimage.workspace = true
-kona-mpt.workspace = true
 kona-derive.workspace = true
 kona-proof.workspace = true
 kona-executor.workspace = true
@@ -36,8 +40,6 @@ serde.workspace = true
 rkyv.workspace = true
 sha2.workspace = true
 tracing.workspace = true
-itertools.workspace = true
-spin.workspace = true
 
 # kzg
 kzg-rs.workspace = true

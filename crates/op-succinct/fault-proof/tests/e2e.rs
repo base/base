@@ -37,7 +37,7 @@ async fn test_e2e_proposer_wins() -> Result<()> {
     );
 
     let l1_provider_with_wallet =
-        ProviderBuilder::new().wallet(wallet.clone()).on_http(proposer_config.l1_rpc.clone());
+        ProviderBuilder::new().wallet(wallet.clone()).connect_http(proposer_config.l1_rpc.clone());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")
@@ -81,11 +81,10 @@ async fn test_e2e_proposer_wins() -> Result<()> {
     }
 
     let game_impl = OPSuccinctFaultDisputeGame::new(
-        factory.gameImpls(proposer_config.game_type).call().await?._0,
+        factory.gameImpls(proposer_config.game_type).call().await?,
         l1_provider_with_wallet.clone(),
     );
-    let max_challenge_duration =
-        game_impl.maxChallengeDuration().call().await?.maxChallengeDuration_.to::<u64>();
+    let max_challenge_duration = game_impl.maxChallengeDuration().call().await?.to::<u64>();
     tracing::info!("Sleeping for {:?} seconds to pass challenge deadline", max_challenge_duration);
     sleep(Duration::from_secs(max_challenge_duration)).await;
 
@@ -102,7 +101,7 @@ async fn test_e2e_proposer_wins() -> Result<()> {
                 let provider = provider.clone();
                 async move {
                     let game = OPSuccinctFaultDisputeGame::new(game_address, (*provider).clone());
-                    let status = game.claimData().call().await?.claimData_.status;
+                    let status = game.claimData().call().await?.status;
                     Ok::<_, anyhow::Error>(status == ProposalStatus::Resolved)
                 }
             },
@@ -140,13 +139,13 @@ async fn test_e2e_challenger_wins() -> Result<()> {
         EthereumWallet::from(env::var("PRIVATE_KEY").unwrap().parse::<PrivateKeySigner>().unwrap());
 
     let l1_provider_with_wallet =
-        ProviderBuilder::new().wallet(wallet.clone()).on_http(proposer_config.l1_rpc.clone());
+        ProviderBuilder::new().wallet(wallet.clone()).connect_http(proposer_config.l1_rpc.clone());
 
     let factory =
         DisputeGameFactory::new(proposer_config.factory_address, l1_provider_with_wallet.clone());
 
     let game_type = proposer_config.game_type;
-    let init_bond = factory.initBonds(game_type).call().await?._0;
+    let init_bond = factory.initBonds(game_type).call().await?;
 
     let latest_game_index = factory.fetch_latest_game_index().await?;
     let start_game_index = latest_game_index.unwrap_or(U256::ZERO);
@@ -214,7 +213,7 @@ async fn test_e2e_challenger_wins() -> Result<()> {
                     async move {
                         let game =
                             OPSuccinctFaultDisputeGame::new(game_address, (*provider).clone());
-                        let status = game.claimData().call().await?.claimData_.status;
+                        let status = game.claimData().call().await?.status;
                         Ok::<_, anyhow::Error>(status == ProposalStatus::Challenged)
                     }
                 }))
