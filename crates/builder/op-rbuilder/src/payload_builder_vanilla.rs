@@ -514,18 +514,13 @@ impl<Txs> OpBuilder<'_, Txs> {
             ctx.metrics
                 .transaction_pool_fetch_duration
                 .record(best_txs_start_time.elapsed());
-            if ctx
-                .execute_best_transactions(
-                    &mut info,
-                    state,
-                    best_txs,
-                    block_gas_limit,
-                    block_da_limit,
-                )?
-                .is_some()
-            {
-                return Ok(BuildOutcomeKind::Cancelled);
-            }
+            ctx.execute_best_transactions(
+                &mut info,
+                state,
+                best_txs,
+                block_gas_limit,
+                block_da_limit,
+            )?;
         }
 
         // Add builder tx to the block

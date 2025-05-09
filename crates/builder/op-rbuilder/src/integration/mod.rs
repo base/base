@@ -1,5 +1,18 @@
+use alloy_consensus::TxEip1559;
+use alloy_eips::BlockNumberOrTag;
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
+use alloy_provider::{Identity, Provider, ProviderBuilder};
+use op_alloy_consensus::OpTypedTransaction;
+use op_alloy_network::Optimism;
+use op_rbuilder::OpRbuilderConfig;
+use op_reth::OpRethConfig;
+use parking_lot::Mutex;
+use std::cmp::max;
+use std::collections::HashSet;
 use std::future::Future;
+use std::net::TcpListener;
 use std::path::Path;
+use std::sync::LazyLock;
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -10,6 +23,10 @@ use std::{
 };
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
+use uuid::Uuid;
+
+use crate::tester::{BlockGenerator, EngineApi};
+use crate::tx_signer::Signer;
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -192,6 +209,125 @@ impl Drop for IntegrationFramework {
     fn drop(&mut self) {
         for service in &mut self.services {
             let _ = service.stop();
+        }
+    }
+}
+
+const BUILDER_PRIVATE_KEY: &str =
+    "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+
+pub struct TestHarness {
+    _framework: IntegrationFramework,
+    builder_auth_rpc_port: u16,
+    builder_http_port: u16,
+    validator_auth_rpc_port: u16,
+}
+
+impl TestHarness {
+    pub async fn new(name: &str) -> Self {
+        let mut framework = IntegrationFramework::new(name).unwrap();
+
+        // we are going to use a genesis file pre-generated before the test
+        let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        genesis_path.push("../../genesis.json");
+        assert!(genesis_path.exists());
+
+        // create the builder
+        let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let builder_auth_rpc_port = get_available_port();
+        let builder_http_port = get_available_port();
+        let op_rbuilder_config = OpRbuilderConfig::new()
+            .chain_config_path(genesis_path.clone())
+            .data_dir(builder_data_dir)
+            .auth_rpc_port(builder_auth_rpc_port)
+            .network_port(get_available_port())
+            .http_port(builder_http_port)
+            .with_builder_private_key(BUILDER_PRIVATE_KEY);
+
+        // create the validation reth node
+
+        let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let validator_auth_rpc_port = get_available_port();
+        let reth = OpRethConfig::new()
+            .chain_config_path(genesis_path)
+            .data_dir(reth_data_dir)
+            .auth_rpc_port(validator_auth_rpc_port)
+            .network_port(get_available_port());
+
+        framework.start("op-reth", &reth).await.unwrap();
+
+        let _ = framework
+            .start("op-rbuilder", &op_rbuilder_config)
+            .await
+            .unwrap();
+
+        Self {
+            _framework: framework,
+            builder_auth_rpc_port,
+            builder_http_port,
+            validator_auth_rpc_port,
+        }
+    }
+
+    pub async fn send_valid_transaction(&self) -> eyre::Result<()> {
+        // Get builder's address
+        let known_wallet = Signer::try_from_secret(BUILDER_PRIVATE_KEY.parse()?)?;
+        let builder_address = known_wallet.address;
+
+        let url = format!("http://localhost:{}", self.builder_http_port);
+        let provider =
+            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+
+        // Get current nonce includeing the ones from the txpool
+        let nonce = provider
+            .get_transaction_count(builder_address)
+            .pending()
+            .await?;
+
+        let latest_block = provider
+            .get_block_by_number(BlockNumberOrTag::Latest)
+            .await?
+            .unwrap();
+
+        let base_fee = max(
+            latest_block.header.base_fee_per_gas.unwrap(),
+            MIN_PROTOCOL_BASE_FEE,
+        );
+
+        // Transaction from builder should succeed
+        let tx_request = OpTypedTransaction::Eip1559(TxEip1559 {
+            chain_id: 901,
+            nonce,
+            gas_limit: 210000,
+            max_fee_per_gas: base_fee.into(),
+            ..Default::default()
+        });
+        let signed_tx = known_wallet.sign_tx(tx_request)?;
+        let _ = provider
+            .send_raw_transaction(signed_tx.encoded_2718().as_slice())
+            .await?;
+
+        Ok(())
+    }
+
+    pub async fn block_generator(&self) -> eyre::Result<BlockGenerator> {
+        let engine_api = EngineApi::new_with_port(self.builder_auth_rpc_port).unwrap();
+        let validation_api = Some(EngineApi::new_with_port(self.validator_auth_rpc_port).unwrap());
+
+        let mut generator = BlockGenerator::new(engine_api, validation_api, false, 1, None);
+        generator.init().await?;
+
+        Ok(generator)
+    }
+}
+
+pub fn get_available_port() -> u16 {
+    static CLAIMED_PORTS: LazyLock<Mutex<HashSet<u16>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
+    loop {
+        let port: u16 = rand::random_range(1000..20000);
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() && CLAIMED_PORTS.lock().insert(port) {
+            return port;
         }
     }
 }

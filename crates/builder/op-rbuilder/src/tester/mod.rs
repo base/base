@@ -80,10 +80,22 @@ impl EngineApi {
         Self::builder().with_url(url).build()
     }
 
+    pub fn new_with_port(port: u16) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::builder()
+            .with_url(&format!("http://localhost:{}", port))
+            .build()
+    }
+
     pub async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV3> {
+        println!(
+            "Fetching payload with id: {} at {}",
+            payload_id,
+            chrono::Utc::now()
+        );
+
         Ok(
             EngineApiClient::<OpEngineTypes>::get_payload_v3(&self.engine_api_client, payload_id)
                 .await?,
@@ -96,6 +108,8 @@ impl EngineApi {
         versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> eyre::Result<PayloadStatus> {
+        println!("Submitting new payload at {}...", chrono::Utc::now());
+
         Ok(EngineApiClient::<OpEngineTypes>::new_payload_v3(
             &self.engine_api_client,
             payload,
@@ -111,6 +125,8 @@ impl EngineApi {
         new_head: B256,
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
+        println!("Updating forkchoice at {}...", chrono::Utc::now());
+
         Ok(EngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
             &self.engine_api_client,
             ForkchoiceState {
@@ -183,9 +199,9 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
 const FJORD_DATA: &[u8] = &hex!("440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a3000000000000000000000000000000000000000000000000000000003ef1278700000000000000000000000000000000000000000000000000000000000000012fdf87b89884a61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a590000000000000000000000006887246668a3b87f54deb3b94ba47a6f63f32985");
 
 /// A system that continuously generates blocks using the engine API
-pub struct BlockGenerator<'a> {
-    engine_api: &'a EngineApi,
-    validation_api: Option<&'a EngineApi>,
+pub struct BlockGenerator {
+    engine_api: EngineApi,
+    validation_api: Option<EngineApi>,
     latest_hash: B256,
     no_tx_pool: bool,
     block_time_secs: u64,
@@ -194,10 +210,10 @@ pub struct BlockGenerator<'a> {
     flashblocks_service: Option<FlashblocksService>,
 }
 
-impl<'a> BlockGenerator<'a> {
+impl BlockGenerator {
     pub fn new(
-        engine_api: &'a EngineApi,
-        validation_api: Option<&'a EngineApi>,
+        engine_api: EngineApi,
+        validation_api: Option<EngineApi>,
         no_tx_pool: bool,
         block_time_secs: u64,
         flashblocks_endpoint: Option<String>,
@@ -219,7 +235,7 @@ impl<'a> BlockGenerator<'a> {
         self.latest_hash = latest_block.header.hash;
 
         // Sync validation node if it exists
-        if let Some(validation_api) = self.validation_api {
+        if let Some(validation_api) = &self.validation_api {
             self.sync_validation_node(validation_api).await?;
         }
 
@@ -321,10 +337,11 @@ impl<'a> BlockGenerator<'a> {
     }
 
     /// Helper function to submit a payload and update chain state
-    async fn submit_payload(
+    pub async fn submit_payload(
         &mut self,
         transactions: Option<Vec<Bytes>>,
         block_building_delay_secs: u64,
+        no_sleep: bool, // TODO: Change this, too many parameters we can tweak here to put as a function arguments
     ) -> eyre::Result<B256> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -398,7 +415,7 @@ impl<'a> BlockGenerator<'a> {
             flashblocks_service.set_current_payload_id(payload_id).await;
         }
 
-        if !self.no_tx_pool {
+        if !self.no_tx_pool && !no_sleep {
             let sleep_time = self.block_time_secs + block_building_delay_secs;
             tokio::time::sleep(tokio::time::Duration::from_secs(sleep_time)).await;
         }
@@ -420,7 +437,7 @@ impl<'a> BlockGenerator<'a> {
         }
 
         // Validate with validation node if present
-        if let Some(validation_api) = self.validation_api {
+        if let Some(validation_api) = &self.validation_api {
             let validation_status = validation_api
                 .new_payload(payload.execution_payload.clone(), vec![], B256::ZERO)
                 .await?;
@@ -442,7 +459,7 @@ impl<'a> BlockGenerator<'a> {
             .await?;
 
         // Update forkchoice on validator if present
-        if let Some(validation_api) = self.validation_api {
+        if let Some(validation_api) = &self.validation_api {
             validation_api
                 .update_forkchoice(self.latest_hash, new_block_hash, None)
                 .await?;
@@ -455,11 +472,11 @@ impl<'a> BlockGenerator<'a> {
 
     /// Generate a single new block and return its hash
     pub async fn generate_block(&mut self) -> eyre::Result<B256> {
-        self.submit_payload(None, 0).await
+        self.submit_payload(None, 0, false).await
     }
 
     pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<B256> {
-        self.submit_payload(None, delay).await
+        self.submit_payload(None, delay, false).await
     }
 
     /// Submit a deposit transaction to seed an account with ETH
@@ -482,7 +499,7 @@ impl<'a> BlockGenerator<'a> {
         let signed_tx = signer.sign_tx(OpTypedTransaction::Deposit(deposit_tx))?;
         let signed_tx_rlp = signed_tx.encoded_2718();
 
-        self.submit_payload(Some(vec![signed_tx_rlp.into()]), 0)
+        self.submit_payload(Some(vec![signed_tx_rlp.into()]), 0, false)
             .await
     }
 }
@@ -505,8 +522,8 @@ pub async fn run_system(
     };
 
     let mut generator = BlockGenerator::new(
-        &engine_api,
-        validation_api.as_ref(),
+        engine_api,
+        validation_api,
         no_tx_pool,
         block_time_secs,
         flashblocks_endpoint,

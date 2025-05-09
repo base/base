@@ -62,7 +62,7 @@ async fn main() -> eyre::Result<()> {
         }
         Commands::Deposit { address, amount } => {
             let engine_api = EngineApi::builder().build().unwrap();
-            let mut generator = BlockGenerator::new(&engine_api, None, false, 1, None);
+            let mut generator = BlockGenerator::new(engine_api, None, false, 1, None);
 
             generator.init().await?;
 
