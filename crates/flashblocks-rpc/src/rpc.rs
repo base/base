@@ -429,6 +429,7 @@ where
                             }
                         }
                     }
+
                     Ok(Some(self.transform_tx(transaction, tx_info, None)))
                 }
             }
