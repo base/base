@@ -64,10 +64,14 @@ impl OpPayloadAttributes {
     ///
     /// This iterator will be empty if there are no transactions in the attributes.
     pub fn decoded_transactions(&self) -> impl Iterator<Item = Eip2718Result<OpTxEnvelope>> + '_ {
-        self.transactions
-            .iter()
-            .flatten()
-            .map(|tx_bytes| OpTxEnvelope::decode_2718(&mut tx_bytes.as_ref()))
+        self.transactions.iter().flatten().map(|tx_bytes| {
+            let mut buf = tx_bytes.as_ref();
+            let tx = OpTxEnvelope::decode_2718(&mut buf).map_err(alloy_rlp::Error::from)?;
+            if !buf.is_empty() {
+                return Err(alloy_rlp::Error::UnexpectedLength.into());
+            }
+            Ok(tx)
+        })
     }
 
     /// Returns iterator over decoded transactions with their original encoded bytes.
