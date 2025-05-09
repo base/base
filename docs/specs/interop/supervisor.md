@@ -19,6 +19,8 @@
     - [`BlockRef`](#blockref)
     - [`DerivedIDPair`](#derivedidpair)
     - [`ChainRootInfo`](#chainrootinfo)
+    - [`SupervisorSyncStatus`](#supervisorsyncstatus)
+    - [`SupervisorChainSyncStatus`](#supervisorchainsyncstatus)
     - [`SuperRootResponse`](#superrootresponse)
     - [`SafetyLevel`](#safetylevel)
   - [Methods](#methods)
@@ -158,6 +160,27 @@ Describes a block.
 - `chainId`: `HexUint64` - The chain ID (Note: this is changing to `ChainID` soon)
 - `canonical`: `Hash` - output root at the latest canonical block
 - `pending`: `Bytes` - output root preimage
+
+#### `SupervisorSyncStatus`
+
+Describes the sync status of the Supervisor component.
+
+`OBJECT`:
+- `minSyncedL1`: `BlockRef` - block ref to the synced L1 block
+- `safeTimestamp`: `Int` - safe timestamp
+- `finalizedTimestamp`: `Int` - finalized timestamp
+- `chains`: `OBJECT` with `ChainID` keys and `SupervisorChainSyncStatus` values
+
+#### `SupervisorChainSyncStatus`
+
+Describes the sync status for a specific chain
+
+`OBJECT`:
+- `localUnsafe`: `BlockRef` - local-unsafe ref for the given chain
+- `localSafe`: `BlockID` - local-safe ref for the given chain
+- `crossUnsafe`: `BlockID` - cross-unsafe ref for the given chain
+- `safe`: `BlockID` - cross-safe ref for the given chain
+- `finalized`: `BlockID` - finalized ref for the given chain
 
 #### `SuperRootResponse`
 
