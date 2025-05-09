@@ -29,6 +29,11 @@ mod tester;
 mod tx_signer;
 use monitor_tx_pool::monitor_tx_pool;
 
+// Prefer jemalloc for performance reasons.
+#[cfg(all(feature = "jemalloc", unix))]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() {
     Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
         .run(|builder, builder_args| async move {
