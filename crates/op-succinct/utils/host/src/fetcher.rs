@@ -5,6 +5,7 @@ use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
 use anyhow::{bail, Result};
+use futures::{stream, StreamExt};
 use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
 use kona_protocol::L2BlockInfo;
@@ -423,12 +424,18 @@ impl OPSuccinctDataFetcher {
 
     /// Fetch headers for a range of blocks inclusive.
     pub async fn fetch_headers_in_range(&self, start: u64, end: u64) -> Result<Vec<Header>> {
-        // Note: Original implementation was using a buffered stream, but this was causing
-        // issues with the RPC requests timing out/receiving no response for 20+ minutes.
+        let block_numbers: Vec<u64> = (start..=end).collect();
         let mut headers = Vec::new();
-        for block_number in start..=end {
-            let header = self.get_l1_header(block_number.into()).await?;
-            headers.push(header);
+
+        // Process blocks in batches of 10, but maintain original order
+        let results = stream::iter(block_numbers)
+            .map(|block_number| self.get_l1_header(block_number.into()))
+            .buffered(10)
+            .collect::<Vec<_>>()
+            .await;
+
+        for result in results {
+            headers.push(result?);
         }
 
         Ok(headers)
