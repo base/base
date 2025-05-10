@@ -140,7 +140,7 @@ impl<E> EthApiExt<E> {
             } else {
                 let cached_receipt = self
                     .cache
-                    .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash.unwrap().to_string()))
+                    .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
                     .unwrap();
 
                 if let OpReceipt::Deposit(receipt) = cached_receipt {
