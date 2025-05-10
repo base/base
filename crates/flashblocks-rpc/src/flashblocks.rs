@@ -1,12 +1,12 @@
-use crate::cache::Cache;
-use alloy_primitives::{map::foldhash::HashMap, Bytes, U256};
+use crate::cache::{Cache, CacheKey};
+use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
 use reth::core::primitives::SignedTransaction;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::error;
@@ -168,7 +168,7 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     // Can't do pending block with this because already missing blocks
     if payload.index != 0
         && cache
-            .get::<ExecutionPayloadBaseV1>(&format!("base:{:?}", block_number))
+            .get::<ExecutionPayloadBaseV1>(&CacheKey::Base(block_number))
             .is_none()
     {
         return;
@@ -178,20 +178,20 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     update_flashblocks_index(payload.index, &cache, &metrics);
 
     // Prevent updating to older blocks
-    let current_block = cache.get::<OpBlock>("pending");
+    let current_block = cache.get::<OpBlock>(&CacheKey::PendingBlock);
     if current_block.is_some() && current_block.unwrap().number > block_number {
         return;
     }
 
     // base only appears once in the first payload index
     let base = if let Some(base) = payload.base {
-        if let Err(e) = cache.set(&format!("base:{:?}", block_number), &base, Some(10)) {
+        if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!("Failed to set base in cache: {}", e);
             return;
         }
         base
     } else {
-        match cache.get(&format!("base:{:?}", block_number)) {
+        match cache.get(&CacheKey::Base(block_number)) {
             Some(base) => base,
             None => {
                 error!("Failed to get base from cache");
@@ -247,13 +247,13 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
 
     // "pending" because users query the block using "pending" tag
     // This is an optimistic update will likely need to tweak in the future
-    if let Err(e) = cache.set("pending", &block, Some(10)) {
+    if let Err(e) = cache.set(CacheKey::PendingBlock, &block, Some(10)) {
         error!("Failed to set pending block in cache: {}", e);
         return;
     }
 
     // set block to block number as well
-    if let Err(e) = cache.set(&format!("block:{:?}", block_number), &block, Some(10)) {
+    if let Err(e) = cache.set(CacheKey::Block(block_number), &block, Some(10)) {
         error!("Failed to set block in cache: {}", e);
         return;
     }
@@ -287,7 +287,11 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
 
     // Store account balances
     for (address, balance) in metadata.new_account_balances.iter() {
-        if let Err(e) = cache.set(address, &balance, Some(10)) {
+        if let Err(e) = cache.set(
+            CacheKey::AccountBalance(Address::from_str(address).unwrap()),
+            &balance,
+            Some(10),
+        ) {
             error!("Failed to set account balance in cache: {}", e);
         }
     }
@@ -308,7 +312,7 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
 fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
     if index == 0 {
         // Get highest index from previous block
-        if let Some(prev_highest_index) = cache.get::<u64>("highest_payload_index") {
+        if let Some(prev_highest_index) = cache.get::<u64>(&CacheKey::HighestPayloadIndex) {
             // Record metric: total flash blocks = highest_index + 1 (since it's 0-indexed)
             metrics
                 .flashblocks_in_block
@@ -317,14 +321,16 @@ fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
         }
 
         // Reset highest index to 0 for new block
-        if let Err(e) = cache.set("highest_payload_index", &0u64, Some(10)) {
+        if let Err(e) = cache.set(CacheKey::HighestPayloadIndex, &0u64, Some(10)) {
             error!("Failed to reset highest flash index: {}", e);
         }
     } else {
         // Update highest index if current index is higher
-        let current_highest = cache.get::<u64>("highest_payload_index").unwrap_or(0);
+        let current_highest = cache
+            .get::<u64>(&CacheKey::HighestPayloadIndex)
+            .unwrap_or(0);
         if index > current_highest {
-            if let Err(e) = cache.set("highest_payload_index", &index, Some(10)) {
+            if let Err(e) = cache.set(CacheKey::HighestPayloadIndex, &index, Some(10)) {
                 error!("Failed to update highest flash index: {}", e);
             }
         }
@@ -341,11 +347,10 @@ fn get_and_set_transactions(
     let transactions = if payload_index == 0 {
         transactions
     } else {
-        let existing =
-            match cache.get::<Vec<Bytes>>(&format!("diff:transactions:{:?}", block_number)) {
-                Some(existing) => existing,
-                None => return Err("Failed to get pending transactions from cache".into()),
-            };
+        let existing = match cache.get::<Vec<Bytes>>(&CacheKey::DiffTransactions(block_number)) {
+            Some(existing) => existing,
+            None => return Err("Failed to get pending transactions from cache".into()),
+        };
         existing
             .into_iter()
             .chain(transactions.iter().cloned())
@@ -353,7 +358,7 @@ fn get_and_set_transactions(
     };
 
     cache.set(
-        &format!("diff:transactions:{:?}", block_number),
+        CacheKey::DiffTransactions(block_number),
         &transactions,
         Some(10),
     )?;
@@ -371,15 +376,23 @@ fn get_and_set_txs_and_receipts(
     // Store tx transaction signed
     for (idx, transaction) in block.body.transactions.iter().enumerate() {
         // check if exists, if not update
-        let existing_tx = cache.get::<OpTransactionSigned>(&transaction.tx_hash().to_string());
+        let existing_tx =
+            cache.get::<OpTransactionSigned>(&CacheKey::Transaction(transaction.tx_hash()));
         if existing_tx.is_none() {
-            if let Err(e) = cache.set(&transaction.tx_hash().to_string(), &transaction, Some(10)) {
+            if let Err(e) = cache.set(
+                CacheKey::Transaction(transaction.tx_hash()),
+                &transaction,
+                Some(10),
+            ) {
                 error!("Failed to set transaction in cache: {}", e);
                 continue;
             }
             // update tx index
-            if let Err(e) = cache.set(&format!("tx_idx:{}", transaction.tx_hash()), &idx, Some(10))
-            {
+            if let Err(e) = cache.set(
+                CacheKey::TransactionIndex(transaction.tx_hash()),
+                &idx,
+                Some(10),
+            ) {
                 error!("Failed to set transaction index in cache: {}", e);
                 continue;
             }
@@ -388,11 +401,17 @@ fn get_and_set_txs_and_receipts(
             if let Ok(from) = transaction.recover_signer() {
                 // Get current tx count, default to 0 if not found
                 let current_count = cache
-                    .get::<u64>(&format!("tx_count:{}:{}", from, block_number))
+                    .get::<u64>(&CacheKey::TransactionCount {
+                        address: from,
+                        block_number,
+                    })
                     .unwrap_or(0);
                 // Increment tx count by 1
                 if let Err(e) = cache.set(
-                    &format!("tx_count:{}:{}", from, block_number),
+                    CacheKey::TransactionCount {
+                        address: from,
+                        block_number,
+                    },
                     &(current_count + 1),
                     Some(10),
                 ) {
@@ -401,7 +420,7 @@ fn get_and_set_txs_and_receipts(
 
                 // also keep track of sender of each transaction
                 if let Err(e) = cache.set(
-                    &format!("tx_sender:{}", transaction.tx_hash()),
+                    CacheKey::TransactionSender(transaction.tx_hash()),
                     &from,
                     Some(10),
                 ) {
@@ -410,7 +429,7 @@ fn get_and_set_txs_and_receipts(
 
                 // also keep track of the block number of each transaction
                 if let Err(e) = cache.set(
-                    &format!("tx_block_number:{}", transaction.tx_hash()),
+                    CacheKey::TransactionBlockNumber(transaction.tx_hash()),
                     &block_number,
                     Some(10),
                 ) {
@@ -429,17 +448,13 @@ fn get_and_set_txs_and_receipts(
                 .receipts
                 .get(&transaction.tx_hash().to_string())
                 .unwrap();
-            if let Err(e) = cache.set(
-                &format!("receipt:{:?}", transaction.tx_hash().to_string()),
-                receipt,
-                Some(10),
-            ) {
+            if let Err(e) = cache.set(CacheKey::Receipt(transaction.tx_hash()), receipt, Some(10)) {
                 error!("Failed to set receipt in cache: {}", e);
                 continue;
             }
             // map receipt's block number as well
             if let Err(e) = cache.set(
-                &format!("receipt_block:{:?}", transaction.tx_hash().to_string()),
+                CacheKey::ReceiptBlock(transaction.tx_hash()),
                 &block_number,
                 Some(10),
             ) {
@@ -465,24 +480,19 @@ fn get_and_set_all_receipts(
         // get receipts and sort by cumulative gas used
         diff_receipts
     } else {
-        let existing =
-            match cache.get::<Vec<OpReceipt>>(&format!("pending_receipts:{:?}", block_number)) {
-                Some(existing) => existing,
-                None => {
-                    return Err("Failed to get pending receipts from cache".into());
-                }
-            };
+        let existing = match cache.get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number)) {
+            Some(existing) => existing,
+            None => {
+                return Err("Failed to get pending receipts from cache".into());
+            }
+        };
         existing
             .into_iter()
             .chain(diff_receipts.iter().cloned())
             .collect()
     };
 
-    cache.set(
-        &format!("pending_receipts:{:?}", block_number),
-        &receipts,
-        Some(10),
-    )?;
+    cache.set(CacheKey::PendingReceipts(block_number), &receipts, Some(10))?;
 
     Ok(receipts)
 }
@@ -653,7 +663,7 @@ mod tests {
         process_payload(payload2, cache.clone());
 
         // Verify final state
-        let final_block = cache.get::<OpBlock>("pending").unwrap();
+        let final_block = cache.get::<OpBlock>(&CacheKey::PendingBlock).unwrap();
         assert_eq!(final_block.body.transactions.len(), 2);
         assert_eq!(final_block.header.state_root, B256::repeat_byte(0x1));
         assert_eq!(final_block.header.receipts_root, B256::repeat_byte(0x2));
@@ -661,31 +671,39 @@ mod tests {
 
         // Verify account balance was updated
         let balance = cache
-            .get::<String>("0x1234567890123456789012345678901234567890")
+            .get::<String>(&CacheKey::AccountBalance(
+                Address::from_str("0x1234567890123456789012345678901234567890").unwrap(),
+            ))
             .unwrap();
         assert_eq!(balance, "0x1234");
 
         let tx1_receipt = cache
-            .get::<OpReceipt>(&format!(
-                "receipt:{:?}",
-                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            .get::<OpReceipt>(&CacheKey::Receipt(
+                B256::from_str(
+                    "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx1_receipt.cumulative_gas_used(), 21000);
 
         let tx2_receipt = cache
-            .get::<OpReceipt>(&format!(
-                "receipt:{:?}",
-                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            .get::<OpReceipt>(&CacheKey::Receipt(
+                B256::from_str(
+                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx2_receipt.cumulative_gas_used(), 42000);
 
         // verify tx_sender, tx_block_number, tx_idx
         let tx_sender = cache
-            .get::<Address>(&format!(
-                "tx_sender:{}",
-                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            .get::<Address>(&CacheKey::TransactionSender(
+                B256::from_str(
+                    "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(
@@ -694,25 +712,31 @@ mod tests {
         );
 
         let tx_block_number = cache
-            .get::<u64>(&format!(
-                "tx_block_number:{}",
-                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            .get::<u64>(&CacheKey::TransactionBlockNumber(
+                B256::from_str(
+                    "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_block_number, 1);
 
         let tx_idx = cache
-            .get::<u64>(&format!(
-                "tx_idx:{}",
-                "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
+            .get::<u64>(&CacheKey::TransactionIndex(
+                B256::from_str(
+                    "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_idx, 0);
 
         let tx_sender2 = cache
-            .get::<Address>(&format!(
-                "tx_sender:{}",
-                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            .get::<Address>(&CacheKey::TransactionSender(
+                B256::from_str(
+                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(
@@ -721,17 +745,21 @@ mod tests {
         );
 
         let tx_block_number2 = cache
-            .get::<u64>(&format!(
-                "tx_block_number:{}",
-                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            .get::<u64>(&CacheKey::TransactionBlockNumber(
+                B256::from_str(
+                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_block_number2, 1);
 
         let tx_idx2 = cache
-            .get::<u64>(&format!(
-                "tx_idx:{}",
-                "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+            .get::<u64>(&CacheKey::TransactionIndex(
+                B256::from_str(
+                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                )
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_idx2, 1);
@@ -759,7 +787,7 @@ mod tests {
         process_payload(payload, cache.clone());
 
         // Verify no block was stored, since it skips the first payload
-        assert!(cache.get::<OpBlock>("pending").is_none());
+        assert!(cache.get::<OpBlock>(&CacheKey::PendingBlock).is_none());
     }
 
     #[test]
@@ -773,7 +801,7 @@ mod tests {
         process_payload(payload1_0, cache.clone());
 
         // Check that highest_payload_index was set to 0
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 0);
 
         // Block 1, payload 1
@@ -781,7 +809,7 @@ mod tests {
         process_payload(payload1_1, cache.clone());
 
         // Check that highest_payload_index was updated
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 1);
 
         // Block 1, payload 2
@@ -789,7 +817,7 @@ mod tests {
         process_payload(payload1_2, cache.clone());
 
         // Check that highest_payload_index was updated
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 2);
 
         // Now start a new block (block 2, payload 0)
@@ -797,7 +825,7 @@ mod tests {
         process_payload(payload2_0, cache.clone());
 
         // Check that highest_payload_index was reset to 0
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 0);
 
         // Block 2, payload 1 (out of order with payload 3)
@@ -805,7 +833,7 @@ mod tests {
         process_payload(payload2_1, cache.clone());
 
         // Check that highest_payload_index was updated
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 1);
 
         // Block 2, payload 3 (skipping 2)
@@ -813,7 +841,7 @@ mod tests {
         process_payload(payload2_3, cache.clone());
 
         // Check that highest_payload_index was updated
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 3);
 
         // Block 2, payload 2 (out of order, should not change highest)
@@ -821,7 +849,7 @@ mod tests {
         process_payload(payload2_2, cache.clone());
 
         // Check that highest_payload_index is still 3
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 3);
 
         // Start block 3, payload 0
@@ -830,7 +858,7 @@ mod tests {
 
         // Check that highest_payload_index was reset to 0
         // Also verify metric would have been recorded (though we can't directly check the metric's value)
-        let highest = cache.get::<u64>("highest_payload_index").unwrap();
+        let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 0);
     }
 }

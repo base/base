@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::cache::Cache;
+use crate::cache::{Cache, CacheKey};
 use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
@@ -134,7 +134,7 @@ impl<E> EthApiExt<E> {
         if tx.is_deposit() {
             let receipt = self
                 .cache
-                .get::<OpReceipt>(&format!("receipt:{:?}", tx_info.hash.unwrap().to_string()))
+                .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
                 .unwrap();
             if let OpReceipt::Deposit(receipt) = receipt {
                 deposit_receipt_version = receipt.deposit_receipt_version;
@@ -185,19 +185,19 @@ impl<E> EthApiExt<E> {
     ) -> RpcReceipt<Optimism> {
         let tx = self
             .cache
-            .get::<OpTransactionSigned>(&tx_hash.to_string())
+            .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
             .unwrap();
 
         let block = self
             .cache
-            .get::<OpBlock>(&format!("block:{}", block_number))
+            .get::<OpBlock>(&CacheKey::Block(block_number))
             .unwrap();
         let mut l1_block_info =
             reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
 
         let index = self
             .cache
-            .get::<u64>(&format!("tx_idx:{}", &tx_hash.to_string()))
+            .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
             .unwrap();
         let meta = TransactionMeta {
             tx_hash,
@@ -212,7 +212,7 @@ impl<E> EthApiExt<E> {
         // get all receipts from cache too
         let all_receipts = self
             .cache
-            .get::<Vec<OpReceipt>>(&format!("pending_receipts:{}", block_number))
+            .get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number))
             .unwrap();
 
         OpReceiptBuilder::new(
@@ -246,7 +246,7 @@ where
             BlockNumberOrTag::Pending => {
                 debug!("pending block by number, delegating to flashblocks");
                 self.metrics.get_block_by_number.increment(1);
-                if let Some(block) = self.cache.get::<OpBlock>("pending") {
+                if let Some(block) = self.cache.get::<OpBlock>(&CacheKey::PendingBlock) {
                     return Ok(Some(self.transform_block(block, _full)));
                 } else {
                     return Ok(None);
@@ -270,17 +270,14 @@ where
 
         // check if receipt is none
         if let Ok(None) = receipt {
-            if let Some(receipt) = self
-                .cache
-                .get::<OpReceipt>(&format!("receipt:{:?}", tx_hash.to_string()))
-            {
+            if let Some(receipt) = self.cache.get::<OpReceipt>(&CacheKey::Receipt(tx_hash)) {
                 self.metrics.get_transaction_receipt.increment(1);
                 return Ok(Some(
                     self.transform_receipt(
                         receipt,
                         tx_hash,
                         self.cache
-                            .get::<u64>(&format!("receipt_block:{:?}", tx_hash.to_string()))
+                            .get::<u64>(&CacheKey::ReceiptBlock(tx_hash))
                             .unwrap(),
                         self.chain_spec.as_ref(),
                     ),
@@ -300,7 +297,7 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_balance.increment(1);
-            if let Some(balance) = self.cache.get::<U256>(address.to_string().as_str()) {
+            if let Some(balance) = self.cache.get::<U256>(&CacheKey::AccountBalance(address)) {
                 return Ok(balance);
             }
             // If pending not found, use standard flow below
@@ -344,7 +341,10 @@ where
 
             let tx_count = self
                 .cache
-                .get::<u64>(&format!("tx_count:{}:{}", address, latest_block_number + 1))
+                .get::<u64>(&CacheKey::TransactionCount {
+                    address,
+                    block_number: latest_block_number + 1,
+                })
                 .unwrap_or(0);
 
             return Ok(current_nonce + U256::from(tx_count));
@@ -392,22 +392,25 @@ where
             }
         } else {
             // Handle cache lookup for transactions not found in the main lookup
-            if let Some(tx) = self.cache.get::<OpTransactionSigned>(&tx_hash.to_string()) {
+            if let Some(tx) = self
+                .cache
+                .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+            {
                 let sender = self
                     .cache
-                    .get::<Address>(&format!("tx_sender:{}", tx_hash))
+                    .get::<Address>(&CacheKey::TransactionSender(tx_hash))
                     .unwrap();
                 let block_number = self
                     .cache
-                    .get::<u64>(&format!("tx_block_number:{}", tx_hash))
+                    .get::<u64>(&CacheKey::TransactionBlockNumber(tx_hash))
                     .unwrap();
                 let block = self
                     .cache
-                    .get::<OpBlock>(&format!("block:{:?}", block_number))
+                    .get::<OpBlock>(&CacheKey::Block(block_number))
                     .unwrap();
                 let index = self
                     .cache
-                    .get::<u64>(&format!("tx_idx:{}", &tx_hash.to_string()))
+                    .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
                     .unwrap();
                 let tx_info = TransactionInfo {
                     hash: Some(tx.tx_hash()),
