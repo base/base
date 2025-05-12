@@ -3,7 +3,7 @@
 [![CI status](https://github.com/flashbots/rbuilder/actions/workflows/checks.yaml/badge.svg?branch=develop)](https://github.com/flashbots/rbuilder/actions/workflows/integration.yaml)
 
 
-`op-rbuilder` is a Rust-based block builder designed to build blocks for the Optimism stack. 
+`op-rbuilder` is a Rust-based block builder designed to build blocks for the Optimism stack.
 
 ## Running op-rbuilder
 
@@ -18,7 +18,7 @@ cargo run -p op-rbuilder --bin op-rbuilder --features flashblocks -- node \
     --chain /path/to/chain-config.json \
     --http \
     --authrpc.port 9551 \
-    --authrpc.jwtsecret /path/to/jwt.hex 
+    --authrpc.jwtsecret /path/to/jwt.hex
 ```
 
 To build the op-rbuilder, run:
@@ -29,7 +29,7 @@ cargo build -p op-rbuilder --bin op-rbuilder --features optimism
 
 ## Observability
 
-To verify whether a builder block has landed on-chain, you can add the `--rollup.builder-secret-key` flag or `BUILDER_SECRET_KEY` environment variable. 
+To verify whether a builder block has landed on-chain, you can add the `--rollup.builder-secret-key` flag or `BUILDER_SECRET_KEY` environment variable.
 This will add an additional transaction to the end of the block from the builder key. The transaction will have `Block Number: {}` in the input data as a transfer to the zero address. Ensure that the key has sufficient balance to pay for the transaction at the end of the block.
 
 To enable metrics, set the `--metrics` flag like in [reth](https://reth.rs/run/observability.html) which will expose reth metrics in addition to op-rbuilder metrics. op-rbuilder exposes on-chain metrics via [reth execution extensions](https://reth.rs/developers/exex/exex.html) such as the number of blocks landed and builder balance. Note that the accuracy of the on-chain metrics will be dependent on the sync status of the builder node. There are also additional block building metrics such as:
@@ -87,9 +87,9 @@ go run main.go cook opstack --external-builder http://host.docker.internal:4444
 cargo run -p op-rbuilder --bin op-rbuilder -- node \
     --chain $HOME/.playground/devnet/l2-genesis.json \
     --http --http.port 2222 \
-    --authrpc.port 4444 --authrpc.jwtsecret $HOME/.playground/devnet/jwtsecret \
+    --authrpc.addr 0.0.0.0 --authrpc.port 4444 --authrpc.jwtsecret $HOME/.playground/devnet/jwtsecret \
     --port 30333 --disable-discovery \
-    --metrics 127.0.0.1:9001 \
+    --metrics 127.0.0.1:9011 \
     --rollup.builder-secret-key ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
     --trusted-peers enode://3479db4d9217fb5d7a8ed4d61ac36e120b05d36c2eefb795dc42ff2e971f251a2315f5649ea1833271e020b9adc98d5db9973c7ed92d6b2f1f2223088c3d852f@127.0.0.1:30304
 ```
