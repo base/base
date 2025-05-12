@@ -32,11 +32,12 @@ jobs:
       - name: Verify the OP Succinct binaries
         run: |
           # Build the binaries
-          cd programs/range
-          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-bump --docker --tag v4.1.7 --output-directory ../../elf
-          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-embedded --docker --tag v4.1.7 --output-directory ../../elf --features embedded
-          ~/.sp1/bin/cargo-prove prove build --elf-name celestia-range-elf-embedded --docker --tag v4.1.7 --output-directory ../../elf --features embedded,celestia
-          cd ../aggregation
+          cd programs/range/ethereum
+          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-bump --docker --tag v4.1.7 --output-directory ../../../elf
+          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-embedded --docker --tag v4.1.7 --output-directory ../../../elf --features embedded
+          cd ../celestia
+          ~/.sp1/bin/cargo-prove prove build --elf-name celestia-range-elf-embedded --docker --tag v4.1.7 --output-directory ../../../elf --features embedded
+          cd ../../aggregation
           ~/.sp1/bin/cargo-prove prove build --elf-name aggregation-elf --docker --tag v4.1.7 --output-directory ../../elf
           cd ../../
 

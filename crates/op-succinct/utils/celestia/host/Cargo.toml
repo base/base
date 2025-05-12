@@ -1,0 +1,36 @@
+[package]
+name = "op-succinct-celestia-host-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+# sp1
+sp1-sdk.workspace = true
+
+# local
+op-succinct-celestia-client-utils.workspace = true
+op-succinct-client-utils.workspace = true
+op-succinct-host-utils.workspace = true
+
+# kona
+kona-preimage.workspace = true
+kona-proof.workspace = true
+kona-rpc.workspace = true
+
+# hana
+hana-blobstream.workspace = true
+hana-host.workspace = true
+hana-oracle.workspace = true
+
+# alloy
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+rkyv.workspace = true

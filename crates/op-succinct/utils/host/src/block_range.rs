@@ -4,12 +4,13 @@ use std::{
     time::Duration,
 };
 
-use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use alloy_eips::BlockId;
 use anyhow::{bail, Result};
 use futures::StreamExt;
 use kona_rpc::{OutputResponse, SafeHeadResponse};
 use serde::{Deserialize, Serialize};
+
+use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
 
 /// Get the start and end block numbers for a range, with validation.
 pub async fn get_validated_block_range(

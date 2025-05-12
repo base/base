@@ -1,14 +1,15 @@
-use anyhow::Result;
 use std::{fmt::Write as _, fs::File, sync::Arc};
 
+use anyhow::Result;
 use common::post_to_github_pr;
 use op_succinct_host_utils::{
     block_range::get_rolling_block_range,
     fetcher::OPSuccinctDataFetcher,
-    get_proof_stdin,
-    hosts::{initialize_host, OPSuccinctHost},
+    host::OPSuccinctHost,
     stats::{ExecutionStats, MarkdownExecutionStats},
+    witness_generation::WitnessGenerator,
 };
+use op_succinct_proof_utils::initialize_host;
 use op_succinct_prove::{execute_multi, DEFAULT_RANGE, ONE_HOUR};
 
 mod common;
@@ -45,7 +46,7 @@ fn create_diff_report(base: &ExecutionStats, current: &ExecutionStats) -> String
         .unwrap();
     };
 
-    // Add key metrics with their comparisons
+    // Add key metrics with their comparisons.
     write_metric(
         &mut report,
         "Total Instructions",
@@ -126,8 +127,8 @@ async fn test_cycle_count_diff() -> Result<()> {
 
     let host_args = host.fetch(l2_start_block, l2_end_block, None, Some(false)).await?;
 
-    let oracle = host.run(&host_args).await?;
-    let sp1_stdin = get_proof_stdin(oracle)?;
+    let witness_data = host.run(&host_args).await?;
+    let sp1_stdin = host.witness_generator().get_sp1_stdin(witness_data)?;
     let (block_data, report, execution_duration) =
         execute_multi(&data_fetcher, sp1_stdin, l2_start_block, l2_end_block).await?;
 

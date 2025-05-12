@@ -16,31 +16,47 @@ jobs:
       - run-id=${{ github.run_id }}
       - disk=large
     steps:
-      - name: Checkout PR Branch
+      - name: Checkout Repository (for local actions)
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Setup CI
         uses: ./.github/actions/setup
 
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          path: new_code
+
+      - name: Checkout Base Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          path: old_code
+
       - name: Run Test On New Branch
         run: |
           RUST_LOG=info NEW_BRANCH=true cargo test test_cycle_count_diff --release -- --exact --nocapture
+        working-directory: ./new_code
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
           L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
           L2_RPC: ${{ secrets.L2_RPC }}
-      
-      - name: Checkout Old Branch
+
+      - name: Copy Stats File For Old Branch
         run: |
-          git checkout origin/${{ github.event.pull_request.base.ref }} -- . ':(exclude)new_cycle_stats.json'
+          STATS_FILE=$(find ${{ github.workspace }}/new_code -name "new_cycle_stats.json" -type f | head -1)
+          cp "$STATS_FILE" ${{ github.workspace }}/old_code/scripts/prove/new_cycle_stats.json
 
       - name: Run Test On Old Branch
         run: |
           RUST_LOG=info NEW_BRANCH=false cargo test test_cycle_count_diff --release -- --exact --nocapture
+        working-directory: ./old_code
         env:
           L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
           L1_RPC: ${{ secrets.L1_RPC }}
@@ -50,6 +66,7 @@ jobs:
       - name: Compare Results And Post To Github
         run: |
           RUST_LOG=info cargo test --test cycle_count_diff test_post_to_github -- --exact --nocapture
+        working-directory: ./old_code
         env:
           REPO_OWNER: ${{ github.repository_owner }}
           REPO_NAME: ${{ github.event.repository.name }}

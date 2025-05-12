@@ -8,10 +8,11 @@ use op_succinct_host_utils::{
         split_range_basic, SpanBatchRange,
     },
     fetcher::OPSuccinctDataFetcher,
-    get_proof_stdin, get_range_elf_embedded,
-    hosts::{initialize_host, OPSuccinctHost},
+    host::OPSuccinctHost,
     stats::ExecutionStats,
+    witness_generation::WitnessGenerator,
 };
+use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use op_succinct_scripts::HostExecutorArgs;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use sp1_sdk::{utils, ProverClient};
@@ -73,8 +74,8 @@ async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
         let host_args = host_args.clone();
         let host = host.clone();
         tokio::spawn(async move {
-            let oracle = host.run(&host_args).await.unwrap();
-            get_proof_stdin(oracle).unwrap()
+            let witness_data = host.run(&host_args).await.unwrap();
+            host.witness_generator().get_sp1_stdin(witness_data).unwrap()
         })
     });
 

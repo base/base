@@ -13,9 +13,9 @@ use fault_proof::{
 use op_alloy_network::EthereumWallet;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
-    hosts::initialize_host,
     metrics::{init_metrics, MetricsGauge},
 };
+use op_succinct_proof_utils::initialize_host;
 
 #[derive(Parser)]
 struct Args {

@@ -1,5 +1,5 @@
 [package]
-name = "range"
+name = "range-celestia"
 version = "0.1.0"
 license.workspace = true
 edition.workspace = true
@@ -8,8 +8,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-tracing.workspace = true
-anyhow.workspace = true
+# general
 rkyv.workspace = true
 
 # kona
@@ -19,7 +18,9 @@ kona-proof.workspace = true
 sp1-zkvm.workspace = true
 
 # op-succinct
+op-succinct-celestia-client-utils.workspace = true
 op-succinct-client-utils.workspace = true
+op-succinct-range-utils.workspace = true
 
 # `tracing-subscriber` feature dependencies
 tracing-subscriber = { workspace = true, optional = true }
@@ -27,4 +28,3 @@ tracing-subscriber = { workspace = true, optional = true }
 [features]
 embedded = ["sp1-zkvm/embedded"]
 tracing-subscriber = ["dep:tracing-subscriber"]
-celestia = ["op-succinct-client-utils/celestia"]

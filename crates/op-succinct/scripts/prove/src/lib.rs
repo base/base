@@ -1,10 +1,8 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Ok, Result};
-use op_succinct_host_utils::{
-    fetcher::{BlockInfo, OPSuccinctDataFetcher},
-    get_range_elf_embedded,
-};
+use op_succinct_host_utils::fetcher::{BlockInfo, OPSuccinctDataFetcher};
+use op_succinct_proof_utils::get_range_elf_embedded;
 use sp1_sdk::{ExecutionReport, ProverClient, SP1Stdin};
 
 pub const DEFAULT_RANGE: u64 = 5;

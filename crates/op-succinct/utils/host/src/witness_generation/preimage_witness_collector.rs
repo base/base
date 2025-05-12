@@ -1,10 +1,11 @@
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use kona_preimage::{
     errors::PreimageOracleResult, CommsClient, HintWriterClient, PreimageKey, PreimageOracleClient,
 };
 use kona_proof::FlushableCache;
 use op_succinct_client_utils::witness::preimage_store::PreimageStore;
-use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 pub struct PreimageWitnessCollector<P: CommsClient + FlushableCache + Send + Sync + Clone> {

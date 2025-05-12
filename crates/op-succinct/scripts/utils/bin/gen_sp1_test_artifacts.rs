@@ -5,9 +5,10 @@ use log::info;
 use op_succinct_host_utils::{
     block_range::{get_validated_block_range, split_range_basic},
     fetcher::OPSuccinctDataFetcher,
-    get_proof_stdin, get_range_elf_embedded,
-    hosts::{initialize_host, OPSuccinctHost},
+    host::OPSuccinctHost,
+    witness_generation::WitnessGenerator,
 };
+use op_succinct_proof_utils::{get_range_elf_embedded, initialize_host};
 use op_succinct_scripts::HostExecutorArgs;
 use sp1_sdk::utils;
 use std::{
@@ -47,8 +48,8 @@ async fn main() -> Result<()> {
 
     let mut successful_ranges = Vec::new();
     for (range, host_args) in split_ranges.iter().zip(host_args.iter()) {
-        let oracle = host.run(host_args).await.unwrap();
-        let sp1_stdin = get_proof_stdin(oracle).unwrap();
+        let witness_data = host.run(host_args).await?;
+        let sp1_stdin = host.witness_generator().get_sp1_stdin(witness_data)?;
         successful_ranges.push((sp1_stdin, range.clone()));
     }
 
