@@ -197,6 +197,26 @@ impl Hash for OpPooledTransaction {
     }
 }
 
+#[cfg(feature = "k256")]
+impl alloy_consensus::transaction::SignerRecoverable for OpPooledTransaction {
+    fn recover_signer(
+        &self,
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        let signature_hash = self.signature_hash();
+        alloy_consensus::crypto::secp256k1::recover_signer(self.signature(), signature_hash)
+    }
+
+    fn recover_signer_unchecked(
+        &self,
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        let signature_hash = self.signature_hash();
+        alloy_consensus::crypto::secp256k1::recover_signer_unchecked(
+            self.signature(),
+            signature_hash,
+        )
+    }
+}
+
 impl Encodable for OpPooledTransaction {
     /// This encodes the transaction _with_ the signature, and an rlp header.
     ///

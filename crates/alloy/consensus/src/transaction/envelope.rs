@@ -574,6 +574,49 @@ impl OpTxEnvelope {
     }
 }
 
+#[cfg(feature = "k256")]
+impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
+    fn recover_signer(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        let signature_hash = match self {
+            Self::Legacy(tx) => tx.signature_hash(),
+            Self::Eip2930(tx) => tx.signature_hash(),
+            Self::Eip1559(tx) => tx.signature_hash(),
+            Self::Eip7702(tx) => tx.signature_hash(),
+            // Optimism's Deposit transaction does not have a signature. Directly return the
+            // `from` address.
+            Self::Deposit(tx) => return Ok(tx.from),
+        };
+        let signature = match self {
+            Self::Legacy(tx) => tx.signature(),
+            Self::Eip2930(tx) => tx.signature(),
+            Self::Eip1559(tx) => tx.signature(),
+            Self::Eip7702(tx) => tx.signature(),
+            Self::Deposit(_) => unreachable!("Deposit transactions should not be handled here"),
+        };
+        alloy_consensus::crypto::secp256k1::recover_signer(signature, signature_hash)
+    }
+
+    fn recover_signer_unchecked(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        let signature_hash = match self {
+            Self::Legacy(tx) => tx.signature_hash(),
+            Self::Eip2930(tx) => tx.signature_hash(),
+            Self::Eip1559(tx) => tx.signature_hash(),
+            Self::Eip7702(tx) => tx.signature_hash(),
+            // Optimism's Deposit transaction does not have a signature. Directly return the
+            // `from` address.
+            Self::Deposit(tx) => return Ok(tx.from),
+        };
+        let signature = match self {
+            Self::Legacy(tx) => tx.signature(),
+            Self::Eip2930(tx) => tx.signature(),
+            Self::Eip1559(tx) => tx.signature(),
+            Self::Eip7702(tx) => tx.signature(),
+            Self::Deposit(_) => unreachable!("Deposit transactions should not be handled here"),
+        };
+        alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
+    }
+}
+
 impl Encodable for OpTxEnvelope {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.network_encode(out)
