@@ -1,17 +1,9 @@
-use reth_metrics::{metrics::Counter, metrics::Gauge, metrics::Histogram, Metrics};
+use reth_metrics::{metrics::Counter, metrics::Histogram, Metrics};
 
 /// op-rbuilder metrics
 #[derive(Metrics, Clone)]
 #[metrics(scope = "op_rbuilder")]
 pub struct OpRBuilderMetrics {
-    /// Builder balance of the last block
-    pub builder_balance: Gauge,
-    /// Number of builder landed blocks
-    pub builder_landed_blocks: Gauge,
-    /// Last built block height
-    pub last_landed_block_height: Gauge,
-    /// Number of blocks the builder did not land
-    pub builder_landed_blocks_missed: Gauge,
     /// Block built success
     pub block_built_success: Counter,
     /// Number of flashblocks added to block (Total per block)
@@ -54,32 +46,4 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
-    /// Number of reverted transactions
-    pub num_reverted_tx: Counter,
-}
-
-impl OpRBuilderMetrics {
-    pub fn inc_num_reverted_tx(&self, num_reverted_tx: usize) {
-        self.num_reverted_tx.increment(num_reverted_tx as u64);
-    }
-
-    pub fn inc_builder_landed_blocks(&self) {
-        self.builder_landed_blocks.increment(1);
-    }
-
-    pub fn dec_builder_landed_blocks(&self) {
-        self.builder_landed_blocks.decrement(1);
-    }
-
-    pub fn inc_builder_landed_blocks_missed(&self) {
-        self.builder_landed_blocks_missed.increment(1);
-    }
-
-    pub fn set_last_landed_block_height(&self, height: u64) {
-        self.last_landed_block_height.set(height as f64);
-    }
-
-    pub fn set_builder_balance(&self, balance: f64) {
-        self.builder_balance.set(balance);
-    }
 }
