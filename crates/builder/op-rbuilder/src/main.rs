@@ -1,6 +1,4 @@
 use clap::Parser;
-use monitoring::Monitoring;
-use reth::providers::CanonStateSubscriptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::node::OpAddOnsBuilder;
 use reth_optimism_node::OpNode;
@@ -54,9 +52,6 @@ fn main() {
                         .build(),
                 )
                 .on_node_started(move |ctx| {
-                    let new_canonical_blocks = ctx.provider().canonical_state_stream();
-                    let builder_signer = builder_args.builder_signer;
-
                     if builder_args.log_pool_transactions {
                         tracing::info!("Logging pool transactions");
                         ctx.task_executor.spawn_critical(
