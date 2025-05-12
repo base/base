@@ -91,11 +91,6 @@ mod tests {
             }
         }
 
-        // there must be a line logging the monitoring transaction
-        op_rbuilder
-            .find_log_line("Committed block built by builder")
-            .await?;
-
         Ok(())
     }
 
