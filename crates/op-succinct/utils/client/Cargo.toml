@@ -25,12 +25,8 @@ kona-derive.workspace = true
 kona-proof.workspace = true
 kona-executor.workspace = true
 kona-driver.workspace = true
-kona-rpc.workspace = true
 kona-protocol.workspace = true
 kona-genesis.workspace = true
-
-# hana
-hana-oracle = { workspace = true, optional = true }
 
 # general
 anyhow.workspace = true
@@ -40,11 +36,8 @@ serde.workspace = true
 rkyv.workspace = true
 sha2.workspace = true
 tracing.workspace = true
+spin.workspace = true
 
 # kzg
 kzg-rs.workspace = true
 cfg-if.workspace = true
-
-[features]
-default = []
-celestia = ["hana-oracle"]

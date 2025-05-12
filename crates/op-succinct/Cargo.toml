@@ -1,5 +1,19 @@
 [workspace]
-members = ["utils/*", "programs/*", "scripts/*", "validity", "fault-proof"]
+members = [
+    "utils/client",
+    "utils/host",
+    "utils/build",
+    "utils/celestia/client",
+    "utils/celestia/host",
+    "utils/proof",
+    "utils/ethereum/client",
+    "utils/ethereum/host",
+    "programs/range/*",
+    "programs/aggregation",
+    "scripts/*",
+    "validity",
+    "fault-proof"
+]
 resolver = "2"
 
 [workspace.package]
@@ -14,7 +28,7 @@ repository = "https://github.com/succinctlabs/op-succinct"
 anyhow = { version = "1.0.86", default-features = false }
 thiserror = { version = "2.0.3" }
 cfg-if = "1.0.0"
-spin = { version = "0.9.8" }
+spin = { version = "0.10.0" }
 lru = "0.12.3"
 async-trait = "0.1.80"
 sha2 = "0.10.8"
@@ -46,31 +60,29 @@ strum_macros = "0.27.1"
 tempfile = "3.10.1"
 
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0" }
-kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", default-features = false, features = [
-    "serde",
-] }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", default-features = false }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.0", default-features = false }
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
 
 # hana
-hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.11" }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.11" }
-hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.11" }
-hana-client = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.11" }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "a6077b794d1c00fc2af129fb28cbb0151f8c81b9" }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "a6077b794d1c00fc2af129fb28cbb0151f8c81b9" }
+hana-host = { git = "https://github.com/celestiaorg/hana", rev = "a6077b794d1c00fc2af129fb28cbb0151f8c81b9" }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "a6077b794d1c00fc2af129fb28cbb0151f8c81b9" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -79,28 +91,34 @@ op-succinct-host-utils = { path = "utils/host" }
 op-succinct-build-utils = { path = "utils/build" }
 op-succinct-validity = { path = "validity" }
 op-succinct-fp = { path = "fault-proof" }
+op-succinct-ethereum-client-utils = { path = "utils/ethereum/client" }
+op-succinct-ethereum-host-utils = { path = "utils/ethereum/host" }
+op-succinct-celestia-client-utils = { path = "utils/celestia/client" }
+op-succinct-celestia-host-utils = { path = "utils/celestia/host" }
+op-succinct-proof-utils = { path = "utils/proof" }
+op-succinct-range-utils = { path = "programs/range/utils" }
 
 # Alloy (Network)
-alloy-signer-local = { version = "0.15.6" }
-alloy-provider = { version = "0.15.6" }
-alloy-transport = { version = "0.15.6" }
-alloy-transport-http = { version = "0.15.6" }
-alloy-contract = { version = "0.15.6" }
-alloy-network = { version = "0.15.6" }
+alloy-signer-local = { version = "0.15.8" }
+alloy-provider = { version = "0.15.8" }
+alloy-transport = { version = "0.15.8" }
+alloy-transport-http = { version = "0.15.8" }
+alloy-contract = { version = "0.15.8" }
+alloy-network = { version = "0.15.8" }
 
 # Alloy
 alloy-rlp = { version = "0.3.11", default-features = false }
 alloy-trie = { version = "0.8.0", default-features = false }
-alloy-eips = { version = "0.15.6", default-features = false }
-alloy-serde = { version = "0.15.6", default-features = false }
-alloy-consensus = { version = "0.15.6", default-features = false }
-alloy-rpc-types = { version = "0.15.6", default-features = false }
-alloy-rpc-client = { version = "0.15.6", default-features = false }
-alloy-node-bindings = { version = "0.15.6", default-features = false }
-alloy-rpc-types-engine = { version = "0.15.6", default-features = false }
-alloy-rpc-types-beacon = { version = "0.15.6", default-features = false }
-alloy-rpc-types-eth = { version = "0.15.6", default-features = false }
-alloy-signer = { version = "0.15.6", default-features = false }
+alloy-eips = { version = "0.15.8", default-features = false }
+alloy-serde = { version = "0.15.8", default-features = false }
+alloy-consensus = { version = "0.15.8", default-features = false }
+alloy-rpc-types = { version = "0.15.8", default-features = false }
+alloy-rpc-client = { version = "0.15.8", default-features = false }
+alloy-node-bindings = { version = "0.15.8", default-features = false }
+alloy-rpc-types-engine = { version = "0.15.8", default-features = false }
+alloy-rpc-types-beacon = { version = "0.15.8", default-features = false }
+alloy-rpc-types-eth = { version = "0.15.8", default-features = false }
+alloy-signer = { version = "0.15.8", default-features = false }
 
 # Keccak with the SHA3 patch is more efficient than the default Keccak.
 alloy-primitives = { version = "1.0.0", default-features = false, features = [
@@ -123,8 +141,8 @@ revm = { version = "22.0.0", default-features = false, features = ["kzg-rs", "bn
 op-revm = { version = "3.0.1", default-features = false }
 
 # SP1
-# TODO(r): Temporary patch to fix get_proof_status. Bump version once merged.
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", branch = "ratan/fix-get-proof-status" }
+# TODO(fakedev9999): Temporary patch to fix get_proof_status. Bump to v4.2.1 when released.
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1", rev = "d2798c9" }
 sp1-lib = { version = "4.2.0", features = ["verify"] }
 sp1-zkvm = { version = "4.2.0", features = ["verify"] }
 sp1-build = { version = "4.2.0" }

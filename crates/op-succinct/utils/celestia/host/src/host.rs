@@ -1,42 +1,35 @@
-use alloy_consensus::Transaction;
-use alloy_eips::BlockId;
-use alloy_primitives::{address, Address, B256};
-use alloy_provider::Provider;
-use async_trait::async_trait;
-use hana_host::celestia::{CelestiaCfg, CelestiaChainHost};
-use kona_preimage::BidirectionalChannel;
-use kona_rpc::SafeHeadResponse;
-use op_succinct_client_utils::witness::WitnessData;
 use std::sync::Arc;
 
-use crate::{
-    fetcher::{OPSuccinctDataFetcher, RPCMode},
-    hosts::OPSuccinctHost,
-    SP1Blobstream,
-};
+use alloy_consensus::Transaction;
+use alloy_eips::BlockId;
+use alloy_primitives::B256;
+use alloy_provider::Provider;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use hana_blobstream::blobstream::{blostream_address, SP1Blobstream};
+use hana_host::celestia::{CelestiaCfg, CelestiaChainHost};
+use kona_rpc::SafeHeadResponse;
+use op_succinct_celestia_client_utils::executor::CelestiaDAWitnessExecutor;
+use op_succinct_host_utils::{
+    fetcher::{OPSuccinctDataFetcher, RPCMode},
+    host::OPSuccinctHost,
+};
+
+use crate::witness_generator::CelestiaDAWitnessGenerator;
 
 #[derive(Clone)]
 pub struct CelestiaOPSuccinctHost {
     pub fetcher: Arc<OPSuccinctDataFetcher>,
+    pub witness_generator: Arc<CelestiaDAWitnessGenerator>,
 }
 
 #[async_trait]
 impl OPSuccinctHost for CelestiaOPSuccinctHost {
     type Args = CelestiaChainHost;
+    type WitnessGenerator = CelestiaDAWitnessGenerator;
 
-    async fn run(&self, args: &Self::Args) -> Result<WitnessData> {
-        let hint = BidirectionalChannel::new()?;
-        let preimage = BidirectionalChannel::new()?;
-
-        let server_task = args.start_server(hint.host, preimage.host).await?;
-
-        let witness = Self::run_witnessgen_client(preimage.client, hint.client).await?;
-        // Unlike the upstream, manually abort the server task, as it will hang if you wait for both
-        // tasks to complete.
-        server_task.abort();
-
-        Ok(witness)
+    fn witness_generator(&self) -> &Self::WitnessGenerator {
+        &self.witness_generator
     }
 
     async fn fetch(
@@ -88,7 +81,8 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
         let batch_inbox_address = fetcher.rollup_config.as_ref().unwrap().batch_inbox_address;
 
         let blobstream_contract = SP1Blobstream::new(
-            get_blobstream_address(fetcher.rollup_config.as_ref().unwrap().l1_chain_id),
+            blostream_address(fetcher.rollup_config.as_ref().unwrap().l1_chain_id)
+                .expect("Failed to fetch blobstream contract address"),
             fetcher.l1_provider.clone(),
         );
         // Get the latest Celestia block included in a Blobstream commitment.
@@ -171,22 +165,12 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
 
 impl CelestiaOPSuccinctHost {
     pub fn new(fetcher: Arc<OPSuccinctDataFetcher>) -> Self {
-        Self { fetcher }
-    }
-}
-
-/// Get the Blobstream contract address for a given L1 chain ID.
-///
-/// The addresses can be found here: https://docs.celestia.org/how-to-guides/blobstream
-fn get_blobstream_address(l1_chain_id: u64) -> Address {
-    match l1_chain_id {
-        1 => address!("7Cf3876F681Dbb6EdA8f6FfC45D66B996Df08fAe"),
-        42161 => address!("A83ca7775Bc2889825BcDeDfFa5b758cf69e8794"),
-        8453 => address!("A83ca7775Bc2889825BcDeDfFa5b758cf69e8794"),
-        11155111 => address!("f0c6429ebab2e7dc6e05dafb61128be21f13cb1e"),
-        421614 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
-        84532 => address!("c3e209eb245Fd59c8586777b499d6A665DF3ABD2"),
-        _ => panic!("Unsupported L1 chain ID: {l1_chain_id}"),
+        Self {
+            fetcher,
+            witness_generator: Arc::new(CelestiaDAWitnessGenerator {
+                executor: CelestiaDAWitnessExecutor::new(),
+            }),
+        }
     }
 }
 

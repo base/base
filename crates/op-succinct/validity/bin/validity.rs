@@ -2,9 +2,9 @@ use alloy_provider::{Provider, ProviderBuilder};
 use anyhow::Result;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
-    hosts::initialize_host,
     metrics::{init_metrics, MetricsGauge},
 };
+use op_succinct_proof_utils::initialize_host;
 use op_succinct_validity::{
     read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
     ValidityGauge,

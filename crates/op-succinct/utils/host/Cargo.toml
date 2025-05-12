@@ -13,51 +13,46 @@ sp1-sdk.workspace = true
 op-succinct-client-utils.workspace = true
 
 # op-alloy
-op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
+op-alloy-network.workspace = true
 
 # kona
+kona-derive.workspace = true
 kona-genesis.workspace = true
-kona-protocol.workspace = true
-kona-rpc.workspace = true
 kona-host.workspace = true
 kona-preimage.workspace = true
 kona-proof.workspace = true
-kona-derive.workspace = true
+kona-protocol.workspace = true
+kona-rpc.workspace = true
 
 # hana
-hana-host = { workspace = true, optional = true }
+hana-host.workspace = true
 
 # alloy
+alloy-consensus.workspace = true
 alloy-contract.workspace = true
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rlp.workspace = true
-alloy-primitives.workspace = true
-alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
-alloy-eips.workspace = true
-alloy-rpc-types.workspace = true
 
 # general
-rkyv.workspace = true
-serde_json.workspace = true
 anyhow.workspace = true
-serde_cbor.workspace = true
-futures.workspace = true
-num-format.workspace = true
-serde.workspace = true
-reqwest.workspace = true
-tracing.workspace = true
 async-trait.workspace = true
-strum.workspace = true
-metrics.workspace = true
-metrics-process.workspace = true
-metrics-exporter-prometheus.workspace = true
 cfg-if.workspace = true
-
-kzg-rs.workspace = true
 c-kzg.workspace = true
-
-[features]
-default = []
-celestia = ["hana-host"]
+futures.workspace = true
+kzg-rs.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+metrics-process.workspace = true
+num-format.workspace = true
+reqwest.workspace = true
+rkyv.workspace = true
+serde.workspace = true
+serde_cbor.workspace = true
+serde_json.workspace = true
+strum.workspace = true
+tokio.workspace = true
+tracing.workspace = true

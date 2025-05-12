@@ -1,3 +1,12 @@
+use std::{
+    cmp::{min, Ordering},
+    env, fs,
+    path::PathBuf,
+    str::FromStr,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use alloy_consensus::{BlockHeader, Header};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
@@ -16,14 +25,6 @@ use op_succinct_client_utils::boot::BootInfoStruct;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    cmp::{min, Ordering},
-    env, fs,
-    path::PathBuf,
-    str::FromStr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
 
 use crate::L2Output;
 

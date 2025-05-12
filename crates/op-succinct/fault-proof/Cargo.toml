@@ -23,6 +23,7 @@ path = "bin/challenger.rs"
 # local
 op-succinct-client-utils.workspace = true
 op-succinct-host-utils.workspace = true
+op-succinct-proof-utils.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
@@ -56,3 +57,8 @@ tracing.workspace = true
 hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+
+[features]
+default = ["ethereum"]
+celestia = ["op-succinct-proof-utils/celestia"]
+ethereum = ["op-succinct-proof-utils/ethereum"]

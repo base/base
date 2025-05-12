@@ -1,0 +1,26 @@
+[package]
+name = "op-succinct-celestia-client-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+# local
+op-succinct-client-utils.workspace = true
+
+# kona
+kona-derive.workspace = true
+kona-driver.workspace = true
+kona-executor.workspace = true
+kona-genesis.workspace = true
+kona-preimage.workspace = true
+kona-proof.workspace = true
+
+# hana
+hana-celestia.workspace = true
+hana-oracle.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+spin.workspace = true

@@ -1,11 +1,12 @@
-use metrics::{describe_gauge, gauge};
-use metrics_exporter_prometheus::PrometheusBuilder;
-use metrics_process::Collector;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     thread,
     time::Duration,
 };
+
+use metrics::{describe_gauge, gauge};
+use metrics_exporter_prometheus::PrometheusBuilder;
+use metrics_process::Collector;
 use strum::{EnumMessage, IntoEnumIterator};
 use tracing::warn;
 

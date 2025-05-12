@@ -2,9 +2,8 @@ use alloy_primitives::B256;
 use anyhow::Result;
 use clap::Parser;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
-use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_range_elf_embedded, AGGREGATION_ELF,
-};
+use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use op_succinct_proof_utils::{get_range_elf_embedded, AGGREGATION_ELF};
 use op_succinct_scripts::ConfigArgs;
 use sp1_sdk::{utils, HashableKey, Prover, ProverClient};
 

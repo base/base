@@ -3,10 +3,8 @@ use alloy_primitives::{hex, Address};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::Result;
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
-use op_succinct_host_utils::{
-    fetcher::{OPSuccinctDataFetcher, RPCMode},
-    get_range_elf_embedded, AGGREGATION_ELF,
-};
+use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
+use op_succinct_proof_utils::{get_range_elf_embedded, AGGREGATION_ELF};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sp1_sdk::{HashableKey, Prover, ProverClient};

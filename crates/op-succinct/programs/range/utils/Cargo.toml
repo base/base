@@ -1,0 +1,29 @@
+[package]
+name = "op-succinct-range-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+tracing.workspace = true
+anyhow.workspace = true
+rkyv.workspace = true
+
+# kona
+kona-proof.workspace = true
+
+# sp1
+sp1-zkvm.workspace = true
+
+# op-succinct
+op-succinct-client-utils.workspace = true
+
+# `tracing-subscriber` feature dependencies
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+embedded = ["sp1-zkvm/embedded"]
+tracing-subscriber = ["dep:tracing-subscriber"]

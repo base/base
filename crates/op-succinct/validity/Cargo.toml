@@ -20,7 +20,9 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 
 # local
+op-succinct-client-utils.workspace = true
 op-succinct-host-utils.workspace = true
+op-succinct-proof-utils.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
@@ -36,7 +38,6 @@ alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 
 anyhow.workspace = true
 dotenv.workspace = true
-op-succinct-client-utils.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
@@ -65,7 +66,6 @@ strum_macros.workspace = true
 op-succinct-build-utils.workspace = true
 
 [features]
-# Building without --features will use `SingleChainOPSuccinctHost` with Ethereum DA.
-default = []
-# Feature flag for Celestia DA support.
-celestia = ["op-succinct-host-utils/celestia"]
+default = ["ethereum"]
+celestia = ["op-succinct-proof-utils/celestia"]
+ethereum = ["op-succinct-proof-utils/ethereum"]
