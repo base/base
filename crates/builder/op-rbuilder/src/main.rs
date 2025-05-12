@@ -18,7 +18,6 @@ pub mod generator;
 mod integration;
 mod metrics;
 mod monitor_tx_pool;
-mod monitoring;
 #[cfg(feature = "flashblocks")]
 pub mod payload_builder;
 #[cfg(not(feature = "flashblocks"))]
@@ -67,14 +66,6 @@ fn main() {
                             }),
                         );
                     }
-
-                    ctx.task_executor.spawn_critical(
-                        "monitoring",
-                        Box::pin(async move {
-                            let monitoring = Monitoring::new(builder_signer);
-                            let _ = monitoring.run_with_stream(new_canonical_blocks).await;
-                        }),
-                    );
 
                     Ok(())
                 })
