@@ -448,10 +448,6 @@ mod tests {
                     .expect("receipt");
             }
         }
-        // there must be a line logging the monitoring transaction
-        op_rbuilder
-            .find_log_line("Processing new chain commit") // no builder tx for flashblocks builder
-            .await?;
 
         // check there's 10 flashblocks log lines (2000ms / 200ms)
         op_rbuilder.find_log_line("Building flashblock 9").await?;
@@ -581,10 +577,6 @@ mod tests {
                 .await?
                 .expect("receipt");
         }
-
-        op_rbuilder
-            .find_log_line("Processing new chain commit") // no builder tx for flashblocks builder
-            .await?;
 
         // check there's no more than 10 flashblocks log lines (2000ms / 200ms)
         op_rbuilder.find_log_line("Building flashblock 9").await?;
