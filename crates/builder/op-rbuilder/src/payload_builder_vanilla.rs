@@ -667,7 +667,7 @@ impl<Txs> OpBuilder<'_, Txs> {
         );
 
         let sealed_block = Arc::new(block.seal_slow());
-        tracing::info!(target: "payload_builder", id=%ctx.attributes().payload_id(), "sealed built block");
+        info!(target: "payload_builder", id=%ctx.attributes().payload_id(), "sealed built block");
 
         // create the executed block data
         let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
