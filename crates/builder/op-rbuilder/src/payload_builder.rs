@@ -173,6 +173,7 @@ where
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
         let extra_block_deadline = self.extra_block_deadline;
+        let enable_revert_protection = self.enable_revert_protection;
         let payload_builder = self.build_payload_builder(ctx, pool).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -183,6 +184,7 @@ where
             payload_builder,
             true,
             extra_block_deadline,
+            enable_revert_protection,
         );
 
         let (payload_service, payload_builder) =

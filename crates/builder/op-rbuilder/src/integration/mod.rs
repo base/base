@@ -1,6 +1,6 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::{hex, TxHash, TxNonce};
+use alloy_primitives::hex;
 use alloy_provider::{
     Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
 };
