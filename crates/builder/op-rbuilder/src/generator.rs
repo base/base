@@ -71,6 +71,8 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     ensure_only_one_payload: bool,
     /// The last payload being processed
     last_payload: Arc<Mutex<CancellationToken>>,
+    /// The extra block deadline in seconds
+    extra_block_deadline: std::time::Duration,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -84,6 +86,7 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         config: BasicPayloadJobGeneratorConfig,
         builder: Builder,
         ensure_only_one_payload: bool,
+        extra_block_deadline: std::time::Duration,
     ) -> Self {
         Self {
             client,
@@ -92,6 +95,7 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             builder,
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
+            extra_block_deadline,
         }
     }
 }
@@ -164,7 +168,7 @@ where
         // "remember" the payloads long enough to accommodate this corner-case
         // (without it we are losing blocks). Postponing the deadline for 5s
         // (not just 0.5s) because of that.
-        let deadline = job_deadline(attributes.timestamp()) + Duration::from_millis(5000);
+        let deadline = job_deadline(attributes.timestamp()) + self.extra_block_deadline;
 
         let deadline = Box::pin(tokio::time::sleep(deadline));
         let config = PayloadConfig::new(Arc::new(parent_header.clone()), attributes);
@@ -632,6 +636,7 @@ mod tests {
             config,
             builder.clone(),
             false,
+            std::time::Duration::from_secs(1),
         );
 
         // this is not nice but necessary
