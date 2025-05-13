@@ -431,34 +431,6 @@ impl OpTxEnvelope {
         }
     }
 
-    /// Recover the signer of the transaction.
-    ///
-    /// If this transaction is a [`TxDeposit`] transaction this returns the deposit transaction's
-    /// `from` address.
-    #[cfg(feature = "k256")]
-    pub fn recover_signer(&self) -> Result<Address, alloy_primitives::SignatureError> {
-        match self {
-            Self::Legacy(tx) => tx.recover_signer(),
-            Self::Eip2930(tx) => tx.recover_signer(),
-            Self::Eip1559(tx) => tx.recover_signer(),
-            Self::Eip7702(tx) => tx.recover_signer(),
-            Self::Deposit(tx) => Ok(tx.inner().from),
-        }
-    }
-    /// Recover the signer and return a new [`alloy_consensus::transaction::Recovered`] instance
-    /// containing both the transaction and the recovered signer address.
-    ///
-    /// If this transaction is a [`TxDeposit`] transaction this returns the deposit transaction's
-    /// `from` address.
-    #[cfg(feature = "k256")]
-    pub fn try_into_recovered(
-        self,
-    ) -> Result<alloy_consensus::transaction::Recovered<Self>, alloy_primitives::SignatureError>
-    {
-        let signer = self.recover_signer()?;
-        Ok(alloy_consensus::transaction::Recovered::new_unchecked(self, signer))
-    }
-
     /// Returns mutable access to the input bytes.
     ///
     /// Caution: modifying this will cause side-effects on the hash.

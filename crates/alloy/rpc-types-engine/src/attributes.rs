@@ -97,16 +97,14 @@ impl OpPayloadAttributes {
     ) -> impl Iterator<
         Item = Result<
             alloy_consensus::transaction::Recovered<OpTxEnvelope>,
-            alloy_primitives::SignatureError,
+            alloy_consensus::crypto::RecoveryError,
         >,
     > + '_ {
+        use alloy_consensus::transaction::SignerRecoverable;
+
         self.decoded_transactions().map(|res| {
-            res.map_err(|_| {
-                alloy_primitives::SignatureError::FromBytes(
-                    "Failed to decode 2718 transaction envelope",
-                )
-            })
-            .and_then(|tx| tx.try_into_recovered())
+            res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
+                .and_then(|tx| tx.try_into_recovered())
         })
     }
 
@@ -120,7 +118,7 @@ impl OpPayloadAttributes {
     ) -> impl Iterator<
         Item = Result<
             WithEncoded<alloy_consensus::transaction::Recovered<OpTxEnvelope>>,
-            alloy_primitives::SignatureError,
+            alloy_consensus::crypto::RecoveryError,
         >,
     > + '_ {
         self.transactions
