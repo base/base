@@ -89,6 +89,7 @@ op-succinct-prove = { path = "scripts/prove" }
 op-succinct-client-utils = { path = "utils/client" }
 op-succinct-host-utils = { path = "utils/host" }
 op-succinct-build-utils = { path = "utils/build" }
+op-succinct-elfs = { path = "utils/elfs" }
 op-succinct-validity = { path = "validity" }
 op-succinct-fp = { path = "fault-proof" }
 op-succinct-ethereum-client-utils = { path = "utils/ethereum/client" }

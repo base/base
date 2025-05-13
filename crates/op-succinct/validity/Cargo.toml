@@ -21,6 +21,7 @@ tracing.workspace = true
 
 # local
 op-succinct-client-utils.workspace = true
+op-succinct-elfs.workspace = true
 op-succinct-host-utils.workspace = true
 op-succinct-proof-utils.workspace = true
 

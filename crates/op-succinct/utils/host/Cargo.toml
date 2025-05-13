@@ -11,6 +11,7 @@ sp1-sdk.workspace = true
 
 # local
 op-succinct-client-utils.workspace = true
+op-succinct-elfs.workspace = true
 
 # op-alloy
 op-alloy-consensus.workspace = true

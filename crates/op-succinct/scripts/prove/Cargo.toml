@@ -31,6 +31,7 @@ op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
 op-succinct-proof-utils.workspace = true
 op-succinct-scripts = { path = "../utils" }
+op-succinct-elfs.workspace = true
 
 # alloy
 alloy-primitives.workspace = true

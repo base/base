@@ -8,6 +8,7 @@ edition.workspace = true
 
 # local
 op-succinct-celestia-host-utils = { workspace = true, optional = true }
+op-succinct-elfs.workspace = true
 op-succinct-ethereum-host-utils = { workspace = true, optional = true }
 op-succinct-host-utils.workspace = true
 
