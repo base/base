@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use reth_optimism_node::txpool::OpPooledTransaction;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
-use tracing::debug;
+use tracing::info;
 
 pub async fn monitor_tx_pool(mut new_transactions: AllTransactionsEvents<OpPooledTransaction>) {
     while let Some(event) = new_transactions.next().await {
@@ -13,6 +13,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
     match event {
         FullTransactionEvent::Pending(hash) => {
             info!(
+                target = "monitoring",
                 tx_hash = hash.to_string(),
                 kind = "pending",
                 "Transaction event received"
@@ -20,6 +21,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
         }
         FullTransactionEvent::Queued(hash) => {
             info!(
+                target = "monitoring",
                 tx_hash = hash.to_string(),
                 kind = "queued",
                 "Transaction event received"
@@ -29,6 +31,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
             tx_hash,
             block_hash,
         } => info!(
+            target = "monitoring",
             tx_hash = tx_hash.to_string(),
             kind = "mined",
             block_hash = block_hash.to_string(),
@@ -38,6 +41,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
             transaction,
             replaced_by,
         } => info!(
+            target = "monitoring",
             tx_hash = transaction.hash().to_string(),
             kind = "replaced",
             replaced_by = replaced_by.to_string(),
@@ -45,6 +49,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
         ),
         FullTransactionEvent::Discarded(hash) => {
             info!(
+                target = "monitoring",
                 tx_hash = hash.to_string(),
                 kind = "discarded",
                 "Transaction event received"
@@ -52,6 +57,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
         }
         FullTransactionEvent::Invalid(hash) => {
             info!(
+                target = "monitoring",
                 tx_hash = hash.to_string(),
                 kind = "invalid",
                 "Transaction event received"
