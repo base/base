@@ -2,7 +2,8 @@
 mod tests {
     use crate::{
         integration::{
-            op_rbuilder::OpRbuilderConfig, op_reth::OpRethConfig, IntegrationFramework, TestHarness,
+            op_rbuilder::OpRbuilderConfig, op_reth::OpRethConfig, IntegrationFramework,
+            TestHarness, TestHarnessBuilder,
         },
         tester::{BlockGenerator, EngineApi},
         tx_signer::Signer,
@@ -96,8 +97,64 @@ mod tests {
 
     #[tokio::test]
     #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_monitor_transaction_drops() -> eyre::Result<()> {
+        // This test ensures that the transactions that get reverted an not included in the block
+        // are emitted as a log on the builder.
+        let harness = TestHarnessBuilder::new("integration_test_monitor_transaction_drops")
+            .with_revert_protection()
+            .build()
+            .await?;
+
+        let mut generator = harness.block_generator().await?;
+
+        // send 10 reverting transactions
+        let mut pending_txn = Vec::new();
+        for _ in 0..10 {
+            let txn = harness.send_revert_transaction().await?;
+            pending_txn.push(txn);
+        }
+
+        // generate 10 blocks
+        for _ in 0..10 {
+            let block_hash = generator.generate_block().await?;
+
+            // query the block and the transactions inside the block
+            let block = harness
+                .provider()?
+                .get_block_by_hash(block_hash)
+                .await?
+                .expect("block");
+
+            // blocks should only include two transactions (deposit + builder)
+            assert_eq!(block.transactions.len(), 2);
+        }
+
+        // check that the builder emitted logs for the reverted transactions
+        // with the monitoring logic
+        // TODO: this is not ideal, lets find a different way to detect this
+        // Each time a transaction is dropped, it emits a log like this
+        // 'Transaction event received target="monitoring" tx_hash="<tx_hash>" kind="discarded"'
+        let builder_logs = std::fs::read_to_string(harness.builder_log_path)?;
+
+        for txn in pending_txn {
+            let txn_log = format!(
+                "Transaction event received target=\"monitoring\" tx_hash=\"{}\" kind=\"discarded\"",
+                txn.tx_hash()
+            );
+
+            assert!(builder_logs.contains(txn_log.as_str()));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
     async fn integration_test_revert_protection_disabled() -> eyre::Result<()> {
-        let harness = TestHarness::new("integration_test_revert_protection_disabled").await;
+        let harness = TestHarnessBuilder::new("integration_test_revert_protection_disabled")
+            .build()
+            .await?;
+
         let mut generator = harness.block_generator().await?;
 
         let txn1 = harness.send_valid_transaction().await?;
@@ -386,13 +443,15 @@ mod tests {
     #[tokio::test]
     #[cfg(not(feature = "flashblocks"))]
     async fn integration_test_get_payload_close_to_fcu() -> eyre::Result<()> {
-        let test_harness = TestHarness::new("integration_test_get_payload_close_to_fcu").await;
+        let test_harness = TestHarnessBuilder::new("integration_test_get_payload_close_to_fcu")
+            .build()
+            .await?;
         let mut block_generator = test_harness.block_generator().await?;
 
         // add some transactions to the pool so that the builder is busy when we send the fcu/getPayload requests
         for _ in 0..10 {
             // Note, for this test it is okay if they are not valid
-            test_harness.send_valid_transaction().await?;
+            let _ = test_harness.send_valid_transaction().await?;
         }
 
         // TODO: In the fail case scenario, this hangs forever, but it should return an error

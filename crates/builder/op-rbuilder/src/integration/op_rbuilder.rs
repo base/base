@@ -116,6 +116,9 @@ impl Service for OpRbuilderConfig {
             .arg("--datadir")
             .arg(self.data_dir.as_ref().expect("data_dir not set"))
             .arg("--disable-discovery")
+            .arg("--color")
+            .arg("never")
+            .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
             .arg("--ipcdisable");

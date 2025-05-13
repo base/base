@@ -219,16 +219,26 @@ impl Drop for IntegrationFramework {
 const BUILDER_PRIVATE_KEY: &str =
     "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
-pub struct TestHarness {
-    _framework: IntegrationFramework,
-    builder_auth_rpc_port: u16,
-    builder_http_port: u16,
-    validator_auth_rpc_port: u16,
+pub struct TestHarnessBuilder {
+    name: String,
+    use_revert_protection: bool,
 }
 
-impl TestHarness {
-    pub async fn new(name: &str) -> Self {
-        let mut framework = IntegrationFramework::new(name).unwrap();
+impl TestHarnessBuilder {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            use_revert_protection: false,
+        }
+    }
+
+    pub fn with_revert_protection(mut self) -> Self {
+        self.use_revert_protection = true;
+        self
+    }
+
+    pub async fn build(self) -> eyre::Result<TestHarness> {
+        let mut framework = IntegrationFramework::new(&self.name).unwrap();
 
         // we are going to use a genesis file pre-generated before the test
         let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -245,7 +255,8 @@ impl TestHarness {
             .auth_rpc_port(builder_auth_rpc_port)
             .network_port(get_available_port())
             .http_port(builder_http_port)
-            .with_builder_private_key(BUILDER_PRIVATE_KEY);
+            .with_builder_private_key(BUILDER_PRIVATE_KEY)
+            .with_revert_protection(self.use_revert_protection);
 
         // create the validation reth node
 
@@ -259,19 +270,33 @@ impl TestHarness {
 
         framework.start("op-reth", &reth).await.unwrap();
 
-        let _ = framework
+        let builder = framework
             .start("op-rbuilder", &op_rbuilder_config)
             .await
             .unwrap();
 
-        Self {
+        let builder_log_path = builder.log_path.clone();
+
+        Ok(TestHarness {
             _framework: framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
-        }
+            builder_log_path,
+        })
     }
+}
 
+pub struct TestHarness {
+    _framework: IntegrationFramework,
+    builder_auth_rpc_port: u16,
+    builder_http_port: u16,
+    validator_auth_rpc_port: u16,
+    #[allow(dead_code)] // I think this is due to some feature flag conflicts
+    builder_log_path: PathBuf,
+}
+
+impl TestHarness {
     pub async fn send_valid_transaction(
         &self,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
