@@ -1174,7 +1174,6 @@ where
 
             // A sequencer's block should never contain blob or deposit transactions from the pool.
             if tx.is_eip4844() || tx.is_deposit() {
-                println!("B");
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }
