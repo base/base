@@ -96,6 +96,42 @@ mod tests {
 
     #[tokio::test]
     #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_revert_protection_disabled() -> eyre::Result<()> {
+        let harness = TestHarness::new("integration_test_revert_protection_disabled").await;
+        let mut generator = harness.block_generator().await?;
+
+        let txn1 = harness.send_valid_transaction().await?;
+        let txn2 = harness.send_revert_transaction().await?;
+        let pending_txn = vec![txn1, txn2];
+
+        let block_hash = generator.generate_block().await?;
+
+        // the transactions should be included in the block now
+        let pending_txn = {
+            let mut transaction_hashes = Vec::new();
+            for txn in pending_txn {
+                let txn_hash = txn.with_timeout(None).watch().await?;
+                transaction_hashes.push(txn_hash);
+            }
+            transaction_hashes
+        };
+
+        // validate that all the transaction hashes are included in the block
+        let provider = harness.provider()?;
+        let block = provider
+            .get_block_by_hash(block_hash)
+            .await?
+            .expect("block");
+
+        for txn in pending_txn {
+            assert!(block.transactions.hashes().any(|hash| hash == txn));
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
     async fn integration_test_revert_protection() -> eyre::Result<()> {
         // This is a simple test using the integration framework to test that the chain
         // produces blocks.
@@ -115,7 +151,8 @@ mod tests {
             .auth_rpc_port(1244)
             .network_port(1245)
             .http_port(1248)
-            .with_builder_private_key(BUILDER_PRIVATE_KEY);
+            .with_builder_private_key(BUILDER_PRIVATE_KEY)
+            .with_revert_protection(true);
 
         // create the validation reth node
         let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
