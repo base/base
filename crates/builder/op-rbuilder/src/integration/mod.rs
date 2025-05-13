@@ -292,6 +292,7 @@ pub struct TestHarness {
     builder_auth_rpc_port: u16,
     builder_http_port: u16,
     validator_auth_rpc_port: u16,
+    #[allow(dead_code)] // I think this is due to some feature flag conflicts
     builder_log_path: PathBuf,
 }
 
