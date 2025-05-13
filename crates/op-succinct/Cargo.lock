@@ -7114,6 +7114,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-elfs"
+version = "0.1.0"
+
+[[package]]
 name = "op-succinct-ethereum-client-utils"
 version = "0.1.0"
 dependencies = [
@@ -7171,6 +7175,7 @@ dependencies = [
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-succinct-client-utils",
+ "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "rand 0.9.1",
@@ -7214,6 +7219,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-network",
  "op-succinct-client-utils",
+ "op-succinct-elfs",
  "reqwest",
  "rkyv",
  "serde",
@@ -7231,6 +7237,7 @@ version = "0.1.0"
 dependencies = [
  "cfg-if",
  "op-succinct-celestia-host-utils",
+ "op-succinct-elfs",
  "op-succinct-ethereum-host-utils",
  "op-succinct-host-utils",
  "tracing",
@@ -7248,6 +7255,7 @@ dependencies = [
  "dotenv",
  "op-succinct-build-utils",
  "op-succinct-client-utils",
+ "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "op-succinct-scripts",
@@ -7289,6 +7297,7 @@ dependencies = [
  "log",
  "op-succinct-build-utils",
  "op-succinct-client-utils",
+ "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "rayon",
@@ -7319,6 +7328,7 @@ dependencies = [
  "futures-util",
  "op-succinct-build-utils",
  "op-succinct-client-utils",
+ "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "reqwest",
