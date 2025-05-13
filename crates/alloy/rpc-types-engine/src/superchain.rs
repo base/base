@@ -58,7 +58,7 @@ impl core::fmt::Display for ProtocolVersion {
 }
 
 /// An error that can occur when encoding or decoding a ProtocolVersion.
-#[derive(Copy, Clone, Debug, Display, From)]
+#[derive(Copy, Clone, thiserror::Error, Debug, Display, From)]
 pub enum ProtocolVersionError {
     /// An unsupported version was encountered.
     #[display("Unsupported version: {_0}")]
@@ -204,7 +204,7 @@ impl<'de> serde::Deserialize<'de> for ProtocolVersion {
 /// <patch> ::= <big-endian uint32>
 /// <pre-release> ::= <big-endian uint32>
 /// ```
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub struct ProtocolVersionFormatV0 {
     /// Differentiates forks and custom-builds of standard protocol
     pub build: B64,
