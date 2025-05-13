@@ -99,11 +99,13 @@ pub struct CustomOpPayloadBuilder {
     flashblocks_ws_url: String,
     chain_block_time: u64,
     flashblock_block_time: u64,
+    extra_block_deadline: std::time::Duration,
 }
 
 impl CustomOpPayloadBuilder {
     pub fn new(
         builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
@@ -113,6 +115,7 @@ impl CustomOpPayloadBuilder {
             flashblocks_ws_url,
             chain_block_time,
             flashblock_block_time,
+            extra_block_deadline,
         }
     }
 }
@@ -168,6 +171,7 @@ where
         pool: Pool,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
+        let extra_block_deadline = self.extra_block_deadline;
         let payload_builder = self.build_payload_builder(ctx, pool).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -177,6 +181,7 @@ where
             payload_job_config,
             payload_builder,
             true,
+            extra_block_deadline,
         );
 
         let (payload_service, payload_builder) =

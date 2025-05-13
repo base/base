@@ -76,6 +76,7 @@ const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
 #[non_exhaustive]
 pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
+    extra_block_deadline: std::time::Duration,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
     #[cfg(feature = "flashblocks")]
@@ -103,11 +104,15 @@ impl CustomOpPayloadBuilder {
     #[cfg(not(feature = "flashblocks"))]
     pub fn new(
         builder_signer: Option<Signer>,
+        extra_block_deadline: std::time::Duration,
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
     ) -> Self {
-        Self { builder_signer }
+        Self {
+            builder_signer,
+            extra_block_deadline,
+        }
     }
 }
 
@@ -161,6 +166,7 @@ where
         pool: Pool,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
+        let extra_block_deadline = self.extra_block_deadline;
         let payload_builder = self.build_payload_builder(ctx, pool).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -170,6 +176,7 @@ where
             payload_job_config,
             payload_builder,
             false,
+            extra_block_deadline,
         );
 
         let (payload_service, payload_builder) =

@@ -41,4 +41,7 @@ pub struct OpRbuilderArgs {
     /// Signals whether to log pool transaction events
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,
+    /// How much time extra to wait for the block building job to complete and not get garbage collected
+    #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
+    pub extra_block_deadline_secs: u64,
 }
