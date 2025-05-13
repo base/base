@@ -1,23 +1,24 @@
-use futures_util::Future;
-use futures_util::FutureExt;
-use reth::providers::BlockReaderIdExt;
-use reth::{providers::StateProviderFactory, tasks::TaskSpawner};
-use reth_basic_payload_builder::HeaderForPayload;
-use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, PayloadConfig};
-use reth_node_api::PayloadBuilderAttributes;
-use reth_node_api::PayloadKind;
-use reth_payload_builder::PayloadJobGenerator;
-use reth_payload_builder::{KeepPayloadJobAlive, PayloadBuilderError, PayloadJob};
+use futures_util::{Future, FutureExt};
+use reth::{
+    providers::{BlockReaderIdExt, StateProviderFactory},
+    tasks::TaskSpawner,
+};
+use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig};
+use reth_node_api::{PayloadBuilderAttributes, PayloadKind};
+use reth_payload_builder::{
+    KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
+};
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
 use reth_revm::cached::CachedReads;
-use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
-use tokio::sync::oneshot;
-use tokio::sync::Notify;
-use tokio::time::Duration;
-use tokio::time::Sleep;
+use std::{
+    sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tokio::{
+    sync::{oneshot, Notify},
+    time::{Duration, Sleep},
+};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
@@ -428,14 +429,15 @@ mod tests {
     use reth::tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlockWithTrieUpdates;
     use reth_node_api::NodePrimitives;
-    use reth_optimism_payload_builder::payload::OpPayloadBuilderAttributes;
-    use reth_optimism_payload_builder::OpPayloadPrimitives;
+    use reth_optimism_payload_builder::{payload::OpPayloadBuilderAttributes, OpPayloadPrimitives};
     use reth_optimism_primitives::OpPrimitives;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
     use reth_testing_utils::generators::{random_block_range, BlockRangeParams};
-    use tokio::task;
-    use tokio::time::{sleep, Duration};
+    use tokio::{
+        task,
+        time::{sleep, Duration},
+    };
 
     #[tokio::test]
     async fn test_block_cell_wait_for_value() {

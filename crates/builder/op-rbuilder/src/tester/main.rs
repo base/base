@@ -67,7 +67,7 @@ async fn main() -> eyre::Result<()> {
             generator.init().await?;
 
             let block_hash = generator.deposit(address, amount).await?;
-            println!("Deposit transaction included in block: {}", block_hash);
+            println!("Deposit transaction included in block: {block_hash}");
             Ok(())
         }
     }

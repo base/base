@@ -1,32 +1,32 @@
 use alloy_consensus::TxEip1559;
-use alloy_eips::BlockNumberOrTag;
-use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
+use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_provider::{Identity, Provider, ProviderBuilder};
 use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_network::Optimism;
 use op_rbuilder::OpRbuilderConfig;
 use op_reth::OpRethConfig;
 use parking_lot::Mutex;
-use std::cmp::max;
-use std::collections::HashSet;
-use std::future::Future;
-use std::net::TcpListener;
-use std::path::Path;
-use std::sync::LazyLock;
 use std::{
+    cmp::max,
+    collections::HashSet,
     fs::{File, OpenOptions},
+    future::Future,
     io,
     io::prelude::*,
-    path::PathBuf,
+    net::TcpListener,
+    path::{Path, PathBuf},
     process::{Child, Command},
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
 use uuid::Uuid;
 
-use crate::tester::{BlockGenerator, EngineApi};
-use crate::tx_signer::Signer;
+use crate::{
+    tester::{BlockGenerator, EngineApi},
+    tx_signer::Signer,
+};
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -92,7 +92,7 @@ pub async fn poll_logs(
 
 impl ServiceInstance {
     pub fn new(name: String, test_dir: PathBuf) -> Self {
-        let log_path = test_dir.join(format!("{}.log", name));
+        let log_path = test_dir.join(format!("{name}.log"));
         Self {
             process: None,
             log_path,
@@ -167,7 +167,7 @@ impl IntegrationFramework {
 
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("../../integration_logs");
-        test_dir.push(format!("{}_{}", date_format, test_name));
+        test_dir.push(format!("{date_format}_{test_name}"));
 
         std::fs::create_dir_all(&test_dir).map_err(|_| IntegrationError::SetupError)?;
 

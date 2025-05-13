@@ -82,7 +82,7 @@ impl EngineApi {
 
     pub fn new_with_port(port: u16) -> Result<Self, Box<dyn std::error::Error>> {
         Self::builder()
-            .with_url(&format!("http://localhost:{}", port))
+            .with_url(&format!("http://localhost:{port}"))
             .build()
     }
 
@@ -179,13 +179,13 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     let timestamp = chrono::Utc::now().timestamp();
     if let Some(config) = genesis.as_object_mut() {
         // Assuming timestamp is at the root level - adjust path as needed
-        config["timestamp"] = Value::String(format!("0x{:x}", timestamp));
+        config["timestamp"] = Value::String(format!("0x{timestamp:x}"));
     }
 
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        println!("Generated genesis file at: {}", output);
+        println!("Generated genesis file at: {output}");
     } else {
         println!("{}", serde_json::to_string_pretty(&genesis)?);
     }
@@ -241,10 +241,7 @@ impl BlockGenerator {
 
         // Initialize flashblocks service
         if let Some(flashblocks_endpoint) = &self.flashblocks_endpoint {
-            println!(
-                "Initializing flashblocks service at {}",
-                flashblocks_endpoint
-            );
+            println!("Initializing flashblocks service at {flashblocks_endpoint}");
 
             self.flashblocks_service = Some(Flashblocks::run(
                 flashblocks_endpoint.to_string(),
@@ -273,7 +270,7 @@ impl BlockGenerator {
             let mut latest_hash = latest_validation_block.header.hash;
 
             for i in (latest_validation_block.header.number + 1)..=latest_block.header.number {
-                println!("syncing block {}", i);
+                println!("syncing block {i}");
 
                 let block = self
                     .engine_api
@@ -512,7 +509,7 @@ pub async fn run_system(
     block_time_secs: u64,
     flashblocks_endpoint: Option<String>,
 ) -> eyre::Result<()> {
-    println!("Validation: {}", validation);
+    println!("Validation: {validation}");
 
     let engine_api = EngineApi::new("http://localhost:4444").unwrap();
     let validation_api = if validation {
@@ -535,6 +532,6 @@ pub async fn run_system(
     loop {
         println!("Generating new block...");
         let block_hash = generator.generate_block().await?;
-        println!("Generated block: {}", block_hash);
+        println!("Generated block: {block_hash}");
     }
 }
