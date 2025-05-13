@@ -98,6 +98,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(feature = "flashblocks"))]
     async fn integration_test_monitor_transaction_drops() -> eyre::Result<()> {
+        // This test ensures that the transactions that get reverted an not included in the block
+        // are emitted as a log on the builder.
         let harness = TestHarnessBuilder::new("integration_test_monitor_transaction_drops")
             .with_revert_protection()
             .build()
