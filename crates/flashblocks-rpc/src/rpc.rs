@@ -29,7 +29,7 @@ use reth_rpc_eth_api::{
     RpcNodeCore,
 };
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -400,15 +400,26 @@ where
                         let receipt =
                             EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
 
-                        // since this txn hash exists in a block, we should always be able to fetch a receipt for it
-                        let envelope: OpReceiptEnvelope = receipt.unwrap().unwrap().into();
+                        match receipt {
+                            Ok(Some(txn_receipt)) => {
+                                let envelope: OpReceiptEnvelope = txn_receipt.into();
 
-                        if let OpReceiptEnvelope::Deposit(deposit_receipt) = envelope {
-                            return Ok(Some(self.transform_tx(
-                                transaction,
-                                tx_info,
-                                Some(deposit_receipt.receipt),
-                            )));
+                                if let OpReceiptEnvelope::Deposit(deposit_receipt) = envelope {
+                                    return Ok(Some(self.transform_tx(
+                                        transaction,
+                                        tx_info,
+                                        Some(deposit_receipt.receipt),
+                                    )));
+                                }
+                            }
+                            // Ok(None) or Err(e)
+                            _ => {
+                                error!(
+                                    "unable to fetch receipt for block transaction: {:?}",
+                                    tx_hash
+                                );
+                                return Ok(None);
+                            }
                         }
                     }
                     Ok(Some(self.transform_tx(transaction, tx_info, None)))
