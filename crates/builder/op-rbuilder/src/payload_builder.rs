@@ -100,6 +100,7 @@ pub struct CustomOpPayloadBuilder {
     chain_block_time: u64,
     flashblock_block_time: u64,
     extra_block_deadline: std::time::Duration,
+    enable_revert_protection: bool,
 }
 
 impl CustomOpPayloadBuilder {
@@ -117,6 +118,7 @@ impl CustomOpPayloadBuilder {
             chain_block_time,
             flashblock_block_time,
             extra_block_deadline,
+            enable_revert_protection,
         }
     }
 }
