@@ -42,6 +42,6 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.log-pool-transactions", default_value = "false")]
     pub log_pool_transactions: bool,
     /// How much time extra to wait for the block building job to complete and not get garbage collected
-    #[arg(long = "builder.extra-block-deadline", default_value = "10s", value_parser = humantime::parse_duration)]
-    pub extra_block_deadline: std::time::Duration,
+    #[arg(long = "builder.extra-block-deadline-secs", default_value = "20")]
+    pub extra_block_deadline_secs: u64,
 }
