@@ -79,19 +79,6 @@ impl OpPooledTransaction {
         payload_length
     }
 
-    /// Recover the signer of the transaction.
-    #[cfg(feature = "k256")]
-    pub fn recover_signer(
-        &self,
-    ) -> Result<alloy_primitives::Address, alloy_primitives::SignatureError> {
-        match self {
-            Self::Legacy(tx) => tx.recover_signer(),
-            Self::Eip2930(tx) => tx.recover_signer(),
-            Self::Eip1559(tx) => tx.recover_signer(),
-            Self::Eip7702(tx) => tx.recover_signer(),
-        }
-    }
-
     /// This encodes the transaction _without_ the signature, and is only suitable for creating a
     /// hash intended for signing.
     pub fn encode_for_signing(&self, out: &mut dyn bytes::BufMut) {
