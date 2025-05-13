@@ -33,7 +33,9 @@ serde = { workspace = true, features = ["derive"] }
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
-derive_more = { workspace = true, features = ["as_ref", "deref_mut"] }
+# misc
+derive_more = { workspace = true, features = ["as_ref", "deref_mut", "try_from"] }
+thiserror.workspace = true
 
 [dev-dependencies]
 rand.workspace = true

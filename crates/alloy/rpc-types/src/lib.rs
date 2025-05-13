@@ -17,3 +17,6 @@ pub use receipt::{L1BlockInfo, OpTransactionReceipt, OpTransactionReceiptFields}
 
 mod transaction;
 pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
+
+pub mod error;
+pub use error::InvalidInboxEntry;
