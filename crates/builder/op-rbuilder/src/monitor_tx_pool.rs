@@ -12,14 +12,14 @@ pub async fn monitor_tx_pool(mut new_transactions: AllTransactionsEvents<OpPoole
 fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
     match event {
         FullTransactionEvent::Pending(hash) => {
-            debug!(
+            info!(
                 tx_hash = hash.to_string(),
                 kind = "pending",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Queued(hash) => {
-            debug!(
+            info!(
                 tx_hash = hash.to_string(),
                 kind = "queued",
                 "Transaction event received"
@@ -28,7 +28,7 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
         FullTransactionEvent::Mined {
             tx_hash,
             block_hash,
-        } => debug!(
+        } => info!(
             tx_hash = tx_hash.to_string(),
             kind = "mined",
             block_hash = block_hash.to_string(),
@@ -37,21 +37,21 @@ fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
         FullTransactionEvent::Replaced {
             transaction,
             replaced_by,
-        } => debug!(
+        } => info!(
             tx_hash = transaction.hash().to_string(),
             kind = "replaced",
             replaced_by = replaced_by.to_string(),
             "Transaction event received"
         ),
         FullTransactionEvent::Discarded(hash) => {
-            debug!(
+            info!(
                 tx_hash = hash.to_string(),
                 kind = "discarded",
                 "Transaction event received"
             )
         }
         FullTransactionEvent::Invalid(hash) => {
-            debug!(
+            info!(
                 tx_hash = hash.to_string(),
                 kind = "invalid",
                 "Transaction event received"
