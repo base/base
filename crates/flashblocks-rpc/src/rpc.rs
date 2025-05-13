@@ -413,12 +413,19 @@ where
                                 }
                             }
                             // Ok(None) or Err(e)
-                            _ => {
+                            Ok(None) => {
                                 error!(
-                                    "unable to fetch receipt for block transaction: {:?}",
+                                    "could not find receipt for block transaction: {:?}",
                                     tx_hash
                                 );
                                 return Ok(None);
+                            }
+                            Err(e) => {
+                                error!(
+                                    "unable to fetch receipt for block transaction: {:?} error: {:?}",
+                                    tx_hash, e
+                                );
+                                return Err(e.into());
                             }
                         }
                     }
