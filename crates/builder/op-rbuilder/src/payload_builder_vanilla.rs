@@ -1103,12 +1103,6 @@ where
                 }
             };
 
-            println!("include reverted txn: {}", result.is_success());
-            println!(
-                "self.enable_revert_protection: {}",
-                self.enable_revert_protection
-            );
-
             self.metrics
                 .tx_simulation_duration
                 .record(tx_simulation_start_time.elapsed());
