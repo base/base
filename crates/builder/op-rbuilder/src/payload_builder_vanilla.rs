@@ -1117,8 +1117,8 @@ where
             if result.is_success() {
                 num_txs_simulated_success += 1;
             } else {
+                num_txs_simulated_fail += 1;
                 if self.enable_revert_protection {
-                    num_txs_simulated_fail += 1;
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     info.invalid_tx_hashes.insert(tx.tx_hash());
