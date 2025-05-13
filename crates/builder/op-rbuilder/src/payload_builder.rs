@@ -106,6 +106,7 @@ impl CustomOpPayloadBuilder {
     pub fn new(
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
+        enable_revert_protection: bool,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
