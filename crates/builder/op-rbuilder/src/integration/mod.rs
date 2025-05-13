@@ -270,16 +270,19 @@ impl TestHarnessBuilder {
 
         framework.start("op-reth", &reth).await.unwrap();
 
-        let _ = framework
+        let builder = framework
             .start("op-rbuilder", &op_rbuilder_config)
             .await
             .unwrap();
+
+        let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
             _framework: framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
+            builder_log_path,
         })
     }
 }
@@ -289,6 +292,7 @@ pub struct TestHarness {
     builder_auth_rpc_port: u16,
     builder_http_port: u16,
     validator_auth_rpc_port: u16,
+    builder_log_path: PathBuf,
 }
 
 impl TestHarness {

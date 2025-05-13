@@ -118,6 +118,7 @@ impl Service for OpRbuilderConfig {
             .arg("--disable-discovery")
             .arg("--color")
             .arg("never")
+            .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
             .arg("--ipcdisable");
