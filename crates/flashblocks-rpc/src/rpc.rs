@@ -397,11 +397,12 @@ where
                     };
                     // preload transaction receipt if it's a deposit transaction
                     if transaction.is_deposit() {
-                        let receipt =
-                            EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
+                        let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+                            .await
+                            .map_err(Into::into)?;
 
                         match receipt {
-                            Ok(Some(txn_receipt)) => {
+                            Some(txn_receipt) => {
                                 let envelope: OpReceiptEnvelope = txn_receipt.into();
 
                                 if let OpReceiptEnvelope::Deposit(deposit_receipt) = envelope {
@@ -412,19 +413,12 @@ where
                                     )));
                                 }
                             }
-                            Ok(None) => {
+                            None => {
                                 error!(
                                     "could not find receipt for block transaction: {:?}",
                                     tx_hash
                                 );
                                 return Ok(None);
-                            }
-                            Err(e) => {
-                                error!(
-                                    "unable to fetch receipt for block transaction: {:?} error: {:?}",
-                                    tx_hash, e
-                                );
-                                return Err(e.into());
                             }
                         }
                     }
