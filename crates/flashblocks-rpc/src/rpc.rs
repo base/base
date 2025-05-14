@@ -412,7 +412,6 @@ where
                                     )));
                                 }
                             }
-                            // Ok(None) or Err(e)
                             Ok(None) => {
                                 error!(
                                     "could not find receipt for block transaction: {:?}",
