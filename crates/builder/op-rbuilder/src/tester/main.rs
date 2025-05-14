@@ -30,6 +30,9 @@ enum Commands {
 
         #[clap(long, short, action)]
         flashblocks_endpoint: Option<String>,
+
+        #[clap(long, action, default_value = "false")]
+        no_sleep: bool,
     },
     /// Deposit funds to the system
     Deposit {
@@ -51,12 +54,14 @@ async fn main() -> eyre::Result<()> {
             no_tx_pool,
             block_time_secs,
             flashblocks_endpoint,
+            no_sleep,
         } => {
             run_system(
                 validation,
                 no_tx_pool,
                 block_time_secs,
                 flashblocks_endpoint,
+                no_sleep,
             )
             .await
         }

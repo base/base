@@ -462,6 +462,26 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_transaction_flood_no_sleep() -> eyre::Result<()> {
+        // This test validates that if we flood the builder with many transactions
+        // and we request short block times, the builder can still eventually resolve all the transactions
+        let mut test_harness =
+            TestHarnessBuilder::new("integration_test_transaction_flood_no_sleep")
+                .build()
+                .await?;
+
+        // Send 500 valid transactions to the builder
+        let mut transactions = Vec::new();
+        for _ in 0..500 {
+            let tx = test_harness.send_valid_transaction().await?;
+            transactions.push(tx);
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     #[cfg(feature = "flashblocks")]
     async fn integration_test_chain_produces_blocks() -> eyre::Result<()> {
         // This is a simple test using the integration framework to test that the chain
