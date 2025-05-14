@@ -224,6 +224,41 @@ where
     }
 }
 
+pub struct OpPayloadBuilderVanillaBuilder {
+    builder_signer: Option<Signer>,
+}
+
+impl<Node, Pool, Txs> PayloadBuilderBuilder<Node, Pool> for OpPayloadBuilderVanillaBuilder
+where
+    Node: FullNodeTypes<
+        Types: NodeTypes<
+            Payload = OpEngineTypes,
+            ChainSpec = OpChainSpec,
+            Primitives = OpPrimitives,
+        >,
+    >,
+    Txs: OpPayloadTransactions<OpTransactionSigned> + Send + Sync + 'static,
+{
+    /// Payload builder implementation.
+    type PayloadBuilder = OpPayloadBuilderVanilla<Pool, Node::Provider, Txs>;
+
+    /// Spawns the payload service and returns the handle to it.
+    ///
+    /// The [`BuilderContext`] is provided to allow access to the node's configuration.
+    async fn build_payload_builder(
+        self,
+        ctx: &BuilderContext<Node>,
+        pool: Pool,
+    ) -> eyre::Result<Self::PayloadBuilder> {
+        Ok(OpPayloadBuilderVanilla::new(
+            OpEvmConfig::optimism(ctx.chain_spec()),
+            self.builder_signer,
+            pool,
+            ctx.provider().clone(),
+        ))
+    }
+}
+
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
 pub struct OpPayloadBuilderVanilla<Pool, Client, Txs = ()> {
