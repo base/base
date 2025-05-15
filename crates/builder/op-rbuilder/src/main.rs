@@ -23,6 +23,10 @@ mod primitives;
 #[cfg(test)]
 mod tester;
 mod tx_signer;
+use metrics::{
+    VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
+    VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
+};
 use monitor_tx_pool::monitor_tx_pool;
 
 // Prefer jemalloc for performance reasons.
@@ -31,6 +35,15 @@ use monitor_tx_pool::monitor_tx_pool;
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() {
+    let version = VersionInfo {
+        version: CARGO_PKG_VERSION,
+        build_timestamp: VERGEN_BUILD_TIMESTAMP,
+        cargo_features: VERGEN_CARGO_FEATURES,
+        git_sha: VERGEN_GIT_SHA,
+        target_triple: VERGEN_CARGO_TARGET_TRIPLE,
+        build_profile: BUILD_PROFILE_NAME,
+    };
+
     Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
         .run(|builder, builder_args| async move {
             let rollup_args = builder_args.rollup_args;
@@ -53,6 +66,7 @@ fn main() {
                         .build(),
                 )
                 .on_node_started(move |ctx| {
+                    version.register_version_metrics();
                     if builder_args.log_pool_transactions {
                         tracing::info!("Logging pool transactions");
                         ctx.task_executor.spawn_critical(

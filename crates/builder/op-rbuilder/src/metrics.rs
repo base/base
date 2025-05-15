@@ -1,7 +1,25 @@
 use reth_metrics::{
-    metrics::{Counter, Histogram},
+    metrics::{gauge, Counter, Histogram},
     Metrics,
 };
+
+/// The latest version from Cargo.toml.
+pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The 8 character short SHA of the latest commit.
+pub const VERGEN_GIT_SHA: &str = env!("VERGEN_GIT_SHA_SHORT");
+
+/// The build timestamp.
+pub const VERGEN_BUILD_TIMESTAMP: &str = env!("VERGEN_BUILD_TIMESTAMP");
+
+/// The target triple.
+pub const VERGEN_CARGO_TARGET_TRIPLE: &str = env!("VERGEN_CARGO_TARGET_TRIPLE");
+
+/// The build features.
+pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
+
+/// The build profile name.
+pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
 
 /// op-rbuilder metrics
 #[derive(Metrics, Clone)]
@@ -49,4 +67,38 @@ pub struct OpRBuilderMetrics {
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
+}
+
+/// Contains version information for the application.
+#[derive(Debug, Clone)]
+pub struct VersionInfo {
+    /// The version of the application.
+    pub version: &'static str,
+    /// The build timestamp of the application.
+    pub build_timestamp: &'static str,
+    /// The cargo features enabled for the build.
+    pub cargo_features: &'static str,
+    /// The Git SHA of the build.
+    pub git_sha: &'static str,
+    /// The target triple for the build.
+    pub target_triple: &'static str,
+    /// The build profile (e.g., debug or release).
+    pub build_profile: &'static str,
+}
+
+impl VersionInfo {
+    /// This exposes reth's version information over prometheus.
+    pub fn register_version_metrics(&self) {
+        let labels: [(&str, &str); 6] = [
+            ("version", self.version),
+            ("build_timestamp", self.build_timestamp),
+            ("cargo_features", self.cargo_features),
+            ("git_sha", self.git_sha),
+            ("target_triple", self.target_triple),
+            ("build_profile", self.build_profile),
+        ];
+
+        let gauge = gauge!("builder_info", &labels);
+        gauge.set(1);
+    }
 }

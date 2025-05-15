@@ -96,6 +96,10 @@ rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "608853
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
 
+[build-dependencies]
+vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
+vergen-git2.workspace = true
+
 [features]
 default = ["jemalloc"]
 
