@@ -702,7 +702,7 @@ where
         // withdrawals root field in block header is used for storage root of L2 predeploy
         // `l2tol1-message-passer`
         Some(
-            isthmus::withdrawals_root(&execution_outcome.state(), state.database.as_ref())
+            isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
                 .map_err(PayloadBuilderError::other)?,
         )
     } else if ctx

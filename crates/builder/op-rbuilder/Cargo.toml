@@ -17,6 +17,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-consensus.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-txpool.workspace = true
+reth-cli.workspace = true
 reth-cli-util.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
@@ -38,6 +39,7 @@ reth-rpc-layer.workspace = true
 reth-payload-builder-primitives.workspace = true
 reth-payload-util.workspace = true
 reth-transaction-pool.workspace = true
+reth-network-peers.workspace = true
 reth-testing-utils.workspace = true
 reth-optimism-forks.workspace = true
 reth-node-builder.workspace = true
@@ -82,6 +84,7 @@ serde_json.workspace = true
 tokio-util.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
+url.workspace = true
 
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
@@ -89,6 +92,9 @@ uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 tokio-tungstenite = "0.26.2"
 rand = "0.9.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
+shellexpand = "3.1"
+serde_yaml = { version = "0.9" }
+
 
 # `flashblocks` branch
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "60885346d4cf7f241de82790478195747433d472" }

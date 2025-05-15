@@ -1,7 +1,7 @@
 use crate::{
     generator::{BlockCell, BlockPayloadJobGenerator, BuildArguments, PayloadBuilder},
     metrics::OpRBuilderMetrics,
-    primitives::reth::{ExecutedPayload, ExecutionInfo},
+    primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
 use alloy_consensus::{
@@ -73,6 +73,13 @@ use tracing::*;
 
 // From https://eips.ethereum.org/EIPS/eip-7623
 const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+
+/// Holds the state after execution
+#[derive(Debug)]
+pub struct ExecutedPayload<N: NodePrimitives> {
+    /// Tracked execution info
+    pub info: ExecutionInfo<N>,
+}
 
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]

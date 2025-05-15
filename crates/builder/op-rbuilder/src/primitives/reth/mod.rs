@@ -1,2 +1,2 @@
 mod execution;
-pub use execution::{ExecutedPayload, ExecutionInfo};
+pub use execution::ExecutionInfo;

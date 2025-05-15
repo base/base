@@ -5,13 +5,6 @@ use reth_node_api::NodePrimitives;
 use reth_optimism_primitives::OpReceipt;
 use std::collections::HashSet;
 
-/// Holds the state after execution
-#[derive(Debug)]
-pub struct ExecutedPayload<N: NodePrimitives> {
-    /// Tracked execution info
-    pub info: ExecutionInfo<N>,
-}
-
 #[derive(Default, Debug)]
 pub struct ExecutionInfo<N: NodePrimitives> {
     /// All executed transactions (unrecovered).

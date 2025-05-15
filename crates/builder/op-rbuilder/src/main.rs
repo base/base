@@ -1,3 +1,4 @@
+use args::CliExt;
 use clap::Parser;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::{node::OpAddOnsBuilder, OpNode};
@@ -45,6 +46,7 @@ fn main() {
     };
 
     Cli::<OpChainSpecParser, args::OpRbuilderArgs>::parse()
+        .populate_defaults()
         .run(|builder, builder_args| async move {
             let rollup_args = builder_args.rollup_args;
 
