@@ -462,6 +462,40 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(not(feature = "flashblocks"))]
+    async fn integration_test_transaction_flood_no_sleep() -> eyre::Result<()> {
+        // This test validates that if we flood the builder with many transactions
+        // and we request short block times, the builder can still eventually resolve all the transactions
+
+        let test_harness = TestHarnessBuilder::new("integration_test_transaction_flood_no_sleep")
+            .build()
+            .await?;
+
+        let mut block_generator = test_harness.block_generator().await?;
+        let provider = test_harness.provider()?;
+
+        // Send 200 valid transactions to the builder
+        // More than this and there is an issue with the RPC endpoint not being able to handle the load
+        let mut transactions = vec![];
+        for _ in 0..200 {
+            let tx = test_harness.send_valid_transaction().await?;
+            let tx_hash = *tx.tx_hash();
+            transactions.push(tx_hash);
+        }
+
+        // After a 10 blocks all the transactions should be included in a block
+        for _ in 0..10 {
+            block_generator.submit_payload(None, 0, true).await.unwrap();
+        }
+
+        for tx in transactions {
+            provider.get_transaction_receipt(tx).await?;
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     #[cfg(feature = "flashblocks")]
     async fn integration_test_chain_produces_blocks() -> eyre::Result<()> {
         // This is a simple test using the integration framework to test that the chain

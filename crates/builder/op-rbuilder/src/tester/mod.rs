@@ -20,10 +20,7 @@ use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
 use rollup_boost::{Flashblocks, FlashblocksService};
 use serde_json::Value;
-use std::{
-    str::FromStr,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::str::FromStr;
 
 /// Helper for engine api operations
 pub struct EngineApi {
@@ -205,6 +202,7 @@ pub struct BlockGenerator {
     latest_hash: B256,
     no_tx_pool: bool,
     block_time_secs: u64,
+    timestamp: u64,
     // flashblocks service
     flashblocks_endpoint: Option<String>,
     flashblocks_service: Option<FlashblocksService>,
@@ -223,6 +221,7 @@ impl BlockGenerator {
             validation_api,
             latest_hash: B256::ZERO, // temporary value
             no_tx_pool,
+            timestamp: 0,
             block_time_secs,
             flashblocks_endpoint,
             flashblocks_service: None,
@@ -233,6 +232,7 @@ impl BlockGenerator {
     pub async fn init(&mut self) -> eyre::Result<Block> {
         let latest_block = self.engine_api.latest().await?.expect("block not found");
         self.latest_hash = latest_block.header.hash;
+        self.timestamp = latest_block.header.timestamp;
 
         // Sync validation node if it exists
         if let Some(validation_api) = &self.validation_api {
@@ -340,11 +340,7 @@ impl BlockGenerator {
         block_building_delay_secs: u64,
         no_sleep: bool, // TODO: Change this, too many parameters we can tweak here to put as a function arguments
     ) -> eyre::Result<B256> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let timestamp = timestamp + self.block_time_secs;
+        let timestamp = self.timestamp + self.block_time_secs;
 
         // Add L1 block info as the first transaction in every L2 block
         // This deposit transaction contains L1 block metadata required by the L2 chain
@@ -464,6 +460,8 @@ impl BlockGenerator {
 
         // Update internal state
         self.latest_hash = new_block_hash;
+        self.timestamp = payload.execution_payload.timestamp();
+
         Ok(new_block_hash)
     }
 
@@ -508,6 +506,7 @@ pub async fn run_system(
     no_tx_pool: bool,
     block_time_secs: u64,
     flashblocks_endpoint: Option<String>,
+    no_sleep: bool,
 ) -> eyre::Result<()> {
     println!("Validation: {validation}");
 
@@ -531,7 +530,7 @@ pub async fn run_system(
     // Infinite loop generating blocks
     loop {
         println!("Generating new block...");
-        let block_hash = generator.generate_block().await?;
+        let block_hash = generator.submit_payload(None, 0, no_sleep).await?;
         println!("Generated block: {block_hash}");
     }
 }

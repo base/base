@@ -121,7 +121,8 @@ impl Service for OpRbuilderConfig {
             .arg("--builder.log-pool-transactions")
             .arg("--port")
             .arg(self.network_port.expect("network_port not set").to_string())
-            .arg("--ipcdisable");
+            .arg("--ipcdisable")
+            .arg("-vvvv");
 
         if let Some(revert_protection) = self.with_revert_protection {
             if revert_protection {
