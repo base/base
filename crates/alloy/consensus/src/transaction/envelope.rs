@@ -1,7 +1,8 @@
 use crate::{OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
-    Sealable, Sealed, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702,
-    TxEnvelope, TxLegacy, Typed2718, error::ValueError, transaction::RlpEcdsaDecodableTx,
+    EthereumTxEnvelope, Sealable, Sealed, SignableTransaction, Signed, Transaction, TxEip1559,
+    TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718, error::ValueError,
+    transaction::RlpEcdsaDecodableTx,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
@@ -115,10 +116,10 @@ impl From<Sealed<TxDeposit>> for OpTxEnvelope {
     }
 }
 
-impl TryFrom<TxEnvelope> for OpTxEnvelope {
-    type Error = TxEnvelope;
+impl<T> TryFrom<EthereumTxEnvelope<T>> for OpTxEnvelope {
+    type Error = EthereumTxEnvelope<T>;
 
-    fn try_from(value: TxEnvelope) -> Result<Self, Self::Error> {
+    fn try_from(value: EthereumTxEnvelope<T>) -> Result<Self, Self::Error> {
         Self::try_from_eth_envelope(value)
     }
 }
@@ -421,13 +422,15 @@ impl OpTxEnvelope {
     ///
     /// Returns the given envelope as error if [`OpTxEnvelope`] doesn't support the variant
     /// (EIP-4844)
-    pub fn try_from_eth_envelope(tx: TxEnvelope) -> Result<Self, TxEnvelope> {
+    pub fn try_from_eth_envelope<T>(
+        tx: EthereumTxEnvelope<T>,
+    ) -> Result<Self, EthereumTxEnvelope<T>> {
         match tx {
-            TxEnvelope::Legacy(tx) => Ok(tx.into()),
-            TxEnvelope::Eip2930(tx) => Ok(tx.into()),
-            TxEnvelope::Eip1559(tx) => Ok(tx.into()),
-            tx @ TxEnvelope::Eip4844(_) => Err(tx),
-            TxEnvelope::Eip7702(tx) => Ok(tx.into()),
+            EthereumTxEnvelope::Legacy(tx) => Ok(tx.into()),
+            EthereumTxEnvelope::Eip2930(tx) => Ok(tx.into()),
+            EthereumTxEnvelope::Eip1559(tx) => Ok(tx.into()),
+            tx @ EthereumTxEnvelope::<T>::Eip4844(_) => Err(tx),
+            EthereumTxEnvelope::Eip7702(tx) => Ok(tx.into()),
         }
     }
 
