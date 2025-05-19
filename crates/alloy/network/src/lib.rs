@@ -233,3 +233,15 @@ impl NetworkWallet<Optimism> for EthereumWallet {
         })
     }
 }
+
+use alloy_provider::fillers::{
+    ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
+};
+
+impl RecommendedFillers for Optimism {
+    type RecommendedFillers = JoinFill<GasFiller, JoinFill<NonceFiller, ChainIdFiller>>;
+
+    fn recommended_fillers() -> Self::RecommendedFillers {
+        Default::default()
+    }
+}
