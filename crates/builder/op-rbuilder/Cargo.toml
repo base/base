@@ -67,9 +67,7 @@ revm.workspace = true
 op-revm.workspace = true
 
 tracing.workspace = true
-futures-util = "0.3.31"
 eyre.workspace = true
-tower = "0.4"
 serde_with.workspace = true
 serde.workspace = true
 secp256k1.workspace = true
@@ -86,6 +84,9 @@ thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
 
+tower = "0.4"
+futures = "0.3"
+futures-util = "0.3.31"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
@@ -127,7 +128,7 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-integration = []
+testing = []
 flashblocks = []
 
 [[bin]]
@@ -136,4 +137,4 @@ path = "src/main.rs"
 
 [[bin]]
 name = "tester"
-path = "src/tester/main.rs"
+required-features = ["testing"]

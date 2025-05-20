@@ -436,7 +436,7 @@ mod tests {
     use super::*;
     use alloy_eips::eip7685::Requests;
     use alloy_primitives::U256;
-    use rand::thread_rng;
+    use rand::rng;
     use reth::tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlockWithTrieUpdates;
     use reth_node_api::NodePrimitives;
@@ -624,7 +624,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_payload_generator() -> eyre::Result<()> {
-        let mut rng = thread_rng();
+        let mut rng = rng();
 
         let client = MockEthProvider::default();
         let executor = TokioTaskExecutor::default();
