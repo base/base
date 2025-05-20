@@ -817,6 +817,7 @@ where
             block_hash,
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
+            withdrawals_root,
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };

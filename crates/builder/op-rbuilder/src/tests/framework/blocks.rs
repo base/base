@@ -2,13 +2,13 @@ use crate::tx_signer::Signer;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
 use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadAttributes,
-    PayloadStatusEnum,
+    ExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+    PayloadAttributes, PayloadStatusEnum,
 };
 use alloy_rpc_types_eth::Block;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use rollup_boost::{Flashblocks, FlashblocksService};
+use rollup_boost::{Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, Version};
 
 use super::apis::EngineApi;
 
@@ -236,15 +236,24 @@ impl BlockGenerator {
         }
 
         let payload = if let Some(flashblocks_service) = &self.flashblocks_service {
-            flashblocks_service.get_best_payload().await?.unwrap()
+            flashblocks_service
+                .get_best_payload(Version::V3)
+                .await?
+                .unwrap()
         } else {
-            self.engine_api.get_payload_v3(payload_id).await?
+            OpExecutionPayloadEnvelope::V3(self.engine_api.get_payload_v3(payload_id).await?)
+        };
+
+        let execution_payload = if let ExecutionPayload::V3(execution_payload) = payload.into() {
+            execution_payload
+        } else {
+            return Err(eyre::eyre!("execution_payload should be V3"));
         };
 
         // Validate with builder node
         let validation_status = self
             .engine_api
-            .new_payload(payload.execution_payload.clone(), vec![], B256::ZERO)
+            .new_payload(execution_payload.clone(), vec![], B256::ZERO)
             .await?;
 
         if validation_status.status != PayloadStatusEnum::Valid {
@@ -254,7 +263,7 @@ impl BlockGenerator {
         // Validate with validation node if present
         if let Some(validation_api) = &self.validation_api {
             let validation_status = validation_api
-                .new_payload(payload.execution_payload.clone(), vec![], B256::ZERO)
+                .new_payload(execution_payload.clone(), vec![], B256::ZERO)
                 .await?;
 
             if validation_status.status != PayloadStatusEnum::Valid {
@@ -262,11 +271,7 @@ impl BlockGenerator {
             }
         }
 
-        let new_block_hash = payload
-            .execution_payload
-            .payload_inner
-            .payload_inner
-            .block_hash;
+        let new_block_hash = execution_payload.payload_inner.payload_inner.block_hash;
 
         // Update forkchoice on builder
         self.engine_api
@@ -282,7 +287,7 @@ impl BlockGenerator {
 
         // Update internal state
         self.latest_hash = new_block_hash;
-        self.timestamp = payload.execution_payload.timestamp();
+        self.timestamp = execution_payload.timestamp();
 
         Ok(new_block_hash)
     }
