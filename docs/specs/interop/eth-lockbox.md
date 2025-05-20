@@ -7,12 +7,15 @@
 - [Overview](#overview)
 - [Design](#design)
   - [Interface and properties](#interface-and-properties)
+    - [`initialize`](#initialize)
     - [`lockETH`](#locketh)
     - [`unlockETH`](#unlocketh)
     - [`authorizePortal`](#authorizeportal)
     - [`authorizeLockbox`](#authorizelockbox)
     - [`migrateLiquidity`](#migrateliquidity)
     - [`receiveLiquidity`](#receiveliquidity)
+    - [`paused`](#paused)
+    - [`superchainConfig`](#superchainconfig)
     - [`proxyAdminOwner`](#proxyadminowner)
   - [Events](#events)
     - [`ETHLocked`](#ethlocked)
@@ -53,6 +56,15 @@ The `ETHLockbox` contract is proxied and managed by the L1 `ProxyAdmin`.
 
 ### Interface and properties
 
+#### `initialize`
+
+Initializes the ETHLockbox contract.
+
+- MUST only be callable by the ProxyAdmin or its owner.
+- MUST set the SystemConfig contract.
+- MUST authorize all portals provided in the initialization array.
+- MUST check that all portals have the same SuperchainConfig as the ETHLockbox.
+
 #### `lockETH`
 
 Deposits and locks ETH into the lockbox's liquidity pool.
@@ -61,6 +73,7 @@ Deposits and locks ETH into the lockbox's liquidity pool.
 - Only authorized `OptimismPortal` addresses MUST be allowed to interact.
 - The function MUST NOT revert when called by an authorized `OptimismPortal`
 - The function MUST emit the `ETHLocked` event with the `portal` that called it and the `amount`.
+- The function CAN be called by an OptimismPortal while it is executing a withdrawal transaction.
 
 ```solidity
 function lockETH() external payable;
@@ -72,9 +85,12 @@ Withdraws a specified amount of ETH from the lockbox's liquidity pool to the `Op
 
 - Only authorized `OptimismPortal` addresses MUST be allowed to interact.
 - The function MUST NOT revert when called by an authorized `OptimismPortal` unless paused.
+- The function MUST check if the ETHLockbox has sufficient balance to fulfill the withdrawal.
 - The function MUST emit the `ETHUnlocked` event with the `portal` that called it and the `amount`.
 - The function MUST use `donateETH` when sending ETH to avoid triggering deposits.
 - The function MUST NOT allow to be called as part of a withdrawal transaction (`OptimismPortal.l2Sender()` MUST be the `DEFAULT_L2_SENDER`).
+- The function MUST revert if an OptimismPortal attempts to call it while executing a
+  withdrawal transaction.
 
 ```solidity
 function unlockETH(uint256 _value) external;
@@ -99,6 +115,7 @@ Authorizes another `ETHLockbox` to migrate its ETH liquidity to the current `ETH
 
 - Only the `ProxyAdmin` owner can call the function.
 - The `ProxyAdmin` owner of the source lockbox must be the same as the `ProxyAdmin` owner of the destination lockbox.
+- Once a lockbox is authorized, it cannot be removed from the authorized list.
 - The function MUST emit the `LockboxAuthorized` event with the `lockbox` that is being authorized.
 
 ```solidity
@@ -111,8 +128,12 @@ Migrates the ETH liquidity from the current `ETHLockbox` to another `ETHLockbox`
 
 - Only the `ProxyAdmin` owner can call the function.
 - The `ProxyAdmin` owner of the source lockbox must be the same as the `ProxyAdmin` owner of the destination lockbox.
-- The function MUST call `receiveLiquidity` from the destination `ETHLockbox`.
-- The function MUST emit the `LiquidityMigrated` event with the `lockbox` that is being migrated to.
+- The function MUST call `receiveLiquidity` from the destination `ETHLockbox` with the entire ETH balance.
+- SHOULD be called atomically with `OptimismPortal.migrateToSuperRoots()` in the same transaction
+  batch, or otherwise the `OptimismPortal` may not be able to unlock ETH from the ETHLockbox on
+  finalized withdrawals.
+- The function MUST emit the `LiquidityMigrated` event with the `lockbox` that is being migrated to
+  and the amount of ETH migrated.
 
 ```solidity
 function migrateLiquidity(address _lockbox) external;
@@ -123,19 +144,24 @@ function migrateLiquidity(address _lockbox) external;
 Receives the ETH liquidity from another `ETHLockbox`.
 
 - Only an authorized `ETHLockbox` can call the function.
-- The function MUST emit the `LiquidityReceived` event with the `lockbox` that is being received from.
+- The function MUST emit the `LiquidityReceived` event with the `lockbox` that is being received
+  from and the amount of ETH received.
 
 ```solidity
 function receiveLiquidity() external payable;
 ```
 
+#### `paused`
+
+Returns whether the contract is paused, delegating to the SystemConfig.
+
+#### `superchainConfig`
+
+Returns the SuperchainConfig contract from the SystemConfig.
+
 #### `proxyAdminOwner`
 
 Returns the `ProxyAdmin` owner that manages the `ETHLockbox`.
-
-```solidity
-function proxyAdminOwner() external view returns (address);
-```
 
 ### Events
 
@@ -144,7 +170,7 @@ function proxyAdminOwner() external view returns (address);
 MUST be triggered when `lockETH` is called
 
 ```solidity
-event ETHLocked(address indexed portal, uint256 amount);
+event ETHLocked(OptimismPortal indexed portal, uint256 amount);
 ```
 
 #### `ETHUnlocked`
@@ -152,7 +178,7 @@ event ETHLocked(address indexed portal, uint256 amount);
 MUST be triggered when `unlockETH` is called
 
 ```solidity
-event ETHUnlocked(address indexed portal, uint256 amount);
+event ETHUnlocked(OptimismPortal indexed portal, uint256 amount);
 ```
 
 #### `PortalAuthorized`
@@ -160,7 +186,7 @@ event ETHUnlocked(address indexed portal, uint256 amount);
 MUST be triggered when `authorizePortal` is called
 
 ```solidity
-event PortalAuthorized(address indexed portal);
+event PortalAuthorized(OptimismPortal indexed portal);
 ```
 
 #### `LockboxAuthorized`
@@ -168,7 +194,7 @@ event PortalAuthorized(address indexed portal);
 MUST be triggered when `authorizeLockbox` is called
 
 ```solidity
-event LockboxAuthorized(address indexed lockbox);
+event LockboxAuthorized(ETHLockbox indexed lockbox);
 ```
 
 #### `LiquidityMigrated`
@@ -176,7 +202,7 @@ event LockboxAuthorized(address indexed lockbox);
 MUST be triggered when `migrateLiquidity` is called
 
 ```solidity
-event LiquidityMigrated(address indexed lockbox);
+event LiquidityMigrated(ETHLockbox indexed lockbox, uint256 amount);
 ```
 
 #### `LiquidityReceived`
@@ -184,7 +210,7 @@ event LiquidityMigrated(address indexed lockbox);
 MUST be triggered when `receiveLiquidity` is called
 
 ```solidity
-event LiquidityReceived(address indexed lockbox);
+event LiquidityReceived(ETHLockbox indexed lockbox, uint256 amount);
 ```
 
 ## Invariants

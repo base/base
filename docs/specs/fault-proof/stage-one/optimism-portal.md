@@ -36,6 +36,7 @@
   - [guardian](#guardian)
   - [proofMaturityDelaySeconds](#proofmaturitydelayseconds)
   - [superRootsActive](#superrootsactive)
+  - [disputeGameFactory](#disputegamefactory)
   - [disputeGameFinalityDelaySeconds](#disputegamefinalitydelayseconds)
   - [respectedGameType](#respectedgametype)
   - [respectedGameTypeUpdatedAt](#respectedgametypeupdatedat)
@@ -44,6 +45,12 @@
   - [proveWithdrawalTransaction (Output Roots)](#provewithdrawaltransaction-output-roots)
   - [checkWithdrawal](#checkwithdrawal)
   - [finalizeWithdrawalTransaction](#finalizewithdrawaltransaction)
+  - [migrateLiquidity](#migrateliquidity)
+  - [migrateToSuperRoots](#migratetosuperroots)
+  - [donateETH](#donateeth)
+  - [finalizeWithdrawalTransactionExternalProof](#finalizewithdrawaltransactionexternalproof)
+  - [numProofSubmitters](#numproofsubmitters)
+  - [depositTransaction](#deposittransaction)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -288,10 +295,11 @@ see this as a critical system risk.
 
 ### initialize
 
+- MUST only be callable by the ProxyAdmin or its owner.
 - MUST only be triggerable once.
-- MUST set the value of the `DisputeGameFactory` contract.
 - MUST set the value of the `SystemConfig` contract.
 - MUST set the value of the `AnchorStateRegistry` contract.
+- MUST set the value of the `ETHLockbox` contract.
 - MUST set `superRootsActive` to either `true` or `false`.
 - MUST set the value of the [L2 Withdrawal Sender](#l2-withdrawal-sender) variable to the default
   value if the value is not set already.
@@ -313,6 +321,10 @@ Returns the value of the [Proof Maturity Delay](#proof-maturity-delay).
 
 Returns the value of the `superRootsActive` variable which determines if the `OptimismPortal` will
 use the standard Output Root proof or the Super Root proof.
+
+### disputeGameFactory
+
+Returns the DisputeGameFactory contract from the AnchorStateRegistry contract.
 
 ### disputeGameFinalityDelaySeconds
 
@@ -351,6 +363,7 @@ Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an 
 that uses dispute games that argue over [Super Roots](#super-root).
 
 - MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
+- MUST revert if the withdrawal target is the address of the `ETHLockbox` contract.
 - MUST revert if the withdrawal is being proven against a game that is not a
   [Proper Game](./anchor-state-registry.md#proper-game).
 - MUST revert if the withdrawal is being proven against a game that is not a
@@ -371,6 +384,9 @@ that uses dispute games that argue over [Super Roots](#super-root).
 - MUST otherwise store a record of the withdrawal proof that includes the hash of the proven  
   withdrawal, the address of the game against which it was proven, and the block timestamp at which
   the proof transaction was submitted.
+- MUST add the proof submitter to the list of submitters for this withdrawal hash.
+- MUST emit a `WithdrawalProven` event with the withdrawal hash, sender, and target.
+- MUST emit a `WithdrawalProvenExtension1` event with the withdrawal hash and proof submitter address.
 
 ### proveWithdrawalTransaction (Output Roots)
 
@@ -378,6 +394,7 @@ Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an 
 that uses dispute games that argue over [Output Roots](#output-root).
 
 - MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
+- MUST revert if the withdrawal target is the address of the `ETHLockbox` contract.
 - MUST revert if the withdrawal is being proven against a game that is not a
   [Proper Game](./anchor-state-registry.md#proper-game).
 - MUST revert if the withdrawal is being proven against a game that is not a
@@ -393,6 +410,9 @@ that uses dispute games that argue over [Output Roots](#output-root).
 - MUST otherwise store a record of the withdrawal proof that includes the hash of the proven  
   withdrawal, the address of the game against which it was proven, and the block timestamp at which
   the proof transaction was submitted.
+- MUST add the proof submitter to the list of submitters for this withdrawal hash.
+- MUST emit a `WithdrawalProven` event with the withdrawal hash, sender, and target.
+- MUST emit a `WithdrawalProvenExtension1` event with the withdrawal hash and proof submitter address.
 
 ### checkWithdrawal
 
@@ -400,8 +420,10 @@ Checks that a withdrawal transaction can be [finalized](#finalized-withdrawal).
 
 - MUST revert if the withdrawal being finalized has already been finalized.
 - MUST revert if the withdrawal being finalized has not been proven.
-- MUST revert if the withdrawal was proven at a timestamp less than the creation timestamp of the
-  dispute game it was proven against, which would signal an unexpected proving bug.
+- MUST revert if the withdrawal was proven at a timestamp less than or equal to the creation
+  timestamp of the dispute game it was proven against, which would signal an unexpected proving
+  bug. Note that prevents withdrawals from being proven in the same block that a dispute game is
+  created.
 - MUST revert if the withdrawal being finalized has been proven less than
   [Proof Maturity Delay](#proof-maturity-delay) seconds ago.
 - MUST revert if the withdrawal being finalized was proven against a game that does not have a
@@ -415,7 +437,83 @@ Allows a user to [finalize](#finalized-withdrawal) a withdrawal transaction.
 - MUST revert if the withdrawal being finalized does not pass `checkWithdrawal`.
 - MUST mark the withdrawal as finalized.
 - MUST set the L2 Withdrawal Sender variable correctly.
+- MUST unlock ETH from the ETHLockbox if the withdrawal includes an ETH value.
 - MUST execute the withdrawal transaction by executing a contract call to the target address with
   the data and ETH value specified within the withdrawal using AT LEAST the minimum amount of gas
   specified by the withdrawal.
 - MUST unset the L2 Withdrawal Sender after the withdrawal call.
+- MUST emit a `WithdrawalFinalized` event with the withdrawal hash and success status.
+- MUST lock any unused ETH back into the ETHLockbox if the call to the target address fails.
+
+### migrateLiquidity
+
+Allows the ProxyAdmin owner to migrate the total ETH balance to the ETHLockbox contract.
+
+- MUST revert if called by any address other than the ProxyAdmin owner.
+- MUST transfer the entire ETH balance of the OptimismPortal to the ETHLockbox contract.
+- MUST emit an ETHMigrated event with the ETHLockbox address and the migrated ETH amount.
+- MAY be called even if the system is paused.
+
+### migrateToSuperRoots
+
+Allows the ProxyAdmin owner to migrate the OptimismPortal to use a new ETHLockbox, point at a new
+AnchorStateRegistry, and start using the Super Roots proof method.
+
+- MUST revert if the system is paused.
+- MUST revert if called by any address other than the ProxyAdmin owner.
+- MUST revert if the new AnchorStateRegistry is the same as the current one.
+- MUST update the ETHLockbox address to the provided new ETHLockbox address.
+- MUST update the AnchorStateRegistry address to the provided new AnchorStateRegistry address.
+- MUST set the superRootsActive flag to true, enabling Super Roots proof method.
+- MUST emit a PortalMigrated event with the old and new ETHLockbox and AnchorStateRegistry
+  addresses.
+
+### donateETH
+
+Allows any address to donate ETH to the contract without triggering a deposit to L2.
+
+- MUST accept ETH payments via the payable modifier.
+- MUST not perform any state-changing operations.
+- MUST not trigger a deposit transaction to L2.
+
+### finalizeWithdrawalTransactionExternalProof
+
+Allows a user to [finalize](#finalized-withdrawal) a withdrawal transaction using a proof submitted
+by another address.
+
+- MUST revert if the system is paused.
+- MUST revert if the function is called while a previous withdrawal is being executed.
+- MUST revert if the target address is the OptimismPortal or the ETHLockbox. Note that the target
+  address is permitted to be the address of *another* OptimismPortal contract but it cannot be the
+  address if this contract.
+- MUST revert if the withdrawal being finalized does not pass `checkWithdrawal` when using the specified proof submitter.
+- MUST mark the withdrawal as finalized.
+- MUST set the L2 Withdrawal Sender variable correctly.
+- MUST unlock ETH from the ETHLockbox if the withdrawal includes an ETH value.
+- MUST execute the withdrawal transaction by executing a contract call to the target address with
+  the data and ETH value specified within the withdrawal using AT LEAST the minimum amount of gas
+  specified by the withdrawal.
+- MUST unset the L2 Withdrawal Sender after the withdrawal call.
+- MUST emit a `WithdrawalFinalized` event with the withdrawal hash and success status.
+- MUST lock any unused ETH back into the ETHLockbox if the call to the target address fails.
+
+### numProofSubmitters
+
+Returns the number of proof submitters for a given withdrawal hash.
+
+- MUST return the length of the proofSubmitters array for the specified withdrawal hash.
+- MUST NOT change state.
+
+### depositTransaction
+
+Accepts deposits of ETH and data, and emits a TransactionDeposited event for use in
+deriving deposit transactions. Note that if a deposit is made by a contract, its
+address will be aliased when retrieved using `tx.origin` or `msg.sender`. Consider
+using the CrossDomainMessenger contracts for a simpler developer experience.
+
+- MUST lock any ETH value (msg.value) in the ETHLockbox contract.
+- MUST revert if the target address is not address(0) for contract creations.
+- MUST revert if the gas limit provided is too low based on the calldata size.
+- MUST revert if the calldata is too large (> 120,000 bytes).
+- MUST transform the sender address to its alias if the caller is a contract.
+- MUST emit a TransactionDeposited event with the from address, to address, deposit version, and opaque data.

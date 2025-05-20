@@ -399,6 +399,7 @@ allotted response time, and resolution would require intervention from the Proxy
 
 ### initialize
 
+- MUST only be callable by the ProxyAdmin or its owner.
 - MUST only be triggerable once.
 - MUST set the value of the `SystemConfig` contract that stores the address of the Guardian.
 - MUST set the value of the `DisputeGameFactory` contract that creates Dispute Game instances.
@@ -455,7 +456,8 @@ Permits the Guardian role to [blacklist](#blacklisted-game) a Dispute Game.
 
 Determines if a game is a Registered Game.
 
-- MUST return `true` if and only if the game was created by the system's `DisputeGameFactory` contract.
+- MUST return `true` if and only if the game was created by the system's `DisputeGameFactory`
+  contract AND the game's `AnchorStateRegistry` address matches the address of this contract.
 
 ### isGameRespected
 
@@ -464,7 +466,6 @@ Determines if a game is a Respected Game.
 - MUST return `true` if and only if the game's game type was the respected game type defined by the
   `AnchorStateRegistry` contract at the time of the game's creation as per a call to
   `AnchorStateRegistry.respectedGameType()`.
-- MUST return `false` if the call to `FaultDisputeGame.wasRespectedGameTypeWhenCreated` reverts.
 
 ### isGameBlacklisted
 
@@ -477,9 +478,13 @@ Determines if a game is a Blacklisted Game.
 
 Determines if a game is a Retired Game.
 
-- MUST return `true` if and only if the game was created before the retirement timestamp defined by
-  the `AnchorStateRegistry` contract as per a call to `AnchorStateRegistry.retirementTimestamp()`.
-  Check should be a strict comparison that the creation is less than the retirement timestamp.
+- MUST return `true` if and only if the game was created before or at the retirement timestamp
+  defined by the `AnchorStateRegistry` contract as per a call to
+  `AnchorStateRegistry.retirementTimestamp()`. We check for less than or equal to the current
+  retirement timestamp to prevent games from being created in the same block but before the
+  transaction in which the retirement timestamp was set. Note that this has the side effect of also
+  invalidating any games created in the same block *after* the retirement timestamp was set but
+  this is an acceptable tradeoff.
 
 ### isGameProper
 

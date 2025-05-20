@@ -18,6 +18,7 @@
   - [System Config Updates](#system-config-updates)
 - [Function Specification](#function-specification)
   - [initialize](#initialize)
+  - [upgrade](#upgrade)
   - [minimumGasLimit](#minimumgaslimit)
   - [maximumGasLimit](#maximumgaslimit)
   - [unsafeBlockSigner](#unsafeblocksigner)
@@ -40,6 +41,7 @@
   - [setEIP1559Params](#seteip1559params)
   - [setOperatorFeeScalars](#setoperatorfeescalars)
   - [resourceConfig](#resourceconfig)
+  - [guardian](#guardian)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -169,17 +171,28 @@ In version `0`, the following update types are supported:
   updates `baseFeeScalar` and `blobBaseFeeScalar`
 - Type `2`: `gasLimit` overwrite, as `uint64` payload
 - Type `3`: `unsafeBlockSigner` overwrite, as `address` payload
+- Type `4`: `eip1559Params` overwrite, as `uint256` payload encoding denomination and elasticity
+- Type `5`: `operatorFeeParams` overwrite, as `uint256` payload encoding scalar and constant
 
 ## Function Specification
 
 ### initialize
 
+- MUST only be triggerable by the ProxyAdmin or its owner.
 - MUST only be triggerable once.
 - MUST set the owner of the contract to the provided `_owner` address.
 - MUST set the SuperchainConfig contract address.
 - MUST set the batcher hash, gas config, gas limit, unsafe block signer, resource config, batch
   inbox, L1 contract addresses, and L2 chain ID.
 - MUST set the start block to the current block number if it hasn't been set already.
+- MUST validate the resource configuration parameters against system constraints.
+
+### upgrade
+
+- MUST only be triggerable by the ProxyAdmin or its owner.
+- MUST set the L2 chain ID to the provided value.
+- MUST set the SuperchainConfig contract address to the provided value.
+- MUST clear the old dispute game factory address from storage (now derived from OptimismPortal).
 
 ### minimumGasLimit
 
@@ -266,7 +279,7 @@ Allows the owner to update the [Batcher Hash](#batcher-hash).
 Allows the owner to update the gas configuration parameters (pre-Ecotone).
 
 - MUST revert if called by an address other than the owner.
-- MUST revert if the scalar exceeds the maximum allowed value.
+- MUST revert if the scalar exceeds the maximum allowed value (no upper 8 bits should be set).
 - MUST update the overhead and scalar values.
 - MUST emit a ConfigUpdate event with the UpdateType.FEE_SCALARS type.
 
@@ -310,3 +323,16 @@ Allows the owner to update the operator fee parameters.
 ### resourceConfig
 
 Returns the current resource metering configuration.
+
+- MUST perform validation checks when setting the resource config:
+  - Minimum base fee must be less than or equal to maximum base fee
+  - Base fee change denominator must be greater than 1
+  - Max resource limit plus system transaction gas must be less than or equal to the L2 gas limit
+  - Elasticity multiplier must be greater than 0
+  - No precision loss when computing target resource limit
+
+### guardian
+
+Returns the address of the guardian from the SuperchainConfig contract.
+
+- MUST return the result of a call to `superchainConfig.guardian()`.

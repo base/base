@@ -12,13 +12,15 @@
     - [Impact](#impact-1)
 - [Function Specification](#function-specification)
   - [initialize](#initialize)
+  - [upgrade](#upgrade)
   - [guardian](#guardian)
+  - [pauseExpiry](#pauseexpiry)
   - [pause](#pause)
   - [unpause](#unpause)
+  - [extend](#extend)
   - [pausable](#pausable)
   - [paused](#paused)
   - [expiration](#expiration)
-  - [reset](#reset)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -45,7 +47,7 @@ of these actors from triggering the pause as needed.
 ### iSUPC-002: The Guardian must be able to reset or undo the Pause Mechanism
 
 We require that the `SuperchainConfig` is constructed such that the
-[Guardian](./stage-1.md#guardian) must be able to reset or unpause the
+[Guardian](./stage-1.md#guardian) must be able to unpause or extend the
 [Pause Mechanism](./stage-1.md#pause-mechanism) at any time.
 
 #### Impact
@@ -61,13 +63,25 @@ that [iSUPC-001][iSUPC-001] holds.
 
 ### initialize
 
+- MUST only be triggerable by the ProxyAdmin or its owner.
 - MUST only be triggerable once.
 - MUST set the value of the Guardian role.
-- MUST set the value of the pause expiry period.
+- MUST emit a ConfigUpdate event with the Guardian address.
+
+### upgrade
+
+- MUST only be triggerable by the ProxyAdmin or its owner.
+- MUST migrate the guardian from old storage to new storage.
+- MUST clear old storage slots.
+- MUST maintain contract version information.
 
 ### guardian
 
 Returns the address of the current [Guardian](./stage-1.md#guardian).
+
+### pauseExpiry
+
+Returns the duration after which a pause expires, which is a hardcoded constant of 7,884,000 seconds (approximately 3 months).
 
 ### pause
 
@@ -77,10 +91,9 @@ Allows the [Guardian](./stage-1.md#guardian) to trigger the
 systems or chains are affected by the pause.
 
 - MUST revert if called by an address other than the Guardian.
-- MUST revert if the pausable flag for the given identifier is set to 1 (used/unavailable).
+- MUST revert if the pause timestamp for the given identifier is non-zero (already paused).
 - MUST set the pause timestamp for the given identifier to the current block timestamp.
-- MUST set the pausable flag for the given identifier to 1 (used/unavailable) to prevent repeated
-  pauses without a reset.
+- MUST emit a Paused event with the identifier.
 
 ### unpause
 
@@ -88,13 +101,22 @@ Allows the [Guardian](./stage-1.md#guardian) to explicitly unpause the system fo
 [Pause Identifier](./stage-1.md#pause-identifier) rather than waiting for the pause to expire.
 Unpausing a specific identifier does NOT unpause the global pause (zero address identifier). If the
 global pause is active, all systems will remain paused even if their specific identifiers are
-unpaused. Note that `unpause` will not revert if the pause is not currently active which would
-cause `unpause` to act like a call to `reset`.
+unpaused.
 
 - MUST revert if called by an address other than the Guardian.
 - MUST set the pause timestamp for the given identifier to 0, representing "not paused".
-- MUST set the pausable flag for the given identifier to 0 (ready to pause), allowing the pause
-  mechanism to be used again.
+- MUST emit an Unpaused event with the identifier.
+- Will not revert if the system is not already paused for the given identifier.
+
+### extend
+
+Allows the [Guardian](./stage-1.md#guardian) to extend an active pause by resetting the pause
+timestamp to the current block timestamp, effectively restarting the expiry timer.
+
+- MUST revert if called by an address other than the Guardian.
+- MUST revert if the pause timestamp for the given identifier is zero (not currently paused).
+- MUST set the pause timestamp for the given identifier to the current block timestamp.
+- MUST emit a Paused event with the identifier.
 
 ### pausable
 
@@ -102,8 +124,8 @@ Allows any user to check if the [Pause Mechanism](./stage-1.md#pause-mechanism) 
 for a specific [Pause Identifier](./stage-1.md#pause-identifier). The pausable status of a specific
 identifier is independent of the pausable status of the global pause (zero address identifier).
 
-- MUST return true if the pausable flag for the given identifier is 0 (ready to pause).
-- MUST return false if the pausable flag for the given identifier is 1 (used/unavailable).
+- MUST return true if the pause timestamp for the given identifier is 0 (not currently paused).
+- MUST return false if the pause timestamp for the given identifier is non-zero (currently paused).
 
 ### paused
 
@@ -113,6 +135,7 @@ Allows any user to check if the system is currently paused for a specific
 - MUST return true if the pause timestamp for the given identifier is non-zero AND not expired
   (current time < pause timestamp + expiry duration).
 - MUST return false otherwise.
+- When called without parameters, MUST check the pause status for the global identifier (address(0)).
 
 ### expiration
 
@@ -122,19 +145,6 @@ expiration for the specific identifier provided.
 
 - MUST return the pause timestamp plus the configured expiry duration if the pause timestamp is non-zero.
 - MUST return 0 if the pause timestamp is 0 (system is not paused) for the given identifier.
-
-### reset
-
-Allows the [Guardian](./stage-1.md#guardian) to reset the pause mechanism for a given
-[Pause Identifier](./stage-1.md#pause-identifier), allowing it to be used again. Note that `reset`
-will not revert if the pausable flag is already set to zero.
-
-- MUST revert if called by an address other than the Guardian.
-- MUST set the pausable flag for the given identifier to 0 (ready to pause).
-- MUST NOT modify the pause timestamp for the given identifier.
-- NOTE: Resetting the pausable flag for a specific identifier does not affect the pause status. If
-  a system is currently paused, it will remain paused until explicitly unpaused or until the pause
-  expires.
 
 <!-- references -->
 
