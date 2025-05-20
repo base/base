@@ -40,6 +40,7 @@
     - [Celestia DA](./fault_proofs/experimental/celestia.md)
 
 - [Advanced](./advanced/intro.md)
+  - [Cost Estimator](./advanced/cost-estimator.md)
   - [Reproduce Binaries](./advanced/verify-binaries.md)
   - [Node Setup](./advanced/node-setup.md)
   - [Kurtosis](./advanced/kurtosis.md)
