@@ -1,5 +1,4 @@
 use crate::tests::TestHarnessBuilder;
-use alloy_provider::Provider;
 
 /// This test ensures that the transactions that get reverted an not included in the block
 /// are emitted as a log on the builder.
@@ -58,29 +57,10 @@ async fn revert_protection_disabled() -> eyre::Result<()> {
     for _ in 0..10 {
         let valid_tx = harness.send_valid_transaction().await?;
         let reverting_tx = harness.send_revert_transaction().await?;
-        let block_hash = generator.generate_block().await?;
+        let block_generated = generator.generate_block().await?;
 
-        let block = harness
-            .provider()?
-            .get_block_by_hash(block_hash)
-            .await?
-            .expect("block");
-
-        assert!(
-            block
-                .transactions
-                .hashes()
-                .any(|hash| hash == *valid_tx.tx_hash()),
-            "successful transaction missing from block"
-        );
-
-        assert!(
-            block
-                .transactions
-                .hashes()
-                .any(|hash| hash == *reverting_tx.tx_hash()),
-            "reverted transaction missing from block"
-        );
+        assert!(block_generated.includes(*valid_tx.tx_hash()));
+        assert!(block_generated.includes(*reverting_tx.tx_hash()));
     }
 
     Ok(())
@@ -98,29 +78,10 @@ async fn revert_protection() -> eyre::Result<()> {
     for _ in 0..10 {
         let valid_tx = harness.send_valid_transaction().await?;
         let reverting_tx = harness.send_revert_transaction().await?;
-        let block_hash = generator.generate_block().await?;
+        let block_generated = generator.generate_block().await?;
 
-        let block = harness
-            .provider()?
-            .get_block_by_hash(block_hash)
-            .await?
-            .expect("block");
-
-        assert!(
-            block
-                .transactions
-                .hashes()
-                .any(|hash| hash == *valid_tx.tx_hash()),
-            "successful transaction missing from block"
-        );
-
-        assert!(
-            !block
-                .transactions
-                .hashes()
-                .any(|hash| hash == *reverting_tx.tx_hash()),
-            "reverted transaction unexpectedly included in block"
-        );
+        assert!(block_generated.includes(*valid_tx.tx_hash()));
+        assert!(block_generated.not_includes(*reverting_tx.tx_hash()));
     }
 
     Ok(())

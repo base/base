@@ -71,8 +71,11 @@ async fn main() -> eyre::Result<()> {
 
             generator.init().await?;
 
-            let block_hash = generator.deposit(address, amount).await?;
-            println!("Deposit transaction included in block: {block_hash}");
+            let block_generated = generator.deposit(address, amount).await?;
+            println!(
+                "Deposit transaction included in block: {:?}",
+                block_generated.block_hash()
+            );
             Ok(())
         }
     }
@@ -108,7 +111,7 @@ pub async fn run_system(
     // Infinite loop generating blocks
     loop {
         println!("Generating new block...");
-        let block_hash = generator.submit_payload(None, 0, no_sleep).await?;
-        println!("Generated block: {block_hash}");
+        let block_generated = generator.submit_payload(None, 0, no_sleep).await?;
+        println!("Generated block: {:?}", block_generated.block_hash());
     }
 }

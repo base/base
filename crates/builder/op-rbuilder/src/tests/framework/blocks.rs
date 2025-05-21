@@ -161,7 +161,7 @@ impl BlockGenerator {
         transactions: Option<Vec<Bytes>>,
         block_building_delay_secs: u64,
         no_sleep: bool, // TODO: Change this, too many parameters we can tweak here to put as a function arguments
-    ) -> eyre::Result<B256> {
+    ) -> eyre::Result<BlockGenerated> {
         let timestamp = self.timestamp + self.block_time_secs;
 
         // Add L1 block info as the first transaction in every L2 block
@@ -289,20 +289,29 @@ impl BlockGenerator {
         self.latest_hash = new_block_hash;
         self.timestamp = execution_payload.timestamp();
 
-        Ok(new_block_hash)
+        let block = self
+            .engine_api
+            .get_block_by_number(BlockNumberOrTag::Latest, false)
+            .await?
+            .expect("block not found");
+
+        assert_eq!(block.header.hash, new_block_hash);
+
+        let generated_block = BlockGenerated { block };
+        Ok(generated_block)
     }
 
     /// Generate a single new block and return its hash
-    pub async fn generate_block(&mut self) -> eyre::Result<B256> {
+    pub async fn generate_block(&mut self) -> eyre::Result<BlockGenerated> {
         self.submit_payload(None, 0, false).await
     }
 
-    pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<B256> {
+    pub async fn generate_block_with_delay(&mut self, delay: u64) -> eyre::Result<BlockGenerated> {
         self.submit_payload(None, delay, false).await
     }
 
     /// Submit a deposit transaction to seed an account with ETH
-    pub async fn deposit(&mut self, address: Address, value: u128) -> eyre::Result<B256> {
+    pub async fn deposit(&mut self, address: Address, value: u128) -> eyre::Result<BlockGenerated> {
         // Create deposit transaction
         let deposit_tx = TxDeposit {
             source_hash: B256::default(),
@@ -343,5 +352,24 @@ impl BlockGenerator {
         }
 
         Ok(signers)
+    }
+}
+
+#[derive(Debug)]
+pub struct BlockGenerated {
+    pub block: Block,
+}
+
+impl BlockGenerated {
+    pub fn block_hash(&self) -> B256 {
+        self.block.header.hash
+    }
+
+    pub fn not_includes(&self, tx_hash: B256) -> bool {
+        !self.includes(tx_hash)
+    }
+
+    pub fn includes(&self, tx_hash: B256) -> bool {
+        self.block.transactions.hashes().any(|hash| hash == tx_hash)
     }
 }
