@@ -70,9 +70,8 @@ impl FromStr for Signer {
 #[cfg(test)]
 mod test {
     use super::*;
-    use alloy_consensus::TxEip1559;
+    use alloy_consensus::{transaction::SignerRecoverable, TxEip1559};
     use alloy_primitives::{address, fixed_bytes, TxKind as TransactionKind};
-    use reth::core::primitives::SignedTransaction;
     #[test]
     fn test_sign_transaction() {
         let secret =

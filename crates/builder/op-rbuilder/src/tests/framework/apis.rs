@@ -3,21 +3,21 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ExecutionPayloadV3, ForkchoiceUpdated, PayloadStatus};
 use jsonrpsee::{
-    core::RpcResult,
-    http_client::{transport::HttpBackend, HttpClient},
+    core::{client::SubscriptionClientT, RpcResult},
     proc_macros::rpc,
 };
 use reth::rpc::{api::EngineApiClient, types::engine::ForkchoiceState};
 use reth_node_api::{EngineTypes, PayloadTypes};
 use reth_optimism_node::OpEngineTypes;
 use reth_payload_builder::PayloadId;
-use reth_rpc_layer::{AuthClientLayer, AuthClientService, JwtSecret};
+use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
 use std::str::FromStr;
 
 /// Helper for engine api operations
 pub struct EngineApi {
-    pub engine_api_client: HttpClient<AuthClientService<HttpBackend>>,
+    url: url::Url,
+    jwt_secret: JwtSecret,
 }
 
 /// Builder for EngineApi configuration
@@ -46,15 +46,9 @@ impl EngineApiBuilder {
     }
 
     pub fn build(self) -> Result<EngineApi, Box<dyn std::error::Error>> {
-        let secret_layer = AuthClientLayer::new(JwtSecret::from_str(&self.jwt_secret)?);
-        let middleware = tower::ServiceBuilder::default().layer(secret_layer);
-        let client = jsonrpsee::http_client::HttpClientBuilder::default()
-            .set_http_middleware(middleware)
-            .build(&self.url)
-            .expect("Failed to create http client");
-
         Ok(EngineApi {
-            engine_api_client: client,
+            url: self.url.parse()?,
+            jwt_secret: JwtSecret::from_str(&self.jwt_secret)?,
         })
     }
 }
@@ -74,6 +68,16 @@ impl EngineApi {
             .build()
     }
 
+    pub fn http_client(&self) -> impl SubscriptionClientT + Clone + Send + Sync + Unpin + 'static {
+        // Create a middleware that adds a new JWT token to every request.
+        let secret_layer = AuthClientLayer::new(self.jwt_secret);
+        let middleware = tower::ServiceBuilder::default().layer(secret_layer);
+        jsonrpsee::http_client::HttpClientBuilder::default()
+            .set_http_middleware(middleware)
+            .build(&self.url)
+            .expect("Failed to create http client")
+    }
+
     pub async fn get_payload_v3(
         &self,
         payload_id: PayloadId,
@@ -85,7 +89,7 @@ impl EngineApi {
         );
 
         Ok(
-            EngineApiClient::<OpEngineTypes>::get_payload_v3(&self.engine_api_client, payload_id)
+            EngineApiClient::<OpEngineTypes>::get_payload_v3(&self.http_client(), payload_id)
                 .await?,
         )
     }
@@ -99,7 +103,7 @@ impl EngineApi {
         println!("Submitting new payload at {}...", chrono::Utc::now());
 
         Ok(EngineApiClient::<OpEngineTypes>::new_payload_v3(
-            &self.engine_api_client,
+            &self.http_client(),
             payload,
             versioned_hashes,
             parent_beacon_block_root,
@@ -116,7 +120,7 @@ impl EngineApi {
         println!("Updating forkchoice at {}...", chrono::Utc::now());
 
         Ok(EngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
-            &self.engine_api_client,
+            &self.http_client(),
             ForkchoiceState {
                 head_block_hash: new_head,
                 safe_block_hash: current_head,
@@ -137,10 +141,7 @@ impl EngineApi {
         number: BlockNumberOrTag,
         include_txs: bool,
     ) -> eyre::Result<Option<alloy_rpc_types_eth::Block>> {
-        Ok(
-            BlockApiClient::get_block_by_number(&self.engine_api_client, number, include_txs)
-                .await?,
-        )
+        Ok(BlockApiClient::get_block_by_number(&self.http_client(), number, include_txs).await?)
     }
 }
 

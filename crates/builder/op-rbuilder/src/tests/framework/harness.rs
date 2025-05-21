@@ -149,7 +149,7 @@ impl TestHarness {
     pub fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
         let url = format!("http://localhost:{}", self.builder_http_port);
         let provider =
-            ProviderBuilder::<Identity, Identity, Optimism>::default().on_http(url.parse()?);
+            ProviderBuilder::<Identity, Identity, Optimism>::default().connect_http(url.parse()?);
 
         Ok(provider)
     }
