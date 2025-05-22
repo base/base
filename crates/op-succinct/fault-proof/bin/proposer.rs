@@ -2,7 +2,6 @@ use std::{env, sync::Arc};
 
 use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
-use alloy_signer_local::PrivateKeySigner;
 use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use clap::Parser;
@@ -10,12 +9,12 @@ use fault_proof::{
     contract::DisputeGameFactory, prometheus::ProposerGauge, proposer::OPSuccinctProposer,
     utils::setup_logging,
 };
-use op_alloy_network::EthereumWallet;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
     metrics::{init_metrics, MetricsGauge},
 };
 use op_succinct_proof_utils::initialize_host;
+use op_succinct_signer_utils::Signer;
 
 #[derive(Parser)]
 struct Args {
@@ -30,23 +29,17 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     dotenv::from_filename(args.env_file).ok();
 
-    let wallet = EthereumWallet::from(
-        env::var("PRIVATE_KEY")
-            .expect("PRIVATE_KEY must be set")
-            .parse::<PrivateKeySigner>()
-            .unwrap(),
-    );
+    let proposer_signer = Signer::from_env()?;
 
-    let l1_provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
+    let l1_provider =
+        ProviderBuilder::new().connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
 
     let factory = DisputeGameFactory::new(
         env::var("FACTORY_ADDRESS")
             .expect("FACTORY_ADDRESS must be set")
             .parse::<Address>()
             .unwrap(),
-        l1_provider_with_wallet.clone(),
+        l1_provider.clone(),
     );
 
     // Use PROVER_ADDRESS from env if available, otherwise use wallet's default signer address from
@@ -54,19 +47,14 @@ async fn main() -> Result<()> {
     let prover_address = env::var("PROVER_ADDRESS")
         .ok()
         .and_then(|addr| addr.parse::<Address>().ok())
-        .unwrap_or_else(|| wallet.default_signer().address());
+        .unwrap_or_else(|| proposer_signer.address());
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
-    let proposer = OPSuccinctProposer::new(
-        prover_address,
-        l1_provider_with_wallet,
-        factory,
-        Arc::new(fetcher),
-        host,
-    )
-    .await
-    .unwrap();
+    let proposer =
+        OPSuccinctProposer::new(prover_address, proposer_signer, factory, Arc::new(fetcher), host)
+            .await
+            .unwrap();
 
     // Initialize proposer gauges.
     ProposerGauge::register_all();

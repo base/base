@@ -49,8 +49,10 @@ impl Default for OPSuccinctDataFetcher {
 #[derive(Debug, Clone)]
 pub struct RPCConfig {
     pub l1_rpc: Url,
+    // TODO(fakedev9999): Make optional if possible.
     pub l1_beacon_rpc: Url,
     pub l2_rpc: Url,
+    // TODO(fakedev9999): Make optional if possible.
     pub l2_node_rpc: Url,
 }
 

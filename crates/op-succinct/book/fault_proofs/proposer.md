@@ -35,8 +35,15 @@ The proposer is configured through various environment variables. Create a `.env
 | `L2_RPC` | L2 RPC endpoint URL |
 | `FACTORY_ADDRESS` | Address of the DisputeGameFactory contract |
 | `GAME_TYPE` | Type identifier for the dispute game |
-| `PRIVATE_KEY` | Private key for transaction signing |
 | `NETWORK_PRIVATE_KEY` | Private key for the succinct prover network (Set to `0x0000000000000000000000000000000000000000000000000000000000000001` if not using fast finality mode) |
+
+Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for transaction signing:
+
+| Variable | Description |
+|----------|-------------|
+| `PRIVATE_KEY` | Private key for transaction signing (if using private key signer) |
+| `SIGNER_URL` | URL of the web3 signer service (if using web3 signer) |
+| `SIGNER_ADDRESS` | Address of the account managed by the web3 signer (if using web3 signer) |
 
 To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/). The Succinct team will reach out to you with an RPC endpoint you can use.
 
@@ -64,7 +71,13 @@ L1_RPC=                  # L1 RPC endpoint URL
 L2_RPC=                  # L2 RPC endpoint URL
 FACTORY_ADDRESS=         # Address of the DisputeGameFactory contract (obtained from deployment)
 GAME_TYPE=               # Type identifier for the dispute game (must match factory configuration)
+
+# Transaction Signing Configuration (Choose one)
+# Option 1: Private Key Signer
 PRIVATE_KEY=             # Private key for transaction signing
+# Option 2: Web3 Signer
+SIGNER_URL=              # URL of the web3 signer service
+SIGNER_ADDRESS=          # Address of the account managed by the web3 signer
 
 # Optional Configuration
 MOCK_MODE=false                          # Whether to use mock mode

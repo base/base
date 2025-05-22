@@ -9,6 +9,9 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     contract DisputeGameFactory {
+        /// @notice Emitted when a new dispute game is created.
+        event DisputeGameCreated(address indexed disputeProxy, GameType indexed gameType, Claim indexed rootClaim);
+
         /// @notice `gameImpls` is a mapping that maps `GameType`s to their respective
         ///         `IDisputeGame` implementations.
         mapping(GameType => IDisputeGame) public gameImpls;

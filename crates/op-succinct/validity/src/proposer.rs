@@ -1,13 +1,8 @@
 use std::{collections::HashMap, env, str::FromStr, sync::Arc, time::Duration};
 
-use alloy_consensus::{TxEnvelope, TypedTransaction};
-use alloy_eips::{BlockId, Decodable2718};
-use alloy_network::{EthereumWallet, TransactionBuilder, TransactionBuilder4844};
+use alloy_eips::BlockId;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_provider::{
-    network::ReceiptResponse, Network, PendingTransactionBuilder, Provider, ProviderBuilder,
-    Web3Signer,
-};
+use alloy_provider::{network::ReceiptResponse, Provider};
 use alloy_sol_types::SolValue;
 use anyhow::{anyhow, Context, Result};
 use futures_util::{stream, StreamExt, TryStreamExt};
@@ -19,20 +14,18 @@ use op_succinct_host_utils::{
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
-use serde::{Deserialize, Serialize};
+use op_succinct_signer_utils::Signer;
 use sp1_sdk::{
     network::proto::network::{ExecutionStatus, FulfillmentStatus},
     HashableKey, NetworkProver, Prover, ProverClient, SP1Proof, SP1ProofWithPublicValues,
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
-use url::Url;
 
 use crate::{
     db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus},
     find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, CommitmentConfig,
-    ContractConfig, OPSuccinctProofRequester, ProgramConfig, ProposerSigner, RequesterConfig,
-    ValidityGauge,
+    ContractConfig, OPSuccinctProofRequester, ProgramConfig, RequesterConfig, ValidityGauge,
 };
 
 /// Configuration for the driver.
@@ -40,43 +33,34 @@ pub struct DriverConfig {
     pub network_prover: Arc<NetworkProver>,
     pub fetcher: Arc<OPSuccinctDataFetcher>,
     pub driver_db_client: Arc<DriverDBClient>,
-    pub proposer_signer: ProposerSigner,
+    pub signer: Signer,
     pub loop_interval: u64,
 }
 /// Type alias for a map of task IDs to their join handles and associated requests
 pub type TaskMap = HashMap<i64, (tokio::task::JoinHandle<Result<()>>, OPSuccinctRequest)>;
 
-pub struct Proposer<P, N, H: OPSuccinctHost>
+pub struct Proposer<P, H: OPSuccinctHost>
 where
-    P: Provider<N> + 'static,
-    N: Network<UnsignedTx = TypedTransaction, TxEnvelope = TxEnvelope>,
-    N::TransactionRequest: TransactionBuilder4844,
+    P: Provider + 'static,
 {
     driver_config: DriverConfig,
-    contract_config: ContractConfig<P, N>,
+    contract_config: ContractConfig<P>,
     program_config: ProgramConfig,
     requester_config: RequesterConfig,
     proof_requester: Arc<OPSuccinctProofRequester<H>>,
     tasks: Arc<Mutex<TaskMap>>,
 }
 
-/// 5 L1 confirmations (1 minute)
-const NUM_CONFIRMATIONS: u64 = 5;
-/// 2 minute timeout.
-const TIMEOUT: u64 = 120;
-
-impl<P, N, H: OPSuccinctHost> Proposer<P, N, H>
+impl<P, H: OPSuccinctHost> Proposer<P, H>
 where
-    P: Provider<N> + 'static + Clone,
-    N: Network<UnsignedTx = TypedTransaction, TxEnvelope = TxEnvelope>,
-    N::TransactionRequest: TransactionBuilder4844,
+    P: Provider + 'static + Clone,
 {
     pub async fn new(
         provider: P,
         db_client: Arc<DriverDBClient>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         requester_config: RequesterConfig,
-        proposer_signer: ProposerSigner,
+        signer: Signer,
         loop_interval: u64,
         host: Arc<H>,
     ) -> Result<Self> {
@@ -158,7 +142,7 @@ where
                 network_prover,
                 fetcher,
                 driver_db_client: db_client,
-                proposer_signer,
+                signer,
                 loop_interval,
             },
             contract_config: ContractConfig {
@@ -478,8 +462,14 @@ where
                     .checkpointBlockHash(U256::from(latest_header.number))
                     .into_transaction_request();
 
-                let receipt =
-                    self.sign_transaction_request(transaction_request).await?.get_receipt().await?;
+                let receipt = self
+                    .driver_config
+                    .signer
+                    .send_transaction_request(
+                        self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
+                        transaction_request,
+                    )
+                    .await?;
 
                 // If transaction reverted, log the error.
                 if !receipt.status() {
@@ -733,11 +723,12 @@ where
                 .value(init_bond)
                 .into_transaction_request();
 
-            self.sign_transaction_request(transaction_request)
-                .await?
-                .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT)))
-                .get_receipt()
+            self.driver_config
+                .signer
+                .send_transaction_request(
+                    self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
+                    transaction_request,
+                )
                 .await?
         } else {
             // Propose the L2 output.
@@ -753,11 +744,12 @@ where
                 )
                 .into_transaction_request();
 
-            self.sign_transaction_request(transaction_request)
-                .await?
-                .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT)))
-                .get_receipt()
+            self.driver_config
+                .signer
+                .send_transaction_request(
+                    self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
+                    transaction_request,
+                )
                 .await?
         };
 
@@ -1192,144 +1184,5 @@ where
         }
 
         Ok(Some(current_end))
-    }
-
-    /// Sign a transaction request.
-    async fn sign_transaction_request(
-        &self,
-        transaction_request: N::TransactionRequest,
-    ) -> Result<PendingTransactionBuilder<N>> {
-        sign_transaction_request_inner(
-            self.driver_config.proposer_signer.clone(),
-            self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
-            transaction_request,
-        )
-        .await
-    }
-}
-
-/// Sign a transaction request using the configured `proposer_signer`.
-async fn sign_transaction_request_inner<N>(
-    proposer_signer: ProposerSigner,
-    l1_rpc: Url,
-    mut transaction_request: N::TransactionRequest,
-) -> Result<PendingTransactionBuilder<N>>
-where
-    N: Network<UnsignedTx = TypedTransaction, TxEnvelope = TxEnvelope>,
-    N::TransactionRequest: TransactionBuilder4844,
-{
-    match proposer_signer {
-        ProposerSigner::Web3Signer(signer_url, signer_address) => {
-            // Set the from address to the signer address.
-            transaction_request.set_from(signer_address);
-
-            // Fill the transaction request with all of the relevant gas and nonce information.
-            let provider = ProviderBuilder::new().network::<N>().connect_http(l1_rpc);
-            let filled_tx = provider.fill(transaction_request).await?;
-
-            // Sign the transaction request using the Web3Signer.
-            let web3_provider = ProviderBuilder::new().network::<N>().connect_http(signer_url);
-            let signer = Web3Signer::new(web3_provider.clone(), signer_address);
-
-            let tx = filled_tx.as_builder().unwrap().clone();
-
-            // NOTE: This is a hack because there is not a "data" field on the TransactionRequest.
-            // `eth_signTransaction` expects a "data" field with the calldata.
-            // TODO: Once alloy fixes this, we can remove this wrapper.
-            let wrapper = TransactionRequestWrapper::<N>::new(tx);
-
-            let raw: Bytes =
-                signer.provider().client().request("eth_signTransaction", (wrapper,)).await?;
-
-            let tx_envelope = N::TxEnvelope::decode_2718(&mut raw.as_ref()).unwrap();
-
-            Ok(provider.send_tx_envelope(tx_envelope).await?)
-        }
-        ProposerSigner::LocalSigner(private_key) => {
-            let provider = ProviderBuilder::new()
-                .network::<N>()
-                .wallet(EthereumWallet::new(private_key.clone()))
-                .connect_http(l1_rpc);
-
-            // Set the from address to the Ethereum wallet address.
-            transaction_request.set_from(private_key.address());
-
-            // Fill the transaction request with all of the relevant gas and nonce information.
-            let filled_tx = provider.fill(transaction_request).await?;
-
-            Ok(provider.send_tx_envelope(filled_tx.as_envelope().unwrap().clone()).await?)
-        }
-    }
-}
-
-/// A wrapper around `TransactionRequest` that adds a data field as bytes.
-///
-/// This is needed because:
-/// 1. The `TransactionRequest` trait and `TransactionBuilder` trait don't include methods to set
-///    the "data" field directly (only `input()` and `set_input()` are available).
-/// 2. Web3Signer's `eth_signTransaction` method specifically expects a "data" field in the JSON-RPC
-///    request, not the "input" field.
-/// 3. While the alloy-rpc-types-eth crate has methods like `normalize_data()` and `set_both()` to
-///    work with both fields, these are only implemented on the specific Ethereum transaction type
-///    struct and aren't accessible through the generic `N::TransactionRequest` interface we're
-///    using here.
-///
-/// TODO(fakedev9999): Once alloy fixes this, we can remove this wrapper.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionRequestWrapper<N: Network> {
-    /// The underlying transaction request
-    #[serde(flatten)]
-    pub tx: N::TransactionRequest,
-    /// The transaction data as bytes
-    pub data: Option<Bytes>,
-}
-
-impl<N: Network> TransactionRequestWrapper<N> {
-    /// Create a new wrapper around a transaction request
-    pub fn new(tx: N::TransactionRequest) -> Self {
-        let data = tx.input().cloned();
-        Self { tx, data }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use alloy_network::Ethereum;
-    use alloy_primitives::address;
-
-    use super::*;
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_sign_transaction_request() {
-        let proposer_signer = ProposerSigner::Web3Signer(
-            "http://localhost:9000".parse().unwrap(),
-            "0x9b3F173823E944d183D532ed236Ee3B83Ef15E1d".parse().unwrap(),
-        );
-
-        let provider = ProviderBuilder::new()
-            .network::<Ethereum>()
-            .connect_http("http://localhost:8545".parse().unwrap());
-
-        let l2oo_contract = OPSuccinctL2OOContract::new(
-            address!("0xDafA1019F21AB8B27b319B1085f93673F02A69B7"),
-            provider.clone(),
-        );
-
-        let latest_header = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-
-        let transaction_request = l2oo_contract
-            .checkpointBlockHash(U256::from(latest_header.header.number))
-            .into_transaction_request();
-
-        let signed_tx = sign_transaction_request_inner::<Ethereum>(
-            proposer_signer,
-            "http://localhost:8545".parse().unwrap(),
-            transaction_request,
-        )
-        .await
-        .unwrap();
-
-        println!("Signed transaction receipt: {:?}", signed_tx.get_receipt().await.unwrap());
     }
 }

@@ -1,10 +1,17 @@
 use std::{env, sync::Arc, time::Duration};
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, TxHash, U256};
-use alloy_provider::{fillers::TxFiller, Provider, ProviderBuilder};
-use alloy_sol_types::SolValue;
+use alloy_provider::{Provider, ProviderBuilder};
+use alloy_sol_types::{SolEvent, SolValue};
 use anyhow::{Context, Result};
+use op_succinct_client_utils::boot::BootInfoStruct;
+use op_succinct_elfs::AGGREGATION_ELF;
+use op_succinct_host_utils::{
+    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::OPSuccinctHost,
+    metrics::MetricsGauge, witness_generation::WitnessGenerator,
+};
+use op_succinct_proof_utils::get_range_elf_embedded;
+use op_succinct_signer_utils::Signer;
 use sp1_sdk::{
     network::FulfillmentStrategy, NetworkProver, Prover, ProverClient, SP1ProofMode,
     SP1ProofWithPublicValues, SP1ProvingKey, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
@@ -13,18 +20,13 @@ use tokio::time;
 
 use crate::{
     config::ProposerConfig,
-    contract::{DisputeGameFactory::DisputeGameFactoryInstance, OPSuccinctFaultDisputeGame},
+    contract::{
+        DisputeGameFactory::{DisputeGameCreated, DisputeGameFactoryInstance},
+        OPSuccinctFaultDisputeGame,
+    },
     prometheus::ProposerGauge,
-    Action, FactoryTrait, L1ProviderWithWallet, L2Provider, L2ProviderTrait, Mode,
-    NUM_CONFIRMATIONS, TIMEOUT_SECONDS,
+    Action, FactoryTrait, L1Provider, L2Provider, L2ProviderTrait, Mode,
 };
-use op_succinct_client_utils::boot::BootInfoStruct;
-use op_succinct_elfs::AGGREGATION_ELF;
-use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::OPSuccinctHost,
-    metrics::MetricsGauge, witness_generation::WitnessGenerator,
-};
-use op_succinct_proof_utils::get_range_elf_embedded;
 
 struct SP1Prover {
     network_prover: Arc<NetworkProver>,
@@ -33,19 +35,19 @@ struct SP1Prover {
     agg_pk: Arc<SP1ProvingKey>,
 }
 
-pub struct OPSuccinctProposer<F, P, H: OPSuccinctHost>
+pub struct OPSuccinctProposer<P, H: OPSuccinctHost>
 where
-    F: TxFiller<Ethereum> + Send + Sync,
-    P: Provider<Ethereum> + Clone + Send + Sync,
+    P: Provider + Clone + Send + Sync,
 {
     pub config: ProposerConfig,
     // The address being committed to when generating the aggregation proof to prevent
     // front-running attacks. This should be the same address that is being used to send
     // `prove` transactions.
     pub prover_address: Address,
-    pub l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
+    pub signer: Signer,
+    pub l1_provider: L1Provider,
     pub l2_provider: L2Provider,
-    pub factory: Arc<DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>>,
+    pub factory: Arc<DisputeGameFactoryInstance<P>>,
     pub init_bond: U256,
     pub safe_db_fallback: bool,
     prover: SP1Prover,
@@ -53,17 +55,16 @@ where
     host: Arc<H>,
 }
 
-impl<F, P, H: OPSuccinctHost> OPSuccinctProposer<F, P, H>
+impl<P, H: OPSuccinctHost> OPSuccinctProposer<P, H>
 where
-    F: TxFiller<Ethereum> + Send + Sync,
-    P: Provider<Ethereum> + Clone + Send + Sync,
+    P: Provider + Clone + Send + Sync,
 {
     /// Creates a new challenger instance with the provided L1 provider with wallet and factory
     /// contract instance.
     pub async fn new(
         prover_address: Address,
-        l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-        factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
+        signer: Signer,
+        factory: DisputeGameFactoryInstance<P>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
@@ -85,7 +86,8 @@ where
         Ok(Self {
             config: config.clone(),
             prover_address,
-            l1_provider_with_wallet: l1_provider_with_wallet.clone(),
+            signer,
+            l1_provider: ProviderBuilder::default().connect_http(config.l1_rpc.clone()),
             l2_provider: ProviderBuilder::default().connect_http(config.l2_rpc),
             factory: Arc::new(factory.clone()),
             init_bond: factory.fetch_init_bond(config.game_type).await?,
@@ -110,8 +112,7 @@ where
             }
         };
 
-        let game =
-            OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+        let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
         let l1_head_hash = game.l1Head().call().await?.0;
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
         let l2_block_number = game.l2BlockNumber().call().await?;
@@ -241,7 +242,7 @@ where
 
         let extra_data = <(U256, u32)>::abi_encode_packed(&(l2_block_number, parent_game_index));
 
-        let receipt = self
+        let transaction_request = self
             .factory
             .create(
                 self.config.game_type,
@@ -249,16 +250,22 @@ where
                 extra_data.into(),
             )
             .value(self.init_bond)
-            .send()
-            .await
-            .context("Failed to send create transaction")?
-            .with_required_confirmations(NUM_CONFIRMATIONS)
-            .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-            .get_receipt()
+            .into_transaction_request();
+
+        let receipt = self
+            .signer
+            .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
 
-        let game_address =
-            Address::from_slice(&receipt.inner.logs()[0].inner.data.topics()[1][12..]);
+        let game_address = receipt
+            .inner
+            .logs()
+            .iter()
+            .find_map(|log| {
+                DisputeGameCreated::decode_log(&log.inner).ok().map(|event| event.disputeProxy)
+            })
+            .context("Could not find DisputeGameCreated event in transaction receipt logs")?;
+
         tracing::info!(
             "\x1b[1mNew game at address {:?} created with tx {:?}\x1b[0m",
             game_address,
@@ -352,7 +359,9 @@ where
             .resolve_games(
                 Mode::Proposer,
                 self.config.max_games_to_check_for_resolution,
-                self.l1_provider_with_wallet.clone(),
+                self.signer.clone(),
+                self.config.l1_rpc.clone(),
+                self.l1_provider.clone(),
                 self.l2_provider.clone(),
             )
             .await
@@ -399,21 +408,19 @@ where
             tracing::info!("Attempting to claim bond from game {:?}", game_address);
 
             // Create a contract instance for the game
-            let game =
-                OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+            let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
 
             // Create a transaction to claim credit
-            let tx = game.claimCredit(self.prover_address);
+            let transaction_request =
+                game.claimCredit(self.prover_address).into_transaction_request();
 
-            // Send the transaction
-            match tx.send().await {
-                Ok(pending_tx) => {
-                    let receipt = pending_tx
-                        .with_required_confirmations(NUM_CONFIRMATIONS)
-                        .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-                        .get_receipt()
-                        .await?;
-
+            // Sign and send the transaction
+            match self
+                .signer
+                .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
+                .await
+            {
+                Ok(receipt) => {
                     tracing::info!(
                         "\x1b[1mSuccessfully claimed bond from game {:?} with tx {:?}\x1b[0m",
                         game_address,
