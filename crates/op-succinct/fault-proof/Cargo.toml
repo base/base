@@ -25,6 +25,7 @@ op-succinct-client-utils.workspace = true
 op-succinct-elfs.workspace = true
 op-succinct-host-utils.workspace = true
 op-succinct-proof-utils.workspace = true
+op-succinct-signer-utils.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
@@ -32,11 +33,9 @@ sp1-sdk.workspace = true
 # alloy
 alloy-contract.workspace = true
 alloy-eips.workspace = true
-alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-types-eth.workspace = true
-alloy-signer-local.workspace = true
 alloy-sol-macro.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-native-tls"] }
@@ -58,6 +57,9 @@ tracing.workspace = true
 hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+
+[dev-dependencies]
+alloy-signer-local.workspace = true
 
 [features]
 default = ["ethereum"]

@@ -31,8 +31,13 @@ This guide provides the fastest path to try out OP Succinct fault dispute games 
     DISPUTE_GAME_FINALITY_DELAY_SECONDS=604800
     MAX_CHALLENGE_DURATION=604800
     MAX_PROVE_DURATION=86400
-    STARTING_ROOT=0xbd4ab027af3c4db0c6b1329dad6d9f8e2505accabec75bfaa2b6b8033c1e60c5...
+    STARTING_ROOT=0xbd4ab027af3c4db0c6b1329dad6d9f8e2505accabec75bfaa2b6b8033c1e60c5
     STARTING_L2_BLOCK_NUMBER=791000
+
+    # Optional
+    # Warning: Setting PERMISSIONLESS_MODE=true allows anyone to propose and challenge games. Ensure this behavior is intended for your deployment.
+    # For a permissioned setup, set this to false and configure PROPOSER_ADDRESSES and CHALLENGER_ADDRESSES.
+    PERMISSIONLESS_MODE=true
 
     # For testing, use mock verifier
     USE_SP1_MOCK_VERIFIER=true
@@ -54,7 +59,9 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
     ```env
     # Required Configuration
     L1_RPC=<YOUR_L1_RPC_URL>
+    L1_BEACON_RPC=<L1_BEACON_RPC_URL>
     L2_RPC=<YOUR_L2_RPC_URL>
+    L2_NODE_RPC=<L2_NODE_RPC_URL>
     FACTORY_ADDRESS=<FACTORY_ADDRESS_FROM_DEPLOYMENT>
     GAME_TYPE=42
     PRIVATE_KEY=<YOUR_PRIVATE_KEY>
@@ -72,8 +79,6 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
     ```env
     FAST_FINALITY_MODE=true
     NETWORK_PRIVATE_KEY=0x...
-    L1_BEACON_RPC=<L1_BEACON_RPC_URL>
-    L2_NODE_RPC=<L2_NODE_RPC_URL>
     ```
 
 To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSd-X9uH7G0bvXH_kjptnQtNil8L4dumrVPpFE4t8Ci1XT1GaQ/viewform). The Succinct team will reach out to you with an RPC endpoint you can use.

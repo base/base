@@ -1,15 +1,10 @@
 use std::{env, time::Duration};
 
-use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256};
-use alloy_provider::{fillers::TxFiller, Provider, ProviderBuilder};
-use alloy_signer_local::PrivateKeySigner;
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_transport_http::reqwest::Url;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use op_alloy_network::EthereumWallet;
-use tokio::time;
-
 use fault_proof::{
     config::ChallengerConfig,
     contract::{
@@ -18,10 +13,11 @@ use fault_proof::{
     },
     prometheus::ChallengerGauge,
     utils::setup_logging,
-    Action, FactoryTrait, L1ProviderWithWallet, L2Provider, Mode, NUM_CONFIRMATIONS,
-    TIMEOUT_SECONDS,
+    Action, FactoryTrait, L1Provider, L2Provider, Mode,
 };
 use op_succinct_host_utils::metrics::{init_metrics, MetricsGauge};
+use op_succinct_signer_utils::Signer;
+use tokio::time;
 
 #[derive(Parser)]
 struct Args {
@@ -29,38 +25,39 @@ struct Args {
     env_file: String,
 }
 
-struct OPSuccinctChallenger<F, P>
+struct OPSuccinctChallenger<P>
 where
-    F: TxFiller<Ethereum>,
-    P: Provider<Ethereum> + Clone,
+    P: Provider + Clone,
 {
     config: ChallengerConfig,
     challenger_address: Address,
+    signer: Signer,
+    l1_provider: L1Provider,
     l2_provider: L2Provider,
-    l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-    factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
+    factory: DisputeGameFactoryInstance<P>,
     challenger_bond: U256,
 }
 
-impl<F, P> OPSuccinctChallenger<F, P>
+impl<P> OPSuccinctChallenger<P>
 where
-    F: TxFiller<Ethereum>,
-    P: Provider<Ethereum> + Clone,
+    P: Provider + Clone,
 {
     /// Creates a new challenger instance with the provided L1 provider with wallet and factory
     /// contract instance.
     pub async fn new(
         challenger_address: Address,
-        l1_provider_with_wallet: L1ProviderWithWallet<F, P>,
-        factory: DisputeGameFactoryInstance<L1ProviderWithWallet<F, P>>,
+        signer: Signer,
+        l1_provider: L1Provider,
+        factory: DisputeGameFactoryInstance<P>,
     ) -> Result<Self> {
         let config = ChallengerConfig::from_env()?;
 
         Ok(Self {
             config: config.clone(),
             challenger_address,
+            signer,
+            l1_provider: l1_provider.clone(),
             l2_provider: ProviderBuilder::default().connect_http(config.l2_rpc.clone()),
-            l1_provider_with_wallet: l1_provider_with_wallet.clone(),
             factory: factory.clone(),
             challenger_bond: factory.fetch_challenger_bond(config.game_type).await?,
         })
@@ -68,20 +65,15 @@ where
 
     /// Challenges a specific game at the given address.
     async fn challenge_game(&self, game_address: Address) -> Result<()> {
-        let game =
-            OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+        let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
 
-        let receipt = game
-            .challenge()
-            .value(self.challenger_bond)
-            .send()
-            .await
-            .context("Failed to send challenge transaction")?
-            .with_required_confirmations(NUM_CONFIRMATIONS)
-            .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-            .get_receipt()
-            .await
-            .context("Failed to get transaction receipt for challenge")?;
+        let transaction_request =
+            game.challenge().value(self.challenger_bond).into_transaction_request();
+
+        let receipt = self
+            .signer
+            .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
+            .await?;
 
         tracing::info!(
             "Successfully challenged game {:?} with tx {:?}",
@@ -120,7 +112,9 @@ where
             .resolve_games(
                 Mode::Challenger,
                 self.config.max_games_to_check_for_resolution,
-                self.l1_provider_with_wallet.clone(),
+                self.signer.clone(),
+                self.config.l1_rpc.clone(),
+                self.l1_provider.clone(),
                 self.l2_provider.clone(),
             )
             .await
@@ -142,21 +136,18 @@ where
             tracing::info!("Attempting to claim bond from game {:?}", game_address);
 
             // Create a contract instance for the game
-            let game =
-                OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider_with_wallet.clone());
+            let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
 
             // Create a transaction to claim credit
-            let tx = game.claimCredit(self.challenger_address);
+            let transaction_request =
+                game.claimCredit(self.challenger_address).into_transaction_request();
 
-            // Send the transaction
-            match tx.send().await {
-                Ok(pending_tx) => {
-                    let receipt = pending_tx
-                        .with_required_confirmations(NUM_CONFIRMATIONS)
-                        .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-                        .get_receipt()
-                        .await?;
-
+            match self
+                .signer
+                .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
+                .await
+            {
+                Ok(receipt) => {
                     tracing::info!(
                         "\x1b[1mSuccessfully claimed bond from game {:?} with tx {:?}\x1b[0m",
                         game_address,
@@ -232,15 +223,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     dotenv::from_filename(args.env_file).ok();
 
-    let wallet = EthereumWallet::from(
-        env::var("PRIVATE_KEY")
-            .expect("PRIVATE_KEY must be set")
-            .parse::<PrivateKeySigner>()
-            .unwrap(),
-    );
+    let challenger_signer = Signer::from_env()?;
 
-    let l1_provider_with_wallet = ProviderBuilder::new()
-        .wallet(wallet.clone())
+    let l1_provider = ProviderBuilder::default()
         .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());
 
     let factory = DisputeGameFactory::new(
@@ -248,12 +233,13 @@ async fn main() -> Result<()> {
             .expect("FACTORY_ADDRESS must be set")
             .parse::<Address>()
             .unwrap(),
-        l1_provider_with_wallet.clone(),
+        l1_provider.clone(),
     );
 
     let mut challenger = OPSuccinctChallenger::new(
-        wallet.default_signer().address(),
-        l1_provider_with_wallet,
+        challenger_signer.address(),
+        challenger_signer,
+        l1_provider,
         factory,
     )
     .await

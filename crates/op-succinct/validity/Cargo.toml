@@ -24,6 +24,7 @@ op-succinct-client-utils.workspace = true
 op-succinct-elfs.workspace = true
 op-succinct-host-utils.workspace = true
 op-succinct-proof-utils.workspace = true
+op-succinct-signer-utils.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
@@ -33,9 +34,6 @@ alloy-eips.workspace = true
 alloy-provider = { workspace = true }
 alloy-signer-local.workspace = true
 alloy-sol-types.workspace = true
-alloy-consensus = { workspace = true }
-alloy-network = { workspace = true }
-alloy-rpc-types-eth = { workspace = true, features = ["serde"] }
 
 anyhow.workspace = true
 dotenv.workspace = true
@@ -59,7 +57,6 @@ futures-util = "0.3.31"
 clap.workspace = true
 tikv-jemallocator = "0.6.0"
 rustls = "0.23.23"
-url = "2.5.4"
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
 

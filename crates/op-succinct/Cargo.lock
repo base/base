@@ -7158,7 +7158,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-contract",
  "alloy-eips 0.15.10",
- "alloy-network 0.15.10",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 0.15.10",
@@ -7178,6 +7177,7 @@ dependencies = [
  "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
+ "op-succinct-signer-utils",
  "rand 0.9.1",
  "sp1-sdk",
  "strum 0.27.1",
@@ -7308,7 +7308,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "op-succinct-validity"
+name = "op-succinct-signer-utils"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus 0.15.10",
@@ -7317,6 +7317,20 @@ dependencies = [
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 0.15.10",
+ "alloy-signer-local 0.15.10",
+ "alloy-transport-http",
+ "anyhow",
+ "op-succinct-host-utils",
+ "tokio",
+]
+
+[[package]]
+name = "op-succinct-validity"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips 0.15.10",
+ "alloy-primitives",
+ "alloy-provider",
  "alloy-signer-local 0.15.10",
  "alloy-sol-types",
  "anyhow",
@@ -7331,6 +7345,7 @@ dependencies = [
  "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
+ "op-succinct-signer-utils",
  "reqwest",
  "rustls",
  "serde",
@@ -7344,7 +7359,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
- "url",
 ]
 
 [[package]]

@@ -1,0 +1,24 @@
+[package]
+name = "op-succinct-signer-utils"
+version = "0.1.0"
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+
+# alloy
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-primitives.workspace = true
+alloy-provider.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-signer-local.workspace = true
+alloy-transport-http.workspace = true
+
+# general
+anyhow.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+op-succinct-host-utils.workspace = true

@@ -133,6 +133,7 @@ async fn test_e2e_challenger_wins() -> Result<()> {
 
     let _span = tracing::info_span!("[[TEST]]").entered();
 
+    dotenv::from_filename(".env.proposer").ok();
     let proposer_config = ProposerConfig::from_env()?;
 
     let wallet =

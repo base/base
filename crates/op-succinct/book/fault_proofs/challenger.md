@@ -35,7 +35,14 @@ The challenger is configured through environment variables. Create a `.env.chall
 | `L2_RPC` | L2 RPC endpoint URL |
 | `FACTORY_ADDRESS` | Address of the DisputeGameFactory contract |
 | `GAME_TYPE` | Type identifier for the dispute game |
-| `PRIVATE_KEY` | Private key for transaction signing |
+
+Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for transaction signing:
+
+| Variable | Description |
+|----------|-------------|
+| `PRIVATE_KEY` | Private key for transaction signing (if using private key signer) |
+| `SIGNER_URL` | URL of the web3 signer service (if using web3 signer) |
+| `SIGNER_ADDRESS` | Address of the account managed by the web3 signer (if using web3 signer) |
 
 ### Optional Environment Variables
 

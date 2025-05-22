@@ -35,7 +35,7 @@ jobs:
         with:
           profile: minimal
           toolchain: nightly
-          components: rustfmt
+          components: rustfmt, clippy
       
       - name: Run cargo check
         uses: actions-rs/cargo@v1

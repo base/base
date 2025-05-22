@@ -6,6 +6,7 @@ members = [
     "utils/celestia/client",
     "utils/celestia/host",
     "utils/proof",
+    "utils/signer",
     "utils/ethereum/client",
     "utils/ethereum/host",
     "programs/range/*",
@@ -97,6 +98,7 @@ op-succinct-ethereum-host-utils = { path = "utils/ethereum/host" }
 op-succinct-celestia-client-utils = { path = "utils/celestia/client" }
 op-succinct-celestia-host-utils = { path = "utils/celestia/host" }
 op-succinct-proof-utils = { path = "utils/proof" }
+op-succinct-signer-utils = { path = "utils/signer" }
 op-succinct-range-utils = { path = "programs/range/utils" }
 
 # Alloy (Network)

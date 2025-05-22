@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256};
-use alloy_provider::{Network, Provider};
+use alloy_provider::Provider;
 use op_succinct_host_utils::{
     DisputeGameFactory::DisputeGameFactoryInstance as DisputeGameFactoryContract,
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
@@ -7,15 +7,14 @@ use op_succinct_host_utils::{
 use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode, SP1ProvingKey, SP1VerifyingKey};
 use std::sync::Arc;
 
-pub struct ContractConfig<P, N>
+pub struct ContractConfig<P>
 where
-    P: Provider<N> + 'static,
-    N: Network,
+    P: Provider + 'static,
 {
     pub l2oo_address: Address,
     pub dgf_address: Address,
-    pub l2oo_contract: OPSuccinctL2OOContract<P, N>,
-    pub dgf_contract: DisputeGameFactoryContract<P, N>,
+    pub l2oo_contract: OPSuccinctL2OOContract<P>,
+    pub dgf_contract: DisputeGameFactoryContract<P>,
 }
 
 #[derive(Debug, Clone)]
