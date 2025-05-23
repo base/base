@@ -1,9 +1,8 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_consensus::Transaction;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, TxHash, U256};
+use alloy_primitives::{private::alloy_rlp::Encodable, Address, U256};
 use reth_node_api::NodePrimitives;
 use reth_optimism_primitives::OpReceipt;
-use std::collections::HashSet;
 
 #[derive(Default, Debug)]
 pub struct ExecutionInfo<N: NodePrimitives> {
@@ -19,8 +18,6 @@ pub struct ExecutionInfo<N: NodePrimitives> {
     pub cumulative_da_bytes_used: u64,
     /// Tracks fees from executed mempool transactions
     pub total_fees: U256,
-    /// Tracks the reverted transaction hashes to remove from the transaction pool
-    pub invalid_tx_hashes: HashSet<TxHash>,
     #[cfg(feature = "flashblocks")]
     /// Index of the last consumed flashblock
     pub last_flashblock_index: usize,
@@ -36,7 +33,6 @@ impl<N: NodePrimitives> ExecutionInfo<N> {
             cumulative_gas_used: 0,
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
-            invalid_tx_hashes: HashSet::new(),
             #[cfg(feature = "flashblocks")]
             last_flashblock_index: 0,
         }

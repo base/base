@@ -137,7 +137,9 @@ impl Service for OpRbuilderConfig {
         if let Some(http_port) = self.http_port {
             cmd.arg("--http")
                 .arg("--http.port")
-                .arg(http_port.to_string());
+                .arg(http_port.to_string())
+                .arg("--http.api")
+                .arg("eth,web3,txpool");
         }
 
         if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {

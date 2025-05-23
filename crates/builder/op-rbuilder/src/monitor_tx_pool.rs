@@ -1,15 +1,15 @@
+use crate::tx::FBPooledTransaction;
 use futures_util::StreamExt;
-use reth_optimism_node::txpool::OpPooledTransaction;
 use reth_transaction_pool::{AllTransactionsEvents, FullTransactionEvent};
 use tracing::info;
 
-pub async fn monitor_tx_pool(mut new_transactions: AllTransactionsEvents<OpPooledTransaction>) {
+pub async fn monitor_tx_pool(mut new_transactions: AllTransactionsEvents<FBPooledTransaction>) {
     while let Some(event) = new_transactions.next().await {
         transaction_event_log(event);
     }
 }
 
-fn transaction_event_log(event: FullTransactionEvent<OpPooledTransaction>) {
+fn transaction_event_log(event: FullTransactionEvent<FBPooledTransaction>) {
     match event {
         FullTransactionEvent::Pending(hash) => {
             info!(

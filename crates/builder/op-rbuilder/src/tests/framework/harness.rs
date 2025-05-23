@@ -7,9 +7,9 @@ use super::{
 };
 use alloy_eips::BlockNumberOrTag;
 use alloy_network::Network;
-use alloy_primitives::hex;
+use alloy_primitives::{hex, B256};
 use alloy_provider::{
-    Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
+    ext::TxPoolApi, Identity, PendingTransactionBuilder, Provider, ProviderBuilder, RootProvider,
 };
 use op_alloy_network::Optimism;
 use parking_lot::Mutex;
@@ -190,8 +190,72 @@ impl TestHarness {
         BUILDER_PRIVATE_KEY
     }
 
-    pub const fn builder_log_path(&self) -> &PathBuf {
-        &self.builder_log_path
+    pub async fn check_tx_in_pool(&self, tx_hash: B256) -> eyre::Result<TransactionStatus> {
+        let pool_inspect = self
+            .provider()
+            .expect("provider not available")
+            .txpool_content()
+            .await?;
+
+        let is_pending = pool_inspect.pending.iter().any(|pending_account_map| {
+            pending_account_map
+                .1
+                .iter()
+                .any(|(_, tx)| tx.as_recovered().hash() == *tx_hash)
+        });
+        if is_pending {
+            return Ok(TransactionStatus::Pending);
+        }
+
+        let is_queued = pool_inspect.queued.iter().any(|queued_account_map| {
+            queued_account_map
+                .1
+                .iter()
+                .any(|(_, tx)| tx.as_recovered().hash() == *tx_hash)
+        });
+        if is_queued {
+            return Ok(TransactionStatus::Queued);
+        }
+
+        // check that the builder emitted logs for the reverted transactions with the monitoring logic
+        // this will tell us whether the builder dropped the transaction
+        // TODO: this is not ideal, lets find a different way to detect this
+        // Each time a transaction is dropped, it emits a log like this
+        // Note that this does not tell us the reason why the transaction was dropped. Ideally
+        // we should know it at this point.
+        // 'Transaction event received target="monitoring" tx_hash="<tx_hash>" kind="discarded"'
+        let builder_logs = std::fs::read_to_string(&self.builder_log_path)?;
+        let txn_log = format!(
+            "Transaction event received target=\"monitoring\" tx_hash=\"{}\" kind=\"discarded\"",
+            tx_hash,
+        );
+        if builder_logs.contains(txn_log.as_str()) {
+            return Ok(TransactionStatus::Dropped);
+        }
+
+        Ok(TransactionStatus::NotFound)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransactionStatus {
+    NotFound,
+    Pending,
+    Queued,
+    Dropped,
+}
+
+impl TransactionStatus {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, TransactionStatus::Pending)
+    }
+
+    pub fn is_queued(&self) -> bool {
+        matches!(self, TransactionStatus::Queued)
+    }
+
+    pub fn is_dropped(&self) -> bool {
+        matches!(self, TransactionStatus::Dropped)
     }
 }
 

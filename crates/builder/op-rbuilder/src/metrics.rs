@@ -34,6 +34,7 @@ pub struct OpRBuilderMetrics {
     #[cfg(feature = "flashblocks")]
     pub messages_sent_count: Counter,
     /// Total duration of building a block
+    #[cfg(feature = "flashblocks")]
     pub total_block_built_duration: Histogram,
     /// Flashblock build duration
     #[cfg(feature = "flashblocks")]

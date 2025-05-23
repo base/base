@@ -100,14 +100,12 @@ pub struct CustomOpPayloadBuilder {
     chain_block_time: u64,
     flashblock_block_time: u64,
     extra_block_deadline: std::time::Duration,
-    enable_revert_protection: bool,
 }
 
 impl CustomOpPayloadBuilder {
     pub fn new(
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
-        enable_revert_protection: bool,
         flashblocks_ws_url: String,
         chain_block_time: u64,
         flashblock_block_time: u64,
@@ -118,7 +116,6 @@ impl CustomOpPayloadBuilder {
             chain_block_time,
             flashblock_block_time,
             extra_block_deadline,
-            enable_revert_protection,
         }
     }
 }
@@ -185,7 +182,6 @@ where
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         tracing::info!("Spawning a custom payload builder");
         let extra_block_deadline = self.extra_block_deadline;
-        let enable_revert_protection = self.enable_revert_protection;
         let payload_builder = self.build_payload_builder(ctx, pool, evm_config).await?;
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
@@ -196,7 +192,6 @@ where
             payload_builder,
             true,
             extra_block_deadline,
-            enable_revert_protection,
         );
 
         let (payload_service, payload_builder) =

@@ -74,8 +74,6 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     last_payload: Arc<Mutex<CancellationToken>>,
     /// The extra block deadline in seconds
     extra_block_deadline: std::time::Duration,
-    /// Whether to enable revert protection
-    enable_revert_protection: bool,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -90,7 +88,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
         builder: Builder,
         ensure_only_one_payload: bool,
         extra_block_deadline: std::time::Duration,
-        enable_revert_protection: bool,
     ) -> Self {
         Self {
             client,
@@ -100,7 +97,6 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
-            enable_revert_protection,
         }
     }
 }
@@ -186,7 +182,6 @@ where
             cancel: cancel_token,
             deadline,
             build_complete: None,
-            enable_revert_protection: self.enable_revert_protection,
         };
 
         job.spawn_build_job();
@@ -219,8 +214,6 @@ where
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
-    /// Block building options
-    pub(crate) enable_revert_protection: bool,
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
@@ -263,8 +256,6 @@ pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
     pub config: PayloadConfig<Attributes, HeaderTy<Payload::Primitives>>,
     /// A marker that can be used to cancel the job.
     pub cancel: CancellationToken,
-    /// Whether to enable revert protection
-    pub enable_revert_protection: bool,
 }
 
 /// A [PayloadJob] is a future that's being polled by the `PayloadBuilderService`
@@ -280,7 +271,6 @@ where
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
         let cancel = self.cancel.clone();
-        let enable_revert_protection = self.enable_revert_protection;
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
@@ -290,7 +280,6 @@ where
                 cached_reads: Default::default(),
                 config: payload_config,
                 cancel,
-                enable_revert_protection,
             };
 
             let result = builder.try_build(args, cell);
@@ -650,7 +639,6 @@ mod tests {
             builder.clone(),
             false,
             std::time::Duration::from_secs(1),
-            false,
         );
 
         // this is not nice but necessary

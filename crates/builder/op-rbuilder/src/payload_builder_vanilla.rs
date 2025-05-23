@@ -1,7 +1,8 @@
 use crate::{
-    generator::{BlockCell, BlockPayloadJobGenerator, BuildArguments, PayloadBuilder},
+    generator::BuildArguments,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
+    tx::{FBPoolTransaction, MaybeRevertingTransaction},
     tx_signer::Signer,
 };
 use alloy_consensus::{
@@ -10,23 +11,17 @@ use alloy_consensus::{
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxHash, TxKind, U256};
+use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxKind, U256};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::Withdrawals;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
 use op_revm::OpSpecId;
 use reth::{
-    builder::{
-        components::{PayloadBuilderBuilder, PayloadServiceBuilder},
-        node::FullNodeTypes,
-        BuilderContext,
-    },
+    builder::{components::PayloadBuilderBuilder, node::FullNodeTypes, BuilderContext},
     core::primitives::InMemorySize,
-    payload::PayloadBuilderHandle,
 };
 use reth_basic_payload_builder::{
-    BasicPayloadJobGeneratorConfig, BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour,
-    PayloadConfig,
+    BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour, PayloadConfig,
 };
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
@@ -35,7 +30,7 @@ use reth_evm::{
     Database, Evm, EvmError, InvalidTxError,
 };
 use reth_execution_types::ExecutionOutcome;
-use reth_node_api::{NodePrimitives, NodeTypes, PrimitivesTy, TxTy};
+use reth_node_api::{NodePrimitives, NodeTypes, PrimitivesTy};
 use reth_node_builder::components::BasicPayloadServiceBuilder;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
@@ -49,16 +44,14 @@ use reth_optimism_payload_builder::{
     OpPayloadPrimitives,
 };
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::OpPooledTx;
-use reth_payload_builder::PayloadBuilderService;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::PayloadBuilderAttributes;
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::{BlockBody, SealedHeader};
 use reth_primitives_traits::{proofs, Block as _, RecoveredBlock, SignedTransaction};
 use reth_provider::{
-    CanonStateSubscriptions, HashedPostStateProvider, ProviderError, StateProviderFactory,
-    StateRootProvider, StorageRootProvider,
+    HashedPostStateProvider, ProviderError, StateProviderFactory, StateRootProvider,
+    StorageRootProvider,
 };
 use reth_revm::database::StateProviderDatabase;
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
@@ -85,8 +78,8 @@ pub struct ExecutedPayload<N: NodePrimitives> {
 #[non_exhaustive]
 pub struct CustomOpPayloadBuilder {
     builder_signer: Option<Signer>,
+    #[allow(dead_code)]
     extra_block_deadline: std::time::Duration,
-    enable_revert_protection: bool,
     #[cfg(feature = "flashblocks")]
     flashblocks_ws_url: String,
     #[cfg(feature = "flashblocks")]
@@ -115,7 +108,6 @@ impl CustomOpPayloadBuilder {
     pub fn new(
         builder_signer: Option<Signer>,
         extra_block_deadline: std::time::Duration,
-        enable_revert_protection: bool,
         _flashblocks_ws_url: String,
         _chain_block_time: u64,
         _flashblock_block_time: u64,
@@ -123,7 +115,6 @@ impl CustomOpPayloadBuilder {
         BasicPayloadServiceBuilder::new(CustomOpPayloadBuilder {
             builder_signer,
             extra_block_deadline,
-            enable_revert_protection,
         })
     }
 }
@@ -137,10 +128,10 @@ where
             Primitives = OpPrimitives,
         >,
     >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>
         + Unpin
         + 'static,
-    <Pool as TransactionPool>::Transaction: OpPooledTx,
+    <Pool as TransactionPool>::Transaction: FBPoolTransaction,
     Evm: ConfigureEvm<
             Primitives = PrimitivesTy<Node::Types>,
             NextBlockEnvCtx = OpNextBlockEnvAttributes,
@@ -159,67 +150,14 @@ where
             self.builder_signer,
             pool,
             ctx.provider().clone(),
-            self.enable_revert_protection,
         ))
-    }
-}
-
-impl<Node, Pool, Evm> PayloadServiceBuilder<Node, Pool, Evm> for CustomOpPayloadBuilder
-where
-    Node: FullNodeTypes<
-        Types: NodeTypes<
-            Payload = OpEngineTypes,
-            ChainSpec = OpChainSpec,
-            Primitives = OpPrimitives,
-        >,
-    >,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = TxTy<Node::Types>>>
-        + Unpin
-        + 'static,
-    <Pool as TransactionPool>::Transaction: OpPooledTx,
-    Evm: ConfigureEvm<
-            Primitives = PrimitivesTy<Node::Types>,
-            NextBlockEnvCtx = OpNextBlockEnvAttributes,
-        > + 'static,
-{
-    async fn spawn_payload_builder_service(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        evm_config: Evm,
-    ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::info!("Spawning a custom payload builder");
-        let extra_block_deadline = self.extra_block_deadline;
-        let enable_revert_protection = self.enable_revert_protection;
-        let payload_builder = self.build_payload_builder(ctx, pool, evm_config).await?;
-        let payload_job_config = BasicPayloadJobGeneratorConfig::default();
-
-        let payload_generator = BlockPayloadJobGenerator::with_builder(
-            ctx.provider().clone(),
-            ctx.task_executor().clone(),
-            payload_job_config,
-            payload_builder,
-            false,
-            extra_block_deadline,
-            enable_revert_protection,
-        );
-
-        let (payload_service, payload_builder) =
-            PayloadBuilderService::new(payload_generator, ctx.provider().canonical_state_stream());
-
-        ctx.task_executor()
-            .spawn_critical("custom payload builder service", Box::pin(payload_service));
-
-        tracing::info!("Custom payload service started");
-
-        Ok(payload_builder)
     }
 }
 
 impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
     for OpPayloadBuilderVanilla<Pool, Client, Txs>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
     Txs: OpPayloadTransactions<Pool::Transaction>,
 {
@@ -242,22 +180,14 @@ where
         let args = BuildArguments {
             cached_reads,
             config,
-            enable_revert_protection: self.enable_revert_protection,
             cancel: CancellationToken::new(),
         };
 
-        self.build_payload(
-            args,
-            |attrs| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions
-                    .best_transactions(pool.clone(), attrs)
-            },
-            |hashes| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions.remove_invalid(pool.clone(), hashes)
-            },
-        )
+        self.build_payload(args, |attrs| {
+            #[allow(clippy::unit_arg)]
+            self.best_transactions
+                .best_transactions(pool.clone(), attrs)
+        })
     }
 
     fn on_missing_payload(
@@ -278,13 +208,10 @@ where
             config,
             cached_reads: Default::default(),
             cancel: Default::default(),
-            enable_revert_protection: false,
         };
-        self.build_payload(
-            args,
-            |_| NoopPayloadTransactions::<Pool::Transaction>::default(),
-            |_| {},
-        )?
+        self.build_payload(args, |_| {
+            NoopPayloadTransactions::<Pool::Transaction>::default()
+        })?
         .into_payload()
         .ok_or_else(|| PayloadBuilderError::MissingPayload)
     }
@@ -308,8 +235,6 @@ pub struct OpPayloadBuilderVanilla<Pool, Client, Txs = ()> {
     pub best_transactions: Txs,
     /// The metrics for the builder
     pub metrics: OpRBuilderMetrics,
-    /// Whether we enable revert protection
-    pub enable_revert_protection: bool,
 }
 
 impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
@@ -319,16 +244,8 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
         builder_signer: Option<Signer>,
         pool: Pool,
         client: Client,
-        enable_revert_protection: bool,
     ) -> Self {
-        Self::with_builder_config(
-            evm_config,
-            builder_signer,
-            pool,
-            client,
-            Default::default(),
-            enable_revert_protection,
-        )
+        Self::with_builder_config(evm_config, builder_signer, pool, client, Default::default())
     }
 
     pub fn with_builder_config(
@@ -337,7 +254,6 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
         pool: Pool,
         client: Client,
         config: OpBuilderConfig,
-        enable_revert_protection: bool,
     ) -> Self {
         Self {
             pool,
@@ -347,70 +263,13 @@ impl<Pool, Client> OpPayloadBuilderVanilla<Pool, Client> {
             best_transactions: (),
             metrics: Default::default(),
             builder_signer,
-            enable_revert_protection,
-        }
-    }
-}
-
-impl<Pool, Client, Txs> PayloadBuilder for OpPayloadBuilderVanilla<Pool, Client, Txs>
-where
-    Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks> + Clone,
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
-    Txs: OpPayloadTransactions<Pool::Transaction>,
-{
-    type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
-    type BuiltPayload = OpBuiltPayload;
-
-    fn try_build(
-        &self,
-        args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
-        best_payload: BlockCell<Self::BuiltPayload>,
-    ) -> Result<(), PayloadBuilderError> {
-        let pool = self.pool.clone();
-        let block_build_start_time = Instant::now();
-
-        match self.build_payload(
-            args,
-            |attrs| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions
-                    .best_transactions(pool.clone(), attrs)
-            },
-            |hashes| {
-                #[allow(clippy::unit_arg)]
-                self.best_transactions.remove_invalid(pool.clone(), hashes)
-            },
-        )? {
-            BuildOutcome::Better { payload, .. } => {
-                best_payload.set(payload);
-                self.metrics
-                    .total_block_built_duration
-                    .record(block_build_start_time.elapsed());
-                self.metrics.block_built_success.increment(1);
-                Ok(())
-            }
-            BuildOutcome::Freeze(payload) => {
-                best_payload.set(payload);
-                self.metrics
-                    .total_block_built_duration
-                    .record(block_build_start_time.elapsed());
-                Ok(())
-            }
-            BuildOutcome::Cancelled => {
-                tracing::warn!("Payload build cancelled");
-                Err(PayloadBuilderError::MissingPayload)
-            }
-            _ => {
-                tracing::warn!("No better payload found");
-                Err(PayloadBuilderError::MissingPayload)
-            }
         }
     }
 }
 
 impl<Pool, Client, T> OpPayloadBuilderVanilla<Pool, Client, T>
 where
-    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+    Pool: TransactionPool<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec: EthChainSpec + OpHardforks>,
 {
     /// Constructs an Optimism payload from the transactions sent via the
@@ -425,16 +284,14 @@ where
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-        remove_reverted: impl FnOnce(Vec<TxHash>),
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError>
     where
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
     {
         let BuildArguments {
             mut cached_reads,
             config,
             cancel,
-            enable_revert_protection,
         } = args;
 
         let chain_spec = self.client.chain_spec();
@@ -475,11 +332,10 @@ where
             block_env_attributes,
             cancel,
             builder_signer: self.builder_signer,
-            metrics: Default::default(),
-            enable_revert_protection,
+            metrics: self.metrics.clone(),
         };
 
-        let builder = OpBuilder::new(best, remove_reverted);
+        let builder = OpBuilder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(state_provider);
@@ -521,19 +377,12 @@ where
 pub struct OpBuilder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
-    /// Removes reverted transactions from the tx pool
-    #[debug(skip)]
-    remove_invalid: Box<dyn FnOnce(Vec<TxHash>) + 'a>,
 }
 
 impl<'a, Txs> OpBuilder<'a, Txs> {
-    fn new(
-        best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
-        remove_reverted: impl FnOnce(Vec<TxHash>) + 'a,
-    ) -> Self {
+    fn new(best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a) -> Self {
         Self {
             best: Box::new(best),
-            remove_invalid: Box::new(remove_reverted),
         }
     }
 }
@@ -547,15 +396,12 @@ impl<Txs> OpBuilder<'_, Txs> {
     ) -> Result<BuildOutcomeKind<ExecutedPayload<N>>, PayloadBuilderError>
     where
         N: OpPayloadPrimitives<_TX = OpTransactionSigned>,
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = N::SignedTx>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
         ChainSpec: EthChainSpec + OpHardforks,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StorageRootProvider,
     {
-        let Self {
-            best,
-            remove_invalid,
-        } = self;
+        let Self { best } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
         // 1. apply pre-execution changes
@@ -636,10 +482,9 @@ impl<Txs> OpBuilder<'_, Txs> {
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
 
-        remove_invalid(info.invalid_tx_hashes.iter().copied().collect());
-
         let payload = ExecutedPayload { info };
 
+        ctx.metrics.block_built_success.increment(1);
         Ok(BuildOutcomeKind::Better { payload })
     }
 
@@ -651,7 +496,7 @@ impl<Txs> OpBuilder<'_, Txs> {
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
         ChainSpec: EthChainSpec + OpHardforks,
-        Txs: PayloadTransactions<Transaction: PoolTransaction<Consensus = OpTransactionSigned>>,
+        Txs: PayloadTransactions<Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>>,
         DB: Database<Error = ProviderError> + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
@@ -813,13 +658,6 @@ pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'sta
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = Transaction>;
-
-    /// Removes invalid transactions from the tx pool
-    fn remove_invalid<Pool: TransactionPool<Transaction = Transaction>>(
-        &self,
-        pool: Pool,
-        hashes: Vec<TxHash>,
-    );
 }
 
 impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
@@ -829,14 +667,6 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
         BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
-    }
-
-    fn remove_invalid<Pool: TransactionPool<Transaction = T>>(
-        &self,
-        pool: Pool,
-        hashes: Vec<TxHash>,
-    ) {
-        pool.remove_transactions(hashes);
     }
 }
 
@@ -861,8 +691,6 @@ pub struct OpPayloadBuilderCtx<ChainSpec, N: NodePrimitives> {
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: OpRBuilderMetrics,
-    /// Whether we enabled revert protection
-    pub enable_revert_protection: bool,
 }
 
 impl<ChainSpec, N> OpPayloadBuilderCtx<ChainSpec, N>
@@ -1124,7 +952,7 @@ where
         info: &mut ExecutionInfo<N>,
         db: &mut State<DB>,
         mut best_txs: impl PayloadTransactions<
-            Transaction: PoolTransaction<Consensus = OpTransactionSigned>,
+            Transaction: FBPoolTransaction<Consensus = OpTransactionSigned>,
         >,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
@@ -1142,6 +970,8 @@ where
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
         while let Some(tx) = best_txs.next(()) {
+            let exclude_reverting_txs = tx.exclude_reverting_txs();
+
             let tx = tx.into_consensus();
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
@@ -1195,10 +1025,9 @@ where
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
-                if self.enable_revert_protection {
+                if exclude_reverting_txs {
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    info.invalid_tx_hashes.insert(tx.tx_hash());
                     continue;
                 }
             }

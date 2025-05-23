@@ -1,7 +1,10 @@
 use args::CliExt;
 use clap::Parser;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::{node::OpAddOnsBuilder, OpNode};
+use reth_optimism_node::{
+    node::{OpAddOnsBuilder, OpPoolBuilder},
+    OpNode,
+};
 use reth_transaction_pool::TransactionPool;
 
 /// CLI argument parsing.
@@ -9,11 +12,12 @@ pub mod args;
 pub mod generator;
 mod metrics;
 mod monitor_tx_pool;
-mod primitives;
-mod tx_signer;
-
 #[cfg(feature = "flashblocks")]
 pub mod payload_builder;
+mod primitives;
+mod revert_protection;
+mod tx;
+mod tx_signer;
 
 #[cfg(not(feature = "flashblocks"))]
 mod payload_builder_vanilla;
@@ -29,6 +33,8 @@ use metrics::{
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
 use monitor_tx_pool::monitor_tx_pool;
+use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
+use tx::FBPooledTransaction;
 
 // Prefer jemalloc for performance reasons.
 #[cfg(all(feature = "jemalloc", unix))]
@@ -53,20 +59,50 @@ fn main() {
             let op_node = OpNode::new(rollup_args.clone());
             let handle = builder
                 .with_types::<OpNode>()
-                .with_components(op_node.components().payload(CustomOpPayloadBuilder::new(
-                    builder_args.builder_signer,
-                    std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
-                    builder_args.enable_revert_protection,
-                    builder_args.flashblocks_ws_url,
-                    builder_args.chain_block_time,
-                    builder_args.flashblock_block_time,
-                )))
+                .with_components(
+                    op_node
+                        .components()
+                        .pool(
+                            OpPoolBuilder::<FBPooledTransaction>::default()
+                                .with_enable_tx_conditional(
+                                    // Revert protection uses the same internal pool logic as conditional transactions
+                                    // to garbage collect transactions out of the bundle range.
+                                    rollup_args.enable_tx_conditional
+                                        || builder_args.enable_revert_protection,
+                                )
+                                .with_supervisor(
+                                    rollup_args.supervisor_http.clone(),
+                                    rollup_args.supervisor_safety_level,
+                                ),
+                        )
+                        .payload(CustomOpPayloadBuilder::new(
+                            builder_args.builder_signer,
+                            std::time::Duration::from_secs(builder_args.extra_block_deadline_secs),
+                            builder_args.flashblocks_ws_url,
+                            builder_args.chain_block_time,
+                            builder_args.flashblock_block_time,
+                        )),
+                )
                 .with_add_ons(
                     OpAddOnsBuilder::default()
                         .with_sequencer(rollup_args.sequencer.clone())
                         .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
                         .build(),
                 )
+                .extend_rpc_modules(move |ctx| {
+                    if builder_args.enable_revert_protection {
+                        tracing::info!("Revert protection enabled");
+
+                        let pool = ctx.pool().clone();
+                        let provider = ctx.provider().clone();
+                        let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+
+                        ctx.modules
+                            .merge_configured(revert_protection_ext.into_rpc())?;
+                    }
+
+                    Ok(())
+                })
                 .on_node_started(move |ctx| {
                     version.register_version_metrics();
                     if builder_args.log_pool_transactions {

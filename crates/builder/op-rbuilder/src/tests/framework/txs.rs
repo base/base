@@ -1,7 +1,7 @@
-use crate::tx_signer::Signer;
+use crate::{primitives::bundle::Bundle, tx_signer::Signer};
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::Bytes;
+use alloy_primitives::{hex, Bytes};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use core::cmp::max;
 use op_alloy_consensus::{OpTxEnvelope, OpTypedTransaction};
@@ -10,7 +10,12 @@ use reth_primitives::Recovered;
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
-use super::BUILDER_PRIVATE_KEY;
+use super::FUNDED_PRIVATE_KEYS;
+
+#[derive(Clone, Copy, Default)]
+pub struct BundleOpts {
+    pub block_number_max: Option<u64>,
+}
 
 #[derive(Clone)]
 pub struct TransactionBuilder {
@@ -19,6 +24,8 @@ pub struct TransactionBuilder {
     nonce: Option<u64>,
     base_fee: Option<u128>,
     tx: TxEip1559,
+    bundle_opts: Option<BundleOpts>,
+    key: Option<u64>,
 }
 
 impl TransactionBuilder {
@@ -33,7 +40,14 @@ impl TransactionBuilder {
                 gas_limit: 210000,
                 ..Default::default()
             },
+            bundle_opts: None,
+            key: None,
         }
+    }
+
+    pub fn with_key(mut self, key: u64) -> Self {
+        self.key = Some(key);
+        self
     }
 
     pub fn with_signer(mut self, signer: Signer) -> Self {
@@ -71,11 +85,21 @@ impl TransactionBuilder {
         self
     }
 
+    pub fn with_bundle(mut self, bundle_opts: BundleOpts) -> Self {
+        self.bundle_opts = Some(bundle_opts);
+        self
+    }
+
+    pub fn with_revert(mut self) -> Self {
+        self.tx.input = hex!("60006000fd").into();
+        self
+    }
+
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
         let signer = match self.signer {
             Some(signer) => signer,
             None => Signer::try_from_secret(
-                BUILDER_PRIVATE_KEY
+                FUNDED_PRIVATE_KEYS[self.key.unwrap_or(0) as usize]
                     .parse()
                     .expect("invalid hardcoded builder private key"),
             )
@@ -118,10 +142,31 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
+        let bundle_opts = self.bundle_opts.clone();
         let provider = self.provider.clone();
         let transaction = self.build().await;
+        let transaction_encoded = transaction.encoded_2718();
+
+        if let Some(bundle_opts) = bundle_opts {
+            // Send the transaction as a bundle with the bundle options
+            let bundle = Bundle {
+                transactions: vec![transaction_encoded.into()],
+                block_number_max: bundle_opts.block_number_max,
+            };
+
+            let tx_hash = provider
+                .client()
+                .request("eth_sendBundle", (bundle,))
+                .await?;
+
+            return Ok(PendingTransactionBuilder::new(
+                provider.root().clone(),
+                tx_hash,
+            ));
+        }
+
         Ok(provider
-            .send_raw_transaction(transaction.encoded_2718().as_slice())
+            .send_raw_transaction(transaction_encoded.as_slice())
             .await?)
     }
 }
