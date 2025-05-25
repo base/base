@@ -1,4 +1,4 @@
-//! Tramsaction types for Optimism.
+//! Transaction types for Optimism.
 
 mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
@@ -20,6 +20,9 @@ pub use pooled::OpPooledTransaction;
 
 #[cfg(feature = "serde")]
 pub use deposit::serde_deposit_tx_rpc;
+
+mod meta;
+pub use meta::{OpDepositInfo, OpTransactionInfo};
 
 /// Bincode-compatible serde implementations for transaction types.
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
