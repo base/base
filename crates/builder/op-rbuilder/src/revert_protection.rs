@@ -1,8 +1,7 @@
 use crate::{
-    primitives::bundle::{Bundle, MAX_BLOCK_RANGE_BLOCKS},
+    primitives::bundle::{Bundle, BundleResult, MAX_BLOCK_RANGE_BLOCKS},
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
-use alloy_primitives::B256;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -17,7 +16,7 @@ use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool}
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
 pub trait EthApiOverride {
     #[method(name = "sendBundle")]
-    async fn send_bundle(&self, tx: Bundle) -> RpcResult<B256>;
+    async fn send_bundle(&self, tx: Bundle) -> RpcResult<BundleResult>;
 }
 
 pub struct RevertProtectionExt<Pool, Provider> {
@@ -37,7 +36,7 @@ where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
 {
-    async fn send_bundle(&self, mut bundle: Bundle) -> RpcResult<B256> {
+    async fn send_bundle(&self, mut bundle: Bundle) -> RpcResult<BundleResult> {
         let last_block_number = self
             .provider
             .best_block_number()
@@ -92,6 +91,7 @@ where
             .await
             .map_err(EthApiError::from)?;
 
-        Ok(hash)
+        let result = BundleResult { bundle_hash: hash };
+        Ok(result)
     }
 }

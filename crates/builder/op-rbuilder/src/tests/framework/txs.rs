@@ -1,4 +1,7 @@
-use crate::{primitives::bundle::Bundle, tx_signer::Signer};
+use crate::{
+    primitives::bundle::{Bundle, BundleResult},
+    tx_signer::Signer,
+};
 use alloy_consensus::TxEip1559;
 use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
 use alloy_primitives::{hex, Bytes};
@@ -154,14 +157,14 @@ impl TransactionBuilder {
                 block_number_max: bundle_opts.block_number_max,
             };
 
-            let tx_hash = provider
+            let result: BundleResult = provider
                 .client()
                 .request("eth_sendBundle", (bundle,))
                 .await?;
 
             return Ok(PendingTransactionBuilder::new(
                 provider.root().clone(),
-                tx_hash,
+                result.bundle_hash,
             ));
         }
 

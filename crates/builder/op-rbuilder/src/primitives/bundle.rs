@@ -1,4 +1,4 @@
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, B256};
 use alloy_rpc_types_eth::erc4337::TransactionConditional;
 use serde::{Deserialize, Serialize};
 
@@ -23,4 +23,10 @@ impl Bundle {
             timestamp_min: None,
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BundleResult {
+    #[serde(rename = "bundleHash")]
+    pub bundle_hash: B256,
 }
