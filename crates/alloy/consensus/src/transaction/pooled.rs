@@ -3,7 +3,7 @@
 
 use crate::{OpTxEnvelope, OpTxType};
 use alloy_consensus::{
-    SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
+    Extended, SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
     error::ValueError,
     transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxLegacy},
 };
@@ -470,6 +470,23 @@ impl TryFrom<OpTxEnvelope> for OpPooledTransaction {
 
     fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
         value.try_into_pooled()
+    }
+}
+
+impl<Tx> From<OpPooledTransaction> for Extended<OpTxEnvelope, Tx> {
+    fn from(tx: OpPooledTransaction) -> Self {
+        Self::BuiltIn(tx.into())
+    }
+}
+
+impl<Tx> TryFrom<Extended<OpTxEnvelope, Tx>> for OpPooledTransaction {
+    type Error = ();
+
+    fn try_from(_tx: Extended<OpTxEnvelope, Tx>) -> Result<Self, Self::Error> {
+        match _tx {
+            Extended::BuiltIn(inner) => inner.try_into().map_err(|_| ()),
+            Extended::Other(_tx) => Err(()),
+        }
     }
 }
 

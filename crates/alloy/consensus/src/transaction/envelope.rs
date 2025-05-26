@@ -1,7 +1,7 @@
 use crate::{OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit};
 use alloy_consensus::{
-    EthereumTxEnvelope, Sealable, Sealed, SignableTransaction, Signed, Transaction, TxEip1559,
-    TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718, error::ValueError,
+    EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed, Transaction,
+    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718, error::ValueError,
     transaction::RlpEcdsaDecodableTx,
 };
 use alloy_eips::{
@@ -113,6 +113,12 @@ impl From<(OpTypedTransaction, Signature)> for OpTxEnvelope {
 impl From<Sealed<TxDeposit>> for OpTxEnvelope {
     fn from(v: Sealed<TxDeposit>) -> Self {
         Self::Deposit(v)
+    }
+}
+
+impl<Tx> From<OpTxEnvelope> for Extended<OpTxEnvelope, Tx> {
+    fn from(value: OpTxEnvelope) -> Self {
+        Self::BuiltIn(value)
     }
 }
 
