@@ -143,6 +143,8 @@ impl Service for OpRbuilderConfig {
         }
 
         if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {
+            cmd.arg("--rollup.enable-flashblocks").arg("true");
+
             cmd.arg("--rollup.flashblocks-ws-url")
                 .arg(flashblocks_ws_url);
         }

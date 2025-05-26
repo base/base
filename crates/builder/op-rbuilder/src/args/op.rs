@@ -19,6 +19,19 @@ pub struct OpRbuilderArgs {
     /// Builder secret key for signing last transaction in block
     #[arg(long = "rollup.builder-secret-key", env = "BUILDER_SECRET_KEY")]
     pub builder_signer: Option<Signer>,
+
+    /// When set to true, the builder will build flashblocks
+    /// and will build standard blocks at the chain block time.
+    ///
+    /// The default value will change in the future once the flashblocks
+    /// feature is stable.
+    #[arg(
+        long = "rollup.enable-flashblocks",
+        default_value = "false",
+        env = "ENABLE_FLASHBLOCKS"
+    )]
+    pub enable_flashblocks: bool,
+
     /// Websocket port for flashblock payload builder
     #[arg(
         long = "rollup.flashblocks-ws-url",

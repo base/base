@@ -355,11 +355,6 @@ impl<T: Clone> BlockCell<T> {
         }
     }
 
-    pub fn is_some(&self) -> bool {
-        let inner = self.inner.lock().unwrap();
-        inner.is_some()
-    }
-
     pub fn set(&self, value: T) {
         let mut inner = self.inner.lock().unwrap();
         *inner = Some(value);

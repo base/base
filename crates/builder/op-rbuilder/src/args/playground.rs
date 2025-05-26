@@ -27,7 +27,6 @@
 //! directory to use. This is useful for testing against different playground
 //! configurations.
 
-use super::OpRbuilderArgs;
 use alloy_primitives::hex;
 use clap::{parser::ValueSource, CommandFactory};
 use core::{
@@ -49,47 +48,9 @@ use std::{
 };
 use url::{Host, Url};
 
-/// This trait is used to extend Reth's CLI with additional functionality that
-/// populates the default values for the command line arguments when the user
-/// specifies that they want to use the playground.
-///
-/// The `--builder.playground` flag is used to populate the CLI arguments with
-/// default values for running the builder against the playground environment.
-///
-/// The values are populated from the default directory of the playground
-/// configuration, which is `$HOME/.playground/devnet/` by default.
-///
-/// Any manually specified CLI arguments by the user will override the defaults.
-pub trait CliExt {
-    /// Populates the default values for the CLI arguments when the user specifies
-    /// the `--builder.playground` flag.
-    fn populate_defaults(self) -> Self;
-}
+use super::Cli;
 
-type Cli = reth_optimism_cli::Cli<OpChainSpecParser, OpRbuilderArgs>;
-
-impl CliExt for Cli {
-    fn populate_defaults(self) -> Self {
-        let Commands::Node(ref node_command) = self.command else {
-            // playground defaults are only relevant if running the node commands.
-            return self;
-        };
-
-        let Some(ref playground_dir) = node_command.ext.playground else {
-            // not running in playground mode.
-            return self;
-        };
-
-        let options = match PlaygroundOptions::new(playground_dir) {
-            Ok(options) => options,
-            Err(e) => exit(e),
-        };
-
-        options.apply(self)
-    }
-}
-
-struct PlaygroundOptions {
+pub struct PlaygroundOptions {
     /// Sets node.chain in NodeCommand
     pub chain: Arc<OpChainSpec>,
 
@@ -208,13 +169,6 @@ impl PlaygroundOptions {
 
         cli
     }
-}
-
-/// Following clap's convention, a failure to parse the command line arguments
-/// will result in terminating the program with a non-zero exit code.
-fn exit(error: eyre::Report) -> ! {
-    eprintln!("{error}");
-    std::process::exit(-1);
 }
 
 fn existing_path(base: &Path, relative: &str) -> Result<String> {

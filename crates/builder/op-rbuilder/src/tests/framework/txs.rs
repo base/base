@@ -145,7 +145,7 @@ impl TransactionBuilder {
     }
 
     pub async fn send(self) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
-        let bundle_opts = self.bundle_opts.clone();
+        let bundle_opts = self.bundle_opts;
         let provider = self.provider.clone();
         let transaction = self.build().await;
         let transaction_encoded = transaction.encoded_2718();

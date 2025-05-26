@@ -28,19 +28,14 @@ pub struct OpRBuilderMetrics {
     /// Block built success
     pub block_built_success: Counter,
     /// Number of flashblocks added to block (Total per block)
-    #[cfg(feature = "flashblocks")]
     pub flashblock_count: Histogram,
     /// Number of messages sent
-    #[cfg(feature = "flashblocks")]
     pub messages_sent_count: Counter,
     /// Total duration of building a block
-    #[cfg(feature = "flashblocks")]
     pub total_block_built_duration: Histogram,
     /// Flashblock build duration
-    #[cfg(feature = "flashblocks")]
     pub flashblock_build_duration: Histogram,
     /// Number of invalid blocks
-    #[cfg(feature = "flashblocks")]
     pub invalid_blocks_count: Counter,
     /// Duration of fetching transactions from the pool
     pub transaction_pool_fetch_duration: Histogram,
