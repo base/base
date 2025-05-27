@@ -1,13 +1,13 @@
 use crate::tx_signer::Signer;
-use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
+use alloy_eips::{eip2718::Encodable2718, eip7685::Requests, BlockNumberOrTag};
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
 use alloy_rpc_types_engine::{
-    ExecutionPayload, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
-    PayloadAttributes, PayloadStatusEnum,
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadAttributes,
+    PayloadStatusEnum,
 };
 use alloy_rpc_types_eth::Block;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
-use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use op_alloy_rpc_types_engine::{OpExecutionPayloadV4, OpPayloadAttributes};
 use rollup_boost::{Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, Version};
 
 use super::apis::EngineApi;
@@ -104,32 +104,37 @@ impl BlockGenerator {
                     return Err(eyre::eyre!("unexpected parent hash during sync"));
                 }
 
-                let payload_request = ExecutionPayloadV3 {
-                    payload_inner: ExecutionPayloadV2 {
-                        payload_inner: ExecutionPayloadV1 {
-                            parent_hash: block.header.parent_hash,
-                            fee_recipient: block.header.beneficiary,
-                            state_root: block.header.state_root,
-                            receipts_root: block.header.receipts_root,
-                            logs_bloom: block.header.logs_bloom,
-                            prev_randao: B256::ZERO,
-                            block_number: block.header.number,
-                            gas_limit: block.header.gas_limit,
-                            gas_used: block.header.gas_used,
-                            timestamp: block.header.timestamp,
-                            extra_data: block.header.extra_data.clone(),
-                            base_fee_per_gas: U256::from(block.header.base_fee_per_gas.unwrap()),
-                            block_hash: block.header.hash,
-                            transactions: vec![], // there are no txns yet
+                let payload_request = OpExecutionPayloadV4 {
+                    payload_inner: ExecutionPayloadV3 {
+                        payload_inner: ExecutionPayloadV2 {
+                            payload_inner: ExecutionPayloadV1 {
+                                parent_hash: block.header.parent_hash,
+                                fee_recipient: block.header.beneficiary,
+                                state_root: block.header.state_root,
+                                receipts_root: block.header.receipts_root,
+                                logs_bloom: block.header.logs_bloom,
+                                prev_randao: B256::ZERO,
+                                block_number: block.header.number,
+                                gas_limit: block.header.gas_limit,
+                                gas_used: block.header.gas_used,
+                                timestamp: block.header.timestamp,
+                                extra_data: block.header.extra_data.clone(),
+                                base_fee_per_gas: U256::from(
+                                    block.header.base_fee_per_gas.unwrap(),
+                                ),
+                                block_hash: block.header.hash,
+                                transactions: vec![], // there are no txns yet
+                            },
+                            withdrawals: block.withdrawals.unwrap().to_vec(),
                         },
-                        withdrawals: block.withdrawals.unwrap().to_vec(),
+                        blob_gas_used: block.header.inner.blob_gas_used.unwrap(),
+                        excess_blob_gas: block.header.inner.excess_blob_gas.unwrap(),
                     },
-                    blob_gas_used: block.header.inner.blob_gas_used.unwrap(),
-                    excess_blob_gas: block.header.inner.excess_blob_gas.unwrap(),
+                    withdrawals_root: Default::default(),
                 };
 
                 let validation_status = validation_api
-                    .new_payload(payload_request, vec![], B256::ZERO)
+                    .new_payload(payload_request, vec![], B256::ZERO, Requests::default())
                     .await?;
 
                 if validation_status.status != PayloadStatusEnum::Valid {
@@ -237,23 +242,31 @@ impl BlockGenerator {
 
         let payload = if let Some(flashblocks_service) = &self.flashblocks_service {
             flashblocks_service
-                .get_best_payload(Version::V3)
+                .get_best_payload(Version::V4)
                 .await?
                 .unwrap()
         } else {
-            OpExecutionPayloadEnvelope::V3(self.engine_api.get_payload_v3(payload_id).await?)
+            OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?)
         };
 
-        let execution_payload = if let ExecutionPayload::V3(execution_payload) = payload.into() {
-            execution_payload
-        } else {
-            return Err(eyre::eyre!("execution_payload should be V3"));
+        let execution_payload = match payload {
+            OpExecutionPayloadEnvelope::V4(execution_payload) => {
+                execution_payload.execution_payload
+            }
+            _ => {
+                return Err(eyre::eyre!("execution_payload should be V4"));
+            }
         };
 
         // Validate with builder node
         let validation_status = self
             .engine_api
-            .new_payload(execution_payload.clone(), vec![], B256::ZERO)
+            .new_payload(
+                execution_payload.clone(),
+                vec![],
+                B256::ZERO,
+                Requests::default(),
+            )
             .await?;
 
         if validation_status.status != PayloadStatusEnum::Valid {
@@ -263,7 +276,12 @@ impl BlockGenerator {
         // Validate with validation node if present
         if let Some(validation_api) = &self.validation_api {
             let validation_status = validation_api
-                .new_payload(execution_payload.clone(), vec![], B256::ZERO)
+                .new_payload(
+                    execution_payload.clone(),
+                    vec![],
+                    B256::ZERO,
+                    Requests::default(),
+                )
                 .await?;
 
             if validation_status.status != PayloadStatusEnum::Valid {
@@ -271,7 +289,11 @@ impl BlockGenerator {
             }
         }
 
-        let new_block_hash = execution_payload.payload_inner.payload_inner.block_hash;
+        let new_block_hash = execution_payload
+            .payload_inner
+            .payload_inner
+            .payload_inner
+            .block_hash;
 
         // Update forkchoice on builder
         self.engine_api
@@ -287,7 +309,7 @@ impl BlockGenerator {
 
         // Update internal state
         self.latest_hash = new_block_hash;
-        self.timestamp = execution_payload.timestamp();
+        self.timestamp = execution_payload.payload_inner.timestamp();
 
         let block = self
             .engine_api

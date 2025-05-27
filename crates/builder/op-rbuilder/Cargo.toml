@@ -44,6 +44,7 @@ reth-testing-utils.workspace = true
 reth-optimism-forks.workspace = true
 reth-node-builder.workspace = true
 reth-rpc-eth-types.workspace = true
+reth-optimism-rpc.workspace = true
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -112,7 +113,9 @@ vergen = { workspace = true, features = ["build", "cargo", "emit_and_set"] }
 vergen-git2.workspace = true
 
 [dev-dependencies]
-alloy-provider = {workspace = true, default-features = true, features = ["txpool-api"]}
+alloy-provider = { workspace = true, default-features = true, features = [
+	"txpool-api",
+] }
 
 [features]
 default = ["jemalloc"]
