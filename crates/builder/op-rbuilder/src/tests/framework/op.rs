@@ -23,7 +23,7 @@ pub struct OpRbuilderConfig {
     http_port: Option<u16>,
     network_port: Option<u16>,
     builder_private_key: Option<String>,
-    flashblocks_ws_url: Option<String>,
+    flashblocks_port: Option<u16>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
     with_revert_protection: Option<bool>,
@@ -71,8 +71,8 @@ impl OpRbuilderConfig {
         self
     }
 
-    pub fn with_flashblocks_ws_url(mut self, url: &str) -> Self {
-        self.flashblocks_ws_url = Some(url.to_string());
+    pub fn with_flashblocks_port(mut self, port: u16) -> Self {
+        self.flashblocks_port = Some(port);
         self
     }
 
@@ -152,11 +152,11 @@ impl Service for OpRbuilderConfig {
                 .arg(http_port.to_string());
         }
 
-        if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {
-            cmd.arg("--rollup.enable-flashblocks").arg("true");
-
-            cmd.arg("--rollup.flashblocks-ws-url")
-                .arg(flashblocks_ws_url);
+        if let Some(flashblocks_port) = &self.flashblocks_port {
+            cmd.arg("--flashblocks.enabled").arg("true");
+            cmd.arg("--flashblocks.addr").arg("127.0.0.1");
+            cmd.arg("--flashblocks.port")
+                .arg(flashblocks_port.to_string());
         }
 
         if let Some(chain_block_time) = self.chain_block_time {

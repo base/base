@@ -12,7 +12,7 @@ use crate::tests::TestHarnessBuilder;
 #[ignore = "Flashblocks tests need more work"]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")
-        .with_flashblocks_ws_url("ws://localhost:1239")
+        .with_flashblocks_port(1239)
         .with_chain_block_time(2000)
         .with_flashbots_block_time(200)
         .build()

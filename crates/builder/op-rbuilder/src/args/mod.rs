@@ -65,7 +65,7 @@ impl CliExt for Cli {
     /// Currently supports `Standard` and `Flashblocks` modes.
     fn builder_mode(&self) -> BuilderMode {
         if let Commands::Node(ref node_command) = self.command {
-            if node_command.ext.enable_flashblocks {
+            if node_command.ext.flashblocks.enabled {
                 return BuilderMode::Flashblocks;
             }
         }

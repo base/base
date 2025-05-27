@@ -22,7 +22,7 @@ use uuid::Uuid;
 pub struct TestHarnessBuilder {
     name: String,
     use_revert_protection: bool,
-    flashblocks_ws_url: Option<String>,
+    flashblocks_port: Option<u16>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
     namespaces: Option<String>,
@@ -34,7 +34,7 @@ impl TestHarnessBuilder {
         Self {
             name: name.to_string(),
             use_revert_protection: false,
-            flashblocks_ws_url: None,
+            flashblocks_port: None,
             chain_block_time: None,
             flashbots_block_time: None,
             namespaces: None,
@@ -47,8 +47,8 @@ impl TestHarnessBuilder {
         self
     }
 
-    pub fn with_flashblocks_ws_url(mut self, url: &str) -> Self {
-        self.flashblocks_ws_url = Some(url.to_string());
+    pub fn with_flashblocks_port(mut self, port: u16) -> Self {
+        self.flashblocks_port = Some(port);
         self
     }
 
@@ -96,8 +96,8 @@ impl TestHarnessBuilder {
             .with_revert_protection(self.use_revert_protection)
             .with_namespaces(self.namespaces)
             .with_extra_params(self.extra_params);
-        if let Some(flashblocks_ws_url) = self.flashblocks_ws_url {
-            op_rbuilder_config = op_rbuilder_config.with_flashblocks_ws_url(&flashblocks_ws_url);
+        if let Some(flashblocks_port) = self.flashblocks_port {
+            op_rbuilder_config = op_rbuilder_config.with_flashblocks_port(flashblocks_port);
         }
 
         if let Some(chain_block_time) = self.chain_block_time {
