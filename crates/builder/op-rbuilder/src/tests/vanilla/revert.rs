@@ -13,6 +13,7 @@ use crate::{
 async fn revert_protection_monitor_transaction_gc() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_monitor_transaction_gc")
         .with_revert_protection()
+        .with_namespaces("eth,web3,txpool")
         .build()
         .await?;
 
@@ -105,6 +106,7 @@ async fn revert_protection_disabled_bundle_endpoint_error() -> eyre::Result<()> 
 async fn revert_protection_bundle() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("revert_protection_bundle")
         .with_revert_protection()
+        .with_namespaces("eth,web3,txpool")
         .build()
         .await?;
 

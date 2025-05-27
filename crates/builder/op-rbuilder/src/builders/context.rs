@@ -1,7 +1,7 @@
 use alloy_consensus::{Eip658Value, Transaction, TxEip1559};
-use alloy_eips::Typed2718;
+use alloy_eips::{Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{private::alloy_rlp::Encodable, Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
@@ -19,6 +19,7 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth_optimism_txpool::estimated_da_size::DataAvailabilitySized;
 use reth_payload_builder::PayloadId;
 use reth_primitives::{Recovered, SealedHeader};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -329,11 +330,18 @@ impl OpPayloadBuilderCtx {
 
         while let Some(tx) = best_txs.next(()) {
             let exclude_reverting_txs = tx.exclude_reverting_txs();
+            let tx_da_size = tx.estimated_da_size();
 
             let tx = tx.into_consensus();
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
-            if info.is_tx_over_limits(tx.inner(), block_gas_limit, tx_da_limit, block_da_limit) {
+            if info.is_tx_over_limits(
+                tx_da_size,
+                block_gas_limit,
+                tx_da_limit,
+                block_da_limit,
+                tx.gas_limit(),
+            ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
@@ -394,6 +402,8 @@ impl OpPayloadBuilderCtx {
             // receipt
             let gas_used = result.gas_used();
             info.cumulative_gas_used += gas_used;
+            // record tx da size
+            info.cumulative_da_bytes_used += tx_da_size;
 
             // Push transaction changeset and calculate header bloom filter for receipt.
             let ctx = ReceiptBuilderCtx {
@@ -498,7 +508,7 @@ impl OpPayloadBuilderCtx {
         db: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
-    ) -> Option<usize>
+    ) -> Option<u64>
     where
         DB: Database<Error = ProviderError>,
     {
@@ -509,7 +519,9 @@ impl OpPayloadBuilderCtx {
                 // Create and sign the transaction
                 let builder_tx =
                     signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(builder_tx.length())
+                Ok(op_alloy_flz::tx_estimated_size_fjord(
+                    builder_tx.encoded_2718().as_slice(),
+                ))
             })
             .transpose()
             .unwrap_or_else(|err: PayloadBuilderError| {

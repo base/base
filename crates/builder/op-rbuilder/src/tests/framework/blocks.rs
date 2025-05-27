@@ -372,4 +372,12 @@ impl BlockGenerated {
     pub fn includes(&self, tx_hash: B256) -> bool {
         self.block.transactions.hashes().any(|hash| hash == tx_hash)
     }
+
+    pub fn includes_vec(&self, tx_hashes: Vec<B256>) -> bool {
+        tx_hashes.iter().all(|hash| self.includes(*hash))
+    }
+
+    pub fn not_includes_vec(&self, tx_hashes: Vec<B256>) -> bool {
+        tx_hashes.iter().all(|hash| self.not_includes(*hash))
+    }
 }

@@ -355,15 +355,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_size| da_size - builder_tx_da_size as u64);
-        // Check that it's possible to create builder tx, considering max_da_tx_size, otherwise panic
-        if let Some(tx_da_limit) = ctx.da_config.max_da_tx_size() {
-            // Panic indicate max_da_tx_size misconfiguration
-            assert!(
-                tx_da_limit >= builder_tx_da_size as u64,
-                "The configured da_config.max_da_tx_size is too small to accommodate builder tx."
-            );
-        }
+            .map(|da_size| da_size.saturating_sub(builder_tx_da_size));
 
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();

@@ -25,6 +25,8 @@ pub struct TestHarnessBuilder {
     flashblocks_ws_url: Option<String>,
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
+    namespaces: Option<String>,
+    extra_params: Option<String>,
 }
 
 impl TestHarnessBuilder {
@@ -35,6 +37,8 @@ impl TestHarnessBuilder {
             flashblocks_ws_url: None,
             chain_block_time: None,
             flashbots_block_time: None,
+            namespaces: None,
+            extra_params: None,
         }
     }
 
@@ -58,6 +62,16 @@ impl TestHarnessBuilder {
         self
     }
 
+    pub fn with_namespaces(mut self, namespaces: &str) -> Self {
+        self.namespaces = Some(namespaces.to_string());
+        self
+    }
+
+    pub fn with_extra_params(mut self, extra_params: &str) -> Self {
+        self.extra_params = Some(extra_params.to_string());
+        self
+    }
+
     pub async fn build(self) -> eyre::Result<TestHarness> {
         let mut framework = IntegrationFramework::new(&self.name).unwrap();
 
@@ -69,7 +83,7 @@ impl TestHarnessBuilder {
         std::fs::write(&genesis_path, genesis)?;
 
         // create the builder
-        let builder_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        let builder_data_dir: PathBuf = std::env::temp_dir().join(Uuid::new_v4().to_string());
         let builder_auth_rpc_port = get_available_port();
         let builder_http_port = get_available_port();
         let mut op_rbuilder_config = OpRbuilderConfig::new()
@@ -79,8 +93,9 @@ impl TestHarnessBuilder {
             .network_port(get_available_port())
             .http_port(builder_http_port)
             .with_builder_private_key(BUILDER_PRIVATE_KEY)
-            .with_revert_protection(self.use_revert_protection);
-
+            .with_revert_protection(self.use_revert_protection)
+            .with_namespaces(self.namespaces)
+            .with_extra_params(self.extra_params);
         if let Some(flashblocks_ws_url) = self.flashblocks_ws_url {
             op_rbuilder_config = op_rbuilder_config.with_flashblocks_ws_url(&flashblocks_ws_url);
         }
@@ -113,7 +128,7 @@ impl TestHarnessBuilder {
         let builder_log_path = builder.log_path.clone();
 
         Ok(TestHarness {
-            _framework: framework,
+            framework: framework,
             builder_auth_rpc_port,
             builder_http_port,
             validator_auth_rpc_port,
@@ -123,7 +138,7 @@ impl TestHarnessBuilder {
 }
 
 pub struct TestHarness {
-    _framework: IntegrationFramework,
+    framework: IntegrationFramework,
     builder_auth_rpc_port: u16,
     builder_http_port: u16,
     validator_auth_rpc_port: u16,
@@ -237,6 +252,16 @@ impl TestHarness {
     }
 }
 
+impl Drop for TestHarness {
+    fn drop(&mut self) {
+        for service in &mut self.framework.services {
+            let res = service.stop();
+            if let Err(e) = res {
+                println!("Failed to stop service: {}", e);
+            }
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionStatus {
     NotFound,

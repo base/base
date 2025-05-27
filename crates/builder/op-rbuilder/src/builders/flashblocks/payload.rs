@@ -222,10 +222,11 @@ where
 
         let gas_per_batch = ctx.block_gas_limit() / self.config.flashblocks_per_block();
         let mut total_gas_per_batch = gas_per_batch;
-        let total_da_bytes_per_batch = ctx
+        let da_per_batch = ctx
             .da_config
             .max_da_block_size()
-            .map(|limit| limit / self.config.flashblocks_per_block());
+            .map(|da_limit| da_limit / self.config.flashblocks_per_block());
+        let mut total_da_per_batch = da_per_batch;
 
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
@@ -295,11 +296,11 @@ where
                     // Continue with flashblock building
                     tracing::info!(
                         target: "payload_builder",
-                        "Building flashblock {} {}",
+                        "Building flashblock idx={} target_gas={} taget_da={}",
                         flashblock_count,
                         total_gas_per_batch,
+                        total_da_per_batch.unwrap_or(0),
                     );
-
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
 
@@ -324,7 +325,7 @@ where
                         &mut db,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
-                        total_da_bytes_per_batch,
+                        total_da_per_batch,
                     )?;
                     ctx.metrics
                         .payload_tx_simulation_duration
@@ -377,6 +378,13 @@ where
                             // Update bundle_state for next iteration
                             bundle_state = new_bundle_state;
                             total_gas_per_batch += gas_per_batch;
+                            if let Some(da_limit) = da_per_batch {
+                                if let Some(da) = total_da_per_batch.as_mut() {
+                                    *da += da_limit;
+                                } else {
+                                    error!("Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set");
+                                }
+                            }
                             flashblock_count += 1;
                             tracing::info!(target: "payload_builder", "Flashblock {} built", flashblock_count);
                         }

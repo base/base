@@ -27,6 +27,8 @@ pub struct OpRbuilderConfig {
     chain_block_time: Option<u64>,
     flashbots_block_time: Option<u64>,
     with_revert_protection: Option<bool>,
+    namespaces: Option<String>,
+    extra_params: Option<String>,
 }
 
 impl OpRbuilderConfig {
@@ -83,6 +85,16 @@ impl OpRbuilderConfig {
         self.flashbots_block_time = Some(time);
         self
     }
+
+    pub fn with_namespaces(mut self, namespaces: Option<String>) -> Self {
+        self.namespaces = namespaces;
+        self
+    }
+
+    pub fn with_extra_params(mut self, extra_params: Option<String>) -> Self {
+        self.extra_params = extra_params;
+        self
+    }
 }
 
 impl Service for OpRbuilderConfig {
@@ -137,9 +149,7 @@ impl Service for OpRbuilderConfig {
         if let Some(http_port) = self.http_port {
             cmd.arg("--http")
                 .arg("--http.port")
-                .arg(http_port.to_string())
-                .arg("--http.api")
-                .arg("eth,web3,txpool");
+                .arg(http_port.to_string());
         }
 
         if let Some(flashblocks_ws_url) = &self.flashblocks_ws_url {
@@ -157,6 +167,14 @@ impl Service for OpRbuilderConfig {
         if let Some(flashbots_block_time) = self.flashbots_block_time {
             cmd.arg("--rollup.flashblock-block-time")
                 .arg(flashbots_block_time.to_string());
+        }
+
+        if let Some(namespaces) = &self.namespaces {
+            cmd.arg("--http.api").arg(namespaces);
+        }
+
+        if let Some(extra_params) = &self.extra_params {
+            cmd.args(extra_params.split_ascii_whitespace());
         }
 
         cmd

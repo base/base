@@ -5,9 +5,8 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 use std::path::PathBuf;
 
-use reth_optimism_node::args::RollupArgs;
-
 use crate::tx_signer::Signer;
+use reth_optimism_node::args::RollupArgs;
 
 /// Parameters for rollup configuration
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
