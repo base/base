@@ -13,6 +13,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 use reth::providers::TransactionsProvider;
@@ -28,7 +29,7 @@ use reth_rpc_eth_api::{
     RpcNodeCore,
 };
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -102,7 +103,7 @@ impl<E> EthApiExt<E> {
                         index: Some(idx as u64),
                         base_fee: block.base_fee_per_gas,
                     };
-                    self.transform_tx(signed_tx_ec_recovered, tx_info)
+                    self.transform_tx(signed_tx_ec_recovered, tx_info, None)
                 })
                 .collect();
             RpcBlock::<Optimism> {
@@ -126,19 +127,26 @@ impl<E> EthApiExt<E> {
         &self,
         tx: Recovered<OpTransactionSigned>,
         tx_info: TransactionInfo,
+        deposit_receipt: Option<OpDepositReceipt>,
     ) -> Transaction {
         let tx = tx.convert::<OpTxEnvelope>();
         let mut deposit_receipt_version = None;
         let mut deposit_nonce = None;
 
         if tx.is_deposit() {
-            let receipt = self
-                .cache
-                .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
-                .unwrap();
-            if let OpReceipt::Deposit(receipt) = receipt {
+            if let Some(receipt) = deposit_receipt {
                 deposit_receipt_version = receipt.deposit_receipt_version;
                 deposit_nonce = receipt.deposit_nonce;
+            } else {
+                let cached_receipt = self
+                    .cache
+                    .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
+                    .unwrap();
+
+                if let OpReceipt::Deposit(receipt) = cached_receipt {
+                    deposit_receipt_version = receipt.deposit_receipt_version;
+                    deposit_nonce = receipt.deposit_nonce;
+                }
             }
         }
 
@@ -370,7 +378,7 @@ where
                 TransactionSource::Pool(tx) => {
                     // Convert the pool transaction
                     let tx_info = TransactionInfo::default();
-                    Ok(Some(self.transform_tx(tx, tx_info)))
+                    Ok(Some(self.transform_tx(tx, tx_info, None)))
                 }
                 TransactionSource::Block {
                     transaction,
@@ -387,7 +395,35 @@ where
                         block_number: Some(block_number),
                         base_fee,
                     };
-                    Ok(Some(self.transform_tx(transaction, tx_info)))
+                    // preload transaction receipt if it's a deposit transaction
+                    if transaction.is_deposit() {
+                        let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+                            .await
+                            .map_err(Into::into)?;
+
+                        match receipt {
+                            Some(txn_receipt) => {
+                                let envelope: OpReceiptEnvelope = txn_receipt.into();
+
+                                if let OpReceiptEnvelope::Deposit(deposit_receipt) = envelope {
+                                    return Ok(Some(self.transform_tx(
+                                        transaction,
+                                        tx_info,
+                                        Some(deposit_receipt.receipt),
+                                    )));
+                                }
+                            }
+                            None => {
+                                error!(
+                                    "could not find receipt for block transaction: {:?}",
+                                    tx_hash
+                                );
+                                return Ok(None);
+                            }
+                        }
+                    }
+
+                    Ok(Some(self.transform_tx(transaction, tx_info, None)))
                 }
             }
         } else {
@@ -420,7 +456,7 @@ where
                     base_fee: block.base_fee_per_gas,
                 };
                 let tx = Recovered::new_unchecked(tx, sender);
-                Ok(Some(self.transform_tx(tx, tx_info)))
+                Ok(Some(self.transform_tx(tx, tx_info, None)))
             } else {
                 Ok(None)
             }
