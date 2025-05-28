@@ -2,7 +2,7 @@
 
 # Base Reth Node
 
-Base Reth Node is an implementation of a Reth Ethereum node, specifically tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth `v1.3.12`. This node is designed to provide a robust and efficient solution for interacting with the Base network.
+Base Reth Node is an implementation of a Reth Ethereum node, specifically tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth `v1.4.3`. This node is designed to provide a robust and efficient solution for interacting with the Base network.
 
 <!-- Badge row 1 - status -->
 
@@ -29,9 +29,16 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 
 - **Base L2 Support:** Optimized for the Base Layer 2 network.
 - **Flashblocks RPC:** Includes a `flashblocks-rpc` crate for Flashblocks.
-- **Reth Based:** Built upon Reth `v1.3.12`, incorporating its Optimism features.
+- **Reth Based:** Built upon Reth `v1.4.3`, incorporating its Optimism features.
 - **Dockerized:** Comes with a `Dockerfile` for easy containerization and deployment.
 - **Development Toolkit:** Includes a `justfile` for streamlined build, test, and linting workflows.
+
+## Node Operators
+
+> [!IMPORTANT]
+> This repository is for development of the client. For docker images and configurations, see the [node repository](https://github.com/base/node) and the
+> [node-reth image](https://github.com/base/node/pkgs/container/node-reth). This image bundles vanilla Reth and Base Reth and can be toggled with
+> `NODE_TYPE=base` or `NODE_TYPE=vanilla`
 
 ## Repository Structure
 
