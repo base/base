@@ -2,7 +2,6 @@ use crate::cache::{Cache, CacheKey};
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
-use reth::core::primitives::SignedTransaction;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
@@ -13,6 +12,7 @@ use tracing::error;
 use url::Url;
 
 use crate::metrics::Metrics;
+use alloy_consensus::transaction::SignerRecoverable;
 use std::time::Instant;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -528,6 +528,7 @@ mod tests {
             logs_bloom: Default::default(),
             gas_used: 0,
             block_hash: Default::default(),
+            withdrawals_root: Default::default(),
         };
 
         let metadata = Metadata {
@@ -572,6 +573,7 @@ mod tests {
             logs_bloom: Default::default(),
             gas_used: 21000 * index,
             block_hash: B256::repeat_byte((index + 2) as u8),
+            withdrawals_root: Default::default(),
         };
 
         let metadata = Metadata {
@@ -604,6 +606,7 @@ mod tests {
             logs_bloom: Default::default(),
             gas_used: 21000,
             block_hash: B256::repeat_byte(0x3),
+            withdrawals_root: Default::default(),
         };
 
         let metadata2 = Metadata {
