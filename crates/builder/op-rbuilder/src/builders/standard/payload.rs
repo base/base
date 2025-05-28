@@ -203,6 +203,8 @@ where
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best: impl FnOnce(BestTransactionsAttributes) -> Txs + Send + Sync + 'a,
     ) -> Result<BuildOutcome<OpBuiltPayload>, PayloadBuilderError> {
+        let block_build_start_time = Instant::now();
+
         let BuildArguments {
             mut cached_reads,
             config,
@@ -254,6 +256,7 @@ where
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let state = StateProviderDatabase::new(state_provider);
+        let metrics = ctx.metrics.clone();
 
         if ctx.attributes().no_tx_pool {
             let db = State::builder()
@@ -269,7 +272,13 @@ where
                 .build();
             builder.build(db, ctx)
         }
-        .map(|out| out.with_cached_reads(cached_reads))
+        .map(|out| {
+            metrics
+                .total_block_built_duration
+                .record(block_build_start_time.elapsed());
+
+            out.with_cached_reads(cached_reads)
+        })
     }
 }
 
