@@ -72,6 +72,7 @@ mod tests {
                 transactions: vec![tx1, tx2],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
+                withdrawals_root: Default::default(),
             },
             metadata: serde_json::to_value(Metadata {
                 block_number: 1,
@@ -173,7 +174,7 @@ mod tests {
         // Create provider to interact with the node
         let provider: alloy_provider::RootProvider<Optimism> =
             ProviderBuilder::<Identity, Identity, Optimism>::default()
-                .on_http("http://localhost:1238".parse()?);
+                .connect_http("http://localhost:1238".parse()?);
 
         // Query first subblock
         if let Some(block) = provider
