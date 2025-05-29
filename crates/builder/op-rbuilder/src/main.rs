@@ -22,8 +22,9 @@ use metrics::{
     VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
     VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
 };
+use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
-use revert_protection::{EthApiOverrideServer, RevertProtectionExt};
+use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
 use tx::FBPooledTransaction;
 
 // Prefer jemalloc for performance reasons.
@@ -71,6 +72,9 @@ where
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
+        let reverted_cache = Cache::builder().max_capacity(100).build();
+        let reverted_cache_copy = reverted_cache.clone();
+
         let handle = builder
             .with_types::<OpNode>()
             .with_components(
@@ -104,10 +108,18 @@ where
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext = RevertProtectionExt::new(pool, provider);
+                    let revert_protection_ext: RevertProtectionExt<
+                        _,
+                        _,
+                        _,
+                        op_alloy_network::Optimism,
+                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.into_rpc())?;
+                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
+                    ctx.modules.replace_configured(
+                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
+                    )?;
                 }
 
                 Ok(())
@@ -119,7 +131,11 @@ where
                     ctx.task_executor.spawn_critical(
                         "txlogging",
                         Box::pin(async move {
-                            monitor_tx_pool(ctx.pool.all_transactions_event_listener()).await;
+                            monitor_tx_pool(
+                                ctx.pool.all_transactions_event_listener(),
+                                reverted_cache_copy,
+                            )
+                            .await;
                         }),
                     );
                 }

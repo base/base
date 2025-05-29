@@ -1,4 +1,4 @@
-use alloy_provider::PendingTransactionBuilder;
+use alloy_provider::{PendingTransactionBuilder, Provider};
 use op_alloy_network::Optimism;
 
 use crate::{
@@ -227,6 +227,45 @@ async fn revert_protection_allow_reverted_transactions_without_bundle() -> eyre:
         assert!(block_generated.includes(*valid_tx.tx_hash()));
         assert!(block_generated.includes(*reverting_tx.tx_hash()));
     }
+
+    Ok(())
+}
+
+/// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt should return
+/// an error message that it was dropped.
+#[tokio::test]
+async fn revert_protection_check_transaction_receipt_status_message() -> eyre::Result<()> {
+    let harness =
+        TestHarnessBuilder::new("revert_protection_check_transaction_receipt_status_message")
+            .with_revert_protection()
+            .build()
+            .await?;
+
+    let provider = harness.provider()?;
+    let mut generator = harness.block_generator().await?;
+
+    let reverting_tx = harness
+        .create_transaction()
+        .with_revert()
+        .with_bundle(BundleOpts {
+            block_number_max: Some(3),
+        })
+        .send()
+        .await?;
+    let tx_hash = reverting_tx.tx_hash();
+
+    let _ = generator.generate_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    let _ = generator.generate_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await?;
+    assert!(receipt.is_none());
+
+    // Dropped
+    let _ = generator.generate_block().await?;
+    let receipt = provider.get_transaction_receipt(*tx_hash).await;
+    assert!(receipt.is_err());
 
     Ok(())
 }
