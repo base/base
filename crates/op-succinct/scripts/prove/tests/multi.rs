@@ -26,7 +26,7 @@ async fn execute_batch() -> Result<()> {
 
     let host = initialize_host(Arc::new(data_fetcher.clone()));
 
-    let host_args = host.fetch(l2_start_block, l2_end_block, None, Some(false)).await?;
+    let host_args = host.fetch(l2_start_block, l2_end_block, None, false).await?;
 
     let witness_data = host.run(&host_args).await?;
 

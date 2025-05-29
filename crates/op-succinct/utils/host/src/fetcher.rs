@@ -532,7 +532,11 @@ impl OPSuccinctDataFetcher {
     /// for the end L2 block was posted. If the safeDB is not activated:
     ///   - If `safe_db_fallback` is `true`, estimate the L1 head based on the L2 block timestamp.
     ///   - Else, return an error.
-    async fn get_l1_head(&self, l2_end_block: u64, safe_db_fallback: bool) -> Result<(B256, u64)> {
+    pub async fn get_l1_head(
+        &self,
+        l2_end_block: u64,
+        safe_db_fallback: bool,
+    ) -> Result<(B256, u64)> {
         if self.rollup_config.is_none() {
             return Err(anyhow::anyhow!("Rollup config not loaded."));
         }
@@ -618,8 +622,7 @@ impl OPSuccinctDataFetcher {
         &self,
         l2_start_block: u64,
         l2_end_block: u64,
-        l1_head_hash: Option<B256>,
-        safe_db_fallback: bool,
+        l1_head_hash: B256,
     ) -> Result<SingleChainHost> {
         // If the rollup config is not already loaded, fetch and save it.
         if self.rollup_config.is_none() {
@@ -674,27 +677,6 @@ impl OPSuccinctDataFetcher {
             l2_claim_hash: l2_claim_hash.0.into(),
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
-
-        let l1_head_hash = match l1_head_hash {
-            Some(l1_head_hash) => l1_head_hash,
-            None => {
-                let (_, l1_head_number) = self.get_l1_head(l2_end_block, safe_db_fallback).await?;
-
-                // FIXME: Investigate requirement for L1 head offset beyond batch posting block with
-                // safe head > L2 end block.
-                let l1_head_number = l1_head_number + 20;
-                // The new L1 header requested should not be greater than the finalized L1 header
-                // minus 10 blocks.
-                let finalized_l1_header = self.get_l1_header(BlockId::finalized()).await?;
-
-                match l1_head_number > finalized_l1_header.number {
-                    true => {
-                        self.get_l1_header(finalized_l1_header.number.into()).await?.hash_slow()
-                    }
-                    false => self.get_l1_header(l1_head_number.into()).await?.hash_slow(),
-                }
-            }
-        };
 
         Ok(SingleChainHost {
             l1_head: l1_head_hash,

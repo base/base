@@ -123,7 +123,7 @@ where
                 l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks,
                 l2_block_number.to::<u64>(),
                 Some(l1_head_hash.into()),
-                Some(self.config.safe_db_fallback),
+                self.config.safe_db_fallback,
             )
             .await
             .context("Failed to get host CLI args")?;

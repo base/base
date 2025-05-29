@@ -29,17 +29,17 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
         l2_start_block: u64,
         l2_end_block: u64,
         l1_head_hash: Option<B256>,
-        safe_db_fallback: Option<bool>,
+        safe_db_fallback: bool,
     ) -> Result<SingleChainHost> {
-        let host = self
-            .fetcher
-            .get_host_args(
-                l2_start_block,
-                l2_end_block,
-                l1_head_hash,
-                safe_db_fallback.expect("`safe_db_fallback` must be set"),
-            )
-            .await?;
+        // Calculate L1 head hash using simple logic if not provided.
+        let l1_head_hash = match l1_head_hash {
+            Some(hash) => hash,
+            None => {
+                self.calculate_safe_l1_head(&self.fetcher, l2_end_block, safe_db_fallback).await?
+            }
+        };
+
+        let host = self.fetcher.get_host_args(l2_start_block, l2_end_block, l1_head_hash).await?;
         Ok(host)
     }
 
@@ -54,6 +54,27 @@ impl OPSuccinctHost for SingleChainOPSuccinctHost {
     ) -> Result<Option<u64>> {
         let finalized_l2_block_number = fetcher.get_l2_header(BlockId::finalized()).await?;
         Ok(Some(finalized_l2_block_number.number))
+    }
+
+    async fn calculate_safe_l1_head(
+        &self,
+        fetcher: &OPSuccinctDataFetcher,
+        l2_end_block: u64,
+        safe_db_fallback: bool,
+    ) -> Result<B256> {
+        // For Ethereum DA, use a simple approach with minimal offset.
+        let (_, l1_head_number) = fetcher.get_l1_head(l2_end_block, safe_db_fallback).await?;
+
+        // FIXME(fakedev9999): Investigate requirement for L1 head offset beyond batch posting block
+        // with safe head > L2 end block.
+        // Add a small buffer for Ethereum DA.
+        let l1_head_number = l1_head_number + 20;
+
+        // Ensure we don't exceed the finalized L1 header.
+        let finalized_l1_header = fetcher.get_l1_header(BlockId::finalized()).await?;
+        let safe_l1_head_number = std::cmp::min(l1_head_number, finalized_l1_header.number);
+
+        Ok(fetcher.get_l1_header(safe_l1_head_number.into()).await?.hash_slow())
     }
 }
 

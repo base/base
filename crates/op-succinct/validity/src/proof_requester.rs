@@ -69,7 +69,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 request.start_block as u64,
                 request.end_block as u64,
                 None,
-                Some(self.safe_db_fallback),
+                self.safe_db_fallback,
             )
             .await?;
 

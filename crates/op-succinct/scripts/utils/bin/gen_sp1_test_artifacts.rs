@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let host = Arc::new(initialize_host(Arc::new(data_fetcher)));
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
-            host.fetch(range.start, range.end, None, Some(args.safe_db_fallback))
+            host.fetch(range.start, range.end, None, args.safe_db_fallback)
                 .await
                 .expect("Failed to get host CLI args")
         })
