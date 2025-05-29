@@ -302,7 +302,7 @@ and burn tokens, depending on if the user is depositing from L1 to L2 or withdra
 
 ## OptimismMintableERC721Factory
 
-[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/universal/OptimismMintableERC721Factory.sol)
+[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/OptimismMintableERC721Factory.sol)
 
 Address: `0x4200000000000000000000000000000000000017`
 
