@@ -175,6 +175,12 @@ interface IDisputeGameFactory {
     /// @return bond_ The required bond for initializing a dispute game of the given type.
     function initBonds(GameType _gameType) external view returns (uint256 bond_);
 
+    /// @notice Returns the chain-specific configuration arguments for a given game type's implementation.
+    /// @dev These arguments are typically passed to the game implementation during proxy creation using CWIA.
+    /// @param _gameType The type of the dispute game.
+    /// @return args_ The chain-specific configuration arguments.
+    function gameArgs(GameType _gameType) external view returns (bytes memory args_);
+
     /// @notice Creates a new DisputeGame proxy contract.
     /// @param _gameType The type of the DisputeGame - used to decide the proxy implementation.
     /// @param _rootClaim The root claim of the DisputeGame.
@@ -193,7 +199,8 @@ interface IDisputeGameFactory {
     /// @dev May only be called by the `owner`.
     /// @param _gameType The type of the DisputeGame.
     /// @param _impl The implementation contract for the given `GameType`.
-    function setImplementation(GameType _gameType, IDisputeGame _impl) external;
+    /// @param _args The chain-specific configuration arguments for this game type's implementation.
+    function setImplementation(GameType _gameType, IDisputeGame _impl, bytes calldata _args) external;
 
     /// @notice Sets the bond (in wei) for initializing a game type.
     /// @dev May only be called by the `owner`.
