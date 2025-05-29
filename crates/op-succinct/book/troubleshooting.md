@@ -28,7 +28,7 @@ Failed to validate L2 block #<block_number> with output root <hash>
 ```
 
 **Cause:**
-This error occurs when the L1 head block selected is too close to the batch posting block, causing the derivation process to fail. The L2 node may have an inconsistent view of the safe head state, requiring additional L1 blocks to properly derive and validate the L2 blocks.
+This error occurs when the L1 head block selected for ETH DA is too close to the batch posting block, causing the derivation process to fail. The L2 node may have an inconsistent view of the safe head state, requiring additional L1 blocks to properly derive and validate the L2 blocks.
 
 **Solution:**
 1. Increase the L1 head offset buffer in the derivation process. The code currently adds a buffer of 20 blocks after the batch posting block, but you can increase this to for example 100 blocks:

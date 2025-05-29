@@ -125,7 +125,7 @@ async fn test_cycle_count_diff() -> Result<()> {
         }
     };
 
-    let host_args = host.fetch(l2_start_block, l2_end_block, None, Some(false)).await?;
+    let host_args = host.fetch(l2_start_block, l2_end_block, None, false).await?;
 
     let witness_data = host.run(&host_args).await?;
     let sp1_stdin = host.witness_generator().get_sp1_stdin(witness_data)?;
