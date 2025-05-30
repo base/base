@@ -133,6 +133,7 @@ impl TestHarnessBuilder {
             builder_http_port,
             validator_auth_rpc_port,
             builder_log_path,
+            chain_block_time: self.chain_block_time,
         })
     }
 }
@@ -143,6 +144,7 @@ pub struct TestHarness {
     builder_http_port: u16,
     validator_auth_rpc_port: u16,
     builder_log_path: PathBuf,
+    chain_block_time: Option<u64>,
 }
 
 impl TestHarness {
@@ -173,7 +175,13 @@ impl TestHarness {
         let engine_api = EngineApi::new_with_port(self.builder_auth_rpc_port).unwrap();
         let validation_api = Some(EngineApi::new_with_port(self.validator_auth_rpc_port).unwrap());
 
-        let mut generator = BlockGenerator::new(engine_api, validation_api, false, 1, None);
+        let mut generator = BlockGenerator::new(
+            engine_api,
+            validation_api,
+            false,
+            self.chain_block_time.map_or(1, |time| time / 1000), // in seconds
+            None,
+        );
         generator.init().await?;
 
         Ok(generator)

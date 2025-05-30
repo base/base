@@ -147,7 +147,7 @@ where
             builder_signer: args.builder_signer,
             revert_protection: args.enable_revert_protection,
             block_time: Duration::from_millis(args.chain_block_time),
-            block_time_leeway: Duration::from_millis(500),
+            block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
             specific: S::try_from(args)?,
         })

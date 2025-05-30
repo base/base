@@ -9,7 +9,6 @@ use tokio_util::sync::CancellationToken;
 use crate::tests::TestHarnessBuilder;
 
 #[tokio::test]
-#[ignore = "Flashblocks tests need more work"]
 async fn chain_produces_blocks() -> eyre::Result<()> {
     let harness = TestHarnessBuilder::new("flashbots_chain_produces_blocks")
         .with_flashblocks_port(1239)
@@ -49,7 +48,9 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
             let _ = harness.send_valid_transaction().await?;
         }
 
-        generator.generate_block().await?;
+        let generated_block = generator.generate_block().await?;
+        assert_eq!(generated_block.num_transactions(), 7); // 5 normal txn + deposit + builder txn
+
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 

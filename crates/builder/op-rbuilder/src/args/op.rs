@@ -95,7 +95,7 @@ pub struct FlashblocksArgs {
 
     /// flashblock block time in milliseconds
     #[arg(
-        long = "flashblock.block-time",
+        long = "flashblocks.block-time",
         default_value = "250",
         env = "FLASHBLOCK_BLOCK_TIME"
     )]

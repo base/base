@@ -402,4 +402,8 @@ impl BlockGenerated {
     pub fn not_includes_vec(&self, tx_hashes: Vec<B256>) -> bool {
         tx_hashes.iter().all(|hash| self.not_includes(*hash))
     }
+
+    pub fn num_transactions(&self) -> usize {
+        self.block.transactions.len()
+    }
 }

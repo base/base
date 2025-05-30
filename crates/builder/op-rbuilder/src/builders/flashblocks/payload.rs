@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Instant};
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        context::OpPayloadBuilderCtx,
+        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
         flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
         BuilderConfig,
@@ -257,6 +257,13 @@ where
             }
         });
 
+        let message = format!("Block Number: {}", ctx.block_number())
+            .as_bytes()
+            .to_vec();
+        let builder_tx_gas = ctx
+            .builder_signer()
+            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
+
         // Process flashblocks in a blocking loop
         loop {
             // Block on receiving a message, break on cancellation or closed channel
@@ -338,6 +345,12 @@ where
                         );
                         // if the job was cancelled, stop
                         return Ok(());
+                    }
+
+                    // If it is the last flashblocks, add the builder txn to the block if enabled
+                    if flashblock_count == self.config.flashblocks_per_block() - 1 {
+                        // TODO: Account for DA size limits
+                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
                     }
 
                     let total_block_built_duration = Instant::now();

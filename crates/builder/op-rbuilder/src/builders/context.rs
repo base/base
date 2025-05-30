@@ -1,5 +1,5 @@
 use alloy_consensus::{Eip658Value, Transaction, TxEip1559};
-use alloy_eips::{Encodable2718, Typed2718};
+use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
@@ -500,9 +500,9 @@ impl OpPayloadBuilderCtx {
         Ok(None)
     }
 
-    pub fn add_builder_tx<DB>(
+    pub fn add_builder_tx<DB, Extra: Debug + Default>(
         &self,
-        info: &mut ExecutionInfo,
+        info: &mut ExecutionInfo<Extra>,
         db: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
@@ -581,6 +581,27 @@ impl OpPayloadBuilderCtx {
                 None
             })
     }
+}
+
+pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
+    // Count zero and non-zero bytes
+    let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
+        if byte == 0 {
+            (zeros + 1, nonzeros)
+        } else {
+            (zeros, nonzeros + 1)
+        }
+    });
+
+    // Calculate gas cost (4 gas per zero byte, 16 gas per non-zero byte)
+    let zero_cost = zero_bytes * 4;
+    let nonzero_cost = nonzero_bytes * 16;
+
+    // Tx gas should be not less than floor gas https://eips.ethereum.org/EIPS/eip-7623
+    let tokens_in_calldata = zero_bytes + nonzero_bytes * 4;
+    let floor_gas = 21_000 + tokens_in_calldata * TOTAL_COST_FLOOR_PER_TOKEN;
+
+    std::cmp::max(zero_cost + nonzero_cost + 21_000, floor_gas)
 }
 
 /// Creates signed builder tx to Address::ZERO and specified message as input

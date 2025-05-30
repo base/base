@@ -153,7 +153,7 @@ impl Service for OpRbuilderConfig {
         }
 
         if let Some(flashblocks_port) = &self.flashblocks_port {
-            cmd.arg("--flashblocks.enabled").arg("true");
+            cmd.arg("--flashblocks.enabled");
             cmd.arg("--flashblocks.addr").arg("127.0.0.1");
             cmd.arg("--flashblocks.port")
                 .arg(flashblocks_port.to_string());
@@ -165,7 +165,7 @@ impl Service for OpRbuilderConfig {
         }
 
         if let Some(flashbots_block_time) = self.flashbots_block_time {
-            cmd.arg("--rollup.flashblock-block-time")
+            cmd.arg("--flashblocks.block-time")
                 .arg(flashbots_block_time.to_string());
         }
 
