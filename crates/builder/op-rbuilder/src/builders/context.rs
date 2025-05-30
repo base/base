@@ -328,6 +328,17 @@ impl OpPayloadBuilderCtx {
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
+        info!(target: "payload_builder", block_da_limit = ?block_da_limit, tx_da_size = ?tx_da_limit, block_gas_limit = ?block_gas_limit, "DA limits");
+
+        // Remove once we merge Reth 1.4.4
+        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
+        self.metrics
+            .da_block_size_limit
+            .record(block_da_limit.map_or(-1.0, |v| v as f64));
+        self.metrics
+            .da_tx_size_limit
+            .record(tx_da_limit.map_or(-1.0, |v| v as f64));
+
         while let Some(tx) = best_txs.next(()) {
             let exclude_reverting_txs = tx.exclude_reverting_txs();
             let tx_da_size = tx.estimated_da_size();
