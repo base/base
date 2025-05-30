@@ -519,7 +519,7 @@ impl OpPayloadBuilderCtx {
                 // Create and sign the transaction
                 let builder_tx =
                     signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(op_alloy_flz::tx_estimated_size_fjord(
+                Ok(op_alloy_flz::data_gas_fjord(
                     builder_tx.encoded_2718().as_slice(),
                 ))
             })
