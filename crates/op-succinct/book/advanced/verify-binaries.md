@@ -37,12 +37,12 @@ Then build the binaries:
 ```bash
 cd programs/range
 # Build the range elfs
-cargo prove build --elf-name range-elf-bump --docker --tag v4.1.7
-cargo prove build --elf-name range-elf-embedded --docker --tag v4.1.7 --features embedded
+cargo prove build --elf-name range-elf-bump --docker --tag v5.0.0
+cargo prove build --elf-name range-elf-embedded --docker --tag v5.0.0 --features embedded
 
 cd ../aggregation
 # Build the aggregation-elf
-cargo prove build --elf-name aggregation-elf --docker --tag v4.1.7
+cargo prove build --elf-name aggregation-elf --docker --tag v5.0.0
 ```
 
 Now, you can verify the binaries. The `config` script outputs the rollup config hash, aggregation verification key, and range verification key commitment based on the ELFs in `/elf`.
