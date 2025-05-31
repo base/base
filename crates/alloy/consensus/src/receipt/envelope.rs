@@ -123,6 +123,11 @@ impl<T> OpReceiptEnvelope<T> {
         &self.as_receipt().unwrap().logs
     }
 
+    /// Consumes the type and returns the logs.
+    pub fn into_logs(self) -> Vec<T> {
+        self.into_receipt().logs
+    }
+
     /// Return the receipt's bloom.
     pub const fn logs_bloom(&self) -> &Bloom {
         match self {
@@ -157,6 +162,14 @@ impl<T> OpReceiptEnvelope<T> {
         match self {
             Self::Deposit(t) => Some(&t.receipt),
             _ => None,
+        }
+    }
+
+    /// Consumes the type and returns the underlying [`Receipt`].
+    pub fn into_receipt(self) -> Receipt<T> {
+        match self {
+            Self::Legacy(t) | Self::Eip2930(t) | Self::Eip1559(t) | Self::Eip7702(t) => t.receipt,
+            Self::Deposit(t) => t.receipt.into_inner(),
         }
     }
 
@@ -303,6 +316,12 @@ impl Decodable2718 for OpReceiptEnvelope {
 
     fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(Self::Legacy(Decodable::decode(buf)?))
+    }
+}
+
+impl<T> From<OpReceiptEnvelope<T>> for Receipt<T> {
+    fn from(receipt: OpReceiptEnvelope<T>) -> Self {
+        receipt.into_receipt()
     }
 }
 
