@@ -131,10 +131,10 @@ alloy-sol-types = { version = "1.0.0", default-features = false }
 alloy-sol-macro = { version = "1.0.0", default-features = false }
 
 # OP Alloy
-op-alloy-consensus = { version = "0.15.1", default-features = false }
-op-alloy-rpc-types = { version = "0.15.1", default-features = false }
-op-alloy-rpc-types-engine = { version = "0.15.1", default-features = false }
-op-alloy-network = { version = "0.15.1", default-features = false }
+op-alloy-consensus = { version = "=0.15.4", default-features = false }
+op-alloy-rpc-types = { version = "=0.15.4", default-features = false }
+op-alloy-rpc-types-engine = { version = "=0.15.4", default-features = false }
+op-alloy-network = { version = "=0.15.4", default-features = false }
 
 # Execution
 alloy-evm = { version = "0.6.0", default-features = false, features = ["op"] }
@@ -144,11 +144,10 @@ revm = { version = "22.0.0", default-features = false, features = ["kzg-rs", "bn
 op-revm = { version = "3.0.1", default-features = false }
 
 # SP1
-# TODO(fakedev9999): Temporary patch to fix get_proof_status. Bump to v4.2.1 when released.
-sp1-sdk = { git = "https://github.com/succinctlabs/sp1", rev = "d2798c9" }
-sp1-lib = { version = "4.2.0", features = ["verify"] }
-sp1-zkvm = { version = "4.2.0", features = ["verify"] }
-sp1-build = { version = "4.2.0" }
+sp1-sdk = { version = "5.0.0" }
+sp1-lib = { version = "5.0.0", features = ["verify"] }
+sp1-zkvm = { version = "5.0.0", features = ["verify"] }
+sp1-build = { version = "5.0.0" }
 
 # kzg
 kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }
@@ -163,7 +162,8 @@ lto = "fat"
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
 sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
-substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-4.0.0" }
+substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
-p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-4.1.0" }
-k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-4.1.0" }
+p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-5.0.0" }
+k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-5.0.0" }
+
