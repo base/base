@@ -1,3 +1,9 @@
+use crate::{
+    builders::{generator::BuildArguments, BuilderConfig},
+    metrics::OpRBuilderMetrics,
+    primitives::reth::ExecutionInfo,
+    traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
+};
 use alloy_consensus::{
     constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
 };
@@ -27,14 +33,7 @@ use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, Transac
 use revm::Database;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
-
-use crate::{
-    builders::{generator::BuildArguments, BuilderConfig},
-    metrics::OpRBuilderMetrics,
-    primitives::reth::ExecutionInfo,
-    traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
-};
+use tracing::{error, info, warn};
 
 use super::super::context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx};
 
@@ -362,7 +361,13 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_size| da_size.saturating_sub(builder_tx_da_size));
+            .map(|da_size| {
+                let da_size = da_size.saturating_sub(builder_tx_da_size);
+                if da_size == 0 {
+                    error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+                }
+                da_size
+            });
 
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();
