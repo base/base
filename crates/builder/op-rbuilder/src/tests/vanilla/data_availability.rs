@@ -79,7 +79,7 @@ async fn data_availability_block_fill() -> eyre::Result<()> {
     // Set block big enough so it could fit 3 transactions without tx size limit
     let call = harness
         .provider()?
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 1600 * 3))
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 3))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 
