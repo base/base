@@ -21,6 +21,15 @@ pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
 /// The build profile name.
 pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
 
+pub const VERSION: VersionInfo = VersionInfo {
+    version: CARGO_PKG_VERSION,
+    build_timestamp: VERGEN_BUILD_TIMESTAMP,
+    cargo_features: VERGEN_CARGO_FEATURES,
+    git_sha: VERGEN_GIT_SHA,
+    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
+    build_profile: BUILD_PROFILE_NAME,
+};
+
 /// op-rbuilder metrics
 #[derive(Metrics, Clone)]
 #[metrics(scope = "op_rbuilder")]

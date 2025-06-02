@@ -1,5 +1,8 @@
-use crate::builders::BuilderMode;
-use clap::Parser;
+use crate::{
+    builders::BuilderMode,
+    metrics::{CARGO_PKG_VERSION, VERGEN_GIT_SHA},
+};
+use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::OpRbuilderArgs;
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
@@ -22,6 +25,10 @@ pub trait CliExt {
     /// Returns the Cli instance with the parsed command line arguments
     /// and defaults populated if applicable.
     fn parsed() -> Self;
+
+    /// Returns the Cli instance with the parsed command line arguments
+    /// and replaces version, name, author, and about
+    fn set_version() -> Self;
 }
 
 pub type Cli = reth_optimism_cli::Cli<OpChainSpecParser, OpRbuilderArgs>;
@@ -58,7 +65,7 @@ impl CliExt for Cli {
     }
 
     fn parsed() -> Self {
-        Cli::parse().populate_defaults()
+        Cli::set_version().populate_defaults()
     }
 
     /// Returns the type of builder implementation that the node is started with.
@@ -70,6 +77,17 @@ impl CliExt for Cli {
             }
         }
         BuilderMode::Standard
+    }
+
+    /// Parses commands and overrides versions
+    fn set_version() -> Self {
+        let matches = Cli::command()
+            .version(format!("{CARGO_PKG_VERSION} ({VERGEN_GIT_SHA})"))
+            .about("Block builder designed for the Optimism stack")
+            .author("Flashbots")
+            .name("op-rbuilder")
+            .get_matches();
+        Cli::from_arg_matches(&matches).expect("Parsing args")
     }
 }
 

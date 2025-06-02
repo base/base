@@ -18,10 +18,7 @@ mod traits;
 mod tx;
 mod tx_signer;
 
-use metrics::{
-    VersionInfo, BUILD_PROFILE_NAME, CARGO_PKG_VERSION, VERGEN_BUILD_TIMESTAMP,
-    VERGEN_CARGO_FEATURES, VERGEN_CARGO_TARGET_TRIPLE, VERGEN_GIT_SHA,
-};
+use metrics::VERSION;
 use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
 use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
@@ -31,15 +28,6 @@ use tx::FBPooledTransaction;
 #[cfg(all(feature = "jemalloc", unix))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-const VERSION: VersionInfo = VersionInfo {
-    version: CARGO_PKG_VERSION,
-    build_timestamp: VERGEN_BUILD_TIMESTAMP,
-    cargo_features: VERGEN_CARGO_FEATURES,
-    git_sha: VERGEN_GIT_SHA,
-    target_triple: VERGEN_CARGO_TARGET_TRIPLE,
-    build_profile: BUILD_PROFILE_NAME,
-};
 
 fn main() {
     let cli = Cli::parsed();
