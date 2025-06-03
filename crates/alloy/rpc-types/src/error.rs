@@ -27,7 +27,7 @@ use derive_more;
 ///
 /// Specs: <https://specs.optimism.io/interop/supervisor.html#protocol-specific-error-codes>
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
-#[repr(i64)]
+#[repr(i32)]
 #[try_from(repr)]
 pub enum InvalidInboxEntry {
     // -3204XX DEADLINE_EXCEEDED errors
