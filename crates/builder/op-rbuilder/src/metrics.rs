@@ -1,5 +1,5 @@
 use reth_metrics::{
-    metrics::{gauge, Counter, Histogram},
+    metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
 };
 
@@ -73,9 +73,9 @@ pub struct OpRBuilderMetrics {
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
     /// Da block size limit
-    pub da_block_size_limit: Histogram,
+    pub da_block_size_limit: Gauge,
     /// Da tx size limit
-    pub da_tx_size_limit: Histogram,
+    pub da_tx_size_limit: Gauge,
 }
 
 /// Contains version information for the application.
