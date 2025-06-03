@@ -361,12 +361,12 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
-            .map(|da_size| {
-                let da_size = da_size.saturating_sub(builder_tx_da_size);
-                if da_size == 0 {
+            .map(|da_limit| {
+                let da_limit = da_limit.saturating_sub(builder_tx_da_size);
+                if da_limit == 0 {
                     error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
                 }
-                da_size
+                da_limit
             });
 
         if !ctx.attributes().no_tx_pool {

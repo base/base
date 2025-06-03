@@ -189,6 +189,16 @@ where
             .with_bundle_update()
             .build();
 
+        // We subtract gas limit and da limit for builder transaction from the whole limit
+        // TODO: we could optimise this and subtract this only for the last flashblocks
+        let message = format!("Block Number: {}", ctx.block_number()).into_bytes();
+        let builder_tx_gas = ctx
+            .builder_signer()
+            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
+        let builder_tx_da_size = ctx
+            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
+            .unwrap_or(0);
+
         let mut info = execute_pre_steps(&mut db, &ctx)?;
         ctx.metrics
             .sequencer_tx_duration
@@ -219,15 +229,22 @@ where
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
         }
-
         let gas_per_batch = ctx.block_gas_limit() / self.config.flashblocks_per_block();
         let mut total_gas_per_batch = gas_per_batch;
         let da_per_batch = ctx
             .da_config
             .max_da_block_size()
             .map(|da_limit| da_limit / self.config.flashblocks_per_block());
+        // Check that builder tx won't affect fb limit too much
+        if let Some(da_limit) = da_per_batch {
+            // We error if we can't insert any tx aside from builder tx in flashblock
+            if da_limit / 2 < builder_tx_da_size {
+                error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+            }
+        }
         let mut total_da_per_batch = da_per_batch;
 
+        let last_flashblock = self.config.flashblocks_per_block().saturating_sub(1);
         let mut flashblock_count = 0;
         // Create a channel to coordinate flashblock building
         let (build_tx, mut build_rx) = mpsc::channel(1);
@@ -256,13 +273,6 @@ where
                 }
             }
         });
-
-        let message = format!("Block Number: {}", ctx.block_number())
-            .as_bytes()
-            .to_vec();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
 
         // Process flashblocks in a blocking loop
         loop {
@@ -310,7 +320,13 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
-
+                    invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
+                        total_gas_per_batch -= builder_tx_gas;
+                        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+                        if let Some(da_limit) = total_da_per_batch.as_mut() {
+                            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+                        }
+                    });
                     let mut db = State::builder()
                         .with_database(state)
                         .with_bundle_update()
@@ -348,10 +364,9 @@ where
                     }
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
-                    if flashblock_count == self.config.flashblocks_per_block() - 1 {
-                        // TODO: Account for DA size limits
+                    invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
                         ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-                    }
+                    });
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
@@ -668,4 +683,14 @@ where
         fb_payload,
         new_bundle,
     ))
+}
+
+pub fn invoke_on_last_flashblock<F: FnOnce()>(
+    current_flashblock: u64,
+    flashblock_limit: u64,
+    fun: F,
+) {
+    if current_flashblock == flashblock_limit {
+        fun()
+    }
 }

@@ -560,6 +560,8 @@ impl OpPayloadBuilderCtx {
     }
 
     /// Calculates EIP 2718 builder transaction size
+    // TODO: this function could be improved, ideally we shouldn't take mut ref to db and maybe
+    // it's possible to do this without db at all
     pub fn estimate_builder_tx_da_size<DB>(
         &self,
         db: &mut State<DB>,
