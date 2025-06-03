@@ -42,7 +42,7 @@ impl TestHarness {
     fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> TestHarness {
         let (sender, _) = broadcast::channel(5);
         let metrics = Arc::new(Metrics::default());
-        let registry = Registry::new(sender.clone(), metrics.clone());
+        let registry = Registry::new(sender.clone(), metrics.clone(), false);
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
         Self {
@@ -57,6 +57,7 @@ impl TestHarness {
                 rate_limited,
                 auth,
                 "header".to_string(),
+                false,
             ),
             server_addr: addr,
             client_id_to_handle: HashMap::new(),

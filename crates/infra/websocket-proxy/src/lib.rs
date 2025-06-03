@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod client;
+pub mod filter;
 pub mod metrics;
 pub mod rate_limit;
 pub mod registry;
@@ -8,6 +9,7 @@ pub mod subscriber;
 
 pub use auth::*;
 pub use client::*;
+pub use filter::*;
 pub use metrics::*;
 pub use rate_limit::*;
 pub use registry::*;

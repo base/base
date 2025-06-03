@@ -430,7 +430,7 @@ mod tests {
 
                                 // Become completely unresponsive - don't read any messages
                                 select! {
-                                    _ = shutdown_inner.cancelled() => return
+                                    _ = shutdown_inner.cancelled() => ()
                                 }
                             });
                         }
