@@ -141,6 +141,8 @@ min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = []
 
+interop = []
+
 [[bin]]
 name = "op-rbuilder"
 path = "src/main.rs"

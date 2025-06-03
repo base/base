@@ -4,6 +4,7 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
+use derive_more::Display;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
 use op_revm::{OpSpecId, OpTransactionError};
 use reth::payload::PayloadBuilderAttributes;
@@ -19,7 +20,10 @@ use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
-use reth_optimism_txpool::estimated_da_size::DataAvailabilitySized;
+use reth_optimism_txpool::{
+    estimated_da_size::DataAvailabilitySized,
+    interop::{is_valid_interop, MaybeInteropTransaction},
+};
 use reth_payload_builder::PayloadId;
 use reth_primitives::{Recovered, SealedHeader};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
@@ -187,31 +191,18 @@ impl OpPayloadBuilderCtx {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Display)]
 enum TxnExecutionResult {
     InvalidDASize,
     SequencerTransaction,
     NonceTooLow,
+    InteropFailed,
+    #[display("InternalError({_0})")]
     InternalError(OpTransactionError),
     EvmError,
     Success,
     Reverted,
     RevertedAndExcluded,
-}
-
-impl std::fmt::Display for TxnExecutionResult {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TxnExecutionResult::InvalidDASize => write!(f, "InvalidDASize"),
-            TxnExecutionResult::SequencerTransaction => write!(f, "SequencerTransaction"),
-            TxnExecutionResult::NonceTooLow => write!(f, "NonceTooLow"),
-            TxnExecutionResult::InternalError(err) => write!(f, "InternalError({err})"),
-            TxnExecutionResult::EvmError => write!(f, "EvmError"),
-            TxnExecutionResult::Success => write!(f, "Success"),
-            TxnExecutionResult::Reverted => write!(f, "Reverted"),
-            TxnExecutionResult::RevertedAndExcluded => write!(f, "RevertedAndExcluded"),
-        }
-    }
 }
 
 impl OpPayloadBuilderCtx {
@@ -367,6 +358,7 @@ impl OpPayloadBuilderCtx {
             .record(tx_da_limit.map_or(-1.0, |v| v as f64));
 
         while let Some(tx) = best_txs.next(()) {
+            let interop = tx.interop_deadline();
             let exclude_reverting_txs = tx.exclude_reverting_txs();
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
@@ -375,6 +367,19 @@ impl OpPayloadBuilderCtx {
             let log_txn = |result: TxnExecutionResult| {
                 info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
             };
+
+            // TODO: remove this condition and feature once we are comfortable enabling interop for everything
+            if cfg!(feature = "interop") {
+                // We skip invalid cross chain txs, they would be removed on the next block update in
+                // the maintenance job
+                if let Some(interop) = interop {
+                    if !is_valid_interop(interop, self.config.attributes.timestamp()) {
+                        log_txn(TxnExecutionResult::InteropFailed);
+                        best_txs.mark_invalid(tx.signer(), tx.nonce());
+                        continue;
+                    }
+                }
+            }
 
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
