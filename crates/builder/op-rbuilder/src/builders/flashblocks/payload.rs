@@ -324,6 +324,13 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
+                    invoke_on_first_flashblock(flashblock_count, || {
+                        total_gas_per_batch -= builder_tx_gas;
+                        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+                        if let Some(da_limit) = total_da_per_batch.as_mut() {
+                            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+                        }
+                    });
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
                         total_gas_per_batch -= builder_tx_gas;
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
@@ -366,6 +373,11 @@ where
                         // if the job was cancelled, stop
                         return Ok(());
                     }
+
+                    // TODO: temporary we add builder tx to the first flashblock too
+                    invoke_on_first_flashblock(flashblock_count, || {
+                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+                    });
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
@@ -687,6 +699,12 @@ where
         fb_payload,
         new_bundle,
     ))
+}
+
+pub fn invoke_on_first_flashblock<F: FnOnce()>(current_flashblock: u64, fun: F) {
+    if current_flashblock == 0 {
+        fun()
+    }
 }
 
 pub fn invoke_on_last_flashblock<F: FnOnce()>(

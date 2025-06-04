@@ -49,7 +49,7 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         }
 
         let generated_block = generator.generate_block().await?;
-        assert_eq!(generated_block.num_transactions(), 7); // 5 normal txn + deposit + builder txn
+        assert_eq!(generated_block.num_transactions(), 8); // 5 normal txn + deposit + 2 builder txn
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
