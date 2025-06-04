@@ -1,28 +1,19 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
-use alloy_consensus::{
-    conditional::BlockConditionalAttributes, BlobTransactionSidecar, BlobTransactionValidationError,
-};
-use alloy_eips::{eip7702::SignedAuthorization, Typed2718};
+use alloy_consensus::{conditional::BlockConditionalAttributes, BlobTransactionValidationError};
+use alloy_eips::{eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization, Typed2718};
 use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-    interop::MaybeInteropTransaction, OpPooledTransaction,
+    interop::MaybeInteropTransaction, OpPooledTransaction, OpPooledTx,
 };
 use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-pub trait FBPoolTransaction:
-    EthPoolTransaction
-    + MaybeInteropTransaction
-    + MaybeConditionalTransaction
-    + DataAvailabilitySized
-    + MaybeRevertingTransaction
-{
-}
+pub trait FBPoolTransaction: MaybeRevertingTransaction + OpPooledTx {}
 
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
@@ -31,6 +22,12 @@ pub struct FBPooledTransaction {
 }
 
 impl FBPoolTransaction for FBPooledTransaction {}
+
+impl OpPooledTx for FBPooledTransaction {
+    fn encoded_2718(&self) -> Cow<'_, Bytes> {
+        Cow::Borrowed(self.inner.encoded_2718())
+    }
+}
 
 pub trait MaybeRevertingTransaction {
     fn set_exclude_reverting_txs(&mut self, exclude: bool);
@@ -179,21 +176,21 @@ impl EthPoolTransaction for FBPooledTransaction {
 
     fn try_into_pooled_eip4844(
         self,
-        sidecar: Arc<BlobTransactionSidecar>,
+        sidecar: Arc<BlobTransactionSidecarVariant>,
     ) -> Option<Recovered<Self::Pooled>> {
         self.inner.try_into_pooled_eip4844(sidecar)
     }
 
     fn try_from_eip4844(
         _tx: Recovered<Self::Consensus>,
-        _sidecar: BlobTransactionSidecar,
+        _sidecar: BlobTransactionSidecarVariant,
     ) -> Option<Self> {
         None
     }
 
     fn validate_blob(
         &self,
-        _sidecar: &BlobTransactionSidecar,
+        _sidecar: &BlobTransactionSidecarVariant,
         _settings: &KzgSettings,
     ) -> Result<(), BlobTransactionValidationError> {
         Err(BlobTransactionValidationError::NotBlobTransaction(

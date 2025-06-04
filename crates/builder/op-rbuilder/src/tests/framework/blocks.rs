@@ -1,3 +1,8 @@
+use std::{
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
+
 use crate::tx_signer::Signer;
 use alloy_eips::{eip2718::Encodable2718, eip7685::Requests, BlockNumberOrTag};
 use alloy_primitives::{address, hex, Address, Bytes, TxKind, B256, U256};
@@ -8,7 +13,11 @@ use alloy_rpc_types_engine::{
 use alloy_rpc_types_eth::Block;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types_engine::{OpExecutionPayloadV4, OpPayloadAttributes};
-use rollup_boost::{Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, Version};
+use rollup_boost::{
+    Flashblocks, FlashblocksService, OpExecutionPayloadEnvelope, PayloadSource, PayloadVersion,
+    RpcClient,
+};
+use url::Url;
 
 use super::apis::EngineApi;
 
@@ -64,10 +73,17 @@ impl BlockGenerator {
         // Initialize flashblocks service
         if let Some(flashblocks_endpoint) = &self.flashblocks_endpoint {
             println!("Initializing flashblocks service at {flashblocks_endpoint}");
+            let builder_client = RpcClient::new(
+                self.engine_api.url.clone(),
+                self.engine_api.jwt_secret.clone(),
+                10,
+                PayloadSource::Builder,
+            )?;
 
             self.flashblocks_service = Some(Flashblocks::run(
-                flashblocks_endpoint.to_string(),
-                "127.0.0.1:1112".to_string(), // output address for the preconfirmations from rb
+                builder_client,
+                Url::from_str(flashblocks_endpoint)?,
+                SocketAddr::new(IpAddr::from_str("127.0.0.1")?, 1112), // output address for the preconfirmations from rb
             )?);
         }
 
@@ -181,7 +197,7 @@ impl BlockGenerator {
                 source_hash: B256::default(),
                 from: address!("DeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001"),
                 to: TxKind::Call(address!("4200000000000000000000000000000000000015")),
-                mint: None,
+                mint: 0,
                 value: U256::default(),
                 gas_limit: 210000,
                 is_system_transaction: false,
@@ -242,7 +258,7 @@ impl BlockGenerator {
 
         let payload = if let Some(flashblocks_service) = &self.flashblocks_service {
             flashblocks_service
-                .get_best_payload(Version::V4)
+                .get_best_payload(PayloadVersion::V4)
                 .await?
                 .unwrap()
         } else {
@@ -339,7 +355,7 @@ impl BlockGenerator {
             source_hash: B256::default(),
             from: address, // Set the sender to the address of the account to seed
             to: TxKind::Create,
-            mint: Some(value), // Amount to deposit
+            mint: value, // Amount to deposit
             value: U256::default(),
             gas_limit: 210000,
             is_system_transaction: false,

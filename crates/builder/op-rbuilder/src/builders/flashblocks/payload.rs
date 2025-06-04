@@ -38,7 +38,7 @@ use reth_revm::{
     State,
 };
 use revm::Database;
-use rollup_boost::primitives::{
+use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
@@ -664,7 +664,7 @@ where
             block_hash,
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
-            withdrawals_root,
+            withdrawals_root: withdrawals_root.unwrap_or_default(),
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };

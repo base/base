@@ -2,6 +2,7 @@ use super::DEFAULT_JWT_TOKEN;
 use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
+use http::Uri;
 use jsonrpsee::{
     core::{client::SubscriptionClientT, RpcResult},
     proc_macros::rpc,
@@ -18,8 +19,8 @@ use std::str::FromStr;
 
 /// Helper for engine api operations
 pub struct EngineApi {
-    url: url::Url,
-    jwt_secret: JwtSecret,
+    pub url: Uri,
+    pub jwt_secret: JwtSecret,
 }
 
 /// Builder for EngineApi configuration
@@ -76,7 +77,7 @@ impl EngineApi {
         let middleware = tower::ServiceBuilder::default().layer(secret_layer);
         jsonrpsee::http_client::HttpClientBuilder::default()
             .set_http_middleware(middleware)
-            .build(&self.url)
+            .build(&self.url.to_string())
             .expect("Failed to create http client")
     }
 

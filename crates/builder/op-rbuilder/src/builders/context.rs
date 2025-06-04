@@ -28,12 +28,9 @@ use reth_payload_builder::PayloadId;
 use reth_primitives::{Recovered, SealedHeader};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_provider::ProviderError;
-use reth_revm::State;
+use reth_revm::{context::Block, State};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{
-    context::{result::ResultAndState, Block},
-    Database, DatabaseCommit,
-};
+use revm::{context::result::ResultAndState, Database, DatabaseCommit};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
