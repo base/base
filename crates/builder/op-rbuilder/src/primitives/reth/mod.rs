@@ -1,2 +1,2 @@
 mod execution;
-pub use execution::ExecutionInfo;
+pub use execution::{ExecutionInfo, TxnExecutionResult};

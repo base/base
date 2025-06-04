@@ -4,9 +4,8 @@ use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
-use derive_more::Display;
 use op_alloy_consensus::{OpDepositReceipt, OpTypedTransaction};
-use op_revm::{OpSpecId, OpTransactionError};
+use op_revm::OpSpecId;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
@@ -36,8 +35,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, trace, warn};
 
 use crate::{
-    metrics::OpRBuilderMetrics, primitives::reth::ExecutionInfo, traits::PayloadTxsBounds,
-    tx::MaybeRevertingTransaction, tx_signer::Signer,
+    metrics::OpRBuilderMetrics,
+    primitives::reth::{ExecutionInfo, TxnExecutionResult},
+    traits::PayloadTxsBounds,
+    tx::MaybeRevertingTransaction,
+    tx_signer::Signer,
 };
 
 /// Container type that holds all necessities to build a new payload.
@@ -186,20 +188,6 @@ impl OpPayloadBuilderCtx {
     pub fn builder_signer(&self) -> Option<Signer> {
         self.builder_signer
     }
-}
-
-#[derive(Debug, Display)]
-enum TxnExecutionResult {
-    InvalidDASize,
-    SequencerTransaction,
-    NonceTooLow,
-    InteropFailed,
-    #[display("InternalError({_0})")]
-    InternalError(OpTransactionError),
-    EvmError,
-    Success,
-    Reverted,
-    RevertedAndExcluded,
 }
 
 impl OpPayloadBuilderCtx {
@@ -380,7 +368,7 @@ impl OpPayloadBuilderCtx {
 
             num_txs_considered += 1;
             // ensure we still have capacity for this transaction
-            if info.is_tx_over_limits(
+            if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
                 block_gas_limit,
                 tx_da_limit,
@@ -390,7 +378,7 @@ impl OpPayloadBuilderCtx {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
                 // the iterator before we can continue
-                log_txn(TxnExecutionResult::InvalidDASize);
+                log_txn(result);
                 best_txs.mark_invalid(tx.signer(), tx.nonce());
                 continue;
             }

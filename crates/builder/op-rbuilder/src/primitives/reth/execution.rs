@@ -1,7 +1,25 @@
 //! Heavily influenced by [reth](https://github.com/paradigmxyz/reth/blob/1e965caf5fa176f244a31c0d2662ba1b590938db/crates/optimism/payload/src/builder.rs#L570)
 use alloy_primitives::{Address, U256};
 use core::fmt::Debug;
+use derive_more::Display;
+use op_revm::OpTransactionError;
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+
+#[derive(Debug, Display)]
+pub enum TxnExecutionResult {
+    TransactionDALimitExceeded,
+    BlockDALimitExceeded,
+    TransactionGasLimitExceeded,
+    SequencerTransaction,
+    NonceTooLow,
+    InteropFailed,
+    #[display("InternalError({_0})")]
+    InternalError(OpTransactionError),
+    EvmError,
+    Success,
+    Reverted,
+    RevertedAndExcluded,
+}
 
 #[derive(Default, Debug)]
 pub struct ExecutionInfo<Extra: Debug + Default = ()> {
@@ -48,17 +66,20 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         tx_data_limit: Option<u64>,
         block_data_limit: Option<u64>,
         tx_gas_limit: u64,
-    ) -> bool {
+    ) -> Result<(), TxnExecutionResult> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
-            return true;
+            return Err(TxnExecutionResult::TransactionDALimitExceeded);
         }
 
         if block_data_limit
             .is_some_and(|da_limit| self.cumulative_da_bytes_used + tx_da_size > da_limit)
         {
-            return true;
+            return Err(TxnExecutionResult::BlockDALimitExceeded);
         }
 
-        self.cumulative_gas_used + tx_gas_limit > block_gas_limit
+        if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
+            return Err(TxnExecutionResult::TransactionGasLimitExceeded);
+        }
+        Ok(())
     }
 }
