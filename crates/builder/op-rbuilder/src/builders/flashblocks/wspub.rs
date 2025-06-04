@@ -187,7 +187,7 @@ async fn broadcast_loop(
                     sent.fetch_add(1, Ordering::Relaxed);
                     metrics.messages_sent_count.increment(1);
 
-                    tracing::info!("Broadcasted payload: {:?}", payload);
+                    tracing::debug!("Broadcasted payload: {:?}", payload);
                     if let Err(e) = stream.send(Message::Text(payload)).await {
                         tracing::debug!("Closing flashblocks subscription for {peer_addr}: {e}");
                         break; // Exit the loop if sending fails
