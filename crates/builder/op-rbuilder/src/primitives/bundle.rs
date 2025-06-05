@@ -9,6 +9,9 @@ pub struct Bundle {
     #[serde(rename = "txs")]
     pub transactions: Vec<Bytes>,
 
+    #[serde(rename = "reverting_tx_hashes")]
+    pub reverting_hashes: Vec<B256>,
+
     #[serde(
         default,
         rename = "maxBlockNumber",
@@ -16,12 +19,20 @@ pub struct Bundle {
         skip_serializing_if = "Option::is_none"
     )]
     pub block_number_max: Option<u64>,
+
+    #[serde(
+        default,
+        rename = "minBlockNumber",
+        with = "alloy_serde::quantity::opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub block_number_min: Option<u64>,
 }
 
 impl Bundle {
     pub fn conditional(&self) -> TransactionConditional {
         TransactionConditional {
-            block_number_min: None,
+            block_number_min: self.block_number_min,
             block_number_max: self.block_number_max,
             known_accounts: Default::default(),
             timestamp_max: None,

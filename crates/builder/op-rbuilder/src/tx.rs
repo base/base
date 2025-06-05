@@ -18,7 +18,11 @@ pub trait FBPoolTransaction: MaybeRevertingTransaction + OpPooledTx {}
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
     pub inner: OpPooledTransaction,
-    pub exclude_reverting_txs: bool,
+
+    /// reverted hashes for the transaction. If the transaction is a bundle,
+    /// this is the list of hashes of the transactions that reverted. If the
+    /// transaction is not a bundle, this is `None`.
+    pub reverted_hashes: Option<Vec<B256>>,
 }
 
 impl FBPoolTransaction for FBPooledTransaction {}
@@ -30,17 +34,17 @@ impl OpPooledTx for FBPooledTransaction {
 }
 
 pub trait MaybeRevertingTransaction {
-    fn set_exclude_reverting_txs(&mut self, exclude: bool);
-    fn exclude_reverting_txs(&self) -> bool;
+    fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>);
+    fn reverted_hashes(&self) -> Option<Vec<B256>>;
 }
 
 impl MaybeRevertingTransaction for FBPooledTransaction {
-    fn set_exclude_reverting_txs(&mut self, exclude: bool) {
-        self.exclude_reverting_txs = exclude;
+    fn set_reverted_hashes(&mut self, reverted_hashes: Vec<B256>) {
+        self.reverted_hashes = Some(reverted_hashes);
     }
 
-    fn exclude_reverting_txs(&self) -> bool {
-        self.exclude_reverting_txs
+    fn reverted_hashes(&self) -> Option<Vec<B256>> {
+        self.reverted_hashes.clone()
     }
 }
 
@@ -68,7 +72,7 @@ impl PoolTransaction for FBPooledTransaction {
         let inner = OpPooledTransaction::from_pooled(tx);
         Self {
             inner,
-            exclude_reverting_txs: false,
+            reverted_hashes: None,
         }
     }
 
@@ -228,7 +232,7 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
     fn from(tx: OpPooledTransaction) -> Self {
         Self {
             inner: tx,
-            exclude_reverting_txs: false,
+            reverted_hashes: None,
         }
     }
 }
@@ -252,7 +256,7 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
     {
         FBPooledTransaction {
             inner: self.inner.with_conditional(conditional),
-            exclude_reverting_txs: self.exclude_reverting_txs,
+            reverted_hashes: self.reverted_hashes,
         }
     }
 }

@@ -1,4 +1,6 @@
-use alloy_consensus::{Eip658Value, Transaction, TxEip1559};
+use alloy_consensus::{
+    conditional::BlockConditionalAttributes, Eip658Value, Transaction, TxEip1559,
+};
 use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
@@ -20,6 +22,7 @@ use reth_optimism_node::OpPayloadBuilderAttributes;
 use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
+    conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized,
     interop::{is_valid_interop, MaybeInteropTransaction},
 };
@@ -342,16 +345,36 @@ impl OpPayloadBuilderCtx {
             .da_tx_size_limit
             .set(tx_da_limit.map_or(-1.0, |v| v as f64));
 
+        let block_attr = BlockConditionalAttributes {
+            number: self.block_number(),
+            timestamp: self.attributes().timestamp(),
+        };
+
         while let Some(tx) = best_txs.next(()) {
             let interop = tx.interop_deadline();
-            let exclude_reverting_txs = tx.exclude_reverting_txs();
+            let reverted_hashes = tx.reverted_hashes().clone();
+            let conditional = tx.conditional().cloned();
+
             let tx_da_size = tx.estimated_da_size();
             let tx = tx.into_consensus();
             let tx_hash = tx.tx_hash();
 
+            // exclude reverting transaction if:
+            // - the transaction comes from a bundle and the hash **is not** in reverted hashes
+            let exclude_reverting_txs =
+                reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
+
             let log_txn = |result: TxnExecutionResult| {
                 info!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
             };
+
+            if let Some(conditional) = conditional {
+                // TODO: ideally we should get this from the txpool stream
+                if !conditional.matches_block_attributes(&block_attr) {
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
 
             // TODO: remove this condition and feature once we are comfortable enabling interop for everything
             if cfg!(feature = "interop") {
