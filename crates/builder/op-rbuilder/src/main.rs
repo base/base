@@ -1,11 +1,6 @@
 use args::*;
-use builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, StandardBuilder};
-use core::fmt::Debug;
-use reth_optimism_node::{
-    node::{OpAddOnsBuilder, OpPoolBuilder},
-    OpNode,
-};
-use reth_transaction_pool::TransactionPool;
+use builders::{BuilderMode, FlashblocksBuilder, StandardBuilder};
+use eyre::Result;
 
 /// CLI argument parsing.
 pub mod args;
@@ -18,10 +13,23 @@ mod traits;
 mod tx;
 mod tx_signer;
 
+use builders::{BuilderConfig, PayloadBuilder};
+use core::fmt::Debug;
 use metrics::VERSION;
 use moka::future::Cache;
 use monitor_tx_pool::monitor_tx_pool;
+use reth::builder::{NodeBuilder, WithLaunchContext};
+use reth_cli_commands::launcher::Launcher;
+use reth_db::mdbx::DatabaseEnv;
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_cli::chainspec::OpChainSpecParser;
+use reth_optimism_node::{
+    node::{OpAddOnsBuilder, OpPoolBuilder},
+    OpNode,
+};
+use reth_transaction_pool::TransactionPool;
 use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
+use std::{marker::PhantomData, sync::Arc};
 use tx::FBPooledTransaction;
 
 // Prefer jemalloc for performance reasons.
@@ -29,32 +37,68 @@ use tx::FBPooledTransaction;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parsed();
-    cli.logs
-        .init_tracing()
-        .expect("Failed to initialize tracing");
+    let mode = cli.builder_mode();
+    let mut cli_app = cli.configure();
 
-    match cli.builder_mode() {
+    #[cfg(feature = "telemetry")]
+    {
+        let otlp = reth_tracing_otlp::layer("op-reth");
+        cli_app.access_tracing_layers()?.add_layer(otlp);
+    }
+
+    cli_app.init_tracing()?;
+    match mode {
         BuilderMode::Standard => {
             tracing::info!("Starting OP builder in standard mode");
-            start_builder_node::<StandardBuilder>(cli);
+            let launcher = BuilderLauncher::<StandardBuilder>::new();
+            cli_app.run(launcher)?;
         }
         BuilderMode::Flashblocks => {
             tracing::info!("Starting OP builder in flashblocks mode");
-            start_builder_node::<FlashblocksBuilder>(cli);
+            let launcher = BuilderLauncher::<FlashblocksBuilder>::new();
+            cli_app.run(launcher)?;
         }
-    };
+    }
+    Ok(())
 }
 
-/// Starts the OP builder node with a given payload builder implementation.
-fn start_builder_node<B: builders::PayloadBuilder>(cli: Cli)
+pub struct BuilderLauncher<B> {
+    _builder: PhantomData<B>,
+}
+
+impl<B> BuilderLauncher<B>
 where
-    BuilderConfig<<B as builders::PayloadBuilder>::Config>: TryFrom<OpRbuilderArgs>,
-    <BuilderConfig<<B as builders::PayloadBuilder>::Config> as TryFrom<OpRbuilderArgs>>::Error:
-        Debug,
+    B: PayloadBuilder,
 {
-    cli.run(|builder, builder_args| async move {
+    pub fn new() -> Self {
+        Self {
+            _builder: PhantomData,
+        }
+    }
+}
+
+impl<B> Default for BuilderLauncher<B>
+where
+    B: PayloadBuilder,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<B> Launcher<OpChainSpecParser, OpRbuilderArgs> for BuilderLauncher<B>
+where
+    B: PayloadBuilder,
+    BuilderConfig<B::Config>: TryFrom<OpRbuilderArgs>,
+    <BuilderConfig<B::Config> as TryFrom<OpRbuilderArgs>>::Error: Debug,
+{
+    async fn entrypoint(
+        self,
+        builder: WithLaunchContext<NodeBuilder<Arc<DatabaseEnv>, OpChainSpec>>,
+        builder_args: OpRbuilderArgs,
+    ) -> Result<()> {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
@@ -133,7 +177,7 @@ where
             .launch()
             .await?;
 
-        handle.node_exit_future.await
-    })
-    .unwrap();
+        handle.node_exit_future.await?;
+        Ok(())
+    }
 }

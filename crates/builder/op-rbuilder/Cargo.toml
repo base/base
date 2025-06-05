@@ -18,7 +18,9 @@ reth-optimism-consensus.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-txpool.workspace = true
 reth-cli.workspace = true
+reth-cli-commands.workspace = true
 reth-cli-util.workspace = true
+reth-db.workspace = true
 reth-payload-primitives.workspace = true
 reth-evm.workspace = true
 reth-exex.workspace = true
@@ -45,6 +47,7 @@ reth-optimism-forks.workspace = true
 reth-node-builder.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-optimism-rpc.workspace = true
+reth-tracing-otlp = { workspace = true, optional = true }
 
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
@@ -142,6 +145,8 @@ min-trace-logs = ["tracing/release_max_level_trace"]
 testing = []
 
 interop = []
+
+telemetry = ["reth-tracing-otlp"]
 
 [[bin]]
 name = "op-rbuilder"
