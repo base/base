@@ -23,13 +23,13 @@
 
 use derive_more;
 
-/// Supervisor protocol error codes.
+/// Supervisor data availability error codes.
 ///
 /// Specs: <https://specs.optimism.io/interop/supervisor.html#protocol-specific-error-codes>
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
 #[repr(i32)]
 #[try_from(repr)]
-pub enum InvalidInboxEntry {
+pub enum SuperchainDAError {
     // -3204XX DEADLINE_EXCEEDED errors
     /// Happens when a chain database is not initialized yet.
     #[error("chain database is not initialized")]
@@ -100,4 +100,13 @@ pub enum InvalidInboxEntry {
     /// Happens when the underlying DB has some I/O issue.
     #[error("underlying database has I/O issues or is corrupted")]
     DataCorruption = -321501,
+}
+
+#[cfg(feature = "jsonrpsee")]
+impl From<SuperchainDAError> for jsonrpsee::types::ErrorObjectOwned {
+    fn from(err: SuperchainDAError) -> Self {
+        use crate::alloc::string::ToString;
+
+        jsonrpsee::types::ErrorObjectOwned::owned(err as i32, err.to_string(), None::<()>)
+    }
 }

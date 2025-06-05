@@ -19,4 +19,4 @@ mod transaction;
 pub use transaction::{OpTransactionFields, OpTransactionRequest, Transaction};
 
 pub mod error;
-pub use error::InvalidInboxEntry;
+pub use error::SuperchainDAError;

@@ -30,6 +30,9 @@ alloy-primitives = { workspace = true, features = ["map", "rlp", "serde"] }
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
 
+# RPC
+jsonrpsee = { workspace = true, optional = true }
+
 # arbitrary
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
@@ -63,3 +66,4 @@ arbitrary = [
 ]
 k256 = ["alloy-rpc-types-eth/k256", "op-alloy-consensus/k256"]
 serde = ["op-alloy-consensus/serde"]
+jsonrpsee = ["dep:jsonrpsee"]
