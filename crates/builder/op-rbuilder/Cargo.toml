@@ -28,6 +28,8 @@ reth-chainspec.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-node-api.workspace = true
+reth-rpc-engine-api.workspace = true
+reth-node-core.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-payload-builder.workspace = true
 reth-node-ethereum.workspace = true
@@ -45,8 +47,11 @@ reth-network-peers.workspace = true
 reth-testing-utils.workspace = true
 reth-optimism-forks.workspace = true
 reth-node-builder.workspace = true
+reth-storage-api.workspace = true
+reth-rpc-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-optimism-rpc.workspace = true
+reth-tasks.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
 
 alloy-primitives.workspace = true
@@ -81,7 +86,8 @@ serde.workspace = true
 secp256k1.workspace = true
 tokio.workspace = true
 jsonrpsee = { workspace = true }
-jsonrpsee-types.workspace = true
+jsonrpsee-core = { workspace = true }
+jsonrpsee-types = { workspace = true }
 async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
@@ -92,6 +98,7 @@ tokio-util.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
+anyhow = "1"
 
 tower = "0.5"
 futures = "0.3"
@@ -120,6 +127,7 @@ vergen-git2.workspace = true
 alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
+tempfile = "3.8"
 
 [features]
 default = ["jemalloc"]
@@ -147,6 +155,8 @@ testing = []
 interop = []
 
 telemetry = ["reth-tracing-otlp"]
+
+custom-engine-api = []
 
 [[bin]]
 name = "op-rbuilder"

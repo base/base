@@ -3,13 +3,13 @@
 //! Copied from OptimismNode to allow easy extension.
 
 //! clap [Args](clap::Args) for optimism rollup configuration
+use crate::tx_signer::Signer;
+use anyhow::{anyhow, Result};
+use reth_optimism_node::args::RollupArgs;
 use std::path::PathBuf;
 
-use crate::tx_signer::Signer;
-use reth_optimism_node::args::RollupArgs;
-
 /// Parameters for rollup configuration
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 pub struct OpRbuilderArgs {
     /// Rollup configuration
@@ -38,6 +38,7 @@ pub struct OpRbuilderArgs {
     #[arg(long = "builder.enable-revert-protection", default_value = "false")]
     pub enable_revert_protection: bool,
 
+    /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",
         num_args = 0..=1,
@@ -46,17 +47,16 @@ pub struct OpRbuilderArgs {
         env = "PLAYGROUND_DIR",
     )]
     pub playground: Option<PathBuf>,
-
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
 }
 
-fn expand_path(s: &str) -> Result<PathBuf, String> {
+fn expand_path(s: &str) -> Result<PathBuf> {
     shellexpand::full(s)
-        .map_err(|e| format!("expansion error for `{s}`: {e}"))?
+        .map_err(|e| anyhow!("expansion error for `{s}`: {e}"))?
         .into_owned()
         .parse()
-        .map_err(|e| format!("invalid path after expansion: {e}"))
+        .map_err(|e| anyhow!("invalid path after expansion: {e}"))
 }
 
 /// Parameters for Flashblocks configuration

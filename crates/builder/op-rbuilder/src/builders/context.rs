@@ -588,12 +588,9 @@ impl OpPayloadBuilderCtx {
                 // Create and sign the transaction
                 let builder_tx =
                     signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
-                Ok(
-                    op_alloy_flz::tx_estimated_size_fjord(builder_tx.encoded_2718().as_slice())
-                        // Downscaled by 1e6 to be compliant with op-geth estimate size function
-                        // https://github.com/ethereum-optimism/op-geth/blob/optimism/core/types/rollup_cost.go#L563
-                        .wrapping_div(1_000_000),
-                )
+                Ok(op_alloy_flz::tx_estimated_size_fjord_bytes(
+                    builder_tx.encoded_2718().as_slice(),
+                ))
             })
             .transpose()
             .unwrap_or_else(|err: PayloadBuilderError| {

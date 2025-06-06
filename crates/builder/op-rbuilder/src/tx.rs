@@ -222,9 +222,7 @@ impl MaybeInteropTransaction for FBPooledTransaction {
 
 impl DataAvailabilitySized for FBPooledTransaction {
     fn estimated_da_size(&self) -> u64 {
-        // Downscaled by 1e6 to be compliant with op-geth estimate size function
-        // https://github.com/ethereum-optimism/op-geth/blob/optimism/core/types/rollup_cost.go#L563
-        op_alloy_flz::tx_estimated_size_fjord(self.inner.encoded_2718()).wrapping_div(1_000_000)
+        self.inner.estimated_da_size()
     }
 }
 

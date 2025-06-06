@@ -11,7 +11,7 @@ use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates};
+use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{execute::BlockBuilder, ConfigureEvm};
 use reth_node_api::{Block, PayloadBuilderError};
 use reth_node_builder::{components::PayloadBuilderBuilder, BuilderContext};
@@ -543,7 +543,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 execution_output: Arc::new(execution_outcome),
                 hashed_state: Arc::new(hashed_state),
             },
-            trie: Arc::new(trie_output),
+            trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
         };
 
         let no_tx_pool = ctx.attributes().no_tx_pool;
