@@ -360,7 +360,9 @@ impl OpPayloadBuilderCtx {
             let tx_hash = tx.tx_hash();
 
             // exclude reverting transaction if:
-            // - the transaction comes from a bundle and the hash **is not** in reverted hashes
+            // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
+            // Note that we need to use the Option to signal whether the transaction comes from a bundle,
+            // otherwise, we would exclude all transactions that are not in the reverted hashes.
             let exclude_reverting_txs =
                 reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
 

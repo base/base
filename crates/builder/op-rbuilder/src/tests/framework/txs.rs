@@ -165,9 +165,9 @@ impl TransactionBuilder {
             let bundle = Bundle {
                 transactions: vec![transaction_encoded.into()],
                 reverting_hashes: if with_reverted_hash {
-                    vec![txn_hash]
+                    Some(vec![txn_hash.into()])
                 } else {
-                    vec![]
+                    None
                 },
                 block_number_max: bundle_opts.block_number_max,
                 block_number_min: bundle_opts.block_number_min,
