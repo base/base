@@ -131,6 +131,14 @@ where
         } else {
             // If no upper bound is set, use the maximum block range
             bundle.block_number_max = Some(last_block_number + MAX_BLOCK_RANGE_BLOCKS);
+            // Ensure that the new max is not smaller than the min
+            if let Some(block_number_min) = bundle.block_number_min {
+                if block_number_min > bundle.block_number_max.unwrap() {
+                    return Err(
+                        EthApiError::InvalidParams("block_number_min is too high".into()).into(),
+                    );
+                }
+            }
         }
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
