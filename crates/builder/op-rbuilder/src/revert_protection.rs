@@ -1,5 +1,5 @@
 use crate::{
-    primitives::bundle::{Bundle, BundleResult, MAX_BLOCK_RANGE_BLOCKS},
+    primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
 use alloy_json_rpc::RpcObject;
@@ -82,7 +82,7 @@ where
     Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
 {
-    async fn send_bundle(&self, mut bundle: Bundle) -> RpcResult<BundleResult> {
+    async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
         let last_block_number = self
             .provider
             .best_block_number()
@@ -105,48 +105,16 @@ where
             }
         };
 
-        if let Some(block_number_max) = bundle.block_number_max {
-            if let Some(block_number_min) = bundle.block_number_min {
-                if block_number_min > block_number_max {
-                    return Err(EthApiError::InvalidParams(
-                        "block_number_min is greater than block_number_max".into(),
-                    )
-                    .into());
-                }
-            }
-
-            // The max block cannot be a past block
-            if block_number_max <= last_block_number {
-                return Err(
-                    EthApiError::InvalidParams("block_number_max is a past block".into()).into(),
-                );
-            }
-
-            // Validate that it is not greater than the max_block_range
-            if block_number_max > last_block_number + MAX_BLOCK_RANGE_BLOCKS {
-                return Err(
-                    EthApiError::InvalidParams("block_number_max is too high".into()).into(),
-                );
-            }
-        } else {
-            // If no upper bound is set, use the maximum block range
-            bundle.block_number_max = Some(last_block_number + MAX_BLOCK_RANGE_BLOCKS);
-            // Ensure that the new max is not smaller than the min
-            if let Some(block_number_min) = bundle.block_number_min {
-                if block_number_min > bundle.block_number_max.unwrap() {
-                    return Err(
-                        EthApiError::InvalidParams("block_number_min is too high".into()).into(),
-                    );
-                }
-            }
-        }
+        let conditional = bundle
+            .conditional(last_block_number)
+            .map_err(EthApiError::from)?;
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
         let mut pool_transaction: FBPooledTransaction =
             OpPooledTransaction::from_pooled(recovered).into();
 
         pool_transaction.set_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default());
-        pool_transaction.set_conditional(bundle.conditional());
+        pool_transaction.set_conditional(conditional);
 
         let hash = self
             .pool
