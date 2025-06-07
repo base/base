@@ -1,15 +1,19 @@
-use crate::{OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit};
+use crate::{
+    OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit,
+    transaction::{OpDepositInfo, OpTransactionInfo},
+};
 use alloy_consensus::{
     EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed, Transaction,
-    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718, error::ValueError,
-    transaction::RlpEcdsaDecodableTx,
+    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718,
+    error::ValueError,
+    transaction::{RlpEcdsaDecodableTx, TransactionInfo},
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256};
+use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
 use alloy_rlp::{Decodable, Encodable};
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
@@ -422,6 +426,22 @@ impl OpTxEnvelope {
             Self::Eip7702(tx) => Ok(tx.into()),
             tx @ Self::Deposit(_) => Err(tx),
         }
+    }
+
+    /// Helper that creates [`OpTransactionInfo`] by adding [`OpDepositInfo`] obtained from the
+    /// given closure if this transaction is a deposit and return the [`OpTransactionInfo`].
+    pub fn try_to_tx_info<F, E>(
+        &self,
+        tx_info: TransactionInfo,
+        f: F,
+    ) -> Result<OpTransactionInfo, E>
+    where
+        F: FnOnce(TxHash) -> Result<Option<OpDepositInfo>, E>,
+    {
+        let deposit_meta =
+            if self.is_deposit() { f(self.tx_hash())? } else { None }.unwrap_or_default();
+
+        Ok(OpTransactionInfo::new(tx_info, deposit_meta))
     }
 
     /// Attempts to convert an ethereum [`TxEnvelope`] into the optimism variant.

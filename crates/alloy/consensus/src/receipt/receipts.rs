@@ -1,6 +1,7 @@
 //! Transaction receipt types for Optimism.
 
 use super::OpTxReceipt;
+use crate::transaction::OpDepositInfo;
 use alloy_consensus::{
     Eip658Value, Receipt, ReceiptWithBloom, RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt,
 };
@@ -67,6 +68,14 @@ impl<T> OpDepositReceipt<T> {
     /// Consumes the type and returns the inner [`Receipt`].
     pub fn into_inner(self) -> Receipt<T> {
         self.inner
+    }
+
+    /// Returns the deposit info for this receipt.
+    pub const fn deposit_info(&self) -> OpDepositInfo {
+        OpDepositInfo {
+            deposit_nonce: self.deposit_nonce,
+            deposit_receipt_version: self.deposit_receipt_version,
+        }
     }
 }
 
