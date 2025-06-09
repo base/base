@@ -5,7 +5,7 @@ use futures_util::StreamExt;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, sync::Arc};
+use std::{io::Read, str::FromStr, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::error;
@@ -82,16 +82,14 @@ impl FlashblocksClient {
 
                             match msg {
                                 Ok(Message::Binary(bytes)) => {
-                                    // Decode binary message to string first
-                                    let text = match String::from_utf8(bytes.to_vec()) {
+                                    let text = match try_parse_message(&bytes) {
                                         Ok(text) => text,
                                         Err(e) => {
-                                            error!("Failed to decode binary message: {}", e);
+                                            error!("Failed to decode message: {}", e);
                                             continue;
                                         }
                                     };
 
-                                    // Then parse JSON
                                     let payload: FlashblocksPayloadV1 =
                                         match serde_json::from_str(&text) {
                                             Ok(m) => m,
@@ -144,6 +142,21 @@ impl FlashblocksClient {
 
         Ok(())
     }
+}
+
+fn try_parse_message(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+    if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+        if text.trim_start().starts_with("{") {
+            return Ok(text);
+        }
+    }
+
+    let mut decompressor = brotli::Decompressor::new(bytes, 4096);
+    let mut decompressed = Vec::new();
+    decompressor.read_to_end(&mut decompressed)?;
+
+    let text = String::from_utf8(decompressed)?;
+    Ok(text)
 }
 
 fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
