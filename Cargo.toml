@@ -8,10 +8,7 @@ repository = "https://github.com/base/reth"
 
 [workspace]
 resolver = "2"
-members = [
-    "crates/flashblocks-rpc",
-    "crates/node"
-]
+members = ["crates/flashblocks-rpc", "crates/node"]
 
 default-members = ["crates/node"]
 
@@ -39,7 +36,9 @@ revm = { version = "23.0.0", default-features = false }
 revm-bytecode = { version = "4.0.1", default-features = false }
 
 # alloy
-alloy-primitives = { version = "1.0.0", default-features = false, features = ["map-foldhash"] }
+alloy-primitives = { version = "1.0.0", default-features = false, features = [
+    "map-foldhash",
+] }
 alloy-eips = { version = "1.0.3", default-features = false }
 alloy-rpc-types = { version = "1.0.3", default-features = false }
 alloy-rpc-types-engine = { version = "1.0.3", default-features = false }
@@ -86,3 +85,4 @@ eyre = { version = "0.6.12" }
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
+brotli = "8.0.1"
