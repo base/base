@@ -1,24 +1,16 @@
-use args::*;
-use builders::{BuilderMode, FlashblocksBuilder, StandardBuilder};
 use eyre::Result;
 
-/// CLI argument parsing.
-pub mod args;
-mod builders;
-mod metrics;
-mod monitor_tx_pool;
-mod primitives;
-mod revert_protection;
-mod traits;
-mod tx;
-mod tx_signer;
-
-use builders::{BuilderConfig, PayloadBuilder};
+use crate::{
+    args::*,
+    builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
+    metrics::VERSION,
+    monitor_tx_pool::monitor_tx_pool,
+    primitives::reth::engine_api_builder::OpEngineApiBuilder,
+    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
+    tx::FBPooledTransaction,
+};
 use core::fmt::Debug;
-use metrics::VERSION;
 use moka::future::Cache;
-use monitor_tx_pool::monitor_tx_pool;
-use primitives::reth::engine_api_builder::OpEngineApiBuilder;
 use reth::builder::{NodeBuilder, WithLaunchContext};
 use reth_cli_commands::launcher::Launcher;
 use reth_db::mdbx::DatabaseEnv;
@@ -29,16 +21,9 @@ use reth_optimism_node::{
     OpNode,
 };
 use reth_transaction_pool::TransactionPool;
-use revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt};
 use std::{marker::PhantomData, sync::Arc};
-use tx::FBPooledTransaction;
 
-// Prefer jemalloc for performance reasons.
-#[cfg(all(feature = "jemalloc", unix))]
-#[global_allocator]
-static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
-fn main() -> Result<()> {
+pub fn launch() -> Result<()> {
     let cli = Cli::parsed();
     let mode = cli.builder_mode();
     let mut cli_app = cli.configure();

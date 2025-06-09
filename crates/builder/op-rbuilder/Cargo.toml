@@ -160,7 +160,7 @@ custom-engine-api = []
 
 [[bin]]
 name = "op-rbuilder"
-path = "src/main.rs"
+path = "src/bin/op-rbuilder/main.rs"
 
 [[bin]]
 name = "tester"
