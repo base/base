@@ -521,9 +521,9 @@ Refer to the documentation of the fault proof VM for further usage information.
 
 Fault Proof VMs:
 
-- [Cannon]: big-endian 32-bit MIPS proof, by OP Labs, in active development.
-- [cannon-rs]: Rust implementation of `Cannon`, by `@clabby`, in active development.
-- [Asterisc]: little-endian 64-bit RISC-V proof, by `@protolambda`, in active development.
+- [Cannon]: big-endian 64-bit MIPS64 architecture, by OP Labs, in active development.
+- [cannon-rs]: Rust implementation of `Cannon`, by `@clabby`, deprecated.
+- [Asterisc]: little-endian 64-bit RISC-V architecture, by `@protolambda`, in active development.
 
 [Cannon]: https://github.com/ethereum-optimism/cannon
 [cannon-rs]: https://github.com/anton-rs/cannon-rs
