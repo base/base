@@ -16,8 +16,8 @@ pub use attributes::OpPayloadAttributes;
 
 mod envelope;
 pub use envelope::{
-    OpExecutionData, OpNetworkPayloadEnvelope, PayloadEnvelopeEncodeError, PayloadEnvelopeError,
-    PayloadHash,
+    OpExecutionData, OpExecutionPayloadEnvelope, OpNetworkPayloadEnvelope,
+    PayloadEnvelopeEncodeError, PayloadEnvelopeError, PayloadHash,
 };
 
 mod sidecar;
