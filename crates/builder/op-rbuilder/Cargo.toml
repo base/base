@@ -116,6 +116,13 @@ http = "1.0"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
 
+dashmap = { version = "6.1", optional = true }
+nanoid = { version = "0.4", optional = true }
+reth-ipc = { workspace = true, optional = true }
+bollard = { version = "0.19", optional = true }
+tar = { version = "0.4", optional = true }
+ctor = { version = "0.4.2", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
 
@@ -128,6 +135,13 @@ alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
 tempfile = "3.8"
+
+dashmap = { version = "6.1" }
+nanoid = { version = "0.4" }
+reth-ipc = { workspace = true }
+reth-node-builder = { workspace = true, features = ["test-utils"] }
+bollard = "0.19"
+ctor = "0.4.2"
 
 [features]
 default = ["jemalloc"]
@@ -150,7 +164,16 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-testing = []
+
+testing = [
+	"dashmap",
+	"nanoid",
+	"reth-ipc",
+	"reth-node-builder/test-utils",
+	"bollard",
+	"ctor",
+]
+
 
 interop = []
 

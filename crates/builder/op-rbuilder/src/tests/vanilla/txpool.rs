@@ -1,45 +1,52 @@
-use crate::tests::{framework::TestHarnessBuilder, ONE_ETH};
-use alloy_provider::ext::TxPoolApi;
+use crate::{
+    builders::StandardBuilder,
+    tests::{default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH},
+};
+use reth::args::TxPoolArgs;
+use reth_node_builder::NodeConfig;
+use reth_optimism_chainspec::OpChainSpec;
 
 /// This test ensures that pending pool custom limit is respected and priority tx would be included even when pool if full.
 #[tokio::test]
 async fn pending_pool_limit() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("pending_pool_limit")
-        .with_namespaces("txpool,eth,debug,admin")
-        .with_extra_params("--txpool.pending-max-count 50")
-        .build()
-        .await?;
+    let rbuilder = LocalInstance::new_with_config::<StandardBuilder>(
+        Default::default(),
+        NodeConfig::<OpChainSpec> {
+            txpool: TxPoolArgs {
+                pending_max_count: 50,
+                ..Default::default()
+            },
+            ..default_node_config()
+        },
+    )
+    .await?;
 
-    let mut generator = harness.block_generator().await?;
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(50, ONE_ETH).await?;
 
     // Send 50 txs from different addrs
-    let accounts = generator.create_funded_accounts(2, ONE_ETH).await?;
     let acc_no_priority = accounts.first().unwrap();
     let acc_with_priority = accounts.last().unwrap();
 
     for _ in 0..50 {
-        let _ = harness
+        let _ = driver
             .create_transaction()
             .with_signer(*acc_no_priority)
             .send()
             .await?;
     }
 
-    let pool = harness
-        .provider()
-        .expect("provider not available")
-        .txpool_status()
-        .await?;
     assert_eq!(
-        pool.pending, 50,
+        rbuilder.pool().pending_count(),
+        50,
         "Pending pool must contain at max 50 txs {:?}",
-        pool
+        rbuilder.pool().pending_count()
     );
 
     // Send 10 txs that should be included in the block
     let mut txs = Vec::new();
     for _ in 0..10 {
-        let tx = harness
+        let tx = driver
             .create_transaction()
             .with_signer(*acc_with_priority)
             .with_max_priority_fee_per_gas(10)
@@ -48,22 +55,18 @@ async fn pending_pool_limit() -> eyre::Result<()> {
         txs.push(*tx.tx_hash());
     }
 
-    let pool = harness
-        .provider()
-        .expect("provider not available")
-        .txpool_status()
-        .await?;
     assert_eq!(
-        pool.pending, 50,
+        rbuilder.pool().pending_count(),
+        50,
         "Pending pool must contain at max 50 txs {:?}",
-        pool
+        rbuilder.pool().pending_count()
     );
 
     // After we try building block our reverting tx would be removed and other tx will move to queue pool
-    let block = generator.generate_block().await?;
+    let block = driver.build_new_block().await?;
 
     // Ensure that 10 extra txs got included
-    assert!(block.includes_vec(txs));
+    assert!(block.includes(&txs));
 
     Ok(())
 }

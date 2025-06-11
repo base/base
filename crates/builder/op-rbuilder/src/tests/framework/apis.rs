@@ -1,8 +1,9 @@
 use super::DEFAULT_JWT_TOKEN;
 use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
 use alloy_primitives::B256;
+
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
-use http::Uri;
+use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
     core::{client::SubscriptionClientT, RpcResult},
     proc_macros::rpc,
@@ -15,84 +16,143 @@ use reth_optimism_rpc::engine::OpEngineApiClient;
 use reth_payload_builder::PayloadId;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use serde_json::Value;
-use std::str::FromStr;
+use tracing::debug;
 
-/// Helper for engine api operations
-pub struct EngineApi {
-    pub url: Uri,
-    pub jwt_secret: JwtSecret,
+#[derive(Clone, Debug)]
+pub enum Address {
+    Ipc(String),
+    Http(url::Url),
 }
 
-/// Builder for EngineApi configuration
-pub struct EngineApiBuilder {
-    url: String,
-    jwt_secret: String,
+pub trait Protocol {
+    fn client(
+        jwt: JwtSecret,
+        address: Address,
+    ) -> impl Future<Output = impl SubscriptionClientT + Send + Sync + Unpin + 'static>;
 }
 
-impl Default for EngineApiBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub struct Http;
+impl Protocol for Http {
+    async fn client(
+        jwt: JwtSecret,
+        address: Address,
+    ) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
+        let Address::Http(url) = address else {
+            unreachable!();
+        };
 
-impl EngineApiBuilder {
-    pub fn new() -> Self {
-        Self {
-            url: String::from("http://localhost:8551"),
-            jwt_secret: String::from(DEFAULT_JWT_TOKEN),
-        }
-    }
-
-    pub fn with_url(mut self, url: &str) -> Self {
-        self.url = url.to_string();
-        self
-    }
-
-    pub fn build(self) -> Result<EngineApi, Box<dyn std::error::Error>> {
-        Ok(EngineApi {
-            url: self.url.parse()?,
-            jwt_secret: JwtSecret::from_str(&self.jwt_secret)?,
-        })
-    }
-}
-
-impl EngineApi {
-    pub fn builder() -> EngineApiBuilder {
-        EngineApiBuilder::new()
-    }
-
-    pub fn new(url: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::builder().with_url(url).build()
-    }
-
-    pub fn new_with_port(port: u16) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::builder()
-            .with_url(&format!("http://localhost:{port}"))
-            .build()
-    }
-
-    pub fn http_client(&self) -> impl SubscriptionClientT + Clone + Send + Sync + Unpin + 'static {
-        // Create a middleware that adds a new JWT token to every request.
-        let secret_layer = AuthClientLayer::new(self.jwt_secret);
+        let secret_layer = AuthClientLayer::new(jwt);
         let middleware = tower::ServiceBuilder::default().layer(secret_layer);
         jsonrpsee::http_client::HttpClientBuilder::default()
             .set_http_middleware(middleware)
-            .build(&self.url.to_string())
+            .build(url)
             .expect("Failed to create http client")
     }
+}
 
+pub struct Ipc;
+impl Protocol for Ipc {
+    async fn client(
+        _: JwtSecret, // ipc does not use JWT
+        address: Address,
+    ) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
+        let Address::Ipc(path) = address else {
+            unreachable!();
+        };
+        reth_ipc::client::IpcClientBuilder::default()
+            .build(&path)
+            .await
+            .expect("Failed to create ipc client")
+    }
+}
+
+/// Helper for engine api operations
+pub struct EngineApi<P: Protocol = Ipc> {
+    address: Address,
+    jwt_secret: JwtSecret,
+    _tag: PhantomData<P>,
+}
+
+impl<P: Protocol> EngineApi<P> {
+    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
+        P::client(self.jwt_secret, self.address.clone()).await
+    }
+}
+
+// http specific
+impl EngineApi<Http> {
+    pub fn with_http(url: &str) -> EngineApi<Http> {
+        EngineApi::<Http> {
+            address: Address::Http(url.parse().expect("Invalid URL")),
+            jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
+            _tag: PhantomData,
+        }
+    }
+
+    pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
+        EngineApi::<Http> {
+            address: Address::Http(
+                format!("http://localhost:{}", port)
+                    .parse()
+                    .expect("Invalid URL"),
+            ),
+            jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
+            _tag: PhantomData,
+        }
+    }
+
+    pub fn with_port(mut self, port: u16) -> Self {
+        let Address::Http(url) = &mut self.address else {
+            unreachable!();
+        };
+
+        url.set_port(Some(port)).expect("Invalid port");
+        self
+    }
+
+    pub fn with_jwt_secret(mut self, jwt_secret: &str) -> Self {
+        self.jwt_secret = jwt_secret.parse().expect("Invalid JWT");
+        self
+    }
+
+    pub fn url(&self) -> &url::Url {
+        let Address::Http(url) = &self.address else {
+            unreachable!();
+        };
+        url
+    }
+}
+
+// ipc specific
+impl EngineApi<Ipc> {
+    pub fn with_ipc(path: &str) -> EngineApi<Ipc> {
+        EngineApi::<Ipc> {
+            address: Address::Ipc(path.into()),
+            jwt_secret: DEFAULT_JWT_TOKEN.parse().expect("Invalid JWT"),
+            _tag: PhantomData,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        let Address::Ipc(path) = &self.address else {
+            unreachable!();
+        };
+        path
+    }
+}
+
+impl<P: Protocol> EngineApi<P> {
     pub async fn get_payload(
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        println!(
+        debug!(
             "Fetching payload with id: {} at {}",
             payload_id,
             chrono::Utc::now()
         );
-
         Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.http_client(), payload_id)
+            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
                 .await?,
         )
     }
@@ -104,10 +164,9 @@ impl EngineApi {
         parent_beacon_block_root: B256,
         execution_requests: Requests,
     ) -> eyre::Result<PayloadStatus> {
-        println!("Submitting new payload at {}...", chrono::Utc::now());
-
+        debug!("Submitting new payload at {}...", chrono::Utc::now());
         Ok(OpEngineApiClient::<OpEngineTypes>::new_payload_v4(
-            &self.http_client(),
+            &self.client().await,
             payload,
             versioned_hashes,
             parent_beacon_block_root,
@@ -122,10 +181,9 @@ impl EngineApi {
         new_head: B256,
         payload_attributes: Option<<OpEngineTypes as PayloadTypes>::PayloadAttributes>,
     ) -> eyre::Result<ForkchoiceUpdated> {
-        println!("Updating forkchoice at {}...", chrono::Utc::now());
-
+        debug!("Updating forkchoice at {}...", chrono::Utc::now());
         Ok(OpEngineApiClient::<OpEngineTypes>::fork_choice_updated_v3(
-            &self.http_client(),
+            &self.client().await,
             ForkchoiceState {
                 head_block_hash: new_head,
                 safe_block_hash: current_head,
@@ -134,19 +192,6 @@ impl EngineApi {
             payload_attributes,
         )
         .await?)
-    }
-
-    pub async fn latest(&self) -> eyre::Result<Option<alloy_rpc_types_eth::Block>> {
-        self.get_block_by_number(BlockNumberOrTag::Latest, false)
-            .await
-    }
-
-    pub async fn get_block_by_number(
-        &self,
-        number: BlockNumberOrTag,
-        include_txs: bool,
-    ) -> eyre::Result<Option<alloy_rpc_types_eth::Block>> {
-        Ok(BlockApiClient::get_block_by_number(&self.http_client(), number, include_txs).await?)
     }
 }
 
@@ -177,9 +222,9 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        println!("Generated genesis file at: {output}");
+        debug!("Generated genesis file at: {output}");
     } else {
-        println!("{}", serde_json::to_string_pretty(&genesis)?);
+        debug!("{}", serde_json::to_string_pretty(&genesis)?);
     }
 
     Ok(())

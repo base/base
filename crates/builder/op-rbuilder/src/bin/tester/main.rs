@@ -1,5 +1,7 @@
 use alloy_primitives::Address;
+use alloy_provider::{Identity, ProviderBuilder};
 use clap::Parser;
+use op_alloy_network::Optimism;
 use op_rbuilder::tests::*;
 
 /// CLI Commands
@@ -49,69 +51,38 @@ async fn main() -> eyre::Result<()> {
 
     match cli.command {
         Commands::Genesis { output } => generate_genesis(output).await,
-        Commands::Run {
-            validation,
-            no_tx_pool,
-            block_time_secs,
-            flashblocks_endpoint,
-            no_sleep,
-        } => {
-            run_system(
-                validation,
-                no_tx_pool,
-                block_time_secs,
-                flashblocks_endpoint,
-                no_sleep,
-            )
-            .await
-        }
+        Commands::Run { validation, .. } => run_system(validation).await,
         Commands::Deposit { address, amount } => {
-            let engine_api = EngineApi::builder().build().unwrap();
-            let mut generator = BlockGenerator::new(engine_api, None, false, 1, None);
-
-            generator.init().await?;
-
-            let block_generated = generator.deposit(address, amount).await?;
-            println!(
-                "Deposit transaction included in block: {:?}",
-                block_generated.block_hash()
-            );
+            let engine_api = EngineApi::with_http("http://localhost:4444");
+            let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
+                .connect_http("http://localhost:2222".try_into()?);
+            let driver = ChainDriver::<Http>::remote(provider, engine_api);
+            let block_hash = driver.fund(address, amount).await?;
+            println!("Deposit transaction included in block: {block_hash}");
             Ok(())
         }
     }
 }
 
 #[allow(dead_code)]
-pub async fn run_system(
-    validation: bool,
-    no_tx_pool: bool,
-    block_time_secs: u64,
-    flashblocks_endpoint: Option<String>,
-    no_sleep: bool,
-) -> eyre::Result<()> {
-    println!("Validation: {validation}");
+pub async fn run_system(validation: bool) -> eyre::Result<()> {
+    println!("Validation node enabled: {validation}");
 
-    let engine_api = EngineApi::new("http://localhost:4444").unwrap();
-    let validation_api = if validation {
-        Some(EngineApi::new("http://localhost:5555").unwrap())
-    } else {
-        None
-    };
+    let engine_api = EngineApi::with_http("http://localhost:4444");
+    let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
+        .connect_http("http://localhost:2222".try_into()?);
+    let mut driver = ChainDriver::<Http>::remote(provider, engine_api);
 
-    let mut generator = BlockGenerator::new(
-        engine_api,
-        validation_api,
-        no_tx_pool,
-        block_time_secs,
-        flashblocks_endpoint,
-    );
-
-    generator.init().await?;
+    if validation {
+        driver = driver
+            .with_validation_node(ExternalNode::reth().await?)
+            .await?;
+    }
 
     // Infinite loop generating blocks
     loop {
         println!("Generating new block...");
-        let block_generated = generator.submit_payload(None, 0, no_sleep).await?;
-        println!("Generated block: {:?}", block_generated.block_hash());
+        let block = driver.build_new_block().await?;
+        println!("Generated block: {:?}", block.header.hash);
     }
 }

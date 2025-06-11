@@ -1,16 +1,27 @@
-use super::framework::TestHarnessBuilder;
-use alloy_provider::Provider;
+use crate::tests::{LocalInstance, TransactionBuilderExt};
+use alloy_primitives::TxHash;
+use core::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use std::collections::HashSet;
+use tokio::{join, task::yield_now};
+use tracing::info;
 
 /// This is a smoke test that ensures that transactions are included in blocks
 /// and that the block generator is functioning correctly.
+///
+/// Generated blocks are also validated against an external op-reth node to
+/// ensure their correctness.
 #[tokio::test]
 async fn chain_produces_blocks() -> eyre::Result<()> {
-    let harness = TestHarnessBuilder::new("chain_produces_blocks")
-        .build()
-        .await?;
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?;
 
-    let mut generator = harness.block_generator().await?;
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
 
     const SAMPLE_SIZE: usize = 10;
 
@@ -18,14 +29,13 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     // no user transactions are sent.
     // the deposit transaction and the block generator's transaction
     for _ in 0..SAMPLE_SIZE {
-        generator
-            .generate_block()
-            .await
-            .expect("Failed to generate block");
-        let transactions = harness.latest_block().await.transactions;
-        assert!(
-            transactions.len() == 2,
-            "Block should have exactly two transactions"
+        let block = driver.build_new_block().await?;
+        let transactions = block.transactions;
+
+        assert_eq!(
+            transactions.len(),
+            2,
+            "Empty blocks should have exactly two transactions"
         );
     }
 
@@ -33,98 +43,111 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
     // sent to it during its block time + the two mandatory transactions
     for _ in 0..SAMPLE_SIZE {
         let count = rand::random_range(1..8);
-        let mut tx_hashes = HashSet::new();
+        let mut tx_hashes = HashSet::<TxHash>::default();
+
         for _ in 0..count {
-            let tx = harness
-                .send_valid_transaction()
+            let tx = driver
+                .create_transaction()
+                .random_valid_transfer()
+                .send()
                 .await
                 .expect("Failed to send transaction");
-            let tx_hash = *tx.tx_hash();
-            tx_hashes.insert(tx_hash);
+            tx_hashes.insert(*tx.tx_hash());
         }
-        generator
-            .generate_block()
-            .await
-            .expect("Failed to generate block");
-        let transactions = harness.latest_block().await.transactions;
 
-        assert!(
-            transactions.len() == 2 + count,
+        let block = driver.build_new_block().await?;
+
+        let txs = block.transactions;
+
+        assert_eq!(
+            txs.len(),
+            2 + count,
             "Block should have {} transactions",
             2 + count
         );
 
         for tx_hash in tx_hashes {
             assert!(
-                transactions.hashes().any(|hash| hash == *tx_hash),
+                txs.hashes().any(|hash| hash == tx_hash),
                 "Transaction {} should be included in the block",
                 tx_hash
             );
         }
     }
-
     Ok(())
 }
 
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
-#[tokio::test]
-async fn get_payload_close_to_fcu() -> eyre::Result<()> {
-    let test_harness = TestHarnessBuilder::new("get_payload_close_to_fcu")
-        .build()
-        .await?;
-    let mut block_generator = test_harness.block_generator().await?;
+#[tokio::test(flavor = "multi_thread")]
+async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
+    let rbuilder = LocalInstance::standard().await?;
+    let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
 
-    // add some transactions to the pool so that the builder
-    // is busy when we send the fcu/getPayload requests
-    for _ in 0..10 {
-        // Note, for this test it is okay if they are not valid
-        let _ = test_harness.send_valid_transaction().await?;
-    }
+    let done = AtomicBool::new(false);
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        block_generator.submit_payload(None, 0, true),
-    )
-    .await;
+    let (populate, produce) = join!(
+        async {
+            // Keep the builder busy with new transactions.
+            loop {
+                match driver
+                    .create_transaction()
+                    .random_valid_transfer()
+                    .send()
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) if e.to_string().contains("txpool is full") => {
+                        // If the txpool is full, give it a short break
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(e) => return Err(e),
+                };
 
-    // ensure we didn't timeout
-    let result = result.expect("Submit payload timed out");
+                if done.load(Ordering::Relaxed) {
+                    break;
+                }
 
-    // ensure we got a payload
-    assert!(result.is_ok(), "Failed to get payload: {:?}", result);
+                yield_now().await;
+            }
+            Ok::<(), eyre::Error>(())
+        },
+        async {
+            // Wait for a short time to allow the transaction population to start
+            // and fill up the txpool.
+            tokio::time::sleep(Duration::from_secs(1)).await;
 
-    Ok(())
-}
+            // Now, start producing blocks under load.
+            for _ in 0..10 {
+                // Ensure that the builder can still produce blocks under
+                // heavy load of incoming transactions.
+                let block = tokio::time::timeout(
+                    Duration::from_secs(rbuilder.args().chain_block_time)
+                        + Duration::from_millis(500),
+                    driver.build_new_block(),
+                )
+                .await
+                .expect("Timeout while waiting for block production")
+                .expect("Failed to produce block under load");
 
-/// This test validates that if we flood the builder with many transactions
-/// and we request short block times, the builder can still eventually resolve all the transactions
-#[tokio::test]
-async fn transaction_flood_no_sleep() -> eyre::Result<()> {
-    let test_harness = TestHarnessBuilder::new("transaction_flood_no_sleep")
-        .build()
-        .await?;
+                info!("Produced a block under load: {block:#?}");
 
-    let mut block_generator = test_harness.block_generator().await?;
-    let provider = test_harness.provider()?;
+                yield_now().await;
+            }
 
-    // Send 200 valid transactions to the builder
-    // More than this and there is an issue with the RPC endpoint not being able to handle the load
-    let mut transactions = vec![];
-    for _ in 0..200 {
-        let tx = test_harness.send_valid_transaction().await?;
-        let tx_hash = *tx.tx_hash();
-        transactions.push(tx_hash);
-    }
+            // we're happy with one block produced under load
+            // set the done flag to true to stop the transaction population
+            done.store(true, Ordering::Relaxed);
+            info!("All blocks produced under load");
 
-    // After a 10 blocks all the transactions should be included in a block
-    for _ in 0..10 {
-        block_generator.submit_payload(None, 0, true).await.unwrap();
-    }
+            Ok::<(), eyre::Error>(())
+        }
+    );
 
-    for tx in transactions {
-        provider.get_transaction_receipt(tx).await?;
-    }
+    populate.unwrap();
+
+    //assert!(populate.is_ok(), "Failed to populate transactions");
+    assert!(produce.is_ok(), "Failed to produce block under load");
 
     Ok(())
 }
