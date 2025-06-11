@@ -49,10 +49,9 @@ to manage it. As supervisor does the dial in, for our context, it is the client 
 socket authentication, only the initial request is authenticated and a live socket is opened.
 No re-authentication is needed during the lifetime of this socket.
 
-The authentication is performed using `JWT`. The construction of jwt is similar to the one
+The authentication is performed using `JWT`. The construction of jwt is the same to the one
 [used in Engine API](https://github.com/ethereum/execution-apis/blob/main/src/engine/authentication.md). The path of
-the file containing the jwt secret should be provided to the supervisor instance. If no input is provided, a new
-jwt should be generated and stored in hex encoded format.
+the file containing the jwt secret should be provided to the supervisor instance.
 
 ## Node `->` Supervisor
 
@@ -81,8 +80,8 @@ Each field item is an event of the type as described below:
 Reset: string
 ```
 
-This is emitted when the node has completed resetting its chain, after it received `interop_reset` event from
-supervisor.
+This is emitted when the node has determined that it needs a reset. It tells the supervisor to send the
+[interop_reset](#interop_reset) event with the required parameters.
 
 ### UnsafeBlock
 
@@ -96,8 +95,8 @@ New L2 unsafe block was processed, updating local-unsafe head.
 
 ```javascript
 DerivationUpdate: DerivedBlockRefPair {
-    Source: BlockRef  //L1 
-    Derived: BlockRef //Last L2 BlockRef
+    source: BlockRef  //L1 
+    derived: BlockRef //Last L2 BlockRef
 }
 ```
 
@@ -116,8 +115,8 @@ Signals that an L2 block is now local-safe because of the given L1 traversal. Th
 
 ```javascript
 ExhaustL1: DerivedBlockRefPair {
-    Source: BlockRef  //Last L1
-    Derived: BlockRef //Last L2 BlockRef
+    source: BlockRef  //Last L1
+    derived: BlockRef //Last L2 BlockRef
 }
 ```
 
@@ -147,7 +146,7 @@ RPC calls that are relevant to managing the node via supervisor. These are direc
 #### interop_pullEvent
 
 ```javascript
-payload: none -> One of the event from node events (previous section).
+payload() -> One of the event from node events (previous section).
 ```
 
 When websocket is not available, supervisor can use this method to get the next event from node.
@@ -155,9 +154,9 @@ When websocket is not available, supervisor can use this method to get the next 
 #### interop_anchorPoint (Soon to be deprecated)
 
 ```javascript
-payload: none -> DerivedBlockRefPair {
-    Source: L1 BlockRef that rollup starts after (no derived transaction)
-    Derived: L2 BlockRef that rollup starts from (no txn, pre-configuration state)
+payload() -> DerivedBlockRefPair {
+    source: L1 BlockRef that rollup starts after (no derived transaction)
+    derived: L2 BlockRef that rollup starts from (no txn, pre-configuration state)
 }
 ```
 
@@ -168,7 +167,7 @@ This method will soon be removed in favor of fetching the information from a sup
 #### interop_invalidateBlock
 
 ```javascript
-payload: BlockSeal //L2's Block
+payload (BlockSeal)  //L2's Block
 ```
 
 Based on some dependency or L1 changes, supervisor can instruct the L2 to invalidate a specific block.
@@ -178,7 +177,7 @@ Based on some dependency or L1 changes, supervisor can instruct the L2 to invali
 #### interop_provideL1
 
 ```javascript
-payload: BlockRef //L1 Block
+payload (BlockRef) //L1 Block
 ```
 
 Supervisor sends the next L1 block to the node. Ideally sent after the node emits `exhausted-l1`.
@@ -186,7 +185,7 @@ Supervisor sends the next L1 block to the node. Ideally sent after the node emit
 #### interop_reset
 
 ```javascript
-payload: (lUnsafe, xUnsafe, lSafe, xSafe, finalized: BlockID)
+payload (lUnsafe, xUnsafe, lSafe, xSafe, finalized: BlockID)
 ```
 
 Forces a reset to a specific local-unsafe/local-safe/finalized starting point only if the blocks did exist. Resets may
@@ -201,7 +200,7 @@ safety info for a given chain and block.
 #### interop_updateCrossSafe
 
 ```javascript
-payload: (derived: BlockID, derivedFrom: BlockID)
+payload (derived: BlockID, source: BlockID)
 ```
 
 Signal that a block can be promoted to cross-safe.
@@ -209,7 +208,7 @@ Signal that a block can be promoted to cross-safe.
 #### interop_updateCrossUnsafe
 
 ```javascript
-payload: BlockID
+payload (BlockID)
 ```
 
 Signal that a block can be promoted to cross-unsafe.
@@ -217,7 +216,7 @@ Signal that a block can be promoted to cross-unsafe.
 #### interop_updateFinalized
 
 ```javascript
-payload: BlockID
+payload (BlockID)
 ```
 
 Signal that a block can be marked as finalized.
@@ -230,7 +229,7 @@ data.
 #### interop_fetchReceipts
 
 ```javascript
-payload: Hash -> Receipts //L2 block hash
+payload (Hash) -> Receipts //L2 block hash
 ```
 
 Fetches all transaction receipts in a given L2 block.
@@ -238,7 +237,7 @@ Fetches all transaction receipts in a given L2 block.
 #### interop_l2BlockRefByTimestamp
 
 ```javascript
-payload: uint64 -> BlockRef
+payload (uint64) -> BlockRef
 ```
 
 Fetches L2 BlockRef of the block that occurred at given timestamp
@@ -246,7 +245,7 @@ Fetches L2 BlockRef of the block that occurred at given timestamp
 #### interop_blockRefByNumber
 
 ```javascript
-payload: uint64 -> BlockRef
+payload (uint64) -> BlockRef
 ```
 
 Fetches the BlockRef from a given L2 block number
@@ -254,7 +253,7 @@ Fetches the BlockRef from a given L2 block number
 #### interop_chainID
 
 ```javascript
-payload: none -> uint256
+payload () -> string
 ```
 
 Returns chainID of the L2
@@ -262,7 +261,7 @@ Returns chainID of the L2
 #### interop_outputV0AtTimestamp
 
 ```javascript
-payload: uint64 -> OutputV0
+payload (uint64) -> OutputV0
 ```
 
 Returns the state root, storage root and block hash for a given timestamp
@@ -270,7 +269,7 @@ Returns the state root, storage root and block hash for a given timestamp
 #### interop_pendingOutputV0AtTimestamp
 
 ```javascript
-payload: uint64 -> OutputV0
+payload (uint64) -> OutputV0
 ```
 
 Returns the optimistic output of the invalidated block from replacement
@@ -283,40 +282,31 @@ Returns the optimistic output of the invalidated block from replacement
 Hash: 0x prefixed, hex encoded, fixed-length string representing 32 bytes
 
 BlockID {
-    Hash: Hash
-    Number: uint64
+    hash: Hash
+    number: uint64
 }
 
 BlockSeal {
-    Hash: Hash
-    Number: uint64
-    Timestamp: uint64
+    hash: Hash
+    number: uint64
+    timestamp: uint64
 }
 
 BlockRef {
-    Hash: Hash
-    Number: uint64
-    ParentHash: Hash
-    Time: uint64
-}
-
-L2BlockRef {
-    Hash: Hash
-    Number: uint64
-    ParentHash: Hash
-    Time: uint64
-    L1Origin: BlockID
-    SequenceNumber: uint64 //distance to first block of epoch
+    hash: Hash
+    number: uint64
+    parentHash: Hash
+    timestamp: uint64
 }
 
 DerivedBlockRefPair {
-    Source: BlockRef
-    Derived: BlockRef
+    source: BlockRef
+    derived: BlockRef
 }
 
 BlockReplacement {
-    Replacement: BlockRef
-    Invalidated: Hash
+    replacement: BlockRef
+    invalidated: Hash
 }
 
 Receipts -> []Receipt
@@ -324,8 +314,8 @@ Receipts -> []Receipt
 Receipt -> op-geth/core/types/receipt
 
 OutputV0 {
-    StateRoot: Hash
-    MessagePasserStorageRoot: Hash
-    BlockHash: Hash
+    stateRoot: Hash
+    messagePasserStorageRoot: Hash
+    blockHash: Hash
 }
 ```
