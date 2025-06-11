@@ -1,5 +1,4 @@
 use core::time::Duration;
-use std::time::SystemTime;
 
 use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
 use alloy_primitives::{address, hex, Bytes, TxKind, B256, U256};
@@ -108,15 +107,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     ) -> eyre::Result<Block<Transaction>> {
         let latest = self.latest().await?;
         let latest_timestamp = Duration::from_secs(latest.header.timestamp);
-        let actual_timestamp = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| eyre::eyre!("Failed to get current system time"))?;
-
-        // block timestamp will be the max of the actual timestamp and the latest block
-        // timestamp plus the minimum block time. This ensures that blocks don't break any
-        // assumptions, but also gives the test author the ability to control the block time
-        // in the test.
-        let block_timestamp = actual_timestamp.max(latest_timestamp + Self::MIN_BLOCK_TIME);
+        let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
 
         // Add L1 block info as the first transaction in every L2 block
         // This deposit transaction contains L1 block metadata required by the L2 chain

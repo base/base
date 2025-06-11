@@ -28,6 +28,22 @@ pub struct Bundle {
         skip_serializing_if = "Option::is_none"
     )]
     pub block_number_min: Option<u64>,
+
+    // Not recommended because this is subject to the builder node clock
+    #[serde(
+        default,
+        rename = "minTimestamp",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_timestamp: Option<u64>,
+
+    // Not recommended because this is subject to the builder node clock
+    #[serde(
+        default,
+        rename = "maxTimestamp",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_timestamp: Option<u64>,
 }
 
 impl From<BundleConditionalError> for EthApiError {
@@ -110,8 +126,8 @@ impl Bundle {
             block_number_min,
             block_number_max,
             known_accounts: Default::default(),
-            timestamp_max: None,
-            timestamp_min: None,
+            timestamp_max: self.max_timestamp,
+            timestamp_min: self.min_timestamp,
         })
     }
 }
@@ -133,6 +149,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: None,
             block_number_min: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -152,6 +170,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1002),
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -168,6 +188,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: Some(1005),
             block_number_min: Some(1010),
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -189,6 +211,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: Some(999),
             block_number_min: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -210,6 +234,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: Some(1020),
             block_number_min: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -232,6 +258,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(1015),
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -253,6 +281,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(1005),
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -269,6 +299,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: Some(1008),
             block_number_min: None,
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
@@ -285,6 +317,8 @@ mod tests {
             reverting_hashes: None,
             block_number_max: None,
             block_number_min: Some(999),
+            min_timestamp: None,
+            max_timestamp: None,
         };
 
         let last_block = 1000;
