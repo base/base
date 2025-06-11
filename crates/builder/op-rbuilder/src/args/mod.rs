@@ -3,7 +3,7 @@ use crate::{
     metrics::{CARGO_PKG_VERSION, VERGEN_GIT_SHA},
 };
 use clap_builder::{CommandFactory, FromArgMatches};
-pub use op::{FlashblocksArgs, OpRbuilderArgs};
+pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
 use playground::PlaygroundOptions;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, commands::Commands};
 

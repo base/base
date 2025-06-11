@@ -43,7 +43,7 @@ use rollup_boost::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, metadata::Level, span, warn};
 
 #[derive(Debug, Default)]
 struct ExtraExecutionInfo {
@@ -138,6 +138,18 @@ where
         let block_build_start_time = Instant::now();
         let BuildArguments { config, cancel, .. } = args;
 
+        // We log only every 100th block to reduce usage
+        let span = if cfg!(feature = "telemetry") && config.parent_header.number % 100 == 0 {
+            span!(Level::INFO, "build_payload")
+        } else {
+            tracing::Span::none()
+        };
+        let _enter = span.enter();
+        span.record(
+            "payload_id",
+            config.attributes.payload_attributes.id.to_string(),
+        );
+
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
         let block_env_attributes = OpNextBlockEnvAttributes {
@@ -211,7 +223,12 @@ where
             .publish(&fb_payload)
             .map_err(PayloadBuilderError::other)?;
 
-        tracing::info!(target: "payload_builder", "Fallback block built");
+        tracing::info!(
+            target: "payload_builder",
+            message = "Fallback block built",
+            payload_id = fb_payload.payload_id.to_string(),
+        );
+
         ctx.metrics
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
@@ -276,6 +293,16 @@ where
 
         // Process flashblocks in a blocking loop
         loop {
+            let fb_span = if span.is_none() {
+                tracing::Span::none()
+            } else {
+                span!(
+                    parent: &span,
+                    Level::INFO,
+                    "build_flashblock",
+                )
+            };
+            let _entered = fb_span.enter();
             // Block on receiving a message, break on cancellation or closed channel
             let received = tokio::task::block_in_place(|| {
                 // Get runtime handle
@@ -430,7 +457,13 @@ where
                                 }
                             }
                             flashblock_count += 1;
-                            tracing::info!(target: "payload_builder", "Flashblock {} built", flashblock_count);
+                            tracing::info!(
+                                target: "payload_builder",
+                                message = "Flashblock built",
+                                ?flashblock_count,
+                                current_gas = info.cumulative_gas_used,
+                                current_da = info.cumulative_da_bytes_used,
+                            );
                         }
                     }
                 }
@@ -440,6 +473,11 @@ where
                     self.metrics
                         .flashblock_count
                         .record(flashblock_count as f64);
+                    debug!(
+                        target: "payload_builder",
+                        message = "Payload building complete, channel closed or job cancelled"
+                    );
+                    span.record("flashblock_count", flashblock_count);
                     return Ok(());
                 }
             }

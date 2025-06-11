@@ -334,7 +334,13 @@ impl OpPayloadBuilderCtx {
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
 
-        info!(target: "payload_builder", block_da_limit = ?block_da_limit, tx_da_size = ?tx_da_limit, block_gas_limit = ?block_gas_limit, "DA limits");
+        info!(
+            target: "payload_builder",
+            message = "Executing best transactions",
+            block_da_limit = ?block_da_limit,
+            tx_da_limit = ?tx_da_limit,
+            block_gas_limit = ?block_gas_limit,
+        );
 
         // Remove once we merge Reth 1.4.4
         // Fixed in https://github.com/paradigmxyz/reth/pull/16514
@@ -367,8 +373,17 @@ impl OpPayloadBuilderCtx {
                 reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(target: "payload_builder", tx_hash = ?tx_hash, tx_da_size = ?tx_da_size, exclude_reverting_txs = ?exclude_reverting_txs, result = %result, "Considering transaction");
+                debug!(
+                    target: "payload_builder",
+                    message = "Considering transaction",
+                    tx_hash = ?tx_hash,
+                    tx_da_size = ?tx_da_size,
+                    exclude_reverting_txs = ?exclude_reverting_txs,
+                    result = %result,
+                );
             };
+
+            num_txs_considered += 1;
 
             if let Some(conditional) = conditional {
                 // TODO: ideally we should get this from the txpool stream
@@ -391,7 +406,6 @@ impl OpPayloadBuilderCtx {
                 }
             }
 
-            num_txs_considered += 1;
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
@@ -512,6 +526,13 @@ impl OpPayloadBuilderCtx {
             .payload_num_tx_simulated_fail
             .record(num_txs_simulated_fail as f64);
 
+        debug!(
+            target: "payload_builder",
+            message = "Completed executing best transactions",
+            txs_executed = num_txs_considered,
+            txs_applied = num_txs_simulated_success,
+            txs_rejected = num_txs_simulated_fail,
+        );
         Ok(None)
     }
 

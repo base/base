@@ -99,6 +99,7 @@ thiserror.workspace = true
 parking_lot.workspace = true
 url.workspace = true
 anyhow = "1"
+opentelemetry = { workspace = true, optional = true }
 
 tower = "0.5"
 futures = "0.3"
@@ -177,7 +178,10 @@ testing = [
 
 interop = []
 
-telemetry = ["reth-tracing-otlp"]
+telemetry = [
+	"reth-tracing-otlp",
+	"opentelemetry",
+]
 
 custom-engine-api = []
 

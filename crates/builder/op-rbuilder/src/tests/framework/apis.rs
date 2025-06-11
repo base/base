@@ -92,7 +92,7 @@ impl EngineApi<Http> {
     pub fn with_localhost_port(port: u16) -> EngineApi<Http> {
         EngineApi::<Http> {
             address: Address::Http(
-                format!("http://localhost:{}", port)
+                format!("http://localhost:{port}")
                     .parse()
                     .expect("Invalid URL"),
             ),

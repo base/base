@@ -20,7 +20,7 @@ use tokio_tungstenite::{
     tungstenite::{Message, Utf8Bytes},
     WebSocketStream,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::metrics::OpRBuilderMetrics;
 
@@ -65,6 +65,14 @@ impl WebSocketPublisher {
         // Serialize the payload to a UTF-8 string
         // serialize only once, then just copy around only a pointer
         // to the serialized data for each subscription.
+        debug!(
+            target: "payload_builder",
+            message = "Sending flashblock to rollup-boost",
+            payload_id = payload.payload_id.to_string(),
+            index = payload.index,
+            base = payload.base.is_some(),
+        );
+
         let serialized = serde_json::to_string(payload)?;
         let utf8_bytes = Utf8Bytes::from(serialized);
 

@@ -52,6 +52,8 @@ pub struct OpRbuilderArgs {
     pub playground: Option<PathBuf>,
     #[command(flatten)]
     pub flashblocks: FlashblocksArgs,
+    #[command(flatten)]
+    pub telemetry: TelemetryArgs,
 }
 
 impl Default for OpRbuilderArgs {
@@ -123,4 +125,16 @@ impl Default for FlashblocksArgs {
         };
         node_command.ext.flashblocks
     }
+}
+
+/// Parameters for telemetry configuration
+#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+pub struct TelemetryArgs {
+    /// OpenTelemetry endpoint for traces
+    #[arg(long = "telemetry.otlp-endpoint", env = "OTEL_EXPORTER_OTLP_ENDPOINT")]
+    pub otlp_endpoint: Option<String>,
+
+    /// OpenTelemetry headers for authentication
+    #[arg(long = "telemetry.otlp-headers", env = "OTEL_EXPORTER_OTLP_HEADERS")]
+    pub otlp_headers: Option<String>,
 }
