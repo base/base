@@ -76,6 +76,8 @@ pub struct OpRBuilderMetrics {
     pub da_block_size_limit: Gauge,
     /// Da tx size limit
     pub da_tx_size_limit: Gauge,
+    /// Number of valid bundles received at the eth_sendBundle endpoint
+    pub bundles_received: Counter,
 }
 
 /// Contains version information for the application.

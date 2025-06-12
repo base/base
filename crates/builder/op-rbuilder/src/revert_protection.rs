@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use crate::{
+    metrics::OpRBuilderMetrics,
     primitives::bundle::{Bundle, BundleResult},
     tx::{FBPooledTransaction, MaybeRevertingTransaction},
 };
@@ -38,6 +41,7 @@ pub struct RevertProtectionExt<Pool, Provider, Eth, Network = op_alloy_network::
     pool: Pool,
     provider: Provider,
     eth_api: Eth,
+    metrics: Arc<OpRBuilderMetrics>,
     _network: std::marker::PhantomData<Network>,
 }
 
@@ -52,6 +56,7 @@ where
             pool,
             provider,
             eth_api,
+            metrics: Arc::new(OpRBuilderMetrics::default()),
             _network: std::marker::PhantomData,
         }
     }
@@ -60,6 +65,7 @@ where
         RevertProtectionBundleAPI {
             pool: self.pool.clone(),
             provider: self.provider.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 
@@ -74,6 +80,7 @@ where
 pub struct RevertProtectionBundleAPI<Pool, Provider> {
     pool: Pool,
     provider: Provider,
+    metrics: Arc<OpRBuilderMetrics>,
 }
 
 #[async_trait]
@@ -121,6 +128,8 @@ where
             .add_transaction(TransactionOrigin::Local, pool_transaction)
             .await
             .map_err(EthApiError::from)?;
+
+        self.metrics.bundles_received.increment(1);
 
         let result = BundleResult { bundle_hash: hash };
         Ok(result)
