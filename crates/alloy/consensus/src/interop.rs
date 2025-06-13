@@ -15,14 +15,16 @@ pub const CROSS_L2_INBOX_ADDRESS: Address = address!("0x420000000000000000000000
 pub enum SafetyLevel {
     /// The message is finalized.
     Finalized,
-    /// The message is safe.
-    Safe,
+    /// The message is safe across chains.
+    #[cfg_attr(feature = "serde", serde(rename = "safe"))]
+    CrossSafe,
     /// The message is safe locally.
     LocalSafe,
     /// The message is unsafe across chains.
     CrossUnsafe,
-    /// The message is unsafe.
-    Unsafe,
+    /// The message is unsafe locally.
+    #[cfg_attr(feature = "serde", serde(rename = "unsafe"))]
+    LocalUnsafe,
     /// The message is invalid.
     Invalid,
 }
@@ -33,10 +35,10 @@ impl FromStr for SafetyLevel {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "finalized" => Ok(Self::Finalized),
-            "safe" => Ok(Self::Safe),
+            "safe" => Ok(Self::CrossSafe),
             "local-safe" | "localsafe" => Ok(Self::LocalSafe),
             "cross-unsafe" | "crossunsafe" => Ok(Self::CrossUnsafe),
-            "unsafe" => Ok(Self::Unsafe),
+            "unsafe" => Ok(Self::LocalUnsafe),
             "invalid" => Ok(Self::Invalid),
             _ => Err(SafetyLevelParseError(s.to_string())),
         }
@@ -74,12 +76,12 @@ mod tests {
     #[test]
     fn test_safety_level_from_str_valid() {
         assert_eq!(SafetyLevel::from_str("finalized").unwrap(), SafetyLevel::Finalized);
-        assert_eq!(SafetyLevel::from_str("safe").unwrap(), SafetyLevel::Safe);
+        assert_eq!(SafetyLevel::from_str("safe").unwrap(), SafetyLevel::CrossSafe);
         assert_eq!(SafetyLevel::from_str("local-safe").unwrap(), SafetyLevel::LocalSafe);
         assert_eq!(SafetyLevel::from_str("localsafe").unwrap(), SafetyLevel::LocalSafe);
         assert_eq!(SafetyLevel::from_str("cross-unsafe").unwrap(), SafetyLevel::CrossUnsafe);
         assert_eq!(SafetyLevel::from_str("crossunsafe").unwrap(), SafetyLevel::CrossUnsafe);
-        assert_eq!(SafetyLevel::from_str("unsafe").unwrap(), SafetyLevel::Unsafe);
+        assert_eq!(SafetyLevel::from_str("unsafe").unwrap(), SafetyLevel::LocalUnsafe);
         assert_eq!(SafetyLevel::from_str("invalid").unwrap(), SafetyLevel::Invalid);
     }
 
