@@ -12,6 +12,7 @@ This guide explains how to run the OP Succinct Lite using Docker Compose.
 ## Docker Setup Overview
 
 The fault proof system consists of two main components:
+
 - **Proposer**: Creates and defends claims about L2 state. See `fault_proof/Dockerfile.proposer`.
 - **Challenger**: Monitors and challenges invalid claims. See `fault_proof/Dockerfile.challenger`.
 
@@ -21,7 +22,7 @@ The fault proof system consists of two main components:
 
 ### Proposer Configuration (.env.proposer)
 
-```
+```env
 # Required Configuration
 L1_RPC=                  # L1 RPC endpoint URL
 L2_RPC=                  # L2 RPC endpoint URL
@@ -41,7 +42,7 @@ MAX_GAMES_TO_CHECK_FOR_DEFENSE=100    # Maximum number of recent games to check 
 
 ### Challenger Configuration (.env.challenger)
 
-```
+```env
 # Required Configuration
 L1_RPC=                  # L1 RPC endpoint URL
 L2_RPC=                  # L2 RPC endpoint URL
@@ -66,8 +67,8 @@ cd fault-proof
 docker compose up -d
 
 # Or start them individually
-docker compose up -d op-succinct-lite-proposer
-docker compose up -d op-succinct-lite-challenger
+docker compose up -d proposer
+docker compose up -d challenger
 ```
 
 ## Monitoring
@@ -86,8 +87,8 @@ View logs for the services:
 docker compose logs -f
 
 # View logs for a specific service
-docker logs -f op-succinct-lite-proposer
-docker logs -f op-succinct-lite-challenger
+docker logs -f proposer
+docker logs -f challenger
 ```
 
 ## Stopping the Services
@@ -118,10 +119,10 @@ If you need to build the Docker images manually:
 cd fault-proof
 
 # Build the proposer image
-docker build -f Dockerfile.proposer -t op-succinct-lite-proposer:latest ..
+docker build -f Dockerfile.proposer -t proposer:latest ..
 
 # Build the challenger image
-docker build -f Dockerfile.challenger -t op-succinct-lite-challenger:latest ..
+docker build -f Dockerfile.challenger -t challenger:latest ..
 ```
 
 ## Troubleshooting
