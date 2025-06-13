@@ -1,25 +1,29 @@
 services:
-  op-succinct-lite-proposer:
+  proposer:
     build:
       context: ..
       dockerfile: fault-proof/Dockerfile.proposer
-    image: op-succinct-lite-proposer:latest
-    container_name: op-succinct-lite-proposer
+    image: proposer:latest
+    container_name: proposer
     restart: unless-stopped
     env_file:
       - .env.proposer
     command: ["proposer"]
+    networks:
+      - monitoring
 
-  op-succinct-lite-challenger:
+  challenger:
     build:
       context: ..
       dockerfile: fault-proof/Dockerfile.challenger
-    image: op-succinct-lite-challenger:latest
-    container_name: op-succinct-lite-challenger
+    image: challenger:latest
+    container_name: challenger
     restart: unless-stopped
     env_file:
       - .env.challenger
     command: ["challenger"]
+    networks:
+      - monitoring
 
   prometheus:
     image: prom/prometheus:latest
@@ -36,6 +40,8 @@ services:
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
       - '--web.enable-lifecycle'
+    networks:
+      - monitoring
 
   grafana:
     image: grafana/grafana:latest
@@ -52,7 +58,13 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - monitoring
 
 volumes:
   prometheus_data:
   grafana_data:
+
+networks:
+  monitoring:
+    driver: bridge

@@ -134,6 +134,7 @@ These values depend on the L2 chain, and the total value secured. Generally, to 
 ## Post-Deployment
 
 After deployment, the script will output the addresses of:
+
 - Factory Proxy.
 - Game Implementation.
 - SP1 Verifier.

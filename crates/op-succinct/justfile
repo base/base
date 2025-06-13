@@ -1,6 +1,44 @@
 default:
   @just --list
 
+# Get starting root for a given L2 block number from env file
+get-starting-root env_file=".env":
+  #!/usr/bin/env bash
+  # Load environment variables
+  source {{env_file}}
+  
+  # Check if required environment variables are set
+  if [ -z "$STARTING_L2_BLOCK_NUMBER" ]; then
+      echo "STARTING_L2_BLOCK_NUMBER not set in {{env_file}}"
+      exit 1
+  fi
+  
+  if [ -z "$L2_NODE_RPC" ]; then
+      echo "L2_NODE_RPC not set in {{env_file}}"
+      exit 1
+  fi
+
+  # Convert block number to hex and remove '0x' prefix
+  BLOCK_HEX=$(cast --to-hex $STARTING_L2_BLOCK_NUMBER | sed 's/0x//')
+
+  # Construct the JSON RPC request
+  JSON_DATA='{
+      "jsonrpc": "2.0",
+      "method": "optimism_outputAtBlock",
+      "params": ["0x'$BLOCK_HEX'"],
+      "id": 1
+  }'
+
+  # Make the RPC call and extract the output root
+  starting_root=$(curl -s -X POST \
+      -H "Content-Type: application/json" \
+      $L2_NODE_RPC \
+      --data "$JSON_DATA" \
+      | jq -r '.result.outputRoot')
+
+  # Display the result
+  printf "Starting root: %s\n" "$starting_root"
+
 # Runs the op-succinct program for a single block.
 run-single l2_block_num use-cache="false" prove="false":
   #!/usr/bin/env bash
@@ -53,6 +91,56 @@ upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
   ADMIN_PK="{{admin_pk}}"
 
   cd contracts && forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader  --rpc-url $L1_RPC --private-key $ADMIN_PK $VERIFY --broadcast --slow
+
+# Deploy OPSuccinct FDG contracts
+deploy-fdg-contracts env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # Load environment variables from project root
+    source {{env_file}}
+    
+    # Load environment variables from contracts directory if it exists
+    if [ -f "contracts/.env" ]; then
+        source contracts/.env
+    fi
+    
+    # Check if required environment variables are set
+    if [ -z "${RPC_URL:-}" ] && [ -z "${L1_RPC:-}" ]; then
+        echo "Error: Neither RPC_URL nor L1_RPC environment variable is set"
+        exit 1
+    fi
+    
+    if [ -z "${PRIVATE_KEY:-}" ]; then
+        echo "Error: PRIVATE_KEY environment variable is not set"
+        exit 1
+    fi
+    
+    # Use RPC_URL if set, otherwise fall back to L1_RPC
+    RPC_URL_TO_USE="${RPC_URL:-$L1_RPC}"
+    
+    echo "Using RPC URL: $RPC_URL_TO_USE"
+    echo "Deploying FDG contracts..."
+    
+    # Change to contracts directory
+    cd contracts
+    
+    # Install dependencies
+    echo "Installing forge dependencies..."
+    forge install
+    
+    # Build contracts
+    echo "Building contracts..."
+    forge build
+    
+    # Run deployment script
+    echo "Running deployment script..."
+    forge script script/fp/DeployOPSuccinctFDG.s.sol \
+        --broadcast \
+        --rpc-url "$RPC_URL_TO_USE" \
+        --private-key "$PRIVATE_KEY"
+    
+    echo "FDG contract deployment complete!"
 
 # Deploy mock verifier
 deploy-mock-verifier env_file=".env":
