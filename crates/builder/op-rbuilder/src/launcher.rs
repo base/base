@@ -162,16 +162,9 @@ where
                 VERSION.register_version_metrics();
                 if builder_args.log_pool_transactions {
                     tracing::info!("Logging pool transactions");
-                    ctx.task_executor.spawn_critical(
-                        "txlogging",
-                        Box::pin(async move {
-                            monitor_tx_pool(
-                                ctx.pool.all_transactions_event_listener(),
-                                reverted_cache_copy,
-                            )
-                            .await;
-                        }),
-                    );
+                    let listener = ctx.pool.all_transactions_event_listener();
+                    let task = monitor_tx_pool(listener, reverted_cache_copy);
+                    ctx.task_executor.spawn_critical("txlogging", task);
                 }
 
                 Ok(())
