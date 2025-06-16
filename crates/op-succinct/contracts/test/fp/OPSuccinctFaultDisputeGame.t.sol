@@ -115,7 +115,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         );
         anchorStateRegistry = AnchorStateRegistry(address(proxy));
 
-        AccessManager accessManager = new AccessManager();
+        AccessManager accessManager = new AccessManager(1209600); // 2 weeks
         accessManager.setProposer(proposer, true);
         accessManager.setChallenger(challenger, true);
 

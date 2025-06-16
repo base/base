@@ -17,7 +17,6 @@ import {OPSuccinctL2OutputOracle} from "src/validity/OPSuccinctL2OutputOracle.so
 import {AnchorStateRegistry} from "src/dispute/AnchorStateRegistry.sol";
 import {SuperchainConfig} from "src/L1/SuperchainConfig.sol";
 import {Proxy} from "@optimism/src/universal/Proxy.sol";
-import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 
 // Interfaces
 import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
@@ -29,7 +28,7 @@ import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol"
 // Utils
 import {MockOptimismPortal2} from "../../utils/MockOptimismPortal2.sol";
 
-contract OPSuccinctDisputeGameTest is Test {
+contract OPSuccinctDisputeGameTest is Test, Utils {
     // Event definitions matching those in OPSuccinctDisputeGame.
     event Resolved(GameStatus indexed status);
 
@@ -63,32 +62,8 @@ contract OPSuccinctDisputeGameTest is Test {
         // Cast the proxy to the factory contract.
         factory = DisputeGameFactory(address(factoryProxy));
 
-        // Create a mock verifier.
-        SP1MockVerifier sp1Verifier = new SP1MockVerifier();
-
-        // Deploy L2OutputOracle.
-        OPSuccinctL2OutputOracle.InitParams memory initParams = OPSuccinctL2OutputOracle.InitParams({
-            verifier: address(sp1Verifier),
-            aggregationVkey: bytes32(0),
-            rangeVkeyCommitment: bytes32(0),
-            startingOutputRoot: bytes32(0),
-            rollupConfigHash: bytes32(0),
-            proposer: address(proposer), // Should be permissionless when using game creation from the factory or else, the check in `proposeL2Output` will fail.
-            challenger: address(0),
-            owner: address(this),
-            finalizationPeriodSeconds: 1000 seconds,
-            l2BlockTime: 2 seconds,
-            startingBlockNumber: 0,
-            startingTimestamp: block.timestamp,
-            submissionInterval: 1000 seconds
-        });
-        bytes memory initializationParams =
-            abi.encodeWithSelector(OPSuccinctL2OutputOracle.initialize.selector, initParams);
-
-        Proxy l2OutputOracleProxy = new Proxy(address(this));
-        l2OutputOracleProxy.upgradeToAndCall(address(new OPSuccinctL2OutputOracle()), initializationParams);
-
-        l2OutputOracle = OPSuccinctL2OutputOracle(address(l2OutputOracleProxy));
+        // Deploy L2OutputOracle using Utils helper functions.
+        (l2OutputOracle,) = deployL2OutputOracleWithStandardParams(proposer, address(0), address(this));
 
         // Deploy the implementation of OPSuccinctDisputeGame.
         gameImpl = new OPSuccinctDisputeGame(address(l2OutputOracle));
@@ -100,13 +75,7 @@ contract OPSuccinctDisputeGameTest is Test {
         vm.startBroadcast(proposer);
 
         // Warp time forward to ensure the game is created after the respectedGameTypeUpdatedAt timestamp.
-        vm.warp(block.timestamp + 4001);
-
-        // Roll forward to the block we want to checkpoint
-        vm.roll(l1BlockNumber + 1);
-
-        // Checkpoint the L1 block hash that we'll use
-        l2OutputOracle.checkpointBlockHash(l1BlockNumber);
+        warpRollAndCheckpoint(l2OutputOracle, 4001, l1BlockNumber);
 
         bytes memory proof = bytes("");
         game = OPSuccinctDisputeGame(
@@ -169,15 +138,9 @@ contract OPSuccinctDisputeGameTest is Test {
         vm.startPrank(maliciousProposer);
         vm.deal(maliciousProposer, 1 ether);
 
-        // Warp forward to the block we want to propose
-        vm.warp(block.timestamp + 2000);
-
-        // Roll forward to the block we want to checkpoint
+        // Warp forward to the block we want to propose and checkpoint
         uint256 newL1BlockNumber = l1BlockNumber + 500;
-        vm.roll(newL1BlockNumber + 1);
-
-        // Checkpoint the L1 block hash that we'll use
-        l2OutputOracle.checkpointBlockHash(newL1BlockNumber);
+        warpRollAndCheckpoint(l2OutputOracle, 2000, newL1BlockNumber);
 
         bytes memory proof = bytes("");
         vm.expectRevert("L2OutputOracle: only approved proposers can propose new outputs");

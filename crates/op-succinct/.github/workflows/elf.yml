@@ -1,3 +1,5 @@
+# This workflow runs on all PRs, and ensures that the ELF files are built correctly.
+
 name: ELF
 
 on:

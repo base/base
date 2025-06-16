@@ -73,8 +73,13 @@ contract DeployOPSuccinctFDG is Script {
 
         AnchorStateRegistry registry = AnchorStateRegistry(address(registryProxy));
         console.log("Anchor state registry:", address(registry));
+
+        // Get fallback timeout from environment variable, default to 2 weeks (1209600 seconds)
+        uint256 fallbackTimeout = vm.envOr("FALLBACK_TIMEOUT_FP_SECS", uint256(1209600));
+        console.log("Permissionless fallback timeout (seconds):", fallbackTimeout);
+
         // Deploy the access manager contract.
-        AccessManager accessManager = new AccessManager();
+        AccessManager accessManager = new AccessManager(fallbackTimeout);
         console.log("Access manager:", address(accessManager));
 
         // Configure access control based on `PERMISSIONLESS_MODE` flag.

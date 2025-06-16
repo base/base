@@ -126,10 +126,23 @@ The deployment script deploys the contract with the following parameters:
 | `PERMISSIONLESS_MODE` | If set to true, anyone can propose or challenge games. | `true` or `false` |
 | `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. Ignored if PERMISSIONLESS_MODE is true. | `0x123...,0x456...` |
 | `CHALLENGER_ADDRESSES` | Comma-separated list of addresses allowed to challenge games. Ignored if PERMISSIONLESS_MODE is true. | `0x123...,0x456...` |
+| `FALLBACK_TIMEOUT_FP_SECS` | Timeout in seconds after which permissionless proposing is allowed if no proposal has been made. | `1209600` (for 2 weeks) |
 
 Use `cast --to-wei <value> eth` to convert the value to wei to avoid mistakes.
 
 These values depend on the L2 chain, and the total value secured. Generally, to prevent frivolous challenges, `CHALLENGER_BOND` should be set to at least 10x of the proving cost needed to prove a game.
+
+### Fallback Timeout Mechanism
+
+The `FALLBACK_TIMEOUT_FP_SECS` parameter configures a permissionless fallback timeout mechanism for proposal creation:
+
+- **Default**: If not set, defaults to 2 weeks (1209600 seconds)
+- **Behavior**: After the specified timeout has elapsed since the last proposal, anyone can create a new proposal regardless of the `PROPOSER_ADDRESSES` configuration
+- **Reset**: The timeout is reset every time a valid proposal is created
+- **Immutable**: The timeout value is set during deployment and cannot be changed later
+- **Scope**: Only affects proposer permissions; challenger permissions are unaffected
+
+This mechanism ensures that if approved proposers become inactive, the system can still progress through permissionless participation after a reasonable delay.
 
 ## Post-Deployment
 
