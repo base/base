@@ -330,6 +330,7 @@ impl OpPayloadBuilderCtx {
         let mut num_txs_simulated = 0;
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
+        let mut num_bundles_reverted = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -369,8 +370,9 @@ impl OpPayloadBuilderCtx {
             // - the transaction comes from a bundle (is_some) and the hash **is not** in reverted hashes
             // Note that we need to use the Option to signal whether the transaction comes from a bundle,
             // otherwise, we would exclude all transactions that are not in the reverted hashes.
+            let is_bundle_tx = reverted_hashes.is_some();
             let exclude_reverting_txs =
-                reverted_hashes.is_some() && !reverted_hashes.unwrap().contains(&tx_hash);
+                is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
                 debug!(
@@ -469,6 +471,9 @@ impl OpPayloadBuilderCtx {
                 num_txs_simulated_success += 1;
             } else {
                 num_txs_simulated_fail += 1;
+                if is_bundle_tx {
+                    num_bundles_reverted += 1;
+                }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
                     info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
@@ -525,6 +530,9 @@ impl OpPayloadBuilderCtx {
         self.metrics
             .payload_num_tx_simulated_fail
             .record(num_txs_simulated_fail as f64);
+        self.metrics
+            .bundles_reverted
+            .record(num_bundles_reverted as f64);
 
         debug!(
             target: "payload_builder",
@@ -532,6 +540,7 @@ impl OpPayloadBuilderCtx {
             txs_executed = num_txs_considered,
             txs_applied = num_txs_simulated_success,
             txs_rejected = num_txs_simulated_fail,
+            bundles_reverted = num_bundles_reverted,
         );
         Ok(None)
     }
