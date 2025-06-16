@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.15;
+pragma solidity ^0.8.15;
 
 // Libraries
 import {Clone} from "@solady/utils/Clone.sol";
@@ -223,6 +223,9 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
 
         // INVARIANT: The proposer must be whitelisted.
         if (!ACCESS_MANAGER.isAllowedProposer(gameCreator())) revert BadAuth();
+
+        // Record that a proposal was made to update the timeout for permissionless mode.
+        ACCESS_MANAGER.recordProposal();
 
         // Revert if the calldata size is not the expected length.
         //

@@ -14,26 +14,29 @@ use std::{
     path::{Path, PathBuf},
 };
 
+const TWO_WEEKS_IN_SECONDS: u64 = 14 * 24 * 60 * 60;
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// The config for deploying the OPSuccinctL2OutputOracle.
 /// Note: The fields should be in alphabetical order for Solidity to parse it correctly.
 struct L2OOConfig {
+    aggregation_vkey: String,
     challenger: String,
+    fallback_timeout_secs: u64,
     finalization_period: u64,
     l2_block_time: u64,
     op_succinct_l2_output_oracle_impl: String,
     owner: String,
     proposer: String,
+    proxy_admin: String,
+    range_vkey_commitment: String,
     rollup_config_hash: String,
     starting_block_number: u64,
     starting_output_root: String,
     starting_timestamp: u64,
     submission_interval: u64,
     verifier: String,
-    aggregation_vkey: String,
-    range_vkey_commitment: String,
-    proxy_admin: String,
 }
 
 /// Returns an address based on environment variables and private key settings:
@@ -132,8 +135,13 @@ async fn update_l2oo_config() -> Result<()> {
 
     let range_vkey_commitment = format!("0x{}", hex::encode(u32_to_u8(range_vkey.vk.hash_u32())));
 
+    let fallback_timeout_secs = env::var("FALLBACK_TIMEOUT_SECS")
+        .map(|p| p.parse().unwrap())
+        .unwrap_or(TWO_WEEKS_IN_SECONDS);
+
     let l2oo_config = L2OOConfig {
         challenger,
+        fallback_timeout_secs,
         finalization_period,
         l2_block_time,
         owner,

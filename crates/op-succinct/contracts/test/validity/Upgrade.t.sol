@@ -30,7 +30,8 @@ contract UpgradeTest is Test, Utils {
             aggregationVkey: bytes32(0x00ea4171dbd0027768055bee7f6d64e17e9cec99b29aad5d18e5d804b967775b),
             rangeVkeyCommitment: bytes32(0x1a4ebe5c47d55436319c425951eb1a7e04f560945e29eb454215d30b30987bbb),
             proxyAdmin: address(0x0000000000000000000000000000000000000000),
-            opSuccinctL2OutputOracleImpl: address(0x0000000000000000000000000000000000000000)
+            opSuccinctL2OutputOracleImpl: address(0x0000000000000000000000000000000000000000),
+            fallbackProposalTimeout: 3600
         });
 
         // This is never called, so we just need to add some code to the address so the check passes.

@@ -30,7 +30,13 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         uint256 startingTimestamp;
         uint256 submissionInterval;
         address verifier;
+        uint256 fallbackTimeout;
     }
+
+    /// @notice The time threshold (in seconds) after which anyone can submit a proposal if no proposal has been submitted.
+    ///         Only applies in permissioned mode.
+    /// @custom:network-specific
+    uint256 public fallbackTimeout;
 
     /// @notice The number of the first L2 block recorded in this contract.
 
@@ -53,11 +59,6 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice The address of the challenger. Can be updated via upgrade.
     /// @custom:network-specific
     address public challenger;
-
-    /// @notice The address of the proposer. Can be updated via upgrade. DEPRECATED: Use approvedProposers mapping instead.
-    /// @custom:network-specific
-    /// @custom:deprecated
-    address public proposer;
 
     /// @notice The minimum time (in seconds) that must elapse before a withdrawal can be finalized.
     /// @custom:network-specific
@@ -226,52 +227,15 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         // Add the initial proposer.
         approvedProposers[_initParams.proposer] = true;
 
+        // Initialize the permissionless fallback timeout.
+        fallbackTimeout = _initParams.fallbackTimeout;
+
         // OP Succinct initialization parameters.
         aggregationVkey = _initParams.aggregationVkey;
         rangeVkeyCommitment = _initParams.rangeVkeyCommitment;
         verifier = _initParams.verifier;
         rollupConfigHash = _initParams.rollupConfigHash;
         owner = _initParams.owner;
-    }
-
-    /// @notice Getter for the submissionInterval.
-    ///         Public getter is legacy and will be removed in the future. Use `submissionInterval` instead.
-    /// @return Submission interval.
-    /// @custom:legacy
-    function SUBMISSION_INTERVAL() external view returns (uint256) {
-        return submissionInterval;
-    }
-
-    /// @notice Getter for the l2BlockTime.
-    ///         Public getter is legacy and will be removed in the future. Use `l2BlockTime` instead.
-    /// @return L2 block time.
-    /// @custom:legacy
-    function L2_BLOCK_TIME() external view returns (uint256) {
-        return l2BlockTime;
-    }
-
-    /// @notice Getter for the challenger address.
-    ///         Public getter is legacy and will be removed in the future. Use `challenger` instead.
-    /// @return Address of the challenger.
-    /// @custom:legacy
-    function CHALLENGER() external view returns (address) {
-        return challenger;
-    }
-
-    /// @notice Getter for the proposer address.
-    ///         Public getter is legacy and will be removed in the future. Use `proposer` instead.
-    /// @return Address of the proposer.
-    /// @custom:legacy
-    function PROPOSER() external view returns (address) {
-        return proposer;
-    }
-
-    /// @notice Getter for the finalizationPeriodSeconds.
-    ///         Public getter is legacy and will be removed in the future. Use `finalizationPeriodSeconds` instead.
-    /// @return Finalization period in seconds.
-    /// @custom:legacy
-    function FINALIZATION_PERIOD_SECONDS() external view returns (uint256) {
-        return finalizationPeriodSeconds;
     }
 
     /// @notice Deletes all output proposals after and including the proposal that corresponds to
@@ -331,9 +295,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         bytes memory _proof,
         address _proverAddress
     ) external payable whenNotOptimistic {
-        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
+        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing),
+        // or the fallback timeout has been exceeded allowing anyone to propose.
         require(
-            approvedProposers[tx.origin] || approvedProposers[address(0)],
+            approvedProposers[tx.origin] || approvedProposers[address(0)]
+                || (block.timestamp - lastProposalTimestamp() > fallbackTimeout),
             "L2OutputOracle: only approved proposers can propose new outputs"
         );
 
@@ -393,9 +359,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         payable
         whenOptimistic
     {
-        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
+        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing),
+        // or the fallback timeout has been exceeded allowing anyone to propose.
         require(
-            approvedProposers[msg.sender] || approvedProposers[address(0)],
+            approvedProposers[msg.sender] || approvedProposers[address(0)]
+                || (block.timestamp - lastProposalTimestamp() > fallbackTimeout),
             "L2OutputOracle: only approved proposers can propose new outputs"
         );
 
@@ -519,6 +487,13 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @return Next L2 block number.
     function nextBlockNumber() public view returns (uint256) {
         return latestBlockNumber() + submissionInterval;
+    }
+
+    /// @notice Returns the timestamp of the last submitted L2 output proposal.
+    ///         If no proposals have been submitted yet, returns the starting timestamp.
+    /// @return Timestamp of the latest submitted L2 output proposal.
+    function lastProposalTimestamp() public view returns (uint256) {
+        return l2Outputs.length == 0 ? startingTimestamp : l2Outputs[l2Outputs.length - 1].timestamp;
     }
 
     /// @notice Returns the L2 timestamp corresponding to a given L2 block number.
