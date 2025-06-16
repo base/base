@@ -51,13 +51,20 @@ pub enum OpTxEnvelope {
 ///
 /// Compared to Ethereum it can tell whether the transaction is a deposit.
 pub trait OpTransaction {
-    /// Returns true if the transaction is a deposit.
+    /// Returns `true` if the transaction is a deposit.
     fn is_deposit(&self) -> bool;
+
+    /// Returns `Some` if the transaction is a deposit.
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>>;
 }
 
 impl OpTransaction for OpTxEnvelope {
     fn is_deposit(&self) -> bool {
-        Self::is_deposit(self)
+        self.is_deposit()
+    }
+
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        self.as_deposit()
     }
 }
 
@@ -70,6 +77,13 @@ where
         match self {
             Self::BuiltIn(b) => b.is_deposit(),
             Self::Other(t) => t.is_deposit(),
+        }
+    }
+
+    fn as_deposit(&self) -> Option<&Sealed<TxDeposit>> {
+        match self {
+            Self::BuiltIn(b) => b.as_deposit(),
+            Self::Other(t) => t.as_deposit(),
         }
     }
 }
