@@ -37,15 +37,14 @@ pub trait EthApiOverride<R: RpcObject> {
     async fn transaction_receipt(&self, hash: B256) -> RpcResult<Option<R>>;
 }
 
-pub struct RevertProtectionExt<Pool, Provider, Eth, Network = op_alloy_network::Optimism> {
+pub struct RevertProtectionExt<Pool, Provider, Eth> {
     pool: Pool,
     provider: Provider,
     eth_api: Eth,
     metrics: Arc<OpRBuilderMetrics>,
-    _network: std::marker::PhantomData<Network>,
 }
 
-impl<Pool, Provider, Eth, Network> RevertProtectionExt<Pool, Provider, Eth, Network>
+impl<Pool, Provider, Eth> RevertProtectionExt<Pool, Provider, Eth>
 where
     Pool: Clone,
     Provider: Clone,
@@ -57,7 +56,6 @@ where
             provider,
             eth_api,
             metrics: Arc::new(OpRBuilderMetrics::default()),
-            _network: std::marker::PhantomData,
         }
     }
 

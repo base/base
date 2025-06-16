@@ -123,12 +123,8 @@ impl LocalInstance {
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext: RevertProtectionExt<
-                        _,
-                        _,
-                        _,
-                        op_alloy_network::Optimism,
-                    > = RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
+                    let revert_protection_ext =
+                        RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
 
                     ctx.modules
                         .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
