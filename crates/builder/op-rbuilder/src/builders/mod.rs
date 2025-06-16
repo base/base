@@ -154,6 +154,7 @@ where
     }
 }
 
+#[expect(clippy::infallible_try_from)]
 impl TryFrom<OpRbuilderArgs> for () {
     type Error = Infallible;
 
