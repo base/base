@@ -47,6 +47,33 @@ pub enum OpTxEnvelope {
     Deposit(Sealed<TxDeposit>),
 }
 
+/// Represents an Optimism transaction envelope.
+///
+/// Compared to Ethereum it can tell whether the transaction is a deposit.
+pub trait OpTransaction {
+    /// Returns true if the transaction is a deposit.
+    fn is_deposit(&self) -> bool;
+}
+
+impl OpTransaction for OpTxEnvelope {
+    fn is_deposit(&self) -> bool {
+        Self::is_deposit(self)
+    }
+}
+
+impl<B, T> OpTransaction for Extended<B, T>
+where
+    B: OpTransaction,
+    T: OpTransaction,
+{
+    fn is_deposit(&self) -> bool {
+        match self {
+            Self::BuiltIn(b) => b.is_deposit(),
+            Self::Other(t) => t.is_deposit(),
+        }
+    }
+}
+
 impl AsRef<Self> for OpTxEnvelope {
     fn as_ref(&self) -> &Self {
         self
