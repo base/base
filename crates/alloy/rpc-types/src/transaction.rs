@@ -34,9 +34,11 @@ pub struct Transaction<T = OpTxEnvelope> {
 }
 
 impl Transaction {
-    /// Returns a rpc [`Transaction`] with a [`OpTransactionInfo`] and
-    /// [`Recovered<OpTxEnvelope>`] as input.
-    pub fn from_transaction(tx: Recovered<OpTxEnvelope>, tx_info: OpTransactionInfo) -> Self {
+    /// Converts a consensus `tx` with an additional context `tx_info` into an RPC [`Transaction`].
+    pub fn from_transaction<T: OpTransaction + TransactionTrait>(
+        tx: Recovered<T>,
+        tx_info: OpTransactionInfo,
+    ) -> Transaction<T> {
         let base_fee = tx_info.inner.base_fee;
         let effective_gas_price = if tx.is_deposit() {
             // For deposits, we must always set the `gasPrice` field to 0 in rpc
@@ -51,7 +53,7 @@ impl Transaction {
                 .unwrap_or_else(|| tx.max_fee_per_gas())
         };
 
-        Self {
+        Transaction {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: tx,
                 block_hash: tx_info.inner.block_hash,
@@ -206,7 +208,7 @@ mod tx_serde {
     //! [`alloy_consensus::transaction::Recovered::signer`] which resides in
     //! [`alloy_rpc_types_eth::Transaction::inner`] and [`op_alloy_consensus::TxDeposit::from`].
     //!
-    //! Additionaly, we need similar logic for the `gasPrice` field
+    //! Additionally, we need similar logic for the `gasPrice` field
     use super::*;
     use alloy_consensus::transaction::Recovered;
     use op_alloy_consensus::OpTransaction;
