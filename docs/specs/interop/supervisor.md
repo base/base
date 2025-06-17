@@ -139,7 +139,7 @@ representing a bytes list, prefixed with `0x`.
 Describes a block.
 
 `OBJECT`:
-- `hash`: `HASH` - block hash
+- `hash`: `Hash` - block hash
 - `number`: `Int` - block number
 
 #### `BlockRef`
@@ -153,6 +153,13 @@ Describes a block.
 - `timestamp`: `Int` - block timestamp
 
 #### `DerivedIDPair`
+
+A pair of block identifiers, linking a `derived` block to the `source` block from which it was derived.
+
+`OBJECT`:
+
+- `source`: `BlockID` - The block ID of the `source` block.
+- `derived`: `BlockID` - The block ID of the `derived` block.
 
 #### `ChainRootInfo`
 
