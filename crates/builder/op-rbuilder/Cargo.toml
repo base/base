@@ -121,8 +121,8 @@ hex = "0.4"
 ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
-tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git"}
-dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git" }
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", optional = true }
+dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git", optional = true }
 
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
@@ -175,7 +175,6 @@ min-info-logs = ["tracing/release_max_level_info"]
 min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
-
 testing = [
 	"dashmap",
 	"nanoid",
@@ -187,12 +186,27 @@ testing = [
 	"rlimit",
 ]
 
-
 interop = []
+
+flashtestations = ["dcap-rs", "tdx"]
 
 telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
 custom-engine-api = []
+
+ci-features = [
+    "default",
+    "jemalloc-prof",
+    "min-error-logs",
+    "min-warn-logs",
+    "min-info-logs",
+    "min-debug-logs",
+    "min-trace-logs",
+	"testing",
+	"interop",
+	"telemetry",
+	"custom-engine-api",
+]
 
 [[bin]]
 name = "op-rbuilder"
