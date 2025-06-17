@@ -11,6 +11,7 @@ jobs:
       - runs-on
       - runner=64cpu-linux-x64
       - run-id=${{ github.run_id }}
+      - disk=large
 
     steps:
       - name: Checkout code
