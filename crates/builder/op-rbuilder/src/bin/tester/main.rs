@@ -70,7 +70,7 @@ pub async fn run_system(validation: bool) -> eyre::Result<()> {
 
     let engine_api = EngineApi::with_http("http://localhost:4444");
     let provider = ProviderBuilder::<Identity, Identity, Optimism>::default()
-        .connect_http("http://localhost:2222".try_into()?);
+        .connect_http("http://localhost:4444".try_into()?);
     let mut driver = ChainDriver::<Http>::remote(provider, engine_api);
 
     if validation {
