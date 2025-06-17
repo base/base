@@ -33,12 +33,9 @@ pub struct Transaction<T = OpTxEnvelope> {
     pub deposit_receipt_version: Option<u64>,
 }
 
-impl Transaction {
+impl<T: OpTransaction + TransactionTrait> Transaction<T> {
     /// Converts a consensus `tx` with an additional context `tx_info` into an RPC [`Transaction`].
-    pub fn from_transaction<T: OpTransaction + TransactionTrait>(
-        tx: Recovered<T>,
-        tx_info: OpTransactionInfo,
-    ) -> Transaction<T> {
+    pub fn from_transaction(tx: Recovered<T>, tx_info: OpTransactionInfo) -> Self {
         let base_fee = tx_info.inner.base_fee;
         let effective_gas_price = if tx.is_deposit() {
             // For deposits, we must always set the `gasPrice` field to 0 in rpc
@@ -53,7 +50,7 @@ impl Transaction {
                 .unwrap_or_else(|| tx.max_fee_per_gas())
         };
 
-        Transaction {
+        Self {
             inner: alloy_rpc_types_eth::Transaction {
                 inner: tx,
                 block_hash: tx_info.inner.block_hash,
