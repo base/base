@@ -115,6 +115,26 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_BLOCK_TIME"
     )]
     pub flashblocks_block_time: u64,
+
+    /// Enabled dynamic flashblocks adjustment. This will allow account for late FCUs and produce
+    /// less flashblocks, while each flashblock would be bigger.
+    #[arg(
+        long = "flashblocks.dynamic",
+        default_value = "false",
+        env = "FLASHBLOCK_DYNAMIC"
+    )]
+    pub flashblocks_dynamic: bool,
+
+    /// Time by which blocks would be completed earlier in milliseconds.
+    ///
+    /// This time used to account for latencies, this time would be deducted from total block
+    /// building time before calculating number of fbs.
+    #[arg(
+        long = "flashblocks.leeway-time",
+        default_value = "50",
+        env = "FLASHBLOCK_LEEWAY_TIME"
+    )]
+    pub flashblocks_leeway_time: u64,
 }
 
 impl Default for FlashblocksArgs {
@@ -137,4 +157,12 @@ pub struct TelemetryArgs {
     /// OpenTelemetry headers for authentication
     #[arg(long = "telemetry.otlp-headers", env = "OTEL_EXPORTER_OTLP_HEADERS")]
     pub otlp_headers: Option<String>,
+
+    /// Inverted sampling frequency in blocks. 1 - each block, 100 - every 100th block.
+    #[arg(
+        long = "telemetry.sampling-ratio",
+        env = "SAMPLING_RATIO",
+        default_value = "100"
+    )]
+    pub sampling_ratio: u64,
 }

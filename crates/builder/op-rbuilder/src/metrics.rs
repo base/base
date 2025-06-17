@@ -76,6 +76,12 @@ pub struct OpRBuilderMetrics {
     pub da_block_size_limit: Gauge,
     /// Da tx size limit
     pub da_tx_size_limit: Gauge,
+    /// Desired number of flashblocks
+    pub target_flashblock: Histogram,
+    /// Time drift that we account for in the beginning of block building
+    pub flashblock_time_drift: Histogram,
+    /// Time offset we used for first flashblock
+    pub first_flashblock_time_offset: Histogram,
     /// Number of valid bundles received at the eth_sendBundle endpoint
     pub bundles_received: Counter,
     /// Number of reverted bundles
