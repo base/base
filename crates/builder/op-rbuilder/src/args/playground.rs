@@ -1,4 +1,4 @@
-//! Autmoatic builder playground configuration.
+//! Automatic builder playground configuration.
 //!
 //! This module is used mostly for testing purposes. It allows op-rbuilder to
 //! automatically configure itself to run against a running op-builder playground.

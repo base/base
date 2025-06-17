@@ -55,6 +55,7 @@ reth-optimism-rpc.workspace = true
 reth-tasks.workspace = true
 reth-tracing-otlp = { workspace = true, optional = true }
 
+alloy.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
@@ -115,8 +116,13 @@ shellexpand = "3.1"
 serde_yaml = { version = "0.9" }
 moka = "0.12"
 http = "1.0"
+sha3 = "0.10"
+hex = "0.4"
+ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git"}
+dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git" }
 
 dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }

@@ -4,14 +4,16 @@ use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, Signature, B256, U256};
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::{public_key_to_address, Recovered};
-use secp256k1::{Message, SecretKey, SECP256K1};
+use reth_primitives::Recovered;
+use secp256k1::{rand::rngs::OsRng, Message, PublicKey, Secp256k1, SecretKey, SECP256K1};
+use sha3::{Digest, Keccak256};
 
 /// Simple struct to sign txs/messages.
 /// Mainly used to sign payout txs from the builder and to create test data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signer {
     pub address: Address,
+    pub pubkey: PublicKey,
     pub secret: SecretKey,
 }
 
@@ -19,9 +21,13 @@ impl Signer {
     pub fn try_from_secret(secret: B256) -> Result<Self, secp256k1::Error> {
         let secret = SecretKey::from_slice(secret.as_ref())?;
         let pubkey = secret.public_key(SECP256K1);
-        let address = public_key_to_address(pubkey);
+        let address = public_key_to_address(&pubkey);
 
-        Ok(Self { address, secret })
+        Ok(Self {
+            address,
+            pubkey,
+            secret,
+        })
     }
 
     pub fn sign_message(&self, message: B256) -> Result<Signature, secp256k1::Error> {
@@ -67,6 +73,33 @@ impl FromStr for Signer {
     }
 }
 
+pub fn generate_ethereum_keypair() -> (SecretKey, PublicKey, Address) {
+    let secp = Secp256k1::new();
+
+    // Generate cryptographically secure random private key
+    let private_key = SecretKey::new(&mut OsRng);
+
+    // Derive public key
+    let public_key = PublicKey::from_secret_key(&secp, &private_key);
+
+    // Derive Ethereum address
+    let address = public_key_to_address(&public_key);
+
+    (private_key, public_key, address)
+}
+
+/// Converts a public key to an Ethereum address
+pub fn public_key_to_address(public_key: &PublicKey) -> Address {
+    // Get uncompressed public key (65 bytes: 0x04 + 64 bytes)
+    let pubkey_bytes = public_key.serialize_uncompressed();
+
+    // Skip the 0x04 prefix and hash the remaining 64 bytes
+    let hash = Keccak256::digest(&pubkey_bytes[1..65]);
+
+    // Take last 20 bytes as address
+    Address::from_slice(&hash[12..32])
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -96,5 +129,49 @@ mod test {
 
         let signed = signed_tx.into_inner();
         assert_eq!(signed.recover_signer().ok(), Some(address));
+    }
+
+    #[test]
+    fn test_public_key_format() {
+        let secp = Secp256k1::new();
+        let private_key = SecretKey::new(&mut OsRng);
+        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+
+        let pubkey_bytes = public_key.serialize_uncompressed();
+
+        // Verify the public key format
+        assert_eq!(
+            pubkey_bytes.len(),
+            65,
+            "Uncompressed public key should be 65 bytes"
+        );
+        assert_eq!(
+            pubkey_bytes[0], 0x04,
+            "Uncompressed public key should start with 0x04"
+        );
+
+        // Verify report data would be 64 bytes
+        let report_data = &pubkey_bytes[1..65];
+        assert_eq!(
+            report_data.len(),
+            64,
+            "Report data should be exactly 64 bytes"
+        );
+    }
+
+    #[test]
+    fn test_deterministic_address_derivation() {
+        // Test with a known private key to ensure deterministic results
+        let secp = Secp256k1::new();
+        let private_key = SecretKey::from_slice(&[0x42; 32]).unwrap();
+        let public_key = PublicKey::from_secret_key(&secp, &private_key);
+
+        let address1 = public_key_to_address(&public_key);
+        let address2 = public_key_to_address(&public_key);
+
+        assert_eq!(
+            address1, address2,
+            "Address derivation should be deterministic"
+        );
     }
 }

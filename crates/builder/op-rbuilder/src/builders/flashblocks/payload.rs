@@ -4,7 +4,7 @@ use crate::{
         context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
         flashblocks::config::FlashBlocksConfigExt,
         generator::{BlockCell, BuildArguments},
-        BuilderConfig,
+        BuilderConfig, BuilderTx,
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
@@ -56,7 +56,7 @@ struct ExtraExecutionInfo {
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client> {
+pub struct OpPayloadBuilder<Pool, Client, BT> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -70,19 +70,22 @@ pub struct OpPayloadBuilder<Pool, Client> {
     pub config: BuilderConfig<FlashblocksConfig>,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
+    /// The end of builder transaction type
+    #[allow(dead_code)]
+    pub builder_tx: BT,
 }
 
-impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
+impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     /// `OpPayloadBuilder` constructor.
     pub fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
+        builder_tx: BT,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
-
         Ok(Self {
             evm_config,
             pool,
@@ -90,14 +93,17 @@ impl<Pool, Client> OpPayloadBuilder<Pool, Client> {
             ws_pub,
             config,
             metrics,
+            builder_tx,
         })
     }
 }
 
-impl<Pool, Client> reth_basic_payload_builder::PayloadBuilder for OpPayloadBuilder<Pool, Client>
+impl<Pool, Client, BT> reth_basic_payload_builder::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BT>
 where
     Pool: Clone + Send + Sync,
     Client: Clone + Send + Sync,
+    BT: Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -120,10 +126,11 @@ where
     }
 }
 
-impl<Pool, Client> OpPayloadBuilder<Pool, Client>
+impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BT: BuilderTx,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -589,10 +596,12 @@ where
     }
 }
 
-impl<Pool, Client> crate::builders::generator::PayloadBuilder for OpPayloadBuilder<Pool, Client>
+impl<Pool, Client, BT> crate::builders::generator::PayloadBuilder
+    for OpPayloadBuilder<Pool, Client, BT>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BT: BuilderTx + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;

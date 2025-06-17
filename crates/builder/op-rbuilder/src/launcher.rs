@@ -166,7 +166,6 @@ where
                     let task = monitor_tx_pool(listener, reverted_cache_copy);
                     ctx.task_executor.spawn_critical("txlogging", task);
                 }
-
                 Ok(())
             })
             .launch()
