@@ -1,27 +1,24 @@
 use alloy_provider::{PendingTransactionBuilder, Provider};
+use macros::{if_flashblocks, if_standard, rb_test};
 use op_alloy_network::Optimism;
 
 use crate::{
     args::OpRbuilderArgs,
-    builders::StandardBuilder,
     primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
         BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance,
-        TransactionBuilderExt, ONE_ETH,
+        OpRbuilderArgsTestExt, TransactionBuilderExt, ONE_ETH,
     },
 };
 
 /// This test ensures that the transactions that get reverted and not included in the block,
 /// are eventually dropped from the pool once their block range is reached.
 /// This test creates N transactions with different block ranges.
-#[tokio::test]
-async fn monitor_transaction_gc() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let accounts = driver.fund_accounts(10, ONE_ETH).await?;
     let latest_block_number = driver.latest().await?.header.number;
@@ -47,8 +44,15 @@ async fn monitor_transaction_gc() -> eyre::Result<()> {
     for i in 0..10 {
         let generated_block = driver.build_new_block().await?;
 
-        // blocks should only include two transactions (deposit + builder)
-        assert_eq!(generated_block.transactions.len(), 2);
+        if_standard! {
+            // standard builder blocks should only include two transactions (deposit + builder)
+            assert_eq!(generated_block.transactions.len(), 2);
+        }
+
+        if_flashblocks! {
+            // flashblocks should include three transactions (deposit + builder + first flashblock)
+            assert_eq!(generated_block.transactions.len(), 3);
+        }
 
         // since we created the 10 transactions with increasing block ranges, as we generate blocks
         // one transaction will be gc on each block.
@@ -65,9 +69,8 @@ async fn monitor_transaction_gc() -> eyre::Result<()> {
 }
 
 /// If revert protection is disabled, the transactions that revert are included in the block.
-#[tokio::test]
-async fn disabled() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn disabled(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
@@ -93,9 +96,8 @@ async fn disabled() -> eyre::Result<()> {
 
 /// If revert protection is disabled, it should not be possible to send a revert bundle
 /// since the revert RPC endpoint is not available.
-#[tokio::test]
-async fn disabled_bundle_endpoint_error() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn disabled_bundle_endpoint_error(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     let res = driver
@@ -115,14 +117,11 @@ async fn disabled_bundle_endpoint_error() -> eyre::Result<()> {
 /// the transaction is included in the block. If the bundle reverts, the transaction
 /// is not included in the block and tried again for the next bundle range blocks
 /// when it will be dropped from the pool.
-#[tokio::test]
-async fn bundle() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let _ = driver.build_new_block().await?; // Block 1
 
@@ -170,14 +169,11 @@ async fn bundle() -> eyre::Result<()> {
 }
 
 /// Test the behaviour of the revert protection bundle with a min block number.
-#[tokio::test]
-async fn bundle_min_block_number() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // The bundle is valid when the min block number is equal to the current block
@@ -224,14 +220,11 @@ async fn bundle_min_block_number() -> eyre::Result<()> {
 }
 
 /// Test the behaviour of the revert protection bundle with a min timestamp.
-#[tokio::test]
-async fn revert_protection_bundle_min_timestamp() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn bundle_min_timestamp(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let initial_timestamp = driver.latest().await?.header.timestamp;
 
@@ -258,14 +251,11 @@ async fn revert_protection_bundle_min_timestamp() -> eyre::Result<()> {
 }
 
 /// Test the range limits for the revert protection bundle.
-#[tokio::test]
-async fn bundle_range_limits() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let _ = driver.build_new_block().await?; // Block 1
     let _ = driver.build_new_block().await?; // Block 2
@@ -349,14 +339,11 @@ async fn bundle_range_limits() -> eyre::Result<()> {
 /// If a transaction reverts and was sent as a normal transaction through the eth_sendRawTransaction
 /// bundle, the transaction should be included in the block.
 /// This behaviour is the same as the 'disabled' test.
-#[tokio::test]
-async fn allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..Default::default()
+})]
+async fn allow_reverted_transactions_without_bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     for _ in 0..10 {
@@ -381,14 +368,11 @@ async fn allow_reverted_transactions_without_bundle() -> eyre::Result<()> {
 
 /// If a transaction reverts and gets dropped it, the eth_getTransactionReceipt should return
 /// an error message that it was dropped.
-#[tokio::test]
-async fn check_transaction_receipt_status_message() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<StandardBuilder>(OpRbuilderArgs {
-        enable_revert_protection: true,
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(args = OpRbuilderArgs {
+    enable_revert_protection: true,
+    ..OpRbuilderArgs::test_default()
+})]
+async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let provider = rbuilder.provider().await?;
 

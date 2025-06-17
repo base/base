@@ -123,6 +123,8 @@ reth-ipc = { workspace = true, optional = true }
 bollard = { version = "0.19", optional = true }
 tar = { version = "0.4", optional = true }
 ctor = { version = "0.4.2", optional = true }
+rlimit = { version = "0.10", optional = true }
+macros = { path = "src/tests/framework/macros", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
@@ -136,13 +138,14 @@ alloy-provider = { workspace = true, default-features = true, features = [
 	"txpool-api",
 ] }
 tempfile = "3.8"
-
+macros = { path = "src/tests/framework/macros" }
 dashmap = { version = "6.1" }
 nanoid = { version = "0.4" }
 reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 bollard = "0.19"
 ctor = "0.4.2"
+rlimit = { version = "0.10" }
 
 [features]
 default = ["jemalloc"]
@@ -173,15 +176,14 @@ testing = [
 	"reth-node-builder/test-utils",
 	"bollard",
 	"ctor",
+	"macros",
+	"rlimit",
 ]
 
 
 interop = []
 
-telemetry = [
-	"reth-tracing-otlp",
-	"opentelemetry",
-]
+telemetry = ["reth-tracing-otlp", "opentelemetry"]
 
 custom-engine-api = []
 

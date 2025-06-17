@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
+use macros::rb_test;
 use parking_lot::Mutex;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -8,26 +9,22 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
-    builders::FlashblocksBuilder,
     tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
 };
 
-#[tokio::test]
-async fn chain_produces_blocks() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::new::<FlashblocksBuilder>(OpRbuilderArgs {
-        chain_block_time: 2000,
-        flashblocks: FlashblocksArgs {
-            enabled: true,
-            flashblocks_port: 1239,
-            flashblocks_addr: "127.0.0.1".into(),
-            flashblocks_block_time: 200,
-            flashblocks_leeway_time: 0,
-            flashblocks_dynamic: false,
-        },
-        ..Default::default()
-    })
-    .await?;
-
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 2000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_leeway_time: 0,
+        flashblocks_dynamic: false,
+    },
+    ..Default::default()
+})]
+async fn smoke(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     driver.fund_default_accounts().await?;
 

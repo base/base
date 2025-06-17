@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+use macros::{if_flashblocks, if_standard, rb_test};
 use std::collections::HashSet;
 use tokio::{join, task::yield_now};
 use tracing::info;
@@ -13,9 +14,8 @@ use tracing::info;
 ///
 /// Generated blocks are also validated against an external op-reth node to
 /// ensure their correctness.
-#[tokio::test]
-async fn chain_produces_blocks() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     #[cfg(target_os = "linux")]
@@ -32,11 +32,23 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
         let block = driver.build_new_block().await?;
         let transactions = block.transactions;
 
-        assert_eq!(
-            transactions.len(),
-            2,
-            "Empty blocks should have exactly two transactions"
-        );
+        if_standard! {
+            assert_eq!(
+                transactions.len(),
+                2,
+                "Empty blocks should have exactly two transactions"
+            );
+        }
+
+        if_flashblocks! {
+            // in flashblocks we add an additional transaction on the first
+            // flashblocks and then one on the last flashblock
+            assert_eq!(
+                transactions.len(),
+                3,
+                "Empty blocks should have exactly three transactions"
+            );
+        }
     }
 
     // ensure that transactions are included in blocks and each block has all the transactions
@@ -59,12 +71,26 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
         let txs = block.transactions;
 
-        assert_eq!(
-            txs.len(),
-            2 + count,
-            "Block should have {} transactions",
-            2 + count
-        );
+        if_standard! {
+            assert_eq!(
+                txs.len(),
+                2 + count,
+                "Block should have {} transactions",
+                2 + count
+            );
+        }
+
+        if_flashblocks! {
+            // in flashblocks we add an additional transaction on the first
+            // flashblocks and then one on the last flashblock, so it will have
+            // one more transaction than the standard builder
+            assert_eq!(
+                txs.len(),
+                3 + count,
+                "Block should have {} transactions",
+                3 + count
+            );
+        }
 
         for tx_hash in tx_hashes {
             assert!(
@@ -79,9 +105,8 @@ async fn chain_produces_blocks() -> eyre::Result<()> {
 
 /// Ensures that payloads are generated correctly even when the builder is busy
 /// with other requests, such as fcu or getPayload.
-#[tokio::test(flavor = "multi_thread")]
-async fn produces_blocks_under_load_within_deadline() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test(multi_threaded)]
+async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?.with_gas_limit(10_00_000);
 
     let done = AtomicBool::new(false);

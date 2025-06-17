@@ -26,7 +26,7 @@ pub const ONE_ETH: u128 = 1_000_000_000_000_000_000;
 /// This gets invoked before any tests, when the cargo test framework loads the test library.
 /// It injects itself into
 #[ctor::ctor]
-fn init_tests_logging() {
+fn init_tests() {
     use tracing_subscriber::{filter::filter_fn, prelude::*};
     if let Ok(v) = std::env::var("TEST_TRACE") {
         let level = match v.as_str() {
@@ -52,4 +52,7 @@ fn init_tests_logging() {
             }))
             .init();
     }
+
+    #[cfg(not(windows))]
+    let _ = rlimit::setrlimit(rlimit::Resource::NOFILE, 500_000, 500_000);
 }

@@ -2,5 +2,20 @@
 mod framework;
 pub use framework::*;
 
+#[cfg(test)]
 mod flashblocks;
-mod vanilla;
+
+#[cfg(test)]
+mod data_availability;
+
+#[cfg(test)]
+mod ordering;
+
+#[cfg(test)]
+mod revert;
+
+#[cfg(test)]
+mod smoke;
+
+#[cfg(test)]
+mod txpool;

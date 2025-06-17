@@ -1,11 +1,11 @@
 use crate::tests::{BlockTransactionsExt, ChainDriverExt, LocalInstance};
 use alloy_provider::Provider;
+use macros::{if_flashblocks, if_standard, rb_test};
 
 /// This test ensures that the transaction size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[tokio::test]
-async fn tx_size_limit() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn tx_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set (max_tx_da_size, max_block_da_size), with this case block won't fit any transaction
@@ -33,9 +33,8 @@ async fn tx_size_limit() -> eyre::Result<()> {
 
 /// This test ensures that the block size limit is respected.
 /// We will set limit to 1 byte and see that the builder will not include any transactions.
-#[tokio::test]
-async fn block_size_limit() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn block_size_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set block da size to be small, so it won't include tx
@@ -60,9 +59,8 @@ async fn block_size_limit() -> eyre::Result<()> {
 /// Size of each transaction is 100000000
 /// We will set limit to 3 txs and see that the builder will include 3 transactions.
 /// We should not forget about builder transaction so we will spawn only 2 regular txs.
-#[tokio::test]
-async fn block_fill() -> eyre::Result<()> {
-    let rbuilder = LocalInstance::standard().await?;
+#[rb_test]
+async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set block big enough so it could fit 3 transactions without tx size limit
@@ -87,9 +85,21 @@ async fn block_fill() -> eyre::Result<()> {
     let unfit_tx_3 = driver.create_transaction().send().await?;
 
     let block = driver.build_new_block().await?;
-    // Now the first 2 txs will fit into the block
-    assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
-    assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
+
+    if_standard! {
+        // Now the first 2 txs will fit into the block
+        assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
+        assert!(block.includes(fit_tx_2.tx_hash()), "tx should be in block");
+    }
+
+    if_flashblocks! {
+        // in flashblocks the DA quota is divided by the number of flashblocks
+        // so we will include only one tx in the block because not all of them
+        // will fit within DA quote / flashblocks count.
+        assert!(block.includes(fit_tx_1.tx_hash()), "tx should be in block");
+        assert!(!block.includes(fit_tx_2.tx_hash()), "tx should not be in block");
+    }
+
     assert!(
         !block.includes(unfit_tx_3.tx_hash()),
         "unfit tx should not be in block"
