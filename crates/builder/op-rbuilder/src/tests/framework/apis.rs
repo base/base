@@ -222,9 +222,9 @@ pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Write the result to the output file
     if let Some(output) = output {
         std::fs::write(&output, serde_json::to_string_pretty(&genesis)?)?;
-        debug!("Generated genesis file at: {output}");
+        println!("Generated genesis file at: {output}");
     } else {
-        debug!("{}", serde_json::to_string_pretty(&genesis)?);
+        println!("{}", serde_json::to_string_pretty(&genesis)?);
     }
 
     Ok(())
