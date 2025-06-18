@@ -41,4 +41,6 @@ No special logic is needed in order to insert or withdraw funds.
 
 Its address will be `0x420000000000000000000000000000000000001b`.
 
+See also [Fee Vaults](./exec-engine.md#fee-vaults).
+
 ## Security Considerations
