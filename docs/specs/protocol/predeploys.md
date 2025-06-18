@@ -25,6 +25,7 @@
 - [EAS](#eas)
 - [Beacon Block Root](#beacon-block-root)
 - [Governance Token](#governance-token)
+- [Operator Fee Vault](#operator-fee-vault)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -72,6 +73,7 @@ or `Bedrock` or `Canyon`. Deprecated contracts should not be used.
 | SchemaRegistry                | 0x4200000000000000000000000000000000000020 | Bedrock    | No         | Yes     |
 | EAS                           | 0x4200000000000000000000000000000000000021 | Bedrock    | No         | Yes     |
 | BeaconBlockRoot               | 0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02 | Ecotone    | No         | No      |
+| OperatorFeeVault              | 0x420000000000000000000000000000000000001B | Isthmus    | No         | Yes     |
 
 ## LegacyMessagePasser
 
@@ -360,3 +362,11 @@ Ecotone network upgrade and is specified in [EIP-4788](https://eips.ethereum.org
 Address: 0x4200000000000000000000000000000000000042
 
 See [Governance Token specs](https://specs.optimism.io/governance/gov-token.html).
+
+## Operator Fee Vault
+
+[Implementation](https://github.com/ethereum-optimism/optimism/blob/develop/packages/contracts-bedrock/src/L2/OperatorFeeVault.sol)
+
+Address: `0x420000000000000000000000000000000000001B`
+
+See [Operator Fee Vault](https://specs.optimism.io/protocol/isthmus/predeploys.html#operatorfeevault) spec.
