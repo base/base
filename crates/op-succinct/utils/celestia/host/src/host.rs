@@ -8,7 +8,8 @@ use op_succinct_celestia_client_utils::executor::CelestiaDAWitnessExecutor;
 use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, host::OPSuccinctHost};
 
 use crate::{
-    blobstream_utils::get_celestia_safe_head_info, witness_generator::CelestiaDAWitnessGenerator,
+    blobstream_utils::{get_celestia_safe_head_info, get_highest_finalized_l2_block},
+    witness_generator::CelestiaDAWitnessGenerator,
 };
 
 #[derive(Clone)]
@@ -65,9 +66,7 @@ impl OPSuccinctHost for CelestiaOPSuccinctHost {
         fetcher: &OPSuccinctDataFetcher,
         latest_proposed_block_number: u64,
     ) -> Result<Option<u64>> {
-        Ok(get_celestia_safe_head_info(fetcher, latest_proposed_block_number)
-            .await?
-            .map(|safe_head| safe_head.l2_safe_head_number))
+        get_highest_finalized_l2_block(fetcher, latest_proposed_block_number).await
     }
 
     /// Calculate the safe L1 head hash for Celestia DA considering Blobstream commitments.
