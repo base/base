@@ -1,20 +1,14 @@
 use crate::{
-    OpPooledTransaction, OpTxType, OpTypedTransaction, TxDeposit,
+    OpPooledTransaction, OpTypedTransaction, TxDeposit,
     transaction::{OpDepositInfo, OpTransactionInfo},
 };
 use alloy_consensus::{
-    EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed, Transaction,
-    TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, Typed2718,
-    error::ValueError,
-    transaction::{RlpEcdsaDecodableTx, TransactionInfo},
+    EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed,
+    TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, error::ValueError,
+    transaction::TransactionInfo,
 };
-use alloy_eips::{
-    eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718, IsTyped2718},
-    eip2930::AccessList,
-    eip7702::SignedAuthorization,
-};
-use alloy_primitives::{Address, B256, Bytes, Signature, TxHash, TxKind, U256};
-use alloy_rlp::{Decodable, Encodable};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{B256, Bytes, Signature, TxHash};
 
 /// The Ethereum [EIP-2718] Transaction Envelope, modified for OP Stack chains.
 ///
@@ -27,23 +21,24 @@ use alloy_rlp::{Decodable, Encodable};
 /// flag.
 ///
 /// [EIP-2718]: https://eips.ethereum.org/EIPS/eip-2718
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(
-    feature = "serde",
-    serde(into = "serde_from::TaggedTxEnvelope", from = "serde_from::MaybeTaggedTxEnvelope")
-)]
-#[cfg_attr(all(any(test, feature = "arbitrary"), feature = "k256"), derive(arbitrary::Arbitrary))]
+#[derive(Debug, Clone, TransactionEnvelope)]
+#[envelope(tx_type_name = OpTxType, serde_cfg(feature = "serde"))]
 pub enum OpTxEnvelope {
     /// An untagged [`TxLegacy`].
+    #[envelope(ty = 0)]
     Legacy(Signed<TxLegacy>),
     /// A [`TxEip2930`] tagged with type 1.
+    #[envelope(ty = 1)]
     Eip2930(Signed<TxEip2930>),
     /// A [`TxEip1559`] tagged with type 2.
+    #[envelope(ty = 2)]
     Eip1559(Signed<TxEip1559>),
     /// A [`TxEip7702`] tagged with type 4.
+    #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
     /// A [`TxDeposit`] tagged with type 0x7E.
+    #[envelope(ty = 126)]
+    #[serde(serialize_with = "crate::serde_deposit_tx_rpc")]
     Deposit(Sealed<TxDeposit>),
 }
 
@@ -180,206 +175,6 @@ impl TryFrom<OpTxEnvelope> for TxEnvelope {
 
     fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
         value.try_into_eth_envelope()
-    }
-}
-
-impl Typed2718 for OpTxEnvelope {
-    fn ty(&self) -> u8 {
-        match self {
-            Self::Legacy(tx) => tx.tx().ty(),
-            Self::Eip2930(tx) => tx.tx().ty(),
-            Self::Eip1559(tx) => tx.tx().ty(),
-            Self::Eip7702(tx) => tx.tx().ty(),
-            Self::Deposit(tx) => tx.ty(),
-        }
-    }
-}
-
-impl IsTyped2718 for OpTxEnvelope {
-    fn is_type(type_id: u8) -> bool {
-        <OpTxType as IsTyped2718>::is_type(type_id)
-    }
-}
-
-impl Transaction for OpTxEnvelope {
-    fn chain_id(&self) -> Option<u64> {
-        match self {
-            Self::Legacy(tx) => tx.tx().chain_id(),
-            Self::Eip2930(tx) => tx.tx().chain_id(),
-            Self::Eip1559(tx) => tx.tx().chain_id(),
-            Self::Eip7702(tx) => tx.tx().chain_id(),
-            Self::Deposit(tx) => tx.chain_id(),
-        }
-    }
-
-    fn nonce(&self) -> u64 {
-        match self {
-            Self::Legacy(tx) => tx.tx().nonce(),
-            Self::Eip2930(tx) => tx.tx().nonce(),
-            Self::Eip1559(tx) => tx.tx().nonce(),
-            Self::Eip7702(tx) => tx.tx().nonce(),
-            Self::Deposit(tx) => tx.nonce(),
-        }
-    }
-
-    fn gas_limit(&self) -> u64 {
-        match self {
-            Self::Legacy(tx) => tx.tx().gas_limit(),
-            Self::Eip2930(tx) => tx.tx().gas_limit(),
-            Self::Eip1559(tx) => tx.tx().gas_limit(),
-            Self::Eip7702(tx) => tx.tx().gas_limit(),
-            Self::Deposit(tx) => tx.gas_limit(),
-        }
-    }
-
-    fn gas_price(&self) -> Option<u128> {
-        match self {
-            Self::Legacy(tx) => tx.tx().gas_price(),
-            Self::Eip2930(tx) => tx.tx().gas_price(),
-            Self::Eip1559(tx) => tx.tx().gas_price(),
-            Self::Eip7702(tx) => tx.tx().gas_price(),
-            Self::Deposit(tx) => tx.gas_price(),
-        }
-    }
-
-    fn max_fee_per_gas(&self) -> u128 {
-        match self {
-            Self::Legacy(tx) => tx.tx().max_fee_per_gas(),
-            Self::Eip2930(tx) => tx.tx().max_fee_per_gas(),
-            Self::Eip1559(tx) => tx.tx().max_fee_per_gas(),
-            Self::Eip7702(tx) => tx.tx().max_fee_per_gas(),
-            Self::Deposit(tx) => tx.max_fee_per_gas(),
-        }
-    }
-
-    fn max_priority_fee_per_gas(&self) -> Option<u128> {
-        match self {
-            Self::Legacy(tx) => tx.tx().max_priority_fee_per_gas(),
-            Self::Eip2930(tx) => tx.tx().max_priority_fee_per_gas(),
-            Self::Eip1559(tx) => tx.tx().max_priority_fee_per_gas(),
-            Self::Eip7702(tx) => tx.tx().max_priority_fee_per_gas(),
-            Self::Deposit(tx) => tx.max_priority_fee_per_gas(),
-        }
-    }
-
-    fn max_fee_per_blob_gas(&self) -> Option<u128> {
-        match self {
-            Self::Legacy(tx) => tx.tx().max_fee_per_blob_gas(),
-            Self::Eip2930(tx) => tx.tx().max_fee_per_blob_gas(),
-            Self::Eip1559(tx) => tx.tx().max_fee_per_blob_gas(),
-            Self::Eip7702(tx) => tx.tx().max_fee_per_blob_gas(),
-            Self::Deposit(tx) => tx.max_fee_per_blob_gas(),
-        }
-    }
-
-    fn priority_fee_or_price(&self) -> u128 {
-        match self {
-            Self::Legacy(tx) => tx.tx().priority_fee_or_price(),
-            Self::Eip2930(tx) => tx.tx().priority_fee_or_price(),
-            Self::Eip1559(tx) => tx.tx().priority_fee_or_price(),
-            Self::Eip7702(tx) => tx.tx().priority_fee_or_price(),
-            Self::Deposit(tx) => tx.priority_fee_or_price(),
-        }
-    }
-
-    fn effective_gas_price(&self, base_fee: Option<u64>) -> u128 {
-        match self {
-            Self::Legacy(tx) => tx.tx().effective_gas_price(base_fee),
-            Self::Eip2930(tx) => tx.tx().effective_gas_price(base_fee),
-            Self::Eip1559(tx) => tx.tx().effective_gas_price(base_fee),
-            Self::Eip7702(tx) => tx.tx().effective_gas_price(base_fee),
-            Self::Deposit(tx) => tx.effective_gas_price(base_fee),
-        }
-    }
-
-    fn is_dynamic_fee(&self) -> bool {
-        match self {
-            Self::Legacy(tx) => tx.tx().is_dynamic_fee(),
-            Self::Eip2930(tx) => tx.tx().is_dynamic_fee(),
-            Self::Eip1559(tx) => tx.tx().is_dynamic_fee(),
-            Self::Eip7702(tx) => tx.tx().is_dynamic_fee(),
-            Self::Deposit(tx) => tx.is_dynamic_fee(),
-        }
-    }
-
-    fn kind(&self) -> TxKind {
-        match self {
-            Self::Legacy(tx) => tx.tx().kind(),
-            Self::Eip2930(tx) => tx.tx().kind(),
-            Self::Eip1559(tx) => tx.tx().kind(),
-            Self::Eip7702(tx) => tx.tx().kind(),
-            Self::Deposit(tx) => tx.kind(),
-        }
-    }
-
-    fn is_create(&self) -> bool {
-        match self {
-            Self::Legacy(tx) => tx.tx().is_create(),
-            Self::Eip2930(tx) => tx.tx().is_create(),
-            Self::Eip1559(tx) => tx.tx().is_create(),
-            Self::Eip7702(tx) => tx.tx().is_create(),
-            Self::Deposit(tx) => tx.is_create(),
-        }
-    }
-
-    fn to(&self) -> Option<Address> {
-        match self {
-            Self::Legacy(tx) => tx.tx().to(),
-            Self::Eip2930(tx) => tx.tx().to(),
-            Self::Eip1559(tx) => tx.tx().to(),
-            Self::Eip7702(tx) => tx.tx().to(),
-            Self::Deposit(tx) => tx.to(),
-        }
-    }
-
-    fn value(&self) -> U256 {
-        match self {
-            Self::Legacy(tx) => tx.tx().value(),
-            Self::Eip2930(tx) => tx.tx().value(),
-            Self::Eip1559(tx) => tx.tx().value(),
-            Self::Eip7702(tx) => tx.tx().value(),
-            Self::Deposit(tx) => tx.value(),
-        }
-    }
-
-    fn input(&self) -> &Bytes {
-        match self {
-            Self::Legacy(tx) => tx.tx().input(),
-            Self::Eip2930(tx) => tx.tx().input(),
-            Self::Eip1559(tx) => tx.tx().input(),
-            Self::Eip7702(tx) => tx.tx().input(),
-            Self::Deposit(tx) => tx.input(),
-        }
-    }
-
-    fn access_list(&self) -> Option<&AccessList> {
-        match self {
-            Self::Legacy(tx) => tx.tx().access_list(),
-            Self::Eip2930(tx) => tx.tx().access_list(),
-            Self::Eip1559(tx) => tx.tx().access_list(),
-            Self::Eip7702(tx) => tx.tx().access_list(),
-            Self::Deposit(tx) => tx.access_list(),
-        }
-    }
-
-    fn blob_versioned_hashes(&self) -> Option<&[B256]> {
-        match self {
-            Self::Legacy(tx) => tx.tx().blob_versioned_hashes(),
-            Self::Eip2930(tx) => tx.tx().blob_versioned_hashes(),
-            Self::Eip1559(tx) => tx.tx().blob_versioned_hashes(),
-            Self::Eip7702(tx) => tx.tx().blob_versioned_hashes(),
-            Self::Deposit(tx) => tx.blob_versioned_hashes(),
-        }
-    }
-
-    fn authorization_list(&self) -> Option<&[SignedAuthorization]> {
-        match self {
-            Self::Legacy(tx) => tx.tx().authorization_list(),
-            Self::Eip2930(tx) => tx.tx().authorization_list(),
-            Self::Eip1559(tx) => tx.tx().authorization_list(),
-            Self::Eip7702(tx) => tx.tx().authorization_list(),
-            Self::Deposit(tx) => tx.authorization_list(),
-        }
     }
 }
 
@@ -618,7 +413,9 @@ impl OpTxEnvelope {
 
 #[cfg(feature = "k256")]
 impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
-    fn recover_signer(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+    fn recover_signer(
+        &self,
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
         let signature_hash = match self {
             Self::Legacy(tx) => tx.signature_hash(),
             Self::Eip2930(tx) => tx.signature_hash(),
@@ -638,7 +435,9 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
         alloy_consensus::crypto::secp256k1::recover_signer(signature, signature_hash)
     }
 
-    fn recover_signer_unchecked(&self) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+    fn recover_signer_unchecked(
+        &self,
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
         let signature_hash = match self {
             Self::Legacy(tx) => tx.signature_hash(),
             Self::Eip2930(tx) => tx.signature_hash(),
@@ -656,160 +455,6 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
             Self::Deposit(_) => unreachable!("Deposit transactions should not be handled here"),
         };
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
-    }
-}
-
-impl Encodable for OpTxEnvelope {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        self.network_encode(out)
-    }
-
-    fn length(&self) -> usize {
-        self.network_len()
-    }
-}
-
-impl Decodable for OpTxEnvelope {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Ok(Self::network_decode(buf)?)
-    }
-}
-
-impl Decodable2718 for OpTxEnvelope {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
-        match ty.try_into().map_err(|_| Eip2718Error::UnexpectedType(ty))? {
-            OpTxType::Eip2930 => Ok(Self::Eip2930(TxEip2930::rlp_decode_signed(buf)?)),
-            OpTxType::Eip1559 => Ok(Self::Eip1559(TxEip1559::rlp_decode_signed(buf)?)),
-            OpTxType::Eip7702 => Ok(Self::Eip7702(TxEip7702::rlp_decode_signed(buf)?)),
-            OpTxType::Deposit => Ok(Self::Deposit(TxDeposit::decode(buf)?.seal_slow())),
-            OpTxType::Legacy => {
-                Err(alloy_rlp::Error::Custom("type-0 eip2718 transactions are not supported")
-                    .into())
-            }
-        }
-    }
-
-    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
-        Ok(Self::Legacy(TxLegacy::rlp_decode_signed(buf)?))
-    }
-}
-
-impl Encodable2718 for OpTxEnvelope {
-    fn type_flag(&self) -> Option<u8> {
-        match self {
-            Self::Legacy(_) => None,
-            Self::Eip2930(_) => Some(OpTxType::Eip2930 as u8),
-            Self::Eip1559(_) => Some(OpTxType::Eip1559 as u8),
-            Self::Eip7702(_) => Some(OpTxType::Eip7702 as u8),
-            Self::Deposit(_) => Some(OpTxType::Deposit as u8),
-        }
-    }
-
-    fn encode_2718_len(&self) -> usize {
-        self.eip2718_encoded_length()
-    }
-
-    fn encode_2718(&self, out: &mut dyn alloy_rlp::BufMut) {
-        match self {
-            // Legacy transactions have no difference between network and 2718
-            Self::Legacy(tx) => tx.eip2718_encode(out),
-            Self::Eip2930(tx) => {
-                tx.eip2718_encode(out);
-            }
-            Self::Eip1559(tx) => {
-                tx.eip2718_encode(out);
-            }
-            Self::Eip7702(tx) => {
-                tx.eip2718_encode(out);
-            }
-            Self::Deposit(tx) => {
-                tx.encode_2718(out);
-            }
-        }
-    }
-
-    fn trie_hash(&self) -> B256 {
-        match self {
-            Self::Legacy(tx) => *tx.hash(),
-            Self::Eip1559(tx) => *tx.hash(),
-            Self::Eip2930(tx) => *tx.hash(),
-            Self::Eip7702(tx) => *tx.hash(),
-            Self::Deposit(tx) => tx.seal(),
-        }
-    }
-}
-
-#[cfg(feature = "serde")]
-mod serde_from {
-    //! NB: Why do we need this?
-    //!
-    //! Because the tag may be missing, we need an abstraction over tagged (with
-    //! type) and untagged (always legacy). This is [`MaybeTaggedTxEnvelope`].
-    //!
-    //! The tagged variant is [`TaggedTxEnvelope`], which always has a type tag.
-    //!
-    //! We serialize via [`TaggedTxEnvelope`] and deserialize via
-    //! [`MaybeTaggedTxEnvelope`].
-    use super::*;
-
-    #[derive(Debug, serde::Deserialize)]
-    #[serde(untagged)]
-    pub(crate) enum MaybeTaggedTxEnvelope {
-        Tagged(TaggedTxEnvelope),
-        #[serde(with = "alloy_consensus::transaction::signed_legacy_serde")]
-        Untagged(Signed<TxLegacy>),
-    }
-
-    #[derive(Debug, serde::Serialize, serde::Deserialize)]
-    #[serde(tag = "type")]
-    pub(crate) enum TaggedTxEnvelope {
-        #[serde(
-            rename = "0x0",
-            alias = "0x00",
-            with = "alloy_consensus::transaction::signed_legacy_serde"
-        )]
-        Legacy(Signed<TxLegacy>),
-        #[serde(rename = "0x1", alias = "0x01")]
-        Eip2930(Signed<TxEip2930>),
-        #[serde(rename = "0x2", alias = "0x02")]
-        Eip1559(Signed<TxEip1559>),
-        #[serde(rename = "0x4", alias = "0x04")]
-        Eip7702(Signed<TxEip7702>),
-        #[serde(rename = "0x7e", alias = "0x7E", serialize_with = "crate::serde_deposit_tx_rpc")]
-        Deposit(Sealed<TxDeposit>),
-    }
-
-    impl From<MaybeTaggedTxEnvelope> for OpTxEnvelope {
-        fn from(value: MaybeTaggedTxEnvelope) -> Self {
-            match value {
-                MaybeTaggedTxEnvelope::Tagged(tagged) => tagged.into(),
-                MaybeTaggedTxEnvelope::Untagged(tx) => Self::Legacy(tx),
-            }
-        }
-    }
-
-    impl From<TaggedTxEnvelope> for OpTxEnvelope {
-        fn from(value: TaggedTxEnvelope) -> Self {
-            match value {
-                TaggedTxEnvelope::Legacy(signed) => Self::Legacy(signed),
-                TaggedTxEnvelope::Eip2930(signed) => Self::Eip2930(signed),
-                TaggedTxEnvelope::Eip1559(signed) => Self::Eip1559(signed),
-                TaggedTxEnvelope::Eip7702(signed) => Self::Eip7702(signed),
-                TaggedTxEnvelope::Deposit(tx) => Self::Deposit(tx),
-            }
-        }
-    }
-
-    impl From<OpTxEnvelope> for TaggedTxEnvelope {
-        fn from(value: OpTxEnvelope) -> Self {
-            match value {
-                OpTxEnvelope::Legacy(signed) => Self::Legacy(signed),
-                OpTxEnvelope::Eip2930(signed) => Self::Eip2930(signed),
-                OpTxEnvelope::Eip1559(signed) => Self::Eip1559(signed),
-                OpTxEnvelope::Eip7702(signed) => Self::Eip7702(signed),
-                OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
-            }
-        }
     }
 }
 
@@ -975,7 +620,7 @@ pub mod serde_bincode_compat {
 mod tests {
     use super::*;
     use alloc::vec;
-    use alloy_consensus::SignableTransaction;
+    use alloy_consensus::{SignableTransaction, Transaction};
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind, U256, hex};
 
     #[test]

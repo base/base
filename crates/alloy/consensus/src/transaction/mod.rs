@@ -4,10 +4,10 @@ mod deposit;
 pub use deposit::{DepositTransaction, TxDeposit};
 
 mod tx_type;
-pub use tx_type::{DEPOSIT_TX_TYPE_ID, OpTxType};
+pub use tx_type::DEPOSIT_TX_TYPE_ID;
 
 mod envelope;
-pub use envelope::{OpTransaction, OpTxEnvelope};
+pub use envelope::{OpTransaction, OpTxEnvelope, OpTxType};
 
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub use envelope::serde_bincode_compat as envelope_serde_bincode_compat;
