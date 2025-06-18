@@ -29,8 +29,13 @@ alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types.workspace = true
+alloy-sol-types.workspace = true
 
 # general
 anyhow.workspace = true
 async-trait.workspace = true
 rkyv.workspace = true
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing.workspace = true
