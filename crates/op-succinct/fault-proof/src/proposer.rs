@@ -220,7 +220,12 @@ where
                 .await?
         };
 
-        let receipt = game.prove(agg_proof.bytes().into()).send().await?.get_receipt().await?;
+        let transaction_request = game.prove(agg_proof.bytes().into()).into_transaction_request();
+
+        let receipt = self
+            .signer
+            .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
+            .await?;
 
         Ok(receipt.transaction_hash)
     }
