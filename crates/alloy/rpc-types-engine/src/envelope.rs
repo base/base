@@ -440,7 +440,7 @@ pub enum PayloadEnvelopeEncodeError {
     /// Wrong versions of the payload.
     #[error("Wrong version of the payload")]
     WrongVersion,
-    /// An error occured during snap encoding.
+    /// An error occurred during snap encoding.
     #[error(transparent)]
     #[cfg(feature = "std")]
     SnapEncoding(#[from] snap::Error),

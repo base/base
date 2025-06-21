@@ -90,7 +90,7 @@ impl ProtocolVersion {
 
         match self {
             Self::V0(value) => {
-                bytes[0] = 0x00; // this is not necessary, but addded for clarity
+                bytes[0] = 0x00; // this is not necessary, but added for clarity
                 bytes[1..].copy_from_slice(&value.encode());
                 B256::from_slice(&bytes)
             }
