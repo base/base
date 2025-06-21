@@ -54,6 +54,7 @@ Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for t
 | `MAX_GAMES_TO_CHECK_FOR_RESOLUTION` | Maximum number of games to check for resolution | `100` |
 | `MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING` | Maximum number of games to check for bond claiming | `100` |
 | `CHALLENGER_METRICS_PORT` | The port to expose metrics on. Update prometheus.yml to use this port, if using docker compose. | `9001` |
+| `MALICIOUS_CHALLENGE_PERCENTAGE` | Percentage (0.0-100.0) of valid games to challenge for testing defense mechanisms | `0.0` |
 
 ```env
 # Required Configuration
@@ -70,6 +71,9 @@ MAX_GAMES_TO_CHECK_FOR_CHALLENGE=100  # Maximum number of games to scan for chal
 MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100 # Maximum number of games to check for resolution
 MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING=100 # Maximum number of games to check for bond claiming
 CHALLENGER_METRICS_PORT=9001          # The port to expose metrics on
+
+# Testing Configuration (Optional)
+MALICIOUS_CHALLENGE_PERCENTAGE=0.0    # Percentage of valid games to challenge for testing (0.0 = disabled)
 ```
 
 ## Running
@@ -80,6 +84,43 @@ cargo run --bin challenger
 ```
 
 The challenger will run indefinitely, monitoring for invalid games and challenging them as needed.
+
+## Testing Defense Mechanisms
+
+The challenger supports **malicious challenging** of valid games for defense mechanisms testing purposes.
+
+### Configuration
+
+Set `MALICIOUS_CHALLENGE_PERCENTAGE` to enable malicious challenging:
+
+```bash
+# Production mode (default) - only challenge invalid games
+MALICIOUS_CHALLENGE_PERCENTAGE=0.0
+
+# Testing mode - challenge all valid games
+MALICIOUS_CHALLENGE_PERCENTAGE=100.0
+
+# Fine-grained testing - challenge 0.1% of valid games
+MALICIOUS_CHALLENGE_PERCENTAGE=0.1
+
+# Mixed testing - challenge 25.5% of valid games
+MALICIOUS_CHALLENGE_PERCENTAGE=25.5
+```
+
+### Behavior
+
+When malicious challenging is enabled:
+
+1. **Priority 1**: Challenge invalid games (honest challenger behavior)
+2. **Priority 2**: Challenge valid games at the configured percentage (defense mechanisms testing behavior)
+
+The challenger will always prioritize challenging invalid games first, then optionally challenge valid games based on the configured percentage.
+
+### Logging
+
+The challenger provides clear logging to distinguish between challenge types:
+- `[CHALLENGE]` - Honest challenges of invalid games
+- `[MALICIOUS CHALLENGE]` - Testing defense mechanisms of challenged valid games
 
 ## Features
 
