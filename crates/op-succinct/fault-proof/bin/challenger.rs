@@ -17,6 +17,7 @@ use fault_proof::{
 };
 use op_succinct_host_utils::metrics::{init_metrics, MetricsGauge};
 use op_succinct_signer_utils::Signer;
+use rand::Rng;
 use tokio::time;
 
 #[derive(Parser)]
@@ -84,10 +85,31 @@ where
         Ok(())
     }
 
+    /// Gets the oldest valid game address for malicious challenging (for defense mechanisms
+    /// testing purposes). This finds games with correct output roots that can be challenged to
+    /// test defense mechanisms.
+    async fn get_oldest_valid_game_for_malicious_challenge(&self) -> Result<Option<Address>> {
+        use fault_proof::contract::ProposalStatus;
+
+        self.factory
+            .get_oldest_game_address(
+                self.config.max_games_to_check_for_challenge,
+                self.l2_provider.clone(),
+                |status| status == ProposalStatus::Unchallenged,
+                |output_root, game_claim| output_root == game_claim, /* Valid games (opposite of
+                                                                      * honest challenger) */
+                "Oldest valid game for malicious challenge",
+            )
+            .await
+    }
+
     /// Handles challenging of invalid games by scanning recent games for potential challenges.
+    /// Also supports malicious challenging of valid games for testing defense mechanisms when
+    /// configured.
     async fn handle_game_challenging(&self) -> Result<Action> {
         let _span = tracing::info_span!("[[Challenging]]").entered();
 
+        // Challenge invalid games (honest challenger behavior)
         if let Some(game_address) = self
             .factory
             .get_oldest_challengable_game_address(
@@ -96,12 +118,44 @@ where
             )
             .await?
         {
-            tracing::info!("Attempting to challenge game {:?}", game_address);
+            tracing::info!(
+                "\x1b[32m[CHALLENGE]\x1b[0m Attempting to challenge invalid game {:?}",
+                game_address
+            );
             self.challenge_game(game_address).await?;
-            Ok(Action::Performed)
-        } else {
-            Ok(Action::Skipped)
+            return Ok(Action::Performed);
         }
+
+        // Maliciously challenge valid games (if configured for testing defense mechanisms)
+        if self.config.malicious_challenge_percentage > 0.0 {
+            tracing::debug!("Checking for valid games to challenge maliciously...");
+            if let Some(game_address) = self.get_oldest_valid_game_for_malicious_challenge().await?
+            {
+                let mut rng = rand::rng();
+                let should_challenge =
+                    rng.random_range(0.0..100.0) <= self.config.malicious_challenge_percentage;
+
+                if should_challenge {
+                    tracing::warn!(
+                        "\x1b[31m[MALICIOUS CHALLENGE]\x1b[0m Attempting to challenge valid game {:?} for testing ({}% chance)",
+                        game_address,
+                        self.config.malicious_challenge_percentage
+                    );
+                    self.challenge_game(game_address).await?;
+                    return Ok(Action::Performed);
+                } else {
+                    tracing::debug!(
+                        "Found valid game {:?} but skipping malicious challenge ({}% chance)",
+                        game_address,
+                        self.config.malicious_challenge_percentage
+                    );
+                }
+            } else {
+                tracing::debug!("No valid games found for malicious challenging");
+            }
+        }
+
+        Ok(Action::Skipped)
     }
 
     /// Handles resolution of challenged games that are ready to be resolved.
@@ -173,6 +227,14 @@ where
     /// resolve.
     async fn run(&mut self) -> Result<()> {
         tracing::info!("OP Succinct Challenger running...");
+        if self.config.malicious_challenge_percentage > 0.0 {
+            tracing::warn!(
+                "\x1b[33mMalicious challenging enabled: {}% of valid games will be challenged for testing\x1b[0m",
+                self.config.malicious_challenge_percentage
+            );
+        } else {
+            tracing::info!("Honest challenger mode (malicious challenging disabled)");
+        }
         let mut interval = time::interval(Duration::from_secs(self.config.fetch_interval));
 
         // Each loop, check the oldest challengeable game and challenge it if it exists.

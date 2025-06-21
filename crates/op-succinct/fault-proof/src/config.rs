@@ -126,6 +126,11 @@ pub struct ChallengerConfig {
 
     /// The metrics port.
     pub metrics_port: u16,
+
+    /// Percentage (0.0-100.0) of valid games to challenge maliciously for testing.
+    /// Set to 0.0 (default) for production use (honest challenging only).
+    /// Set to >0.0 for testing defense mechanisms.
+    pub malicious_challenge_percentage: f64,
 }
 
 impl ChallengerConfig {
@@ -150,6 +155,9 @@ impl ChallengerConfig {
                 .parse()?,
             metrics_port: env::var("CHALLENGER_METRICS_PORT")
                 .unwrap_or("9001".to_string())
+                .parse()?,
+            malicious_challenge_percentage: env::var("MALICIOUS_CHALLENGE_PERCENTAGE")
+                .unwrap_or("0.0".to_string())
                 .parse()?,
         })
     }
