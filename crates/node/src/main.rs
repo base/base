@@ -21,31 +21,41 @@ struct FlashblocksRollupArgs {
     pub rollup_args: RollupArgs,
 
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
-    pub websocket_url: String,
+    pub websocket_url: Option<String>,
+}
+
+impl FlashblocksRollupArgs {
+    fn flashblocks_enabled(&self) -> bool {
+        self.websocket_url.is_some()
+    }
 }
 
 fn main() {
     Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
         .run(|builder, flashblocks_rollup_args| async move {
             info!("Starting custom Base node");
+
             let cache = Arc::new(Cache::default());
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
             let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
-
             let cache_clone = Arc::clone(&cache);
             let chain_spec = builder.config().chain.clone();
+            let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
+
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
-                    let api_ext = EthApiExt::new(
-                        ctx.registry.eth_api().clone(),
-                        Arc::clone(&cache_clone),
-                        chain_spec.clone(),
-                    );
-                    ctx.modules.replace_configured(api_ext.into_rpc())?;
+                    if flashblocks_enabled {
+                        let api_ext = EthApiExt::new(
+                            ctx.registry.eth_api().clone(),
+                            cache_clone,
+                            chain_spec.clone(),
+                        );
+                        ctx.modules.replace_configured(api_ext.into_rpc())?;
+                    }
                     Ok(())
                 })
                 .launch_with_fn(|builder| {
@@ -60,18 +70,24 @@ fn main() {
                         builder.config().datadir(),
                         engine_tree_config,
                     );
-                    builder.task_executor().spawn(async move {
-                        flashblocks_client
-                            .init(flashblocks_rollup_args.websocket_url.clone())
-                            .unwrap();
-                    });
-                    builder.task_executor().spawn(async move {
-                        let mut interval = tokio::time::interval(Duration::from_secs(2));
-                        loop {
-                            interval.tick().await;
-                            cache.cleanup_expired();
-                        }
-                    });
+
+                    if flashblocks_enabled {
+                        info!("starting flashblocks");
+                        builder.task_executor().spawn(async move {
+                            flashblocks_client
+                                .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
+                                .unwrap();
+                        });
+                        builder.task_executor().spawn(async move {
+                            let mut interval = tokio::time::interval(Duration::from_secs(2));
+                            loop {
+                                interval.tick().await;
+                                cache.cleanup_expired();
+                            }
+                        });
+                    } else {
+                        info!("flashblocks is disabled");
+                    }
                     builder.launch_with(launcher)
                 })
                 .await?;
