@@ -7,8 +7,7 @@ pub fn setup_logging() {
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
-        .with_line_number(false)
-        .with_ansi(true);
+        .with_line_number(false);
 
     // Initialize logging using RUST_LOG environment variable, defaulting to INFO level
     tracing_subscriber::fmt()

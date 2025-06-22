@@ -7,8 +7,7 @@ pub fn setup_proposer_logger() {
         .with_thread_ids(false)
         .with_thread_names(false)
         .with_file(false)
-        .with_line_number(false)
-        .with_ansi(true);
+        .with_line_number(false);
 
     // Turn off all logging from kona and SP1.
     tracing_subscriber::fmt()

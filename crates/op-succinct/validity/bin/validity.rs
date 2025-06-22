@@ -45,6 +45,10 @@ async fn main() -> Result<()> {
     let env_config = read_proposer_env()?;
 
     let db_client = Arc::new(DriverDBClient::new(&env_config.db_url).await?);
+
+    let op_succinct_config_name_hash =
+        alloy_primitives::keccak256(env_config.op_succinct_config_name.as_bytes());
+
     let proposer_config = RequesterConfig {
         l1_chain_id: fetcher.l1_provider.get_chain_id().await? as i64,
         l2_chain_id: fetcher.l2_provider.get_chain_id().await? as i64,
@@ -60,6 +64,7 @@ async fn main() -> Result<()> {
         mock: env_config.mock,
         prover_address: env_config.prover_address,
         safe_db_fallback: env_config.safe_db_fallback,
+        op_succinct_config_name_hash,
     };
 
     let l1_provider = ProviderBuilder::new().connect_http(env_config.l1_rpc.clone());

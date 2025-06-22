@@ -49,6 +49,7 @@ pub struct RequesterConfig {
     pub range_proof_strategy: FulfillmentStrategy,
     pub agg_proof_strategy: FulfillmentStrategy,
     pub agg_proof_mode: SP1ProofMode,
+    pub op_succinct_config_name_hash: B256,
     pub mock: bool,
     /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not
     /// activated for op-node.

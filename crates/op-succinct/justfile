@@ -235,63 +235,26 @@ upgrade-oracle env_file=".env" *features='':
     if [ -n "${EXECUTE_UPGRADE_CALL:-}" ]; then ENV_VARS="$ENV_VARS EXECUTE_UPGRADE_CALL=$EXECUTE_UPGRADE_CALL"; fi
     if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
     if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
+
     
+    
+    VERIFY_FLAGS=""
+    if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
+        VERIFY_FLAGS="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
+    fi
+
     if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
         env $ENV_VARS forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY \
-            --etherscan-api-key $ETHERSCAN_API_KEY
+            --private-key $PRIVATE_KEY
     else
         env $ENV_VARS forge script script/validity/OPSuccinctUpgrader.s.sol:OPSuccinctUpgrader \
             --rpc-url $L1_RPC \
             --private-key $PRIVATE_KEY \
-            --verify \
-            --verifier etherscan \
-            --etherscan-api-key $ETHERSCAN_API_KEY \
+            $VERIFY_FLAGS \
             --broadcast
     fi
 
-# Update the parameters of the OPSuccinct L2 Output Oracle
-update-parameters env_file=".env" *features='':
-    #!/usr/bin/env bash
-    set -euo pipefail
-    
-    # First fetch rollup config using the env file
-    if [ -z "{{features}}" ]; then
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
-    else
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
-    fi
-    
-    # Load environment variables
-    source {{env_file}}
-
-    # cd into contracts directory
-    cd contracts
-
-    # forge install
-    forge install
-    
-    # Run the forge upgrade script
-    if [ "${EXECUTE_UPGRADE_CALL:-true}" = "false" ]; then
-        env L2OO_ADDRESS="$L2OO_ADDRESS" \
-            ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
-            ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
-            ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
-            forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
-            --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY \
-            --broadcast
-    else
-        env L2OO_ADDRESS="$L2OO_ADDRESS" \
-            ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
-            ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
-            ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
-            forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
-            --rpc-url $L1_RPC \
-            --private-key $PRIVATE_KEY \
-            --broadcast
-    fi
 
 deploy-dispute-game-factory env_file=".env":
     #!/usr/bin/env bash
@@ -317,7 +280,7 @@ deploy-dispute-game-factory env_file=".env":
     forge install
 
     VERIFY=""
-    if [ $ETHERSCAN_API_KEY != "" ]; then
+    if [ -n "$ETHERSCAN_API_KEY" ]; then
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     
@@ -329,3 +292,61 @@ deploy-dispute-game-factory env_file=".env":
         --private-key $PRIVATE_KEY \
         --broadcast \
         $VERIFY
+
+# Add a new OpSuccinctConfig to the L2 Output Oracle
+add-config config_name env_file=".env" *features='':
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # First fetch rollup config using the env file
+    if [ -z "{{features}}" ]; then
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+    else
+        echo "Fetching rollup config with features: {{features}}"
+        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+    fi
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+
+    # forge install
+    forge install
+    
+    # Run the forge script to add config
+    env L2OO_ADDRESS="$L2OO_ADDRESS" \
+        ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
+        ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
+        ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
+        forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        --sig "addConfig(string)" "{{config_name}}" \
+        --rpc-url $L1_RPC \
+        --private-key $PRIVATE_KEY \
+        --broadcast
+
+# Remove an OpSuccinctConfig from the L2 Output Oracle  
+remove-config config_name env_file=".env":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory
+    cd contracts
+
+    # forge install
+    forge install
+    
+    # Run the forge script to remove config
+    env L2OO_ADDRESS="$L2OO_ADDRESS" \
+        ${EXECUTE_UPGRADE_CALL:+EXECUTE_UPGRADE_CALL="$EXECUTE_UPGRADE_CALL"} \
+        ${ADMIN_PK:+ADMIN_PK="$ADMIN_PK"} \
+        ${DEPLOY_PK:+DEPLOY_PK="$DEPLOY_PK"} \
+        forge script script/validity/OPSuccinctParameterUpdater.s.sol:OPSuccinctParameterUpdater \
+        --sig "removeConfig(string)" "{{config_name}}" \
+        --rpc-url $L1_RPC \
+        --private-key $PRIVATE_KEY \
+        --broadcast

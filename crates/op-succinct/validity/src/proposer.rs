@@ -705,10 +705,11 @@ where
                 .call()
                 .await?;
 
-            let extra_data = <(U256, U256, Address, Bytes)>::abi_encode_packed(&(
+            let extra_data = <(U256, U256, Address, B256, Bytes)>::abi_encode_packed(&(
                 U256::from(completed_agg_proof.end_block as u64),
                 U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap() as u64),
                 self.requester_config.prover_address,
+                self.requester_config.op_succinct_config_name_hash,
                 completed_agg_proof.proof.as_ref().unwrap().clone().into(),
             ));
 
@@ -736,6 +737,7 @@ where
                 .contract_config
                 .l2oo_contract
                 .proposeL2Output(
+                    self.requester_config.op_succinct_config_name_hash,
                     output.output_root,
                     U256::from(completed_agg_proof.end_block),
                     U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
@@ -763,13 +765,15 @@ where
 
     /// Validate the requester config matches the contract.
     async fn validate_contract_config(&self) -> Result<()> {
-        // Validate the requester config matches the contract.
-        let contract_rollup_config_hash =
-            self.contract_config.l2oo_contract.rollupConfigHash().call().await?;
-        let contract_agg_vkey_hash =
-            self.contract_config.l2oo_contract.aggregationVkey().call().await?;
-        let contract_range_vkey_commitment =
-            self.contract_config.l2oo_contract.rangeVkeyCommitment().call().await?;
+        let config_name = self.requester_config.op_succinct_config_name_hash;
+
+        let contract_config =
+            self.contract_config.l2oo_contract.opSuccinctConfigs(config_name).call().await?;
+
+        // Extract the OpSuccinctConfig fields with meaningful names.
+        let contract_agg_vkey_hash = contract_config.aggregation_vkey();
+        let contract_range_vkey_commitment = contract_config.range_vkey_commitment();
+        let contract_rollup_config_hash = contract_config.rollup_config_hash();
 
         let rollup_config_hash_match =
             contract_rollup_config_hash == self.program_config.commitments.rollup_config_hash;
