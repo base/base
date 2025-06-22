@@ -500,7 +500,7 @@ impl OpExecutionPayload {
 
     /// Tries to create a new unsealed block from the given payload and payload sidecar.
     ///
-    /// Additional to checks preformed in [`OpExecutionPayload::try_into_block`], which is called
+    /// Additional to checks performed in [`OpExecutionPayload::try_into_block`], which is called
     /// under the hood, also checks that sidecar doesn't contain:
     /// - blob versioned hashes
     /// - execution layer requests
