@@ -97,10 +97,10 @@ contract Utils is Test, JSONDecoder {
     {
         return OPSuccinctL2OutputOracle.InitParams({
             verifier: verifier,
-            aggregationVkey: bytes32(0),
-            rangeVkeyCommitment: bytes32(0),
-            startingOutputRoot: bytes32(0),
-            rollupConfigHash: bytes32(0),
+            aggregationVkey: keccak256("aggregation_vkey"),
+            rangeVkeyCommitment: keccak256("range_vkey"),
+            startingOutputRoot: keccak256("starting_output"),
+            rollupConfigHash: keccak256("rollup_config"),
             proposer: proposer,
             challenger: challenger,
             owner: owner,

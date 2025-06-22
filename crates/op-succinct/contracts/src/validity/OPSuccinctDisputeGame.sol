@@ -45,8 +45,9 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         status = GameStatus.IN_PROGRESS;
         wasRespectedGameTypeWhenCreated = true;
 
-        OPSuccinctL2OutputOracle(L2_OUTPUT_ORACLE).proposeL2Output(
-            rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
+        OPSuccinctL2OutputOracle oracle = OPSuccinctL2OutputOracle(L2_OUTPUT_ORACLE);
+        oracle.proposeL2Output(
+            configName(), rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
         );
 
         this.resolve();
@@ -96,17 +97,23 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         proverAddress_ = _getArgAddress(0x94);
     }
 
-    /// @notice The prover address of the disputed output root in the `L2OutputOracle`.
+    /// @notice Getter for the config name.
+    /// @return configName_ The config name to use for the L2OutputOracle.
+    function configName() public pure returns (bytes32 configName_) {
+        configName_ = _getArgBytes32(0xA8);
+    }
+
+    /// @notice The SP1 proof of the new output root. To be verified in the `L2OutputOracle`.
     function proof() public pure returns (bytes memory proof_) {
         uint256 len;
         assembly {
-            // 0xA8 is the starting point of the proof in the calldata.
+            // 0xC8 is the starting point of the proof in the calldata.
             // calldataload(sub(calldatasize(), 2)) loads the last 2 bytes of the calldata, which gives the length of the immutable args.
             // shr(240, calldataload(sub(calldatasize(), 2))) masks the last 30 bytes loaded in the previous step, so only the length of the immutable args is left.
-            // sub(sub(...)) subtracts the length of the immutable args (2 bytes) and the starting point of the proof (0xA8).
-            len := sub(sub(shr(240, calldataload(sub(calldatasize(), 2))), 2), 0xA8)
+            // sub(sub(...)) subtracts the length of the immutable args (2 bytes) and the starting point of the proof (0xC8).
+            len := sub(sub(shr(240, calldataload(sub(calldatasize(), 2))), 2), 0xC8)
         }
-        proof_ = _getArgBytes(0xA8, len);
+        proof_ = _getArgBytes(0xC8, len);
     }
 
     /// @notice Getter for the extra data.

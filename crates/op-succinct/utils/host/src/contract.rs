@@ -1,12 +1,19 @@
+use crate::OPSuccinctL2OutputOracle::opSuccinctConfigsReturn;
+use alloy_primitives::B256;
 use alloy_sol_types::sol;
 
 // Sourced from op-succinct/contracts/src/validity/OPSuccinctL2OutputOracle.sol
 sol! {
     #[sol(rpc)]
     contract OPSuccinctL2OutputOracle {
-        bytes32 public aggregationVkey;
-        bytes32 public rangeVkeyCommitment;
-        bytes32 public rollupConfigHash;
+        struct OpSuccinctConfig {
+            bytes32 aggregationVkey;
+            bytes32 rangeVkeyCommitment;
+            bytes32 rollupConfigHash;
+        }
+
+        mapping(bytes32 => OpSuccinctConfig) public opSuccinctConfigs;
+
         uint256 public submissionInterval;
 
         function latestBlockNumber() public view returns (uint256);
@@ -19,10 +26,24 @@ sol! {
         function checkpointBlockHash(uint256 _blockNumber) external;
 
         // Proposing outputs when the output oracle is set to ZK mode.
-        function proposeL2Output(bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes memory _proof, address _proverAddress)
+        function proposeL2Output(bytes32 _configName, bytes32 _outputRoot, uint256 _l2BlockNumber, uint256 _l1BlockNumber, bytes memory _proof, address _proverAddress)
         external
         payable
         whenNotOptimistic;
+    }
+}
+
+impl opSuccinctConfigsReturn {
+    pub fn aggregation_vkey(&self) -> B256 {
+        self._0
+    }
+
+    pub fn range_vkey_commitment(&self) -> B256 {
+        self._1
+    }
+
+    pub fn rollup_config_hash(&self) -> B256 {
+        self._2
     }
 }
 
