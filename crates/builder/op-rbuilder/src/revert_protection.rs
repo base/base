@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use crate::{
     metrics::OpRBuilderMetrics,
@@ -17,6 +17,7 @@ use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTra
 use reth_provider::StateProviderFactory;
 use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
+use tracing::error;
 
 // We have to split the RPC modules in two sets because we have methods that both
 // replace an existing method and add a new one.
@@ -88,6 +89,34 @@ where
     Provider: StateProviderFactory + Send + Sync + Clone + 'static,
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleResult> {
+        let request_start_time = Instant::now();
+        self.metrics.bundle_requests.increment(1);
+
+        let bundle_result = self
+            .send_bundle_inner(bundle)
+            .await
+            .inspect_err(|err| error!("eth_sendBundle request failed: {err:?}"));
+
+        if bundle_result.is_ok() {
+            self.metrics.valid_bundles.increment(1);
+        } else {
+            self.metrics.failed_bundles.increment(1);
+        }
+
+        self.metrics
+            .bundle_receive_duration
+            .record(request_start_time.elapsed());
+
+        bundle_result
+    }
+}
+
+impl<Pool, Provider> RevertProtectionBundleAPI<Pool, Provider>
+where
+    Pool: TransactionPool<Transaction = FBPooledTransaction> + Clone + 'static,
+    Provider: StateProviderFactory + Send + Sync + Clone + 'static,
+{
+    async fn send_bundle_inner(&self, bundle: Bundle) -> RpcResult<BundleResult> {
         let last_block_number = self
             .provider
             .best_block_number()
@@ -115,19 +144,16 @@ where
             .map_err(EthApiError::from)?;
 
         let recovered = recover_raw_transaction(&bundle_transaction)?;
-        let mut pool_transaction: FBPooledTransaction =
-            OpPooledTransaction::from_pooled(recovered).into();
-
-        pool_transaction.set_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default());
-        pool_transaction.set_conditional(conditional);
+        let pool_transaction =
+            FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered))
+                .with_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default())
+                .with_conditional(conditional);
 
         let hash = self
             .pool
             .add_transaction(TransactionOrigin::Local, pool_transaction)
             .await
             .map_err(EthApiError::from)?;
-
-        self.metrics.bundles_received.increment(1);
 
         let result = BundleResult { bundle_hash: hash };
         Ok(result)
