@@ -178,6 +178,19 @@ impl TryFrom<OpTxEnvelope> for TxEnvelope {
     }
 }
 
+#[cfg(feature = "alloy-compat")]
+impl From<OpTxEnvelope> for alloy_rpc_types_eth::TransactionRequest {
+    fn from(value: OpTxEnvelope) -> Self {
+        match value {
+            OpTxEnvelope::Eip2930(tx) => tx.into_parts().0.into(),
+            OpTxEnvelope::Eip1559(tx) => tx.into_parts().0.into(),
+            OpTxEnvelope::Eip7702(tx) => tx.into_parts().0.into(),
+            OpTxEnvelope::Deposit(tx) => tx.into_inner().into(),
+            OpTxEnvelope::Legacy(tx) => tx.into_parts().0.into(),
+        }
+    }
+}
+
 impl OpTxEnvelope {
     /// Creates a new enveloped transaction from the given transaction, signature and hash.
     ///

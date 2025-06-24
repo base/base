@@ -330,6 +330,31 @@ impl Sealable for TxDeposit {
     }
 }
 
+#[cfg(feature = "alloy-compat")]
+impl From<TxDeposit> for alloy_rpc_types_eth::TransactionRequest {
+    fn from(tx: TxDeposit) -> Self {
+        let TxDeposit {
+            source_hash: _,
+            from,
+            to,
+            mint: _,
+            value,
+            gas_limit,
+            is_system_transaction: _,
+            input,
+        } = tx;
+
+        Self {
+            from: Some(from),
+            to: Some(to),
+            value: Some(value),
+            gas: Some(gas_limit),
+            input: input.into(),
+            ..Default::default()
+        }
+    }
+}
+
 /// A trait representing a deposit transaction with specific attributes.
 pub trait DepositTransaction: Transaction {
     /// Returns the hash that uniquely identifies the source of the deposit.

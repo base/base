@@ -79,6 +79,19 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
     }
 }
 
+#[cfg(feature = "alloy-compat")]
+impl From<OpTypedTransaction> for alloy_rpc_types_eth::TransactionRequest {
+    fn from(tx: OpTypedTransaction) -> Self {
+        match tx {
+            OpTypedTransaction::Legacy(tx) => tx.into(),
+            OpTypedTransaction::Eip2930(tx) => tx.into(),
+            OpTypedTransaction::Eip1559(tx) => tx.into(),
+            OpTypedTransaction::Eip7702(tx) => tx.into(),
+            OpTypedTransaction::Deposit(tx) => tx.into(),
+        }
+    }
+}
+
 impl OpTypedTransaction {
     /// Return the [`OpTxType`] of the inner txn.
     pub const fn tx_type(&self) -> OpTxType {

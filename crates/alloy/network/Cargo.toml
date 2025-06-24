@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 # Workspace
-op-alloy-consensus.workspace = true
+op-alloy-consensus = { workspace = true, features = ["alloy-compat"] }
 op-alloy-rpc-types.workspace = true
 
 # Alloy
@@ -28,11 +28,5 @@ alloy-rpc-types-eth.workspace = true
 alloy-signer.workspace = true
 
 [features]
-std = [
-	"op-alloy-consensus/std",
-	"op-alloy-rpc-types/std"
-]
-serde = [
-	"op-alloy-consensus/serde",
-	"op-alloy-rpc-types/serde"
-]
+std = ["op-alloy-consensus/std", "op-alloy-rpc-types/std"]
+serde = ["op-alloy-consensus/serde", "op-alloy-rpc-types/serde"]
