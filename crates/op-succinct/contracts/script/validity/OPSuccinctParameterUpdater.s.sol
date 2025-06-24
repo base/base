@@ -18,7 +18,7 @@ contract OPSuccinctParameterUpdater is Script, Utils {
     function addConfig(string memory configName) public {
         vm.startBroadcast();
 
-        Config memory cfg = readJson("opsuccinctl2ooconfig.json");
+        L2OOConfig memory cfg = readL2OOJson("opsuccinctl2ooconfig.json");
 
         address l2OutputOracleProxy = vm.envAddress("L2OO_ADDRESS");
         bool executeUpgradeCall = vm.envOr("EXECUTE_UPGRADE_CALL", true);

@@ -18,7 +18,7 @@ contract OPSuccinctDeployer is Script, Utils {
             vm.startBroadcast();
         }
 
-        Config memory config = readJson("opsuccinctl2ooconfig.json");
+        L2OOConfig memory config = readL2OOJson("opsuccinctl2ooconfig.json");
 
         // Set the implementation address if it is not already set.
         if (config.opSuccinctL2OutputOracleImpl == address(0)) {

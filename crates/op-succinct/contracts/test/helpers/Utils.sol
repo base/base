@@ -10,7 +10,7 @@ import {OPSuccinctL2OutputOracle} from "../../src/validity/OPSuccinctL2OutputOra
 import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 
 contract Utils is Test, JSONDecoder {
-    function deployWithConfig(Config memory cfg) public returns (address) {
+    function deployWithConfig(L2OOConfig memory cfg) public returns (address) {
         if (cfg.opSuccinctL2OutputOracleImpl == address(0)) {
             cfg.opSuccinctL2OutputOracleImpl = address(new OPSuccinctL2OutputOracle());
         }
@@ -22,7 +22,7 @@ contract Utils is Test, JSONDecoder {
     }
 
     // If `executeUpgradeCall` is false, the upgrade call will not be executed.
-    function upgradeAndInitialize(Config memory cfg, address l2OutputOracleProxy, bool executeUpgradeCall) public {
+    function upgradeAndInitialize(L2OOConfig memory cfg, address l2OutputOracleProxy, bool executeUpgradeCall) public {
         // Require that the verifier gateway is deployed
         require(
             address(cfg.verifier).code.length > 0, "OPSuccinctL2OutputOracleUpgrader: verifier gateway not deployed"
@@ -78,12 +78,20 @@ contract Utils is Test, JSONDecoder {
     }
 
     // Read the config from the json file.
-    function readJson(string memory filepath) public view returns (Config memory) {
+    function readL2OOJson(string memory filepath) public view returns (L2OOConfig memory) {
         string memory root = vm.projectRoot();
         string memory path = string.concat(root, "/", filepath);
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
-        return abi.decode(data, (Config));
+        return abi.decode(data, (L2OOConfig));
+    }
+
+    function readFDGJson(string memory filepath) public view returns (FDGConfig memory) {
+        string memory root = vm.projectRoot();
+        string memory path = string.concat(root, "/", filepath);
+        string memory json = vm.readFile(path);
+        bytes memory data = vm.parseJson(json);
+        return abi.decode(data, (FDGConfig));
     }
 
     // Helper functions for test setup

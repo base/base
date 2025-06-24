@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 contract JSONDecoder {
-    struct Config {
+    struct L2OOConfig {
         bytes32 aggregationVkey;
         address challenger;
         uint256 fallbackProposalTimeout;
@@ -19,6 +19,34 @@ contract JSONDecoder {
         uint256 startingTimestamp;
         uint256 submissionInterval;
         address verifier;
+    }
+
+    struct SP1Config {
+        address verifierAddress;
+        bytes32 rollupConfigHash;
+        bytes32 aggregationVkey;
+        bytes32 rangeVkeyCommitment;
+    }
+
+    struct FDGConfig {
+        bytes32 aggregationVkey;
+        address[] challengerAddresses;
+        uint256 challengerBondWei;
+        uint256 disputeGameFinalityDelaySeconds;
+        uint256 fallbackTimeoutFpSecs;
+        uint32 gameType;
+        uint256 initialBondWei;
+        uint256 maxChallengeDuration;
+        uint256 maxProveDuration;
+        address optimismPortal2Address;
+        bool permissionlessMode;
+        address[] proposerAddresses;
+        bytes32 rangeVkeyCommitment;
+        bytes32 rollupConfigHash;
+        uint256 startingL2BlockNumber;
+        bytes32 startingRoot;
+        bool useSp1MockVerifier;
+        address verifierAddress;
     }
 
     struct OutputAtBlock {

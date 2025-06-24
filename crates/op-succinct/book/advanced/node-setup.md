@@ -2,12 +2,12 @@
 
 ## Overview
 
-To run OP Succinct or OP Succinct Lite, you will need the following RPCs:
+To run OP Succinct or OP Succinct Lite, you will need the following RPCs in your `.env`:
 
-- L1 Execution Archive Node
-- L1 Consensus (Beacon) Node
-- L2 Execution Node (`op-geth`)
-- L2 Rollup Node (`op-node`)
+- `L1_RPC`: L1 Execution Archive Node
+- `L1_BEACON_RPC`: L1 Consensus (Beacon) Node
+- `L2_RPC`: L2 Execution Node (`op-geth`)
+- `L2_NODE_RPC`: L2 Rollup Node (`op-node`)
 
 ## Required Accessible Endpoints
 

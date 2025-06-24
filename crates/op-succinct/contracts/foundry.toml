@@ -19,7 +19,7 @@ remappings = [
     "src/L2/=lib/optimism/packages/contracts-bedrock/src/L2/",
     "src/dispute/=lib/optimism/packages/contracts-bedrock/src/dispute/",
     "interfaces/=lib/optimism/packages/contracts-bedrock/interfaces/",
-    "@lib-keccak/=lib/lib-keccak/contracts/lib"
+    "@lib-keccak/=lib/lib-keccak/contracts/lib",
 ]
 
 # Enable read-write access to all files in current directory

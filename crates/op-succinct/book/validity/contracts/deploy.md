@@ -15,7 +15,6 @@ Check out the latest release of `op-succinct` from [here](https://github.com/suc
 
 First, ensure that you have the correct environment variables set in your `.env` file. See the [Environment Variables](./environment.md) section for more information.
 
-
 ## 3. Deploy `OPSuccinctL2OutputOracle`
 
 To deploy the `OPSuccinctL2OutputOracle` contract, run the following command in `/contracts`.
@@ -32,7 +31,7 @@ just deploy-oracle .env.example
 
 This will deploy the `OPSuccinctL2OutputOracle` contract using the parameters in the `.env.example` file.
 
-You will see the following output. The contract address that should be used is the proxy address. 
+You will see the following output. The contract address that should be used is the proxy address.
 
 ```shell
 % just deploy-oracle .env.example
