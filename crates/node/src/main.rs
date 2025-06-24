@@ -22,6 +22,22 @@ struct FlashblocksRollupArgs {
 
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
+
+    #[arg(
+        long = "receipt-buffer-size",
+        value_name = "RECEIPT_BUFFER_SIZE",
+        default_value = "2000",
+        env = "RECEIPT_BUFFER_SIZE"
+    )]
+    pub receipt_buffer_size: usize,
+
+    #[arg(
+        long = "total-timeout-secs",
+        value_name = "TOTAL_TIMEOUT_SECS",
+        default_value = "4",
+        env = "TOTAL_TIMEOUT_SECS"
+    )]
+    pub total_timeout_secs: u64,
 }
 
 impl FlashblocksRollupArgs {
@@ -36,9 +52,10 @@ fn main() {
             info!("Starting custom Base node");
 
             let cache = Arc::new(Cache::default());
+            let cache_clone = Arc::new(Cache::default());
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
-            let mut flashblocks_client = FlashblocksClient::new(Arc::clone(&cache));
-            let cache_clone = Arc::clone(&cache);
+            let receipt_buffer_size = flashblocks_rollup_args.receipt_buffer_size;
+            let total_timeout_secs = flashblocks_rollup_args.total_timeout_secs;
             let chain_spec = builder.config().chain.clone();
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
 
@@ -49,12 +66,24 @@ fn main() {
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
+                        info!("starting flashblocks");
+                        let mut flashblocks_client =
+                            FlashblocksClient::new(cache.clone(), receipt_buffer_size);
+
+                        flashblocks_client
+                            .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
+                            .unwrap();
+
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
-                            cache_clone,
+                            cache.clone(),
                             chain_spec.clone(),
+                            flashblocks_client,
+                            total_timeout_secs,
                         );
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
+                    } else {
+                        info!("flashblocks is disabled");
                     }
                     Ok(())
                 })
@@ -72,21 +101,13 @@ fn main() {
                     );
 
                     if flashblocks_enabled {
-                        info!("starting flashblocks");
-                        builder.task_executor().spawn(async move {
-                            flashblocks_client
-                                .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
-                                .unwrap();
-                        });
                         builder.task_executor().spawn(async move {
                             let mut interval = tokio::time::interval(Duration::from_secs(2));
                             loop {
                                 interval.tick().await;
-                                cache.cleanup_expired();
+                                cache_clone.cleanup_expired();
                             }
                         });
-                    } else {
-                        info!("flashblocks is disabled");
                     }
                     builder.launch_with(launcher)
                 })

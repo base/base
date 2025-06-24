@@ -1,19 +1,33 @@
-use crate::cache::{Cache, CacheKey};
+use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
+
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
-use std::{io::Read, str::FromStr, sync::Arc};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::error;
+use tracing::{debug, error};
 use url::Url;
 
+use crate::cache::{Cache, CacheKey};
 use crate::metrics::Metrics;
-use alloy_consensus::transaction::SignerRecoverable;
-use std::time::Instant;
+
+/// API trait for Flashblocks client functionality
+pub trait FlashblocksApi {
+    /// Subscribe to real-time receipt broadcasts
+    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash>;
+}
+
+/// A receipt with its transaction hash for broadcasting
+#[derive(Debug, Clone)]
+pub struct ReceiptWithHash {
+    pub tx_hash: alloy_primitives::TxHash,
+    pub receipt: OpReceipt,
+    pub block_number: u64,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FlashbotsMessage {
@@ -41,18 +55,25 @@ pub struct FlashblocksClient {
     mailbox: mpsc::Receiver<ActorMessage>,
     cache: Arc<Cache>,
     metrics: Metrics,
+    receipt_sender: broadcast::Sender<ReceiptWithHash>,
 }
 
 impl FlashblocksClient {
-    pub fn new(cache: Arc<Cache>) -> Self {
+    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
+        let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
         Self {
             sender,
             mailbox,
             cache,
             metrics: Metrics::default(),
+            receipt_sender,
         }
+    }
+
+    pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
+        self.receipt_sender.subscribe()
     }
 
     pub fn init(&mut self, ws_url: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -60,6 +81,7 @@ impl FlashblocksClient {
         println!("trying to connect to {:?}", url);
         let sender = self.sender.clone();
         let cache_clone = self.cache.clone();
+        let receipt_sender_clone = self.receipt_sender.clone();
 
         // Take ownership of mailbox for the actor loop
         let mut mailbox = std::mem::replace(&mut self.mailbox, mpsc::channel(1).1);
@@ -134,13 +156,19 @@ impl FlashblocksClient {
             while let Some(message) = mailbox.recv().await {
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        process_payload(payload, cache_clone.clone());
+                        process_payload(payload, &cache_clone, &receipt_sender_clone);
                     }
                 }
             }
         });
 
         Ok(())
+    }
+}
+
+impl FlashblocksApi for FlashblocksClient {
+    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
+        self.receipt_sender.subscribe()
     }
 }
 
@@ -159,7 +187,11 @@ fn try_parse_message(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>>
     Ok(text)
 }
 
-fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
+fn process_payload(
+    payload: FlashblocksPayloadV1,
+    cache: &Arc<Cache>,
+    receipt_sender: &broadcast::Sender<ReceiptWithHash>,
+) {
     let metrics = Metrics::default();
     let msg_processing_start_time = Instant::now();
 
@@ -188,7 +220,7 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     }
 
     // Track flashblock indices and record metrics
-    update_flashblocks_index(payload.index, &cache, &metrics);
+    update_flashblocks_index(payload.index, cache, &metrics);
 
     // Prevent updating to older blocks
     let current_block = cache.get::<OpBlock>(&CacheKey::PendingBlock);
@@ -312,6 +344,32 @@ fn process_payload(payload: FlashblocksPayloadV1, cache: Arc<Cache>) {
     metrics
         .block_processing_duration
         .record(msg_processing_start_time.elapsed());
+
+    for (tx_hash_str, receipt) in &metadata.receipts {
+        if let Ok(tx_hash) = alloy_primitives::TxHash::from_str(tx_hash_str) {
+            let receipt_with_hash = ReceiptWithHash {
+                tx_hash,
+                receipt: receipt.clone(),
+                block_number,
+            };
+
+            match receipt_sender.send(receipt_with_hash) {
+                Ok(subscriber_count) => {
+                    debug!(
+                        "Broadcasted receipt for tx {} to {} subscribers",
+                        tx_hash, subscriber_count
+                    );
+                }
+                Err(_) => {
+                    // No active subscribers, which is normal
+                    debug!(
+                        "No active subscribers for receipt broadcast of tx {}",
+                        tx_hash
+                    );
+                }
+            }
+        }
+    }
 
     // check duration on the most heavy payload
     if payload.index == 0 {
@@ -668,15 +726,42 @@ mod tests {
     #[test]
     fn test_process_payload() {
         let cache = Arc::new(Cache::default());
+        let (receipt_sender, mut receipt_receiver) = broadcast::channel(100);
 
         let payload = create_first_payload();
 
         // Process first payload
-        process_payload(payload, cache.clone());
+        process_payload(payload, &cache, &receipt_sender);
 
         let payload2 = create_second_payload();
         // Process second payload
-        process_payload(payload2, cache.clone());
+        process_payload(payload2, &cache, &receipt_sender);
+
+        // Check that receipts were broadcast for both transactions
+        let mut receipts = vec![];
+        receipts.push(receipt_receiver.try_recv().unwrap());
+        receipts.push(receipt_receiver.try_recv().unwrap());
+
+        // Sort receipts by tx_hash to ensure deterministic testing
+        receipts.sort_by_key(|r| r.tx_hash);
+
+        let expected_tx1_hash =
+            B256::from_str("0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c")
+                .unwrap();
+        let expected_tx2_hash =
+            B256::from_str("0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8")
+                .unwrap();
+
+        assert_eq!(receipts[0].tx_hash, expected_tx1_hash);
+        assert_eq!(receipts[0].block_number, 1);
+        assert_eq!(receipts[0].receipt.cumulative_gas_used(), 21000);
+
+        assert_eq!(receipts[1].tx_hash, expected_tx2_hash);
+        assert_eq!(receipts[1].block_number, 1);
+        assert_eq!(receipts[1].receipt.cumulative_gas_used(), 42000);
+
+        // Verify no more receipts are available
+        assert!(receipt_receiver.try_recv().is_err());
 
         // Verify final state
         let final_block = cache.get::<OpBlock>(&CacheKey::PendingBlock).unwrap();
@@ -784,6 +869,7 @@ mod tests {
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
         let cache = Arc::new(Cache::default());
+        let (receipt_sender, _) = broadcast::channel(100);
 
         let metadata = Metadata {
             block_number: 1,
@@ -800,7 +886,7 @@ mod tests {
         };
 
         // Process payload
-        process_payload(payload, cache.clone());
+        process_payload(payload, &cache, &receipt_sender);
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>(&CacheKey::PendingBlock).is_none());
@@ -810,11 +896,12 @@ mod tests {
     fn test_flash_block_tracking() {
         // Create cache
         let cache = Arc::new(Cache::default());
+        let (receipt_sender, _) = broadcast::channel(100);
 
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
-        process_payload(payload1_0, cache.clone());
+        process_payload(payload1_0, &cache, &receipt_sender);
 
         // Check that highest_payload_index was set to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -822,7 +909,7 @@ mod tests {
 
         // Block 1, payload 1
         let payload1_1 = create_payload_with_index(1, 1);
-        process_payload(payload1_1, cache.clone());
+        process_payload(payload1_1, &cache, &receipt_sender);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -830,7 +917,7 @@ mod tests {
 
         // Block 1, payload 2
         let payload1_2 = create_payload_with_index(2, 1);
-        process_payload(payload1_2, cache.clone());
+        process_payload(payload1_2, &cache, &receipt_sender);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -838,7 +925,7 @@ mod tests {
 
         // Now start a new block (block 2, payload 0)
         let payload2_0 = create_payload_with_index(0, 2);
-        process_payload(payload2_0, cache.clone());
+        process_payload(payload2_0, &cache, &receipt_sender);
 
         // Check that highest_payload_index was reset to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -846,7 +933,7 @@ mod tests {
 
         // Block 2, payload 1 (out of order with payload 3)
         let payload2_1 = create_payload_with_index(1, 2);
-        process_payload(payload2_1, cache.clone());
+        process_payload(payload2_1, &cache, &receipt_sender);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -854,7 +941,7 @@ mod tests {
 
         // Block 2, payload 3 (skipping 2)
         let payload2_3 = create_payload_with_index(3, 2);
-        process_payload(payload2_3, cache.clone());
+        process_payload(payload2_3, &cache, &receipt_sender);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -862,7 +949,7 @@ mod tests {
 
         // Block 2, payload 2 (out of order, should not change highest)
         let payload2_2 = create_payload_with_index(2, 2);
-        process_payload(payload2_2, cache.clone());
+        process_payload(payload2_2, &cache, &receipt_sender);
 
         // Check that highest_payload_index is still 3
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -870,7 +957,7 @@ mod tests {
 
         // Start block 3, payload 0
         let payload3_0 = create_payload_with_index(0, 3);
-        process_payload(payload3_0, cache.clone());
+        process_payload(payload3_0, &cache, &receipt_sender);
 
         // Check that highest_payload_index was reset to 0
         // Also verify metric would have been recorded (though we can't directly check the metric's value)
