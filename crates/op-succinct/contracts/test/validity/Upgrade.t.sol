@@ -15,7 +15,7 @@ contract UpgradeTest is Test, Utils {
         vm.warp(12345678);
         uint256 exampleTimestamp = block.timestamp - 1;
 
-        Config memory config = Config({
+        L2OOConfig memory config = L2OOConfig({
             challenger: address(0),
             finalizationPeriod: 0,
             l2BlockTime: 10,

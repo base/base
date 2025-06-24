@@ -5,6 +5,7 @@ This guide explains how to deploy the OP Succinct Fault Dispute Game contracts u
 ## Overview
 
 The deployment script performs the following actions:
+
 1. Deploys the `DisputeGameFactory` implementation and proxy.
 2. Deploys the `AnchorStateRegistry` implementation and proxy.
 3. Deploys a mock `OptimismPortal2` for testing.
@@ -19,114 +20,56 @@ The deployment script performs the following actions:
 - Access to an Ethereum node (local or network).
 - Environment variables properly configured.
 
-## Configuration
+| Parameter | Description |
+|-----------|-------------|
+| `L1_RPC` | L1 Archive Node. |
+| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
+| `L2_RPC` | L2 Execution Node (`op-geth`). |
+| `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
+| `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
+| `ETHERSCAN_API_KEY` | Etherscan API key used for verifying the contract (optional). |
 
-Create a `.env` file in the contracts directory with the following variables:
+## Contract Configuration
+
+Create a `.env` file in the project root directory with the following variables:
 
 ### Required Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `GAME_TYPE` | Unique identifier for the game type (uint32). | `42` |
+| `GAME_TYPE` | Unique identifier for the game type (uint32). In almost all cases, to use the OP Succinct Fault Dispute Game, this should be set to 42. | `42` |
 | `DISPUTE_GAME_FINALITY_DELAY_SECONDS` | Delay before finalizing dispute games. | `604800` for 7 days |
 | `MAX_CHALLENGE_DURATION` | Maximum duration for challenges in seconds. | `604800` for 7 days |
 | `MAX_PROVE_DURATION` | Maximum duration for proving in seconds. | `86400` for 1 day |
-| `STARTING_L2_BLOCK_NUMBER` | Starting L2 block number in decimal. | `786000` |
-| `STARTING_ROOT` | Starting anchor root in hex. | `0x...` |
-
-#### Getting the Starting Root
-
-You can get the starting root for the `STARTING_L2_BLOCK_NUMBER` from the L2 node RPC using this command:
-
-```bash
-# Convert block number to hex and remove '0x' prefix
-BLOCK_HEX=$(cast --to-hex <STARTING_L2_BLOCK_NUMBER> | sed 's/0x//')
-
-# Construct the JSON RPC request
-JSON_DATA='{
-    "jsonrpc": "2.0",
-    "method": "optimism_outputAtBlock",
-    "params": ["0x'$BLOCK_HEX'"],
-    "id": 1
-}'
-
-# Make the RPC call and extract the output root
-starting_root=$(curl -s -X POST \
-    -H "Content-Type: application/json" \
-    <L2_NODE_RPC> \
-    --data "$JSON_DATA" \
-    | jq -r '.result.outputRoot')
-
-# Display the result
-printf "\nStarting root: %s\n" "$starting_root"
-```
 
 ### SP1 Verifier Configuration
-For testing, set:
-```bash
-USE_SP1_MOCK_VERIFIER=true
-```
 
-For production, remove the `USE_SP1_MOCK_VERIFIER` environment variable and set all of these:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `VERIFIER_ADDRESS` | Address of the SP1 verifier ([see contract addresses](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses)) | `0x...` |
-| `ROLLUP_CONFIG_HASH` | Hash of the rollup configuration | `0x...` |
-| `AGGREGATION_VKEY` | Verification key for aggregation | `0x...` |
-| `RANGE_VKEY_COMMITMENT` | Commitment to range verification key | `0x...` |
-
-#### Getting the Rollup Config Hash, Aggregation Verification Key, and Range Verification Key Commitment
-
-First, create a `.env` file in the root directory with the following variables:
-```bash
-L1_RPC=<L1_RPC_URL>
-L1_BEACON_RPC=<L1_BEACON_RPC_URL>
-L2_RPC=<L2_RPC_URL>
-L2_NODE_RPC=<L2_NODE_RPC_URL>
-```
-
-You can get the aggregation program verification key, range program verification key commitment, and rollup config hash by running the following command:
-
-```bash
-cargo run --bin config --release -- --env-file <PATH_TO_ENV_FILE>
-```
+For testing, deploy a [Mock Verifier](../validity/contracts/deploy.md#step-2-deploy-an-sp1mockverifier-for-verifying-mock-proofs). If you do this, make sure to set the `OP_SUCCINCT_MOCK` environment variable to `true`, and set the `VERIFIER_ADDRESS` to your newly deployed mock verifier.
 
 ## Deployment
 
-1. Change directory to contracts:
-   ```bash
-   cd contracts
-   ```
+Run the following command. This automatically detects configurations based on the contents of the `elf` directory, environment variables, and the L2.  
 
-2. Install dependencies:
-   ```bash
-   forge install
-   ```
-
-3. Build the contracts:
-   ```bash
-   forge build
-   ```
-
-4. Run the deployment script:
-   ```bash
-   forge script script/fp/DeployOPSuccinctFDG.s.sol --broadcast --rpc-url <RPC_URL> --private-key <PRIVATE_KEY>
-   ```
+```bash
+just deploy-fdg-contracts
+```
 
 ## Optional Environment Variables
 
-The deployment script deploys the contract with the following parameters:
+The deployment script deploys the contracts with the following parameters:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `INITIAL_BOND_WEI` | Initial bond for the game. | 1_000_000_000_000_000 (for 0.001 ETH) |
 | `CHALLENGER_BOND_WEI` | Challenger bond for the game. | 1_000_000_000_000_000 (for 0.001 ETH) |
-| `OPTIMISM_PORTAL2_ADDRESS` | Address of an existing OptimismPortal2 contract. If not provided, a mock will be deployed. | `0x...` |
-| `PERMISSIONLESS_MODE` | If set to true, anyone can propose or challenge games. | `true` or `false` |
-| `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. Ignored if PERMISSIONLESS_MODE is true. | `0x123...,0x456...` |
-| `CHALLENGER_ADDRESSES` | Comma-separated list of addresses allowed to challenge games. Ignored if PERMISSIONLESS_MODE is true. | `0x123...,0x456...` |
+| `OPTIMISM_PORTAL2_ADDRESS` | Address of an existing OptimismPortal2 contract. Default: if unset, a fresh `MockOptimismPortal2` is deployed. | `0x...` |
+| `PERMISSIONLESS_MODE` | If set to true, anyone can propose or challenge games. Default: `false` | `true` or `false` |
+| `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
+| `CHALLENGER_ADDRESSES` | Comma-separated list of addresses allowed to challenge games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
 | `FALLBACK_TIMEOUT_FP_SECS` | Timeout in seconds after which permissionless proposing is allowed if no proposal has been made. | `1209600` (for 2 weeks) |
+| `STARTING_L2_BLOCK_NUMBER` | Starting L2 block number in decimal. Default: \<Latest L2 Finalized block\> - \<Number of blocks since the `DISPUTE_GAME_FINALITY_SECONDS`>  | `786000` |
+| `VERIFIER_ADDRESS` | Default: Succinct's official Groth16 VerifierGateway. Address of the `ISP1Verifier` contract used to verify proofs. For mock proofs, this is the address of the `SP1MockVerifier` contract. | `0x...` |
+| `OP_SUCCINCT_MOCK` | Default: `false`. If true, this verifies mock SP1 proofs instead of real proofs, in order for faster and cheaper testing. | `true` or `false` |
 
 Use `cast --to-wei <value> eth` to convert the value to wei to avoid mistakes.
 
@@ -161,10 +104,11 @@ Save these addresses for future reference and configuration of other components.
 
 - The deployer address will be set as the factory owner.
 - Initial parameters are set for testing - adjust for production.
-- The mock SP1 verifier (`USE_SP1_MOCK_VERIFIER=true`) should ONLY be used for testing.
+- The mock SP1 verifier (`OP_SUCCINCT_MOCK=true`) should ONLY be used for testing.
 - For production deployments:
   - Provide a valid `VERIFIER_ADDRESS`.
-  - Configure proper `ROLLUP_CONFIG_HASH`, `AGGREGATION_VKEY`, and `RANGE_VKEY_COMMITMENT`.
+  - Configure proper `ROLLUP_CONFIG_HASH`, `AGGREGATION_VKEY`, and `RANGE_VKEY_COMMITMENT`. If you used the `just deploy-fdg-contracts` script, these parameters should have been automatically set correctly using `fetch_fault_dispute_game_config.rs`.
+  - Set the `OPTIMISM_PORTAL2_ADDRESS` environment variable, instead of using the default mock portal.
   - Review and adjust finality delay and duration parameters.
   - Consider access control settings.
 

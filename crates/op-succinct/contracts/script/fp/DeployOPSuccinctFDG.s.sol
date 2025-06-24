@@ -25,12 +25,23 @@ import {OPSuccinctFaultDisputeGame} from "../../src/fp/OPSuccinctFaultDisputeGam
 import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 
 // Utils
+import {Utils} from "../../test/helpers/Utils.sol";
 import {MockOptimismPortal2} from "../../utils/MockOptimismPortal2.sol";
 
-contract DeployOPSuccinctFDG is Script {
+contract DeployOPSuccinctFDG is Script, Utils {
     function run() public {
         vm.startBroadcast();
 
+        // Load configuration
+        FDGConfig memory config = readFDGJson("opsuccinctfdgconfig.json");
+
+        // Deploy contracts
+        deployContracts(config);
+
+        vm.stopBroadcast();
+    }
+
+    function deployContracts(FDGConfig memory config) internal {
         // Deploy factory proxy.
         ERC1967Proxy factoryProxy = new ERC1967Proxy(
             address(new DisputeGameFactory()),
@@ -38,25 +49,63 @@ contract DeployOPSuccinctFDG is Script {
         );
         DisputeGameFactory factory = DisputeGameFactory(address(factoryProxy));
 
-        GameType gameType = GameType.wrap(uint32(vm.envUint("GAME_TYPE")));
+        GameType gameType = GameType.wrap(config.gameType);
 
-        // Use provided OptimismPortal2 address if given, otherwise deploy MockOptimismPortal2.
-        address payable portalAddress;
-        if (vm.envOr("OPTIMISM_PORTAL2_ADDRESS", address(0)) != address(0)) {
-            portalAddress = payable(vm.envAddress("OPTIMISM_PORTAL2_ADDRESS"));
-            console.log("Using existing OptimismPortal2:", portalAddress);
-        } else {
-            MockOptimismPortal2 portal =
-                new MockOptimismPortal2(gameType, vm.envUint("DISPUTE_GAME_FINALITY_DELAY_SECONDS"));
-            portalAddress = payable(address(portal));
-            console.log("Deployed MockOptimismPortal2:", portalAddress);
-        }
+        // Deploy MockOptimismPortal2 or get OptimismPortal2
+        address payable portalAddress = deployOrGetOptimismPortal2(config, gameType);
 
-        OutputRoot memory startingAnchorRoot = OutputRoot({
-            root: Hash.wrap(vm.envBytes32("STARTING_ROOT")),
-            l2BlockNumber: vm.envUint("STARTING_L2_BLOCK_NUMBER")
-        });
+        OutputRoot memory startingAnchorRoot =
+            OutputRoot({root: Hash.wrap(config.startingRoot), l2BlockNumber: config.startingL2BlockNumber});
 
+        // Deploy anchor state registry
+        AnchorStateRegistry registry = deployAnchorStateRegistry(factory, portalAddress, startingAnchorRoot);
+
+        // Deploy and configure access manager
+        AccessManager accessManager = deployAccessManager(config);
+
+        // Deploy SP1 verifier and get configuration
+        SP1Config memory sp1Config = deploySP1Verifier(config);
+
+        // Deploy game implementation
+        OPSuccinctFaultDisputeGame gameImpl =
+            deployGameImplementation(config, factory, sp1Config, registry, accessManager);
+
+        // Set initial bond and implementation in factory.
+        factory.setInitBond(gameType, config.initialBondWei);
+        factory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
+
+        // Log deployed addresses.
+        console.log("Factory Proxy:", address(factoryProxy));
+        console.log("Game Implementation:", address(gameImpl));
+        console.log("SP1 Verifier:", sp1Config.verifierAddress);
+    }
+
+    function deployGameImplementation(
+        FDGConfig memory config,
+        DisputeGameFactory factory,
+        SP1Config memory sp1Config,
+        AnchorStateRegistry registry,
+        AccessManager accessManager
+    ) internal returns (OPSuccinctFaultDisputeGame) {
+        return new OPSuccinctFaultDisputeGame(
+            Duration.wrap(uint64(config.maxChallengeDuration)),
+            Duration.wrap(uint64(config.maxProveDuration)),
+            IDisputeGameFactory(address(factory)),
+            ISP1Verifier(sp1Config.verifierAddress),
+            sp1Config.rollupConfigHash,
+            sp1Config.aggregationVkey,
+            sp1Config.rangeVkeyCommitment,
+            config.challengerBondWei,
+            IAnchorStateRegistry(address(registry)),
+            accessManager
+        );
+    }
+
+    function deployAnchorStateRegistry(
+        DisputeGameFactory factory,
+        address payable portalAddress,
+        OutputRoot memory startingAnchorRoot
+    ) internal returns (AnchorStateRegistry) {
         // Deploy the anchor state registry proxy.
         ERC1967Proxy registryProxy = new ERC1967Proxy(
             address(new AnchorStateRegistry()),
@@ -73,97 +122,76 @@ contract DeployOPSuccinctFDG is Script {
 
         AnchorStateRegistry registry = AnchorStateRegistry(address(registryProxy));
         console.log("Anchor state registry:", address(registry));
+        return registry;
+    }
 
-        // Get fallback timeout from environment variable, default to 2 weeks (1209600 seconds)
-        uint256 fallbackTimeout = vm.envOr("FALLBACK_TIMEOUT_FP_SECS", uint256(1209600));
-        console.log("Permissionless fallback timeout (seconds):", fallbackTimeout);
+    function deployOrGetOptimismPortal2(FDGConfig memory config, GameType gameType)
+        internal
+        returns (address payable)
+    {
+        address payable portalAddress;
+        if (config.optimismPortal2Address != address(0)) {
+            portalAddress = payable(config.optimismPortal2Address);
+            console.log("Using existing OptimismPortal2:", portalAddress);
+        } else {
+            MockOptimismPortal2 portal = new MockOptimismPortal2(gameType, config.disputeGameFinalityDelaySeconds);
+            portalAddress = payable(address(portal));
+            console.log("Deployed MockOptimismPortal2:", portalAddress);
+        }
+        return portalAddress;
+    }
 
+    function deploySP1Verifier(FDGConfig memory config) internal returns (SP1Config memory) {
+        SP1Config memory sp1Config;
+        sp1Config.rollupConfigHash = config.rollupConfigHash;
+        sp1Config.aggregationVkey = config.aggregationVkey;
+        sp1Config.rangeVkeyCommitment = config.rangeVkeyCommitment;
+
+        // Get or deploy SP1 verifier based on configuration.
+        if (config.useSp1MockVerifier) {
+            // Deploy mock verifier for testing.
+            SP1MockVerifier sp1Verifier = new SP1MockVerifier();
+            sp1Config.verifierAddress = address(sp1Verifier);
+            console.log("Using SP1 Mock Verifier:", address(sp1Verifier));
+        } else {
+            // Use provided verifier address for production.
+            sp1Config.verifierAddress = config.verifierAddress;
+            console.log("Using SP1 Verifier Gateway:", sp1Config.verifierAddress);
+        }
+
+        return sp1Config;
+    }
+
+    function deployAccessManager(FDGConfig memory config) internal returns (AccessManager) {
         // Deploy the access manager contract.
-        AccessManager accessManager = new AccessManager(fallbackTimeout);
+        AccessManager accessManager = new AccessManager(config.fallbackTimeoutFpSecs);
         console.log("Access manager:", address(accessManager));
+        console.log("Permissionless fallback timeout (seconds):", config.fallbackTimeoutFpSecs);
 
-        // Configure access control based on `PERMISSIONLESS_MODE` flag.
-        if (vm.envOr("PERMISSIONLESS_MODE", false)) {
+        // Configure access control based on config.
+        if (config.permissionlessMode) {
             // Set to permissionless games (anyone can propose and challenge).
             accessManager.setProposer(address(0), true);
             accessManager.setChallenger(address(0), true);
             console.log("Access Manager configured for permissionless mode");
         } else {
-            // Set proposers from comma-separated list.
-            string memory proposersStr = vm.envOr("PROPOSER_ADDRESSES", string(""));
-            if (bytes(proposersStr).length > 0) {
-                string[] memory proposers = LibString.split(proposersStr, ",");
-                for (uint256 i = 0; i < proposers.length; i++) {
-                    address proposer = vm.parseAddress(proposers[i]);
-                    if (proposer != address(0)) {
-                        accessManager.setProposer(proposer, true);
-                        console.log("Added proposer:", proposer);
-                    }
+            // Set proposers.
+            for (uint256 i = 0; i < config.proposerAddresses.length; i++) {
+                if (config.proposerAddresses[i] != address(0)) {
+                    accessManager.setProposer(config.proposerAddresses[i], true);
+                    console.log("Added proposer:", config.proposerAddresses[i]);
                 }
             }
 
-            // Set challengers from comma-separated list.
-            string memory challengersStr = vm.envOr("CHALLENGER_ADDRESSES", string(""));
-            if (bytes(challengersStr).length > 0) {
-                string[] memory challengers = LibString.split(challengersStr, ",");
-                for (uint256 i = 0; i < challengers.length; i++) {
-                    address challenger = vm.parseAddress(challengers[i]);
-                    if (challenger != address(0)) {
-                        accessManager.setChallenger(challenger, true);
-                        console.log("Added challenger:", challenger);
-                    }
+            // Set challengers.
+            for (uint256 i = 0; i < config.challengerAddresses.length; i++) {
+                if (config.challengerAddresses[i] != address(0)) {
+                    accessManager.setChallenger(config.challengerAddresses[i], true);
+                    console.log("Added challenger:", config.challengerAddresses[i]);
                 }
             }
         }
 
-        // Config values dependent on the `USE_SP1_MOCK_VERIFIER` flag.
-        address sp1VerifierAddress;
-        bytes32 rollupConfigHash;
-        bytes32 aggregationVkey;
-        bytes32 rangeVkeyCommitment;
-
-        // Get or deploy SP1 verifier based on environment variable.
-        if (vm.envOr("USE_SP1_MOCK_VERIFIER", false)) {
-            // Deploy mock verifier for testing.
-            SP1MockVerifier sp1Verifier = new SP1MockVerifier();
-            sp1VerifierAddress = address(sp1Verifier);
-            console.log("Using SP1 Mock Verifier:", address(sp1Verifier));
-
-            rollupConfigHash = bytes32(0);
-            aggregationVkey = bytes32(0);
-            rangeVkeyCommitment = bytes32(0);
-        } else {
-            // Use provided verifier address for production.
-            sp1VerifierAddress = vm.envAddress("VERIFIER_ADDRESS");
-            console.log("Using SP1 Verifier Gateway:", sp1VerifierAddress);
-
-            rollupConfigHash = vm.envBytes32("ROLLUP_CONFIG_HASH");
-            aggregationVkey = vm.envBytes32("AGGREGATION_VKEY");
-            rangeVkeyCommitment = vm.envBytes32("RANGE_VKEY_COMMITMENT");
-        }
-
-        OPSuccinctFaultDisputeGame gameImpl = new OPSuccinctFaultDisputeGame(
-            Duration.wrap(uint64(vm.envUint("MAX_CHALLENGE_DURATION"))),
-            Duration.wrap(uint64(vm.envUint("MAX_PROVE_DURATION"))),
-            IDisputeGameFactory(address(factory)),
-            ISP1Verifier(sp1VerifierAddress),
-            rollupConfigHash,
-            aggregationVkey,
-            rangeVkeyCommitment,
-            vm.envOr("CHALLENGER_BOND_WEI", uint256(0.001 ether)),
-            IAnchorStateRegistry(address(registry)),
-            accessManager
-        );
-
-        // Set initial bond and implementation in factory.
-        factory.setInitBond(gameType, vm.envOr("INITIAL_BOND_WEI", uint256(0.001 ether)));
-        factory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
-
-        vm.stopBroadcast();
-
-        // Log deployed addresses.
-        console.log("Factory Proxy:", address(factoryProxy));
-        console.log("Game Implementation:", address(gameImpl));
-        console.log("SP1 Verifier:", sp1VerifierAddress);
+        return accessManager;
     }
 }

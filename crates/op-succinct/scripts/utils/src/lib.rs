@@ -1,6 +1,8 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+pub mod config_common;
+
 /// The arguments for the host executable.
 #[derive(Debug, Clone, Parser)]
 pub struct HostExecutorArgs {

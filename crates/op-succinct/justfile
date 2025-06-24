@@ -1,44 +1,6 @@
 default:
   @just --list
 
-# Get starting root for a given L2 block number from env file
-get-starting-root env_file=".env":
-  #!/usr/bin/env bash
-  # Load environment variables
-  source {{env_file}}
-  
-  # Check if required environment variables are set
-  if [ -z "$STARTING_L2_BLOCK_NUMBER" ]; then
-      echo "STARTING_L2_BLOCK_NUMBER not set in {{env_file}}"
-      exit 1
-  fi
-  
-  if [ -z "$L2_NODE_RPC" ]; then
-      echo "L2_NODE_RPC not set in {{env_file}}"
-      exit 1
-  fi
-
-  # Convert block number to hex and remove '0x' prefix
-  BLOCK_HEX=$(cast --to-hex $STARTING_L2_BLOCK_NUMBER | sed 's/0x//')
-
-  # Construct the JSON RPC request
-  JSON_DATA='{
-      "jsonrpc": "2.0",
-      "method": "optimism_outputAtBlock",
-      "params": ["0x'$BLOCK_HEX'"],
-      "id": 1
-  }'
-
-  # Make the RPC call and extract the output root
-  starting_root=$(curl -s -X POST \
-      -H "Content-Type: application/json" \
-      $L2_NODE_RPC \
-      --data "$JSON_DATA" \
-      | jq -r '.result.outputRoot')
-
-  # Display the result
-  printf "Starting root: %s\n" "$starting_root"
-
 # Runs the op-succinct program for a single block.
 run-single l2_block_num use-cache="false" prove="false":
   #!/usr/bin/env bash
@@ -97,6 +59,10 @@ deploy-fdg-contracts env_file=".env":
     #!/usr/bin/env bash
     set -euo pipefail
     
+    # First fetch FDG config using the env file
+    echo "Fetching Fault Dispute Game configuration..."
+    RUST_LOG=info cargo run --bin fetch-fault-dispute-game-config --release -- --env-file {{env_file}}
+    
     # Load environment variables from project root
     source {{env_file}}
     
@@ -118,8 +84,8 @@ deploy-fdg-contracts env_file=".env":
     
     # Use RPC_URL if set, otherwise fall back to L1_RPC
     RPC_URL_TO_USE="${RPC_URL:-$L1_RPC}"
-    
     echo "Using RPC URL: $RPC_URL_TO_USE"
+
     echo "Deploying FDG contracts..."
     
     # Change to contracts directory
@@ -179,10 +145,10 @@ deploy-oracle env_file=".env" *features='':
     
     # First fetch rollup config using the env file
     if [ -z "{{features}}" ]; then
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release -- --env-file {{env_file}}
     else
         echo "Fetching rollup config with features: {{features}}"
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release --features {{features}} -- --env-file {{env_file}}
     fi
     
     # Load environment variables
@@ -214,10 +180,10 @@ upgrade-oracle env_file=".env" *features='':
     
     # First fetch rollup config using the env file
     if [ -z "{{features}}" ]; then
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release -- --env-file {{env_file}}
     else
         echo "Fetching rollup config with features: {{features}}"
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release --features {{features}} -- --env-file {{env_file}}
     fi
     
     # Load environment variables
@@ -254,7 +220,6 @@ upgrade-oracle env_file=".env" *features='':
             $VERIFY_FLAGS \
             --broadcast
     fi
-
 
 deploy-dispute-game-factory env_file=".env":
     #!/usr/bin/env bash
