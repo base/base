@@ -43,10 +43,10 @@ pub enum ProposerGauge {
     )]
     GameCreationError,
     #[strum(
-        serialize = "op_succinct_fp_game_defense_error",
-        message = "Total number of game defense errors encountered by the proposer"
+        serialize = "op_succinct_fp_game_proving_error",
+        message = "Total number of game proving errors encountered by the proposer"
     )]
-    GameDefenseError,
+    GameProvingError,
     #[strum(
         serialize = "op_succinct_fp_game_resolution_error",
         message = "Total number of game resolution errors encountered by the proposer"

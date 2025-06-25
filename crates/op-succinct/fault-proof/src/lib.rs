@@ -21,7 +21,7 @@ use crate::{
         AnchorStateRegistry, DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, L2Output,
         OPSuccinctFaultDisputeGame, ProposalStatus,
     },
-    prometheus::ProposerGauge,
+    prometheus::{ChallengerGauge, ProposerGauge},
 };
 use op_succinct_host_utils::metrics::MetricsGauge;
 
@@ -302,7 +302,7 @@ where
     ) -> Result<Option<(U256, U256)>> {
         // Get latest game index, return None if no games exist.
         let Some(mut game_index) = self.fetch_latest_game_index().await? else {
-            tracing::info!("No games exist yet");
+            tracing::info!("No games exist yet for finding latest valid proposal");
             return Ok(None);
         };
 
@@ -548,7 +548,7 @@ where
         let latest_game_index = match self.fetch_latest_game_index().await? {
             Some(index) => index,
             None => {
-                tracing::info!("No games exist yet");
+                tracing::info!("No games exist yet for bond claiming");
                 return Ok(None);
             }
         };
@@ -669,6 +669,18 @@ where
     }
 
     /// Attempts to resolve games, up to `max_games_to_check_for_resolution`.
+    #[tracing::instrument(
+        name = "[[Resolving]]",
+        skip(
+            self,
+            mode,
+            max_games_to_check_for_resolution,
+            signer,
+            l1_rpc,
+            l1_provider,
+            l2_provider
+        )
+    )]
     async fn resolve_games(
         &self,
         mode: Mode,
@@ -707,7 +719,11 @@ where
                     )
                     .await
                 {
-                    ProposerGauge::GamesResolved.increment(1.0);
+                    // Use mode-specific metrics to avoid cross-contamination
+                    match mode {
+                        Mode::Proposer => ProposerGauge::GamesResolved.increment(1.0),
+                        Mode::Challenger => ChallengerGauge::GamesResolved.increment(1.0),
+                    }
                 }
             }
         } else {
