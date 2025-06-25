@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::cache::{Cache, CacheKey};
+use crate::flashblocks::FlashblocksApi;
 use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
@@ -16,7 +18,7 @@ use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
-use reth::providers::TransactionsProvider;
+use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
 use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
@@ -29,6 +31,9 @@ use reth_rpc_eth_api::{
     RpcNodeCore,
 };
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
+use tokio::sync::broadcast::error;
+use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tracing::log::warn;
 use tracing::{debug, error, info};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -39,7 +44,7 @@ pub trait EthApiOverride {
         &self,
         number: BlockNumberOrTag,
         full: bool,
-    ) -> RpcResult<Option<RpcBlock<op_alloy_network::Optimism>>>;
+    ) -> RpcResult<Option<RpcBlock<Optimism>>>;
 
     #[method(name = "getTransactionReceipt")]
     async fn get_transaction_receipt(
@@ -63,24 +68,42 @@ pub trait EthApiOverride {
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcTransaction<Optimism>>>;
+
+    #[method(name = "sendRawTransactionSync")]
+    async fn send_raw_transaction_sync(
+        &self,
+        transaction: alloy_primitives::Bytes,
+    ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth> {
-    #[allow(dead_code)] // temporary until we implement the flashblocks API
+pub struct EthApiExt<Eth, F> {
     eth_api: Eth,
     cache: Arc<Cache>,
     metrics: Metrics,
     chain_spec: Arc<OpChainSpec>,
+    flashblocks_api: F,
+    total_timeout_secs: u64,
 }
 
-impl<E> EthApiExt<E> {
-    pub fn new(eth_api: E, cache: Arc<Cache>, chain_spec: Arc<OpChainSpec>) -> Self {
+impl<E, F> EthApiExt<E, F>
+where
+    F: FlashblocksApi,
+{
+    pub fn new(
+        eth_api: E,
+        cache: Arc<Cache>,
+        chain_spec: Arc<OpChainSpec>,
+        flashblocks_api: F,
+        total_timeout_secs: u64,
+    ) -> Self {
         Self {
             eth_api,
             cache,
             metrics: Metrics::default(),
             chain_spec,
+            flashblocks_api,
+            total_timeout_secs,
         }
     }
 
@@ -237,12 +260,14 @@ impl<E> EthApiExt<E> {
 }
 
 #[async_trait]
-impl<Eth> EthApiOverrideServer for EthApiExt<Eth>
+impl<Eth, F> EthApiOverrideServer for EthApiExt<Eth, F>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     Eth: RpcNodeCore,
+    F: FlashblocksApi + Send + Sync + 'static,
     <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
     <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
+    <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
 {
     async fn block_by_number(
         &self,
@@ -461,5 +486,101 @@ where
                 Ok(None)
             }
         }
+    }
+
+    async fn send_raw_transaction_sync(
+        &self,
+        transaction: alloy_primitives::Bytes,
+    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+        let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
+        {
+            Ok(hash) => hash,
+            Err(e) => return Err(e.into()),
+        };
+
+        debug!("send_raw_transaction_sync: sent transaction {}", tx_hash);
+
+        match self.wait_for_receipt(tx_hash).await {
+            Some(receipt) => {
+                debug!("send_raw_transaction_sync: got receipt for {}", tx_hash);
+                Ok(Some(receipt))
+            }
+            None => {
+                debug!(
+                    "send_raw_transaction_sync: timeout waiting for receipt for {}",
+                    tx_hash
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
+impl<Eth, F> EthApiExt<Eth, F>
+where
+    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    Eth: RpcNodeCore,
+    F: FlashblocksApi + Send + Sync + 'static,
+    <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
+    <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
+    <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
+{
+    /// Wait for receipts from Flashblocks or canonical chain
+    async fn wait_for_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+        let total_timeout = Duration::from_secs(self.total_timeout_secs);
+
+        tokio::select! {
+            receipt = self.wait_for_flashblocks_receipt(tx_hash) => receipt,
+            receipt = self.wait_for_canonical_receipt(tx_hash) => receipt,
+            _ = tokio::time::sleep(total_timeout) => {
+                debug!("Receipt waiting routine timed out for {}", tx_hash);
+                None
+            }
+        }
+    }
+
+    async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+        let mut receiver = self.flashblocks_api.subscribe_to_receipts();
+
+        loop {
+            match receiver.recv().await {
+                Ok(receipt_with_hash) if receipt_with_hash.tx_hash == tx_hash => {
+                    return Some(self.transform_receipt(
+                        receipt_with_hash.receipt,
+                        tx_hash,
+                        receipt_with_hash.block_number,
+                        self.chain_spec.as_ref(),
+                    ));
+                }
+                Ok(_) => continue,
+                Err(error::RecvError::Closed) => {
+                    debug!("Flashblocks receipt queue closed");
+                    return None;
+                }
+                Err(error::RecvError::Lagged(_)) => {
+                    warn!("Flashblocks receipt queue lagged, maybe missing receipts");
+                }
+            }
+        }
+    }
+
+    async fn wait_for_canonical_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+        let mut stream =
+            BroadcastStream::new(self.eth_api.provider().subscribe_to_canonical_state());
+
+        while let Some(Ok(canon_state)) = stream.next().await {
+            for (block_receipt, _) in canon_state.block_receipts() {
+                for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
+                    if *canonical_tx_hash == tx_hash {
+                        debug!("Found receipt in canonical state for {}", tx_hash);
+                        return EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
+                            .await
+                            .ok()
+                            .flatten();
+                    }
+                }
+            }
+        }
+        None
     }
 }
