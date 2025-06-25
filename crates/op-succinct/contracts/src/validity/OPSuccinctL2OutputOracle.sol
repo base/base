@@ -46,13 +46,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         uint256 fallbackTimeout;
     }
 
-    /// @notice The time threshold (in seconds) after which anyone can submit a proposal if no proposal has been submitted.
-    ///         Only applies in permissioned mode.
-    /// @custom:network-specific
-    uint256 public fallbackTimeout;
-
     /// @notice The number of the first L2 block recorded in this contract.
-
     uint256 public startingBlockNumber;
 
     /// @notice The timestamp of the first L2 block recorded in this contract.
@@ -73,18 +67,30 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @custom:network-specific
     address public challenger;
 
+    /// @notice The address of the proposer. Can be updated via upgrade. DEPRECATED: Use approvedProposers mapping instead.
+    /// @custom:network-specific
+    /// @custom:deprecated
+    address public proposer;
+
     /// @notice The minimum time (in seconds) that must elapse before a withdrawal can be finalized.
     /// @custom:network-specific
     uint256 public finalizationPeriodSeconds;
 
-    /// @notice Mapping of configuration names to OpSuccinctConfig structs.
-    mapping(bytes32 => OpSuccinctConfig) public opSuccinctConfigs;
+    /// @notice The verification key of the aggregation SP1 program.
+    /// @custom:deprecated
+    bytes32 public aggregationVkey;
 
-    /// @notice The genesis configuration name.
-    bytes32 public constant GENESIS_CONFIG_NAME = keccak256("opsuccinct_genesis");
+    /// @notice The 32 byte commitment to the BabyBear representation of the verification key of the range SP1 program. Specifically,
+    /// this verification is the output of converting the [u32; 8] range BabyBear verification key to a [u8; 32] array.
+    /// @custom:deprecated
+    bytes32 public rangeVkeyCommitment;
 
     /// @notice The deployed SP1Verifier contract to verify proofs.
     address public verifier;
+
+    /// @notice The hash of the chain's rollup config, which ensures the proofs submitted are for the correct chain.
+    /// @custom:deprecated
+    bytes32 public rollupConfigHash;
 
     /// @notice The owner of the contract, who has admin permissions.
     address public owner;
@@ -97,6 +103,17 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
 
     /// @notice Activate optimistic mode. When true, the contract will accept outputs without verification.
     bool public optimisticMode;
+
+    /// @notice The time threshold (in seconds) after which anyone can submit a proposal if no proposal has been submitted.
+    ///         Only applies in permissioned mode.
+    /// @custom:network-specific
+    uint256 public fallbackTimeout;
+
+    /// @notice Mapping of configuration names to OpSuccinctConfig structs.
+    mapping(bytes32 => OpSuccinctConfig) public opSuccinctConfigs;
+
+    /// @notice The genesis configuration name.
+    bytes32 public constant GENESIS_CONFIG_NAME = keccak256("opsuccinct_genesis");
 
     ////////////////////////////////////////////////////////////
     //                         Events                         //
@@ -161,8 +178,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     error L1BlockHashNotCheckpointed();
 
     /// @notice Semantic version.
-    /// @custom:semver v2.0.0
-    string public constant version = "v2.0.0";
+    /// @custom:semver v3.0.0
+    string public constant version = "v3.0.0";
 
     /// @notice The version of the initializer on the contract. Used for managing upgrades.
     uint8 public constant initializerVersion = 3;
