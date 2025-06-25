@@ -16,7 +16,7 @@ This guide will walk you through the steps to deploy OP Succinct for your OP Sta
 
 ``` admonish info
 On Ubuntu, you'll need some system dependencies to run the service: `curl`, `clang`, `pkg-config`,
-`libssl-dev`, `ca-certificates`, `git`, `libclang-dev`, `llvm-dev`, and `jq`. You can see the [Dockerfile](https://github.com/succinctlabs/op-succinct/blob/main/validity/Dockerfile#L38) for more details.
+`libssl-dev`, `ca-certificates`, `git`, `libclang-dev`, and `jq`. You can see the [Dockerfile](https://github.com/succinctlabs/op-succinct/blob/main/validity/Dockerfile#L38) for more details.
 ```
 
 ## Step 1: Set environment variables.
