@@ -32,7 +32,7 @@ pub struct FlashtestationsService {
 
 // TODO: FlashtestationsService error types
 impl FlashtestationsService {
-    pub fn new(args: FlashtestationsArgs, funding_signer: Signer) -> Self {
+    pub fn new(args: FlashtestationsArgs) -> Self {
         let (private_key, public_key, address) = generate_ethereum_keypair();
         let tee_service_signer = Signer {
             address,
@@ -47,7 +47,8 @@ impl FlashtestationsService {
 
         let tx_manager = TxManager::new(
             tee_service_signer,
-            funding_signer,
+            args.funding_key
+                .expect("funding key required when flashtestations enabled"),
             args.rpc_url,
             args.registry_address
                 .expect("registry address required when flashtestations enabled"),
@@ -101,7 +102,6 @@ impl BuilderTx for FlashtestationsService {
 
 pub async fn spawn_flashtestations_service<Node>(
     args: FlashtestationsArgs,
-    funding_signer: Signer,
     ctx: &BuilderContext<Node>,
 ) -> eyre::Result<FlashtestationsService>
 where
@@ -109,7 +109,7 @@ where
 {
     info!("Flashtestations enabled");
 
-    let flashtestations_service = FlashtestationsService::new(args.clone(), funding_signer);
+    let flashtestations_service = FlashtestationsService::new(args.clone());
     // Generates new key and registers the attestation onchain
     flashtestations_service.bootstrap().await?;
 

@@ -53,17 +53,8 @@ where
         pool: Pool,
         _evm_config: OpEvmConfig,
     ) -> eyre::Result<Self::PayloadBuilder> {
-        let signer = self.0.builder_signer;
-
         if self.0.flashtestations_config.flashtestations_enabled {
-            let funding_signer = signer.expect("Key to fund TEE generated address not set");
-            match spawn_flashtestations_service(
-                self.0.flashtestations_config.clone(),
-                funding_signer,
-                ctx,
-            )
-            .await
-            {
+            match spawn_flashtestations_service(self.0.flashtestations_config.clone(), ctx).await {
                 Ok(service) => service,
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");

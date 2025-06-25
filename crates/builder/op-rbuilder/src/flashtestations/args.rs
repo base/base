@@ -1,5 +1,7 @@
 use alloy_primitives::{utils::parse_ether, Address, U256};
 
+use crate::tx_signer::Signer;
+
 /// Parameters for Flashtestations configuration
 /// The names in the struct are prefixed with `flashtestations`
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
@@ -32,6 +34,14 @@ pub struct FlashtestationsArgs {
         default_value = "http://localhost:8545"
     )]
     pub rpc_url: String,
+
+    /// Funding key for the TEE key
+    #[arg(
+        long = "flashtestations.funding-key",
+        env = "FLASHTESTATIONS_FUNDING_KEY",
+        required_if_eq("flashtestations_enabled", "true")
+    )]
+    pub funding_key: Option<Signer>,
 
     /// Funding amount for the generated signer
     #[arg(

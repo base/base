@@ -73,10 +73,8 @@ where
         tracing::debug!("Spawning flashblocks payload builder service");
         let signer = self.0.builder_signer;
         if self.0.flashtestations_config.flashtestations_enabled {
-            let funding_signer = signer.expect("Key to fund TEE generated address not set");
             let flashtestations_service = match spawn_flashtestations_service(
                 self.0.flashtestations_config.clone(),
-                funding_signer,
                 ctx,
             )
             .await
