@@ -254,14 +254,9 @@ where
                 }
             }
 
-            match self.handle_game_resolution().await {
-                Ok(_) => {
-                    ChallengerGauge::GamesResolved.increment(1.0);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to handle game resolution: {:?}", e);
-                    ChallengerGauge::GameResolutionError.increment(1.0);
-                }
+            if let Err(e) = self.handle_game_resolution().await {
+                tracing::warn!("Failed to handle game resolution: {:?}", e);
+                ChallengerGauge::GameResolutionError.increment(1.0);
             }
 
             match self.handle_bond_claiming().await {
