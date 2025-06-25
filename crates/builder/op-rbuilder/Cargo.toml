@@ -121,7 +121,8 @@ hex = "0.4"
 ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
-tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", optional = true }
+# TODO: this deps routes to https://github.com/SozinM/tdx-attestation-sdk/tree/msozin/backport - backport for tdx error fix, replace it once https://github.com/automata-network/tdx-attestation-sdk/pull/17 is merged
+tdx = { git = "https://github.com/automata-network/tdx-attestation-sdk.git", rev = "ce02e0009c20bb4fc37c4c95701925fc3f139b41", optional = true }
 dcap-rs = { git = "https://github.com/automata-network/dcap-rs.git", optional = true }
 
 dashmap = { version = "6.1", optional = true }
