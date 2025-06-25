@@ -7,6 +7,9 @@ use alloy_serde::OtherFields;
 use op_alloy_consensus::{OpTransaction, OpTxEnvelope, transaction::OpTransactionInfo};
 use serde::{Deserialize, Serialize};
 
+mod request;
+pub use request::OpTransactionRequest;
+
 /// OP Transaction type
 #[derive(
     Clone, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Deref, derive_more::DerefMut,
