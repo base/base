@@ -361,7 +361,6 @@ fn process_payload(
                     );
                 }
                 Err(_) => {
-                    // No active subscribers, which is normal
                     debug!(
                         "No active subscribers for receipt broadcast of tx {}",
                         tx_hash
@@ -745,6 +744,7 @@ mod tests {
         // Sort receipts by tx_hash to ensure deterministic testing
         receipts.sort_by_key(|r| r.tx_hash);
 
+        // These are defined in the second payload method
         let expected_tx1_hash =
             B256::from_str("0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c")
                 .unwrap();
