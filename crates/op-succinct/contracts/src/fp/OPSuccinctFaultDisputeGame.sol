@@ -30,7 +30,7 @@ import {
     UnexpectedRootClaim
 } from "src/dispute/lib/Errors.sol";
 import "src/fp/lib/Errors.sol";
-import {AggregationOutputs} from "src/lib/Types.sol";
+import {AggregationOutputs, OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE} from "src/lib/Types.sol";
 
 // Interfaces
 import {ISemver} from "interfaces/universal/ISemver.sol";
@@ -188,7 +188,7 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         AccessManager _accessManager
     ) {
         // Set up initial game state.
-        GAME_TYPE = GameType.wrap(42);
+        GAME_TYPE = GameType.wrap(OP_SUCCINCT_FAULT_DISPUTE_GAME_TYPE);
         MAX_CHALLENGE_DURATION = _maxChallengeDuration;
         MAX_PROVE_DURATION = _maxProveDuration;
         DISPUTE_GAME_FACTORY = _disputeGameFactory;
@@ -223,9 +223,6 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
 
         // INVARIANT: The proposer must be whitelisted.
         if (!ACCESS_MANAGER.isAllowedProposer(gameCreator())) revert BadAuth();
-
-        // Record that a proposal was made to update the timeout for permissionless mode.
-        ACCESS_MANAGER.recordProposal();
 
         // Revert if the calldata size is not the expected length.
         //
