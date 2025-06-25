@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::cache::{Cache, CacheKey};
+use crate::flashblocks::FlashblocksApi;
+use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
@@ -28,15 +31,10 @@ use reth_rpc_eth_api::{
     RpcNodeCore,
 };
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
-#[cfg(test)]
-use tokio::sync::broadcast;
 use tokio::sync::broadcast::error;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tracing::log::warn;
 use tracing::{debug, error, info};
-
-use crate::cache::{Cache, CacheKey};
-use crate::flashblocks::FlashblocksApi;
-use crate::metrics::Metrics;
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -559,7 +557,9 @@ where
                     debug!("Flashblocks receipt queue closed");
                     return None;
                 }
-                Err(error::RecvError::Lagged(_)) => continue,
+                Err(error::RecvError::Lagged(_)) => {
+                    warn!("Flashblocks receipt queue lagged, maybe missing receipts");
+                }
             }
         }
     }
