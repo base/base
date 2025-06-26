@@ -5,6 +5,7 @@ use std::{
     process::Command,
     time::Duration,
 };
+use tracing::info;
 
 fn get_or_create_jwt_path(jwt_path: Option<&PathBuf>) -> PathBuf {
     jwt_path.cloned().unwrap_or_else(|| {
@@ -67,7 +68,10 @@ impl Service for OpRethConfig {
         let mut bin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         bin_path.push("../../target/debug/base-reth-node");
 
-        println!("bin_path: {}", bin_path.display());
+        info!(
+            message = "using binary path",
+            bin_path = %bin_path.display()
+        );
 
         let mut cmd = Command::new(bin_path);
         let jwt_path = get_or_create_jwt_path(self.jwt_secret_path.as_ref());

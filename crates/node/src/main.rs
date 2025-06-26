@@ -49,7 +49,7 @@ impl FlashblocksRollupArgs {
 fn main() {
     Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
         .run(|builder, flashblocks_rollup_args| async move {
-            info!("Starting custom Base node");
+            info!(message = "starting custom Base node");
 
             let cache = Arc::new(Cache::default());
             let cache_clone = Arc::new(Cache::default());
@@ -66,7 +66,7 @@ fn main() {
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
-                        info!("starting flashblocks");
+                        info!(message = "starting flashblocks integration");
                         let mut flashblocks_client =
                             FlashblocksClient::new(cache.clone(), receipt_buffer_size);
 
@@ -83,7 +83,7 @@ fn main() {
                         );
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
                     } else {
-                        info!("flashblocks is disabled");
+                        info!(message = "flashblocks integration is disabled");
                     }
                     Ok(())
                 })
