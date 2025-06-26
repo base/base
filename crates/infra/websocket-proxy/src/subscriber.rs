@@ -186,6 +186,10 @@ where
             loop {
                 interval.tick().await;
                 if let Err(e) = write.send(Message::Ping(bytes::Bytes::new())).await {
+                    error!(
+                        message = "failed to send ping to upstream",
+                        error = e.to_string()
+                    );
                     let _ = ping_error_tx.send(e);
                     break;
                 }
@@ -198,6 +202,10 @@ where
             select! {
                 _ = deadline_check.tick() => {
                     if Instant::now() >= pong_deadline {
+                        error!(
+                            message = "pong timeout from upstream",
+                            uri = self.uri.to_string()
+                        );
                         break Err(ConnectionClosed);
                     }
                 }
@@ -205,14 +213,11 @@ where
                     break Err(ping_err);
                 }
                 message = read.next() => {
-                    match message {
-                        Some(msg) => {
-                            match self.handle_message(msg, &mut pong_deadline, options.pong_timeout).await {
-                                Ok(()) => {},
-                                Err(e) => break Err(e),
-                            }
-                        }
-                        None => break Ok(()),
+                    let Some(msg) = message else {
+                        break Ok(());
+                    };
+                    if let Err(e) = self.handle_message(msg, &mut pong_deadline, options.pong_timeout).await {
+                        break Err(e);
                     }
                 }
             }
