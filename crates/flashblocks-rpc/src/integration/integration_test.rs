@@ -25,6 +25,7 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_tungstenite::accept_async;
     use tokio_tungstenite::tungstenite::Message;
+    use tracing::info;
     use uuid::Uuid;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {
@@ -122,7 +123,10 @@ mod tests {
         let ws_server = tokio::spawn(async move {
             let addr = "127.0.0.1:1239".parse::<SocketAddr>().unwrap();
             let listener = TcpListener::bind(&addr).await.unwrap();
-            println!("WebSocket server listening on: {}", addr);
+            info!(
+                message = "WebSocket server listening",
+                address = %addr
+            );
 
             while let Ok((stream, _)) = listener.accept().await {
                 let ws_stream = accept_async(stream).await.unwrap();
