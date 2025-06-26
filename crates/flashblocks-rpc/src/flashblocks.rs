@@ -9,7 +9,7 @@ use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::cache::{Cache, CacheKey};
@@ -78,7 +78,10 @@ impl FlashblocksClient {
 
     pub fn init(&mut self, ws_url: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let url = Url::parse(&ws_url)?;
-        println!("trying to connect to {:?}", url);
+        info!(
+            message = "trying to connect to WebSocket",
+            url = %url
+        );
         let sender = self.sender.clone();
         let cache_clone = self.cache.clone();
         let receipt_sender_clone = self.receipt_sender.clone();
@@ -95,7 +98,7 @@ impl FlashblocksClient {
             loop {
                 match connect_async(url.as_str()).await {
                     Ok((ws_stream, _)) => {
-                        println!("WebSocket connected!");
+                        info!(message = "WebSocket connected successfully");
                         let (_write, mut read) = ws_stream.split();
                         // Handle incoming messages
                         while let Some(msg) = read.next().await {
@@ -107,7 +110,10 @@ impl FlashblocksClient {
                                     let text = match try_parse_message(&bytes) {
                                         Ok(text) => text,
                                         Err(e) => {
-                                            error!("Failed to decode message: {}", e);
+                                            error!(
+                                                message = "failed to decode message",
+                                                error = %e
+                                            );
                                             continue;
                                         }
                                     };
@@ -116,7 +122,10 @@ impl FlashblocksClient {
                                         match serde_json::from_str(&text) {
                                             Ok(m) => m,
                                             Err(e) => {
-                                                error!("failed to parse message: {}", e);
+                                                error!(
+                                                    message = "failed to parse message",
+                                                    error = %e
+                                                );
                                                 continue;
                                             }
                                         };
@@ -130,7 +139,10 @@ impl FlashblocksClient {
                                 Ok(Message::Close(_)) => break,
                                 Err(e) => {
                                     metrics.upstream_errors.increment(1);
-                                    error!("Error receiving message: {}", e);
+                                    error!(
+                                        message = "error receiving message",
+                                        error = %e
+                                    );
                                     break;
                                 }
                                 _ => {} // Handle other message types if needed
@@ -139,8 +151,9 @@ impl FlashblocksClient {
                     }
                     Err(e) => {
                         error!(
-                            "WebSocket connection error, retrying in {:?}: {}",
-                            backoff, e
+                            message = "WebSocket connection error, retrying",
+                            backoff_duration = ?backoff,
+                            error = %e
                         );
                         tokio::time::sleep(backoff).await;
                         // Double the backoff time, but cap at MAX_BACKOFF
@@ -199,7 +212,10 @@ fn process_payload(
     let metadata: Metadata = match serde_json::from_value(payload.metadata) {
         Ok(m) => m,
         Err(e) => {
-            error!("Failed to deserialize metadata: {}", e);
+            error!(
+                message = "failed to deserialize metadata",
+                error = %e
+            );
             return;
         }
     };
@@ -231,7 +247,10 @@ fn process_payload(
     // base only appears once in the first payload index
     let base = if let Some(base) = payload.base {
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
-            error!("Failed to set base in cache: {}", e);
+            error!(
+                message = "failed to set base in cache",
+                error = %e
+            );
             return;
         }
         base
@@ -239,7 +258,7 @@ fn process_payload(
         match cache.get(&CacheKey::Base(block_number)) {
             Some(base) => base,
             None => {
-                error!("Failed to get base from cache");
+                error!(message = "failed to get base from cache");
                 return;
             }
         }
@@ -253,7 +272,10 @@ fn process_payload(
     ) {
         Ok(txs) => txs,
         Err(e) => {
-            error!("Failed to get and set transactions: {}", e);
+            error!(
+                message = "failed to get and set transactions",
+                error = %e
+            );
             return;
         }
     };
@@ -285,7 +307,10 @@ fn process_payload(
     let block: OpBlock = match execution_payload.try_into_block() {
         Ok(block) => block,
         Err(e) => {
-            error!("Failed to convert execution payload to block: {}", e);
+            error!(
+                message = "failed to convert execution payload to block",
+                error = %e
+            );
             return;
         }
     };
@@ -293,13 +318,19 @@ fn process_payload(
     // "pending" because users query the block using "pending" tag
     // This is an optimistic update will likely need to tweak in the future
     if let Err(e) = cache.set(CacheKey::PendingBlock, &block, Some(10)) {
-        error!("Failed to set pending block in cache: {}", e);
+        error!(
+            message = "failed to set pending block in cache",
+            error = %e
+        );
         return;
     }
 
     // set block to block number as well
     if let Err(e) = cache.set(CacheKey::Block(block_number), &block, Some(10)) {
-        error!("Failed to set block in cache: {}", e);
+        error!(
+            message = "failed to set block in cache",
+            error = %e
+        );
         return;
     }
 
@@ -311,7 +342,10 @@ fn process_payload(
     ) {
         Ok(receipts) => receipts,
         Err(e) => {
-            error!("Failed to get and set receipts: {}", e);
+            error!(
+                message = "failed to get and set receipts",
+                error = %e
+            );
             return;
         }
     };
@@ -325,7 +359,10 @@ fn process_payload(
     ) {
         Ok(receipts) => receipts,
         Err(e) => {
-            error!("Failed to get and set all receipts: {}", e);
+            error!(
+                message = "failed to get and set all receipts",
+                error = %e
+            );
             return;
         }
     };
@@ -337,7 +374,10 @@ fn process_payload(
             &balance,
             Some(10),
         ) {
-            error!("Failed to set account balance in cache: {}", e);
+            error!(
+                message = "failed to set account balance in cache",
+                error = %e
+            );
         }
     }
 
@@ -356,14 +396,15 @@ fn process_payload(
             match receipt_sender.send(receipt_with_hash) {
                 Ok(subscriber_count) => {
                     debug!(
-                        "Broadcasted receipt for tx {} to {} subscribers",
-                        tx_hash, subscriber_count
+                        message = "broadcasted receipt",
+                        tx_hash = %tx_hash,
+                        subscriber_count = subscriber_count
                     );
                 }
                 Err(_) => {
                     debug!(
-                        "No active subscribers for receipt broadcast of tx {}",
-                        tx_hash
+                        message = "no active subscribers for receipt broadcast",
+                        tx_hash = %tx_hash
                     );
                 }
             }
@@ -372,9 +413,9 @@ fn process_payload(
 
     // check duration on the most heavy payload
     if payload.index == 0 {
-        println!(
-            "block processing time: {:?}",
-            msg_processing_start_time.elapsed()
+        info!(
+            message = "block processing completed",
+            processing_time = ?msg_processing_start_time.elapsed()
         );
     }
 }
@@ -387,12 +428,18 @@ fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
             metrics
                 .flashblocks_in_block
                 .record((prev_highest_index + 1) as f64);
-            println!("Previous block had {} flash blocks", prev_highest_index + 1);
+            info!(
+                message = "previous block processed",
+                flash_blocks_count = prev_highest_index + 1
+            );
         }
 
         // Reset highest index to 0 for new block
         if let Err(e) = cache.set(CacheKey::HighestPayloadIndex, &0u64, Some(10)) {
-            error!("Failed to reset highest flash index: {}", e);
+            error!(
+                message = "failed to reset highest flash index",
+                error = %e
+            );
         }
     } else {
         // Update highest index if current index is higher
@@ -401,7 +448,10 @@ fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
             .unwrap_or(0);
         if index > current_highest {
             if let Err(e) = cache.set(CacheKey::HighestPayloadIndex, &index, Some(10)) {
-                error!("Failed to update highest flash index: {}", e);
+                error!(
+                message = "failed to update highest flash index",
+                error = %e
+            );
             }
         }
     }
@@ -454,7 +504,10 @@ fn get_and_set_txs_and_receipts(
                 &transaction,
                 Some(10),
             ) {
-                error!("Failed to set transaction in cache: {}", e);
+                error!(
+                    message = "failed to set transaction in cache",
+                    error = %e
+                );
                 continue;
             }
             // update tx index
@@ -463,7 +516,10 @@ fn get_and_set_txs_and_receipts(
                 &idx,
                 Some(10),
             ) {
-                error!("Failed to set transaction index in cache: {}", e);
+                error!(
+                    message = "failed to set transaction index in cache",
+                    error = %e
+                );
                 continue;
             }
 
@@ -485,7 +541,10 @@ fn get_and_set_txs_and_receipts(
                     &(current_count + 1),
                     Some(10),
                 ) {
-                    error!("Failed to set transaction count in cache: {}", e);
+                    error!(
+                        message = "failed to set transaction count in cache",
+                        error = %e
+                    );
                 }
 
                 // also keep track of sender of each transaction
@@ -494,7 +553,10 @@ fn get_and_set_txs_and_receipts(
                     &from,
                     Some(10),
                 ) {
-                    error!("Failed to set transaction sender in cache: {}", e);
+                    error!(
+                        message = "failed to set transaction sender in cache",
+                        error = %e
+                    );
                 }
 
                 // also keep track of the block number of each transaction
@@ -503,7 +565,10 @@ fn get_and_set_txs_and_receipts(
                     &block_number,
                     Some(10),
                 ) {
-                    error!("Failed to set transaction sender in cache: {}", e);
+                    error!(
+                        message = "failed to set transaction block number in cache",
+                        error = %e
+                    );
                 }
             }
         }
@@ -519,7 +584,10 @@ fn get_and_set_txs_and_receipts(
                 .get(&transaction.tx_hash().to_string())
                 .unwrap();
             if let Err(e) = cache.set(CacheKey::Receipt(transaction.tx_hash()), receipt, Some(10)) {
-                error!("Failed to set receipt in cache: {}", e);
+                error!(
+                    message = "failed to set receipt in cache",
+                    error = %e
+                );
                 continue;
             }
             // map receipt's block number as well
@@ -528,7 +596,10 @@ fn get_and_set_txs_and_receipts(
                 &block_number,
                 Some(10),
             ) {
-                error!("Failed to set receipt block in cache: {}", e);
+                error!(
+                    message = "failed to set receipt block in cache",
+                    error = %e
+                );
                 continue;
             }
 
