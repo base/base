@@ -170,7 +170,9 @@ A pair of block identifiers, linking a `derived` block to the `source` block fro
 
 #### `SupervisorSyncStatus`
 
-Describes the sync status of the Supervisor component.
+Describes the sync status of the Supervisor component. Fields `minSyncedL1`,
+`safeTimestamp` and `finalizedTimestamp` are set as the minimum value among
+chains in `chains`.
 
 `OBJECT`:
 - `minSyncedL1`: `BlockRef` - block ref to the synced L1 block
@@ -262,7 +264,8 @@ Returns: `SuperRootResponse`
 
 Parameters: (none)
 
-Returns: `SupervisorSyncStatus`
+Returns: `SupervisorSyncStatus`.
+Throws: Some error if set of supervised chains is empty.
 
 #### `supervisor_allSafeDerivedAt`
 
