@@ -255,6 +255,11 @@ where
             .sequencer_tx_duration
             .record(sequencer_tx_start_time.elapsed());
 
+        // If we have payload with txpool we add first builder tx right after deposits
+        if !ctx.attributes().no_tx_pool {
+            ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+        }
+
         let (payload, fb_payload, mut bundle_state) = build_block(db, &ctx, &mut info)?;
 
         best_payload.set(payload.clone());
@@ -315,6 +320,12 @@ where
             }
         }
         let mut total_da_per_batch = da_per_batch;
+
+        // Account for already included builder tx
+        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+        if let Some(da_limit) = total_da_per_batch.as_mut() {
+            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+        }
 
         // TODO: we should account for a case when we will issue only 1 flashblock
         let last_flashblock = flashblocks_per_block.saturating_sub(1);
@@ -430,15 +441,8 @@ where
                     );
                     let flashblock_build_start_time = Instant::now();
                     let state = StateProviderDatabase::new(&state_provider);
-                    invoke_on_first_flashblock(flashblock_count, || {
-                        total_gas_per_batch -= builder_tx_gas;
-                        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-                        if let Some(da_limit) = total_da_per_batch.as_mut() {
-                            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-                        }
-                    });
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
-                        total_gas_per_batch -= builder_tx_gas;
+                        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
                         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
                         if let Some(da_limit) = total_da_per_batch.as_mut() {
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
@@ -484,11 +488,6 @@ where
                     ctx.metrics
                         .payload_tx_simulation_duration
                         .record(tx_execution_start_time.elapsed());
-
-                    // TODO: temporary we add builder tx to the first flashblock too
-                    invoke_on_first_flashblock(flashblock_count, || {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
-                    });
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
@@ -850,12 +849,6 @@ where
         fb_payload,
         new_bundle,
     ))
-}
-
-pub fn invoke_on_first_flashblock<F: FnOnce()>(current_flashblock: u64, fun: F) {
-    if current_flashblock == 0 {
-        fun()
-    }
 }
 
 pub fn invoke_on_last_flashblock<F: FnOnce()>(
