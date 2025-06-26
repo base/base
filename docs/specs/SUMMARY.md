@@ -78,7 +78,7 @@
     - [Sequencer](./interop/sequencer.md)
     - [Verifier](./interop/verifier.md)
     - [Supervisor](./interop/supervisor.md)
-    - [Managed Mode](./interop/managed-mode.md)
+    - [Managed Node](./interop/managed-node.md)
     - [Fault Proof](./interop/fault-proof.md)
     - [Token Bridging](./interop/token-bridging.md)
     - [ETH Liquidity](./interop/eth-liquidity.md)
