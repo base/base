@@ -10,6 +10,7 @@ use std::{
 };
 use time::{format_description, OffsetDateTime};
 use tokio::time::sleep;
+use tracing::info;
 
 /// Default JWT token for testing purposes
 pub const DEFAULT_JWT_TOKEN: &str =
@@ -136,7 +137,10 @@ impl IntegrationFramework {
         let mut test_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_dir.push("./integration_logs");
         test_dir.push(format!("{}_{}", date_format, test_name));
-        println!("test_dir: {}", test_dir.display());
+        info!(
+            message = "test directory created",
+            test_dir = %test_dir.display()
+        );
 
         std::fs::create_dir_all(&test_dir).map_err(|_| IntegrationError::SetupError)?;
 

@@ -274,10 +274,13 @@ where
         number: BlockNumberOrTag,
         _full: bool,
     ) -> RpcResult<Option<RpcBlock<Optimism>>> {
-        debug!("block_by_number: {:?}", number);
+        debug!(
+            message = "processing block_by_number request",
+            block_number = ?number
+        );
         match number {
             BlockNumberOrTag::Pending => {
-                debug!("pending block by number, delegating to flashblocks");
+                debug!(message = "handling pending block request via flashblocks");
                 self.metrics.get_block_by_number.increment(1);
                 if let Some(block) = self.cache.get::<OpBlock>(&CacheKey::PendingBlock) {
                     return Ok(Some(self.transform_block(block, _full)));
@@ -286,7 +289,10 @@ where
                 }
             }
             _ => {
-                info!("non pending block, using standard flow");
+                info!(
+                    message = "handling non-pending block request via standard flow",
+                    block_number = ?number
+                );
                 EthBlocks::rpc_block(&self.eth_api, number.into(), _full)
                     .await
                     .map_err(Into::into)
@@ -298,7 +304,10 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        debug!("get_transaction_receipt: {:?}", tx_hash);
+        debug!(
+            message = "processing get_transaction_receipt request",
+            tx_hash = %tx_hash
+        );
         let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await;
 
         // check if receipt is none
@@ -326,7 +335,10 @@ where
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256> {
-        debug!("get_balance: {:?}", address);
+        debug!(
+            message = "processing get_balance request",
+            address = %address
+        );
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_balance.increment(1);
@@ -346,7 +358,10 @@ where
         address: Address,
         block_number: Option<BlockId>,
     ) -> RpcResult<U256> {
-        debug!("get_transaction_count: {:?}", address);
+        debug!(
+            message = "processing get_transaction_count request",
+            address = %address
+        );
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_transaction_count.increment(1);
@@ -392,7 +407,10 @@ where
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcTransaction<Optimism>>> {
-        debug!("transaction_by_hash: {:?}", tx_hash);
+        debug!(
+            message = "processing transaction_by_hash request",
+            tx_hash = %tx_hash
+        );
         let tx = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
             .await
             .map_err(Into::into)?;
@@ -440,8 +458,8 @@ where
                             }
                             None => {
                                 error!(
-                                    "could not find receipt for block transaction: {:?}",
-                                    tx_hash
+                                    message = "could not find receipt for block transaction",
+                                    tx_hash = %tx_hash
                                 );
                                 return Ok(None);
                             }
@@ -498,17 +516,23 @@ where
             Err(e) => return Err(e.into()),
         };
 
-        debug!("send_raw_transaction_sync: sent transaction {}", tx_hash);
+        debug!(
+            message = "sent raw transaction successfully",
+            tx_hash = %tx_hash
+        );
 
         match self.wait_for_receipt(tx_hash).await {
             Some(receipt) => {
-                debug!("send_raw_transaction_sync: got receipt for {}", tx_hash);
+                debug!(
+                    message = "received receipt for transaction",
+                    tx_hash = %tx_hash
+                );
                 Ok(Some(receipt))
             }
             None => {
                 debug!(
-                    "send_raw_transaction_sync: timeout waiting for receipt for {}",
-                    tx_hash
+                    message = "timeout waiting for receipt",
+                    tx_hash = %tx_hash
                 );
                 Ok(None)
             }
@@ -533,7 +557,10 @@ where
             receipt = self.wait_for_flashblocks_receipt(tx_hash) => receipt,
             receipt = self.wait_for_canonical_receipt(tx_hash) => receipt,
             _ = tokio::time::sleep(total_timeout) => {
-                debug!("Receipt waiting routine timed out for {}", tx_hash);
+                debug!(
+                    message = "receipt waiting routine timed out",
+                    tx_hash = %tx_hash
+                );
                 None
             }
         }
@@ -554,7 +581,7 @@ where
                 }
                 Ok(_) => continue,
                 Err(error::RecvError::Closed) => {
-                    debug!("Flashblocks receipt queue closed");
+                    debug!(message = "flashblocks receipt queue closed");
                     return None;
                 }
                 Err(error::RecvError::Lagged(_)) => {
@@ -572,7 +599,10 @@ where
             for (block_receipt, _) in canon_state.block_receipts() {
                 for (canonical_tx_hash, _) in &block_receipt.tx_receipts {
                     if *canonical_tx_hash == tx_hash {
-                        debug!("Found receipt in canonical state for {}", tx_hash);
+                        debug!(
+                            message = "found receipt in canonical state",
+                            tx_hash = %tx_hash
+                        );
                         return EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
                             .await
                             .ok()
