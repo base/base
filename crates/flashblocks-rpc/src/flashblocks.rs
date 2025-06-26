@@ -449,9 +449,9 @@ fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
         if index > current_highest {
             if let Err(e) = cache.set(CacheKey::HighestPayloadIndex, &index, Some(10)) {
                 error!(
-                message = "failed to update highest flash index",
-                error = %e
-            );
+                    message = "failed to update highest flash index",
+                    error = %e
+                );
             }
         }
     }
