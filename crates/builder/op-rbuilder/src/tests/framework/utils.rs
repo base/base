@@ -1,14 +1,22 @@
+use crate::{
+    tests::{framework::driver::ChainDriver, Protocol, ONE_ETH},
+    tx_signer::Signer,
+};
 use alloy_eips::Encodable2718;
 use alloy_primitives::{hex, Address, BlockHash, TxHash, TxKind, B256, U256};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types::Transaction;
-
-use crate::{
-    tests::{framework::driver::ChainDriver, Protocol, ONE_ETH},
-    tx_signer::Signer,
+use reth_db::{
+    init_db,
+    mdbx::{DatabaseArguments, MaxReadTransactionDuration, KILOBYTE, MEGABYTE},
+    test_utils::{TempDatabase, ERROR_DB_CREATION},
+    ClientVersion, DatabaseEnv,
 };
+use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
+use reth_optimism_chainspec::OpChainSpec;
+use std::sync::Arc;
 
 use super::{TransactionBuilder, FUNDED_PRIVATE_KEYS};
 
@@ -190,4 +198,25 @@ impl AsTxs for Vec<TxHash> {
     fn as_txs(&self) -> Vec<TxHash> {
         self.clone()
     }
+}
+
+pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<DatabaseEnv>> {
+    let path = reth_node_core::dirs::MaybePlatformPath::<DataDirPath>::from(
+        reth_db::test_utils::tempdir_path(),
+    );
+    let db_config = config.with_datadir_args(DatadirArgs {
+        datadir: path.clone(),
+        ..Default::default()
+    });
+    let data_dir = path.unwrap_or_chain_default(db_config.chain.chain(), db_config.datadir.clone());
+    let path = data_dir.db();
+    let db = init_db(
+        path.as_path(),
+        DatabaseArguments::new(ClientVersion::default())
+            .with_max_read_transaction_duration(Some(MaxReadTransactionDuration::Unbounded))
+            .with_geometry_max_size(Some(4 * MEGABYTE))
+            .with_growth_step(Some(4 * KILOBYTE)),
+    )
+    .expect(ERROR_DB_CREATION);
+    Arc::new(TempDatabase::new(db, path))
 }

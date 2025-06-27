@@ -17,11 +17,17 @@ pub struct FlashblocksConfig {
     pub interval: Duration,
 
     /// How much time would be deducted from block build time to account for latencies in
-    /// milliseconds
+    /// milliseconds.
+    ///
+    /// If dynamic_adjustment is false this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
+    ///
+    /// If dynamic_adjustment is true this value would be deducted from first flashblock and
+    /// it shouldn't be more than interval
     pub leeway_time: Duration,
 
-    /// Enables dynamic flashblocks number based on FCU arrival time
-    pub dynamic_adjustment: bool,
+    /// Disables dynamic flashblocks number adjustment based on FCU arrival time
+    pub fixed: bool,
 }
 
 impl Default for FlashblocksConfig {
@@ -30,7 +36,7 @@ impl Default for FlashblocksConfig {
             ws_addr: SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 1111),
             interval: Duration::from_millis(250),
             leeway_time: Duration::from_millis(50),
-            dynamic_adjustment: false,
+            fixed: false,
         }
     }
 }
@@ -48,13 +54,13 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let leeway_time = Duration::from_millis(args.flashblocks.flashblocks_leeway_time);
 
-        let dynamic_adjustment = args.flashblocks.flashblocks_dynamic;
+        let fixed = args.flashblocks.flashblocks_fixed;
 
         Ok(Self {
             ws_addr,
             interval,
             leeway_time,
-            dynamic_adjustment,
+            fixed,
         })
     }
 }

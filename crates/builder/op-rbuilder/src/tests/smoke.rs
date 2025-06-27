@@ -29,7 +29,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
     // no user transactions are sent.
     // the deposit transaction and the block generator's transaction
     for _ in 0..SAMPLE_SIZE {
-        let block = driver.build_new_block().await?;
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
         let transactions = block.transactions;
 
         if_standard! {
@@ -67,7 +67,7 @@ async fn chain_produces_blocks(rbuilder: LocalInstance) -> eyre::Result<()> {
             tx_hashes.insert(*tx.tx_hash());
         }
 
-        let block = driver.build_new_block().await?;
+        let block = driver.build_new_block_with_current_timestamp(None).await?;
 
         let txs = block.transactions;
 
@@ -149,7 +149,7 @@ async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> 
                 let block = tokio::time::timeout(
                     Duration::from_secs(rbuilder.args().chain_block_time)
                         + Duration::from_millis(500),
-                    driver.build_new_block(),
+                    driver.build_new_block_with_current_timestamp(None),
                 )
                 .await
                 .expect("Timeout while waiting for block production")

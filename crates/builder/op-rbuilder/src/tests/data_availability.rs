@@ -84,7 +84,7 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
     let unfit_tx_3 = driver.create_transaction().send().await?;
 
-    let block = driver.build_new_block().await?;
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     if_standard! {
         // Now the first 2 txs will fit into the block

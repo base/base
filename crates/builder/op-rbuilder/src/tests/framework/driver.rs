@@ -99,15 +99,24 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         self.build_new_block_with_txs(vec![]).await
     }
 
-    /// Builds a new block using the current state of the chain and the transactions in the pool with a list
-    /// of mandatory builder transactions. Those are usually deposit transactions.
-    pub async fn build_new_block_with_txs(
+    /// Builds a new block with block_timestamp calculated as block time right before sending FCU
+    pub async fn build_new_block_with_current_timestamp(
+        &self,
+        timestamp_jitter: Option<Duration>,
+    ) -> eyre::Result<Block<Transaction>> {
+        self.build_new_block_with_txs_timestamp(vec![], None, timestamp_jitter)
+            .await
+    }
+
+    /// Builds a new block with provided txs and timestamp
+    pub async fn build_new_block_with_txs_timestamp(
         &self,
         txs: Vec<Bytes>,
+        block_timestamp: Option<Duration>,
+        // Amount of time to lag before sending FCU. This tests late FCU scenarios
+        timestamp_jitter: Option<Duration>,
     ) -> eyre::Result<Block<Transaction>> {
         let latest = self.latest().await?;
-        let latest_timestamp = Duration::from_secs(latest.header.timestamp);
-        let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
 
         // Add L1 block info as the first transaction in every L2 block
         // This deposit transaction contains L1 block metadata required by the L2 chain
@@ -134,10 +143,35 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             signed_tx.encoded_2718().into()
         };
 
+        let mut wait_until = None;
+        // If block_timestamp we need to produce new timestamp according to current clocks
+        let block_timestamp = if let Some(block_timestamp) = block_timestamp {
+            block_timestamp.as_secs()
+        } else {
+            // We take the following second, until which we will need to wait before issuing FCU
+            let latest_timestamp = (chrono::Utc::now().timestamp() + 1) as u64;
+            wait_until = Some(latest_timestamp);
+            latest_timestamp
+                + Duration::from_millis(self.args.chain_block_time)
+                    .as_secs()
+                    .max(Self::MIN_BLOCK_TIME.as_secs())
+        };
+
+        // This step will alight time at which we send FCU. ideally we must send FCU and the beginning of the second.
+        if let Some(wait_until) = wait_until {
+            let sleep_time = Duration::from_secs(wait_until).saturating_sub(Duration::from_millis(
+                chrono::Utc::now().timestamp_millis() as u64,
+            ));
+            if let Some(timestamp_jitter) = timestamp_jitter {
+                tokio::time::sleep(sleep_time + timestamp_jitter).await;
+            } else {
+                tokio::time::sleep(sleep_time).await;
+            }
+        }
         let fcu_result = self
             .fcu(OpPayloadAttributes {
                 payload_attributes: PayloadAttributes {
-                    timestamp: block_timestamp.as_secs(),
+                    timestamp: block_timestamp,
                     parent_beacon_block_root: Some(B256::ZERO),
                     withdrawals: Some(vec![]),
                     ..Default::default()
@@ -157,10 +191,19 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
             .ok_or_else(|| eyre::eyre!("Forkchoice update did not return a payload ID"))?;
 
         // wait for the block to be built for the specified chain block time
-        tokio::time::sleep(
-            Duration::from_millis(self.args.chain_block_time).max(Self::MIN_BLOCK_TIME),
-        )
-        .await;
+        if let Some(timestamp_jitter) = timestamp_jitter {
+            tokio::time::sleep(
+                Duration::from_millis(self.args.chain_block_time)
+                    .max(Self::MIN_BLOCK_TIME)
+                    .saturating_sub(timestamp_jitter),
+            )
+            .await;
+        } else {
+            tokio::time::sleep(
+                Duration::from_millis(self.args.chain_block_time).max(Self::MIN_BLOCK_TIME),
+            )
+            .await;
+        }
 
         let payload =
             OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?);
@@ -204,6 +247,20 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
 
         Ok(block)
+    }
+
+    /// Builds a new block using the current state of the chain and the transactions in the pool with a list
+    /// of mandatory builder transactions. Those are usually deposit transactions.
+    pub async fn build_new_block_with_txs(
+        &self,
+        txs: Vec<Bytes>,
+    ) -> eyre::Result<Block<Transaction>> {
+        let latest = self.latest().await?;
+        let latest_timestamp = Duration::from_secs(latest.header.timestamp);
+        let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
+
+        self.build_new_block_with_txs_timestamp(txs, Some(block_timestamp), None)
+            .await
     }
 
     /// Retreives the latest built block and returns only a list of transaction

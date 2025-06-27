@@ -42,7 +42,7 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // generate 10 blocks
     for i in 0..10 {
-        let generated_block = driver.build_new_block().await?;
+        let generated_block = driver.build_new_block_with_current_timestamp(None).await?;
 
         if_standard! {
             // standard builder blocks should only include two transactions (deposit + builder)
@@ -50,7 +50,7 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
         }
 
         if_flashblocks! {
-            // flashblocks should include three transactions (deposit + builder + first flashblock)
+            // flashblocks should include three transactions (deposit + 2 builder txs)
             assert_eq!(generated_block.transactions.len(), 3);
         }
 

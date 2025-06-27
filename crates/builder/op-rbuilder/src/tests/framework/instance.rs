@@ -4,6 +4,7 @@ use crate::{
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
     tests::{
+        create_test_db,
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
         ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver,
     },
@@ -108,7 +109,8 @@ impl LocalInstance {
             .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
-            .testing_node(task_manager.executor())
+            .with_database(create_test_db(config.clone()))
+            .with_launch_context(task_manager.executor())
             .with_types::<OpNode>()
             .with_components(
                 op_node
