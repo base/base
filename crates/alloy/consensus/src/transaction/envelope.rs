@@ -469,6 +469,35 @@ impl alloy_consensus::transaction::SignerRecoverable for OpTxEnvelope {
         };
         alloy_consensus::crypto::secp256k1::recover_signer_unchecked(signature, signature_hash)
     }
+
+    fn recover_signer_unchecked_with_buf(
+        &self,
+        buf: &mut alloc::vec::Vec<u8>,
+    ) -> Result<alloy_primitives::Address, alloy_consensus::crypto::RecoveryError> {
+        match self {
+            Self::Legacy(tx) => {
+                alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked_with_buf(
+                    tx, buf,
+                )
+            }
+            Self::Eip2930(tx) => {
+                alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked_with_buf(
+                    tx, buf,
+                )
+            }
+            Self::Eip1559(tx) => {
+                alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked_with_buf(
+                    tx, buf,
+                )
+            }
+            Self::Eip7702(tx) => {
+                alloy_consensus::transaction::SignerRecoverable::recover_signer_unchecked_with_buf(
+                    tx, buf,
+                )
+            }
+            Self::Deposit(tx) => Ok(tx.from),
+        }
+    }
 }
 
 /// Bincode-compatible serde implementation for OpTxEnvelope.
