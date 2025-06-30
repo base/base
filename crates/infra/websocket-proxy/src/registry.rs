@@ -1,27 +1,52 @@
 use crate::client::ClientConnection;
 use crate::metrics::Metrics;
+use axum::extract::ws::Message;
+use futures::stream::StreamExt;
+use futures::SinkExt;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Sender;
-use tracing::{info, trace, warn};
+use tokio::time::{interval, Duration};
+use tracing::{debug, info, trace, warn};
+
+fn get_message_size(msg: &Message) -> u64 {
+    match msg {
+        Message::Text(text) => text.len() as u64,
+        Message::Binary(data) => data.len() as u64,
+        Message::Ping(data) => data.len() as u64,
+        Message::Pong(data) => data.len() as u64,
+        Message::Close(_) => 0,
+    }
+}
 
 #[derive(Clone)]
 pub struct Registry {
-    sender: Sender<Vec<u8>>,
+    sender: Sender<Message>,
     metrics: Arc<Metrics>,
     compressed: bool,
+    ping_enabled: bool,
+    pong_timeout_ms: u64,
 }
 
 impl Registry {
-    pub fn new(sender: Sender<Vec<u8>>, metrics: Arc<Metrics>, compressed: bool) -> Self {
+    pub fn new(
+        sender: Sender<Message>,
+        metrics: Arc<Metrics>,
+        compressed: bool,
+        ping_enabled: bool,
+        pong_timeout_ms: u64,
+    ) -> Self {
         Self {
             sender,
             metrics,
             compressed,
+            ping_enabled,
+            pong_timeout_ms,
         }
     }
 
-    pub async fn subscribe(&self, mut client: ClientConnection) {
+    pub async fn subscribe(&self, client: ClientConnection) {
         info!(message = "subscribing client", client = client.id());
 
         let mut receiver = self.sender.subscribe();
@@ -30,50 +55,123 @@ impl Registry {
 
         let filter = client.filter.clone();
         let compressed = self.compressed;
+        let client_id = client.id();
+        let (mut ws_sender, ws_receiver) = client.websocket.split();
 
-        tokio::spawn(async move {
-            loop {
-                match receiver.recv().await {
-                    Ok(msg) => {
-                        if filter.matches(&msg, compressed) {
-                            trace!(message = "filter matched for client", client = client.id(), filter = ?filter);
-                            match client.send(msg.clone()).await {
-                                Ok(_) => {
-                                    trace!(
-                                        message = "message sent to client",
-                                        client = client.id()
-                                    );
-                                    metrics.sent_messages.increment(1);
-                                    metrics.bytes_broadcasted.increment(msg.len() as u64);
-                                }
-                                Err(e) => {
+        let (pong_error_tx, mut pong_error_rx) = tokio::sync::oneshot::channel();
+        let client_reader = self.start_reader(ws_receiver, client_id.clone(), pong_error_tx);
+
+        loop {
+            tokio::select! {
+                broadcast_result = receiver.recv() => {
+                    match broadcast_result {
+                        Ok(msg) => {
+                            if filter.matches(&msg, compressed) {
+                                trace!(message = "filter matched for client", client = client_id, filter = ?filter);
+                                if let Err(e) = ws_sender.send(msg.clone()).await {
                                     warn!(
                                         message = "failed to send data to client",
-                                        client = client.id(),
+                                        client = client_id,
                                         error = e.to_string()
                                     );
                                     metrics.failed_messages.increment(1);
                                     break;
                                 }
+                                trace!(message = "message sent to client", client = client_id);
+                                metrics.sent_messages.increment(1);
+                                metrics.bytes_broadcasted.increment(get_message_size(&msg));
+                            } else {
+                                trace!("Filter did not match for client {}", client_id);
                             }
-                        } else {
-                            trace!("Filter did not match for client {}", client.id());
+                        }
+                        Err(RecvError::Closed) => {
+                            info!(message = "upstream connection closed", client = client_id);
+                            break;
+                        }
+                        Err(RecvError::Lagged(_)) => {
+                            info!(message = "client is lagging", client = client_id);
+                            metrics.lagged_connections.increment(1);
+                            break;
                         }
                     }
-                    Err(RecvError::Closed) => {
-                        info!(message = "upstream connection closed", client = client.id());
-                        break;
+                }
+
+                _ = &mut pong_error_rx => {
+                    debug!(message = "client reader signaled disconnect", client = client_id);
+                    break;
+                }
+            }
+        }
+
+        client_reader.abort();
+        metrics.closed_connections.increment(1);
+
+        info!(message = "client disconnected", client = client_id);
+    }
+
+    fn start_reader(
+        &self,
+        ws_receiver: futures::stream::SplitStream<axum::extract::ws::WebSocket>,
+        client_id: String,
+        pong_error_tx: tokio::sync::oneshot::Sender<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        let ping_enabled = self.ping_enabled;
+        let pong_timeout_ms = self.pong_timeout_ms;
+        let metrics = self.metrics.clone();
+
+        tokio::spawn(async move {
+            let mut ws_receiver = ws_receiver;
+            let mut last_pong = Instant::now();
+            let mut timeout_checker = interval(Duration::from_millis(pong_timeout_ms / 4));
+            let pong_timeout = Duration::from_millis(pong_timeout_ms);
+
+            loop {
+                tokio::select! {
+                    msg = ws_receiver.next() => {
+                        match msg {
+                            Some(Ok(Message::Pong(_))) => {
+                                if ping_enabled {
+                                    trace!(message = "received pong from client", client = client_id);
+                                    last_pong = Instant::now();
+                                }
+                            }
+                            Some(Ok(Message::Close(_))) => {
+                                trace!(message = "received close from client", client = client_id);
+                                let _ = pong_error_tx.send(());
+                                return;
+                            }
+                            Some(Err(e)) => {
+                                trace!(
+                                    message = "error receiving from client",
+                                    client = client_id,
+                                    error = e.to_string()
+                                );
+                                let _ = pong_error_tx.send(());
+                                return;
+                            }
+                            None => {
+                                trace!(message = "client connection closed", client = client_id);
+                                let _ = pong_error_tx.send(());
+                                return;
+                            }
+                            _ => {}
+                        }
                     }
-                    Err(RecvError::Lagged(_)) => {
-                        info!(message = "client is lagging", client = client.id());
-                        metrics.lagged_connections.increment(1);
-                        break;
+
+                    _ = timeout_checker.tick() => {
+                        if ping_enabled && last_pong.elapsed() > pong_timeout  {
+                            debug!(
+                                message = "client pong timeout, disconnecting",
+                                client = client_id,
+                                elapsed_ms = last_pong.elapsed().as_millis()
+                            );
+                            metrics.client_pong_disconnects.increment(1);
+                            let _ = pong_error_tx.send(());
+                            return;
+                        }
                     }
                 }
             }
-
-            metrics.closed_connections.increment(1);
-            info!(message = "client disconnected", client = client.id());
-        });
+        })
     }
 }

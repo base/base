@@ -44,6 +44,9 @@ pub struct Metrics {
 
     #[metric(describe = "Total bytes broadcasted to clients")]
     pub bytes_broadcasted: Counter,
+
+    #[metric(describe = "Count of clients disconnected due to pong timeout")]
+    pub client_pong_disconnects: Counter,
 }
 
 impl Metrics {

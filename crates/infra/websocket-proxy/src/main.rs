@@ -7,6 +7,7 @@ mod registry;
 mod server;
 mod subscriber;
 
+use axum::extract::ws::Message;
 use axum::http::Uri;
 use clap::Parser;
 use dotenvy::dotenv;
@@ -22,6 +23,7 @@ use std::time::Duration;
 use subscriber::{SubscriberOptions, WebsocketSubscriber};
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast;
+use tokio::time::interval;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, trace, warn, Level};
 use tracing_subscriber::EnvFilter;
@@ -138,13 +140,33 @@ struct Args {
     )]
     redis_key_prefix: String,
 
+        help = "Allow unauthenticated access to endpoints even if api-keys are provided"
+    )]
+    public_access_enabled: bool,
+
     #[arg(
         long,
         env,
         default_value = "false",
-        help = "Allow unauthenticated access to endpoints even if api-keys are provided"
+        help = "Enable ping/pong client health checks"
     )]
-    public_access_enabled: bool,
+    client_ping_enabled: bool,
+
+    #[arg(
+        long,
+        env,
+        default_value = "15000",
+        help = "Interval in milliseconds to send ping messages to clients"
+    )]
+    client_ping_interval_ms: u64,
+
+    #[arg(
+        long,
+        env,
+        default_value = "30000",
+        help = "Timeout in milliseconds to wait for pong response from clients"
+    )]
+    client_pong_timeout_ms: u64,
 }
 
 #[tokio::main]
@@ -244,7 +266,7 @@ async fn main() {
             data.into_bytes()
         };
 
-        match send.send(message_data) {
+        match send.send(message_data.into()) {
             Ok(_) => (),
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
@@ -282,7 +304,44 @@ async fn main() {
         subscriber_tasks.push(task);
     }
 
-    let registry = Registry::new(sender, metrics.clone(), args.enable_compression);
+    let ping_task = if args.client_ping_enabled {
+        let ping_sender = sender.clone();
+        let ping_token = token.clone();
+        let ping_interval = args.client_ping_interval_ms;
+
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_millis(ping_interval));
+            info!(
+                message = "starting ping sender",
+                interval_ms = ping_interval
+            );
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match ping_sender.send(Message::Ping(vec![].into())) {
+                            Ok(_) => trace!(message = "sent ping to all clients"),
+                            Err(e) => error!(message = "failed to send ping", error = e.to_string()),
+                        }
+                    }
+                    _ = ping_token.cancelled() => {
+                        info!(message = "ping sender shutting down");
+                        break;
+                    }
+                }
+            }
+        })
+    } else {
+        tokio::spawn(std::future::pending())
+    };
+
+    let registry = Registry::new(
+        sender,
+        metrics.clone(),
+        args.enable_compression,
+        args.client_ping_enabled,
+        args.client_pong_timeout_ms,
+    );
 
     let rate_limiter = match &args.redis_url {
         Some(redis_url) => {
@@ -341,7 +400,11 @@ async fn main() {
         _ = server_task => {
             info!("server task terminated");
             token.cancel();
-        }
+        },
+        _ = ping_task => {
+            info!("ping task terminated");
+            token.cancel();
+        },
         _ = interrupt.recv() => {
             info!("process interrupted, shutting down");
             token.cancel();

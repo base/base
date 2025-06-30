@@ -1,7 +1,6 @@
 use crate::filter::FilterType;
 use crate::rate_limit::Ticket;
 use axum::extract::ws::WebSocket;
-use axum::Error;
 use std::net::IpAddr;
 
 pub struct ClientConnection {
@@ -24,10 +23,6 @@ impl ClientConnection {
             websocket,
             filter,
         }
-    }
-
-    pub async fn send(&mut self, data: Vec<u8>) -> Result<(), Error> {
-        self.websocket.send(data.into()).await
     }
 
     pub fn id(&self) -> String {
