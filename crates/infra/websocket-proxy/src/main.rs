@@ -140,6 +140,10 @@ struct Args {
     )]
     redis_key_prefix: String,
 
+    #[arg(
+        long,
+        env,
+        default_value = "false",
         help = "Allow unauthenticated access to endpoints even if api-keys are provided"
     )]
     public_access_enabled: bool,

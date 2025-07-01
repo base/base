@@ -66,7 +66,11 @@ impl Registry {
                 broadcast_result = receiver.recv() => {
                     match broadcast_result {
                         Ok(msg) => {
-                            if filter.matches(&msg, compressed) {
+                            let msg_bytes = match &msg {
+                                Message::Binary(data) => data.as_ref(),
+                                _ => &[],
+                            };
+                            if filter.matches(msg_bytes, compressed) {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
                                 if let Err(e) = ws_sender.send(msg.clone()).await {
                                     warn!(
