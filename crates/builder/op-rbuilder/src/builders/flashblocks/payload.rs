@@ -398,6 +398,18 @@ where
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
                     )?;
+                    // We got block cancelled, we won't need anything from the block at this point
+                    // Caution: this assume that block cancel token only cancelled when new FCU is received
+                    if block_cancel.is_cancelled() {
+                        ctx.metrics.block_built_success.increment(1);
+                        ctx.metrics.flashblock_count.record(flashblock_count as f64);
+                        debug!(
+                            target: "payload_builder",
+                            message = "Payload building complete, job cancelled during execution"
+                        );
+                        span.record("flashblock_count", flashblock_count);
+                        return Ok(());
+                    }
                     ctx.metrics
                         .payload_tx_simulation_duration
                         .record(tx_execution_start_time.elapsed());
@@ -550,14 +562,14 @@ where
         // FCU(a) could arrive with `block_time - fb_time < delay`. In this case we could only produce 1 flashblock
         // FCU(a) could arrive with `delay < fb_time` - in this case we will shrink first flashblock
         // FCU(a) could arrive with `fb_time < delay < block_time - fb_time` - in this case we will issue less flashblocks
-        let time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
+        let target_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp)
             - self.config.specific.leeway_time;
         let now = std::time::SystemTime::now();
-        let Ok(time_drift) = time.duration_since(now) else {
+        let Ok(time_drift) = target_time.duration_since(now) else {
             error!(
                 target: "payload_builder",
                 message = "FCU arrived too late or system clock are unsynced",
-                ?time,
+                ?target_time,
                 ?now,
             );
             return (
@@ -571,7 +583,7 @@ where
         debug!(
             target: "payload_builder",
             message = "Time drift for building round",
-            ?time,
+            ?target_time,
             ?time_drift,
             ?timestamp
         );

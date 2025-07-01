@@ -134,7 +134,7 @@ pub struct FlashblocksArgs {
     /// building time before calculating number of fbs.
     #[arg(
         long = "flashblocks.leeway-time",
-        default_value = "50",
+        default_value = "75",
         env = "FLASHBLOCK_LEEWAY_TIME"
     )]
     pub flashblocks_leeway_time: u64,
