@@ -10,7 +10,7 @@ use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUEST
 use alloy_primitives::{B256, Sealable};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
-    ExecutionPayloadV3,
+    ExecutionPayloadV3, PayloadError,
 };
 use error::OpPayloadError;
 
@@ -480,16 +480,41 @@ impl OpExecutionPayload {
     ///
     /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
     pub fn try_into_block<T: Decodable2718 + Typed2718>(self) -> Result<Block<T>, OpPayloadError> {
+        self.try_into_block_with(|tx| {
+            T::decode_2718_exact(tx.as_ref())
+                .map_err(alloy_rlp::Error::from)
+                .map_err(PayloadError::from)
+        })
+    }
+
+    #[allow(rustdoc::broken_intra_doc_links)]
+    /// Converts [`OpExecutionPayload`] to [`Block`] with a custom transaction mapper.
+    ///
+    /// Checks that payload doesn't contain:
+    /// - blob transactions
+    /// - L1 withdrawals
+    ///
+    /// Caution: This does not set fields that are not part of the payload and only part of the
+    /// [`OpExecutionPayloadSidecar`]:
+    /// - parent_beacon_block_root
+    ///
+    /// See also: [`OpExecutionPayload::try_into_block_with_sidecar_with`]
+    pub fn try_into_block_with<T, F, E>(self, f: F) -> Result<Block<T>, OpPayloadError>
+    where
+        T: Typed2718,
+        F: FnMut(alloy_primitives::Bytes) -> Result<T, E>,
+        E: Into<PayloadError>,
+    {
         if let Some(payload) = self.as_v2() {
             if !payload.withdrawals.is_empty() {
                 return Err(OpPayloadError::NonEmptyL1Withdrawals);
             }
         }
         let block = match self {
-            Self::V1(payload) => return Ok(payload.try_into_block()?),
-            Self::V2(payload) => return Ok(payload.try_into_block()?),
-            Self::V3(payload) => payload.try_into_block()?,
-            Self::V4(payload) => payload.try_into_block()?,
+            Self::V1(payload) => return Ok(payload.try_into_block_with(f)?),
+            Self::V2(payload) => return Ok(payload.try_into_block_with(f)?),
+            Self::V3(payload) => payload.try_into_block_with(f)?,
+            Self::V4(payload) => payload.try_into_block_with(f)?,
         };
         if block.body.has_eip4844_transactions() {
             return Err(OpPayloadError::BlobTransaction);
@@ -511,7 +536,34 @@ impl OpExecutionPayload {
         self,
         sidecar: &OpExecutionPayloadSidecar,
     ) -> Result<Block<T>, OpPayloadError> {
-        let mut base_payload = self.try_into_block()?;
+        self.try_into_block_with_sidecar_with(sidecar, |tx| {
+            T::decode_2718_exact(tx.as_ref())
+                .map_err(alloy_rlp::Error::from)
+                .map_err(PayloadError::from)
+        })
+    }
+
+    /// Tries to create a new unsealed block from the given payload and payload sidecar with a
+    /// custom transaction mapper.
+    ///
+    /// Additional to checks performed in [`OpExecutionPayload::try_into_block_with`], which is
+    /// called under the hood, also checks that sidecar doesn't contain:
+    /// - blob versioned hashes
+    /// - execution layer requests
+    ///
+    /// See also docs for
+    /// [`ExecutionPayload::try_into_block_with_sidecar_with`](alloy_rpc_types_engine::ExecutionPayload::try_into_block_with_sidecar_with).
+    pub fn try_into_block_with_sidecar_with<T, F, E>(
+        self,
+        sidecar: &OpExecutionPayloadSidecar,
+        f: F,
+    ) -> Result<Block<T>, OpPayloadError>
+    where
+        T: Typed2718,
+        F: FnMut(alloy_primitives::Bytes) -> Result<T, E>,
+        E: Into<PayloadError>,
+    {
+        let mut base_payload = self.try_into_block_with(f)?;
         if let Some(blobs_hashes) = sidecar.versioned_hashes() {
             if !blobs_hashes.is_empty() {
                 return Err(OpPayloadError::NonEmptyBlobVersionedHashes);

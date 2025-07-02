@@ -42,7 +42,25 @@ impl OpExecutionPayloadV4 {
     ///
     /// See also [`ExecutionPayloadV3::try_into_block`].
     pub fn try_into_block<T: Decodable2718>(self) -> Result<Block<T>, PayloadError> {
-        let mut base_block = self.payload_inner.try_into_block()?;
+        self.try_into_block_with(|tx| {
+            T::decode_2718_exact(tx.as_ref())
+                .map_err(alloy_rlp::Error::from)
+                .map_err(PayloadError::from)
+        })
+    }
+
+    /// Converts [`OpExecutionPayloadV4`] to [`Block`] with a custom transaction mapper.
+    ///
+    /// This performs the same conversion as the underlying V3 payload, but inserts the L2
+    /// withdrawals root.
+    ///
+    /// See also [`ExecutionPayloadV3::try_into_block_with`].
+    pub fn try_into_block_with<T, F, E>(self, f: F) -> Result<Block<T>, PayloadError>
+    where
+        F: FnMut(Bytes) -> Result<T, E>,
+        E: Into<PayloadError>,
+    {
+        let mut base_block = self.payload_inner.try_into_block_with(f)?;
 
         // overwrite l1 withdrawals root with l2 withdrawals root
         base_block.header.withdrawals_root = Some(self.withdrawals_root);
