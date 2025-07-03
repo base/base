@@ -32,7 +32,9 @@ use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_provider::ProviderError;
 use reth_revm::{context::Block, State};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
-use revm::{context::result::ResultAndState, Database, DatabaseCommit};
+use revm::{
+    context::result::ResultAndState, interpreter::as_u64_saturated, Database, DatabaseCommit,
+};
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, trace, warn};
@@ -95,7 +97,7 @@ impl OpPayloadBuilderCtx {
 
     /// Returns the block number for the block.
     pub fn block_number(&self) -> u64 {
-        self.evm_env.block_env.number
+        as_u64_saturated!(self.evm_env.block_env.number)
     }
 
     /// Returns the current base fee
