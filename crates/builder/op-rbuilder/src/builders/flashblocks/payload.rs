@@ -529,10 +529,12 @@ where
                     loop {
                         // Initiate fb job
                         let child_token = block_cancel.child_token();
+                        debug!(target: "payload_builder", "Sending child cancel token to execution loop");
                         flashblock_cancel_token_rx
                             .send(Some(child_token.clone()))
                             .await?;
                         timer.tick().await;
+                        debug!(target: "payload_builder", "Cancelling child token to complete flashblock");
                         // Cancel job once time is up
                         child_token.cancel();
                     }
