@@ -71,16 +71,6 @@ where
         ));
     }
 
-    // In the case where the agreed upon L2 output root is the same as the claimed L2 output
-    // root, trace extension is detected and we can skip the derivation and execution
-    // steps.
-    if boot.agreed_l2_output_root == boot.claimed_l2_output_root {
-        info!(
-            target: "client",
-            "Trace extension detected. State transition is already agreed upon.",
-        );
-        return Ok((boot_clone, None));
-    }
     ////////////////////////////////////////////////////////////////
     //                   DERIVATION & EXECUTION                   //
     ////////////////////////////////////////////////////////////////
