@@ -15,6 +15,7 @@ jobs:
       - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}
       - disk=large
+      - spot=false
     
     env:
       DOCKER_BUILDKIT: 1
@@ -84,6 +85,7 @@ jobs:
       - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}
       - disk=large
+      - spot=false
       
     env:
       DOCKER_BUILDKIT: 1
@@ -153,6 +155,7 @@ jobs:
       - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}
       - disk=large
+      - spot=false
       
     env:
       DOCKER_BUILDKIT: 1
