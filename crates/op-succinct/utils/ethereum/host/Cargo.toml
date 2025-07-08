@@ -1,6 +1,6 @@
 [package]
 name = "op-succinct-ethereum-host-utils"
-version = "0.1.0"
+version.workspace = true
 license.workspace = true
 edition.workspace = true
 

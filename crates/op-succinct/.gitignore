@@ -45,3 +45,6 @@ contracts/opsuccinctfdgconfig.json
 
 # Rollup Configs
 configs/
+
+# Grafana alloy config
+config.alloy

@@ -6,6 +6,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use anyhow::Result;
 use op_alloy_network::EthereumWallet;
+use op_succinct_host_utils::setup_logger;
 use tokio::{
     process::Command as TokioCommand,
     time,
@@ -15,7 +16,6 @@ use tokio::{
 use fault_proof::{
     config::ProposerConfig,
     contract::{DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus},
-    utils::setup_logging,
     FactoryTrait,
 };
 
@@ -23,7 +23,7 @@ use fault_proof::{
 async fn test_e2e_proposer_wins() -> Result<()> {
     const NUM_GAMES: usize = 3;
 
-    setup_logging();
+    setup_logger();
 
     let _span = tracing::info_span!("[[TEST]]").entered();
 
@@ -129,7 +129,7 @@ async fn test_e2e_proposer_wins() -> Result<()> {
 async fn test_e2e_challenger_wins() -> Result<()> {
     const NUM_GAMES: usize = 3;
 
-    setup_logging();
+    setup_logger();
 
     let _span = tracing::info_span!("[[TEST]]").entered();
 

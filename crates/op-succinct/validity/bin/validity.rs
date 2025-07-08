@@ -3,11 +3,11 @@ use anyhow::Result;
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
     metrics::{init_metrics, MetricsGauge},
+    setup_logger,
 };
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_validity::{
-    read_proposer_env, setup_proposer_logger, DriverDBClient, Proposer, RequesterConfig,
-    ValidityGauge,
+    read_proposer_env, DriverDBClient, Proposer, RequesterConfig, ValidityGauge,
 };
 use std::sync::Arc;
 use tikv_jemallocator::Jemalloc;
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
 
     dotenv::from_filename(args.env_file).ok();
 
-    setup_proposer_logger();
+    setup_logger();
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
