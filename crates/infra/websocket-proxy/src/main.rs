@@ -290,7 +290,7 @@ async fn main() {
             .with_max_backoff_interval(Duration::from_millis(args.subscriber_max_interval_ms))
             .with_ping_interval(Duration::from_millis(args.subscriber_ping_interval_ms))
             .with_pong_timeout(Duration::from_millis(args.subscriber_pong_timeout_ms))
-            .with_backoff_initial_interval(Duration::from_secs(500))
+            .with_backoff_initial_interval(Duration::from_millis(500))
             .with_initial_grace_period(Duration::from_secs(5));
 
         let mut subscriber =
