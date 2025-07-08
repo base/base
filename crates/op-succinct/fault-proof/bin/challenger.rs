@@ -12,10 +12,12 @@ use fault_proof::{
         OPSuccinctFaultDisputeGame,
     },
     prometheus::ChallengerGauge,
-    utils::setup_logging,
     Action, FactoryTrait, L1Provider, L2Provider, Mode,
 };
-use op_succinct_host_utils::metrics::{init_metrics, MetricsGauge};
+use op_succinct_host_utils::{
+    metrics::{init_metrics, MetricsGauge},
+    setup_logger,
+};
 use op_succinct_signer_utils::Signer;
 use rand::Rng;
 use tokio::time;
@@ -275,7 +277,7 @@ where
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    setup_logging();
+    setup_logger();
 
     let args = Args::parse();
     dotenv::from_filename(args.env_file).ok();

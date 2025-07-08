@@ -1,6 +1,6 @@
 [package]
 name = "op-succinct-validity"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -16,8 +16,16 @@ path = "bin/validity.rs"
 # workspace
 tokio.workspace = true
 alloy-primitives.workspace = true
-tracing-subscriber.workspace = true
+
+# tracing and telemetry
 tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-stdout.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-appender-tracing.workspace = true
 
 # local
 op-succinct-client-utils.workspace = true

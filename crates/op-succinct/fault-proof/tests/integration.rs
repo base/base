@@ -5,7 +5,7 @@ use alloy_provider::ProviderBuilder;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_transport_http::reqwest::Url;
 use anyhow::{Context, Result};
-use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
+use op_succinct_host_utils::{fetcher::OPSuccinctDataFetcher, setup_logger};
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_signer_utils::Signer;
 use tokio::time::Duration;
@@ -13,13 +13,12 @@ use tokio::time::Duration;
 use fault_proof::{
     contract::{DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus},
     proposer::OPSuccinctProposer,
-    utils::setup_logging,
     FactoryTrait,
 };
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_proposer_defends_successfully() -> Result<()> {
-    setup_logging();
+    setup_logger();
     let _span = tracing::info_span!("[[TEST]]").entered();
 
     dotenv::from_filename(".env.proposer").ok();

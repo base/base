@@ -1,6 +1,6 @@
 [package]
 name = "op-succinct-fp"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -38,7 +38,10 @@ alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-types-eth.workspace = true
 alloy-sol-macro.workspace = true
 alloy-sol-types.workspace = true
-alloy-transport-http = { workspace = true, features = ["reqwest", "reqwest-native-tls"] }
+alloy-transport-http = { workspace = true, features = [
+    "reqwest",
+    "reqwest-native-tls",
+] }
 
 # op-alloy
 op-alloy-network.workspace = true
@@ -52,7 +55,7 @@ dotenv.workspace = true
 futures.workspace = true
 rand = "0.9"
 tokio.workspace = true
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
 hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
