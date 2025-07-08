@@ -26,7 +26,7 @@
   - [Sync Methods](#sync-methods)
     - [interop_fetchReceipts](#interop_fetchreceipts)
     - [interop_l2BlockRefByTimestamp](#interop_l2blockrefbytimestamp)
-    - [interop_blockRefByNumber](#interop_blockrefbynumber)
+    - [interop_l2BlockRefByNumber](#interop_l2blockrefbynumber)
     - [interop_chainID](#interop_chainid)
     - [interop_outputV0AtTimestamp](#interop_outputv0attimestamp)
     - [interop_pendingOutputV0AtTimestamp](#interop_pendingoutputv0attimestamp)
@@ -242,13 +242,13 @@ payload (uint64) -> BlockRef
 
 Fetches L2 BlockRef of the block that occurred at given timestamp
 
-#### interop_blockRefByNumber
+#### interop_l2BlockRefByNumber
 
 ```javascript
-payload (uint64) -> BlockRef
+payload (uint64) -> L2BlockRef
 ```
 
-Fetches the BlockRef from a given L2 block number
+Fetches the L2 BlockRef from a given L2 block number
 
 #### interop_chainID
 
