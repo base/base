@@ -281,9 +281,11 @@ where
             first_flashblock_offset = first_flashblock_offset.as_millis(),
             flashblocks_interval = self.config.specific.interval.as_millis(),
         );
-        ctx.metrics
-            .target_flashblock
-            .record(flashblocks_per_block as f64);
+        ctx.metrics.reduced_flashblocks_number.record(
+            self.config
+                .flashblocks_per_block()
+                .saturating_sub(flashblocks_per_block) as f64,
+        );
         ctx.metrics
             .first_flashblock_time_offset
             .record(first_flashblock_offset.as_millis() as f64);
@@ -490,9 +492,14 @@ where
                     // Exit loop if channel closed or cancelled
                     ctx.metrics.block_built_success.increment(1);
                     ctx.metrics.flashblock_count.record(flashblock_count as f64);
+                    ctx.metrics
+                        .missing_flashblocks_count
+                        .record(flashblocks_per_block.saturating_sub(flashblock_count) as f64);
                     debug!(
                         target: "payload_builder",
-                        message = "Payload building complete, channel closed or job cancelled"
+                        message = "Payload building complete, channel closed or job cancelled",
+                        missing_falshblocks = flashblocks_per_block.saturating_sub(flashblock_count),
+                        reduced_flashblocks = self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block),
                     );
                     span.record("flashblock_count", flashblock_count);
                     return Ok(());
@@ -579,14 +586,17 @@ where
                 self.config.specific.interval,
             );
         };
-        self.metrics
-            .flashblock_time_drift
-            .record(time_drift.as_millis() as f64);
+        self.metrics.flashblocks_time_drift.record(
+            self.config
+                .block_time
+                .as_millis()
+                .saturating_sub(time_drift.as_millis()) as f64,
+        );
         debug!(
             target: "payload_builder",
             message = "Time drift for building round",
             ?target_time,
-            ?time_drift,
+            time_drift = self.config.block_time.as_millis().saturating_sub(time_drift.as_millis()),
             ?timestamp
         );
         // This is extra check to ensure that we would account at least for block time in case we have any timer discrepancies.
