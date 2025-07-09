@@ -65,6 +65,25 @@ impl OpDepositReceipt {
 }
 
 impl<T> OpDepositReceipt<T> {
+    /// Maps the inner receipt value of this receipt.
+    ///
+    /// This is mainly useful for mapping the receipt log type to the rpc variant.
+    pub fn map_inner<U, F>(self, f: F) -> OpDepositReceipt<U>
+    where
+        F: FnOnce(Receipt<T>) -> Receipt<U>,
+    {
+        OpDepositReceipt {
+            inner: f(self.inner),
+            deposit_nonce: self.deposit_nonce,
+            deposit_receipt_version: self.deposit_receipt_version,
+        }
+    }
+
+    /// Attaches the given bloom to the receipt returning [`ReceiptWithBloom`].
+    pub const fn with_bloom_unchecked(self, bloom: Bloom) -> ReceiptWithBloom<Self> {
+        ReceiptWithBloom::new(self, bloom)
+    }
+
     /// Consumes the type and returns the inner [`Receipt`].
     pub fn into_inner(self) -> Receipt<T> {
         self.inner
