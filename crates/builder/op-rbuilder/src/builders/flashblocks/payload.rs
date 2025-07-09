@@ -35,6 +35,7 @@ use reth_revm::{
     db::{states::bundle_state::BundleRetention, BundleState},
     State,
 };
+use reth_transaction_pool::BestTransactions;
 use revm::Database;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -385,8 +386,11 @@ where
 
                     let best_txs_start_time = Instant::now();
                     let best_txs = BestPayloadTransactions::new(
+                        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
+                        // https://github.com/paradigmxyz/reth/issues/17325
                         self.pool
-                            .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                            .best_transactions_with_attributes(ctx.best_transaction_attributes())
+                            .without_updates(),
                     );
                     ctx.metrics
                         .transaction_pool_fetch_duration

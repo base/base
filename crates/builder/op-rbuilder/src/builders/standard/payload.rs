@@ -30,7 +30,9 @@ use reth_provider::{
 use reth_revm::{
     database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
 };
-use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction, TransactionPool};
+use reth_transaction_pool::{
+    BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
+};
 use revm::Database;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -135,7 +137,12 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
         pool: Pool,
         attr: BestTransactionsAttributes,
     ) -> impl PayloadTransactions<Transaction = T> {
-        BestPayloadTransactions::new(pool.best_transactions_with_attributes(attr))
+        // TODO: once this issue is fixed we could remove without_updates and rely on regular impl
+        // https://github.com/paradigmxyz/reth/issues/17325
+        BestPayloadTransactions::new(
+            pool.best_transactions_with_attributes(attr)
+                .without_updates(),
+        )
     }
 }
 
