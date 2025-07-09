@@ -343,7 +343,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         ctx: &OpPayloadBuilderCtx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P>,
+        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
         P: StorageRootProvider,
     {
         let Self { best } = self;
@@ -438,7 +438,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         ctx: OpPayloadBuilderCtx,
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P>,
+        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     {
         let ExecutedPayload { info } = match self.execute(&mut state, &ctx)? {

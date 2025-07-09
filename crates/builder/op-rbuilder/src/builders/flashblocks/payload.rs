@@ -648,7 +648,7 @@ fn execute_pre_steps<DB>(
     ctx: &OpPayloadBuilderCtx,
 ) -> Result<ExecutionInfo<ExtraExecutionInfo>, PayloadBuilderError>
 where
-    DB: Database<Error = ProviderError>,
+    DB: Database<Error = ProviderError> + std::fmt::Debug,
 {
     // 1. apply pre-execution changes
     ctx.evm_config

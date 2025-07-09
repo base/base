@@ -234,7 +234,7 @@ impl OpPayloadBuilderCtx {
         db: &mut State<DB>,
     ) -> Result<ExecutionInfo<E>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error = ProviderError> + std::fmt::Debug,
     {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
@@ -325,7 +325,7 @@ impl OpPayloadBuilderCtx {
         block_da_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error = ProviderError> + std::fmt::Debug,
     {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -555,7 +555,7 @@ impl OpPayloadBuilderCtx {
         message: Vec<u8>,
     ) -> Option<()>
     where
-        DB: Database<Error = ProviderError>,
+        DB: Database<Error = ProviderError> + std::fmt::Debug,
     {
         self.builder_signer()
             .map(|signer| {
