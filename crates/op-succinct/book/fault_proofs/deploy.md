@@ -41,6 +41,8 @@ Create a `.env` file in the project root directory with the following variables:
 | `DISPUTE_GAME_FINALITY_DELAY_SECONDS` | Delay before finalizing dispute games. | `604800` for 7 days |
 | `MAX_CHALLENGE_DURATION` | Maximum duration for challenges in seconds. | `604800` for 7 days |
 | `MAX_PROVE_DURATION` | Maximum duration for proving in seconds. | `86400` for 1 day |
+| `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
+| `CHALLENGER_ADDRESSES` | Comma-separated list of addresses allowed to challenge games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
 
 ### SP1 Verifier Configuration
 
@@ -64,8 +66,6 @@ The deployment script deploys the contracts with the following parameters:
 | `CHALLENGER_BOND_WEI` | Challenger bond for the game. | 1_000_000_000_000_000 (for 0.001 ETH) |
 | `OPTIMISM_PORTAL2_ADDRESS` | Address of an existing OptimismPortal2 contract. Default: if unset, a fresh `MockOptimismPortal2` is deployed. | `0x...` |
 | `PERMISSIONLESS_MODE` | If set to true, anyone can propose or challenge games. Default: `false` | `true` or `false` |
-| `PROPOSER_ADDRESSES` | Comma-separated list of addresses allowed to propose games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
-| `CHALLENGER_ADDRESSES` | Comma-separated list of addresses allowed to challenge games. Ignored if `PERMISSIONLESS_MODE` is true. | `0x123...,0x456...` |
 | `FALLBACK_TIMEOUT_FP_SECS` | Timeout in seconds after which permissionless proposing is allowed if no proposal has been made. | `1209600` (for 2 weeks) |
 | `STARTING_L2_BLOCK_NUMBER` | Starting L2 block number in decimal. Default: \<Latest L2 Finalized block\> - \<Number of blocks since the `DISPUTE_GAME_FINALITY_SECONDS`>  | `786000` |
 | `VERIFIER_ADDRESS` | Default: Succinct's official Groth16 VerifierGateway. Address of the `ISP1Verifier` contract used to verify proofs. For mock proofs, this is the address of the `SP1MockVerifier` contract. | `0x...` |

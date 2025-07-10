@@ -99,12 +99,20 @@ deploy-fdg-contracts env_file=".env":
     echo "Building contracts..."
     forge build
     
+    # Setup verification flags
+    VERIFY=""
+    if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
+        VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY --retries 10 --delay 5"
+        echo "Verification enabled with Etherscan"
+    fi
+    
     # Run deployment script
     echo "Running deployment script..."
     forge script script/fp/DeployOPSuccinctFDG.s.sol \
         --broadcast \
         --rpc-url "$RPC_URL_TO_USE" \
-        --private-key "$PRIVATE_KEY"
+        --private-key "$PRIVATE_KEY" \
+        $VERIFY
     
     echo "FDG contract deployment complete!"
 
