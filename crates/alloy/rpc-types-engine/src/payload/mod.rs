@@ -52,9 +52,8 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                 A: serde::de::MapAccess<'de>,
             {
                 use alloc::string::String;
-                use alloy_primitives::map::HashMap;
+                use alloy_primitives::{U64, map::HashMap};
                 use alloy_rpc_types_engine::ExecutionPayloadV1;
-                use serde::de::IntoDeserializer;
 
                 enum Fields {
                     ParentHash,
@@ -157,24 +156,20 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                         Fields::LogsBloom => logs_bloom = Some(map.next_value()?),
                         Fields::PrevRandao => prev_randao = Some(map.next_value()?),
                         Fields::BlockNumber => {
-                            let raw = map.next_value::<&str>()?;
-                            block_number =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            block_number = Some(raw.to());
                         }
                         Fields::GasLimit => {
-                            let raw = map.next_value::<&str>()?;
-                            gas_limit =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            gas_limit = Some(raw.to());
                         }
                         Fields::GasUsed => {
-                            let raw = map.next_value::<String>()?;
-                            gas_used =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            gas_used = Some(raw.to());
                         }
                         Fields::Timestamp => {
-                            let raw = map.next_value::<String>()?;
-                            timestamp =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            timestamp = Some(raw.to());
                         }
                         Fields::ExtraData => extra_data = Some(map.next_value()?),
                         Fields::BaseFeePerGas => base_fee_per_gas = Some(map.next_value()?),
@@ -182,14 +177,12 @@ impl<'de> serde::Deserialize<'de> for OpExecutionPayload {
                         Fields::Transactions => transactions = Some(map.next_value()?),
                         Fields::Withdrawals => withdrawals = Some(map.next_value()?),
                         Fields::BlobGasUsed => {
-                            let raw = map.next_value::<String>()?;
-                            blob_gas_used =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            blob_gas_used = Some(raw.to());
                         }
                         Fields::ExcessBlobGas => {
-                            let raw = map.next_value::<String>()?;
-                            excess_blob_gas =
-                                Some(alloy_serde::quantity::deserialize(raw.into_deserializer())?);
+                            let raw = map.next_value::<U64>()?;
+                            excess_blob_gas = Some(raw.to());
                         }
                         Fields::WithdrawalsRoot => withdrawals_root = Some(map.next_value()?),
                         Fields::Unknown(field) => {
