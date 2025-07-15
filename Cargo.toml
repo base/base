@@ -20,33 +20,33 @@ base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-node = { path = "crates/node" }
 
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.0" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
 
 # revm
-revm = { version = "26.0.1", default-features = false }
-revm-bytecode = { version = "5.0.0", default-features = false }
+revm = { version = "27.0.2", default-features = false }
+revm-bytecode = { version = "6.0.1", default-features = false }
 
 # alloy
 alloy-primitives = { version = "1.2.0", default-features = false, features = [
     "map-foldhash",
 ] }
-alloy-eips = { version = "1.0.16", default-features = false }
-alloy-rpc-types = { version = "1.0.16", default-features = false }
-alloy-rpc-types-engine = { version = "1.0.16", default-features = false }
-alloy-rpc-types-eth = { version = "1.0.16" }
-alloy-consensus = { version = "1.0.16" }
+alloy-eips = { version = "1.0.18", default-features = false }
+alloy-rpc-types = { version = "1.0.18", default-features = false }
+alloy-rpc-types-engine = { version = "1.0.18", default-features = false }
+alloy-rpc-types-eth = { version = "1.0.18" }
+alloy-consensus = { version = "1.0.18" }
 alloy-trie = { version = "0.9.0", default-features = false }
 nybbles = { version = "0.4.0", default-features = false }
-alloy-provider = { version = "1.0.16" }
+alloy-provider = { version = "1.0.18" }
 alloy-hardforks = "0.2.7"
 
 # op-alloy
