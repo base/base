@@ -94,6 +94,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
 // public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
+    pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
+        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None)
+            .await
+    }
+
     /// Builds a new block using the current state of the chain and the transactions in the pool.
     pub async fn build_new_block(&self) -> eyre::Result<Block<Transaction>> {
         self.build_new_block_with_txs(vec![]).await
@@ -104,7 +109,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         &self,
         timestamp_jitter: Option<Duration>,
     ) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], None, timestamp_jitter)
+        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter)
             .await
     }
 
@@ -112,6 +117,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     pub async fn build_new_block_with_txs_timestamp(
         &self,
         txs: Vec<Bytes>,
+        no_tx_pool: Option<bool>,
         block_timestamp: Option<Duration>,
         // Amount of time to lag before sending FCU. This tests late FCU scenarios
         timestamp_jitter: Option<Duration>,
@@ -178,6 +184,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 },
                 transactions: Some(vec![block_info_tx].into_iter().chain(txs).collect()),
                 gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
+                no_tx_pool,
                 ..Default::default()
             })
             .await?;
@@ -259,7 +266,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         let latest_timestamp = Duration::from_secs(latest.header.timestamp);
         let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
 
-        self.build_new_block_with_txs_timestamp(txs, Some(block_timestamp), None)
+        self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None)
             .await
     }
 

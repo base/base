@@ -176,3 +176,16 @@ async fn produces_blocks_under_load_within_deadline(rbuilder: LocalInstance) -> 
 
     Ok(())
 }
+
+#[rb_test]
+async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    // make sure we can build a couple of blocks first
+    let _ = driver.build_new_block().await?;
+
+    // now lets try to build a block with no transactions
+    let _ = driver.build_new_block_with_no_tx_pool().await?;
+
+    Ok(())
+}
