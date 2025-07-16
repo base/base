@@ -5,9 +5,10 @@ pub mod v3;
 pub mod v4;
 
 use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
+use alloc::vec::Vec;
 use alloy_consensus::{Block, BlockHeader, Transaction};
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
-use alloy_primitives::{B256, Sealable};
+use alloy_primitives::{B256, Bytes, Sealable};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
@@ -438,6 +439,16 @@ impl OpExecutionPayload {
             Self::V1(_) | Self::V2(_) | Self::V3(_) => None,
             Self::V4(payload) => Some(payload),
         }
+    }
+
+    /// Returns the transactions for the payload.
+    pub const fn transactions(&self) -> &Vec<Bytes> {
+        &self.as_v1().transactions
+    }
+
+    /// Returns a mutable reference to the transactions for the payload.
+    pub const fn transactions_mut(&mut self) -> &mut Vec<Bytes> {
+        &mut self.as_v1_mut().transactions
     }
 
     /// Returns the parent hash for the payload.
