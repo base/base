@@ -35,6 +35,19 @@ impl OpExecutionPayloadV4 {
         Self { withdrawals_root, payload_inner: payload }
     }
 
+    /// Converts [`OpExecutionPayloadV4`] to [`Block`] with raw transactions.
+    ///
+    /// This performs the same conversion as the underlying V3 payload, but inserts the L2
+    /// withdrawals root and returns raw transaction bytes instead of decoded transactions.
+    pub fn into_block_raw(self) -> Result<Block<Bytes>, PayloadError> {
+        let mut base_block = self.payload_inner.into_block_raw()?;
+
+        // overwrite l1 withdrawals root with l2 withdrawals root
+        base_block.header.withdrawals_root = Some(self.withdrawals_root);
+
+        Ok(base_block)
+    }
+
     /// Converts [`OpExecutionPayloadV4`] to [`Block`].
     ///
     /// This performs the same conversion as the underlying V3 payload, but inserts the L2
@@ -42,7 +55,8 @@ impl OpExecutionPayloadV4 {
     ///
     /// See also [`ExecutionPayloadV3::try_into_block`].
     pub fn try_into_block<T: Decodable2718>(self) -> Result<Block<T>, PayloadError> {
-        self.try_into_block_with(|tx| {
+        let block = self.into_block_raw()?;
+        block.try_map_transactions(|tx| {
             T::decode_2718_exact(tx.as_ref())
                 .map_err(alloy_rlp::Error::from)
                 .map_err(PayloadError::from)
@@ -60,12 +74,8 @@ impl OpExecutionPayloadV4 {
         F: FnMut(Bytes) -> Result<T, E>,
         E: Into<PayloadError>,
     {
-        let mut base_block = self.payload_inner.try_into_block_with(f)?;
-
-        // overwrite l1 withdrawals root with l2 withdrawals root
-        base_block.header.withdrawals_root = Some(self.withdrawals_root);
-
-        Ok(base_block)
+        let block = self.into_block_raw()?;
+        block.try_map_transactions(f).map_err(|e| e.into())
     }
 }
 

@@ -471,6 +471,57 @@ impl OpExecutionPayload {
         self.as_v1().timestamp
     }
 
+    /// Converts [`OpExecutionPayload`] to [`Block`] with raw transactions.
+    ///
+    /// Caution: This does not set fields that are not part of the payload and only part of the
+    /// [`OpExecutionPayloadSidecar`]:
+    /// - parent_beacon_block_root
+    ///
+    /// See also: [`OpExecutionPayload::into_block_with_sidecar_raw`]
+    pub fn into_block_raw(self) -> Result<Block<alloy_primitives::Bytes>, PayloadError> {
+        match self {
+            Self::V1(payload) => payload.into_block_raw(),
+            Self::V2(payload) => payload.into_block_raw(),
+            Self::V3(payload) => payload.into_block_raw(),
+            Self::V4(payload) => payload.into_block_raw(),
+        }
+    }
+
+    /// Creates a new unsealed block from the given payload and payload sidecar with raw
+    /// transactions.
+    ///
+    /// This sets the `parent_beacon_block_root` and `requests_hash` if present in the sidecar.
+    /// Also validates that L1 withdrawals are empty.
+    ///
+    /// See also: [`OpExecutionPayload::try_into_block_with_sidecar`]
+    pub fn into_block_with_sidecar_raw(
+        self,
+        sidecar: &OpExecutionPayloadSidecar,
+    ) -> Result<Block<alloy_primitives::Bytes>, OpPayloadError> {
+        if let Some(payload) = self.as_v2() {
+            if !payload.withdrawals.is_empty() {
+                return Err(OpPayloadError::NonEmptyL1Withdrawals);
+            }
+        }
+
+        let mut block = self.into_block_raw()?;
+
+        if let Some(blobs_hashes) = sidecar.versioned_hashes() {
+            if !blobs_hashes.is_empty() {
+                return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
+            }
+        }
+        if let Some(reqs_hash) = sidecar.requests_hash() {
+            if reqs_hash != EMPTY_REQUESTS_HASH {
+                return Err(OpPayloadError::NonEmptyELRequests);
+            }
+            block.header.requests_hash = Some(EMPTY_REQUESTS_HASH)
+        }
+        block.header.parent_beacon_block_root = sidecar.parent_beacon_block_root();
+
+        Ok(block)
+    }
+
     #[allow(rustdoc::broken_intra_doc_links)]
     /// Converts [`OpExecutionPayload`] to [`Block`].
     ///
