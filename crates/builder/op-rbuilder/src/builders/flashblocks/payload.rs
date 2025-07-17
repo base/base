@@ -232,9 +232,9 @@ where
             .unwrap_or(0);
 
         let mut info = execute_pre_steps(&mut db, &ctx)?;
-        ctx.metrics
-            .sequencer_tx_duration
-            .record(sequencer_tx_start_time.elapsed());
+        let sequencer_tx_time = sequencer_tx_start_time.elapsed();
+        ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
+        ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // If we have payload with txpool we add first builder tx right after deposits
         if !ctx.attributes().no_tx_pool {
@@ -257,6 +257,9 @@ where
         ctx.metrics
             .payload_num_tx
             .record(info.executed_transactions.len() as f64);
+        ctx.metrics
+            .payload_num_tx_gauge
+            .set(info.executed_transactions.len() as f64);
 
         if ctx.attributes().no_tx_pool {
             info!(
@@ -264,9 +267,13 @@ where
                 "No transaction pool, skipping transaction pool processing",
             );
 
+            let total_block_building_time = block_build_start_time.elapsed();
             ctx.metrics
                 .total_block_built_duration
-                .record(block_build_start_time.elapsed());
+                .record(total_block_building_time);
+            ctx.metrics
+                .total_block_built_gauge
+                .set(total_block_building_time);
 
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
@@ -389,9 +396,13 @@ where
                         self.pool
                             .best_transactions_with_attributes(ctx.best_transaction_attributes()),
                     );
+                    let transaction_pool_fetch_time = best_txs_start_time.elapsed();
                     ctx.metrics
                         .transaction_pool_fetch_duration
-                        .record(best_txs_start_time.elapsed());
+                        .record(transaction_pool_fetch_time);
+                    ctx.metrics
+                        .transaction_pool_fetch_gauge
+                        .set(transaction_pool_fetch_time);
 
                     let tx_execution_start_time = Instant::now();
                     ctx.execute_best_transactions(
@@ -413,13 +424,14 @@ where
                         span.record("flashblock_count", flashblock_count);
                         return Ok(());
                     }
-                    ctx.metrics
-                        .payload_tx_simulation_duration
-                        .record(tx_execution_start_time.elapsed());
 
+                    let payload_tx_simulation_time = tx_execution_start_time.elapsed();
                     ctx.metrics
                         .payload_tx_simulation_duration
-                        .record(tx_execution_start_time.elapsed());
+                        .record(payload_tx_simulation_time);
+                    ctx.metrics
+                        .payload_tx_simulation_gauge
+                        .set(payload_tx_simulation_time);
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     invoke_on_last_flashblock(flashblock_count, last_flashblock, || {
@@ -428,9 +440,13 @@ where
 
                     let total_block_built_duration = Instant::now();
                     let build_result = build_block(db, &ctx, &mut info);
+                    let total_block_built_duration = total_block_built_duration.elapsed();
                     ctx.metrics
                         .total_block_built_duration
-                        .record(total_block_built_duration.elapsed());
+                        .record(total_block_built_duration);
+                    ctx.metrics
+                        .total_block_built_gauge
+                        .set(total_block_built_duration);
 
                     // Handle build errors with match pattern
                     match build_result {
@@ -460,10 +476,10 @@ where
                                 .flashblock_build_duration
                                 .record(flashblock_build_start_time.elapsed());
                             ctx.metrics
-                                .payload_byte_size
+                                .flashblock_byte_size_histogram
                                 .record(new_payload.block().size() as f64);
                             ctx.metrics
-                                .payload_num_tx
+                                .flashblock_num_tx_histogram
                                 .record(info.executed_transactions.len() as f64);
 
                             best_payload.set(new_payload.clone());
@@ -677,9 +693,13 @@ where
     // and 4788 contract call
     let state_merge_start_time = Instant::now();
     state.merge_transitions(BundleRetention::Reverts);
+    let state_transition_merge_time = state_merge_start_time.elapsed();
     ctx.metrics
         .state_transition_merge_duration
-        .record(state_merge_start_time.elapsed());
+        .record(state_transition_merge_time);
+    ctx.metrics
+        .state_transition_merge_gauge
+        .set(state_transition_merge_time);
 
     let new_bundle = state.take_bundle();
 
@@ -723,9 +743,13 @@ where
                 );
             })?
     };
+    let state_root_calculation_time = state_root_start_time.elapsed();
     ctx.metrics
         .state_root_calculation_duration
-        .record(state_root_start_time.elapsed());
+        .record(state_root_calculation_time);
+    ctx.metrics
+        .state_root_calculation_gauge
+        .set(state_root_calculation_time);
 
     let mut requests_hash = None;
     let withdrawals_root = if ctx

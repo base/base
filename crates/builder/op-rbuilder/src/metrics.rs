@@ -1,3 +1,4 @@
+use metrics::IntoF64;
 use reth_metrics::{
     metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
@@ -40,35 +41,63 @@ pub struct OpRBuilderMetrics {
     pub flashblock_count: Histogram,
     /// Number of messages sent
     pub messages_sent_count: Counter,
-    /// Total duration of building a block
+    /// Histogram of the time taken to build a block
     pub total_block_built_duration: Histogram,
-    /// Flashblock build duration
+    /// Latest time taken to build a block
+    pub total_block_built_gauge: Gauge,
+    /// Histogram of the time taken to build a Flashblock
     pub flashblock_build_duration: Histogram,
+    /// Flashblock byte size histogram
+    pub flashblock_byte_size_histogram: Histogram,
+    /// Histogram of transactions in a Flashblock
+    pub flashblock_num_tx_histogram: Histogram,
     /// Number of invalid blocks
     pub invalid_blocks_count: Counter,
-    /// Duration of fetching transactions from the pool
+    /// Histogram of fetching transactions from the pool duration
     pub transaction_pool_fetch_duration: Histogram,
-    /// Duration of state root calculation
+    /// Latest time taken to fetch tx from the pool
+    pub transaction_pool_fetch_gauge: Gauge,
+    /// Histogram of state root calculation duration
     pub state_root_calculation_duration: Histogram,
-    /// Duration of sequencer transaction execution
+    /// Latest state root calculation duration
+    pub state_root_calculation_gauge: Gauge,
+    /// Histogram of sequencer transaction execution duration
     pub sequencer_tx_duration: Histogram,
-    /// Duration of state merge transitions
+    /// Latest sequencer transaction execution duration
+    pub sequencer_tx_gauge: Gauge,
+    /// Histogram of state merge transitions duration
     pub state_transition_merge_duration: Histogram,
-    /// Duration of payload simulation of all transactions
+    /// Latest state merge transitions duration
+    pub state_transition_merge_gauge: Gauge,
+    /// Histogram of the duration of payload simulation of all transactions
     pub payload_tx_simulation_duration: Histogram,
+    /// Latest payload simulation of all transactions duration
+    pub payload_tx_simulation_gauge: Gauge,
     /// Number of transaction considered for inclusion in the block
     pub payload_num_tx_considered: Histogram,
-    /// Payload byte size
+    /// Latest number of transactions considered for inclusion in the block
+    pub payload_num_tx_considered_gauge: Gauge,
+    /// Payload byte size histogram
     pub payload_byte_size: Histogram,
-    /// Number of transactions in the payload
+    /// Latest Payload byte size
+    pub payload_byte_size_gauge: Gauge,
+    /// Histogram of transactions in the payload
     pub payload_num_tx: Histogram,
-    /// Number of transactions in the payload that were successfully simulated
+    /// Latest number of transactions in the payload
+    pub payload_num_tx_gauge: Gauge,
+    /// Histogram of transactions in the payload that were successfully simulated
     pub payload_num_tx_simulated: Histogram,
-    /// Number of transactions in the payload that were successfully simulated
+    /// Latest number of transactions in the payload that were successfully simulated
+    pub payload_num_tx_simulated_gauge: Gauge,
+    /// Histogram of transactions in the payload that were successfully simulated
     pub payload_num_tx_simulated_success: Histogram,
-    /// Number of transactions in the payload that failed simulation
+    /// Latest number of transactions in the payload that were successfully simulated
+    pub payload_num_tx_simulated_success_gauge: Gauge,
+    /// Histogram of transactions in the payload that failed simulation
     pub payload_num_tx_simulated_fail: Histogram,
-    /// Duration of tx simulation
+    /// Latest number of transactions in the payload that failed simulation
+    pub payload_num_tx_simulated_fail_gauge: Gauge,
+    /// Histogram of tx simulation duration
     pub tx_simulation_duration: Histogram,
     /// Byte size of transactions
     pub tx_byte_size: Histogram,
@@ -92,8 +121,38 @@ pub struct OpRBuilderMetrics {
     pub failed_bundles: Counter,
     /// Number of reverted bundles
     pub bundles_reverted: Histogram,
-    /// Time taken to respond to a request to the eth_sendBundle endpoint
+    /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+}
+
+impl OpRBuilderMetrics {
+    pub fn set_payload_builder_metrics(
+        &self,
+        payload_tx_simulation_time: impl IntoF64 + Copy,
+        num_txs_considered: impl IntoF64 + Copy,
+        num_txs_simulated: impl IntoF64 + Copy,
+        num_txs_simulated_success: impl IntoF64 + Copy,
+        num_txs_simulated_fail: impl IntoF64 + Copy,
+        num_bundles_reverted: impl IntoF64,
+    ) {
+        self.payload_tx_simulation_duration
+            .record(payload_tx_simulation_time);
+        self.payload_tx_simulation_gauge
+            .set(payload_tx_simulation_time);
+        self.payload_num_tx_considered.record(num_txs_considered);
+        self.payload_num_tx_considered_gauge.set(num_txs_considered);
+        self.payload_num_tx_simulated.record(num_txs_simulated);
+        self.payload_num_tx_simulated_gauge.set(num_txs_simulated);
+        self.payload_num_tx_simulated_success
+            .record(num_txs_simulated_success);
+        self.payload_num_tx_simulated_success_gauge
+            .set(num_txs_simulated_success);
+        self.payload_num_tx_simulated_fail
+            .record(num_txs_simulated_fail);
+        self.payload_num_tx_simulated_fail_gauge
+            .set(num_txs_simulated_fail);
+        self.bundles_reverted.record(num_bundles_reverted);
+    }
 }
 
 /// Contains version information for the application.
