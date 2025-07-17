@@ -82,6 +82,11 @@ pub enum ValidityGauge {
     )]
     AggProofRequestErrorCount,
     #[strum(
+        serialize = "succinct_agg_proof_validation_error_count",
+        message = "Number of aggregation proof validation errors"
+    )]
+    AggProofValidationErrorCount,
+    #[strum(
         serialize = "succinct_relay_agg_proof_error_count",
         message = "Number of relay aggregation proof errors"
     )]
