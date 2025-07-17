@@ -42,10 +42,10 @@ impl ssz::Encode for OpExecutionPayloadEnvelope {
     }
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
-        // Write parent beacon block root
-        match &self.parent_beacon_block_root {
-            Some(root) => buf.extend_from_slice(root.as_slice()),
-            None => buf.extend_from_slice(&[0u8; 32]),
+        // Write parent beacon block root only if the payload is not a v1 or v2 payload.
+        // <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-encoding>
+        if !matches!(self.payload, OpExecutionPayload::V1(_) | OpExecutionPayload::V2(_)) {
+            buf.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         }
 
         // Write payload
