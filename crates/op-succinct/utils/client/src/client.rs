@@ -128,7 +128,7 @@ where
                     // Strip out all transactions that are not deposits.
                     attributes.transactions = attributes.transactions.map(|txs| {
                         txs.into_iter()
-                            .filter(|tx| (!tx.is_empty() && tx[0] == OpTxType::Deposit as u8))
+                            .filter(|tx| !tx.is_empty() && tx[0] == OpTxType::Deposit as u8)
                             .collect::<Vec<_>>()
                     });
 
