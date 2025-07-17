@@ -25,11 +25,13 @@ pub struct OpExecutionPayloadEnvelope {
 
 impl OpExecutionPayloadEnvelope {
     /// Returns the payload hash over the ssz encoded payload envelope data.
+    ///
+    /// <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-signatures>
     #[cfg(feature = "std")]
     pub fn payload_hash(&self) -> crate::PayloadHash {
         use ssz::Encode;
         let ssz_bytes = self.as_ssz_bytes();
-        crate::PayloadHash::from(&ssz_bytes.as_slice()[65..])
+        crate::PayloadHash::from(ssz_bytes.as_slice())
     }
 }
 
