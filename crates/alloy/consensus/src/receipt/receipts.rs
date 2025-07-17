@@ -96,6 +96,13 @@ impl<T> OpDepositReceipt<T> {
             deposit_receipt_version: self.deposit_receipt_version,
         }
     }
+
+    /// Converts the receipt's log type by applying a function to each log.
+    ///
+    /// Returns the receipt with the new log type
+    pub fn map_logs<U>(self, f: impl FnMut(T) -> U) -> OpDepositReceipt<U> {
+        self.map_inner(|r| r.map_logs(f))
+    }
 }
 
 impl<T: Encodable> OpDepositReceipt<T> {

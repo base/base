@@ -118,6 +118,19 @@ impl<T> OpReceiptEnvelope<T> {
         self.as_receipt().unwrap().cumulative_gas_used
     }
 
+    /// Converts the receipt's log type by applying a function to each log.
+    ///
+    /// Returns the receipt with the new log type.
+    pub fn map_logs<U>(self, f: impl FnMut(T) -> U) -> OpReceiptEnvelope<U> {
+        match self {
+            Self::Legacy(r) => OpReceiptEnvelope::Legacy(r.map_logs(f)),
+            Self::Eip2930(r) => OpReceiptEnvelope::Eip2930(r.map_logs(f)),
+            Self::Eip1559(r) => OpReceiptEnvelope::Eip1559(r.map_logs(f)),
+            Self::Eip7702(r) => OpReceiptEnvelope::Eip7702(r.map_logs(f)),
+            Self::Deposit(r) => OpReceiptEnvelope::Deposit(r.map_receipt(|r| r.map_logs(f))),
+        }
+    }
+
     /// Return the receipt logs.
     pub fn logs(&self) -> &[T] {
         &self.as_receipt().unwrap().logs
