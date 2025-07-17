@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
-    tests::{ChainDriverExt, LocalInstance, TransactionBuilderExt},
+    tests::{LocalInstance, TransactionBuilderExt},
 };
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
@@ -25,7 +25,6 @@ use crate::{
 })]
 async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -94,7 +93,6 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
 })]
 async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -163,7 +161,6 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
 })]
 async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -232,7 +229,6 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
 })]
 async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -301,7 +297,6 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
 })]
 async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));
@@ -372,7 +367,6 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
 })]
 async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
-    driver.fund_default_accounts().await?;
 
     // Create a struct to hold received messages
     let received_messages = Arc::new(Mutex::new(Vec::new()));

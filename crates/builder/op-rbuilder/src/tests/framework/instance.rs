@@ -6,7 +6,7 @@ use crate::{
     tests::{
         create_test_db,
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
-        ChainDriverExt, EngineApi, Ipc, TransactionPoolObserver,
+        EngineApi, Ipc, TransactionPoolObserver,
     },
     tx::FBPooledTransaction,
     tx_signer::Signer,
@@ -179,10 +179,7 @@ impl LocalInstance {
         let Commands::Node(ref node_command) = args.command else {
             unreachable!()
         };
-        let instance = Self::new::<StandardBuilder>(node_command.ext.clone()).await?;
-        let driver = ChainDriver::<Ipc>::local(&instance).await?;
-        driver.fund_default_accounts().await?;
-        Ok(instance)
+        Self::new::<StandardBuilder>(node_command.ext.clone()).await
     }
 
     /// Creates new local instance of the OP builder node with the flashblocks builder configuration.
@@ -194,10 +191,7 @@ impl LocalInstance {
         };
         node_command.ext.flashblocks.enabled = true;
         node_command.ext.flashblocks.flashblocks_port = 0; // use random os assigned port
-        let instance = Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await?;
-        let driver = ChainDriver::<Ipc>::local(&instance).await?;
-        driver.fund_default_accounts().await?;
-        Ok(instance)
+        Self::new::<FlashblocksBuilder>(node_command.ext.clone()).await
     }
 
     pub const fn config(&self) -> &NodeConfig<OpChainSpec> {
