@@ -332,6 +332,15 @@ impl Decodable2718 for OpReceiptEnvelope {
     }
 }
 
+impl<T> From<T> for OpReceiptEnvelope<T>
+where
+    T: Into<ReceiptWithBloom<OpDepositReceipt<T>>>,
+{
+    fn from(value: T) -> Self {
+        Self::Deposit(value.into())
+    }
+}
+
 impl<T> From<OpReceiptEnvelope<T>> for Receipt<T> {
     fn from(receipt: OpReceiptEnvelope<T>) -> Self {
         receipt.into_receipt()

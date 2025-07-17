@@ -238,6 +238,12 @@ impl OpTxReceipt for OpDepositReceipt {
     }
 }
 
+impl<T> From<ReceiptWithBloom<Self>> for OpDepositReceipt<T> {
+    fn from(value: ReceiptWithBloom<Self>) -> Self {
+        value.receipt
+    }
+}
+
 #[cfg(feature = "arbitrary")]
 impl<'a, T> arbitrary::Arbitrary<'a> for OpDepositReceipt<T>
 where
