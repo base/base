@@ -52,7 +52,7 @@ fn main() {
             info!(message = "starting custom Base node");
 
             let cache = Arc::new(Cache::default());
-            let cache_clone = Arc::new(Cache::default());
+            let cache_clone = cache.clone();
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
             let receipt_buffer_size = flashblocks_rollup_args.receipt_buffer_size;
             let total_timeout_secs = flashblocks_rollup_args.total_timeout_secs;
