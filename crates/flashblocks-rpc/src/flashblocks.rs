@@ -1,7 +1,7 @@
 use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
 
 use alloy_consensus::transaction::SignerRecoverable;
-use alloy_primitives::{map::foldhash::HashMap, Address, Bytes, U256};
+use alloy_primitives::{map::foldhash::HashMap, Address, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
@@ -297,7 +297,7 @@ fn process_payload(
                 gas_used: diff.gas_used,
                 timestamp: base.timestamp,
                 extra_data: base.extra_data,
-                base_fee_per_gas: U256::from(1000),
+                base_fee_per_gas: base.base_fee_per_gas,
                 block_hash: diff.block_hash,
                 transactions,
             },
@@ -642,7 +642,7 @@ fn get_and_set_all_receipts(
 mod tests {
     use super::*;
     use alloy_consensus::{Receipt, TxReceipt};
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
     use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
@@ -658,7 +658,7 @@ mod tests {
             timestamp: 1234567890,
             prev_randao: Default::default(),
             extra_data: Default::default(),
-            base_fee_per_gas: U256::from(1000),
+            base_fee_per_gas: U256::from(10000),
         };
 
         let delta = ExecutionPayloadFlashblockDeltaV1 {
@@ -840,6 +840,7 @@ mod tests {
         assert_eq!(final_block.header.state_root, B256::repeat_byte(0x1));
         assert_eq!(final_block.header.receipts_root, B256::repeat_byte(0x2));
         assert_eq!(final_block.header.gas_used, 21000);
+        assert_eq!(final_block.header.base_fee_per_gas, Some(10000));
 
         // Verify account balance was updated
         let balance = cache
