@@ -31,6 +31,18 @@ impl Signer {
         }
     }
 
+    /// Creates a new Web3 signer with the given URL and address.
+    pub fn new_web3_signer(url: Url, address: Address) -> Self {
+        Signer::Web3Signer(url, address)
+    }
+
+    /// Creates a new local signer from a private key string.
+    pub fn new_local_signer(private_key_str: &str) -> Result<Self> {
+        let private_key =
+            PrivateKeySigner::from_str(private_key_str).context("Failed to parse private key")?;
+        Ok(Signer::LocalSigner(private_key))
+    }
+
     pub fn from_env() -> Result<Self> {
         if let (Ok(signer_url_str), Ok(signer_address_str)) =
             (std::env::var("SIGNER_URL"), std::env::var("SIGNER_ADDRESS"))
@@ -38,11 +50,9 @@ impl Signer {
             let signer_url = Url::parse(&signer_url_str).context("Failed to parse SIGNER_URL")?;
             let signer_address =
                 Address::from_str(&signer_address_str).context("Failed to parse SIGNER_ADDRESS")?;
-            Ok(Signer::Web3Signer(signer_url, signer_address))
+            Ok(Signer::new_web3_signer(signer_url, signer_address))
         } else if let Ok(private_key_str) = std::env::var("PRIVATE_KEY") {
-            let private_key = PrivateKeySigner::from_str(&private_key_str)
-                .context("Failed to parse PRIVATE_KEY")?;
-            Ok(Signer::LocalSigner(private_key))
+            Signer::new_local_signer(&private_key_str)
         } else {
             anyhow::bail!(
                 "Neither (SIGNER_URL and SIGNER_ADDRESS) nor PRIVATE_KEY are set in environment"

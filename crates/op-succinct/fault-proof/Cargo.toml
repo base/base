@@ -33,9 +33,11 @@ sp1-sdk.workspace = true
 # alloy
 alloy-contract.workspace = true
 alloy-eips.workspace = true
+alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider = { workspace = true, features = ["reqwest"] }
 alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-trace.workspace = true
 alloy-sol-macro.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport-http = { workspace = true, features = [
@@ -52,8 +54,8 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 dotenv.workspace = true
-futures.workspace = true
 rand = "0.9"
+serde.workspace = true
 tokio.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing.workspace = true
@@ -63,6 +65,14 @@ strum_macros.workspace = true
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
+alloy-node-bindings.workspace = true
+alloy.workspace = true
+op-succinct-bindings.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+lazy_static = "1.5"
+alloy-rpc-types-trace = "0.15.11"
+which = "4.4"
 
 [features]
 default = ["ethereum"]

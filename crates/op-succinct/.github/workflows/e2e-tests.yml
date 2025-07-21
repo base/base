@@ -1,0 +1,78 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'fault-proof/**'
+      - 'bindings/**'
+      - '.github/workflows/e2e-tests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'fault-proof/**'
+      - 'bindings/**'
+      - '.github/workflows/e2e-tests.yml'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: 'Test name filter (optional)'
+        required: false
+        default: ''
+
+jobs:
+  e2e-tests:
+    name: Run E2E Tests
+    runs-on:
+      - runs-on
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }}
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+      
+    - name: Setup Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup component add rustfmt clippy
+        
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly-d592b3e0f142d694c3be539702704a4a73238773
+        
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          bindings
+        
+    - name: Run E2E tests
+      run: |
+        if [ -n "${{ github.event.inputs.test_filter }}" ]; then
+          cargo test --release --test e2e ${{ github.event.inputs.test_filter }} -- --test-threads=1 --nocapture
+        else
+          cargo test --release --test e2e -- --test-threads=1 --nocapture
+        fi
+      env:
+        L1_RPC: ${{ secrets.L1_RPC }}
+        L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+        L2_RPC: ${{ secrets.L2_RPC }}
+        L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+        
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: e2e-test-logs
+        path: |
+          **/*.log
+          target/debug/deps/*.log
+        retention-days: fou7

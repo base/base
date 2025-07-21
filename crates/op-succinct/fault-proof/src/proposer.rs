@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    env,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -91,38 +90,34 @@ where
     P: Provider + Clone + Send + Sync + 'static,
     H: OPSuccinctHost + Clone + Send + Sync + 'static,
 {
-    /// Creates a new challenger instance with the provided L1 provider with wallet and factory
+    /// Creates a new proposer instance with the provided L1 provider with wallet and factory
     /// contract instance.
     pub async fn new(
+        config: ProposerConfig,
+        network_private_key: String,
         prover_address: Address,
         signer: Signer,
         factory: DisputeGameFactoryInstance<P>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
-        let config = ProposerConfig::from_env()?;
-
-        // Set a default network private key to avoid an error in mock mode.
-        let private_key = env::var("NETWORK_PRIVATE_KEY").unwrap_or_else(|_| {
-            tracing::warn!(
-                "Using default NETWORK_PRIVATE_KEY of 0x01. This is only valid in mock mode."
-            );
-            "0x0000000000000000000000000000000000000000000000000000000000000001".to_string()
-        });
-
         let network_prover =
-            Arc::new(ProverClient::builder().network().private_key(&private_key).build());
+            Arc::new(ProverClient::builder().network().private_key(&network_private_key).build());
         let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
         let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
+
+        let l1_provider = ProviderBuilder::default().connect_http(config.l1_rpc.clone());
+        let l2_provider = ProviderBuilder::default().connect_http(config.l2_rpc.clone());
+        let init_bond = factory.fetch_init_bond(config.game_type).await?;
 
         Ok(Self {
             config: config.clone(),
             prover_address,
             signer,
-            l1_provider: ProviderBuilder::default().connect_http(config.l1_rpc.clone()),
-            l2_provider: ProviderBuilder::default().connect_http(config.l2_rpc),
+            l1_provider,
+            l2_provider,
             factory: Arc::new(factory.clone()),
-            init_bond: factory.fetch_init_bond(config.game_type).await?,
+            init_bond,
             safe_db_fallback: config.safe_db_fallback,
             prover: SP1Prover {
                 network_prover,
@@ -653,7 +648,6 @@ where
     /// - Ok(true): Task was successfully spawned
     /// - Ok(false): No work needed (proposal interval not elapsed or no finalized blocks)
     /// - Err: Actual error occurred during task spawning
-    #[tracing::instrument(name = "[[Proposing]]", skip(self))]
     async fn spawn_game_creation_task(&self) -> Result<bool> {
         // First check if we should create a game
         let should_create = self.should_create_game().await?;
@@ -671,7 +665,7 @@ where
                     Ok(())
                 }
                 Ok(None) => Ok(()),
-                Err(e) => Err(e),
+                Err(e) => Err(anyhow::anyhow!("error in game creation: {:?}", e)),
             }
         });
 
@@ -752,6 +746,7 @@ where
             .factory
             .get_oldest_defensible_game_address(
                 self.config.max_games_to_check_for_defense,
+                self.l1_provider.clone(),
                 self.l2_provider.clone(),
             )
             .await?
@@ -847,7 +842,6 @@ where
                     proposer.signer.clone(),
                     proposer.config.l1_rpc.clone(),
                     proposer.l1_provider.clone(),
-                    proposer.l2_provider.clone(),
                 )
                 .await
         });

@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -36,6 +38,11 @@ jobs:
           profile: minimal
           toolchain: nightly
           components: rustfmt, clippy
+      
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
       
       - name: Run cargo check
         uses: actions-rs/cargo@v1

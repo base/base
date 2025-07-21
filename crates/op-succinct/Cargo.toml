@@ -14,6 +14,7 @@ members = [
     "scripts/*",
     "validity",
     "fault-proof",
+    "bindings",
 ]
 resolver = "2"
 
@@ -52,6 +53,7 @@ hex = "0.4.3"
 bincode = "1.3.3"
 base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
+lazy_static = "1.5.0"
 tracing = { version = "0.1.40", default-features = false }
 tracing-subscriber = { version = "0.3.19", features = ["fmt"] }
 tracing-opentelemetry = "^0.24"
@@ -112,6 +114,7 @@ op-succinct-celestia-host-utils = { path = "utils/celestia/host" }
 op-succinct-proof-utils = { path = "utils/proof" }
 op-succinct-signer-utils = { path = "utils/signer" }
 op-succinct-range-utils = { path = "programs/range/utils" }
+op-succinct-bindings = { path = "bindings" }
 
 # Alloy (Network)
 alloy-signer-local = { version = "0.15.8" }
@@ -133,7 +136,15 @@ alloy-node-bindings = { version = "0.15.8", default-features = false }
 alloy-rpc-types-engine = { version = "0.15.8", default-features = false }
 alloy-rpc-types-beacon = { version = "0.15.8", default-features = false }
 alloy-rpc-types-eth = { version = "0.15.8", default-features = false }
+alloy-rpc-types-trace = { version = "0.15.8", default-features = false }
 alloy-signer = { version = "0.15.8", default-features = false }
+alloy = { version = "0.15.8", features = [
+    "reqwest",
+    "network",
+    "providers",
+    "sol-types",
+    "rpc-types",
+] }
 
 # Keccak with the SHA3 patch is more efficient than the default Keccak.
 alloy-primitives = { version = "1.0.0", default-features = false, features = [
