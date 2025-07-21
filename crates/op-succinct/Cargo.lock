@@ -121,6 +121,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "alloy"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b064bd1cea105e70557a258cd2b317731896753ec08edf51da2d1fced587b05"
+dependencies = [
+ "alloy-consensus 0.15.11",
+ "alloy-contract",
+ "alloy-core",
+ "alloy-eips 0.15.11",
+ "alloy-genesis",
+ "alloy-network 0.15.11",
+ "alloy-provider",
+ "alloy-rpc-client",
+ "alloy-rpc-types",
+ "alloy-serde 0.15.11",
+ "alloy-signer 0.15.11",
+ "alloy-signer-local 0.15.11",
+ "alloy-transport",
+ "alloy-transport-http",
+]
+
+[[package]]
 name = "alloy-chains"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,6 +249,19 @@ dependencies = [
  "futures",
  "futures-util",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "alloy-core"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3c5a28f166629752f2e7246b813cdea3243cca59aab2d4264b1fd68392c10eb"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-sol-types",
 ]
 
 [[package]]
@@ -364,6 +399,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-genesis"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f723856b1c4ad5473f065650ab9be557c96fbc77e89180fbdac003e904a8d6"
+dependencies = [
+ "alloy-eips 0.15.11",
+ "alloy-primitives",
+ "alloy-serde 0.15.11",
+ "alloy-trie",
+ "serde",
+]
+
+[[package]]
 name = "alloy-hardforks"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -492,6 +540,27 @@ dependencies = [
  "alloy-primitives",
  "alloy-serde 1.0.9",
  "serde",
+]
+
+[[package]]
+name = "alloy-node-bindings"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9c4bde7223db742a6cb2ab61d99bc37e741d1447b60dfe5fe87405aae96741f"
+dependencies = [
+ "alloy-genesis",
+ "alloy-hardforks",
+ "alloy-network 0.15.11",
+ "alloy-primitives",
+ "alloy-signer 0.15.11",
+ "alloy-signer-local 0.15.11",
+ "k256",
+ "rand 0.8.5",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -783,6 +852,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-rpc-types-trace"
+version = "0.15.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d57f1b7da0af516ad2c02233ed1274527f9b0536dbda300acea2e8a1e7ac20c8"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rpc-types-eth 0.15.11",
+ "alloy-serde 0.15.11",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "alloy-serde"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -897,6 +980,7 @@ version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a384edac7283bc4c010a355fb648082860c04b826bb7a814c45263c8f304c74"
 dependencies = [
+ "alloy-json-abi",
  "alloy-sol-macro-input",
  "const-hex",
  "heck 0.5.0",
@@ -915,12 +999,14 @@ version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0dd588c2d516da7deb421b8c166dc60b7ae31bca5beea29ab6621fcfa53d6ca5"
 dependencies = [
+ "alloy-json-abi",
  "const-hex",
  "dunce",
  "heck 0.5.0",
  "macro-string",
  "proc-macro2",
  "quote",
+ "serde_json",
  "syn 2.0.101",
  "syn-solidity",
 ]
@@ -7182,6 +7268,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-succinct-bindings"
+version = "3.0.0-rc.1"
+dependencies = [
+ "alloy",
+ "alloy-sol-types",
+ "anyhow",
+ "cargo_metadata",
+]
+
+[[package]]
 name = "op-succinct-build-utils"
 version = "3.0.0-rc.1"
 dependencies = [
@@ -7312,11 +7408,15 @@ dependencies = [
 name = "op-succinct-fp"
 version = "3.0.0-rc.1"
 dependencies = [
+ "alloy",
  "alloy-contract",
  "alloy-eips 0.15.11",
+ "alloy-network 0.15.11",
+ "alloy-node-bindings",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types-eth 0.15.11",
+ "alloy-rpc-types-trace",
  "alloy-signer-local 0.15.11",
  "alloy-sol-macro",
  "alloy-sol-types",
@@ -7325,22 +7425,26 @@ dependencies = [
  "async-trait",
  "clap",
  "dotenv",
- "futures",
  "hex",
+ "lazy_static",
  "op-alloy-network",
  "op-alloy-rpc-types",
+ "op-succinct-bindings",
  "op-succinct-client-utils",
  "op-succinct-elfs",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "op-succinct-signer-utils",
  "rand 0.9.1",
+ "serde",
+ "serde_json",
  "sp1-sdk",
  "strum 0.27.1",
  "strum_macros 0.27.1",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "which",
 ]
 
 [[package]]
@@ -7357,6 +7461,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "c-kzg",
+ "cargo_metadata",
  "cfg-if",
  "futures",
  "hana-host",
@@ -7368,6 +7473,7 @@ dependencies = [
  "kona-protocol",
  "kona-rpc",
  "kzg-rs",
+ "lazy_static",
  "metrics",
  "metrics-exporter-prometheus 0.16.2",
  "metrics-process",
@@ -7461,6 +7567,7 @@ dependencies = [
  "op-succinct-build-utils",
  "op-succinct-client-utils",
  "op-succinct-elfs",
+ "op-succinct-fp",
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "rayon",
@@ -7509,11 +7616,6 @@ dependencies = [
  "op-succinct-host-utils",
  "op-succinct-proof-utils",
  "op-succinct-signer-utils",
- "opentelemetry 0.23.0",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry-stdout",
- "opentelemetry_sdk 0.23.0",
  "reqwest 0.12.18",
  "rustls",
  "serde",
@@ -7526,8 +7628,6 @@ dependencies = [
  "tikv-jemallocator",
  "tokio",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber 0.3.19",
 ]
 
 [[package]]

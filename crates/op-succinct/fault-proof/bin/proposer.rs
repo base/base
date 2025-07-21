@@ -6,7 +6,8 @@ use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use clap::Parser;
 use fault_proof::{
-    contract::DisputeGameFactory, prometheus::ProposerGauge, proposer::OPSuccinctProposer,
+    config::ProposerConfig, contract::DisputeGameFactory, prometheus::ProposerGauge,
+    proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::{
     fetcher::OPSuccinctDataFetcher,
@@ -51,10 +52,27 @@ async fn main() -> Result<()> {
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
+
+    // Set a default network private key to avoid an error in mock mode.
+    let network_private_key = env::var("NETWORK_PRIVATE_KEY").unwrap_or_else(|_| {
+        tracing::warn!(
+            "Using default NETWORK_PRIVATE_KEY of 0x01. This is only valid in mock mode."
+        );
+        "0x0000000000000000000000000000000000000000000000000000000000000001".to_string()
+    });
+
     let proposer = Arc::new(
-        OPSuccinctProposer::new(prover_address, proposer_signer, factory, Arc::new(fetcher), host)
-            .await
-            .unwrap(),
+        OPSuccinctProposer::new(
+            ProposerConfig::from_env()?,
+            network_private_key,
+            prover_address,
+            proposer_signer,
+            factory,
+            Arc::new(fetcher),
+            host,
+        )
+        .await
+        .unwrap(),
     );
 
     // Initialize proposer gauges.

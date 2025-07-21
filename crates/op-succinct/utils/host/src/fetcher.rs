@@ -65,7 +65,13 @@ pub enum RPCMode {
     L2Node,
 }
 
-fn get_rpcs() -> RPCConfig {
+/// Gets the RPC URLs from environment variables.
+///
+/// L1_RPC: The L1 RPC URL.
+/// L1_BEACON_RPC: The L1 beacon RPC URL.
+/// L2_RPC: The L2 RPC URL.
+/// L2_NODE_RPC: The L2 node RPC URL.
+pub fn get_rpcs_from_env() -> RPCConfig {
     let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
     let l1_beacon_rpc = env::var("L1_BEACON_RPC").expect("L1_BEACON_RPC must be set");
     let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
@@ -101,7 +107,7 @@ pub struct FeeData {
 impl OPSuccinctDataFetcher {
     /// Gets the RPC URL's and saves the rollup config for the chain to the rollup config file.
     pub fn new() -> Self {
-        let rpc_config = get_rpcs();
+        let rpc_config = get_rpcs_from_env();
 
         let l1_provider =
             Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));
@@ -119,7 +125,7 @@ impl OPSuccinctDataFetcher {
 
     /// Initialize the fetcher with a rollup config.
     pub async fn new_with_rollup_config() -> Result<Self> {
-        let rpc_config = get_rpcs();
+        let rpc_config = get_rpcs_from_env();
 
         let l1_provider =
             Arc::new(ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone()));

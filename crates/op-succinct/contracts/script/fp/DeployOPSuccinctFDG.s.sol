@@ -4,6 +4,7 @@ pragma solidity ^0.8.15;
 // Libraries
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
+import {stdJson} from "forge-std/StdJson.sol";
 import {Claim, GameType, Hash, OutputRoot, Duration} from "src/dispute/lib/Types.sol";
 import {LibString} from "@solady/utils/LibString.sol";
 
@@ -29,19 +30,49 @@ import {Utils} from "../../test/helpers/Utils.sol";
 import {MockOptimismPortal2} from "../../utils/MockOptimismPortal2.sol";
 
 contract DeployOPSuccinctFDG is Script, Utils {
-    function run() public {
+    using stdJson for string;
+
+    struct DeployedContracts {
+        address factoryProxy;
+        address gameImplementation;
+        address sp1Verifier;
+        address anchorStateRegistry;
+        address accessManager;
+        address optimismPortal2;
+    }
+
+    function run()
+        public
+        returns (
+            address factoryProxy,
+            address gameImplementation,
+            address sp1Verifier,
+            address anchorStateRegistry,
+            address accessManager,
+            address optimismPortal2
+        )
+    {
         vm.startBroadcast();
 
         // Load configuration
         FDGConfig memory config = readFDGJson("opsuccinctfdgconfig.json");
 
         // Deploy contracts
-        deployContracts(config);
+        DeployedContracts memory deployedContracts = deployContracts(config);
 
         vm.stopBroadcast();
+
+        return (
+            deployedContracts.factoryProxy,
+            deployedContracts.gameImplementation,
+            deployedContracts.sp1Verifier,
+            deployedContracts.anchorStateRegistry,
+            deployedContracts.accessManager,
+            deployedContracts.optimismPortal2
+        );
     }
 
-    function deployContracts(FDGConfig memory config) internal {
+    function deployContracts(FDGConfig memory config) internal returns (DeployedContracts memory) {
         // Deploy factory proxy.
         ERC1967Proxy factoryProxy = new ERC1967Proxy(
             address(new DisputeGameFactory()),
@@ -74,10 +105,17 @@ contract DeployOPSuccinctFDG is Script, Utils {
         factory.setInitBond(gameType, config.initialBondWei);
         factory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
 
-        // Log deployed addresses.
-        console.log("Factory Proxy:", address(factoryProxy));
-        console.log("Game Implementation:", address(gameImpl));
-        console.log("SP1 Verifier:", sp1Config.verifierAddress);
+        // Create deployed contracts struct
+        DeployedContracts memory deployedContracts = DeployedContracts({
+            factoryProxy: address(factoryProxy),
+            gameImplementation: address(gameImpl),
+            sp1Verifier: sp1Config.verifierAddress,
+            anchorStateRegistry: address(registry),
+            accessManager: address(accessManager),
+            optimismPortal2: portalAddress
+        });
+
+        return deployedContracts;
     }
 
     function deployGameImplementation(

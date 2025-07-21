@@ -64,6 +64,8 @@ op-succinct-host-utils.workspace = true
 op-succinct-client-utils.workspace = true
 op-succinct-proof-utils.workspace = true
 op-succinct-elfs.workspace = true
+op-succinct-fp.workspace = true
+
 # sp1
 sp1-sdk.workspace = true
 

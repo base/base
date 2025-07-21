@@ -1,9 +1,11 @@
 use alloy_eips::BlockId;
 use anyhow::Result;
-use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
+use op_succinct_host_utils::{
+    fetcher::{OPSuccinctDataFetcher, RPCMode},
+    OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
+};
 use op_succinct_scripts::config_common::{
-    find_project_root, get_address, get_shared_config_data, get_workspace_root, write_config_file,
-    TWO_WEEKS_IN_SECONDS,
+    find_project_root, get_address, get_shared_config_data, write_config_file, TWO_WEEKS_IN_SECONDS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,7 +50,6 @@ struct L2OOConfig {
 async fn update_l2oo_config() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let shared_config = get_shared_config_data().await?;
-    let workspace_root = get_workspace_root()?;
 
     let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();
     let l2_block_time = rollup_config.block_time;
@@ -113,8 +114,7 @@ async fn update_l2oo_config() -> Result<()> {
         op_succinct_l2_output_oracle_impl,
     };
 
-    let config_path = workspace_root.join("contracts/opsuccinctl2ooconfig.json");
-    write_config_file(&l2oo_config, &config_path, "L2 Output Oracle")?;
+    write_config_file(&l2oo_config, &OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH, "L2 Output Oracle")?;
 
     Ok(())
 }

@@ -127,8 +127,3 @@ pub fn find_project_root() -> Option<PathBuf> {
     }
     Some(path)
 }
-
-/// Get the workspace root using cargo metadata.
-pub fn get_workspace_root() -> Result<PathBuf> {
-    Ok(cargo_metadata::MetadataCommand::new().exec()?.workspace_root.into())
-}
