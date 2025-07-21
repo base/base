@@ -1,7 +1,7 @@
 //! Optimism specific types related to transactions.
 
 use alloy_consensus::{Transaction as TransactionTrait, Typed2718, transaction::Recovered};
-use alloy_eips::{eip2930::AccessList, eip7702::SignedAuthorization};
+use alloy_eips::{Encodable2718, eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, BlockHash, Bytes, ChainId, TxKind, U256};
 use alloy_serde::OtherFields;
 use op_alloy_consensus::{OpTransaction, OpTxEnvelope, transaction::OpTransactionInfo};
@@ -64,13 +64,13 @@ impl<T: OpTransaction + TransactionTrait> Transaction<T> {
     }
 }
 
-impl Typed2718 for Transaction {
+impl<T: Typed2718> Typed2718 for Transaction<T> {
     fn ty(&self) -> u8 {
         self.inner.ty()
     }
 }
 
-impl alloy_consensus::Transaction for Transaction {
+impl<T: TransactionTrait> TransactionTrait for Transaction<T> {
     fn chain_id(&self) -> Option<ChainId> {
         self.inner.chain_id()
     }
@@ -144,7 +144,9 @@ impl alloy_consensus::Transaction for Transaction {
     }
 }
 
-impl alloy_network_primitives::TransactionResponse for Transaction {
+impl<T: TransactionTrait + Encodable2718> alloy_network_primitives::TransactionResponse
+    for Transaction<T>
+{
     fn tx_hash(&self) -> alloy_primitives::TxHash {
         self.inner.tx_hash()
     }
@@ -192,8 +194,8 @@ impl From<OpTransactionFields> for OtherFields {
     }
 }
 
-impl AsRef<OpTxEnvelope> for Transaction {
-    fn as_ref(&self) -> &OpTxEnvelope {
+impl<T> AsRef<T> for Transaction<T> {
+    fn as_ref(&self) -> &T {
         self.inner.as_ref()
     }
 }
