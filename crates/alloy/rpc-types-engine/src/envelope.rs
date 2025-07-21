@@ -20,7 +20,7 @@ pub struct OpExecutionPayloadEnvelope {
     /// The parent beacon block root, if any.
     pub parent_beacon_block_root: Option<B256>,
     /// The execution payload.
-    pub payload: OpExecutionPayload,
+    pub execution_payload: OpExecutionPayload,
 }
 
 impl OpExecutionPayloadEnvelope {
@@ -44,18 +44,19 @@ impl ssz::Encode for OpExecutionPayloadEnvelope {
     fn ssz_append(&self, buf: &mut Vec<u8>) {
         // Write parent beacon block root only if the payload is not a v1 or v2 payload.
         // <https://specs.optimism.io/protocol/rollup-node-p2p.html#block-encoding>
-        if !matches!(self.payload, OpExecutionPayload::V1(_) | OpExecutionPayload::V2(_)) {
+        if !matches!(self.execution_payload, OpExecutionPayload::V1(_) | OpExecutionPayload::V2(_))
+        {
             buf.extend_from_slice(self.parent_beacon_block_root.unwrap_or_default().as_slice());
         }
 
         // Write payload
-        self.payload.ssz_append(buf);
+        self.execution_payload.ssz_append(buf);
     }
 
     fn ssz_bytes_len(&self) -> usize {
         let mut len = 0;
         len += B256::ssz_fixed_len(); // parent_beacon_block_root is always 32 bytes
-        len += self.payload.ssz_bytes_len();
+        len += self.execution_payload.ssz_bytes_len();
         len
     }
 }
@@ -85,16 +86,17 @@ impl ssz::Decode for OpExecutionPayloadEnvelope {
         };
 
         // Decode payload
-        let payload = OpExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
+        let execution_payload =
+            OpExecutionPayload::from_ssz_bytes(&bytes[B256::ssz_fixed_len()..])?;
 
-        Ok(Self { parent_beacon_block_root, payload })
+        Ok(Self { parent_beacon_block_root, execution_payload })
     }
 }
 
 impl From<OpNetworkPayloadEnvelope> for OpExecutionPayloadEnvelope {
     fn from(envelope: OpNetworkPayloadEnvelope) -> Self {
         Self {
-            payload: envelope.payload,
+            execution_payload: envelope.payload,
             parent_beacon_block_root: envelope.parent_beacon_block_root,
         }
     }
@@ -530,7 +532,7 @@ mod tests {
     #[cfg(feature = "serde")]
     fn test_serde_roundtrip_op_execution_payload_envelope() {
         let envelope_str = r#"{
-            "payload": {"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119"},
+            "executionPayload": {"parentHash":"0xe927a1448525fb5d32cb50ee1408461a945ba6c39bd5cf5621407d500ecc8de9","feeRecipient":"0x0000000000000000000000000000000000000000","stateRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119","receiptsRoot":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","prevRandao":"0xe0d8b4521a7da1582a713244ffb6a86aa1726932087386e2dc7973f43fc6cb24","blockNumber":"0x1","gasLimit":"0x2ffbd2","gasUsed":"0x0","timestamp":"0x1235","extraData":"0xd883010d00846765746888676f312e32312e30856c696e7578","baseFeePerGas":"0x342770c0","blockHash":"0x44d0fa5f2f73a938ebb96a2a21679eb8dea3e7b7dd8fd9f35aa756dda8bf0a8a","transactions":[],"withdrawals":[],"blobGasUsed":"0x0","excessBlobGas":"0x0","withdrawalsRoot":"0x10f8a0830000e8edef6d00cc727ff833f064b1950afd591ae41357f97e543119"},
             "parentBeaconBlockRoot": "0x9999999999999999999999999999999999999999999999999999999999999999"
         }"#;
 
