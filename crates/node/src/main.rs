@@ -67,13 +67,15 @@ fn main() {
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "starting flashblocks integration");
-                        let mut flashblocks_client =
-                            FlashblocksClient::new(cache.clone(), receipt_buffer_size);
+                        let mut flashblocks_client = FlashblocksClient::new(
+                            cache.clone(),
+                            receipt_buffer_size,
+                            ctx.provider().clone(),
+                        );
 
                         flashblocks_client
                             .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
                             .unwrap();
-
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             cache.clone(),
