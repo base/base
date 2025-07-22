@@ -2,7 +2,7 @@ use crate::auth::Authentication;
 use crate::client::ClientConnection;
 use crate::filter::{FilterType, MatchMode};
 use crate::metrics::Metrics;
-use crate::rate_limit::{RateLimit, RateLimitError};
+use crate::rate_limit::{RateLimit, RateLimitError, RateLimitType};
 use crate::registry::Registry;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Path, Query, State, WebSocketUpgrade};
@@ -236,8 +236,20 @@ fn websocket_handler(
 
     let ticket = match state.rate_limiter.try_acquire(client_addr) {
         Ok(ticket) => ticket,
-        Err(RateLimitError::Limit { reason }) => {
-            state.metrics.rate_limited_requests.increment(1);
+        Err(RateLimitError::Limit { reason, limit_type }) => {
+            match limit_type {
+                RateLimitType::PerIp => {
+                    info!(
+                        message = "per-IP rate limit exceeded",
+                        client_ip = client_addr.to_string(),
+                        reason = reason
+                    );
+                    state.metrics.per_ip_rate_limited_requests.increment(1);
+                }
+                RateLimitType::Global => {
+                    state.metrics.global_rate_limited_requests.increment(1);
+                }
+            }
 
             return Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
