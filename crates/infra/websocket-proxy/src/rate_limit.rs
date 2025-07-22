@@ -11,10 +11,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+pub enum RateLimitType {
+    PerIp,
+    Global,
+}
+
 #[derive(Error, Debug)]
 pub enum RateLimitError {
     #[error("Rate Limit Reached: {reason}")]
-    Limit { reason: String },
+    Limit { reason: String, limit_type: RateLimitType },
 }
 
 #[clippy::has_significant_drop]
@@ -69,6 +75,7 @@ impl RateLimit for InMemoryRateLimit {
                 .try_acquire_owned()
                 .map_err(|_| RateLimitError::Limit {
                     reason: "Global limit".to_owned(),
+                    limit_type: RateLimitType::Global,
                 })?;
 
         let current_count = match inner.active_connections.get(&addr) {
@@ -83,6 +90,7 @@ impl RateLimit for InMemoryRateLimit {
             );
             return Err(RateLimitError::Limit {
                 reason: String::from("IP limit exceeded"),
+                limit_type: RateLimitType::PerIp,
             });
         }
 
@@ -339,6 +347,7 @@ impl RateLimit for RedisRateLimit {
             Err(_) => {
                 return Err(RateLimitError::Limit {
                     reason: "Maximum connection limit reached for this server instance".to_string(),
+                    limit_type: RateLimitType::Global,
                 });
             }
         };
@@ -352,6 +361,7 @@ impl RateLimit for RedisRateLimit {
                 );
                 return Err(RateLimitError::Limit {
                     reason: "Redis connection failed".to_string(),
+                    limit_type: RateLimitType::Global,
                 });
             }
         };
@@ -366,6 +376,7 @@ impl RateLimit for RedisRateLimit {
                 );
                 return Err(RateLimitError::Limit {
                     reason: "Redis operation failed".to_string(),
+                    limit_type: RateLimitType::Global,
                 });
             }
         };
@@ -379,6 +390,7 @@ impl RateLimit for RedisRateLimit {
         if total_ip_connections >= self.per_ip_limit {
             return Err(RateLimitError::Limit {
                 reason: format!("Per-IP connection limit reached for {}", addr),
+                limit_type: RateLimitType::PerIp,
             });
         }
 
@@ -391,6 +403,7 @@ impl RateLimit for RedisRateLimit {
                 );
                 return Err(RateLimitError::Limit {
                     reason: "Redis operation failed".to_string(),
+                    limit_type: RateLimitType::Global,
                 });
             }
         };

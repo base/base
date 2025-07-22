@@ -21,8 +21,11 @@ pub struct Metrics {
     #[metric(describe = "Number of client connections currently open")]
     pub active_connections: Gauge,
 
-    #[metric(describe = "Count of rate limited request")]
-    pub rate_limited_requests: Counter,
+    #[metric(describe = "Count of requests rate limited due to per-IP limits")]
+    pub per_ip_rate_limited_requests: Counter,
+
+    #[metric(describe = "Count of requests rate limited due to global instance limits")]
+    pub global_rate_limited_requests: Counter,
 
     #[metric(describe = "Count of unauthorized requests with invalid API keys")]
     pub unauthorized_requests: Counter,
