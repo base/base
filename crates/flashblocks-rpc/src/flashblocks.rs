@@ -1,9 +1,14 @@
 use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
-
+use alloy_consensus::Header;
 use alloy_consensus::transaction::SignerRecoverable;
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
+use reth::chainspec::ChainSpecProvider;
+use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
+use reth::revm::{Database, State};
+use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
@@ -50,16 +55,22 @@ enum ActorMessage {
     BestPayload { payload: FlashblocksPayloadV1 },
 }
 
-pub struct FlashblocksClient {
+pub struct FlashblocksClient<Client> {
     sender: mpsc::Sender<ActorMessage>,
     mailbox: mpsc::Receiver<ActorMessage>,
     cache: Arc<Cache>,
+    /// Current pending state with all intermidiate transactions froms flashblocks applied
+    client: Client,
     metrics: Metrics,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
 }
 
-impl FlashblocksClient {
-    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize) -> Self {
+impl <Client> FlashblocksClient<Client>
+where Client: StateProviderFactory
+                + BlockReaderIdExt<Header = Header>
+                + Clone
+{
+    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
         let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
@@ -67,6 +78,7 @@ impl FlashblocksClient {
             sender,
             mailbox,
             cache,
+            client,
             metrics: Metrics::default(),
             receipt_sender,
         }
@@ -163,13 +175,13 @@ impl FlashblocksClient {
                 }
             }
         });
-
+        let client = self.client.clone();
         // Spawn actor's event loop
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        process_payload(payload, &cache_clone, &receipt_sender_clone);
+                        process_payload(payload, &cache_clone, &receipt_sender_clone, client);
                     }
                 }
             }
@@ -179,7 +191,7 @@ impl FlashblocksClient {
     }
 }
 
-impl FlashblocksApi for FlashblocksClient {
+impl FlashblocksApi for FlashblocksClient<()> {
     fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
         self.receipt_sender.subscribe()
     }
@@ -200,11 +212,16 @@ fn try_parse_message(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>>
     Ok(text)
 }
 
-fn process_payload(
+fn process_payload<Client>(
     payload: FlashblocksPayloadV1,
     cache: &Arc<Cache>,
     receipt_sender: &broadcast::Sender<ReceiptWithHash>,
-) {
+    client: Client,
+)
+where Client: StateProviderFactory
+    + BlockReaderIdExt<Header = Header>
+    + Clone
+{
     let metrics = Metrics::default();
     let msg_processing_start_time = Instant::now();
 
@@ -246,6 +263,7 @@ fn process_payload(
 
     // base only appears once in the first payload index
     let base = if let Some(base) = payload.base {
+        // TODO: initial set state in here
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!(
                 message = "failed to set base in cache",
@@ -253,8 +271,11 @@ fn process_payload(
             );
             return;
         }
+        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number)).expect("get state for commited block");
+        // cache.state.write().expect("poisoned lock").replace(state);
         base
     } else {
+        // Execute additonal transaction in here to progress state
         match cache.get(&CacheKey::Base(block_number)) {
             Some(base) => base,
             None => {

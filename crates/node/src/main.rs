@@ -9,9 +9,11 @@ use reth::{
     builder::{EngineNodeLauncher, TreeConfig},
     providers::providers::BlockchainProvider,
 };
+use reth::providers::StateProviderFactory;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
+use reth_rpc_eth_api::RpcNodeCore;
 use tracing::info;
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
@@ -68,12 +70,11 @@ fn main() {
                     if flashblocks_enabled {
                         info!(message = "starting flashblocks integration");
                         let mut flashblocks_client =
-                            FlashblocksClient::new(cache.clone(), receipt_buffer_size);
+                            FlashblocksClient::new(cache.clone(), receipt_buffer_size, ctx.provider().clone());
 
                         flashblocks_client
                             .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
                             .unwrap();
-
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             cache.clone(),

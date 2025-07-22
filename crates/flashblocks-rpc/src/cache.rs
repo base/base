@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use reth::providers::StateProviderBox;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
@@ -58,12 +59,14 @@ struct CacheEntry<T> {
 #[derive(Debug, Clone)]
 pub struct Cache {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
+    pub state: Arc<RwLock<Option<StateProviderBox>>>,
 }
 
 impl Default for Cache {
     fn default() -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
+            state: Arc::new(RwLock::new(None)),
         }
     }
 }
