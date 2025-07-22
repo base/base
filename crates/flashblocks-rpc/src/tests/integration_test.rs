@@ -4,14 +4,16 @@ mod tests {
     use crate::tests::{op_reth::OpRethConfig, IntegrationFramework};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::{Address, Bytes, B256, U256};
+    use alloy_primitives::{address, bytes, Address, Bytes, B256, U256};
     use alloy_provider::Identity;
     use alloy_provider::{Provider, ProviderBuilder};
     use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::TransactionInput;
     use futures::SinkExt;
     use futures_util::StreamExt;
     use op_alloy_network::Optimism;
     use op_alloy_network::ReceiptResponse;
+    use op_alloy_rpc_types::OpTransactionRequest;
     use reth_optimism_primitives::OpReceipt;
     use rollup_boost::primitives::{
         ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -38,7 +40,7 @@ mod tests {
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
                 block_number: 1,
-                gas_limit: 0,
+                gas_limit: 60_000_000,
                 timestamp: 0,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::ZERO,
@@ -54,12 +56,14 @@ mod tests {
     }
 
     fn create_second_payload() -> FlashblocksPayloadV1 {
+        // NOTE:
+        // To create tx use cast mktx/
+        // Example: `cast mktx --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --nonce 1 --gas-limit 100000 --gas-price 1499576 --chain 84532 --value 0 --priority-gas-price 0 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x`
         // Create second payload (index 1) with transactions
         // tx1 hash: 0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548 (deposit transaction)
-        // tx2 hash: 0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8
+        // tx2 hash: 0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3
         let tx1 = Bytes::from_str("0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3").unwrap();
-        let tx2 = Bytes::from_str("0xf8cd82016d8316e5708302c01c94f39635f2adf40608255779ff742afe13de31f57780b8646e530e9700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000156ddc81eed2a36d68302948ba0a608703e79b22164f74523d188a11f81c25a65dd59535bab1cd1d8b30d115f3ea07f4cfbbad77a139c9209d3bded89091867ff6b548dd714109c61d1f8e7a84d14").unwrap();
-
+        let tx2 = Bytes::from_str("0x02f87383014a3480808316e1b8830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018a021e19e0c997c21d356080c001a0550a5dcf4dcab7151142a0c76cb46ea185962c74c61372ee67ae165820274df7a04c93fc2001bc726136d4342c220128573b1542a550d015b937be5ac11ff54046").unwrap();
         // Send another test flashblock payload
         let payload = FlashblocksPayloadV1 {
             payload_id: PayloadId::new([0; 8]),
@@ -89,7 +93,7 @@ mod tests {
                         }),
                     );
                     receipts.insert(
-                        "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
+                        "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3"
                             .to_string(), // transaction hash as string
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
@@ -102,7 +106,7 @@ mod tests {
                 new_account_balances: {
                     let mut map = HashMap::default();
                     map.insert(
-                        "0x1234567890123456789012345678901234567890".to_string(),
+                        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string(),
                         "0x1234".to_string(),
                     );
                     map
@@ -192,6 +196,18 @@ mod tests {
             assert!(false, "no block found");
         }
 
+        // We ensure that eth_call will succeed because we are on plain state
+        let eth_call = OpTransactionRequest::default()
+            .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+            .transaction_type(0)
+            .gas_limit(200000)
+            .nonce(1)
+            .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
+            .value(U256::from(9999999999849942300000u128))
+            .input(TransactionInput::new(bytes!("0x")));
+        let res = provider.call(eth_call).await;
+        assert!(res.is_ok());
+
         tokio::time::sleep(Duration::from_secs(3)).await;
         // Query second subblock, now there should be 2 transactions
         if let Some(block) = provider
@@ -222,7 +238,7 @@ mod tests {
         let receipt = provider
             .get_transaction_receipt(
                 B256::from_str(
-                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                    "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3",
                 )
                 .unwrap(),
             )
@@ -244,12 +260,31 @@ mod tests {
         let tx = provider
             .get_transaction_by_hash(
                 B256::from_str(
-                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                    "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3",
                 )
                 .unwrap(),
             )
             .await?;
         assert!(tx.is_some());
+
+        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // this eth_call with fail
+        let eth_call = OpTransactionRequest::default()
+            .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+            .transaction_type(0)
+            .gas_limit(20000000)
+            .nonce(1)
+            .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
+            .value(U256::from(9999999999849942300000u128))
+            .input(TransactionInput::new(bytes!("0x")));
+        let res = provider.call(eth_call).await;
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
 
         // check balance
         // use curl command to get balance with pending tag, since alloy provider doesn't support pending tag
@@ -260,7 +295,7 @@ mod tests {
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x1234567890123456789012345678901234567890","pending"],"id":1}"#)
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","pending"],"id":1}"#)
         .output()?;
 
         let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -275,7 +310,7 @@ mod tests {
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","pending"],"id":1}"#)
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","pending"],"id":1}"#)
         .output()?;
 
         let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
@@ -290,7 +325,7 @@ mod tests {
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","latest"],"id":1}"#)
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","latest"],"id":1}"#)
         .output()?;
 
         let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;

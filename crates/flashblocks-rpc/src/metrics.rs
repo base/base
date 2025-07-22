@@ -29,4 +29,7 @@ pub struct Metrics {
 
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
+
+    #[metric(describe = "Count of times flashblocks call is called")]
+    pub call: Counter,
 }
