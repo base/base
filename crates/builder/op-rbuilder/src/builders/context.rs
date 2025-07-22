@@ -49,7 +49,7 @@ use crate::{
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx {
+pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
@@ -68,9 +68,11 @@ pub struct OpPayloadBuilderCtx {
     pub builder_signer: Option<Signer>,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
+    /// Extra context for the payload builder
+    pub extra_ctx: ExtraCtx,
 }
 
-impl OpPayloadBuilderCtx {
+impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the parent block the payload will be build on.
     pub fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
@@ -195,7 +197,7 @@ impl OpPayloadBuilderCtx {
     }
 }
 
-impl OpPayloadBuilderCtx {
+impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Constructs a receipt for the given transaction.
     fn build_receipt<E: Evm>(
         &self,

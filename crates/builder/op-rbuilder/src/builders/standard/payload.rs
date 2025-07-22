@@ -274,6 +274,7 @@ where
             cancel,
             builder_signer: self.config.builder_signer,
             metrics: self.metrics.clone(),
+            extra_ctx: Default::default(),
         };
 
         let builder = OpBuilder::new(best);
