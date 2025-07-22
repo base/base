@@ -67,8 +67,7 @@ async fn test_e2e_static_data() {
         let tx_hash = format!("{:#x}", tx.as_recovered().hash());
         assert_eq!(
             expected_missing_hashes[i], tx_hash,
-            "Transaction {} hash should match expected",
-            i
+            "Transaction {i} hash should match expected"
         );
     }
 }
