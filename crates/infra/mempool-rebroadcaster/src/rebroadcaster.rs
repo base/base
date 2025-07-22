@@ -4,13 +4,13 @@ use alloy::{
     consensus::Transaction,
     eips::{
         eip2718::{EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID},
-        BlockId,
+        BlockId, Encodable2718,
     },
     primitives::B256,
     providers::{ext::TxPoolApi, Provider, ProviderBuilder, RootProvider},
     rpc::types::{txpool::TxpoolContent, Transaction as RpcTransaction},
 };
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 const IGNORED_ERRORS: [&str; 3] = [
     "transaction underpriced",
@@ -57,10 +57,31 @@ impl Rebroadcaster {
         let (base_fee, gas_price) = self.fetch_network_fees().await?;
         let (geth_mempool_contents, reth_mempool_contents) = self.fetch_mempool_contents().await?;
 
+        let (geth_pending_count, geth_queued_count) = self.count_txns(&geth_mempool_contents);
+        let (reth_pending_count, reth_queued_count) = self.count_txns(&reth_mempool_contents);
+
+        info!(
+            geth_pending_count,
+            geth_queued_count, reth_pending_count, reth_queued_count, "txn counts"
+        );
+
         let filtered_geth_mempool_contents =
             self.filter_underpriced_txns(&geth_mempool_contents, base_fee, gas_price);
         let filtered_reth_mempool_contents =
             self.filter_underpriced_txns(&reth_mempool_contents, base_fee, gas_price);
+
+        let (filtered_geth_pending_count, filtered_geth_queued_count) =
+            self.count_txns(&filtered_geth_mempool_contents);
+        let (filtered_reth_pending_count, filtered_reth_queued_count) =
+            self.count_txns(&filtered_reth_mempool_contents);
+
+        info!(
+            filtered_geth_pending_count,
+            filtered_geth_queued_count,
+            filtered_reth_pending_count,
+            filtered_reth_queued_count,
+            "filtered txn counts"
+        );
 
         let diff = self.compute_diff(
             &filtered_geth_mempool_contents,
@@ -80,15 +101,16 @@ impl Rebroadcaster {
             debug!(tx = ?hash, "broadcasting txn found in geth but not in reth");
             let result = self
                 .reth_provider
-                .send_transaction(txn.clone().into())
+                .send_raw_transaction(txn.clone().into_signed().into_encoded().encoded_bytes())
                 .await;
 
             if let Err(e) = result {
-                if !IGNORED_ERRORS.contains(&e.to_string().as_str()) {
+                let err_msg = e.as_error_resp().unwrap().message.to_string();
+                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
                     output.unexpected_failed_geth_to_reth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?e,
+                        error = ?err_msg,
                         from = sender,
                         "error sending txn from geth to reth"
                     );
@@ -105,15 +127,16 @@ impl Rebroadcaster {
             debug!(tx = ?hash, "broadcasting txn found in reth but not in geth");
             let result = self
                 .geth_provider
-                .send_transaction(txn.clone().into())
+                .send_raw_transaction(txn.clone().into_signed().into_encoded().encoded_bytes())
                 .await;
 
             if let Err(e) = result {
-                if !IGNORED_ERRORS.contains(&e.to_string().as_str()) {
+                let err_msg = e.as_error_resp().unwrap().message.to_string();
+                if !IGNORED_ERRORS.contains(&err_msg.as_str()) {
                     output.unexpected_failed_reth_to_geth += 1;
                     error!(
                         tx = ?hash,
-                        error = ?e,
+                        error = ?err_msg,
                         from = sender,
                         "error sending txn from reth to geth"
                     );
@@ -222,6 +245,21 @@ impl Rebroadcaster {
                 true
             }
         }
+    }
+
+    fn count_txns(&self, mempool: &TxpoolContent) -> (usize, usize) {
+        let mut pending_count = 0;
+        let mut queued_count = 0;
+
+        for (_, nonce_txns) in mempool.pending.iter() {
+            pending_count += nonce_txns.len();
+        }
+
+        for (_, nonce_txns) in mempool.queued.iter() {
+            queued_count += nonce_txns.len();
+        }
+
+        (pending_count, queued_count)
     }
 
     pub fn compute_diff(
