@@ -4,6 +4,8 @@ use reth_metrics::{
     Metrics,
 };
 
+use crate::args::OpRbuilderArgs;
+
 /// The latest version from Cargo.toml.
 pub const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -153,6 +155,16 @@ impl OpRBuilderMetrics {
             .set(num_txs_simulated_fail);
         self.bundles_reverted.record(num_bundles_reverted);
     }
+}
+
+/// Set gauge metrics for some flags so we can inspect which ones are set
+/// and which ones aren't.
+pub fn record_flag_gauge_metrics(builder_args: &OpRbuilderArgs) {
+    gauge!("op_rbuilder_flags_flashblocks_enabled").set(builder_args.flashblocks.enabled as i32);
+    gauge!("op_rbuilder_flags_flashtestations_enabled")
+        .set(builder_args.flashtestations.flashtestations_enabled as i32);
+    gauge!("op_rbuilder_flags_enable_revert_protection")
+        .set(builder_args.enable_revert_protection as i32);
 }
 
 /// Contains version information for the application.

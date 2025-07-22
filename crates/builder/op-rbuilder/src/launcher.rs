@@ -3,7 +3,7 @@ use eyre::Result;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    metrics::VERSION,
+    metrics::{record_flag_gauge_metrics, VERSION},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
@@ -97,6 +97,8 @@ where
     ) -> Result<()> {
         let builder_config = BuilderConfig::<B::Config>::try_from(builder_args.clone())
             .expect("Failed to convert rollup args to builder config");
+
+        record_flag_gauge_metrics(&builder_args);
 
         let da_config = builder_config.da_config.clone();
         let rollup_args = builder_args.rollup_args;
