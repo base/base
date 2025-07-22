@@ -262,13 +262,13 @@ impl Rebroadcaster {
 
         for (_, nonce_txns) in mempool.pending.iter() {
             for (_, txn) in nonce_txns.iter() {
-                txns_by_hash.insert(txn.as_recovered().hash().clone(), txn.clone());
+                txns_by_hash.insert(*txn.as_recovered().hash(), txn.clone());
             }
         }
 
         for (_, nonce_txns) in mempool.queued.iter() {
             for (_, txn) in nonce_txns.iter() {
-                txns_by_hash.insert(txn.as_recovered().hash().clone(), txn.clone());
+                txns_by_hash.insert(*txn.as_recovered().hash(), txn.clone());
             }
         }
 
