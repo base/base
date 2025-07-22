@@ -239,6 +239,11 @@ fn websocket_handler(
         Err(RateLimitError::Limit { reason, limit_type }) => {
             match limit_type {
                 RateLimitType::PerIp => {
+                    info!(
+                        message = "per-IP rate limit exceeded",
+                        client_ip = client_addr.to_string(),
+                        reason = reason
+                    );
                     state.metrics.per_ip_rate_limited_requests.increment(1);
                 }
                 RateLimitType::Global => {
