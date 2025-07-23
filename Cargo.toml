@@ -30,6 +30,7 @@ reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1"
 reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.5.1" }
 
 # revm
 revm = { version = "27.0.2", default-features = false }

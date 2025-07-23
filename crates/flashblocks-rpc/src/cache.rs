@@ -5,6 +5,8 @@ use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use reth::providers::StateProviderBox;
+use reth::revm::database::StateProviderDatabase;
+use revm::database::{CacheDB, State};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
@@ -59,7 +61,7 @@ struct CacheEntry<T> {
 #[derive(Debug, Clone)]
 pub struct Cache {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
-    pub state: Arc<RwLock<Option<StateProviderBox>>>,
+    pub state: Arc<RwLock<Option<State<StateProviderDatabase<StateProviderBox>>>>>,
 }
 
 impl Default for Cache {

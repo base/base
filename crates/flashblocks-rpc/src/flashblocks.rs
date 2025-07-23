@@ -1,6 +1,7 @@
 use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
+use std::ops::Deref;
 use alloy_consensus::Header;
-use alloy_consensus::transaction::SignerRecoverable;
+use alloy_consensus::transaction::{Recovered, SignerRecoverable};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
@@ -8,7 +9,14 @@ use futures_util::StreamExt;
 use reth::chainspec::ChainSpecProvider;
 use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
 use reth::revm::{Database, State};
+use reth::revm::database::StateProviderDatabase;
+use reth::revm::db::CacheDB;
 use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_evm::{
+    eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
+};
+use reth_evm::op_revm::OpSpecId;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
@@ -67,10 +75,13 @@ pub struct FlashblocksClient<Client> {
 
 impl <Client> FlashblocksClient<Client>
 where Client: StateProviderFactory
+                + ChainSpecProvider<ChainSpec = OpChainSpec>
                 + BlockReaderIdExt<Header = Header>
                 + Clone
+                + 'static
 {
-    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client) -> Self {
+    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client,
+    ) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
         let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
@@ -179,6 +190,7 @@ where Client: StateProviderFactory
         // Spawn actor's event loop
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
+                let client = client.clone();
                 match message {
                     ActorMessage::BestPayload { payload } => {
                         process_payload(payload, &cache_clone, &receipt_sender_clone, client);
@@ -219,6 +231,7 @@ fn process_payload<Client>(
     client: Client,
 )
 where Client: StateProviderFactory
+    + ChainSpecProvider<ChainSpec = OpChainSpec>
     + BlockReaderIdExt<Header = Header>
     + Clone
 {
@@ -260,9 +273,8 @@ where Client: StateProviderFactory
     if current_block.is_some() && current_block.unwrap().number > block_number {
         return;
     }
-
     // base only appears once in the first payload index
-    let base = if let Some(base) = payload.base {
+    let (base) = if let Some(base) = payload.base {
         // TODO: initial set state in here
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!(
@@ -271,11 +283,15 @@ where Client: StateProviderFactory
             );
             return;
         }
-        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number)).expect("get state for commited block");
-        // cache.state.write().expect("poisoned lock").replace(state);
+        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1)).expect("get state for commited block");
+        let state = StateProviderDatabase::new(state);
+        let db = State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build();
+        cache.state.write().unwrap().replace(db);
         base
     } else {
-        // Execute additonal transaction in here to progress state
         match cache.get(&CacheKey::Base(block_number)) {
             Some(base) => base,
             None => {
@@ -300,6 +316,19 @@ where Client: StateProviderFactory
             return;
         }
     };
+
+    let block_env_attributes = OpNextBlockEnvAttributes {
+        timestamp: base.timestamp,
+        suggested_fee_recipient: base.fee_recipient,
+        prev_randao: base.prev_randao,
+        gas_limit: base.gas_limit,
+        parent_beacon_block_root: Some(base.parent_beacon_block_root),
+        extra_data: base.extra_data.clone(),
+    };
+    let header = client.header_by_number(block_number - 1).expect("get header").expect("existing header");
+    let evm_config = OpEvmConfig::optimism(client.chain_spec());
+    let evm_env = evm_config
+        .next_evm_env(&header, &block_env_attributes).expect("create evm env");
 
     let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
         blob_gas_used: 0,
@@ -335,6 +364,17 @@ where Client: StateProviderFactory
             return;
         }
     };
+
+    {
+        let mut db = cache.state.write().unwrap().take().unwrap();
+        let mut evm = evm_config.evm_with_env(*db, evm_env);
+        for tx in block.body.transactions.clone() {
+            let sender = tx.recover_signer().expect("success");
+            let recovered = Recovered::new_unchecked(tx.clone(), sender);
+            let res = evm.transact_commit(recovered).expect("asd");
+            info!("executed tx, res: {:?}", res);
+        }
+    }
 
     // "pending" because users query the block using "pending" tag
     // This is an optimistic update will likely need to tweak in the future
