@@ -297,7 +297,7 @@ fn process_payload<Client>(
     };
 
     let transactions = match get_and_set_transactions(
-        diff_transactions,
+        diff_transactions.clone(),
         payload.index,
         block_number,
         cache.clone(),
@@ -364,37 +364,25 @@ fn process_payload<Client>(
         .next_evm_env(&header, &block_env_attributes)
         .expect("create evm env");
 
-    // We use this if because we could do lock-free update if we on base FB
-    if is_base_flashblock {
-        let state = client
-            .state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1))
-            .expect("get state for commited block");
-        let state = StateProviderDatabase::new(state);
-        let mut db = CacheDB::new(
-            State::builder()
-                .with_database(state)
-                .with_bundle_update()
-                .build(),
-        );
-        let mut evm = evm_config.evm_with_env(&mut db, evm_env);
-        for tx in block.body.transactions.clone() {
-            let sender = tx.recover_signer().expect("success");
-            let recovered = Recovered::new_unchecked(tx.clone(), sender);
-            let res = evm.transact_commit(recovered).expect("asd");
-            info!("executed tx, res: {:?}", res);
-        }
-        cache.state.write().unwrap().replace(db);
-    } else {
-        if let Some(db) = cache.state.write().unwrap().as_mut() {
-            let mut evm = evm_config.evm_with_env(db, evm_env);
-            for tx in block.body.transactions.clone() {
-                let sender = tx.recover_signer().expect("success");
-                let recovered = Recovered::new_unchecked(tx.clone(), sender);
-                let res = evm.transact_commit(recovered).expect("asd");
-                info!("executed tx, res: {:?}", res);
-            }
-        }
+    // TODO: this is suboptimal, because we reexecute some of the transactions
+    let state = client
+        .state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1))
+        .expect("get state for commited block");
+    let state = StateProviderDatabase::new(state);
+    let mut db = CacheDB::new(
+        State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build(),
+    );
+    let mut evm = evm_config.evm_with_env(&mut db, evm_env);
+    for tx in block.body.transactions.clone() {
+        let sender = tx.recover_signer().expect("success");
+        let recovered = Recovered::new_unchecked(tx.clone(), sender);
+        let res = evm.transact_commit(recovered).expect("asd");
+        info!("executed tx, res: {:?}", res);
     }
+    cache.state.write().unwrap().replace(db);
 
     // "pending" because users query the block using "pending" tag
     // This is an optimistic update will likely need to tweak in the future
