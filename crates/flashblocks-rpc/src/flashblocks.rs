@@ -1,25 +1,25 @@
-use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
-use std::ops::Deref;
-use alloy_consensus::Header;
 use alloy_consensus::transaction::{Recovered, SignerRecoverable};
+use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{map::foldhash::HashMap, Address, Bytes};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use futures_util::StreamExt;
 use reth::chainspec::ChainSpecProvider;
 use reth::providers::{BlockReaderIdExt, ProviderError, StateProviderFactory};
-use reth::revm::{Database, State};
 use reth::revm::database::StateProviderDatabase;
 use reth::revm::db::CacheDB;
-use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth::revm::{Database, State};
+use reth_evm::op_revm::OpSpecId;
 use reth_evm::{
     eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
 };
-use reth_evm::op_revm::OpSpecId;
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{Deserialize, Serialize};
+use std::ops::Deref;
+use std::{io::Read, str::FromStr, sync::Arc, time::Instant};
 use tokio::sync::{broadcast, mpsc};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{debug, error, info};
@@ -73,15 +73,15 @@ pub struct FlashblocksClient<Client> {
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
 }
 
-impl <Client> FlashblocksClient<Client>
-where Client: StateProviderFactory
-                + ChainSpecProvider<ChainSpec = OpChainSpec>
-                + BlockReaderIdExt<Header = Header>
-                + Clone
-                + 'static
+impl<Client> FlashblocksClient<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + 'static,
 {
-    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client,
-    ) -> Self {
+    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize, client: Client) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
         let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
@@ -230,11 +230,11 @@ fn process_payload<Client>(
     cache: Arc<Cache>,
     receipt_sender: &broadcast::Sender<ReceiptWithHash>,
     client: Client,
-)
-where Client: StateProviderFactory
-    + ChainSpecProvider<ChainSpec = OpChainSpec>
-    + BlockReaderIdExt<Header = Header>
-    + Clone
+) where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + Clone,
 {
     let metrics = Metrics::default();
     let msg_processing_start_time = Instant::now();
@@ -355,19 +355,27 @@ where Client: StateProviderFactory
         parent_beacon_block_root: Some(base.parent_beacon_block_root),
         extra_data: base.extra_data,
     };
-    let header = client.header_by_number(block_number - 1).expect("get header").expect("existing header");
+    let header = client
+        .header_by_number(block_number - 1)
+        .expect("get header")
+        .expect("existing header");
     let evm_config = OpEvmConfig::optimism(client.chain_spec());
     let evm_env = evm_config
-        .next_evm_env(&header, &block_env_attributes).expect("create evm env");
+        .next_evm_env(&header, &block_env_attributes)
+        .expect("create evm env");
 
     // We use this if because we could do lock-free update if we on base FB
     if is_base_flashblock {
-        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1)).expect("get state for commited block");
+        let state = client
+            .state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1))
+            .expect("get state for commited block");
         let state = StateProviderDatabase::new(state);
-        let mut db = CacheDB::new(State::builder()
-            .with_database(state)
-            .with_bundle_update()
-            .build());
+        let mut db = CacheDB::new(
+            State::builder()
+                .with_database(state)
+                .with_bundle_update()
+                .build(),
+        );
         let mut evm = evm_config.evm_with_env(&mut db, evm_env);
         for tx in block.body.transactions.clone() {
             let sender = tx.recover_signer().expect("success");

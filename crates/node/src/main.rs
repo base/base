@@ -9,7 +9,6 @@ use reth::{
     builder::{EngineNodeLauncher, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use reth::providers::StateProviderFactory;
 use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
@@ -69,8 +68,11 @@ fn main() {
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "starting flashblocks integration");
-                        let mut flashblocks_client =
-                            FlashblocksClient::new(cache.clone(), receipt_buffer_size, ctx.provider().clone());
+                        let mut flashblocks_client = FlashblocksClient::new(
+                            cache.clone(),
+                            receipt_buffer_size,
+                            ctx.provider().clone(),
+                        );
 
                         flashblocks_client
                             .init(flashblocks_rollup_args.websocket_url.unwrap().clone())

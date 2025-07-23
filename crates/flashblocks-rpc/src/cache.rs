@@ -1,15 +1,15 @@
 use alloy_primitives::{Address, B256};
-use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
 use reth::providers::StateProviderBox;
 use reth::revm::database::StateProviderDatabase;
 use reth_evm::op_revm::OpEvm;
 use reth_evm::precompiles::PrecompilesMap;
 use revm::database::{CacheDB, State};
 use revm::inspector::NoOpInspector;
+use serde::{de::DeserializeOwned, Serialize};
+use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
