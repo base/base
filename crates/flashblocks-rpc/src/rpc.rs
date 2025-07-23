@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -5,6 +6,7 @@ use crate::cache::{Cache, CacheKey};
 use crate::flashblocks::FlashblocksApi;
 use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
+use alloy_consensus::TxReceipt;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, Sealable, TxHash, U256};
@@ -22,8 +24,9 @@ use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
 use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use reth_optimism_primitives::{OpBlock, OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{
@@ -214,11 +217,6 @@ where
         block_number: u64,
         chain_spec: &OpChainSpec,
     ) -> RpcReceipt<Optimism> {
-        let tx = self
-            .cache
-            .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
-            .unwrap();
-
         let block = self
             .cache
             .get::<OpBlock>(&CacheKey::Block(block_number))
@@ -246,16 +244,29 @@ where
             .get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number))
             .unwrap();
 
-        OpReceiptBuilder::new(
-            chain_spec,
-            &tx,
+        let tx = get_recovered_tx(&self.cache, tx_hash);
+
+        let mut gas_used = 0;
+        let mut next_log_index = 0;
+
+        if meta.index > 0 {
+            for receipt in all_receipts.iter().take(meta.index as usize) {
+                gas_used = receipt.cumulative_gas_used();
+                next_log_index += receipt.logs().len();
+            }
+        }
+
+        let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+            receipt: Cow::Borrowed(&receipt),
+            tx: Recovered::new_unchecked(&*tx, tx.signer()),
+            gas_used: receipt.cumulative_gas_used() - gas_used,
+            next_log_index,
             meta,
-            &receipt,
-            &all_receipts,
-            &mut l1_block_info,
-        )
-        .expect("failed to build receipt")
-        .build()
+        };
+
+        OpReceiptBuilder::new(chain_spec, input, &mut l1_block_info)
+            .expect("failed to build receipt")
+            .build()
     }
 }
 
@@ -475,10 +486,6 @@ where
                 .cache
                 .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
             {
-                let sender = self
-                    .cache
-                    .get::<Address>(&CacheKey::TransactionSender(tx_hash))
-                    .unwrap();
                 let block_number = self
                     .cache
                     .get::<u64>(&CacheKey::TransactionBlockNumber(tx_hash))
@@ -498,7 +505,7 @@ where
                     index: Some(index),
                     base_fee: block.base_fee_per_gas,
                 };
-                let tx = Recovered::new_unchecked(tx, sender);
+                let tx = get_recovered_tx(&self.cache, tx_hash);
                 Ok(Some(self.transform_tx(tx, tx_info, None)))
             } else {
                 Ok(None)
@@ -613,4 +620,14 @@ where
         }
         None
     }
+}
+
+fn get_recovered_tx(ctx: &Cache, tx_hash: TxHash) -> Recovered<OpTransactionSigned> {
+    let sender = ctx
+        .get::<Address>(&CacheKey::TransactionSender(tx_hash))
+        .unwrap();
+    let tx = ctx
+        .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+        .unwrap();
+    Recovered::new_unchecked(tx, sender)
 }
