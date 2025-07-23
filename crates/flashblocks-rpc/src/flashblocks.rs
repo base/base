@@ -204,7 +204,7 @@ where Client: StateProviderFactory
     }
 }
 
-impl FlashblocksApi for FlashblocksClient<()> {
+impl<Client> FlashblocksApi for FlashblocksClient<Client> {
     fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
         self.receipt_sender.subscribe()
     }
