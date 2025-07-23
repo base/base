@@ -215,6 +215,7 @@ mod tests {
             )
             .await?;
         assert!(receipt.is_some());
+        let receipt = receipt.unwrap();
         assert_eq!(receipt.gas_used(), 21000);
 
         // check transaction receipt
