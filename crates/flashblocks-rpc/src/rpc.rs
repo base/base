@@ -21,6 +21,7 @@ use op_alloy_rpc_types::Transaction;
 use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
 use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
+use reth::rpc::server_types::eth::error::ensure_success;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
@@ -553,39 +554,20 @@ where
     ) -> RpcResult<alloy_primitives::Bytes> {
         // Check if this is a call to the pending block
         let block_id = block_number.unwrap_or_default();
+        let overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
 
         if block_id.is_pending() {
             self.metrics.call.increment(1);
 
-            let mut transaction_requests = self
-                .cache
-                .get::<OpBlock>(&CacheKey::PendingBlock)
-                .unwrap_or_default()
-                .body
-                .transactions
-                .iter()
-                .map(|tx| TransactionRequest::from_transaction(tx.clone()))
-                .collect::<Vec<TransactionRequest>>();
-
-            transaction_requests.push(transaction);
-            let bundles = vec![Bundle::from(transaction_requests)];
-
-            let context = StateContext {
-                block_number: Some(BlockId::Number(BlockNumberOrTag::Pending)),
-                transaction_index: None,
-            };
-            return EthCall::call_many(&self.eth_api, bundles, Some(context), None)
-                .await
-                .map_err(Into::into)
-                .map(|responses| {
-                    responses
-                        .first()
-                        .map_or_else(alloy_primitives::Bytes::default, |r| {
-                            r.last().unwrap().value.clone().unwrap()
-                        })
-                });
+            let (evm_env, _) = self.eth_api.evm_env_at(BlockId::Number(BlockNumberOrTag::Latest)).await.expect("asd");
+            self.spawn_blocking_io(move |_| {
+                let mut db = self.cache.state.write().unwrap();
+                let (evm_env, tx_env) =
+                    self.eth_api.prepare_call_env(evm_env, transaction, &mut db, overrides)?;
+                self.eth_api.transact(&mut db, evm_env, tx_env)
+            })
+            .await
         }
-        let overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
         // Delegate to the underlying eth_api
         EthCall::call(&self.eth_api, transaction, block_number, overrides)
             .await
