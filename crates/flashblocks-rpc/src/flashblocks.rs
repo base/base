@@ -191,9 +191,10 @@ where Client: StateProviderFactory
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 let client = client.clone();
+                let cache_clone = cache_clone.clone();
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        process_payload(payload, &cache_clone, &receipt_sender_clone, client);
+                        process_payload(payload, cache_clone, &receipt_sender_clone, client);
                     }
                 }
             }
@@ -226,7 +227,7 @@ fn try_parse_message(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>>
 
 fn process_payload<Client>(
     payload: FlashblocksPayloadV1,
-    cache: &Arc<Cache>,
+    cache: Arc<Cache>,
     receipt_sender: &broadcast::Sender<ReceiptWithHash>,
     client: Client,
 )
@@ -266,15 +267,16 @@ where Client: StateProviderFactory
     }
 
     // Track flashblock indices and record metrics
-    update_flashblocks_index(payload.index, cache, &metrics);
+    update_flashblocks_index(payload.index, cache.clone(), &metrics);
 
     // Prevent updating to older blocks
     let current_block = cache.get::<OpBlock>(&CacheKey::PendingBlock);
     if current_block.is_some() && current_block.unwrap().number > block_number {
         return;
     }
+    let is_base_flashblock = payload.base.is_some();
     // base only appears once in the first payload index
-    let (base) = if let Some(base) = payload.base {
+    let base = if let Some(base) = payload.base {
         // TODO: initial set state in here
         if let Err(e) = cache.set(CacheKey::Base(block_number), &base, Some(10)) {
             error!(
@@ -283,13 +285,6 @@ where Client: StateProviderFactory
             );
             return;
         }
-        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1)).expect("get state for commited block");
-        let state = StateProviderDatabase::new(state);
-        let db = State::builder()
-            .with_database(state)
-            .with_bundle_update()
-            .build();
-        cache.state.write().unwrap().replace(db);
         base
     } else {
         match cache.get(&CacheKey::Base(block_number)) {
@@ -317,19 +312,6 @@ where Client: StateProviderFactory
         }
     };
 
-    let block_env_attributes = OpNextBlockEnvAttributes {
-        timestamp: base.timestamp,
-        suggested_fee_recipient: base.fee_recipient,
-        prev_randao: base.prev_randao,
-        gas_limit: base.gas_limit,
-        parent_beacon_block_root: Some(base.parent_beacon_block_root),
-        extra_data: base.extra_data.clone(),
-    };
-    let header = client.header_by_number(block_number - 1).expect("get header").expect("existing header");
-    let evm_config = OpEvmConfig::optimism(client.chain_spec());
-    let evm_env = evm_config
-        .next_evm_env(&header, &block_env_attributes).expect("create evm env");
-
     let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
         blob_gas_used: 0,
         excess_blob_gas: 0,
@@ -346,7 +328,7 @@ where Client: StateProviderFactory
                 gas_limit: base.gas_limit,
                 gas_used: diff.gas_used,
                 timestamp: base.timestamp,
-                extra_data: base.extra_data,
+                extra_data: base.extra_data.clone(),
                 base_fee_per_gas: base.base_fee_per_gas,
                 block_hash: diff.block_hash,
                 transactions,
@@ -365,14 +347,44 @@ where Client: StateProviderFactory
         }
     };
 
-    {
-        let mut db = cache.state.write().unwrap().take().unwrap();
-        let mut evm = evm_config.evm_with_env(*db, evm_env);
+    let block_env_attributes = OpNextBlockEnvAttributes {
+        timestamp: base.timestamp,
+        suggested_fee_recipient: base.fee_recipient,
+        prev_randao: base.prev_randao,
+        gas_limit: base.gas_limit,
+        parent_beacon_block_root: Some(base.parent_beacon_block_root),
+        extra_data: base.extra_data,
+    };
+    let header = client.header_by_number(block_number - 1).expect("get header").expect("existing header");
+    let evm_config = OpEvmConfig::optimism(client.chain_spec());
+    let evm_env = evm_config
+        .next_evm_env(&header, &block_env_attributes).expect("create evm env");
+
+    // We use this if because we could do lock-free update if we on base FB
+    if is_base_flashblock {
+        let state = client.state_by_block_number_or_tag(BlockNumberOrTag::Number(block_number - 1)).expect("get state for commited block");
+        let state = StateProviderDatabase::new(state);
+        let mut db = CacheDB::new(State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build());
+        let mut evm = evm_config.evm_with_env(&mut db, evm_env);
         for tx in block.body.transactions.clone() {
             let sender = tx.recover_signer().expect("success");
             let recovered = Recovered::new_unchecked(tx.clone(), sender);
             let res = evm.transact_commit(recovered).expect("asd");
             info!("executed tx, res: {:?}", res);
+        }
+        cache.state.write().unwrap().replace(db);
+    } else {
+        if let Some(db) = cache.state.write().unwrap().as_mut() {
+            let mut evm = evm_config.evm_with_env(db, evm_env);
+            for tx in block.body.transactions.clone() {
+                let sender = tx.recover_signer().expect("success");
+                let recovered = Recovered::new_unchecked(tx.clone(), sender);
+                let res = evm.transact_commit(recovered).expect("asd");
+                info!("executed tx, res: {:?}", res);
+            }
         }
     }
 
@@ -481,7 +493,7 @@ where Client: StateProviderFactory
     }
 }
 
-fn update_flashblocks_index(index: u64, cache: &Arc<Cache>, metrics: &Metrics) {
+fn update_flashblocks_index(index: u64, cache: Arc<Cache>, metrics: &Metrics) {
     if index == 0 {
         // Get highest index from previous block
         if let Some(prev_highest_index) = cache.get::<u64>(&CacheKey::HighestPayloadIndex) {
@@ -862,11 +874,11 @@ mod tests {
         let payload = create_first_payload();
 
         // Process first payload
-        process_payload(payload, &cache, &receipt_sender);
+        process_payload(payload, cache.clone(), &receipt_sender);
 
         let payload2 = create_second_payload();
         // Process second payload
-        process_payload(payload2, &cache, &receipt_sender);
+        process_payload(payload2, cache, &receipt_sender);
 
         // Check that receipts were broadcast for both transactions
         let mut receipts = vec![];
