@@ -11,9 +11,6 @@ description = "Flashblocks RPC Support"
 [lints]
 workspace = true
 
-[features]
-integration = []
-
 [dependencies]
 # reth
 reth.workspace = true
