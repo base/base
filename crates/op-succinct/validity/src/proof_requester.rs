@@ -450,6 +450,19 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 } else {
                     let proof_id = self.request_range_proof(stdin).await?;
                     self.db_client.update_request_to_prove(request.id, proof_id).await?;
+
+                    info!(
+                        proof_id = request.id,
+                        start_block = request.start_block,
+                        end_block = request.end_block,
+                        proof_request_time = ?request.created_at,
+                        total_tx_fees = %request.total_tx_fees,
+                        total_transactions = request.total_nb_transactions,
+                        witnessgen_duration_s = request.witnessgen_duration,
+                        total_eth_gas_used = request.total_eth_gas_used,
+                        total_l1_fees = %request.total_l1_fees,
+                        "Range proof request submitted to Succinct network"
+                    );
                 }
             }
             RequestType::Aggregation => {
@@ -459,6 +472,17 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
                 } else {
                     let proof_id = self.request_agg_proof(stdin).await?;
                     self.db_client.update_request_to_prove(request.id, proof_id).await?;
+
+                    info!(
+                        proof_id = request.id,
+                        start_block = request.start_block,
+                        end_block = request.end_block,
+                        proof_request_time = ?request.created_at,
+                        witnessgen_duration_s = request.witnessgen_duration,
+                        checkpointed_l1_block_number = request.checkpointed_l1_block_number,
+                        checkpointed_l1_block_hash = ?request.checkpointed_l1_block_hash,
+                        "Aggregation proof request submitted to Succinct network"
+                    );
                 }
             }
         }
