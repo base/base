@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::{
-    db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus},
+    db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus, RequestType},
     find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, CommitmentConfig,
     ContractConfig, OPSuccinctProofRequester, ProgramConfig, RequesterConfig, ValidityGauge,
 };
@@ -250,6 +250,15 @@ where
 
             // Insert the new range proof requests into the database.
             self.driver_config.driver_db_client.insert_requests(&new_range_requests).await?;
+
+            // Log details for each created range proof request.
+            for request in &new_range_requests {
+                info!(
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    "Range proof request created and inserted into database"
+                );
+            }
         }
 
         Ok(())
@@ -308,10 +317,29 @@ where
 
                 ValidityGauge::ProofRequestTimeoutErrorCount.increment(1.0);
 
-                tracing::warn!(
-                    "Proof request has timed out for request id: {:?}",
-                    proof_request_id
-                );
+                // Log timeout of range proof
+                match request.req_type {
+                    RequestType::Range => {
+                        warn!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            deadline = status.deadline,
+                            current_time = current_time,
+                            "Range proof request timed out"
+                        );
+                    }
+                    RequestType::Aggregation => {
+                        warn!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            deadline = status.deadline,
+                            current_time = current_time,
+                            "Aggregation proof request timed out"
+                        );
+                    }
+                }
 
                 return Ok(());
             }
@@ -336,7 +364,65 @@ where
                     .await?;
                 // Update the prove_duration based on the current time and the proof_request_time.
                 self.driver_config.driver_db_client.update_prove_duration(request.id).await?;
+
+                // Log completion of range and aggregation proofs.
+                match request.req_type {
+                    RequestType::Range => {
+                        info!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            proof_request_time = ?request.proof_request_time,
+                            total_tx_fees = %request.total_tx_fees,
+                            total_transactions = request.total_nb_transactions,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            prove_duration_s = request.prove_duration,
+                            total_eth_gas_used = request.total_eth_gas_used,
+                            total_l1_fees = %request.total_l1_fees,
+                            "Range proof completed successfully"
+                        );
+                    }
+                    RequestType::Aggregation => {
+                        info!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            prove_duration_s = request.prove_duration,
+                            "Aggregation proof completed successfully"
+                        );
+                    }
+                }
             } else if status.fulfillment_status() == FulfillmentStatus::Unfulfillable {
+                // Log failure of range and aggregation proofs.
+                match request.req_type {
+                    RequestType::Range => {
+                        warn!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            proof_request_time = ?request.proof_request_time,
+                            total_tx_fees = %request.total_tx_fees,
+                            total_transactions = request.total_nb_transactions,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            total_eth_gas_used = request.total_eth_gas_used,
+                            total_l1_fees = %request.total_l1_fees,
+                            execution_status = ?status.execution_status(),
+                            "Range proof request failed - unfulfillable"
+                        );
+                    }
+                    RequestType::Aggregation => {
+                        warn!(
+                            proof_id = request.id,
+                            start_block = request.start_block,
+                            end_block = request.end_block,
+                            witnessgen_duration_s = request.witnessgen_duration,
+                            execution_status = ?status.execution_status(),
+                            "Aggregation proof request failed - unfulfillable"
+                        );
+                    }
+                }
+
                 self.proof_requester
                     .handle_failed_request(request, status.execution_status())
                     .await?;
@@ -483,22 +569,27 @@ where
 
             // Create an aggregation proof request to cover the range with the checkpointed L1 block
             // hash.
-            self.driver_config
-                .driver_db_client
-                .insert_request(&OPSuccinctRequest::new_agg_request(
-                    if self.requester_config.mock { RequestMode::Mock } else { RequestMode::Real },
-                    latest_proposed_block_number,
-                    highest_proven_contiguous_block_number,
-                    self.program_config.commitments.range_vkey_commitment,
-                    self.program_config.commitments.agg_vkey_hash,
-                    self.program_config.commitments.rollup_config_hash,
-                    self.requester_config.l1_chain_id,
-                    self.requester_config.l2_chain_id,
-                    checkpointed_l1_block_number,
-                    checkpointed_l1_block_hash,
-                    self.requester_config.prover_address,
-                ))
-                .await?;
+            let agg_request = OPSuccinctRequest::new_agg_request(
+                if self.requester_config.mock { RequestMode::Mock } else { RequestMode::Real },
+                latest_proposed_block_number,
+                highest_proven_contiguous_block_number,
+                self.program_config.commitments.range_vkey_commitment,
+                self.program_config.commitments.agg_vkey_hash,
+                self.program_config.commitments.rollup_config_hash,
+                self.requester_config.l1_chain_id,
+                self.requester_config.l2_chain_id,
+                checkpointed_l1_block_number,
+                checkpointed_l1_block_hash,
+                self.requester_config.prover_address,
+            );
+
+            self.driver_config.driver_db_client.insert_request(&agg_request).await?;
+
+            info!(
+                start_block = agg_request.start_block,
+                end_block = agg_request.end_block,
+                "Aggregation proof request created and inserted into database"
+            );
         }
 
         Ok(())
