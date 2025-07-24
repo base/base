@@ -1,4 +1,4 @@
-use crate::integration::{poll_logs, IntegrationError, Service, DEFAULT_JWT_TOKEN};
+use crate::tests::{poll_logs, IntegrationError, Service, DEFAULT_JWT_TOKEN};
 use futures_util::Future;
 use std::{
     path::{Path, PathBuf},

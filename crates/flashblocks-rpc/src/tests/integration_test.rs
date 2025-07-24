@@ -1,7 +1,7 @@
-#[cfg(all(test, feature = "integration"))]
+#[cfg(test)]
 mod tests {
     use crate::flashblocks::Metadata;
-    use crate::integration::{op_reth::OpRethConfig, IntegrationFramework};
+    use crate::tests::{op_reth::OpRethConfig, IntegrationFramework};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
     use alloy_primitives::{Address, Bytes, B256, U256};
@@ -157,7 +157,7 @@ mod tests {
 
         // Setup genesis path
         let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        genesis_path.push("src/integration/genesis.json");
+        genesis_path.push("src/tests/assets/genesis.json");
         assert!(genesis_path.exists());
 
         // Create and start reth-flashblocks node
