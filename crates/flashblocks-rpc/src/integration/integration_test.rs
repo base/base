@@ -157,7 +157,7 @@ mod tests {
 
         // Setup genesis path
         let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        genesis_path.push("src/integration/genesis.json");
+        genesis_path.push("src/integration/assets/genesis.json");
         assert!(genesis_path.exists());
 
         // Create and start reth-flashblocks node
