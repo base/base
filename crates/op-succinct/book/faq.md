@@ -2,7 +2,7 @@
 
 ## Has OP Succinct been audited?
 
-Cantina has audited both [OP Succinct](https://github.com/succinctlabs/op-succinct/blob/edward/docs/audits/OP%20Succinct%20Spearbit.pdf) and [OP Succinct Lite](https://github.com/succinctlabs/op-succinct/blob/edward/docs/audits/OP%20Succinct%20Lite%20Spearbit.pdf). 
+Cantina has audited both [OP Succinct](https://github.com/succinctlabs/op-succinct/blob/69a05927ae7bb7b6e212640b5bbab62d68ed2c7c/audits/OP%20Succinct%20Spearbit.pdf) and [OP Succinct Lite](https://github.com/succinctlabs/op-succinct/blob/69a05927ae7bb7b6e212640b5bbab62d68ed2c7c/audits/OP%20Succinct%20Lite%20Spearbit.pdf). 
 
 ## How is data availability proven?
 
