@@ -1,4 +1,5 @@
 use eyre::Result;
+use reth_optimism_rpc::OpEthApiBuilder;
 
 use crate::{
     args::*,
@@ -108,7 +109,7 @@ where
 
         let mut addons: OpAddOns<
             _,
-            _,
+            OpEthApiBuilder,
             OpEngineValidatorBuilder,
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()

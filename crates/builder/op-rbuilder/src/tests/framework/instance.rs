@@ -37,6 +37,7 @@ use reth_optimism_node::{
     node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
 };
+use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::oneshot;
@@ -99,7 +100,7 @@ impl LocalInstance {
 
         let addons: OpAddOns<
             _,
-            _,
+            OpEthApiBuilder,
             OpEngineValidatorBuilder,
             OpEngineApiBuilder<OpEngineValidatorBuilder>,
         > = OpAddOnsBuilder::default()
