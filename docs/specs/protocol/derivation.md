@@ -49,7 +49,7 @@
 
 <!-- All glossary references in this file. -->
 
-[g-derivation]: ../glossary.md#L2-chain-derivation
+[g-derivation]: ../glossary.md#l2-chain-derivation
 [g-payload-attr]: ../glossary.md#payload-attributes
 [g-block]: ../glossary.md#block
 [g-exec-engine]: ../glossary.md#execution-engine
@@ -67,7 +67,7 @@
 [g-sequencing-window]: ../glossary.md#sequencing-window
 [g-sequencer-batch]: ../glossary.md#sequencer-batch
 [g-l2-genesis]: ../glossary.md#l2-genesis-block
-[g-l2-chain-inception]: ../glossary.md#L2-chain-inception
+[g-l2-chain-inception]: ../glossary.md#l2-chain-inception
 [g-l2-genesis-block]: ../glossary.md#l2-genesis-block
 [g-batcher-transaction]: ../glossary.md#batcher-transaction
 [g-avail-provider]: ../glossary.md#data-availability-provider
