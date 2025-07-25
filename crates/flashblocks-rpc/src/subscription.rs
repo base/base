@@ -10,8 +10,8 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info};
 use url::Url;
 
-use crate::cache::Cache;
 use crate::metrics::Metrics;
+use crate::state::FlashblocksState;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FlashbotsMessage {
@@ -34,15 +34,15 @@ enum ActorMessage {
     BestPayload { payload: FlashblocksPayloadV1 },
 }
 
-pub struct FlashblocksClient {
+pub struct FlashblocksSubscriber {
     sender: mpsc::Sender<ActorMessage>,
     mailbox: mpsc::Receiver<ActorMessage>,
-    cache: Arc<Cache>,
+    cache: Arc<FlashblocksState>,
     metrics: Metrics,
 }
 
-impl FlashblocksClient {
-    pub fn new(cache: Arc<Cache>) -> Self {
+impl FlashblocksSubscriber {
+    pub fn new(cache: Arc<FlashblocksState>) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
 
         Self {

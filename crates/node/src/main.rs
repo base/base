@@ -1,4 +1,6 @@
-use base_reth_flashblocks_rpc::{cache::Cache, flashblocks::FlashblocksClient, rpc::EthApiExt};
+use base_reth_flashblocks_rpc::{
+    rpc::EthApiExt, state::FlashblocksState, subscription::FlashblocksSubscriber,
+};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -55,7 +57,9 @@ fn main() {
             let chain_spec = builder.config().chain.clone();
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
 
-            let cache = Arc::new(Cache::new(flashblocks_rollup_args.receipt_buffer_size));
+            let cache = Arc::new(FlashblocksState::new(
+                flashblocks_rollup_args.receipt_buffer_size,
+            ));
             let cache_clone = cache.clone();
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
@@ -67,7 +71,7 @@ fn main() {
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "starting flashblocks integration");
-                        let mut flashblocks_client = FlashblocksClient::new(cache.clone());
+                        let mut flashblocks_client = FlashblocksSubscriber::new(cache.clone());
 
                         flashblocks_client
                             .init(flashblocks_rollup_args.websocket_url.unwrap().clone())

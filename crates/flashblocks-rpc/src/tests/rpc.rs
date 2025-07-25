@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::cache::Cache;
-    use crate::flashblocks::Metadata;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
+    use crate::state::FlashblocksState;
+    use crate::subscription::Metadata;
     use alloy_consensus::Receipt;
     use alloy_genesis::Genesis;
     use alloy_primitives::{address, b256, Address, Bytes, TxHash, B256, U256};
@@ -108,7 +108,7 @@ mod tests {
             .extend_rpc_modules(move |ctx| {
                 // We are not going to use the websocket connection to send payloads so we use
                 // a dummy url.
-                let cache = Arc::new(Cache::default());
+                let cache = Arc::new(FlashblocksState::default());
 
                 let api_ext = EthApiExt::new(
                     ctx.registry.eth_api().clone(),
