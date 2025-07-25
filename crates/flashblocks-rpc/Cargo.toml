@@ -15,8 +15,6 @@ workspace = true
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
-reth-primitives.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-optimism-primitives.workspace = true
 reth-rpc-convert.workspace = true
@@ -26,11 +24,6 @@ reth-optimism-chainspec.workspace = true
 reth-provider.workspace = true
 reth-tracing.workspace = true
 
-
-# revm
-revm.workspace = true
-revm-bytecode.workspace = true
-
 # alloy
 alloy-primitives.workspace = true
 alloy-eips.workspace = true
@@ -38,14 +31,10 @@ alloy-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
-alloy-trie.workspace = true
 alloy-provider.workspace = true
-alloy-hardforks.workspace = true
 
 # op-alloy
 op-alloy-rpc-types.workspace = true
-op-alloy-rpc-types-engine.workspace = true
-op-alloy-rpc-jsonrpsee.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
 
@@ -55,7 +44,6 @@ alloy-rpc-client.workspace = true
 
 # rollup-boost
 rollup-boost.workspace = true
-rustls.workspace = true
 
 # tokio
 tokio.workspace = true
@@ -63,30 +51,22 @@ tokio-stream.workspace = true
 tokio-tungstenite.workspace = true
 
 # async
-futures.workspace = true
 futures-util.workspace = true
-reqwest.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
 
 # misc
-clap.workspace = true
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 url.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
-itertools.workspace = true
 eyre.workspace = true
-uuid.workspace = true
-time.workspace = true
-chrono.workspace = true
 brotli.workspace = true
 
 [dev-dependencies]
-# TODO move version up etc.
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0", features = [
     "test-utils",
 ] }

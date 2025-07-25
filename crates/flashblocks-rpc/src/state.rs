@@ -1,11 +1,27 @@
 use crate::metrics::Metrics;
 use crate::subscription::Metadata;
-use alloy_consensus::transaction::SignerRecoverable;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_consensus::transaction::{
+    Recovered, SignerRecoverable, TransactionInfo, TransactionMeta,
+};
+use alloy_consensus::TxReceipt;
+use alloy_primitives::{Address, Bytes, Sealable, TxHash, B256, U256};
+use alloy_provider::network::primitives::BlockTransactions;
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use alloy_rpc_types_eth::Header;
+use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
+use op_alloy_network::Optimism;
+use op_alloy_rpc_types::Transaction;
+use reth::api::BlockBody;
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_primitives::{OpBlock, OpPrimitives, OpReceipt, OpTransactionSigned};
+use reth_optimism_rpc::OpReceiptBuilder;
+use reth_rpc_convert::transaction::ConvertReceiptInput;
+use reth_rpc_convert::RpcTransaction;
+use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use rollup_boost::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{de::DeserializeOwned, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Add;
@@ -15,16 +31,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 
-/// API trait for Flashblocks client functionality
-pub trait FlashblocksApi {
-    /// Subscribe to real-time receipt broadcasts
-    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash>;
-}
-
 /// A receipt with its transaction hash for broadcasting
 #[derive(Debug, Clone)]
 pub struct ReceiptWithHash {
-    pub tx_hash: alloy_primitives::TxHash,
+    pub tx_hash: TxHash,
     pub receipt: OpReceipt,
     pub block_number: u64,
 }
@@ -84,30 +94,60 @@ pub struct FlashblocksState {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
     metrics: Metrics,
-}
-
-impl Default for FlashblocksState {
-    fn default() -> Self {
-        Self {
-            store: Arc::new(RwLock::new(HashMap::new())),
-            receipt_sender: broadcast::channel(2000).0,
-            metrics: Metrics::default(),
-        }
-    }
-}
-
-impl FlashblocksApi for FlashblocksState {
-    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
-        self.receipt_sender.subscribe()
-    }
+    chain_spec: Arc<OpChainSpec>,
 }
 
 impl FlashblocksState {
-    pub fn new(receipt_buffer_size: usize) -> Self {
+    pub fn new(chain_spec: Arc<OpChainSpec>, receipt_buffer_size: usize) -> Self {
         Self {
+            chain_spec,
+            store: Arc::new(RwLock::new(HashMap::new())),
             receipt_sender: broadcast::channel(receipt_buffer_size).0,
-            ..Self::default()
+            metrics: Metrics::default(),
         }
+    }
+
+    pub fn block_by_number(&self, full: bool) -> Option<RpcBlock<Optimism>> {
+        self.get::<OpBlock>(&CacheKey::PendingBlock)
+            .map(|block| self.transform_block(block, full))
+    }
+
+    pub fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+        self.get::<OpReceipt>(&CacheKey::Receipt(tx_hash))
+            .map(|receipt| {
+                self.transform_receipt(
+                    receipt,
+                    tx_hash,
+                    self.get::<u64>(&CacheKey::ReceiptBlock(tx_hash)).unwrap(),
+                )
+            })
+    }
+
+    pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
+        // Handle cache lookup for transactions not found in the main lookup
+        self.get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+            .map(|tx| {
+                let block_number = self
+                    .get::<u64>(&CacheKey::TransactionBlockNumber(tx_hash))
+                    .unwrap();
+                let block = self.get::<OpBlock>(&CacheKey::Block(block_number)).unwrap();
+                let index = self
+                    .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
+                    .unwrap();
+                let tx_info = TransactionInfo {
+                    hash: Some(tx.tx_hash()),
+                    block_hash: Some(block.header.hash_slow()),
+                    block_number: Some(block.number),
+                    index: Some(index),
+                    base_fee: block.base_fee_per_gas,
+                };
+                let tx = get_recovered_tx(self, tx_hash);
+                self.transform_tx(tx, tx_info, None)
+            })
+    }
+
+    pub fn get_balance(&self, address: Address) -> Option<U256> {
+        self.get::<U256>(&CacheKey::AccountBalance(address))
     }
 
     pub fn get<T: DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
@@ -118,6 +158,10 @@ impl FlashblocksState {
             }
             serde_json::from_slice(&entry.value).ok()
         })
+    }
+
+    pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
+        self.receipt_sender.subscribe()
     }
 
     pub fn process_payload(&self, payload: FlashblocksPayloadV1) {
@@ -547,6 +591,165 @@ impl FlashblocksState {
             store.retain(|_, entry| entry.expiry < Instant::now());
         }
     }
+
+    pub fn transform_block(&self, block: OpBlock, full: bool) -> RpcBlock<Optimism> {
+        let header: alloy_consensus::Header = block.header.clone();
+        let transactions = block.body.transactions.to_vec();
+
+        let transactions = if full {
+            let transactions_with_senders = transactions
+                .into_iter()
+                .zip(block.body.recover_signers().unwrap());
+            let converted_txs = transactions_with_senders
+                .enumerate()
+                .map(|(idx, (tx, sender))| {
+                    let signed_tx_ec_recovered = Recovered::new_unchecked(tx.clone(), sender);
+                    let tx_info = TransactionInfo {
+                        hash: Some(tx.tx_hash()),
+                        block_hash: Some(block.header.hash_slow()),
+                        block_number: Some(block.number),
+                        index: Some(idx as u64),
+                        base_fee: block.base_fee_per_gas,
+                    };
+                    self.transform_tx(signed_tx_ec_recovered, tx_info, None)
+                })
+                .collect();
+            BlockTransactions::Full(converted_txs)
+        } else {
+            let tx_hashes = transactions.into_iter().map(|tx| tx.tx_hash()).collect();
+            BlockTransactions::Hashes(tx_hashes)
+        };
+
+        RpcBlock::<Optimism> {
+            header: Header::from_consensus(header.seal_slow(), None, None),
+            transactions,
+            uncles: Vec::new(),
+            withdrawals: None,
+        }
+    }
+
+    pub fn transform_tx(
+        &self,
+        tx: Recovered<OpTransactionSigned>,
+        tx_info: TransactionInfo,
+        deposit_receipt: Option<OpDepositReceipt>,
+    ) -> Transaction {
+        let tx = tx.convert::<OpTxEnvelope>();
+        let mut deposit_receipt_version = None;
+        let mut deposit_nonce = None;
+
+        if tx.is_deposit() {
+            if let Some(receipt) = deposit_receipt {
+                deposit_receipt_version = receipt.deposit_receipt_version;
+                deposit_nonce = receipt.deposit_nonce;
+            } else {
+                let cached_receipt = self
+                    .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
+                    .unwrap();
+
+                if let OpReceipt::Deposit(receipt) = cached_receipt {
+                    deposit_receipt_version = receipt.deposit_receipt_version;
+                    deposit_nonce = receipt.deposit_nonce;
+                }
+            }
+        }
+
+        let TransactionInfo {
+            block_hash,
+            block_number,
+            index: transaction_index,
+            base_fee,
+            ..
+        } = tx_info;
+
+        let effective_gas_price = if tx.is_deposit() {
+            // For deposits, we must always set the `gasPrice` field to 0 in rpc
+            // deposit tx don't have a gas price field, but serde of `Transaction` will take care of
+            // it
+            0
+        } else {
+            base_fee
+                .map(|base_fee| {
+                    tx.effective_tip_per_gas(base_fee).unwrap_or_default() + base_fee as u128
+                })
+                .unwrap_or_else(|| tx.max_fee_per_gas())
+        };
+
+        Transaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: tx,
+                block_hash,
+                block_number,
+                transaction_index,
+                effective_gas_price: Some(effective_gas_price),
+            },
+            deposit_nonce,
+            deposit_receipt_version,
+        }
+    }
+
+    pub fn transform_receipt(
+        &self,
+        receipt: OpReceipt,
+        tx_hash: TxHash,
+        block_number: u64,
+    ) -> RpcReceipt<Optimism> {
+        let block = self.get::<OpBlock>(&CacheKey::Block(block_number)).unwrap();
+        let mut l1_block_info =
+            reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
+
+        let index = self
+            .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
+            .unwrap();
+        let meta = TransactionMeta {
+            tx_hash,
+            index,
+            block_hash: block.header.hash_slow(),
+            block_number: block.number,
+            base_fee: block.base_fee_per_gas,
+            excess_blob_gas: block.excess_blob_gas,
+            timestamp: block.timestamp,
+        };
+
+        // get all receipts from cache too
+        let all_receipts = self
+            .get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number))
+            .unwrap();
+
+        let tx = get_recovered_tx(self, tx_hash);
+
+        let mut gas_used = 0;
+        let mut next_log_index = 0;
+
+        if meta.index > 0 {
+            for receipt in all_receipts.iter().take(meta.index as usize) {
+                gas_used = receipt.cumulative_gas_used();
+                next_log_index += receipt.logs().len();
+            }
+        }
+
+        let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+            receipt: Cow::Borrowed(&receipt),
+            tx: Recovered::new_unchecked(&*tx, tx.signer()),
+            gas_used: receipt.cumulative_gas_used() - gas_used,
+            next_log_index,
+            meta,
+        };
+
+        OpReceiptBuilder::new(self.chain_spec.as_ref(), input, &mut l1_block_info)
+            .expect("failed to build receipt")
+            .build()
+    }
+}
+
+fn get_recovered_tx(ctx: &FlashblocksState, tx_hash: TxHash) -> Recovered<OpTransactionSigned> {
+    let sender = ctx
+        .get::<Address>(&CacheKey::TransactionSender(tx_hash))
+        .unwrap();
+    let tx = ctx
+        .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+        .unwrap();
+    Recovered::new_unchecked(tx, sender)
 }
 
 #[cfg(test)]
@@ -556,8 +759,19 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpBlock;
+    use reth_optimism_chainspec::OpChainSpecBuilder;
     use rollup_boost::ExecutionPayloadFlashblockDeltaV1;
     use std::str::FromStr;
+
+    fn new_state() -> FlashblocksState {
+        let chain_spec = Arc::new(
+            OpChainSpecBuilder::base_mainnet()
+                .ecotone_activated()
+                .build(),
+        );
+
+        FlashblocksState::new(chain_spec, 2000)
+    }
 
     fn create_first_payload() -> FlashblocksPayloadV1 {
         // First payload (index 0) setup remains the same
@@ -707,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_process_payload() {
-        let cache = Arc::new(FlashblocksState::default());
+        let cache = new_state();
         let mut receipt_receiver = cache.subscribe_to_receipts();
 
         let payload = create_first_payload();
@@ -852,7 +1066,7 @@ mod tests {
 
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
-        let cache = Arc::new(FlashblocksState::default());
+        let cache = new_state();
         let metadata = Metadata {
             block_number: 1,
             receipts: HashMap::default(),
@@ -876,8 +1090,7 @@ mod tests {
 
     #[test]
     fn test_flash_block_tracking() {
-        // Create cache
-        let cache = Arc::new(FlashblocksState::default());
+        let cache = new_state();
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
