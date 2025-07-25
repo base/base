@@ -8,6 +8,7 @@ use rollup_boost::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::ops::Add;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -75,11 +76,12 @@ impl Display for CacheKey {
 #[derive(Debug, Clone)]
 struct CacheEntry<T> {
     value: T,
-    expiry: Option<Instant>,
+    expiry: Instant,
 }
 
 #[derive(Debug, Clone)]
 pub struct Cache {
+    // block: Option<OpBlock>,
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
     metrics: Metrics,
@@ -88,6 +90,7 @@ pub struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         Self {
+            // block: None,
             store: Arc::new(RwLock::new(HashMap::new())),
             receipt_sender: broadcast::channel(2000).0,
             metrics: Metrics::default(),
@@ -109,68 +112,14 @@ impl Cache {
         }
     }
 
-    fn get_and_set_all_receipts(
-        &self,
-        payload_index: u64,
-        block_number: u64,
-        diff_receipts: Vec<OpReceipt>,
-    ) -> Result<Vec<OpReceipt>, Box<dyn std::error::Error>> {
-        // update all receipts
-        let receipts = if payload_index == 0 {
-            // get receipts and sort by cumulative gas used
-            diff_receipts
-        } else {
-            let existing =
-                match self.get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number)) {
-                    Some(existing) => existing,
-                    None => {
-                        return Err("Failed to get pending receipts from cache".into());
-                    }
-                };
-            existing
-                .into_iter()
-                .chain(diff_receipts.iter().cloned())
-                .collect()
-        };
-
-        self.set(CacheKey::PendingReceipts(block_number), &receipts, Some(10))?;
-
-        Ok(receipts)
-    }
-
-    fn update_flashblocks_index(&self, index: u64) {
-        if index == 0 {
-            // Get the highest index from previous block
-            if let Some(prev_highest_index) = self.get::<u64>(&CacheKey::HighestPayloadIndex) {
-                // Record metric: total flash blocks = highest_index + 1 (since it's 0-indexed)
-                self.metrics
-                    .flashblocks_in_block
-                    .record((prev_highest_index + 1) as f64);
-                info!(
-                    message = "previous block processed",
-                    flash_blocks_count = prev_highest_index + 1
-                );
+    pub fn get<T: DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
+        let store = self.store.read().unwrap();
+        store.get(key).and_then(|entry| {
+            if entry.expiry < Instant::now() {
+                return None;
             }
-
-            // Reset the highest index to 0 for new block
-            if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &0u64, Some(10)) {
-                error!(
-                    message = "failed to reset highest flash index",
-                    error = %e
-                );
-            }
-        } else {
-            // Update highest index if current index is higher
-            let current_highest = self.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap_or(0);
-            if index > current_highest {
-                if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &index, Some(10)) {
-                    error!(
-                        message = "failed to update highest flash index",
-                        error = %e
-                    );
-                }
-            }
-        }
+            serde_json::from_slice(&entry.value).ok()
+        })
     }
 
     pub fn process_payload(&self, payload: FlashblocksPayloadV1) {
@@ -214,7 +163,7 @@ impl Cache {
 
         // base only appears once in the first payload index
         let base = if let Some(base) = payload.base {
-            if let Err(e) = self.set(CacheKey::Base(block_number), &base, Some(10)) {
+            if let Err(e) = self.set(CacheKey::Base(block_number), &base) {
                 error!(
                     message = "failed to set base in cache",
                     error = %e
@@ -281,7 +230,7 @@ impl Cache {
 
         // "pending" because users query the block using "pending" tag
         // This is an optimistic update will likely need to tweak in the future
-        if let Err(e) = self.set(CacheKey::PendingBlock, &block, Some(10)) {
+        if let Err(e) = self.set(CacheKey::PendingBlock, &block) {
             error!(
                 message = "failed to set pending block in cache",
                 error = %e
@@ -290,7 +239,7 @@ impl Cache {
         }
 
         // set block to block number as well
-        if let Err(e) = self.set(CacheKey::Block(block_number), &block, Some(10)) {
+        if let Err(e) = self.set(CacheKey::Block(block_number), &block) {
             error!(
                 message = "failed to set block in cache",
                 error = %e
@@ -332,7 +281,6 @@ impl Cache {
             if let Err(e) = self.set(
                 CacheKey::AccountBalance(Address::from_str(address).unwrap()),
                 &balance,
-                Some(10),
             ) {
                 error!(
                     message = "failed to set account balance in cache",
@@ -380,6 +328,70 @@ impl Cache {
         }
     }
 
+    fn get_and_set_all_receipts(
+        &self,
+        payload_index: u64,
+        block_number: u64,
+        diff_receipts: Vec<OpReceipt>,
+    ) -> Result<Vec<OpReceipt>, Box<dyn std::error::Error>> {
+        // update all receipts
+        let receipts = if payload_index == 0 {
+            // get receipts and sort by cumulative gas used
+            diff_receipts
+        } else {
+            let existing =
+                match self.get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number)) {
+                    Some(existing) => existing,
+                    None => {
+                        return Err("Failed to get pending receipts from cache".into());
+                    }
+                };
+            existing
+                .into_iter()
+                .chain(diff_receipts.iter().cloned())
+                .collect()
+        };
+
+        self.set(CacheKey::PendingReceipts(block_number), &receipts)?;
+
+        Ok(receipts)
+    }
+
+    fn update_flashblocks_index(&self, index: u64) {
+        if index == 0 {
+            // Get the highest index from previous block
+            if let Some(prev_highest_index) = self.get::<u64>(&CacheKey::HighestPayloadIndex) {
+                // Record metric: total flash blocks = highest_index + 1 (since it's 0-indexed)
+                self.metrics
+                    .flashblocks_in_block
+                    .record((prev_highest_index + 1) as f64);
+                info!(
+                    message = "previous block processed",
+                    flash_blocks_count = prev_highest_index + 1
+                );
+            }
+
+            // Reset the highest index to 0 for new block
+            if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &0u64) {
+                error!(
+                    message = "failed to reset highest flash index",
+                    error = %e
+                );
+            }
+        } else {
+            // Update highest index if current index is higher
+            let current_highest = self.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap_or(0);
+            if index > current_highest {
+                if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &index) {
+                    error!(
+                        message = "failed to update highest flash index",
+                        error = %e
+                    );
+                }
+            }
+        }
+    }
+
     fn get_and_set_transactions(
         &self,
         transactions: Vec<Bytes>,
@@ -400,11 +412,7 @@ impl Cache {
                 .collect()
         };
 
-        self.set(
-            CacheKey::DiffTransactions(block_number),
-            &transactions,
-            Some(10),
-        )?;
+        self.set(CacheKey::DiffTransactions(block_number), &transactions)?;
 
         Ok(transactions)
     }
@@ -422,11 +430,8 @@ impl Cache {
             let existing_tx =
                 self.get::<OpTransactionSigned>(&CacheKey::Transaction(transaction.tx_hash()));
             if existing_tx.is_none() {
-                if let Err(e) = self.set(
-                    CacheKey::Transaction(transaction.tx_hash()),
-                    &transaction,
-                    Some(10),
-                ) {
+                if let Err(e) = self.set(CacheKey::Transaction(transaction.tx_hash()), &transaction)
+                {
                     error!(
                         message = "failed to set transaction in cache",
                         error = %e
@@ -434,11 +439,7 @@ impl Cache {
                     continue;
                 }
                 // update tx index
-                if let Err(e) = self.set(
-                    CacheKey::TransactionIndex(transaction.tx_hash()),
-                    &idx,
-                    Some(10),
-                ) {
+                if let Err(e) = self.set(CacheKey::TransactionIndex(transaction.tx_hash()), &idx) {
                     error!(
                         message = "failed to set transaction index in cache",
                         error = %e
@@ -462,7 +463,6 @@ impl Cache {
                             block_number,
                         },
                         &(current_count + 1),
-                        Some(10),
                     ) {
                         error!(
                             message = "failed to set transaction count in cache",
@@ -471,11 +471,9 @@ impl Cache {
                     }
 
                     // also keep track of sender of each transaction
-                    if let Err(e) = self.set(
-                        CacheKey::TransactionSender(transaction.tx_hash()),
-                        &from,
-                        Some(10),
-                    ) {
+                    if let Err(e) =
+                        self.set(CacheKey::TransactionSender(transaction.tx_hash()), &from)
+                    {
                         error!(
                             message = "failed to set transaction sender in cache",
                             error = %e
@@ -486,7 +484,6 @@ impl Cache {
                     if let Err(e) = self.set(
                         CacheKey::TransactionBlockNumber(transaction.tx_hash()),
                         &block_number,
-                        Some(10),
                     ) {
                         error!(
                             message = "failed to set transaction block number in cache",
@@ -506,9 +503,7 @@ impl Cache {
                     .receipts
                     .get(&transaction.tx_hash().to_string())
                     .unwrap();
-                if let Err(e) =
-                    self.set(CacheKey::Receipt(transaction.tx_hash()), receipt, Some(10))
-                {
+                if let Err(e) = self.set(CacheKey::Receipt(transaction.tx_hash()), receipt) {
                     error!(
                         message = "failed to set receipt in cache",
                         error = %e
@@ -516,11 +511,9 @@ impl Cache {
                     continue;
                 }
                 // map receipt's block number as well
-                if let Err(e) = self.set(
-                    CacheKey::ReceiptBlock(transaction.tx_hash()),
-                    &block_number,
-                    Some(10),
-                ) {
+                if let Err(e) =
+                    self.set(CacheKey::ReceiptBlock(transaction.tx_hash()), &block_number)
+                {
                     error!(
                         message = "failed to set receipt block in cache",
                         error = %e
@@ -539,12 +532,11 @@ impl Cache {
         &self,
         key: CacheKey,
         value: &T,
-        ttl_secs: Option<u64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let serialized = serde_json::to_vec(value)?;
         let entry = CacheEntry {
             value: serialized,
-            expiry: ttl_secs.map(|secs| Instant::now() + Duration::from_secs(secs)),
+            expiry: Instant::now().add(Duration::from_secs(10)),
         };
 
         let mut store = self.store.write().unwrap();
@@ -552,24 +544,9 @@ impl Cache {
         Ok(())
     }
 
-    pub fn get<T: DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
-        let store = self.store.read().unwrap();
-        store.get(key).and_then(|entry| {
-            if entry.expiry.is_some_and(|e| Instant::now() > e) {
-                return None;
-            }
-            serde_json::from_slice(&entry.value).ok()
-        })
-    }
-
     pub fn cleanup_expired(&self) {
         if let Ok(mut store) = self.store.write() {
-            store.retain(|_, entry| {
-                entry
-                    .expiry
-                    .map(|expiry| Instant::now() <= expiry)
-                    .unwrap_or(true)
-            });
+            store.retain(|_, entry| entry.expiry < Instant::now());
         }
     }
 }
