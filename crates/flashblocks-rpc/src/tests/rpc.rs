@@ -108,14 +108,9 @@ mod tests {
             .extend_rpc_modules(move |ctx| {
                 // We are not going to use the websocket connection to send payloads so we use
                 // a dummy url.
-                let cache = Arc::new(FlashblocksState::default());
+                let cache = Arc::new(FlashblocksState::new(chain_spec.clone(), 2000));
 
-                let api_ext = EthApiExt::new(
-                    ctx.registry.eth_api().clone(),
-                    cache.clone(),
-                    chain_spec.clone(),
-                    1,
-                );
+                let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), cache.clone(), 1);
 
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
