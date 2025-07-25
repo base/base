@@ -2,7 +2,7 @@
 mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
-    use crate::subscription::Metadata;
+    use crate::subscription::{Flashblock, Metadata};
     use alloy_consensus::Receipt;
     use alloy_genesis::Genesis;
     use alloy_primitives::{address, b256, Address, Bytes, TxHash, B256, U256};
@@ -21,7 +21,7 @@ mod tests {
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
     use rollup_boost::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
+        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1,
     };
     use serde_json;
     use std::any::Any;
@@ -32,7 +32,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     pub struct NodeContext {
-        sender: mpsc::Sender<(FlashblocksPayloadV1, oneshot::Sender<()>)>,
+        sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
         http_api_addr: SocketAddr,
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
@@ -40,7 +40,7 @@ mod tests {
     }
 
     impl NodeContext {
-        pub async fn send_payload(&self, payload: FlashblocksPayloadV1) -> eyre::Result<()> {
+        pub async fn send_payload(&self, payload: Flashblock) -> eyre::Result<()> {
             let (tx, rx) = oneshot::channel();
             self.sender.send((payload, tx)).await?;
             rx.await?;
@@ -94,8 +94,7 @@ mod tests {
         let node = OpNode::new(RollupArgs::default());
 
         // Start websocket server to simulate the builder and send payloads back to the node
-        let (sender, mut receiver) =
-            mpsc::channel::<(FlashblocksPayloadV1, oneshot::Sender<()>)>(100);
+        let (sender, mut receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
 
         let NodeHandle {
             node,
@@ -141,8 +140,8 @@ mod tests {
         })
     }
 
-    fn create_first_payload() -> FlashblocksPayloadV1 {
-        FlashblocksPayloadV1 {
+    fn create_first_payload() -> Flashblock {
+        Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
             base: Some(ExecutionPayloadBaseV1 {
@@ -157,21 +156,20 @@ mod tests {
                 base_fee_per_gas: U256::ZERO,
             }),
             diff: ExecutionPayloadFlashblockDeltaV1::default(),
-            metadata: serde_json::to_value(Metadata {
+            metadata: Metadata {
                 block_number: 1,
                 receipts: HashMap::default(),
                 new_account_balances: HashMap::default(),
-            })
-            .unwrap(),
+            },
         }
     }
 
-    fn create_second_payload() -> FlashblocksPayloadV1 {
+    fn create_second_payload() -> Flashblock {
         // Create second payload (index 1) with transactions
         let tx1 = Bytes::from_str("0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3").unwrap();
         let tx2 = Bytes::from_str("0xf8cd82016d8316e5708302c01c94f39635f2adf40608255779ff742afe13de31f57780b8646e530e9700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000156ddc81eed2a36d68302948ba0a608703e79b22164f74523d188a11f81c25a65dd59535bab1cd1d8b30d115f3ea07f4cfbbad77a139c9209d3bded89091867ff6b548dd714109c61d1f8e7a84d14").unwrap();
 
-        let payload = FlashblocksPayloadV1 {
+        let payload = Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 1,
             base: None,
@@ -185,7 +183,7 @@ mod tests {
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
             },
-            metadata: serde_json::to_value(Metadata {
+            metadata: Metadata {
                 block_number: 1,
                 receipts: {
                     let mut receipts = HashMap::default();
@@ -215,8 +213,7 @@ mod tests {
                     );
                     map
                 },
-            })
-            .unwrap(),
+            },
         };
 
         payload
