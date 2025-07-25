@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cache::{Cache, CacheKey, FlashblocksApi};
 use crate::metrics::Metrics;
+use crate::state::{CacheKey, FlashblocksApi, FlashblocksState};
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::TxReceipt;
 use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
@@ -81,7 +81,7 @@ pub trait EthApiOverride {
 #[derive(Debug)]
 pub struct EthApiExt<Eth> {
     eth_api: Eth,
-    cache: Arc<Cache>,
+    flashblocks_state: Arc<FlashblocksState>,
     metrics: Metrics,
     chain_spec: Arc<OpChainSpec>,
     total_timeout_secs: u64,
@@ -90,13 +90,13 @@ pub struct EthApiExt<Eth> {
 impl<E> EthApiExt<E> {
     pub fn new(
         eth_api: E,
-        cache: Arc<Cache>,
+        cache: Arc<FlashblocksState>,
         chain_spec: Arc<OpChainSpec>,
         total_timeout_secs: u64,
     ) -> Self {
         Self {
             eth_api,
-            cache,
+            flashblocks_state: cache,
             metrics: Metrics::default(),
             chain_spec,
             total_timeout_secs,
@@ -158,7 +158,7 @@ impl<E> EthApiExt<E> {
                 deposit_nonce = receipt.deposit_nonce;
             } else {
                 let cached_receipt = self
-                    .cache
+                    .flashblocks_state
                     .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
                     .unwrap();
 
@@ -211,14 +211,14 @@ impl<E> EthApiExt<E> {
         chain_spec: &OpChainSpec,
     ) -> RpcReceipt<Optimism> {
         let block = self
-            .cache
+            .flashblocks_state
             .get::<OpBlock>(&CacheKey::Block(block_number))
             .unwrap();
         let mut l1_block_info =
             reth_optimism_evm::extract_l1_info(&block.body).expect("failed to extract l1 info");
 
         let index = self
-            .cache
+            .flashblocks_state
             .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
             .unwrap();
         let meta = TransactionMeta {
@@ -233,11 +233,11 @@ impl<E> EthApiExt<E> {
 
         // get all receipts from cache too
         let all_receipts = self
-            .cache
+            .flashblocks_state
             .get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number))
             .unwrap();
 
-        let tx = get_recovered_tx(&self.cache, tx_hash);
+        let tx = get_recovered_tx(&self.flashblocks_state, tx_hash);
 
         let mut gas_used = 0;
         let mut next_log_index = 0;
@@ -285,10 +285,13 @@ where
             BlockNumberOrTag::Pending => {
                 debug!(message = "handling pending block request via flashblocks");
                 self.metrics.get_block_by_number.increment(1);
-                if let Some(block) = self.cache.get::<OpBlock>(&CacheKey::PendingBlock) {
-                    return Ok(Some(self.transform_block(block, _full)));
+                if let Some(block) = self
+                    .flashblocks_state
+                    .get::<OpBlock>(&CacheKey::PendingBlock)
+                {
+                    Ok(Some(self.transform_block(block, _full)))
                 } else {
-                    return Ok(None);
+                    Ok(None)
                 }
             }
             _ => {
@@ -315,13 +318,16 @@ where
 
         // check if receipt is none
         if let Ok(None) = receipt {
-            if let Some(receipt) = self.cache.get::<OpReceipt>(&CacheKey::Receipt(tx_hash)) {
+            if let Some(receipt) = self
+                .flashblocks_state
+                .get::<OpReceipt>(&CacheKey::Receipt(tx_hash))
+            {
                 self.metrics.get_transaction_receipt.increment(1);
                 return Ok(Some(
                     self.transform_receipt(
                         receipt,
                         tx_hash,
-                        self.cache
+                        self.flashblocks_state
                             .get::<u64>(&CacheKey::ReceiptBlock(tx_hash))
                             .unwrap(),
                         self.chain_spec.as_ref(),
@@ -345,7 +351,10 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_balance.increment(1);
-            if let Some(balance) = self.cache.get::<U256>(&CacheKey::AccountBalance(address)) {
+            if let Some(balance) = self
+                .flashblocks_state
+                .get::<U256>(&CacheKey::AccountBalance(address))
+            {
                 return Ok(balance);
             }
             // If pending not found, use standard flow below
@@ -391,7 +400,7 @@ where
             };
 
             let tx_count = self
-                .cache
+                .flashblocks_state
                 .get::<u64>(&CacheKey::TransactionCount {
                     address,
                     block_number: latest_block_number + 1,
@@ -475,19 +484,19 @@ where
         } else {
             // Handle cache lookup for transactions not found in the main lookup
             if let Some(tx) = self
-                .cache
+                .flashblocks_state
                 .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
             {
                 let block_number = self
-                    .cache
+                    .flashblocks_state
                     .get::<u64>(&CacheKey::TransactionBlockNumber(tx_hash))
                     .unwrap();
                 let block = self
-                    .cache
+                    .flashblocks_state
                     .get::<OpBlock>(&CacheKey::Block(block_number))
                     .unwrap();
                 let index = self
-                    .cache
+                    .flashblocks_state
                     .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
                     .unwrap();
                 let tx_info = TransactionInfo {
@@ -497,7 +506,7 @@ where
                     index: Some(index),
                     base_fee: block.base_fee_per_gas,
                 };
-                let tx = get_recovered_tx(&self.cache, tx_hash);
+                let tx = get_recovered_tx(&self.flashblocks_state, tx_hash);
                 Ok(Some(self.transform_tx(tx, tx_info, None)))
             } else {
                 Ok(None)
@@ -565,7 +574,7 @@ where
     }
 
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        let mut receiver = self.cache.subscribe_to_receipts();
+        let mut receiver = self.flashblocks_state.subscribe_to_receipts();
 
         loop {
             match receiver.recv().await {
@@ -613,7 +622,7 @@ where
     }
 }
 
-fn get_recovered_tx(ctx: &Cache, tx_hash: TxHash) -> Recovered<OpTransactionSigned> {
+fn get_recovered_tx(ctx: &FlashblocksState, tx_hash: TxHash) -> Recovered<OpTransactionSigned> {
     let sender = ctx
         .get::<Address>(&CacheKey::TransactionSender(tx_hash))
         .unwrap();

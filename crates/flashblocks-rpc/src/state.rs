@@ -1,5 +1,5 @@
-use crate::flashblocks::Metadata;
 use crate::metrics::Metrics;
+use crate::subscription::Metadata;
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
@@ -80,17 +80,15 @@ struct CacheEntry<T> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Cache {
-    // block: Option<OpBlock>,
+pub struct FlashblocksState {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
     metrics: Metrics,
 }
 
-impl Default for Cache {
+impl Default for FlashblocksState {
     fn default() -> Self {
         Self {
-            // block: None,
             store: Arc::new(RwLock::new(HashMap::new())),
             receipt_sender: broadcast::channel(2000).0,
             metrics: Metrics::default(),
@@ -98,13 +96,13 @@ impl Default for Cache {
     }
 }
 
-impl FlashblocksApi for Cache {
+impl FlashblocksApi for FlashblocksState {
     fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
         self.receipt_sender.subscribe()
     }
 }
 
-impl Cache {
+impl FlashblocksState {
     pub fn new(receipt_buffer_size: usize) -> Self {
         Self {
             receipt_sender: broadcast::channel(receipt_buffer_size).0,
@@ -709,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_process_payload() {
-        let cache = Arc::new(Cache::default());
+        let cache = Arc::new(FlashblocksState::default());
         let mut receipt_receiver = cache.subscribe_to_receipts();
 
         let payload = create_first_payload();
@@ -854,7 +852,7 @@ mod tests {
 
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
-        let cache = Arc::new(Cache::default());
+        let cache = Arc::new(FlashblocksState::default());
         let metadata = Metadata {
             block_number: 1,
             receipts: HashMap::default(),
@@ -879,7 +877,7 @@ mod tests {
     #[test]
     fn test_flash_block_tracking() {
         // Create cache
-        let cache = Arc::new(Cache::default());
+        let cache = Arc::new(FlashblocksState::default());
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
