@@ -1,3 +1,4 @@
+use crate::cache::FlashblocksCache;
 use crate::metrics::Metrics;
 use crate::subscription::{Flashblock, Metadata};
 use alloy_consensus::transaction::{
@@ -9,6 +10,7 @@ use alloy_provider::network::primitives::BlockTransactions;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::Header;
+use arc_swap::ArcSwap;
 use op_alloy_consensus::{OpDepositReceipt, OpTxEnvelope};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
@@ -53,7 +55,6 @@ pub enum CacheKey {
     PendingBlock,                                             // pending
     PendingReceipts(u64),                                     // pending_receipts:block_number
     DiffTransactions(u64),                                    // diff:transactions:block_number
-    AccountBalance(Address),                                  // address
     HighestPayloadIndex,                                      // highest_payload_index
 }
 
@@ -77,7 +78,6 @@ impl Display for CacheKey {
             CacheKey::PendingBlock => write!(f, "pending"),
             CacheKey::PendingReceipts(number) => write!(f, "pending_receipts:{number:?}"),
             CacheKey::DiffTransactions(number) => write!(f, "diff:transactions:{number:?}"),
-            CacheKey::AccountBalance(addr) => write!(f, "{addr:?}"),
             CacheKey::HighestPayloadIndex => write!(f, "highest_payload_index"),
         }
     }
@@ -91,6 +91,8 @@ struct CacheEntry<T> {
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksState {
+    current_state: Arc<ArcSwap<FlashblocksCache>>,
+
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
     metrics: Metrics,
@@ -101,6 +103,7 @@ impl FlashblocksState {
     pub fn new(chain_spec: Arc<OpChainSpec>, receipt_buffer_size: usize) -> Self {
         Self {
             chain_spec,
+            current_state: Arc::new(ArcSwap::from_pointee(FlashblocksCache::empty())),
             store: Arc::new(RwLock::new(HashMap::new())),
             receipt_sender: broadcast::channel(receipt_buffer_size).0,
             metrics: Metrics::default(),
@@ -163,7 +166,7 @@ impl FlashblocksState {
     }
 
     pub fn get_balance(&self, address: Address) -> Option<U256> {
-        self.get::<U256>(&CacheKey::AccountBalance(address))
+        self.current_state.load().get_balance(address)
     }
 
     pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
@@ -178,7 +181,42 @@ impl FlashblocksState {
 
     // TODO: Refactor
 
+    fn is_next_flashblock(&self, flashblock: &Flashblock) -> bool {
+        flashblock.metadata.block_number == self.current_state.load().block_number
+            && flashblock.index == self.current_state.load().index_number + 1
+    }
+
     pub fn on_flashblock_received(&self, flashblock: Flashblock) {
+        let current_state = self.current_state.load();
+
+        // todo remove once method is simplified
+        let flashblock_clone = flashblock.clone();
+
+        if flashblock.index == 0 {
+            self.current_state
+                .swap(Arc::new(FlashblocksCache::new_block(flashblock_clone)));
+        } else if self.is_next_flashblock(&flashblock) {
+            self.current_state
+                .swap(Arc::new(FlashblocksCache::extend_block(
+                    &current_state,
+                    flashblock_clone,
+                )));
+        } else if current_state.block_number != flashblock.metadata.block_number {
+            info!(
+                message = "Received Flashblock for new block, zero'ing Flashblocks until ",
+                curr_block = %current_state.block_number,
+                new_block = %flashblock.metadata.block_number,
+            );
+
+            self.current_state.swap(Arc::new(FlashblocksCache::empty()));
+        } else {
+            info!(
+                message = "None sequential Flashblocks, keeping cache",
+                curr_block = %current_state.block_number,
+                new_block = %flashblock.metadata.block_number,
+            );
+        }
+
         let msg_processing_start_time = Instant::now();
 
         let block_number = flashblock.metadata.block_number;
@@ -325,19 +363,6 @@ impl FlashblocksState {
                 return;
             }
         };
-
-        // Store account balances
-        for (address, balance) in metadata.new_account_balances.iter() {
-            if let Err(e) = self.set(
-                CacheKey::AccountBalance(Address::from_str(address).unwrap()),
-                &balance,
-            ) {
-                error!(
-                    message = "failed to set account balance in cache",
-                    error = %e
-                );
-            }
-        }
 
         self.metrics
             .block_processing_duration
@@ -911,8 +936,8 @@ mod tests {
             new_account_balances: {
                 let mut map = HashMap::default();
                 map.insert(
-                    "0x1234567890123456789012345678901234567890".to_string(),
-                    "0x1234".to_string(),
+                    Address::from_str("0x1234567890123456789012345678901234567890").unwrap(),
+                    U256::from_str("0x1234").unwrap(),
                 );
                 map
             },
@@ -975,14 +1000,6 @@ mod tests {
         assert_eq!(final_block.header.receipts_root, B256::repeat_byte(0x2));
         assert_eq!(final_block.header.gas_used, 21000);
         assert_eq!(final_block.header.base_fee_per_gas, Some(10000));
-
-        // Verify account balance was updated
-        let balance = cache
-            .get::<String>(&CacheKey::AccountBalance(
-                Address::from_str("0x1234567890123456789012345678901234567890").unwrap(),
-            ))
-            .unwrap();
-        assert_eq!(balance, "0x1234");
 
         let tx1_receipt = cache
             .get::<OpReceipt>(&CacheKey::Receipt(

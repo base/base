@@ -1031,6 +1031,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f7f8c3906b62b754cd5326047894316021dcfe5a194c8ea52bdd94934a3457"
+
+[[package]]
 name = "ark-bls12-381"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1559,6 +1565,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
+ "arc-swap",
  "brotli",
  "eyre",
  "futures-util",

@@ -91,3 +91,4 @@ uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 brotli = "8.0.1"
+arc-swap = "1.7.1"
