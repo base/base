@@ -1,18 +1,32 @@
+use crate::flashblocks::Metadata;
+use crate::metrics::Metrics;
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, Bytes, B256};
+use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use alloy_consensus::transaction::SignerRecoverable;
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use tokio::sync::broadcast;
 use tracing::{debug, error, info};
-use crate::flashblocks::{Metadata, ReceiptWithHash};
-use crate::metrics::Metrics;
+
+/// API trait for Flashblocks client functionality
+pub trait FlashblocksApi {
+    /// Subscribe to real-time receipt broadcasts
+    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash>;
+}
+
+/// A receipt with its transaction hash for broadcasting
+#[derive(Debug, Clone)]
+pub struct ReceiptWithHash {
+    pub tx_hash: alloy_primitives::TxHash,
+    pub receipt: OpReceipt,
+    pub block_number: u64,
+}
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
@@ -67,6 +81,7 @@ struct CacheEntry<T> {
 #[derive(Debug, Clone)]
 pub struct Cache {
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
+    receipt_sender: broadcast::Sender<ReceiptWithHash>,
     metrics: Metrics,
 }
 
@@ -74,12 +89,26 @@ impl Default for Cache {
     fn default() -> Self {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
+            receipt_sender: broadcast::channel(2000).0,
             metrics: Metrics::default(),
         }
     }
 }
 
+impl FlashblocksApi for Cache {
+    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
+        self.receipt_sender.subscribe()
+    }
+}
+
 impl Cache {
+    pub fn new(receipt_buffer_size: usize) -> Self {
+        Self {
+            receipt_sender: broadcast::channel(receipt_buffer_size).0,
+            ..Self::default()
+        }
+    }
+
     fn get_and_set_all_receipts(
         &self,
         payload_index: u64,
@@ -91,12 +120,13 @@ impl Cache {
             // get receipts and sort by cumulative gas used
             diff_receipts
         } else {
-            let existing = match self.get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number)) {
-                Some(existing) => existing,
-                None => {
-                    return Err("Failed to get pending receipts from cache".into());
-                }
-            };
+            let existing =
+                match self.get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number)) {
+                    Some(existing) => existing,
+                    None => {
+                        return Err("Failed to get pending receipts from cache".into());
+                    }
+                };
             existing
                 .into_iter()
                 .chain(diff_receipts.iter().cloned())
@@ -110,46 +140,40 @@ impl Cache {
 
     fn update_flashblocks_index(&self, index: u64) {
         if index == 0 {
-            // Get highest index from previous block
+            // Get the highest index from previous block
             if let Some(prev_highest_index) = self.get::<u64>(&CacheKey::HighestPayloadIndex) {
                 // Record metric: total flash blocks = highest_index + 1 (since it's 0-indexed)
                 self.metrics
                     .flashblocks_in_block
                     .record((prev_highest_index + 1) as f64);
                 info!(
-                message = "previous block processed",
-                flash_blocks_count = prev_highest_index + 1
-            );
+                    message = "previous block processed",
+                    flash_blocks_count = prev_highest_index + 1
+                );
             }
 
             // Reset highest index to 0 for new block
             if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &0u64, Some(10)) {
                 error!(
-                message = "failed to reset highest flash index",
-                error = %e
-            );
+                    message = "failed to reset highest flash index",
+                    error = %e
+                );
             }
         } else {
             // Update highest index if current index is higher
-            let current_highest = self
-                .get::<u64>(&CacheKey::HighestPayloadIndex)
-                .unwrap_or(0);
+            let current_highest = self.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap_or(0);
             if index > current_highest {
                 if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &index, Some(10)) {
                     error!(
-                    message = "failed to update highest flash index",
-                    error = %e
-                );
+                        message = "failed to update highest flash index",
+                        error = %e
+                    );
                 }
             }
         }
     }
 
-    pub fn process_payload(
-        &self,
-        payload: FlashblocksPayloadV1,
-        receipt_sender: &broadcast::Sender<ReceiptWithHash>,
-    ) {
+    pub fn process_payload(&self, payload: FlashblocksPayloadV1) {
         let msg_processing_start_time = Instant::now();
 
         // Convert metadata with error handling
@@ -157,9 +181,9 @@ impl Cache {
             Ok(m) => m,
             Err(e) => {
                 error!(
-                message = "failed to deserialize metadata",
-                error = %e
-            );
+                    message = "failed to deserialize metadata",
+                    error = %e
+                );
                 return;
             }
         };
@@ -173,8 +197,8 @@ impl Cache {
         // Can't do pending block with this because already missing blocks
         if payload.index != 0
             && self
-            .get::<ExecutionPayloadBaseV1>(&CacheKey::Base(block_number))
-            .is_none()
+                .get::<ExecutionPayloadBaseV1>(&CacheKey::Base(block_number))
+                .is_none()
         {
             return;
         }
@@ -192,9 +216,9 @@ impl Cache {
         let base = if let Some(base) = payload.base {
             if let Err(e) = self.set(CacheKey::Base(block_number), &base, Some(10)) {
                 error!(
-                message = "failed to set base in cache",
-                error = %e
-            );
+                    message = "failed to set base in cache",
+                    error = %e
+                );
                 return;
             }
             base
@@ -208,20 +232,17 @@ impl Cache {
             }
         };
 
-        let transactions = match self.get_and_set_transactions(
-            diff_transactions,
-            payload.index,
-            block_number,
-        ) {
-            Ok(txs) => txs,
-            Err(e) => {
-                error!(
-                message = "failed to get and set transactions",
-                error = %e
-            );
-                return;
-            }
-        };
+        let transactions =
+            match self.get_and_set_transactions(diff_transactions, payload.index, block_number) {
+                Ok(txs) => txs,
+                Err(e) => {
+                    error!(
+                        message = "failed to get and set transactions",
+                        error = %e
+                    );
+                    return;
+                }
+            };
 
         let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
             blob_gas_used: 0,
@@ -251,9 +272,9 @@ impl Cache {
             Ok(block) => block,
             Err(e) => {
                 error!(
-                message = "failed to convert execution payload to block",
-                error = %e
-            );
+                    message = "failed to convert execution payload to block",
+                    error = %e
+                );
                 return;
             }
         };
@@ -262,18 +283,18 @@ impl Cache {
         // This is an optimistic update will likely need to tweak in the future
         if let Err(e) = self.set(CacheKey::PendingBlock, &block, Some(10)) {
             error!(
-            message = "failed to set pending block in cache",
-            error = %e
-        );
+                message = "failed to set pending block in cache",
+                error = %e
+            );
             return;
         }
 
         // set block to block number as well
         if let Err(e) = self.set(CacheKey::Block(block_number), &block, Some(10)) {
             error!(
-            message = "failed to set block in cache",
-            error = %e
-        );
+                message = "failed to set block in cache",
+                error = %e
+            );
             return;
         }
 
@@ -285,28 +306,26 @@ impl Cache {
             Ok(receipts) => receipts,
             Err(e) => {
                 error!(
-                message = "failed to get and set receipts",
-                error = %e
-            );
+                    message = "failed to get and set receipts",
+                    error = %e
+                );
                 return;
             }
         };
 
         // update all receipts
-        let _receipts = match self.get_and_set_all_receipts(
-            payload.index,
-            block_number,
-            diff_receipts.clone(),
-        ) {
-            Ok(receipts) => receipts,
-            Err(e) => {
-                error!(
-                message = "failed to get and set all receipts",
-                error = %e
-            );
-                return;
-            }
-        };
+        let _receipts =
+            match self.get_and_set_all_receipts(payload.index, block_number, diff_receipts.clone())
+            {
+                Ok(receipts) => receipts,
+                Err(e) => {
+                    error!(
+                        message = "failed to get and set all receipts",
+                        error = %e
+                    );
+                    return;
+                }
+            };
 
         // Store account balances
         for (address, balance) in metadata.new_account_balances.iter() {
@@ -316,9 +335,9 @@ impl Cache {
                 Some(10),
             ) {
                 error!(
-                message = "failed to set account balance in cache",
-                error = %e
-            );
+                    message = "failed to set account balance in cache",
+                    error = %e
+                );
             }
         }
 
@@ -334,19 +353,19 @@ impl Cache {
                     block_number,
                 };
 
-                match receipt_sender.send(receipt_with_hash) {
+                match self.receipt_sender.send(receipt_with_hash) {
                     Ok(subscriber_count) => {
                         debug!(
-                        message = "broadcasted receipt",
-                        tx_hash = %tx_hash,
-                        subscriber_count = subscriber_count
-                    );
+                            message = "broadcasted receipt",
+                            tx_hash = %tx_hash,
+                            subscriber_count = subscriber_count
+                        );
                     }
                     Err(_) => {
                         debug!(
-                        message = "no active subscribers for receipt broadcast",
-                        tx_hash = %tx_hash
-                    );
+                            message = "no active subscribers for receipt broadcast",
+                            tx_hash = %tx_hash
+                        );
                     }
                 }
             }
@@ -355,9 +374,9 @@ impl Cache {
         // check duration on the most heavy payload
         if payload.index == 0 {
             info!(
-            message = "block processing completed",
-            processing_time = ?msg_processing_start_time.elapsed()
-        );
+                message = "block processing completed",
+                processing_time = ?msg_processing_start_time.elapsed()
+            );
         }
     }
 
@@ -409,9 +428,9 @@ impl Cache {
                     Some(10),
                 ) {
                     error!(
-                    message = "failed to set transaction in cache",
-                    error = %e
-                );
+                        message = "failed to set transaction in cache",
+                        error = %e
+                    );
                     continue;
                 }
                 // update tx index
@@ -421,9 +440,9 @@ impl Cache {
                     Some(10),
                 ) {
                     error!(
-                    message = "failed to set transaction index in cache",
-                    error = %e
-                );
+                        message = "failed to set transaction index in cache",
+                        error = %e
+                    );
                     continue;
                 }
 
@@ -446,9 +465,9 @@ impl Cache {
                         Some(10),
                     ) {
                         error!(
-                        message = "failed to set transaction count in cache",
-                        error = %e
-                    );
+                            message = "failed to set transaction count in cache",
+                            error = %e
+                        );
                     }
 
                     // also keep track of sender of each transaction
@@ -458,9 +477,9 @@ impl Cache {
                         Some(10),
                     ) {
                         error!(
-                        message = "failed to set transaction sender in cache",
-                        error = %e
-                    );
+                            message = "failed to set transaction sender in cache",
+                            error = %e
+                        );
                     }
 
                     // also keep track of the block number of each transaction
@@ -470,9 +489,9 @@ impl Cache {
                         Some(10),
                     ) {
                         error!(
-                        message = "failed to set transaction block number in cache",
-                        error = %e
-                    );
+                            message = "failed to set transaction block number in cache",
+                            error = %e
+                        );
                     }
                 }
             }
@@ -487,11 +506,13 @@ impl Cache {
                     .receipts
                     .get(&transaction.tx_hash().to_string())
                     .unwrap();
-                if let Err(e) = self.set(CacheKey::Receipt(transaction.tx_hash()), receipt, Some(10)) {
+                if let Err(e) =
+                    self.set(CacheKey::Receipt(transaction.tx_hash()), receipt, Some(10))
+                {
                     error!(
-                    message = "failed to set receipt in cache",
-                    error = %e
-                );
+                        message = "failed to set receipt in cache",
+                        error = %e
+                    );
                     continue;
                 }
                 // map receipt's block number as well
@@ -501,9 +522,9 @@ impl Cache {
                     Some(10),
                 ) {
                     error!(
-                    message = "failed to set receipt block in cache",
-                    error = %e
-                );
+                        message = "failed to set receipt block in cache",
+                        error = %e
+                    );
                     continue;
                 }
 
@@ -513,7 +534,6 @@ impl Cache {
 
         Ok(diff_receipts)
     }
-
 
     fn set<T: Serialize>(
         &self,
@@ -560,9 +580,9 @@ mod tests {
     use alloy_consensus::{Receipt, TxReceipt};
     use alloy_primitives::{Address, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
+    use op_alloy_consensus::OpBlock;
     use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::str::FromStr;
-    use op_alloy_consensus::OpBlock;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {
         // First payload (index 0) setup remains the same
@@ -713,16 +733,16 @@ mod tests {
     #[test]
     fn test_process_payload() {
         let cache = Arc::new(Cache::default());
-        let (receipt_sender, mut receipt_receiver) = broadcast::channel(100);
+        let mut receipt_receiver = cache.subscribe_to_receipts();
 
         let payload = create_first_payload();
 
         // Process first payload
-        cache.process_payload(payload, &receipt_sender);
+        cache.process_payload(payload);
 
         let payload2 = create_second_payload();
         // Process second payload
-        cache.process_payload(payload2, &receipt_sender);
+        cache.process_payload(payload2);
 
         // Check that receipts were broadcast for both transactions
         let mut receipts = vec![];
@@ -772,7 +792,7 @@ mod tests {
                 B256::from_str(
                     "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx1_receipt.cumulative_gas_used(), 21000);
@@ -782,7 +802,7 @@ mod tests {
                 B256::from_str(
                     "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx2_receipt.cumulative_gas_used(), 42000);
@@ -793,7 +813,7 @@ mod tests {
                 B256::from_str(
                     "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(
@@ -806,7 +826,7 @@ mod tests {
                 B256::from_str(
                     "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_block_number, 1);
@@ -816,7 +836,7 @@ mod tests {
                 B256::from_str(
                     "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_idx, 0);
@@ -826,7 +846,7 @@ mod tests {
                 B256::from_str(
                     "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(
@@ -839,7 +859,7 @@ mod tests {
                 B256::from_str(
                     "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_block_number2, 1);
@@ -849,7 +869,7 @@ mod tests {
                 B256::from_str(
                     "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
                 )
-                    .unwrap(),
+                .unwrap(),
             ))
             .unwrap();
         assert_eq!(tx_idx2, 1);
@@ -858,8 +878,6 @@ mod tests {
     #[test]
     fn test_skip_initial_non_zero_index_payload() {
         let cache = Arc::new(Cache::default());
-        let (receipt_sender, _) = broadcast::channel(100);
-
         let metadata = Metadata {
             block_number: 1,
             receipts: HashMap::default(),
@@ -875,7 +893,7 @@ mod tests {
         };
 
         // Process payload
-        cache.process_payload(payload, &receipt_sender);
+        cache.process_payload(payload);
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>(&CacheKey::PendingBlock).is_none());
@@ -885,12 +903,10 @@ mod tests {
     fn test_flash_block_tracking() {
         // Create cache
         let cache = Arc::new(Cache::default());
-        let (receipt_sender, _) = broadcast::channel(100);
-
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
-        cache.process_payload(payload1_0, &receipt_sender);
+        cache.process_payload(payload1_0);
 
         // Check that highest_payload_index was set to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -898,7 +914,7 @@ mod tests {
 
         // Block 1, payload 1
         let payload1_1 = create_payload_with_index(1, 1);
-        cache.process_payload(payload1_1, &receipt_sender);
+        cache.process_payload(payload1_1);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -906,7 +922,7 @@ mod tests {
 
         // Block 1, payload 2
         let payload1_2 = create_payload_with_index(2, 1);
-        cache.process_payload(payload1_2, &receipt_sender);
+        cache.process_payload(payload1_2);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -914,7 +930,7 @@ mod tests {
 
         // Now start a new block (block 2, payload 0)
         let payload2_0 = create_payload_with_index(0, 2);
-        cache.process_payload(payload2_0, &receipt_sender);
+        cache.process_payload(payload2_0);
 
         // Check that highest_payload_index was reset to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -922,7 +938,7 @@ mod tests {
 
         // Block 2, payload 1 (out of order with payload 3)
         let payload2_1 = create_payload_with_index(1, 2);
-        cache.process_payload(payload2_1, &receipt_sender);
+        cache.process_payload(payload2_1);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -930,7 +946,7 @@ mod tests {
 
         // Block 2, payload 3 (skipping 2)
         let payload2_3 = create_payload_with_index(3, 2);
-        cache.process_payload(payload2_3, &receipt_sender);
+        cache.process_payload(payload2_3);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -938,7 +954,7 @@ mod tests {
 
         // Block 2, payload 2 (out of order, should not change highest)
         let payload2_2 = create_payload_with_index(2, 2);
-        cache.process_payload(payload2_2, &receipt_sender);
+        cache.process_payload(payload2_2);
 
         // Check that highest_payload_index is still 3
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -946,7 +962,7 @@ mod tests {
 
         // Start block 3, payload 0
         let payload3_0 = create_payload_with_index(0, 3);
-        cache.process_payload(payload3_0, &receipt_sender);
+        cache.process_payload(payload3_0);
 
         // Check that highest_payload_index was reset to 0
         // Also verify metric would have been recorded (though we can't directly check the metric's value)

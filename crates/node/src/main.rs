@@ -51,13 +51,13 @@ fn main() {
         .run(|builder, flashblocks_rollup_args| async move {
             info!(message = "starting custom Base node");
 
-            let cache = Arc::new(Cache::default());
-            let cache_clone = cache.clone();
-            let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
-            let receipt_buffer_size = flashblocks_rollup_args.receipt_buffer_size;
             let total_timeout_secs = flashblocks_rollup_args.total_timeout_secs;
             let chain_spec = builder.config().chain.clone();
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
+
+            let cache = Arc::new(Cache::new(flashblocks_rollup_args.receipt_buffer_size));
+            let cache_clone = cache.clone();
+            let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -67,8 +67,7 @@ fn main() {
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "starting flashblocks integration");
-                        let mut flashblocks_client =
-                            FlashblocksClient::new(cache.clone(), receipt_buffer_size);
+                        let mut flashblocks_client = FlashblocksClient::new(cache.clone());
 
                         flashblocks_client
                             .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
@@ -78,7 +77,6 @@ fn main() {
                             ctx.registry.eth_api().clone(),
                             cache.clone(),
                             chain_spec.clone(),
-                            flashblocks_client,
                             total_timeout_secs,
                         );
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
