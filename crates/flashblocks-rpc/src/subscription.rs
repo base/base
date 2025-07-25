@@ -37,30 +37,33 @@ enum ActorMessage {
 pub struct FlashblocksSubscriber {
     sender: mpsc::Sender<ActorMessage>,
     mailbox: mpsc::Receiver<ActorMessage>,
-    cache: Arc<FlashblocksState>,
+    flashblocks_state: Arc<FlashblocksState>,
     metrics: Metrics,
+    ws_url: Url,
 }
 
 impl FlashblocksSubscriber {
-    pub fn new(cache: Arc<FlashblocksState>) -> Self {
+    pub fn new(cache: Arc<FlashblocksState>, ws_url: Url) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
 
         Self {
             sender,
             mailbox,
-            cache,
+            ws_url,
+            flashblocks_state: cache,
             metrics: Metrics::default(),
         }
     }
 
-    pub fn init(&mut self, ws_url: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let url = Url::parse(&ws_url)?;
+    pub fn start(&mut self) {
         info!(
-            message = "trying to connect to WebSocket",
-            url = %url
+            message = "Starting Flashblocks subscription",
+            url = %self.ws_url,
         );
+
+        let ws_url = self.ws_url.clone();
         let sender = self.sender.clone();
-        let cache_clone = self.cache.clone();
+        let flashblocks_state = self.flashblocks_state.clone();
 
         // Take ownership of mailbox for the actor loop
         let mut mailbox = std::mem::replace(&mut self.mailbox, mpsc::channel(1).1);
@@ -72,9 +75,10 @@ impl FlashblocksSubscriber {
             const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(10);
 
             loop {
-                match connect_async(url.as_str()).await {
+                match connect_async(ws_url.as_str()).await {
                     Ok((ws_stream, _)) => {
-                        info!(message = "WebSocket connected successfully");
+                        info!(message = "WebSocket connection established");
+
                         let (_write, mut read) = ws_stream.split();
                         // Handle incoming messages
                         while let Some(msg) = read.next().await {
@@ -145,13 +149,11 @@ impl FlashblocksSubscriber {
             while let Some(message) = mailbox.recv().await {
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        cache_clone.process_payload(payload);
+                        flashblocks_state.on_flashblock_received(payload);
                     }
                 }
             }
         });
-
-        Ok(())
     }
 }
 

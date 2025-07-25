@@ -15,6 +15,7 @@ use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
 use tracing::info;
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -72,13 +73,19 @@ fn main() {
                 .on_component_initialized(move |_ctx| Ok(()))
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
-                        info!(message = "starting flashblocks integration");
-                        let mut flashblocks_client =
-                            FlashblocksSubscriber::new(flashblocks_state.clone());
+                        info!(message = "Starting Flashblocks");
 
-                        flashblocks_client
-                            .init(flashblocks_rollup_args.websocket_url.unwrap().clone())
-                            .unwrap();
+                        let ws_url = Url::parse(
+                            flashblocks_rollup_args
+                                .websocket_url
+                                .expect("WEBSOCKET_URL must be set when Flashblocks is enabled")
+                                .as_str(),
+                        )?;
+
+                        let mut flashblocks_client =
+                            FlashblocksSubscriber::new(flashblocks_state.clone(), ws_url);
+
+                        flashblocks_client.start();
 
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),

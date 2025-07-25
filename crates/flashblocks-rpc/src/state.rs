@@ -151,7 +151,13 @@ impl FlashblocksState {
                     index: Some(index),
                     base_fee: block.base_fee_per_gas,
                 };
-                let tx = get_recovered_tx(self, tx_hash);
+                let sender = self
+                    .get::<Address>(&CacheKey::TransactionSender(tx_hash))
+                    .unwrap();
+                let tx = self
+                    .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+                    .unwrap();
+                let tx = Recovered::new_unchecked(tx, sender);
                 self.transform_tx(tx, tx_info, None)
             })
     }
@@ -172,7 +178,7 @@ impl FlashblocksState {
 
     // TODO: Refactor
 
-    pub fn process_payload(&self, payload: FlashblocksPayloadV1) {
+    pub fn on_flashblock_received(&self, payload: FlashblocksPayloadV1) {
         let msg_processing_start_time = Instant::now();
 
         // Convert metadata with error handling
@@ -728,7 +734,13 @@ impl FlashblocksState {
             .get::<Vec<OpReceipt>>(&CacheKey::PendingReceipts(block_number))
             .unwrap();
 
-        let tx = get_recovered_tx(self, tx_hash);
+        let sender = self
+            .get::<Address>(&CacheKey::TransactionSender(tx_hash))
+            .unwrap();
+        let tx = self
+            .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
+            .unwrap();
+        let tx = Recovered::new_unchecked(tx, sender);
 
         let mut gas_used = 0;
         let mut next_log_index = 0;
@@ -752,16 +764,6 @@ impl FlashblocksState {
             .expect("failed to build receipt")
             .build()
     }
-}
-
-fn get_recovered_tx(ctx: &FlashblocksState, tx_hash: TxHash) -> Recovered<OpTransactionSigned> {
-    let sender = ctx
-        .get::<Address>(&CacheKey::TransactionSender(tx_hash))
-        .unwrap();
-    let tx = ctx
-        .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
-        .unwrap();
-    Recovered::new_unchecked(tx, sender)
 }
 
 #[cfg(test)]
@@ -939,11 +941,11 @@ mod tests {
         let payload = create_first_payload();
 
         // Process first payload
-        cache.process_payload(payload);
+        cache.on_flashblock_received(payload);
 
         let payload2 = create_second_payload();
         // Process second payload
-        cache.process_payload(payload2);
+        cache.on_flashblock_received(payload2);
 
         // Check that receipts were broadcast for both transactions
         let mut receipts = vec![];
@@ -1094,7 +1096,7 @@ mod tests {
         };
 
         // Process payload
-        cache.process_payload(payload);
+        cache.on_flashblock_received(payload);
 
         // Verify no block was stored, since it skips the first payload
         assert!(cache.get::<OpBlock>(&CacheKey::PendingBlock).is_none());
@@ -1106,7 +1108,7 @@ mod tests {
         // Process first block with 3 flash blocks
         // Block 1, payload 0 (starts a new block)
         let payload1_0 = create_payload_with_index(0, 1);
-        cache.process_payload(payload1_0);
+        cache.on_flashblock_received(payload1_0);
 
         // Check that highest_payload_index was set to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1114,7 +1116,7 @@ mod tests {
 
         // Block 1, payload 1
         let payload1_1 = create_payload_with_index(1, 1);
-        cache.process_payload(payload1_1);
+        cache.on_flashblock_received(payload1_1);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1122,7 +1124,7 @@ mod tests {
 
         // Block 1, payload 2
         let payload1_2 = create_payload_with_index(2, 1);
-        cache.process_payload(payload1_2);
+        cache.on_flashblock_received(payload1_2);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1130,7 +1132,7 @@ mod tests {
 
         // Now start a new block (block 2, payload 0)
         let payload2_0 = create_payload_with_index(0, 2);
-        cache.process_payload(payload2_0);
+        cache.on_flashblock_received(payload2_0);
 
         // Check that highest_payload_index was reset to 0
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1138,7 +1140,7 @@ mod tests {
 
         // Block 2, payload 1 (out of order with payload 3)
         let payload2_1 = create_payload_with_index(1, 2);
-        cache.process_payload(payload2_1);
+        cache.on_flashblock_received(payload2_1);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1146,7 +1148,7 @@ mod tests {
 
         // Block 2, payload 3 (skipping 2)
         let payload2_3 = create_payload_with_index(3, 2);
-        cache.process_payload(payload2_3);
+        cache.on_flashblock_received(payload2_3);
 
         // Check that highest_payload_index was updated
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1154,7 +1156,7 @@ mod tests {
 
         // Block 2, payload 2 (out of order, should not change highest)
         let payload2_2 = create_payload_with_index(2, 2);
-        cache.process_payload(payload2_2);
+        cache.on_flashblock_received(payload2_2);
 
         // Check that highest_payload_index is still 3
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
@@ -1162,7 +1164,7 @@ mod tests {
 
         // Start block 3, payload 0
         let payload3_0 = create_payload_with_index(0, 3);
-        cache.process_payload(payload3_0);
+        cache.on_flashblock_received(payload3_0);
 
         // Check that highest_payload_index was reset to 0
         // Also verify metric would have been recorded (though we can't directly check the metric's value)
