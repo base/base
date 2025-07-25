@@ -75,6 +75,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # rpc
 jsonrpsee = { version = "0.25.1" }
+jsonrpsee-types = { version = "0.25.1" }
 
 # misc
 clap = { version = "4.4.3" }

@@ -160,19 +160,17 @@ impl FlashblocksState {
         self.get::<U256>(&CacheKey::AccountBalance(address))
     }
 
-    pub fn get<T: DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
-        let store = self.store.read().unwrap();
-        store.get(key).and_then(|entry| {
-            if entry.expiry < Instant::now() {
-                return None;
-            }
-            serde_json::from_slice(&entry.value).ok()
-        })
-    }
-
     pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
         self.receipt_sender.subscribe()
     }
+
+    pub fn cleanup_expired(&self) {
+        if let Ok(mut store) = self.store.write() {
+            store.retain(|_, entry| entry.expiry < Instant::now());
+        }
+    }
+
+    // TODO: Refactor
 
     pub fn process_payload(&self, payload: FlashblocksPayloadV1) {
         let msg_processing_start_time = Instant::now();
@@ -378,6 +376,16 @@ impl FlashblocksState {
                 processing_time = ?msg_processing_start_time.elapsed()
             );
         }
+    }
+
+    fn get<T: DeserializeOwned>(&self, key: &CacheKey) -> Option<T> {
+        let store = self.store.read().unwrap();
+        store.get(key).and_then(|entry| {
+            if entry.expiry < Instant::now() {
+                return None;
+            }
+            serde_json::from_slice(&entry.value).ok()
+        })
     }
 
     fn get_and_set_all_receipts(
@@ -594,12 +602,6 @@ impl FlashblocksState {
         let mut store = self.store.write().unwrap();
         store.insert(key, entry);
         Ok(())
-    }
-
-    pub fn cleanup_expired(&self) {
-        if let Ok(mut store) = self.store.write() {
-            store.retain(|_, entry| entry.expiry < Instant::now());
-        }
     }
 
     pub fn transform_block(&self, block: OpBlock, full: bool) -> RpcBlock<Optimism> {

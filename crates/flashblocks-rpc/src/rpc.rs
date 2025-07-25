@@ -2,36 +2,26 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::metrics::Metrics;
-use crate::state::{CacheKey, FlashblocksState};
-use alloy_consensus::{transaction::Recovered, transaction::TransactionInfo};
+use crate::state::FlashblocksState;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::Address;
 use alloy_primitives::TxHash;
 use alloy_primitives::U256;
-use alloy_rpc_types::TransactionTrait;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
-use op_alloy_consensus::OpDepositReceipt;
-use op_alloy_consensus::{OpReceiptEnvelope, OpTxEnvelope};
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
-use reth::providers::HeaderProvider;
-use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
-use reth::rpc::server_types::eth::TransactionSource;
-use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
+use reth::providers::CanonStateSubscriptions;
+use reth_rpc_eth_api::helpers::EthBlocks;
+use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
-use reth_rpc_eth_api::{
-    helpers::{EthBlocks, EthState},
-    RpcNodeCore,
-};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast::error;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tracing::debug;
 use tracing::log::warn;
-use tracing::{debug, error};
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -81,74 +71,13 @@ pub struct EthApiExt<Eth> {
     total_timeout_secs: u64,
 }
 
-impl<E> EthApiExt<E> {
-    pub fn new(eth_api: E, cache: Arc<FlashblocksState>, total_timeout_secs: u64) -> Self {
+impl<Eth> EthApiExt<Eth> {
+    pub fn new(eth_api: Eth, cache: Arc<FlashblocksState>, total_timeout_secs: u64) -> Self {
         Self {
             eth_api,
             flashblocks_state: cache,
             metrics: Metrics::default(),
             total_timeout_secs,
-        }
-    }
-
-    pub fn transform_tx(
-        &self,
-        tx: Recovered<OpTransactionSigned>,
-        tx_info: TransactionInfo,
-        deposit_receipt: Option<OpDepositReceipt>,
-    ) -> RpcTransaction<Optimism> {
-        let tx = tx.convert::<OpTxEnvelope>();
-        let mut deposit_receipt_version = None;
-        let mut deposit_nonce = None;
-
-        if tx.is_deposit() {
-            if let Some(receipt) = deposit_receipt {
-                deposit_receipt_version = receipt.deposit_receipt_version;
-                deposit_nonce = receipt.deposit_nonce;
-            } else {
-                let cached_receipt = self
-                    .flashblocks_state
-                    .get::<OpReceipt>(&CacheKey::Receipt(tx_info.hash.unwrap()))
-                    .unwrap();
-
-                if let OpReceipt::Deposit(receipt) = cached_receipt {
-                    deposit_receipt_version = receipt.deposit_receipt_version;
-                    deposit_nonce = receipt.deposit_nonce;
-                }
-            }
-        }
-
-        let TransactionInfo {
-            block_hash,
-            block_number,
-            index: transaction_index,
-            base_fee,
-            ..
-        } = tx_info;
-
-        let effective_gas_price = if tx.is_deposit() {
-            // For deposits, we must always set the `gasPrice` field to 0 in rpc
-            // deposit tx don't have a gas price field, but serde of `Transaction` will take care of
-            // it
-            0
-        } else {
-            base_fee
-                .map(|base_fee| {
-                    tx.effective_tip_per_gas(base_fee).unwrap_or_default() + base_fee as u128
-                })
-                .unwrap_or_else(|| tx.max_fee_per_gas())
-        };
-
-        Transaction {
-            inner: alloy_rpc_types_eth::Transaction {
-                inner: tx,
-                block_hash,
-                block_number,
-                transaction_index,
-                effective_gas_price: Some(effective_gas_price),
-            },
-            deposit_nonce,
-            deposit_receipt_version,
         }
     }
 }
@@ -157,10 +86,7 @@ impl<E> EthApiExt<E> {
 impl<Eth> EthApiOverrideServer for EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
-    Eth: RpcNodeCore,
-    <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
-    <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
-    <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
+    jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn block_by_number(
         &self,
@@ -191,8 +117,8 @@ where
             tx_hash = %tx_hash
         );
 
-        self.metrics.get_transaction_receipt.increment(1);
         if let Some(fb_receipt) = self.flashblocks_state.get_transaction_receipt(tx_hash) {
+            self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_receipt));
         }
 
@@ -221,29 +147,6 @@ where
         EthState::balance(&self.eth_api, address, block_number)
             .await
             .map_err(Into::into)
-    }
-
-    async fn send_raw_transaction_sync(
-        &self,
-        transaction: alloy_primitives::Bytes,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        debug!(message = "rpc::send_raw_transaction_sync",);
-
-        let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
-        {
-            Ok(hash) => hash,
-            Err(e) => return Err(e.into()),
-        };
-
-        debug!(
-            message = "rpc::send_raw_transaction_sync::sent_transaction",
-            tx_hash = %tx_hash
-        );
-
-        match self.wait_for_receipt(tx_hash).await {
-            Some(receipt) => Ok(Some(receipt)),
-            None => Ok(None),
-        }
     }
 
     async fn get_transaction_count(
@@ -302,67 +205,37 @@ where
             tx_hash = %tx_hash
         );
 
-        let tx = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
-            .await
-            .map_err(Into::into)?;
-
-        // Process the result without using map() and transpose()
-        if let Some(tx_source) = tx {
-            match tx_source {
-                TransactionSource::Pool(tx) => {
-                    // Convert the pool transaction
-                    let tx_info = TransactionInfo::default();
-                    Ok(Some(self.transform_tx(tx, tx_info, None)))
-                }
-                TransactionSource::Block {
-                    transaction,
-                    index,
-                    block_hash,
-                    block_number,
-                    base_fee,
-                } => {
-                    // Convert the block transaction
-                    let tx_info = TransactionInfo {
-                        hash: Some(tx_hash),
-                        index: Some(index),
-                        block_hash: Some(block_hash),
-                        block_number: Some(block_number),
-                        base_fee,
-                    };
-                    // preload transaction receipt if it's a deposit transaction
-                    if transaction.is_deposit() {
-                        let receipt = EthTransactions::transaction_receipt(&self.eth_api, tx_hash)
-                            .await
-                            .map_err(Into::into)?;
-
-                        match receipt {
-                            Some(txn_receipt) => {
-                                let envelope: OpReceiptEnvelope = txn_receipt.into();
-
-                                if let OpReceiptEnvelope::Deposit(deposit_receipt) = envelope {
-                                    return Ok(Some(self.transform_tx(
-                                        transaction,
-                                        tx_info,
-                                        Some(deposit_receipt.receipt),
-                                    )));
-                                }
-                            }
-                            None => {
-                                error!(
-                                    message = "could not find receipt for block transaction",
-                                    tx_hash = %tx_hash
-                                );
-                                return Ok(None);
-                            }
-                        }
-                    }
-
-                    Ok(Some(self.transform_tx(transaction, tx_info, None)))
-                }
-            }
-        } else {
+        if let Some(fb_transaction) = self.flashblocks_state.get_transaction_by_hash(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
-            Ok(self.flashblocks_state.get_transaction_by_hash(tx_hash))
+            return Ok(Some(fb_transaction));
+        }
+
+        Ok(EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
+            .await?
+            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
+            .transpose()?)
+    }
+
+    async fn send_raw_transaction_sync(
+        &self,
+        transaction: alloy_primitives::Bytes,
+    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
+        debug!(message = "rpc::send_raw_transaction_sync",);
+
+        let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
+        {
+            Ok(hash) => hash,
+            Err(e) => return Err(e.into()),
+        };
+
+        debug!(
+            message = "rpc::send_raw_transaction_sync::sent_transaction",
+            tx_hash = %tx_hash
+        );
+
+        match self.wait_for_receipt(tx_hash).await {
+            Some(receipt) => Ok(Some(receipt)),
+            None => Ok(None),
         }
     }
 }
@@ -370,10 +243,6 @@ where
 impl<Eth> EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
-    Eth: RpcNodeCore,
-    <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
-    <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
-    <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
 {
     /// Wait for receipts from Flashblocks or canonical chain
     async fn wait_for_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
