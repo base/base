@@ -1,9 +1,12 @@
-use std::{io::Read, sync::Arc, time::Instant};
+use std::{io::Read, sync::Arc};
 
 use alloy_primitives::map::foldhash::HashMap;
+use alloy_rpc_types_engine::PayloadId;
 use futures_util::StreamExt;
 use reth_optimism_primitives::OpReceipt;
-use rollup_boost::FlashblocksPayloadV1;
+use rollup_boost::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -28,15 +31,22 @@ pub struct Metadata {
     pub block_number: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct Flashblock {
+    pub payload_id: PayloadId,
+    pub index: u64,
+    pub base: Option<ExecutionPayloadBaseV1>,
+    pub diff: ExecutionPayloadFlashblockDeltaV1,
+    pub metadata: Metadata,
+}
+
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
 enum ActorMessage {
-    BestPayload { payload: FlashblocksPayloadV1 },
+    BestPayload { payload: Flashblock },
 }
 
 pub struct FlashblocksSubscriber {
-    sender: mpsc::Sender<ActorMessage>,
-    mailbox: mpsc::Receiver<ActorMessage>,
     flashblocks_state: Arc<FlashblocksState>,
     metrics: Metrics,
     ws_url: Url,
@@ -44,11 +54,7 @@ pub struct FlashblocksSubscriber {
 
 impl FlashblocksSubscriber {
     pub fn new(cache: Arc<FlashblocksState>, ws_url: Url) -> Self {
-        let (sender, mailbox) = mpsc::channel(100);
-
         Self {
-            sender,
-            mailbox,
             ws_url,
             flashblocks_state: cache,
             metrics: Metrics::default(),
@@ -62,11 +68,9 @@ impl FlashblocksSubscriber {
         );
 
         let ws_url = self.ws_url.clone();
-        let sender = self.sender.clone();
         let flashblocks_state = self.flashblocks_state.clone();
 
-        // Take ownership of mailbox for the actor loop
-        let mut mailbox = std::mem::replace(&mut self.mailbox, mpsc::channel(1).1);
+        let (sender, mut mailbox) = mpsc::channel(100);
 
         // Spawn WebSocket handler with integrated actor loop
         let metrics = self.metrics.clone(); // Clone here for the first spawn
@@ -79,44 +83,29 @@ impl FlashblocksSubscriber {
                     Ok((ws_stream, _)) => {
                         info!(message = "WebSocket connection established");
 
-                        let (_write, mut read) = ws_stream.split();
-                        // Handle incoming messages
+                        let (_, mut read) = ws_stream.split();
+
                         while let Some(msg) = read.next().await {
                             metrics.upstream_messages.increment(1);
-                            let msg_start_time = Instant::now();
 
                             match msg {
-                                Ok(Message::Binary(bytes)) => {
-                                    let text = match try_parse_message(&bytes) {
-                                        Ok(text) => text,
-                                        Err(e) => {
-                                            error!(
-                                                message = "failed to decode message",
-                                                error = %e
-                                            );
-                                            continue;
-                                        }
-                                    };
-
-                                    let payload: FlashblocksPayloadV1 =
-                                        match serde_json::from_str(&text) {
-                                            Ok(m) => m,
-                                            Err(e) => {
-                                                error!(
-                                                    message = "failed to parse message",
-                                                    error = %e
-                                                );
-                                                continue;
-                                            }
-                                        };
-
-                                    let _ =
-                                        sender.send(ActorMessage::BestPayload { payload }).await;
-                                    metrics
-                                        .websocket_processing_duration
-                                        .record(msg_start_time.elapsed());
+                                Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
+                                    Ok(payload) => {
+                                        let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
+                                            error!(message = "Failed to publish message to chanell", error = %e);
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            message = "error decoding flashblock message",
+                                            error = %e
+                                        );
+                                    }
+                                },
+                                Ok(Message::Close(_)) => {
+                                    info!(message = "WebSocket connection closed by upstream");
+                                    break;
                                 }
-                                Ok(Message::Close(_)) => break,
                                 Err(e) => {
                                     metrics.upstream_errors.increment(1);
                                     error!(
@@ -125,7 +114,7 @@ impl FlashblocksSubscriber {
                                     );
                                     break;
                                 }
-                                _ => {} // Handle other message types if needed
+                                _ => {}
                             }
                         }
                     }
@@ -157,7 +146,33 @@ impl FlashblocksSubscriber {
     }
 }
 
-fn try_parse_message(bytes: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
+fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {
+    let text = try_parse_message(bytes)?;
+
+    let payload: FlashblocksPayloadV1 = match serde_json::from_str(&text) {
+        Ok(m) => m,
+        Err(e) => {
+            return Err(eyre::eyre!("failed to parse message: {}", e));
+        }
+    };
+
+    let metadata: Metadata = match serde_json::from_value(payload.metadata.clone()) {
+        Ok(m) => m,
+        Err(e) => {
+            return Err(eyre::eyre!("failed to parse message metadata: {}", e));
+        }
+    };
+
+    Ok(Flashblock {
+        payload_id: payload.payload_id,
+        index: payload.index,
+        base: payload.base,
+        diff: payload.diff,
+        metadata,
+    })
+}
+
+fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
     if let Ok(text) = String::from_utf8(bytes.to_vec()) {
         if text.trim_start().starts_with("{") {
             return Ok(text);

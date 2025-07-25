@@ -20,3 +20,23 @@ Cache
         - appends data to maps
 
  */
+// use alloy_primitives::{Address, U256};
+// use std::collections::HashMap;
+//
+// struct FlashblocksCache {
+//     account_balances: HashMap<Address, U256>,
+// }
+//
+// impl FlashblocksCache {
+//     // pub fn new(flashblock: FlashblocksPayloadV1) {
+//     //     todo!()
+//     // }
+//     //
+//     // pub fn on_flashblock_received(&self, flashblock: FlashblocksPayloadV1) {
+//     //     todo!()
+//     // }
+//     //
+//     // fn insert_data(&self, flashblock: FlashblocksPayloadV1) {
+//     //     todo!()
+//     // }
+// }

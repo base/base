@@ -1,5 +1,5 @@
 use crate::metrics::Metrics;
-use crate::subscription::Metadata;
+use crate::subscription::{Flashblock, Metadata};
 use alloy_consensus::transaction::{
     Recovered, SignerRecoverable, TransactionInfo, TransactionMeta,
 };
@@ -19,7 +19,7 @@ use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use rollup_boost::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
+use rollup_boost::ExecutionPayloadBaseV1;
 use serde::{de::DeserializeOwned, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -178,29 +178,18 @@ impl FlashblocksState {
 
     // TODO: Refactor
 
-    pub fn on_flashblock_received(&self, payload: FlashblocksPayloadV1) {
+    pub fn on_flashblock_received(&self, flashblock: Flashblock) {
         let msg_processing_start_time = Instant::now();
 
-        // Convert metadata with error handling
-        let metadata: Metadata = match serde_json::from_value(payload.metadata) {
-            Ok(m) => m,
-            Err(e) => {
-                error!(
-                    message = "failed to deserialize metadata",
-                    error = %e
-                );
-                return;
-            }
-        };
-
-        let block_number = metadata.block_number;
-        let diff = payload.diff;
+        let block_number = flashblock.metadata.block_number;
+        let diff = flashblock.diff;
         let withdrawals = diff.withdrawals.clone();
         let diff_transactions = diff.transactions.clone();
+        let metadata = flashblock.metadata;
 
         // Skip if index is 0 and base is not cached, likely the first payload
         // Can't do pending block with this because already missing blocks
-        if payload.index != 0
+        if flashblock.index != 0
             && self
                 .get::<ExecutionPayloadBaseV1>(&CacheKey::Base(block_number))
                 .is_none()
@@ -209,7 +198,7 @@ impl FlashblocksState {
         }
 
         // Track flashblock indices and record metrics
-        self.update_flashblocks_index(payload.index);
+        self.update_flashblocks_index(flashblock.index);
 
         // Prevent updating to older blocks
         let current_block = self.get::<OpBlock>(&CacheKey::PendingBlock);
@@ -218,7 +207,7 @@ impl FlashblocksState {
         }
 
         // base only appears once in the first payload index
-        let base = if let Some(base) = payload.base {
+        let base = if let Some(base) = flashblock.base {
             if let Err(e) = self.set(CacheKey::Base(block_number), &base) {
                 error!(
                     message = "failed to set base in cache",
@@ -237,17 +226,20 @@ impl FlashblocksState {
             }
         };
 
-        let transactions =
-            match self.get_and_set_transactions(diff_transactions, payload.index, block_number) {
-                Ok(txs) => txs,
-                Err(e) => {
-                    error!(
-                        message = "failed to get and set transactions",
-                        error = %e
-                    );
-                    return;
-                }
-            };
+        let transactions = match self.get_and_set_transactions(
+            diff_transactions,
+            flashblock.index,
+            block_number,
+        ) {
+            Ok(txs) => txs,
+            Err(e) => {
+                error!(
+                    message = "failed to get and set transactions",
+                    error = %e
+                );
+                return;
+            }
+        };
 
         let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
             blob_gas_used: 0,
@@ -319,18 +311,20 @@ impl FlashblocksState {
         };
 
         // update all receipts
-        let _receipts =
-            match self.get_and_set_all_receipts(payload.index, block_number, diff_receipts.clone())
-            {
-                Ok(receipts) => receipts,
-                Err(e) => {
-                    error!(
-                        message = "failed to get and set all receipts",
-                        error = %e
-                    );
-                    return;
-                }
-            };
+        let _receipts = match self.get_and_set_all_receipts(
+            flashblock.index,
+            block_number,
+            diff_receipts.clone(),
+        ) {
+            Ok(receipts) => receipts,
+            Err(e) => {
+                error!(
+                    message = "failed to get and set all receipts",
+                    error = %e
+                );
+                return;
+            }
+        };
 
         // Store account balances
         for (address, balance) in metadata.new_account_balances.iter() {
@@ -376,7 +370,7 @@ impl FlashblocksState {
         }
 
         // check duration on the most heavy payload
-        if payload.index == 0 {
+        if flashblock.index == 0 {
             info!(
                 message = "block processing completed",
                 processing_time = ?msg_processing_start_time.elapsed()
@@ -787,7 +781,7 @@ mod tests {
         FlashblocksState::new(chain_spec, 2000)
     }
 
-    fn create_first_payload() -> FlashblocksPayloadV1 {
+    fn create_first_payload() -> Flashblock {
         // First payload (index 0) setup remains the same
         let base = ExecutionPayloadBaseV1 {
             parent_hash: Default::default(),
@@ -818,17 +812,17 @@ mod tests {
             new_account_balances: HashMap::default(),
         };
 
-        FlashblocksPayloadV1 {
+        Flashblock {
             index: 0,
             payload_id: PayloadId::new([0; 8]),
             base: Some(base),
             diff: delta,
-            metadata: serde_json::to_value(metadata).unwrap(),
+            metadata: metadata,
         }
     }
 
     // Create payload with specific index and block number
-    fn create_payload_with_index(index: u64, block_number: u64) -> FlashblocksPayloadV1 {
+    fn create_payload_with_index(index: u64, block_number: u64) -> Flashblock {
         let base = if index == 0 {
             Some(ExecutionPayloadBaseV1 {
                 parent_hash: Default::default(),
@@ -863,16 +857,16 @@ mod tests {
             new_account_balances: HashMap::default(),
         };
 
-        FlashblocksPayloadV1 {
+        Flashblock {
             index,
             payload_id: PayloadId::new([0; 8]),
             base,
             diff: delta,
-            metadata: serde_json::to_value(metadata).unwrap(),
+            metadata,
         }
     }
 
-    fn create_second_payload() -> FlashblocksPayloadV1 {
+    fn create_second_payload() -> Flashblock {
         // Create second payload (index 1) with transactions
         // tx1 hash: 0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c
         // tx2 hash: 0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8
@@ -924,12 +918,12 @@ mod tests {
             },
         };
 
-        FlashblocksPayloadV1 {
+        Flashblock {
             index: 1,
             payload_id: PayloadId::new([0; 8]),
             base: None,
             diff: delta2,
-            metadata: serde_json::to_value(metadata2).unwrap(),
+            metadata: metadata2,
         }
     }
 
@@ -1087,12 +1081,12 @@ mod tests {
             new_account_balances: HashMap::default(),
         };
 
-        let payload = FlashblocksPayloadV1 {
+        let payload = Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 1, // Non-zero index but no base in cache
             base: None,
             diff: ExecutionPayloadFlashblockDeltaV1::default(),
-            metadata: serde_json::to_value(metadata).unwrap(),
+            metadata,
         };
 
         // Process payload
