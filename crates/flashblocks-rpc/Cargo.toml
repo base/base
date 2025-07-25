@@ -55,6 +55,7 @@ futures-util.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
+jsonrpsee-types.workspace = true
 
 # misc
 tracing.workspace = true

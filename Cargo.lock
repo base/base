@@ -1563,6 +1563,7 @@ dependencies = [
  "eyre",
  "futures-util",
  "jsonrpsee 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "jsonrpsee-types 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrics",
  "metrics-derive",
  "op-alloy-consensus",
