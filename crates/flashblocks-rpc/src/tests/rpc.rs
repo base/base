@@ -20,9 +20,7 @@ mod tests {
     use reth_optimism_node::OpNode;
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
-    use rollup_boost::{
-        ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1,
-    };
+    use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use serde_json;
     use std::any::Any;
     use std::collections::HashMap;
@@ -207,10 +205,7 @@ mod tests {
                 },
                 new_account_balances: {
                     let mut map = HashMap::default();
-                    map.insert(
-                        TEST_ADDRESS.to_string(),
-                        format!("0x{:x}", U256::from(PENDING_BALANCE)),
-                    );
+                    map.insert(TEST_ADDRESS, U256::from(PENDING_BALANCE));
                     map
                 },
             },
