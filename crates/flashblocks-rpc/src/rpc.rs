@@ -107,7 +107,7 @@ impl<E> EthApiExt<E> {
         let header: alloy_consensus::Header = block.header.clone();
         let transactions = block.body.transactions.to_vec();
 
-        if full {
+        let transactions = if full {
             let transactions_with_senders = transactions
                 .into_iter()
                 .zip(block.body.recover_signers().unwrap());
@@ -125,20 +125,17 @@ impl<E> EthApiExt<E> {
                     self.transform_tx(signed_tx_ec_recovered, tx_info, None)
                 })
                 .collect();
-            RpcBlock::<Optimism> {
-                header: Header::from_consensus(header.seal_slow(), None, None),
-                transactions: BlockTransactions::Full(converted_txs),
-                uncles: Vec::new(),
-                withdrawals: None,
-            }
+            BlockTransactions::Full(converted_txs)
         } else {
             let tx_hashes = transactions.into_iter().map(|tx| tx.tx_hash()).collect();
-            RpcBlock::<Optimism> {
-                header: Header::from_consensus(header.seal_slow(), None, None),
-                transactions: BlockTransactions::Hashes(tx_hashes),
-                uncles: Vec::new(),
-                withdrawals: None,
-            }
+            BlockTransactions::Hashes(tx_hashes)
+        };
+
+        RpcBlock::<Optimism> {
+            header: Header::from_consensus(header.seal_slow(), None, None),
+            transactions,
+            uncles: Vec::new(),
+            withdrawals: None,
         }
     }
 
