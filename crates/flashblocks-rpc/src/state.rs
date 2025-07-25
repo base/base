@@ -123,6 +123,16 @@ impl FlashblocksState {
             })
     }
 
+    pub fn get_transaction_count(&self, block_num: u64, address: Address) -> U256 {
+        U256::from(
+            self.get::<u64>(&CacheKey::TransactionCount {
+                address,
+                block_number: block_num + 1,
+            })
+            .unwrap_or(0),
+        )
+    }
+
     pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
         // Handle cache lookup for transactions not found in the main lookup
         self.get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
