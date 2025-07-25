@@ -3,19 +3,14 @@ mod tests {
     use crate::cache::Cache;
     use crate::flashblocks::Metadata;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
-    use crate::tests::{op_reth::OpRethConfig, IntegrationFramework};
     use alloy_consensus::Receipt;
-    use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
     use alloy_primitives::{address, b256, Address, Bytes, TxHash, B256, U256};
-    use alloy_provider::{Identity, RootProvider};
-    use alloy_provider::{Provider, ProviderBuilder};
+    use alloy_provider::Provider;
+    use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_engine::PayloadId;
-    use futures::SinkExt;
-    use futures_util::StreamExt;
-    use op_alloy_network::Optimism;
-    use op_alloy_network::ReceiptResponse;
+    use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
     use reth::core::exit::NodeExitFuture;
@@ -32,16 +27,9 @@ mod tests {
     use std::any::Any;
     use std::collections::HashMap;
     use std::net::SocketAddr;
-    use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::Arc;
-    use std::time::Duration;
-    use tokio::net::TcpListener;
     use tokio::sync::{mpsc, oneshot};
-    use tokio_tungstenite::accept_async;
-    use tokio_tungstenite::tungstenite::Message;
-    use tracing::info;
-    use uuid::Uuid;
 
     pub struct NodeContext {
         sender: mpsc::Sender<(FlashblocksPayloadV1, oneshot::Sender<()>)>,
@@ -59,11 +47,11 @@ mod tests {
             Ok(())
         }
 
-        pub async fn provider(&self) -> eyre::Result<RootProvider> {
+        pub async fn provider(&self) -> eyre::Result<RootProvider<Optimism>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::builder().http(url.parse()?);
 
-            Ok(RootProvider::new(client))
+            Ok(RootProvider::<Optimism>::new(client))
         }
 
         pub async fn send_test_payloads(&self) -> eyre::Result<()> {
@@ -241,6 +229,9 @@ mod tests {
     const TEST_ADDRESS: Address = address!("0x1234567890123456789012345678901234567890");
     const PENDING_BALANCE: u64 = 4660;
 
+    const TX1_SENDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    const TX2_SENDER: Address = address!("0x6e5e56b972374e4fde8390df0033397df931a49d");
+
     const TX1_HASH: TxHash =
         b256!("0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548");
     const TX2_HASH: TxHash =
@@ -248,189 +239,46 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_pending_block() -> eyre::Result<()> {
-        let mut framework =
-            IntegrationFramework::new("integration_test_get_pending_block").unwrap();
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
 
-        // Start WebSocket server
-        let ws_server = tokio::spawn(async move {
-            let addr = "127.0.0.1:1239".parse::<SocketAddr>().unwrap();
-            let listener = TcpListener::bind(&addr).await.unwrap();
-            info!(
-                message = "WebSocket server listening",
-                address = %addr
-            );
-
-            while let Ok((stream, _)) = listener.accept().await {
-                let ws_stream = accept_async(stream).await.unwrap();
-                let (mut write, mut read) = ws_stream.split();
-
-                // Send test flashblock payload
-                let payload = create_first_payload();
-                let message = serde_json::to_string(&payload).unwrap();
-                write.send(Message::Binary(message.into())).await.unwrap();
-
-                // wait for 5 seconds to send another payload
-                tokio::time::sleep(Duration::from_secs(5)).await;
-
-                let payload = create_second_payload();
-                let message = serde_json::to_string(&payload).unwrap();
-                write.send(Message::Binary(message.into())).await.unwrap();
-
-                // Keep connection alive and handle messages
-                while let Some(msg) = read.next().await {
-                    if let Ok(_) = msg {
-                        // Handle incoming messages if needed
-                        continue;
-                    }
-                    break;
-                }
-            }
-        });
-
-        // Setup genesis path
-        let mut genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        genesis_path.push("src/tests/assets/genesis.json");
-        assert!(genesis_path.exists());
-
-        // Create and start reth-flashblocks node
-        let reth_data_dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
-        let reth = OpRethConfig::new()
-            .chain_config_path(genesis_path.clone())
-            .data_dir(reth_data_dir)
-            .auth_rpc_port(1236)
-            .network_port(1237)
-            .http_port(1238)
-            .websocket_url("ws://localhost:1239");
-
-        framework.start("base-reth-node", &reth).await.unwrap();
-
-        // Wait for some time to allow messages to be processed
-        tokio::time::sleep(Duration::from_secs(3)).await;
-
-        // Create provider to interact with the node
-        let provider: RootProvider<Optimism> =
-            ProviderBuilder::<Identity, Identity, Optimism>::default()
-                .connect_http("http://localhost:1238".parse()?);
-
-        // Query first subblock
-        if let Some(block) = provider
-            .get_block_by_number(BlockNumberOrTag::Pending)
+        let latest_block = provider
+            .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
             .await?
-        {
-            // Verify block properties
-            assert_eq!(block.header.number, 1);
-            assert_eq!(block.transactions.len(), 0);
-        } else {
-            assert!(false, "no block found");
-        }
+            .expect("latest block expected");
+        assert_eq!(latest_block.number(), 0);
 
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        // Query second subblock, now there should be 2 transactions
-        if let Some(block) = provider
-            .get_block_by_number(BlockNumberOrTag::Pending)
+        // Querying pending block when it does not exists yet
+        let pending_block = provider
+            .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
+            .await?;
+        assert_eq!(pending_block.is_none(), true);
+
+        let base_payload = create_first_payload();
+        node.send_payload(base_payload).await?;
+
+        // Query pending block after sending the base payload with an empty delta
+        let pending_block = provider
+            .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
             .await?
-        {
-            // Verify block properties
-            assert_eq!(block.header.number, 1);
-            assert_eq!(block.transactions.len(), 2);
-        } else {
-            assert!(false, "no block found");
-        }
+            .expect("pending block expected");
 
-        // check transaction receipt
-        let receipt = provider
-            .get_transaction_receipt(
-                B256::from_str(
-                    "0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548",
-                )
-                .unwrap(),
-            )
-            .await?;
-        assert!(receipt.is_some());
-        let receipt = receipt.unwrap();
-        assert_eq!(receipt.gas_used(), 21000);
+        assert_eq!(pending_block.number(), 1);
+        assert_eq!(pending_block.transactions.hashes().len(), 0);
 
-        // check transaction receipt
-        let receipt = provider
-            .get_transaction_receipt(
-                B256::from_str(
-                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
-                )
-                .unwrap(),
-            )
-            .await?;
-        assert!(receipt.is_some());
-        assert_eq!(receipt.unwrap().gas_used(), 24000); // 45000 - 21000
+        let second_payload = create_second_payload();
+        node.send_payload(second_payload).await?;
 
-        // check transaction by hash
-        let tx = provider
-            .get_transaction_by_hash(
-                B256::from_str(
-                    "0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548",
-                )
-                .unwrap(),
-            )
-            .await?;
-        assert!(tx.is_some());
+        // Query pending block after sending the second payload with two transactions
+        let block = provider
+            .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
+            .await?
+            .expect("pending block expected");
 
-        let tx = provider
-            .get_transaction_by_hash(
-                B256::from_str(
-                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
-                )
-                .unwrap(),
-            )
-            .await?;
-        assert!(tx.is_some());
+        assert_eq!(block.number(), 1);
+        assert_eq!(block.transactions.hashes().len(), 2);
 
-        // check balance
-        // use curl command to get balance with pending tag, since alloy provider doesn't support pending tag
-        let output = std::process::Command::new("curl")
-        .arg("http://localhost:1238")
-        .arg("-X")
-        .arg("POST")
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x1234567890123456789012345678901234567890","pending"],"id":1}"#)
-        .output()?;
-
-        let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        let balance = U256::from_str(response["result"].as_str().unwrap()).unwrap();
-        assert_eq!(balance, U256::from_str("0x1234").unwrap());
-
-        // check nonce
-        let output = std::process::Command::new("curl")
-        .arg("http://localhost:1238")
-        .arg("-X")
-        .arg("POST")
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","pending"],"id":1}"#)
-        .output()?;
-
-        let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        let nonce = U256::from_str(response["result"].as_str().unwrap()).unwrap();
-        assert_eq!(nonce, U256::from_str("0x1").unwrap());
-
-        // check latest nonce, should still be 0
-        let output = std::process::Command::new("curl")
-        .arg("http://localhost:1238")
-        .arg("-X")
-        .arg("POST")
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0x6e5e56b972374e4fde8390df0033397df931a49d","latest"],"id":1}"#)
-        .output()?;
-
-        let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-        let nonce = U256::from_str(response["result"].as_str().unwrap()).unwrap();
-        assert_eq!(nonce, U256::from_str("0x0").unwrap());
-
-        // Don't forget to cleanup
-        ws_server.abort();
         Ok(())
     }
 
@@ -447,6 +295,35 @@ mod tests {
 
         let pending_balance = provider.get_balance(TEST_ADDRESS).pending().await?;
         assert_eq!(pending_balance, U256::from(PENDING_BALANCE));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_transaction_by_hash_pending() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        assert!(provider.get_transaction_by_hash(TX1_HASH).await?.is_none());
+        assert!(provider.get_transaction_by_hash(TX2_HASH).await?.is_none());
+
+        node.send_test_payloads().await?;
+
+        let tx1 = provider
+            .get_transaction_by_hash(TX1_HASH)
+            .await?
+            .expect("tx1 expected");
+        assert_eq!(tx1.tx_hash(), TX1_HASH);
+        assert_eq!(tx1.from(), TX1_SENDER);
+
+        let tx2 = provider
+            .get_transaction_by_hash(TX2_HASH)
+            .await?
+            .expect("tx2 expected");
+        assert_eq!(tx2.tx_hash(), TX2_HASH);
+        assert_eq!(tx2.from(), TX2_SENDER);
+
+        // TODO: Verify more properties of the txns here.
 
         Ok(())
     }
@@ -466,10 +343,39 @@ mod tests {
             .get_transaction_receipt(TX1_HASH)
             .await?
             .expect("receipt expected");
-        assert_eq!(receipt.gas_used, 21000);
+        assert_eq!(receipt.gas_used(), 21000);
+
+        let receipt = provider
+            .get_transaction_receipt(TX2_HASH)
+            .await?
+            .expect("receipt expected");
+        assert_eq!(receipt.gas_used(), 24000); // 45000 - 21000
 
         // TODO: Add a new payload and validate that the receipts from the previous payload
         // are not returned.
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_transaction_count() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        assert_eq!(provider.get_transaction_count(TX1_SENDER).await?, 0);
+        assert_eq!(
+            provider.get_transaction_count(TX2_SENDER).pending().await?,
+            0
+        );
+
+        node.send_test_payloads().await?;
+
+        assert_eq!(provider.get_transaction_count(TX1_SENDER).await?, 0);
+        assert_eq!(
+            provider.get_transaction_count(TX2_SENDER).pending().await?,
+            1
+        );
 
         Ok(())
     }
