@@ -273,6 +273,7 @@ where
                     .await
                     .map_err(Into::into)?;
 
+            // TODO: We can probably clean this up.
             // Check if we have a block header
             let latest_block_number = if let Some(header) = latest_block_header {
                 header.number
@@ -281,15 +282,10 @@ where
                 return Ok(latest_count);
             };
 
-            let tx_count = self
+            let fb_count = self
                 .flashblocks_state
-                .get::<u64>(&CacheKey::TransactionCount {
-                    address,
-                    block_number: latest_block_number + 1,
-                })
-                .unwrap_or(0);
-
-            return Ok(latest_count + U256::from(tx_count));
+                .get_transaction_count(latest_block_number, address);
+            return Ok(latest_count + fb_count);
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number)
