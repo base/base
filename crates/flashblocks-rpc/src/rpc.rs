@@ -2,8 +2,7 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::cache::{Cache, CacheKey};
-use crate::flashblocks::FlashblocksApi;
+use crate::cache::{Cache, CacheKey, FlashblocksApi};
 use crate::metrics::Metrics;
 use alloy_consensus::transaction::TransactionMeta;
 use alloy_consensus::TxReceipt;
@@ -80,24 +79,19 @@ pub trait EthApiOverride {
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth, F> {
+pub struct EthApiExt<Eth> {
     eth_api: Eth,
     cache: Arc<Cache>,
     metrics: Metrics,
     chain_spec: Arc<OpChainSpec>,
-    flashblocks_api: F,
     total_timeout_secs: u64,
 }
 
-impl<E, F> EthApiExt<E, F>
-where
-    F: FlashblocksApi,
-{
+impl<E> EthApiExt<E> {
     pub fn new(
         eth_api: E,
         cache: Arc<Cache>,
         chain_spec: Arc<OpChainSpec>,
-        flashblocks_api: F,
         total_timeout_secs: u64,
     ) -> Self {
         Self {
@@ -105,7 +99,6 @@ where
             cache,
             metrics: Metrics::default(),
             chain_spec,
-            flashblocks_api,
             total_timeout_secs,
         }
     }
@@ -271,11 +264,10 @@ where
 }
 
 #[async_trait]
-impl<Eth, F> EthApiOverrideServer for EthApiExt<Eth, F>
+impl<Eth> EthApiOverrideServer for EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     Eth: RpcNodeCore,
-    F: FlashblocksApi + Send + Sync + 'static,
     <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
     <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
     <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
@@ -547,11 +539,10 @@ where
     }
 }
 
-impl<Eth, F> EthApiExt<Eth, F>
+impl<Eth> EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     Eth: RpcNodeCore,
-    F: FlashblocksApi + Send + Sync + 'static,
     <Eth as RpcNodeCore>::Provider: HeaderProvider<Header = alloy_consensus::Header>,
     <Eth as RpcNodeCore>::Provider: TransactionsProvider<Transaction = OpTransactionSigned>,
     <Eth as RpcNodeCore>::Provider: CanonStateSubscriptions,
@@ -574,7 +565,7 @@ where
     }
 
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        let mut receiver = self.flashblocks_api.subscribe_to_receipts();
+        let mut receiver = self.cache.subscribe_to_receipts();
 
         loop {
             match receiver.recv().await {

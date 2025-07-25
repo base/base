@@ -1,31 +1,17 @@
 use std::{io::Read, sync::Arc, time::Instant};
 
-use alloy_primitives::{map::foldhash::HashMap, Bytes};
+use alloy_primitives::map::foldhash::HashMap;
 use futures_util::StreamExt;
-use reth_optimism_primitives::{OpReceipt};
-use rollup_boost::primitives::{FlashblocksPayloadV1};
+use reth_optimism_primitives::OpReceipt;
+use rollup_boost::primitives::FlashblocksPayloadV1;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info};
 use url::Url;
 
-use crate::cache::{Cache};
+use crate::cache::Cache;
 use crate::metrics::Metrics;
-
-/// API trait for Flashblocks client functionality
-pub trait FlashblocksApi {
-    /// Subscribe to real-time receipt broadcasts
-    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash>;
-}
-
-/// A receipt with its transaction hash for broadcasting
-#[derive(Debug, Clone)]
-pub struct ReceiptWithHash {
-    pub tx_hash: alloy_primitives::TxHash,
-    pub receipt: OpReceipt,
-    pub block_number: u64,
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FlashbotsMessage {
@@ -53,25 +39,18 @@ pub struct FlashblocksClient {
     mailbox: mpsc::Receiver<ActorMessage>,
     cache: Arc<Cache>,
     metrics: Metrics,
-    receipt_sender: broadcast::Sender<ReceiptWithHash>,
 }
 
 impl FlashblocksClient {
-    pub fn new(cache: Arc<Cache>, receipt_buffer_size: usize) -> Self {
+    pub fn new(cache: Arc<Cache>) -> Self {
         let (sender, mailbox) = mpsc::channel(100);
-        let (receipt_sender, _) = broadcast::channel(receipt_buffer_size);
 
         Self {
             sender,
             mailbox,
             cache,
             metrics: Metrics::default(),
-            receipt_sender,
         }
-    }
-
-    pub fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
-        self.receipt_sender.subscribe()
     }
 
     pub fn init(&mut self, ws_url: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -82,7 +61,6 @@ impl FlashblocksClient {
         );
         let sender = self.sender.clone();
         let cache_clone = self.cache.clone();
-        let receipt_sender_clone = self.receipt_sender.clone();
 
         // Take ownership of mailbox for the actor loop
         let mut mailbox = std::mem::replace(&mut self.mailbox, mpsc::channel(1).1);
@@ -167,19 +145,13 @@ impl FlashblocksClient {
             while let Some(message) = mailbox.recv().await {
                 match message {
                     ActorMessage::BestPayload { payload } => {
-                        cache_clone.process_payload(payload, &receipt_sender_clone);
+                        cache_clone.process_payload(payload);
                     }
                 }
             }
         });
 
         Ok(())
-    }
-}
-
-impl FlashblocksApi for FlashblocksClient {
-    fn subscribe_to_receipts(&self) -> broadcast::Receiver<ReceiptWithHash> {
-        self.receipt_sender.subscribe()
     }
 }
 
