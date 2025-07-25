@@ -3,7 +3,7 @@ use std::{io::Read, sync::Arc, time::Instant};
 use alloy_primitives::map::foldhash::HashMap;
 use futures_util::StreamExt;
 use reth_optimism_primitives::OpReceipt;
-use rollup_boost::primitives::FlashblocksPayloadV1;
+use rollup_boost::FlashblocksPayloadV1;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};

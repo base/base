@@ -4,7 +4,7 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
-use rollup_boost::primitives::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
+use rollup_boost::{ExecutionPayloadBaseV1, FlashblocksPayloadV1};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -152,7 +152,7 @@ impl Cache {
                 );
             }
 
-            // Reset highest index to 0 for new block
+            // Reset the highest index to 0 for new block
             if let Err(e) = self.set(CacheKey::HighestPayloadIndex, &0u64, Some(10)) {
                 error!(
                     message = "failed to reset highest flash index",
@@ -581,7 +581,7 @@ mod tests {
     use alloy_primitives::{Address, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpBlock;
-    use rollup_boost::primitives::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
+    use rollup_boost::ExecutionPayloadFlashblockDeltaV1;
     use std::str::FromStr;
 
     fn create_first_payload() -> FlashblocksPayloadV1 {

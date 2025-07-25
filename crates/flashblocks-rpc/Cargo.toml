@@ -24,6 +24,8 @@ reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-provider.workspace = true
+reth-tracing.workspace = true
+
 
 # revm
 revm.workspace = true
@@ -46,6 +48,10 @@ op-alloy-rpc-types-engine.workspace = true
 op-alloy-rpc-jsonrpsee.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
+
+# alloy
+alloy-genesis.workspace = true
+alloy-rpc-client.workspace = true
 
 # rollup-boost
 rollup-boost.workspace = true
@@ -78,3 +84,9 @@ uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
 brotli.workspace = true
+
+[dev-dependencies]
+# TODO move version up etc.
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0", features = [
+    "test-utils",
+] }
