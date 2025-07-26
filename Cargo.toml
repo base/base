@@ -32,6 +32,8 @@ reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
 # revm
 revm = { version = "27.0.3", default-features = false }
