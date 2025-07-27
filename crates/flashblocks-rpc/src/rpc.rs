@@ -170,24 +170,9 @@ where
             .await
             .map_err(Into::into)?;
 
-            // get the current latest block number
-            let latest_block_header =
-                EthBlocks::rpc_block_header(&self.eth_api, BlockNumberOrTag::Latest.into())
-                    .await
-                    .map_err(Into::into)?;
-
-            // TODO: We can probably clean this up.
-            // Check if we have a block header
-            let latest_block_number = if let Some(header) = latest_block_header {
-                header.number
-            } else {
-                // If there's no latest block, return the current nonce without additions
-                return Ok(latest_count);
-            };
-
             let fb_count = self
                 .flashblocks_state
-                .get_transaction_count(latest_block_number, address);
+                .get_transaction_count(address);
             return Ok(latest_count + fb_count);
         }
 
