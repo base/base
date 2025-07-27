@@ -1,5 +1,5 @@
-use crate::pending::PendingBlock;
 use crate::metrics::Metrics;
+use crate::pending::PendingBlock;
 use crate::subscription::{Flashblock, Metadata};
 use alloy_consensus::transaction::{
     Recovered, SignerRecoverable, TransactionInfo, TransactionMeta,
@@ -27,7 +27,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::ops::Add;
-use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
@@ -43,18 +42,18 @@ pub struct ReceiptWithHash {
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum CacheKey {
-    Transaction(B256),                                        // tx_hash
-    TransactionSender(B256),                                  // tx_sender:tx_hash
-    TransactionBlockNumber(B256),                             // tx_block_number:tx_hash
-    TransactionIndex(B256),                                   // tx_idx:tx_hash
-    Receipt(B256),                                            // receipt:tx_hash
-    ReceiptBlock(B256),                                       // receipt_block:tx_hash
-    Block(u64),                                               // block:block_number
-    Base(u64),                                                // base:block_number
-    PendingBlock,                                             // pending
-    PendingReceipts(u64),                                     // pending_receipts:block_number
-    DiffTransactions(u64),                                    // diff:transactions:block_number
-    HighestPayloadIndex,                                      // highest_payload_index
+    Transaction(B256),            // tx_hash
+    TransactionSender(B256),      // tx_sender:tx_hash
+    TransactionBlockNumber(B256), // tx_block_number:tx_hash
+    TransactionIndex(B256),       // tx_idx:tx_hash
+    Receipt(B256),                // receipt:tx_hash
+    ReceiptBlock(B256),           // receipt_block:tx_hash
+    Block(u64),                   // block:block_number
+    Base(u64),                    // base:block_number
+    PendingBlock,                 // pending
+    PendingReceipts(u64),         // pending_receipts:block_number
+    DiffTransactions(u64),        // diff:transactions:block_number
+    HighestPayloadIndex,          // highest_payload_index
 }
 
 impl Display for CacheKey {
@@ -109,7 +108,9 @@ impl FlashblocksState {
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.get::<OpReceipt>(&CacheKey::Receipt(tx_hash))
+        self.current_state
+            .load()
+            .get_receipt(tx_hash)
             .map(|receipt| {
                 self.transform_receipt(
                     receipt,
@@ -183,11 +184,10 @@ impl FlashblocksState {
             self.current_state
                 .swap(Arc::new(PendingBlock::new_block(flashblock_clone)));
         } else if self.is_next_flashblock(&flashblock) {
-            self.current_state
-                .swap(Arc::new(PendingBlock::extend_block(
-                    &current_state,
-                    flashblock_clone,
-                )));
+            self.current_state.swap(Arc::new(PendingBlock::extend_block(
+                &current_state,
+                flashblock_clone,
+            )));
         } else if current_state.block_number != flashblock.metadata.block_number {
             info!(
                 message = "Received Flashblock for new block, zero'ing Flashblocks until ",
@@ -355,28 +355,27 @@ impl FlashblocksState {
             .block_processing_duration
             .record(msg_processing_start_time.elapsed());
 
-        for (tx_hash_str, receipt) in &metadata.receipts {
-            if let Ok(tx_hash) = alloy_primitives::TxHash::from_str(tx_hash_str) {
-                let receipt_with_hash = ReceiptWithHash {
-                    tx_hash,
-                    receipt: receipt.clone(),
-                    block_number,
-                };
+        for (tx_hash, receipt) in &metadata.receipts {
+            let tx_hash = *tx_hash;
+            let receipt_with_hash = ReceiptWithHash {
+                tx_hash,
+                receipt: receipt.clone(),
+                block_number,
+            };
 
-                match self.receipt_sender.send(receipt_with_hash) {
-                    Ok(subscriber_count) => {
-                        debug!(
-                            message = "broadcasted receipt",
-                            tx_hash = %tx_hash,
-                            subscriber_count = subscriber_count
-                        );
-                    }
-                    Err(_) => {
-                        debug!(
-                            message = "no active subscribers for receipt broadcast",
-                            tx_hash = %tx_hash
-                        );
-                    }
+            match self.receipt_sender.send(receipt_with_hash) {
+                Ok(subscriber_count) => {
+                    debug!(
+                        message = "broadcasted receipt",
+                        tx_hash = %tx_hash,
+                        subscriber_count = subscriber_count
+                    );
+                }
+                Err(_) => {
+                    debug!(
+                        message = "no active subscribers for receipt broadcast",
+                        tx_hash = %tx_hash
+                    );
                 }
             }
         }
@@ -545,15 +544,9 @@ impl FlashblocksState {
             }
 
             // TODO: move this into the transaction check
-            if metadata
-                .receipts
-                .contains_key(&transaction.tx_hash().to_string())
-            {
+            if metadata.receipts.contains_key(&transaction.tx_hash()) {
                 // find receipt in metadata and set it in cache
-                let receipt = metadata
-                    .receipts
-                    .get(&transaction.tx_hash().to_string())
-                    .unwrap();
+                let receipt = metadata.receipts.get(&transaction.tx_hash()).unwrap();
                 if let Err(e) = self.set(CacheKey::Receipt(transaction.tx_hash()), receipt) {
                     error!(
                         message = "failed to set receipt in cache",
@@ -880,8 +873,10 @@ mod tests {
             receipts: {
                 let mut receipts = HashMap::default();
                 receipts.insert(
-                    "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c"
-                        .to_string(), // transaction hash as string
+                    B256::from_str(
+                        "0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c",
+                    )
+                    .unwrap(),
                     OpReceipt::Legacy(Receipt {
                         status: true.into(),
                         cumulative_gas_used: 21000,
@@ -889,8 +884,10 @@ mod tests {
                     }),
                 );
                 receipts.insert(
-                    "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8"
-                        .to_string(), // transaction hash as string
+                    B256::from_str(
+                        "0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8",
+                    )
+                    .unwrap(),
                     OpReceipt::Legacy(Receipt {
                         status: true.into(),
                         cumulative_gas_used: 42000,

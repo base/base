@@ -186,7 +186,7 @@ mod tests {
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
-                        TX1_HASH.to_string(),
+                        TX1_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
                             cumulative_gas_used: 21000,
@@ -194,7 +194,7 @@ mod tests {
                         }),
                     );
                     receipts.insert(
-                        TX2_HASH.to_string(),
+                        TX2_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
                             cumulative_gas_used: 45000,

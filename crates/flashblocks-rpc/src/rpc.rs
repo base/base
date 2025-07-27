@@ -170,9 +170,7 @@ where
             .await
             .map_err(Into::into)?;
 
-            let fb_count = self
-                .flashblocks_state
-                .get_transaction_count(address);
+            let fb_count = self.flashblocks_state.get_transaction_count(address);
             return Ok(latest_count + fb_count);
         }
 
