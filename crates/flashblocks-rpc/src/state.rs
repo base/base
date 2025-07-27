@@ -1,4 +1,4 @@
-use crate::cache::FlashblocksCache;
+use crate::pending::PendingBlock;
 use crate::metrics::Metrics;
 use crate::subscription::{Flashblock, Metadata};
 use alloy_consensus::transaction::{
@@ -91,7 +91,7 @@ struct CacheEntry<T> {
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksState {
-    current_state: Arc<ArcSwap<FlashblocksCache>>,
+    current_state: Arc<ArcSwap<PendingBlock>>,
 
     store: Arc<RwLock<HashMap<CacheKey, CacheEntry<Vec<u8>>>>>,
     receipt_sender: broadcast::Sender<ReceiptWithHash>,
@@ -103,7 +103,7 @@ impl FlashblocksState {
     pub fn new(chain_spec: Arc<OpChainSpec>, receipt_buffer_size: usize) -> Self {
         Self {
             chain_spec,
-            current_state: Arc::new(ArcSwap::from_pointee(FlashblocksCache::empty())),
+            current_state: Arc::new(ArcSwap::from_pointee(PendingBlock::empty())),
             store: Arc::new(RwLock::new(HashMap::new())),
             receipt_sender: broadcast::channel(receipt_buffer_size).0,
             metrics: Metrics::default(),
@@ -127,6 +127,7 @@ impl FlashblocksState {
     }
 
     pub fn get_transaction_count(&self, block_num: u64, address: Address) -> U256 {
+        // self.current_state.load().get_transaction_count(address)
         U256::from(
             self.get::<u64>(&CacheKey::TransactionCount {
                 address,
@@ -194,10 +195,10 @@ impl FlashblocksState {
 
         if flashblock.index == 0 {
             self.current_state
-                .swap(Arc::new(FlashblocksCache::new_block(flashblock_clone)));
+                .swap(Arc::new(PendingBlock::new_block(flashblock_clone)));
         } else if self.is_next_flashblock(&flashblock) {
             self.current_state
-                .swap(Arc::new(FlashblocksCache::extend_block(
+                .swap(Arc::new(PendingBlock::extend_block(
                     &current_state,
                     flashblock_clone,
                 )));
@@ -208,7 +209,7 @@ impl FlashblocksState {
                 new_block = %flashblock.metadata.block_number,
             );
 
-            self.current_state.swap(Arc::new(FlashblocksCache::empty()));
+            self.current_state.swap(Arc::new(PendingBlock::empty()));
         } else {
             info!(
                 message = "None sequential Flashblocks, keeping cache",

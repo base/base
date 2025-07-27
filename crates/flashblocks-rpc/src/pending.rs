@@ -25,19 +25,21 @@ use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, U256};
 
 #[derive(Debug, Clone)]
-pub struct FlashblocksCache {
+pub struct PendingBlock {
     pub block_number: u64,
     pub index_number: u64,
 
     account_balances: HashMap<Address, U256>,
+    transaction_count: HashMap<Address, U256>,
 }
 
-impl FlashblocksCache {
+impl PendingBlock {
     pub fn empty() -> Self {
         Self {
             block_number: 0,
             index_number: 0,
             account_balances: HashMap::default(),
+            transaction_count: HashMap::default(),
         }
     }
     pub fn new_block(flashblock: Flashblock) -> Self {
@@ -45,12 +47,13 @@ impl FlashblocksCache {
             block_number: flashblock.metadata.block_number,
             index_number: flashblock.index,
             account_balances: HashMap::default(),
+            transaction_count: HashMap::default(),
         };
         result.insert_data(flashblock);
         result
     }
 
-    pub fn extend_block(previous_cache: &FlashblocksCache, flashblock: Flashblock) -> Self {
+    pub fn extend_block(previous_cache: &PendingBlock, flashblock: Flashblock) -> Self {
         let mut result = previous_cache.clone();
         result.insert_data(flashblock);
         result
@@ -62,6 +65,10 @@ impl FlashblocksCache {
         }
     }
 
+    pub fn get_transaction_count(&self, address: Address) -> U256 {
+        self.transaction_count.get(&address).cloned().unwrap_or(U256::from(0))
+    }
+
     pub fn get_balance(&self, address: Address) -> Option<U256> {
         self.account_balances.get(&address).cloned()
     }
@@ -69,7 +76,7 @@ impl FlashblocksCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::cache::FlashblocksCache;
+    use crate::pending::PendingBlock;
     use crate::subscription::{Flashblock, Metadata};
     use alloy_primitives::{Address, Bloom, B256, B64, U256};
     use alloy_rpc_types_engine::PayloadId;
@@ -109,7 +116,7 @@ mod tests {
             .new_account_balances
             .insert(alice, U256::from(1000));
 
-        let cache = FlashblocksCache::new_block(fb1);
+        let cache = PendingBlock::new_block(fb1);
         assert_eq!(
             cache.get_balance(alice).expect("should be set"),
             U256::from(1000)
@@ -124,7 +131,7 @@ mod tests {
             .new_account_balances
             .insert(bob, U256::from(1000));
 
-        let cache = FlashblocksCache::extend_block(&cache, fb2);
+        let cache = PendingBlock::extend_block(&cache, fb2);
         assert_eq!(
             cache.get_balance(alice).expect("should be set"),
             U256::from(2000)
