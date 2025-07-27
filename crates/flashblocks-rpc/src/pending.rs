@@ -92,8 +92,7 @@ impl PendingBlock {
 
         // TODO: Error cases
         let block: OpBlock = execution_payload.try_into_block().unwrap();
-        let _l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
-            .unwrap();
+        let _l1_block_info = reth_optimism_evm::extract_l1_info(&block.body).unwrap();
 
         // TODO: Can we do this without zero'ing out the txn count for the whole block.
         self.transaction_count.clear();
@@ -120,9 +119,9 @@ impl PendingBlock {
         }
     }
 
-    pub fn get_receipt(&self, tx_hash: B256) -> Option<OpReceipt> {
-        self.transaction_receipts.get(&tx_hash).cloned()
-    }
+    // pub fn get_receipt(&self, tx_hash: B256) -> Option<OpReceipt> {
+    //     self.transaction_receipts.get(&tx_hash).cloned()
+    // }
 
     pub fn get_transaction_count(&self, address: Address) -> U256 {
         self.transaction_count
@@ -140,12 +139,24 @@ impl PendingBlock {
 mod tests {
     use crate::pending::PendingBlock;
     use crate::subscription::{Flashblock, Metadata};
-    use alloy_primitives::{Address, Bloom, B256, B64, U256};
+    use alloy_consensus::Receipt;
+    use alloy_primitives::{Address, Bloom, Bytes, B256, B64, U256};
     use alloy_rpc_types_engine::PayloadId;
+    use op_alloy_consensus::OpDepositReceipt;
+    use reth_optimism_primitives::OpReceipt;
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::collections::HashMap;
+    use std::str::FromStr;
 
     fn default_fb() -> Flashblock {
+        let block_info_tx = Bytes::from_str(
+            "0x7ef90104a0972fdff54755b8da75e0594e686fb9038e18e8f6cd0483e6c44aa653fef5befe94deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c12000000000000000500000000688695a700000000015f26db000000000000000000000000000000000000000000000000000000000c2247580000000000000000000000000000000000000000000000000000000000000001ceff391154edb6396376345638e8029beef559de7dbb5d4e33fb8328bb690b0a0000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
+            .unwrap();
+
+        let block_info_txn_hash =
+            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
+                .unwrap();
+
         Flashblock {
             payload_id: PayloadId(B64::random()),
             index: 0,
@@ -156,12 +167,27 @@ mod tests {
                 logs_bloom: Bloom::random(),
                 gas_used: 1000,
                 block_hash: B256::random(),
-                transactions: vec![],
+                transactions: vec![block_info_tx],
                 withdrawals: vec![],
                 withdrawals_root: B256::random(),
             },
             metadata: Metadata {
-                receipts: HashMap::default(),
+                receipts: {
+                    let mut receipts = HashMap::default();
+                    receipts.insert(
+                        block_info_txn_hash,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 10000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012991u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                    receipts
+                },
                 new_account_balances: HashMap::default(),
                 block_number: 10,
             },

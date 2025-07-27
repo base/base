@@ -108,9 +108,7 @@ impl FlashblocksState {
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.current_state
-            .load()
-            .get_receipt(tx_hash)
+        self.get::<OpReceipt>(&CacheKey::Receipt(tx_hash))
             .map(|receipt| {
                 self.transform_receipt(
                     receipt,
@@ -766,6 +764,14 @@ mod tests {
     }
 
     fn create_first_payload() -> Flashblock {
+        let block_info_tx = Bytes::from_str(
+            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
+            .unwrap();
+
+        let block_info_txn_hash =
+            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
+                .unwrap();
+
         // First payload (index 0) setup remains the same
         let base = ExecutionPayloadBaseV1 {
             parent_hash: Default::default(),
@@ -780,7 +786,7 @@ mod tests {
         };
 
         let delta = ExecutionPayloadFlashblockDeltaV1 {
-            transactions: vec![],
+            transactions: vec![block_info_tx],
             withdrawals: vec![],
             state_root: Default::default(),
             receipts_root: Default::default(),
@@ -792,7 +798,22 @@ mod tests {
 
         let metadata = Metadata {
             block_number: 1,
-            receipts: HashMap::default(),
+            receipts: {
+                let mut receipts = alloy_primitives::map::HashMap::default();
+                receipts.insert(
+                    block_info_txn_hash,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            },
             new_account_balances: HashMap::default(),
         };
 
@@ -824,8 +845,21 @@ mod tests {
             None
         };
 
+        let block_info_txn_hash =
+            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
+                .unwrap();
+
+        let transactions = if index == 0 {
+            let block_info_tx = Bytes::from_str(
+                "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
+                .unwrap();
+            vec![block_info_tx]
+        } else {
+            vec![]
+        };
+
         let delta = ExecutionPayloadFlashblockDeltaV1 {
-            transactions: vec![],
+            transactions,
             withdrawals: vec![],
             state_root: B256::repeat_byte(index as u8),
             receipts_root: B256::repeat_byte((index + 1) as u8),
@@ -837,7 +871,24 @@ mod tests {
 
         let metadata = Metadata {
             block_number,
-            receipts: HashMap::default(),
+            receipts: {
+                let mut receipts = HashMap::default();
+                if index == 0 {
+                    receipts.insert(
+                        block_info_txn_hash,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 10000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012991u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                }
+                receipts
+            },
             new_account_balances: HashMap::default(),
         };
 
@@ -933,6 +984,7 @@ mod tests {
         let mut receipts = vec![];
         receipts.push(receipt_receiver.try_recv().unwrap());
         receipts.push(receipt_receiver.try_recv().unwrap());
+        receipts.push(receipt_receiver.try_recv().unwrap());
 
         // Sort receipts by tx_hash to ensure deterministic testing
         receipts.sort_by_key(|r| r.tx_hash);
@@ -958,7 +1010,7 @@ mod tests {
 
         // Verify final state
         let final_block = cache.get::<OpBlock>(&CacheKey::PendingBlock).unwrap();
-        assert_eq!(final_block.body.transactions.len(), 2);
+        assert_eq!(final_block.body.transactions.len(), 3);
         assert_eq!(final_block.header.state_root, B256::repeat_byte(0x1));
         assert_eq!(final_block.header.receipts_root, B256::repeat_byte(0x2));
         assert_eq!(final_block.header.gas_used, 21000);
@@ -1016,7 +1068,7 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap();
-        assert_eq!(tx_idx, 0);
+        assert_eq!(tx_idx, 1);
 
         let tx_sender2 = cache
             .get::<Address>(&CacheKey::TransactionSender(
@@ -1049,7 +1101,7 @@ mod tests {
                 .unwrap(),
             ))
             .unwrap();
-        assert_eq!(tx_idx2, 1);
+        assert_eq!(tx_idx2, 2);
     }
 
     #[test]
