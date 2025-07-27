@@ -47,7 +47,6 @@ pub enum CacheKey {
     TransactionSender(B256),                                  // tx_sender:tx_hash
     TransactionBlockNumber(B256),                             // tx_block_number:tx_hash
     TransactionIndex(B256),                                   // tx_idx:tx_hash
-    TransactionCount { address: Address, block_number: u64 }, // tx_count:from_address:block_number
     Receipt(B256),                                            // receipt:tx_hash
     ReceiptBlock(B256),                                       // receipt_block:tx_hash
     Block(u64),                                               // block:block_number
@@ -65,12 +64,6 @@ impl Display for CacheKey {
             CacheKey::TransactionSender(hash) => write!(f, "tx_sender:{hash:?}"),
             CacheKey::TransactionBlockNumber(hash) => write!(f, "tx_block_number:{hash:?}"),
             CacheKey::TransactionIndex(hash) => write!(f, "tx_idx:{hash:?}"),
-            CacheKey::TransactionCount {
-                address,
-                block_number,
-            } => {
-                write!(f, "tx_count:{address}:{block_number}")
-            }
             CacheKey::Receipt(hash) => write!(f, "receipt:{hash:?}"),
             CacheKey::ReceiptBlock(hash) => write!(f, "receipt_block:{hash:?}"),
             CacheKey::Block(number) => write!(f, "block:{number:?}"),
@@ -126,15 +119,8 @@ impl FlashblocksState {
             })
     }
 
-    pub fn get_transaction_count(&self, block_num: u64, address: Address) -> U256 {
-        // self.current_state.load().get_transaction_count(address)
-        U256::from(
-            self.get::<u64>(&CacheKey::TransactionCount {
-                address,
-                block_number: block_num + 1,
-            })
-            .unwrap_or(0),
-        )
+    pub fn get_transaction_count(&self, address: Address) -> U256 {
+        self.current_state.load().get_transaction_count(address)
     }
 
     pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
@@ -535,27 +521,6 @@ impl FlashblocksState {
 
                 // update tx count for each from address
                 if let Ok(from) = transaction.recover_signer() {
-                    // Get current tx count, default to 0 if not found
-                    let current_count = self
-                        .get::<u64>(&CacheKey::TransactionCount {
-                            address: from,
-                            block_number,
-                        })
-                        .unwrap_or(0);
-                    // Increment tx count by 1
-                    if let Err(e) = self.set(
-                        CacheKey::TransactionCount {
-                            address: from,
-                            block_number,
-                        },
-                        &(current_count + 1),
-                    ) {
-                        error!(
-                            message = "failed to set transaction count in cache",
-                            error = %e
-                        );
-                    }
-
                     // also keep track of sender of each transaction
                     if let Err(e) =
                         self.set(CacheKey::TransactionSender(transaction.tx_hash()), &from)
