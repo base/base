@@ -5,11 +5,13 @@ mod tests {
     use crate::subscription::{Flashblock, Metadata};
     use alloy_consensus::Receipt;
     use alloy_genesis::Genesis;
+    use alloy_primitives::map::HashMap;
     use alloy_primitives::{address, b256, Address, Bytes, TxHash, B256, U256};
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_engine::PayloadId;
+    use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
@@ -23,7 +25,6 @@ mod tests {
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use serde_json;
     use std::any::Any;
-    use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::str::FromStr;
     use std::sync::Arc;
@@ -139,6 +140,14 @@ mod tests {
     }
 
     fn create_first_payload() -> Flashblock {
+        let block_info_tx = Bytes::from_str(
+            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
+            .unwrap();
+
+        let block_info_txn_hash =
+            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
+                .unwrap();
+
         Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
@@ -153,10 +162,28 @@ mod tests {
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::ZERO,
             }),
-            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![block_info_tx],
+                ..Default::default()
+            },
             metadata: Metadata {
                 block_number: 1,
-                receipts: HashMap::default(),
+                receipts: {
+                    let mut receipts = HashMap::default();
+                    receipts.insert(
+                        block_info_txn_hash,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 10000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012991u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                    receipts
+                },
                 new_account_balances: HashMap::default(),
             },
         }
@@ -189,7 +216,7 @@ mod tests {
                         TX1_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 21000,
+                            cumulative_gas_used: 31000,
                             logs: vec![],
                         }),
                     );
@@ -197,7 +224,7 @@ mod tests {
                         TX2_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 45000,
+                            cumulative_gas_used: 55000,
                             logs: vec![],
                         }),
                     );
@@ -253,7 +280,7 @@ mod tests {
             .expect("pending block expected");
 
         assert_eq!(pending_block.number(), 1);
-        assert_eq!(pending_block.transactions.hashes().len(), 0);
+        assert_eq!(pending_block.transactions.hashes().len(), 1); // L1Info transaction
 
         let second_payload = create_second_payload();
         node.send_payload(second_payload).await?;
@@ -265,7 +292,7 @@ mod tests {
             .expect("pending block expected");
 
         assert_eq!(block.number(), 1);
-        assert_eq!(block.transactions.hashes().len(), 2);
+        assert_eq!(block.transactions.hashes().len(), 3);
 
         Ok(())
     }
