@@ -1,7 +1,7 @@
 use std::{io::Read, sync::Arc};
 
 use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use futures_util::StreamExt;
 use reth_optimism_primitives::OpReceipt;
@@ -27,7 +27,7 @@ struct FlashbotsMessage {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Metadata {
-    pub receipts: HashMap<String, OpReceipt>,
+    pub receipts: HashMap<B256, OpReceipt>,
     pub new_account_balances: HashMap<Address, U256>,
     pub block_number: u64,
 }

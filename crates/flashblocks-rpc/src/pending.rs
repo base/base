@@ -1,31 +1,9 @@
-/*
-
-State
-    - new_flashblock_received(...)
-        - update
-    - new_canonical_block_received(...)
-        - clear
-    - subscribe_to_flashblocks(...)
-        - return a thing that fires on new one received and processed
-
-Cache
-    - current block number
-    - pending block
-    - map<hash => receipt>
-    - map<hash => txn>
-    - map<address => balance>
-    - map<address => txn count>
-
-    new_flashblock_received(...)
-        - appends data to maps
-
- */
-use alloy_consensus::transaction::SignerRecoverable;
 use crate::subscription::Flashblock;
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use reth_optimism_primitives::OpBlock;
+use reth_optimism_primitives::{OpBlock, OpReceipt};
 use rollup_boost::ExecutionPayloadBaseV1;
 
 #[derive(Debug, Clone)]
@@ -38,6 +16,7 @@ pub struct PendingBlock {
 
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
+    transaction_receipts: HashMap<B256, OpReceipt>,
 }
 
 impl PendingBlock {
@@ -49,6 +28,7 @@ impl PendingBlock {
             flashblocks: vec![],
             account_balances: HashMap::default(),
             transaction_count: HashMap::default(),
+            transaction_receipts: HashMap::default(),
         }
     }
     pub fn new_block(flashblock: Flashblock) -> Self {
@@ -59,6 +39,7 @@ impl PendingBlock {
             flashblocks: vec![],
             account_balances: HashMap::default(),
             transaction_count: HashMap::default(),
+            transaction_receipts: HashMap::default(),
         };
         result.insert_data(flashblock);
         result
@@ -73,14 +54,16 @@ impl PendingBlock {
     fn insert_data(&mut self, flashblock: Flashblock) {
         self.flashblocks.push(flashblock.clone());
 
-        let transactions = self.flashblocks.iter()
-            .map(|flashblock| flashblock.diff.transactions.clone())
-            .flatten()
+        let transactions = self
+            .flashblocks
+            .iter()
+            .flat_map(|flashblock| flashblock.diff.transactions.clone())
             .collect();
 
-        let withdrawals = self.flashblocks.iter()
-            .map(|flashblock| flashblock.diff.withdrawals.clone())
-            .flatten()
+        let withdrawals = self
+            .flashblocks
+            .iter()
+            .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
             .collect();
 
         let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
@@ -107,25 +90,29 @@ impl PendingBlock {
             },
         };
 
-        // TODO: Error case
+        // TODO: Error cases
         let block: OpBlock = execution_payload.try_into_block().unwrap();
+        let _l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)
+            .unwrap();
 
-        // Redo transaction count for the whole block.
+        // TODO: Can we do this without zero'ing out the txn count for the whole block.
         self.transaction_count.clear();
         for transaction in block.body.transactions.iter() {
-            let signer = match transaction.recover_signer() {
+            let sender = match transaction.recover_signer() {
                 Ok(signer) => signer,
                 Err(_err) => panic!("hello world todo"),
             };
 
             let zero = U256::from(0);
-            let current_count = self.transaction_count.get(&signer)
-                .unwrap_or(&zero);
+            let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
 
-            _ = self.transaction_count.insert(
-                signer,
-                *current_count + U256::from(1),
-            )
+            _ = self
+                .transaction_count
+                .insert(sender, *current_count + U256::from(1))
+        }
+
+        for (tx_hash, receipt) in flashblock.metadata.receipts.iter() {
+            _ = self.transaction_receipts.insert(*tx_hash, receipt.clone())
         }
 
         for (address, balance) in flashblock.metadata.new_account_balances {
@@ -133,8 +120,15 @@ impl PendingBlock {
         }
     }
 
+    pub fn get_receipt(&self, tx_hash: B256) -> Option<OpReceipt> {
+        self.transaction_receipts.get(&tx_hash).cloned()
+    }
+
     pub fn get_transaction_count(&self, address: Address) -> U256 {
-        self.transaction_count.get(&address).cloned().unwrap_or(U256::from(0))
+        self.transaction_count
+            .get(&address)
+            .cloned()
+            .unwrap_or(U256::from(0))
     }
 
     pub fn get_balance(&self, address: Address) -> Option<U256> {
