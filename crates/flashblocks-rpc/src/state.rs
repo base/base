@@ -45,8 +45,7 @@ impl FlashblocksState {
             && flashblock.index == pending_block.flashblock_idx + 1
     }
 
-    fn update_block(&self, block: eyre::Result<PendingBlock>) {
-        let start_time = Instant::now();
+    fn update_block(&self, block: eyre::Result<PendingBlock>, start_time: Instant) {
         match block {
             Ok(block) => {
                 self.pending_block.swap(Some(Arc::new(block)));
@@ -62,6 +61,7 @@ impl FlashblocksState {
     }
 
     pub fn on_flashblock_received(&self, flashblock: Flashblock) {
+        let start_time = Instant::now();
         match self.pending_block.load_full() {
             Some(pending_block) => {
                 if flashblock.index == 0 {
@@ -69,15 +69,15 @@ impl FlashblocksState {
                         .flashblocks_in_block
                         .record((pending_block.flashblock_idx + 1) as f64);
 
-                    self.update_block(PendingBlock::new_block(
-                        self.chain_spec.clone(),
-                        flashblock.clone(),
-                    ));
+                    self.update_block(
+                        PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()),
+                        start_time,
+                    );
                 } else if self.is_next_flashblock(&pending_block, &flashblock) {
-                    self.update_block(PendingBlock::extend_block(
-                        &pending_block,
-                        flashblock.clone(),
-                    ));
+                    self.update_block(
+                        PendingBlock::extend_block(&pending_block, flashblock.clone()),
+                        start_time,
+                    );
                 } else if pending_block.block_number != flashblock.metadata.block_number {
                     self.metrics.unexpected_block_order.increment(1);
                     self.pending_block.swap(None);
@@ -99,10 +99,10 @@ impl FlashblocksState {
             }
             None => {
                 if flashblock.index == 0 {
-                    self.update_block(PendingBlock::new_block(
-                        self.chain_spec.clone(),
-                        flashblock.clone(),
-                    ));
+                    self.update_block(
+                        PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()),
+                        start_time,
+                    );
                 } else {
                     debug!(message = "waiting for first Flashblock")
                 }
