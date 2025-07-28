@@ -21,6 +21,8 @@ pub enum CacheKey {
     DiffTransactions(u64),                                    // diff:transactions:block_number
     AccountBalance(Address),                                  // address
     HighestPayloadIndex,                                      // highest_payload_index
+    // Overrides for eth_call based on flashblocks executed txs
+    PendingOverrides, // pending
 }
 
 impl Display for CacheKey {
@@ -45,6 +47,7 @@ impl Display for CacheKey {
             CacheKey::DiffTransactions(number) => write!(f, "diff:transactions:{number:?}"),
             CacheKey::AccountBalance(addr) => write!(f, "{addr:?}"),
             CacheKey::HighestPayloadIndex => write!(f, "highest_payload_index"),
+            CacheKey::PendingOverrides => write!(f, "pending_eth_overrides"),
         }
     }
 }
