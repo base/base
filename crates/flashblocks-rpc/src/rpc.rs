@@ -19,7 +19,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_consensus::{OpDepositReceipt, OpReceiptEnvelope};
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
+use op_alloy_rpc_types::{OpTransactionRequest, Transaction};
 use reth::providers::{CanonStateSubscriptions, TransactionsProvider};
 use reth::rpc::server_types::eth::TransactionSource;
 use reth::{api::BlockBody, providers::HeaderProvider};
@@ -27,7 +27,7 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{OpBlock, OpPrimitives, OpReceipt, OpTransactionSigned};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_rpc_eth_api::helpers::EthTransactions;
+use reth_rpc_eth_api::helpers::{EthCall, EthTransactions};
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{
     helpers::{EthBlocks, EthState},
@@ -77,6 +77,13 @@ pub trait EthApiOverride {
         &self,
         transaction: alloy_primitives::Bytes,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
+
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes>;
 }
 
 #[derive(Debug)]
@@ -544,6 +551,26 @@ where
                 Ok(None)
             }
         }
+    }
+
+    async fn call(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes> {
+        let block_id = block_number.unwrap_or_default();
+        let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.call.increment(1);
+            overrides.state = self
+                .cache
+                .get::<alloy_rpc_types_eth::state::StateOverride>(&CacheKey::PendingOverrides);
+        }
+        // Delegate to the underlying eth_api
+        EthCall::call(&self.eth_api, transaction, block_number, overrides)
+            .await
+            .map_err(Into::into)
     }
 }
 
