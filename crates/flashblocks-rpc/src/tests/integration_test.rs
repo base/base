@@ -138,7 +138,7 @@ mod tests {
                 new_account_balances: {
                     let mut map = HashMap::default();
                     map.insert(
-                        "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string(),
+                        "0x1234567890123456789012345678901234567890".to_string(),
                         "0x1234".to_string(),
                     );
                     map.insert(
@@ -332,7 +332,7 @@ mod tests {
         .arg("-H")
         .arg("Content-Type: application/json")
         .arg("-d")
-        .arg(r#"{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266","pending"],"id":1}"#)
+        .arg(r#"{"jsonrpc":"2.0","method":"eth_getBalance","params":["0x1234567890123456789012345678901234567890","pending"],"id":1}"#)
         .output()?;
 
         let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
