@@ -74,13 +74,18 @@ impl PendingBlock {
             transactions_by_hash: HashMap::default(),
         }
     }
-    pub fn new_block(chain_spec: Arc<OpChainSpec>, flashblock: Flashblock) -> Self {
+    pub fn new_block(chain_spec: Arc<OpChainSpec>, flashblock: Flashblock) -> eyre::Result<Self> {
+        let base = flashblock
+            .base
+            .clone()
+            .ok_or(eyre!("missing base flashblock"))?;
+
         let mut result = Self {
             chain_spec,
             header: Header::default().seal_slow(),
             block_number: flashblock.metadata.block_number,
             index_number: flashblock.index,
-            base: flashblock.base.clone().unwrap(), //todo!
+            base,
             transactions: Default::default(),
             flashblocks: vec![],
             account_balances: HashMap::default(),
@@ -88,17 +93,20 @@ impl PendingBlock {
             transaction_receipts: HashMap::default(),
             transactions_by_hash: HashMap::default(),
         };
-        result.insert_data(flashblock);
-        result
+        result.insert_data(flashblock)?;
+        Ok(result)
     }
 
-    pub fn extend_block(previous_cache: &PendingBlock, flashblock: Flashblock) -> Self {
+    pub fn extend_block(
+        previous_cache: &PendingBlock,
+        flashblock: Flashblock,
+    ) -> eyre::Result<Self> {
         let mut result = previous_cache.clone();
-        result.insert_data(flashblock);
-        result
+        result.insert_data(flashblock)?;
+        Ok(result)
     }
 
-    fn insert_data(&mut self, flashblock: Flashblock) {
+    fn insert_data(&mut self, flashblock: Flashblock) -> eyre::Result<()> {
         self.flashblocks.push(flashblock.clone());
 
         let transactions = self
@@ -146,24 +154,22 @@ impl PendingBlock {
             },
         };
 
-        // TODO: Error cases
-        let block: OpBlock = execution_payload.try_into_block().unwrap();
-        let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body).unwrap();
+        let block: OpBlock = execution_payload.try_into_block()?;
+        let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
 
         self.header = block.header.clone().seal_slow();
 
-        // TODO: Can we do this without zero'ing out the txn count for the whole block.
         self.transaction_count.clear();
         self.transaction_receipts.clear();
         self.transactions_by_hash.clear();
         self.transactions.clear();
-
         let mut gas_used = 0;
         let mut next_log_index = 0;
+
         for (idx, transaction) in block.body.transactions.iter().enumerate() {
             let sender = match transaction.recover_signer() {
                 Ok(signer) => signer,
-                Err(_err) => panic!("hello world todo"),
+                Err(err) => return Err(err.into()),
             };
 
             // Transaction Count
@@ -178,8 +184,7 @@ impl PendingBlock {
             let receipt = receipt_by_hash
                 .get(&transaction.tx_hash())
                 .cloned()
-                .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))
-                .unwrap(); // todo
+                .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
 
             let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
             let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
@@ -188,8 +193,7 @@ impl PendingBlock {
             let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
                 let deposit_receipt = receipt
                     .as_deposit_receipt()
-                    .ok_or(eyre!("deposit transaction, non deposit receipt"))
-                    .unwrap(); // todo return
+                    .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
 
                 (
                     deposit_receipt.deposit_receipt_version,
@@ -250,9 +254,7 @@ impl PendingBlock {
             };
 
             let op_receipt =
-                OpReceiptBuilder::new(self.chain_spec.as_ref(), input, &mut l1_block_info)
-                    .expect("failed to build receipt")
-                    .build();
+                OpReceiptBuilder::new(self.chain_spec.as_ref(), input, &mut l1_block_info)?.build();
 
             self.transaction_receipts
                 .insert(transaction.tx_hash(), op_receipt);
@@ -264,6 +266,8 @@ impl PendingBlock {
         for (address, balance) in flashblock.metadata.new_account_balances {
             self.account_balances.insert(address, balance);
         }
+
+        Ok(())
     }
 
     pub fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
