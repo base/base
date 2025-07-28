@@ -3,7 +3,7 @@ use crate::pending::PendingBlock;
 use crate::rpc::FlashblocksAPI;
 use crate::subscription::Flashblock;
 use alloy_primitives::{Address, TxHash, U256};
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapOption;
 use op_alloy_network::Optimism;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_rpc_convert::RpcTransaction;
@@ -12,14 +12,14 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 // Buffer 4s of Flashblocks
 const BUFFER_SIZE: usize = 20;
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksState {
-    current_state: Arc<ArcSwap<PendingBlock>>,
+    pending_block: Arc<ArcSwapOption<PendingBlock>>,
 
     flashblock_sender: Sender<Flashblock>,
     metrics: Metrics,
@@ -29,82 +29,84 @@ pub struct FlashblocksState {
 impl FlashblocksState {
     pub fn new(chain_spec: Arc<OpChainSpec>) -> Self {
         Self {
-            current_state: Arc::new(ArcSwap::from_pointee(PendingBlock::empty(
-                chain_spec.clone(),
-            ))),
+            pending_block: Arc::new(ArcSwapOption::new(None)),
             chain_spec,
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
             metrics: Metrics::default(),
         }
     }
 
-    fn is_next_flashblock(&self, flashblock: &Flashblock) -> bool {
-        flashblock.metadata.block_number == self.current_state.load().block_number
-            && flashblock.index == self.current_state.load().index_number + 1
+    fn is_next_flashblock(
+        &self,
+        pending_block: &Arc<PendingBlock>,
+        flashblock: &Flashblock,
+    ) -> bool {
+        flashblock.metadata.block_number == pending_block.block_number
+            && flashblock.index == pending_block.flashblock_idx + 1
     }
 
-    pub fn on_flashblock_received(&self, flashblock: Flashblock) {
+    fn update_block(&self, block: eyre::Result<PendingBlock>) {
         let start_time = Instant::now();
-        let current_state = self.current_state.load();
-
-        if flashblock.index == 0 {
-            self.metrics
-                .flashblocks_in_block
-                .record((current_state.index_number + 1) as f64);
-
-            if let Ok(pending_block) =
-                PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone())
-            {
-                self.current_state.swap(Arc::new(pending_block));
+        match block {
+            Ok(block) => {
+                self.pending_block.swap(Some(Arc::new(block)));
                 self.metrics
                     .block_processing_duration
                     .record(start_time.elapsed());
-            } else {
+            }
+            Err(e) => {
+                warn!(message = "could not process Flashblock", error = %e);
                 self.metrics.block_processing_error.increment(1);
             }
+        }
+    }
 
-            match PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()) {
-                Ok(block) => {
-                    self.current_state.swap(Arc::new(block));
+    pub fn on_flashblock_received(&self, flashblock: Flashblock) {
+        match self.pending_block.load_full() {
+            Some(pending_block) => {
+                if flashblock.index == 0 {
                     self.metrics
-                        .block_processing_duration
-                        .record(start_time.elapsed());
-                }
-                Err(e) => {
-                    warn!(message = "failed to process flashblock (extension)", error = %e)
+                        .flashblocks_in_block
+                        .record((pending_block.flashblock_idx + 1) as f64);
+
+                    self.update_block(PendingBlock::new_block(
+                        self.chain_spec.clone(),
+                        flashblock.clone(),
+                    ));
+                } else if self.is_next_flashblock(&pending_block, &flashblock) {
+                    self.update_block(PendingBlock::extend_block(
+                        &pending_block,
+                        flashblock.clone(),
+                    ));
+                } else if pending_block.block_number != flashblock.metadata.block_number {
+                    self.metrics.unexpected_block_order.increment(1);
+                    self.pending_block.swap(None);
+
+                    info!(
+                        message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
+                        curr_block = %pending_block.block_number,
+                        new_block = %flashblock.metadata.block_number,
+                    );
+                } else {
+                    self.metrics.unexpected_block_order.increment(1);
+
+                    info!(
+                        message = "None sequential Flashblocks, keeping cache",
+                        curr_block = %pending_block.block_number,
+                        new_block = %flashblock.metadata.block_number,
+                    );
                 }
             }
-        } else if self.is_next_flashblock(&flashblock) {
-            match PendingBlock::extend_block(&current_state, flashblock.clone()) {
-                Ok(block) => {
-                    self.current_state.swap(Arc::new(block));
-                    self.metrics
-                        .block_processing_duration
-                        .record(start_time.elapsed());
-                }
-                Err(e) => {
-                    warn!(message = "failed to process flashblock (extension)", error = %e)
+            None => {
+                if flashblock.index == 0 {
+                    self.update_block(PendingBlock::new_block(
+                        self.chain_spec.clone(),
+                        flashblock.clone(),
+                    ));
+                } else {
+                    debug!(message = "waiting for first Flashblock")
                 }
             }
-        } else if current_state.block_number != flashblock.metadata.block_number {
-            self.metrics.unexpected_block_order.increment(1);
-
-            info!(
-                message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                curr_block = %current_state.block_number,
-                new_block = %flashblock.metadata.block_number,
-            );
-
-            self.current_state
-                .swap(Arc::new(PendingBlock::empty(self.chain_spec.clone())));
-        } else {
-            self.metrics.unexpected_block_order.increment(1);
-
-            info!(
-                message = "None sequential Flashblocks, keeping cache",
-                curr_block = %current_state.block_number,
-                new_block = %flashblock.metadata.block_number,
-            );
         }
 
         _ = self.flashblock_sender.send(flashblock);
@@ -113,23 +115,32 @@ impl FlashblocksState {
 
 impl FlashblocksAPI for FlashblocksState {
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.current_state.load().get_block(full)
+        self.pending_block.load_full().map(|pb| pb.get_block(full))
     }
 
     fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.current_state.load().get_receipt(tx_hash)
+        self.pending_block
+            .load_full()
+            .and_then(|pb| pb.get_receipt(tx_hash))
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
-        self.current_state.load().get_transaction_count(address)
+        self.pending_block
+            .load_full()
+            .map(|pb| pb.get_transaction_count(address))
+            .unwrap_or_else(|| U256::from(0))
     }
 
     fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
-        self.current_state.load().get_transaction_by_hash(tx_hash)
+        self.pending_block
+            .load_full()
+            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
-        self.current_state.load().get_balance(address)
+        self.pending_block
+            .load_full()
+            .and_then(|pb| pb.get_balance(address))
     }
 
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock> {
