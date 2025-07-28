@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
-use tracing::info;
+use tracing::{info, warn};
 
 // Buffer 4s of Flashblocks
 const BUFFER_SIZE: usize = 20;
@@ -52,22 +52,40 @@ impl FlashblocksState {
                 .flashblocks_in_block
                 .record((current_state.index_number + 1) as f64);
 
-            self.current_state.swap(Arc::new(PendingBlock::new_block(
-                self.chain_spec.clone(),
-                flashblock.clone(),
-            )));
+            if let Ok(pending_block) =
+                PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone())
+            {
+                self.current_state.swap(Arc::new(pending_block));
+                self.metrics
+                    .block_processing_duration
+                    .record(start_time.elapsed());
+            } else {
+                self.metrics.block_processing_error.increment(1);
+            }
 
-            self.metrics
-                .block_processing_duration
-                .record(start_time.elapsed());
+            match PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()) {
+                Ok(block) => {
+                    self.current_state.swap(Arc::new(block));
+                    self.metrics
+                        .block_processing_duration
+                        .record(start_time.elapsed());
+                }
+                Err(e) => {
+                    warn!(message = "failed to process flashblock (extension)", error = %e)
+                }
+            }
         } else if self.is_next_flashblock(&flashblock) {
-            self.current_state.swap(Arc::new(PendingBlock::extend_block(
-                &current_state,
-                flashblock.clone(),
-            )));
-            self.metrics
-                .block_processing_duration
-                .record(start_time.elapsed());
+            match PendingBlock::extend_block(&current_state, flashblock.clone()) {
+                Ok(block) => {
+                    self.current_state.swap(Arc::new(block));
+                    self.metrics
+                        .block_processing_duration
+                        .record(start_time.elapsed());
+                }
+                Err(e) => {
+                    warn!(message = "failed to process flashblock (extension)", error = %e)
+                }
+            }
         } else if current_state.block_number != flashblock.metadata.block_number {
             self.metrics.unexpected_block_order.increment(1);
 
@@ -248,6 +266,39 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn test_processing_error() {
+        let state = new_state();
+
+        assert!(state.get_block(true).is_none());
+
+        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
+
+        let current_block = state.get_block(true).unwrap();
+
+        let invalid_flashblock = Flashblock {
+            index: 1,
+            base: None,
+            payload_id: PayloadId::new([0; 8]),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![TX1_DATA, TX2_DATA],
+                withdrawals: vec![],
+                gas_used: 21000,
+                ..Default::default()
+            },
+            metadata: Metadata {
+                block_number: 1,
+                receipts: HashMap::default(), // invalid because it's missing the receipts for txns
+                new_account_balances: HashMap::default(),
+            },
+        };
+
+        state.on_flashblock_received(invalid_flashblock);
+
+        // When the flashblock is invalid, the chain doesn't progress
+        assert_eq!(state.get_block(true).unwrap().hash(), current_block.hash());
     }
 
     #[test]

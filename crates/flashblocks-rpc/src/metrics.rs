@@ -29,4 +29,7 @@ pub struct Metrics {
 
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
+
+    #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
+    pub block_processing_error: Counter,
 }
