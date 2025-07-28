@@ -24,22 +24,6 @@ struct FlashblocksRollupArgs {
 
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
-
-    #[arg(
-        long = "receipt-buffer-size",
-        value_name = "RECEIPT_BUFFER_SIZE",
-        default_value = "2000",
-        env = "RECEIPT_BUFFER_SIZE"
-    )]
-    pub receipt_buffer_size: usize,
-
-    #[arg(
-        long = "total-timeout-secs",
-        value_name = "TOTAL_TIMEOUT_SECS",
-        default_value = "4",
-        env = "TOTAL_TIMEOUT_SECS"
-    )]
-    pub total_timeout_secs: u64,
 }
 
 impl FlashblocksRollupArgs {
@@ -53,14 +37,10 @@ fn main() {
         .run(|builder, flashblocks_rollup_args| async move {
             info!(message = "starting custom Base node");
 
-            let total_timeout_secs = flashblocks_rollup_args.total_timeout_secs;
             let chain_spec = builder.config().chain.clone();
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
 
-            let flashblocks_state = Arc::new(FlashblocksState::new(
-                chain_spec.clone(),
-                flashblocks_rollup_args.receipt_buffer_size,
-            ));
+            let flashblocks_state = Arc::new(FlashblocksState::new(chain_spec.clone()));
 
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
@@ -88,7 +68,6 @@ fn main() {
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             flashblocks_state.clone(),
-                            total_timeout_secs,
                         );
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
                     } else {
