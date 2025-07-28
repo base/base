@@ -40,7 +40,7 @@ mod tests {
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
                 block_number: 1,
-                gas_limit: 60_000_000,
+                gas_limit: 30_000_000,
                 timestamp: 0,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::ZERO,
@@ -61,9 +61,9 @@ mod tests {
         // Example: `cast mktx --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --nonce 1 --gas-limit 100000 --gas-price 1499576 --chain 84532 --value 0 --priority-gas-price 0 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x`
         // Create second payload (index 1) with transactions
         // tx1 hash: 0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548 (deposit transaction)
-        // tx2 hash: 0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3
+        // tx2 hash: 0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a
         let tx1 = Bytes::from_str("0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3").unwrap();
-        let tx2 = Bytes::from_str("0x02f87383014a3480808316e1b8830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018a021e19e0c997c21d356080c001a0550a5dcf4dcab7151142a0c76cb46ea185962c74c61372ee67ae165820274df7a04c93fc2001bc726136d4342c220128573b1542a550d015b937be5ac11ff54046").unwrap();
+        let tx2 = Bytes::from_str("0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31").unwrap();
         // Send another test flashblock payload
         let payload = FlashblocksPayloadV1 {
             payload_id: PayloadId::new([0; 8]),
@@ -93,7 +93,7 @@ mod tests {
                         }),
                     );
                     receipts.insert(
-                        "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3"
+                        "0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a"
                             .to_string(), // transaction hash as string
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
@@ -238,7 +238,7 @@ mod tests {
         let receipt = provider
             .get_transaction_receipt(
                 B256::from_str(
-                    "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3",
+                    "0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a",
                 )
                 .unwrap(),
             )
@@ -260,7 +260,7 @@ mod tests {
         let tx = provider
             .get_transaction_by_hash(
                 B256::from_str(
-                    "0xf1846b9cb3a6d3e6f4345dd4f55243e553379464d2e7d0de1dbc44337d6b86d3",
+                    "0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a",
                 )
                 .unwrap(),
             )
