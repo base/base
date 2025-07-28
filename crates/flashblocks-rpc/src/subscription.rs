@@ -25,7 +25,7 @@ struct FlashbotsMessage {
     id: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Metadata {
     pub receipts: HashMap<B256, OpReceipt>,
     pub new_account_balances: HashMap<Address, U256>,
@@ -93,7 +93,7 @@ impl FlashblocksSubscriber {
                                 Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
                                     Ok(payload) => {
                                         let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
-                                            error!(message = "Failed to publish message to chanell", error = %e);
+                                            error!(message = "Failed to publish message to channel", error = %e);
                                         });
                                     }
                                     Err(e) => {
