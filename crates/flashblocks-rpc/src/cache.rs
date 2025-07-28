@@ -47,7 +47,7 @@ impl Display for CacheKey {
             CacheKey::DiffTransactions(number) => write!(f, "diff:transactions:{number:?}"),
             CacheKey::AccountBalance(addr) => write!(f, "{addr:?}"),
             CacheKey::HighestPayloadIndex => write!(f, "highest_payload_index"),
-            CacheKey::PendingOverrides => write!(f, "pending_storage_slots"),
+            CacheKey::PendingOverrides => write!(f, "pending_eth_overrides"),
         }
     }
 }

@@ -1157,35 +1157,4 @@ mod tests {
         let highest = cache.get::<u64>(&CacheKey::HighestPayloadIndex).unwrap();
         assert_eq!(highest, 0);
     }
-
-    // /// Create provide and push 1 block with transaction
-    // fn get_mock_provider() -> MockEthProvider<EthPrimitives, OpChainSpec> {
-    //     let chain_spec = OpChainSpecBuilder::base_mainnet().build();
-    //     let client = NoopProvider::eth(Arc::new(chain_spec));
-    //     let mut parent_hash = B256::default();
-    //     let header = Header {
-    //         number: 1,
-    //         gas_limit: 60_000_000,
-    //         gas_used: 0,
-    //         base_fee_per_gas: Some(1000),
-    //         parent_hash,
-    //         ..Default::default()
-    //     };
-    //     let transaction = TransactionSigned::new_unhashed(
-    //         Transaction::Legacy(Default::default()),
-    //         Signature::test_signature(),
-    //     );
-    //     let transactions = vec![transaction];
-    //     client.add_block(
-    //         parent_hash,
-    //         Block {
-    //             header: header.clone(),
-    //             body: BlockBody {
-    //                 transactions,
-    //                 ..Default::default()
-    //             },
-    //         },
-    //     );
-    //     client
-    // }
 }
