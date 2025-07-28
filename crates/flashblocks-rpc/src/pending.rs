@@ -3,11 +3,13 @@ use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta
 use alloy_consensus::TxReceipt;
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, TxHash, B256, U256};
+use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use eyre::eyre;
-use op_alloy_rpc_types::OpTransactionReceipt;
+use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_primitives::{OpBlock, OpPrimitives};
+use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use rollup_boost::ExecutionPayloadBaseV1;
@@ -22,9 +24,12 @@ pub struct PendingBlock {
 
     pub block_number: u64,
     pub index_number: u64,
+
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
+    transactions_by_hash: HashMap<B256, Transaction>,
+    transactions: Vec<Transaction>,
 }
 
 impl PendingBlock {
@@ -33,11 +38,13 @@ impl PendingBlock {
             chain_spec,
             block_number: 0,
             index_number: 0,
+            transactions: Default::default(),
             base: ExecutionPayloadBaseV1::default(),
             flashblocks: vec![],
             account_balances: HashMap::default(),
             transaction_count: HashMap::default(),
             transaction_receipts: HashMap::default(),
+            transactions_by_hash: HashMap::default(),
         }
     }
     pub fn new_block(chain_spec: Arc<OpChainSpec>, flashblock: Flashblock) -> Self {
@@ -46,10 +53,12 @@ impl PendingBlock {
             block_number: flashblock.metadata.block_number,
             index_number: flashblock.index,
             base: flashblock.base.clone().unwrap(), //todo!
+            transactions: Default::default(),
             flashblocks: vec![],
             account_balances: HashMap::default(),
             transaction_count: HashMap::default(),
             transaction_receipts: HashMap::default(),
+            transactions_by_hash: HashMap::default(),
         };
         result.insert_data(flashblock);
         result
@@ -118,6 +127,9 @@ impl PendingBlock {
         // TODO: Can we do this without zero'ing out the txn count for the whole block.
         self.transaction_count.clear();
         self.transaction_receipts.clear();
+        self.transactions_by_hash.clear();
+        self.transactions.clear();
+
         let mut gas_used = 0;
         let mut next_log_index = 0;
         for (idx, transaction) in block.body.transactions.iter().enumerate() {
@@ -126,20 +138,73 @@ impl PendingBlock {
                 Err(_err) => panic!("hello world todo"),
             };
 
+            // Transaction Count
             let zero = U256::from(0);
             let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
 
             _ = self
                 .transaction_count
                 .insert(sender, *current_count + U256::from(1));
+            // End Transaction Count
 
-            // TODO
             let receipt = receipt_by_hash
                 .get(&transaction.tx_hash())
                 .cloned()
-                .ok_or(eyre!("todo"))
-                .unwrap();
+                .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))
+                .unwrap(); // todo
 
+            let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
+            let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
+
+            // Build Transaction
+            let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
+                println!("DANYAL: {transaction:?} {receipt:?}");
+
+                let deposit_receipt = receipt
+                    .as_deposit_receipt()
+                    .ok_or(eyre!("deposit transaction, non deposit receipt"))
+                    .unwrap(); // todo return
+
+                (
+                    deposit_receipt.deposit_receipt_version,
+                    deposit_receipt.deposit_nonce,
+                )
+            } else {
+                (None, None)
+            };
+
+            let effective_gas_price = if transaction.is_deposit() {
+                0
+            } else {
+                block
+                    .base_fee_per_gas
+                    .map(|base_fee| {
+                        transaction
+                            .effective_tip_per_gas(base_fee)
+                            .unwrap_or_default()
+                            + base_fee as u128
+                    })
+                    .unwrap_or_else(|| transaction.max_fee_per_gas())
+            };
+
+            let rpc_txn = Transaction {
+                inner: alloy_rpc_types_eth::Transaction {
+                    inner: envelope,
+                    block_hash: Some(block_hash),
+                    block_number: Some(self.block_number),
+                    transaction_index: Some(idx as u64),
+                    effective_gas_price: Some(effective_gas_price),
+                },
+                deposit_nonce,
+                deposit_receipt_version,
+            };
+
+            self.transactions_by_hash
+                .insert(transaction.tx_hash(), rpc_txn.clone());
+            self.transactions.push(rpc_txn);
+            // End Transaction
+
+            // Receipt Generation
             let meta = TransactionMeta {
                 tx_hash: transaction.tx_hash(),
                 index: idx as u64,
@@ -177,6 +242,10 @@ impl PendingBlock {
 
     pub fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
         self.transaction_receipts.get(&tx_hash).cloned()
+    }
+
+    pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<Transaction> {
+        self.transactions_by_hash.get(&tx_hash).cloned()
     }
 
     pub fn get_transaction_count(&self, address: Address) -> U256 {

@@ -118,32 +118,7 @@ impl FlashblocksState {
     }
 
     pub fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
-        // Handle cache lookup for transactions not found in the main lookup
-        self.get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
-            .map(|tx| {
-                let block_number = self
-                    .get::<u64>(&CacheKey::TransactionBlockNumber(tx_hash))
-                    .unwrap();
-                let block = self.get::<OpBlock>(&CacheKey::Block(block_number)).unwrap();
-                let index = self
-                    .get::<u64>(&CacheKey::TransactionIndex(tx_hash))
-                    .unwrap();
-                let tx_info = TransactionInfo {
-                    hash: Some(tx.tx_hash()),
-                    block_hash: Some(block.header.hash_slow()),
-                    block_number: Some(block.number),
-                    index: Some(index),
-                    base_fee: block.base_fee_per_gas,
-                };
-                let sender = self
-                    .get::<Address>(&CacheKey::TransactionSender(tx_hash))
-                    .unwrap();
-                let tx = self
-                    .get::<OpTransactionSigned>(&CacheKey::Transaction(tx_hash))
-                    .unwrap();
-                let tx = Recovered::new_unchecked(tx, sender);
-                self.transform_tx(tx, tx_info, None)
-            })
+        self.current_state.load().get_transaction_by_hash(tx_hash)
     }
 
     pub fn get_balance(&self, address: Address) -> Option<U256> {
