@@ -9,8 +9,12 @@ pub struct Metrics {
     #[metric(describe = "Count of messages received from the upstream source")]
     pub upstream_messages: Gauge,
 
-    // #[metric(describe = "Time taken to process a message")]
-    // pub block_processing_duration: Histogram,
+    #[metric(describe = "Time taken to process a message")]
+    pub block_processing_duration: Histogram,
+
+    #[metric(describe = "Time taken to process a message")]
+    pub unexpected_block_order: Counter,
+
     #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
     pub get_transaction_count: Counter,
 

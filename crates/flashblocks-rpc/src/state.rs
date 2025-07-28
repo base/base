@@ -9,6 +9,7 @@ use reth_optimism_primitives::OpReceipt;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::broadcast;
 use tracing::info;
 
@@ -71,6 +72,7 @@ impl FlashblocksState {
     }
 
     pub fn on_flashblock_received(&self, flashblock: Flashblock) {
+        let start_time = Instant::now();
         let current_state = self.current_state.load();
 
         if flashblock.index == 0 {
@@ -82,12 +84,17 @@ impl FlashblocksState {
                 self.chain_spec.clone(),
                 flashblock,
             )));
+
+            self.metrics.block_processing_duration.record(start_time.elapsed());
         } else if self.is_next_flashblock(&flashblock) {
             self.current_state.swap(Arc::new(PendingBlock::extend_block(
                 &current_state,
                 flashblock,
             )));
+            self.metrics.block_processing_duration.record(start_time.elapsed());
         } else if current_state.block_number != flashblock.metadata.block_number {
+            self.metrics.unexpected_block_order.increment(1);
+
             info!(
                 message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
                 curr_block = %current_state.block_number,
@@ -97,6 +104,8 @@ impl FlashblocksState {
             self.current_state
                 .swap(Arc::new(PendingBlock::empty(self.chain_spec.clone())));
         } else {
+            self.metrics.unexpected_block_order.increment(1);
+
             info!(
                 message = "None sequential Flashblocks, keeping cache",
                 curr_block = %current_state.block_number,
