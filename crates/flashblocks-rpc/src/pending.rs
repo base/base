@@ -28,7 +28,7 @@ pub struct PendingBlock {
     chain_spec: Arc<OpChainSpec>,
 
     pub block_number: u64,
-    pub index_number: u64,
+    pub flashblock_idx: u64,
 
     header: Sealed<Header>,
     account_balances: HashMap<Address, U256>,
@@ -39,41 +39,6 @@ pub struct PendingBlock {
 }
 
 impl PendingBlock {
-    pub fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        if self.flashblocks.is_empty() {
-            return None;
-        }
-
-        let transactions = if full {
-            BlockTransactions::Full(self.transactions.clone())
-        } else {
-            let tx_hashes = self.transactions.iter().map(|tx| tx.tx_hash()).collect();
-            BlockTransactions::Hashes(tx_hashes)
-        };
-
-        Some(RpcBlock::<Optimism> {
-            header: RPCHeader::from_consensus(self.header.clone(), None, None),
-            transactions,
-            uncles: Vec::new(),
-            withdrawals: None,
-        })
-    }
-
-    pub fn empty(chain_spec: Arc<OpChainSpec>) -> Self {
-        Self {
-            chain_spec,
-            header: Header::default().seal_slow(),
-            block_number: 0,
-            index_number: 0,
-            transactions: Default::default(),
-            base: ExecutionPayloadBaseV1::default(),
-            flashblocks: vec![],
-            account_balances: HashMap::default(),
-            transaction_count: HashMap::default(),
-            transaction_receipts: HashMap::default(),
-            transactions_by_hash: HashMap::default(),
-        }
-    }
     pub fn new_block(chain_spec: Arc<OpChainSpec>, flashblock: Flashblock) -> eyre::Result<Self> {
         let base = flashblock
             .base
@@ -84,7 +49,7 @@ impl PendingBlock {
             chain_spec,
             header: Header::default().seal_slow(),
             block_number: flashblock.metadata.block_number,
-            index_number: flashblock.index,
+            flashblock_idx: flashblock.index,
             base,
             transactions: Default::default(),
             flashblocks: vec![],
@@ -268,6 +233,22 @@ impl PendingBlock {
         }
 
         Ok(())
+    }
+
+    pub fn get_block(&self, full: bool) -> RpcBlock<Optimism> {
+        let transactions = if full {
+            BlockTransactions::Full(self.transactions.clone())
+        } else {
+            let tx_hashes = self.transactions.iter().map(|tx| tx.tx_hash()).collect();
+            BlockTransactions::Hashes(tx_hashes)
+        };
+
+        RpcBlock::<Optimism> {
+            header: RPCHeader::from_consensus(self.header.clone(), None, None),
+            transactions,
+            uncles: Vec::new(),
+            withdrawals: None,
+        }
     }
 
     pub fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
