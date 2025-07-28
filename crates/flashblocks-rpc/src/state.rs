@@ -105,8 +105,11 @@ impl FlashblocksState {
     }
 
     pub fn block_by_number(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.get::<OpBlock>(&CacheKey::PendingBlock)
-            .map(|block| self.transform_block(block, full))
+        // todo bug, when no pending state should be global on this class, not per PendingBlock
+        self.current_state.load().get_block(full)
+
+        // self.get::<OpBlock>(&CacheKey::PendingBlock)
+        //     .map(|block| self.transform_block(block, full))
     }
 
     pub fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
