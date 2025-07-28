@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::metrics::Metrics;
 use crate::state::FlashblocksState;
+use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::Address;
 use alloy_primitives::TxHash;
@@ -13,15 +14,39 @@ use jsonrpsee::{
 };
 use op_alloy_network::Optimism;
 use reth::providers::CanonStateSubscriptions;
+use reth::rpc::server_types::eth::EthApiError::TransactionConfirmationTimeout;
 use reth_rpc_eth_api::helpers::EthBlocks;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
-use tokio::sync::broadcast::error;
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
-use tracing::debug;
-use tracing::log::warn;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::time;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
+use tracing::{debug, trace, warn};
+
+/// Core API for accessing flashblock state and data.
+pub trait FlashblocksAPI {
+    /// Retrieves the current block. If `full` is true, includes full transaction details.
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>>;
+
+    /// Gets transaction receipt by hash.
+    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>>;
+
+    /// Gets transaction count (nonce) for an address.
+    fn get_transaction_count(&self, address: Address) -> U256;
+
+    /// Gets transaction details by hash.
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>>;
+
+    /// Gets balance for an address. Returns None if address not updated in flashblocks.
+    fn get_balance(&self, address: Address) -> Option<U256>;
+
+    /// Creates a subscription to receive flashblock updates.
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
+}
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
@@ -60,7 +85,7 @@ pub trait EthApiOverride {
     async fn send_raw_transaction_sync(
         &self,
         transaction: alloy_primitives::Bytes,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
+    ) -> RpcResult<RpcReceipt<Optimism>>;
 }
 
 #[derive(Debug)]
@@ -68,16 +93,14 @@ pub struct EthApiExt<Eth> {
     eth_api: Eth,
     flashblocks_state: Arc<FlashblocksState>,
     metrics: Metrics,
-    total_timeout_secs: u64,
 }
 
 impl<Eth> EthApiExt<Eth> {
-    pub fn new(eth_api: Eth, cache: Arc<FlashblocksState>, total_timeout_secs: u64) -> Self {
+    pub fn new(eth_api: Eth, cache: Arc<FlashblocksState>) -> Self {
         Self {
             eth_api,
             flashblocks_state: cache,
             metrics: Metrics::default(),
-            total_timeout_secs,
         }
     }
 }
@@ -202,8 +225,8 @@ where
     async fn send_raw_transaction_sync(
         &self,
         transaction: alloy_primitives::Bytes,
-    ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
-        debug!(message = "rpc::send_raw_transaction_sync",);
+    ) -> RpcResult<RpcReceipt<Optimism>> {
+        debug!(message = "rpc::send_raw_transaction_sync");
 
         let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
         {
@@ -216,9 +239,16 @@ where
             tx_hash = %tx_hash
         );
 
-        match self.wait_for_receipt(tx_hash).await {
-            Some(receipt) => Ok(Some(receipt)),
-            None => Ok(None),
+        const TIMEOUT_DURATION: Duration = Duration::from_secs(6);
+        tokio::select! {
+            receipt = self.wait_for_flashblocks_receipt(tx_hash) => Ok(receipt.unwrap()),
+            receipt = self.wait_for_canonical_receipt(tx_hash) => Ok(receipt.unwrap()),
+            _ = time::sleep(TIMEOUT_DURATION) => {
+                Err(TransactionConfirmationTimeout {
+                    hash: tx_hash,
+                    duration: TIMEOUT_DURATION,
+                }.into_rpc_err())
+            }
         }
     }
 }
@@ -227,37 +257,23 @@ impl<Eth> EthApiExt<Eth>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
 {
-    /// Wait for receipts from Flashblocks or canonical chain
-    async fn wait_for_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        let total_timeout = Duration::from_secs(self.total_timeout_secs);
-
-        tokio::select! {
-            receipt = self.wait_for_flashblocks_receipt(tx_hash) => receipt,
-            receipt = self.wait_for_canonical_receipt(tx_hash) => receipt,
-            _ = tokio::time::sleep(total_timeout) => {
-                debug!(
-                    message = "receipt waiting routine timed out",
-                    tx_hash = %tx_hash
-                );
-                None
-            }
-        }
-    }
-
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        let mut receiver = self.flashblocks_state.subscribe_to_receipts();
+        let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
         loop {
             match receiver.recv().await {
-                Ok(receipt_with_hash) if receipt_with_hash.tx_hash == tx_hash => {
+                Ok(flashblock) if flashblock.metadata.receipts.contains_key(&tx_hash) => {
+                    debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
                     return self.flashblocks_state.get_transaction_receipt(tx_hash);
                 }
-                Ok(_) => continue,
-                Err(error::RecvError::Closed) => {
+                Ok(_) => {
+                    trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);
+                }
+                Err(RecvError::Closed) => {
                     debug!(message = "flashblocks receipt queue closed");
                     return None;
                 }
-                Err(error::RecvError::Lagged(_)) => {
+                Err(RecvError::Lagged(_)) => {
                     warn!("Flashblocks receipt queue lagged, maybe missing receipts");
                 }
             }
