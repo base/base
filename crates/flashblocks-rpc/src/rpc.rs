@@ -96,10 +96,10 @@ pub struct EthApiExt<Eth> {
 }
 
 impl<Eth> EthApiExt<Eth> {
-    pub fn new(eth_api: Eth, cache: Arc<FlashblocksState>) -> Self {
+    pub fn new(eth_api: Eth, flashblocks_state: Arc<FlashblocksState>) -> Self {
         Self {
             eth_api,
-            flashblocks_state: cache,
+            flashblocks_state,
             metrics: Metrics::default(),
         }
     }
@@ -240,14 +240,28 @@ where
         );
 
         const TIMEOUT_DURATION: Duration = Duration::from_secs(6);
-        tokio::select! {
-            receipt = self.wait_for_flashblocks_receipt(tx_hash) => Ok(receipt.unwrap()),
-            receipt = self.wait_for_canonical_receipt(tx_hash) => Ok(receipt.unwrap()),
-            _ = time::sleep(TIMEOUT_DURATION) => {
-                Err(TransactionConfirmationTimeout {
-                    hash: tx_hash,
-                    duration: TIMEOUT_DURATION,
-                }.into_rpc_err())
+        loop {
+            tokio::select! {
+                receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
+                    if let Some(receipt) = receipt {
+                        return Ok(receipt);
+                    } else {
+                        continue
+                    }
+                }
+                receipt = self.wait_for_canonical_receipt(tx_hash) => {
+                        if let Some(receipt) = receipt {
+                            return Ok(receipt);
+                        } else {
+                            continue
+                        }
+                    }
+                _ = time::sleep(TIMEOUT_DURATION) => {
+                    return Err(TransactionConfirmationTimeout {
+                        hash: tx_hash,
+                        duration: TIMEOUT_DURATION,
+                    }.into_rpc_err());
+                }
             }
         }
     }

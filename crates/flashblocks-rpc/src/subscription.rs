@@ -54,10 +54,10 @@ pub struct FlashblocksSubscriber {
 }
 
 impl FlashblocksSubscriber {
-    pub fn new(cache: Arc<FlashblocksState>, ws_url: Url) -> Self {
+    pub fn new(flashblocks_state: Arc<FlashblocksState>, ws_url: Url) -> Self {
         Self {
             ws_url,
-            flashblocks_state: cache,
+            flashblocks_state,
             metrics: Metrics::default(),
         }
     }
@@ -73,8 +73,7 @@ impl FlashblocksSubscriber {
 
         let (sender, mut mailbox) = mpsc::channel(100);
 
-        // Spawn WebSocket handler with integrated actor loop
-        let metrics = self.metrics.clone(); // Clone here for the first spawn
+        let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let mut backoff = std::time::Duration::from_secs(1);
             const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(10);
@@ -126,7 +125,6 @@ impl FlashblocksSubscriber {
                             error = %e
                         );
                         tokio::time::sleep(backoff).await;
-                        // Double the backoff time, but cap at MAX_BACKOFF
                         backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
                         continue;
                     }
@@ -134,7 +132,6 @@ impl FlashblocksSubscriber {
             }
         });
 
-        // Spawn actor's event loop
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {

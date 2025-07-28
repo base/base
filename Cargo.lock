@@ -1580,7 +1580,6 @@ dependencies = [
  "op-alloy-rpc-types",
  "reth",
  "reth-e2e-test-utils",
- "reth-node-builder",
  "reth-optimism-chainspec 1.6.0",
  "reth-optimism-cli",
  "reth-optimism-evm 1.6.0",
