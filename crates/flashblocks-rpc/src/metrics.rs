@@ -12,7 +12,7 @@ pub struct Metrics {
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
 
-    #[metric(describe = "Time taken to process a message")]
+    #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
     pub unexpected_block_order: Counter,
 
     #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
