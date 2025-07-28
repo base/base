@@ -1,17 +1,22 @@
 use crate::subscription::Flashblock;
 use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
-use alloy_consensus::TxReceipt;
+use alloy_consensus::{Header, TxReceipt};
 use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, TxHash, B256, U256};
+use alloy_primitives::{Address, Sealable, Sealed, TxHash, B256, U256};
+use alloy_provider::network::primitives::BlockTransactions;
+use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_eth::Header as RPCHeader;
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
+use reth_rpc_eth_api::RpcBlock;
 use rollup_boost::ExecutionPayloadBaseV1;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -25,6 +30,7 @@ pub struct PendingBlock {
     pub block_number: u64,
     pub index_number: u64,
 
+    header: Sealed<Header>,
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
@@ -33,9 +39,30 @@ pub struct PendingBlock {
 }
 
 impl PendingBlock {
+    pub fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
+        if self.flashblocks.is_empty() {
+            return None;
+        }
+
+        let transactions = if full {
+            BlockTransactions::Full(self.transactions.clone())
+        } else {
+            let tx_hashes = self.transactions.iter().map(|tx| tx.tx_hash()).collect();
+            BlockTransactions::Hashes(tx_hashes)
+        };
+
+        Some(RpcBlock::<Optimism> {
+            header: RPCHeader::from_consensus(self.header.clone(), None, None),
+            transactions,
+            uncles: Vec::new(),
+            withdrawals: None,
+        })
+    }
+
     pub fn empty(chain_spec: Arc<OpChainSpec>) -> Self {
         Self {
             chain_spec,
+            header: Header::default().seal_slow(),
             block_number: 0,
             index_number: 0,
             transactions: Default::default(),
@@ -50,6 +77,7 @@ impl PendingBlock {
     pub fn new_block(chain_spec: Arc<OpChainSpec>, flashblock: Flashblock) -> Self {
         let mut result = Self {
             chain_spec,
+            header: Header::default().seal_slow(),
             block_number: flashblock.metadata.block_number,
             index_number: flashblock.index,
             base: flashblock.base.clone().unwrap(), //todo!
@@ -122,7 +150,7 @@ impl PendingBlock {
         let block: OpBlock = execution_payload.try_into_block().unwrap();
         let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body).unwrap();
 
-        let block_hash = block.header.hash_slow();
+        self.header = block.header.clone().seal_slow();
 
         // TODO: Can we do this without zero'ing out the txn count for the whole block.
         self.transaction_count.clear();
@@ -158,8 +186,6 @@ impl PendingBlock {
 
             // Build Transaction
             let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                println!("DANYAL: {transaction:?} {receipt:?}");
-
                 let deposit_receipt = receipt
                     .as_deposit_receipt()
                     .ok_or(eyre!("deposit transaction, non deposit receipt"))
@@ -190,7 +216,7 @@ impl PendingBlock {
             let rpc_txn = Transaction {
                 inner: alloy_rpc_types_eth::Transaction {
                     inner: envelope,
-                    block_hash: Some(block_hash),
+                    block_hash: Some(self.header.hash()),
                     block_number: Some(self.block_number),
                     transaction_index: Some(idx as u64),
                     effective_gas_price: Some(effective_gas_price),
@@ -208,7 +234,7 @@ impl PendingBlock {
             let meta = TransactionMeta {
                 tx_hash: transaction.tx_hash(),
                 index: idx as u64,
-                block_hash,
+                block_hash: self.header.hash(),
                 block_number: block.number,
                 base_fee: block.base_fee_per_gas,
                 excess_blob_gas: block.excess_blob_gas,
