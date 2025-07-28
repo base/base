@@ -2,7 +2,6 @@ use base_reth_flashblocks_rpc::{
     rpc::EthApiExt, state::FlashblocksState, subscription::FlashblocksSubscriber,
 };
 use std::sync::Arc;
-use std::time::Duration;
 
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use clap::Parser;
@@ -63,7 +62,6 @@ fn main() {
                 flashblocks_rollup_args.receipt_buffer_size,
             ));
 
-            let cache_clone = flashblocks_state.clone();
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
             let handle = builder
@@ -111,15 +109,6 @@ fn main() {
                         engine_tree_config,
                     );
 
-                    if flashblocks_enabled {
-                        builder.task_executor().spawn(async move {
-                            let mut interval = tokio::time::interval(Duration::from_secs(2));
-                            loop {
-                                interval.tick().await;
-                                cache_clone.cleanup_expired();
-                            }
-                        });
-                    }
                     builder.launch_with(launcher)
                 })
                 .await?;
