@@ -242,7 +242,10 @@ mod tests {
             .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
             .value(U256::from(9999999999849942300000u128))
             .input(TransactionInput::new(bytes!("0x")));
-        let res = provider.call(eth_call).await;
+        let res = provider
+            .call(eth_call)
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
         assert!(res.is_ok());
 
         tokio::time::sleep(Duration::from_secs(3)).await;
@@ -314,7 +317,10 @@ mod tests {
             .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
             .value(U256::from(9999999999849942300000u128))
             .input(TransactionInput::new(bytes!("0x")));
-        let res = provider.call(eth_call).await;
+        let res = provider
+            .call(eth_call)
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
         assert!(res.is_err());
         assert!(res
             .unwrap_err()
@@ -426,7 +432,10 @@ mod tests {
             .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
             .value(U256::ZERO)
             .input(TransactionInput::new(bytes!("0x8381f58a")));
-        let res = provider.call(eth_call).await;
+        let res = provider
+            .call(eth_call)
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
         assert!(res.is_ok());
         assert_eq!(
             U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
