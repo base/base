@@ -4,10 +4,10 @@ use std::time::Duration;
 use crate::metrics::Metrics;
 use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::Address;
-use alloy_primitives::TxHash;
-use alloy_primitives::U256;
-use alloy_rpc_types_eth::state::StateOverride;
+use alloy_primitives::{Address, Sealable, TxHash, U256};
+use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types::{BlockOverrides, TransactionTrait};
+use alloy_rpc_types::{BlockTransactions, Header};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -95,7 +95,17 @@ pub trait EthApiOverride {
         &self,
         transaction: OpTransactionRequest,
         block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes>;
+
+    #[method(name = "estimateGas")]
+    async fn estimate_gas(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
+    ) -> RpcResult<U256>;
 }
 
 #[derive(Debug)]
@@ -281,17 +291,55 @@ where
         &self,
         transaction: OpTransactionRequest,
         block_number: Option<BlockId>,
+        state_overrides: Option<StateOverride>,
+        block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes> {
         let block_id = block_number.unwrap_or_default();
-        let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.call.increment(1);
-            overrides.state = self.flashblocks_state.get_state_overrides()
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 
+        // Apply user's overrides on top
+        let mut state_overrides_builder =
+            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+        state_overrides_builder =
+            state_overrides_builder.extend(state_overrides.unwrap_or_default());
+        let final_overrides = state_overrides_builder.build();
+
         // Delegate to the underlying eth_api
-        EthCall::call(&self.eth_api, transaction, block_number, overrides)
+        EthCall::call(
+            &self.eth_api,
+            transaction,
+            block_number,
+            EvmOverrides::new(Some(final_overrides), block_overrides),
+        )
+        .await
+        .map_err(Into::into)
+    }
+
+    async fn estimate_gas(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+        overrides: Option<StateOverride>,
+    ) -> RpcResult<U256> {
+        let block_id = block_number.unwrap_or_default();
+        let mut pending_overrides = EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.estimate_gas.increment(1);
+            pending_overrides.state = self.cache.get::<StateOverride>(&CacheKey::PendingOverrides);
+        }
+
+        let mut state_overrides_builder =
+            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+        state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
+        let final_overrides = state_overrides_builder.build();
+
+        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
             .await
             .map_err(Into::into)
     }
