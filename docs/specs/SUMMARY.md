@@ -68,7 +68,6 @@
 - [Governance]()
   - [Governance Token](./governance/gov-token.md)
 - [Experimental]()
-  - [Custom Gas Token](./experimental/custom-gas-token.md)
   - [Standard L2 Genesis](./experimental/standard-l2-genesis.md)
   - [Alt-DA](./experimental/alt-da.md)
   - [Interoperability](./interop/overview.md)
