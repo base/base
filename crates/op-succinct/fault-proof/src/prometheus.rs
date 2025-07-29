@@ -36,6 +36,21 @@ pub enum ProposerGauge {
         message = "Total number of games that bonds were claimed by the proposer"
     )]
     GamesBondsClaimed,
+    #[strum(
+        serialize = "op_succinct_fp_active_proving_tasks",
+        message = "Number of game proving tasks currently in progress"
+    )]
+    ActiveProvingTasks,
+    #[strum(
+        serialize = "op_succinct_fp_games_proven",
+        message = "Total number of games successfully proven by the proposer"
+    )]
+    GamesProven,
+    #[strum(
+        serialize = "op_succinct_fp_proving_duration_seconds",
+        message = "Duration of last successful game proving in seconds"
+    )]
+    ProvingDurationSeconds,
     // Error metrics
     #[strum(
         serialize = "op_succinct_fp_game_creation_error",

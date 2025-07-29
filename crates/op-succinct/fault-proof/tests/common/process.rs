@@ -40,6 +40,7 @@ pub async fn start_proposer(
         max_games_to_check_for_bond_claiming: 100,
         safe_db_fallback: false,
         metrics_port: 9000,
+        fast_finality_proving_limit: 1,
     };
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());
