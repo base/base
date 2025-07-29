@@ -48,7 +48,7 @@ in the cluster falls behind the tip of any remote chain.
 
 The sequencer MAY include an executing message with any level of confirmation safety.
 Including cross chain messages based on preconfirmation levels of security results
-in lower latency messaging at a higher risk or an invalid block being produced.
+in lower latency messaging at a higher risk of an invalid block being produced.
 
 The sequencer MAY require different levels of security depending on the source chain.
 If the block containing the initiating message is considered safe, no additional trust
