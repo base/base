@@ -201,7 +201,7 @@ However, a challenge is only valid if the commitment and block number pairing ma
 and its L1 origin block number during derivation. Challenges associated with an illegal commitment
 or block number will be ignored during derivation and have no impact on the state of the chain.
 
-The contract is deployed behind upgradable proxy so the address can be hardcoded in the rollup config
+The contract is deployed behind an upgradable proxy so the address can be hardcoded in the rollup config
 file and does not need to change. A future upgrade can add custom resolver functions to be chosen
 dynamically when a user calls the resolve function to support other alt DA solutions.
 
