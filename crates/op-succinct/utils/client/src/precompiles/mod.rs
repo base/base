@@ -9,7 +9,7 @@ use op_revm::{
 use revm::{
     context::{Cfg, ContextTr},
     handler::{EthPrecompiles, PrecompileProvider},
-    interpreter::{Gas, InputsImpl, InstructionResult, InterpreterResult},
+    interpreter::{CallInput, Gas, InputsImpl, InstructionResult, InterpreterResult},
     precompile::{bn128, PrecompileError, PrecompileResult, PrecompileWithAddress, Precompiles},
     primitives::hardfork::SpecId,
 };
@@ -20,7 +20,7 @@ pub use factory::ZkvmOpEvmFactory;
 /// Create an annotated precompile that simply tracks the cycle count of a precompile.
 macro_rules! create_annotated_precompile {
     ($precompile:expr, $name:expr) => {
-        PrecompileWithAddress($precompile.0, |input: &Bytes, gas_limit: u64| -> PrecompileResult {
+        PrecompileWithAddress($precompile.0, |input: &[u8], gas_limit: u64| -> PrecompileResult {
             let precompile = $precompile.precompile();
 
             #[cfg(target_os = "zkvm")]
@@ -37,7 +37,6 @@ macro_rules! create_annotated_precompile {
 }
 
 /// Tuples of the original and annotated precompiles.
-// TODO: Add kzg_point_evaluation once it has standard precompile support in revm-precompile 0.17.0.
 const PRECOMPILES: &[(PrecompileWithAddress, PrecompileWithAddress)] = &[
     (bn128::add::ISTANBUL, create_annotated_precompile!(bn128::add::ISTANBUL, "bn-add")),
     (bn128::mul::ISTANBUL, create_annotated_precompile!(bn128::mul::ISTANBUL, "bn-mul")),
@@ -49,6 +48,13 @@ const PRECOMPILES: &[(PrecompileWithAddress, PrecompileWithAddress)] = &[
     (
         revm::precompile::secp256r1::P256VERIFY,
         create_annotated_precompile!(revm::precompile::secp256r1::P256VERIFY, "p256-verify"),
+    ),
+    (
+        revm::precompile::kzg_point_evaluation::POINT_EVALUATION,
+        create_annotated_precompile!(
+            revm::precompile::kzg_point_evaluation::POINT_EVALUATION,
+            "kzg-eval"
+        ),
     ),
 ];
 
@@ -100,7 +106,7 @@ where
     #[inline]
     fn run(
         &mut self,
-        _context: &mut CTX,
+        context: &mut CTX,
         address: &Address,
         inputs: &InputsImpl,
         _is_static: bool,
@@ -112,12 +118,24 @@ where
             output: Bytes::new(),
         };
 
+        use revm::context::LocalContextTr;
+        // NOTE: this snippet is refactored from the revm source code.
+        // See https://github.com/bluealloy/revm/blob/9bc0c04fda0891e0e8d2e2a6dfd0af81c2af18c4/crates/handler/src/precompile_provider.rs#L111-L122.
+        let shared_buffer;
+        let input_bytes = match &inputs.input {
+            CallInput::SharedBuffer(range) => {
+                shared_buffer = context.local().shared_memory_buffer_slice(range.clone());
+                shared_buffer.as_deref().unwrap_or(&[])
+            }
+            CallInput::Bytes(bytes) => bytes.0.iter().as_slice(),
+        };
+
         // Priority:
         // 1. If the precompile has an accelerated version, use that.
         // 2. If the precompile is not accelerated, use the default version.
         // 3. If the precompile is not found, return None.
         let output = if let Some(precompile) = self.inner.precompiles.get(address) {
-            (*precompile)(&inputs.input, gas_limit)
+            (*precompile)(input_bytes, gas_limit)
         } else {
             return Ok(None);
         };
