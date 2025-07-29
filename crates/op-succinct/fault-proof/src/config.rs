@@ -57,6 +57,10 @@ pub struct ProposerConfig {
 
     /// The metrics port.
     pub metrics_port: u16,
+
+    /// Maximum concurrent proving tasks allowed in fast finality mode.
+    /// This limit prevents game creation when proving capacity is reached.
+    pub fast_finality_proving_limit: u64,
 }
 
 impl ProposerConfig {
@@ -91,6 +95,9 @@ impl ProposerConfig {
                 .parse()?,
             metrics_port: env::var("PROPOSER_METRICS_PORT")
                 .unwrap_or("9000".to_string())
+                .parse()?,
+            fast_finality_proving_limit: env::var("FAST_FINALITY_PROVING_LIMIT")
+                .unwrap_or("1".to_string())
                 .parse()?,
         })
     }
