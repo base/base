@@ -75,29 +75,30 @@ strum_macros = "0.27.1"
 tempfile = "3.10.1"
 
 # kona
-kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
-kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", features = [
+kona-mpt = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-derive = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
+kona-driver = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-preimage = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", features = [
     "rkyv",
     "serde",
 ] }
-kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
+kona-executor = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-proof = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
 
-kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1" }
-kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
-kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
-kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
-kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.1", default-features = false }
+kona-client = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-host = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-providers-alloy = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2" }
+kona-rpc = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
+kona-protocol = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
+kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
+kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
 
 # hana
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "904f086fd7335986e87a0f0432b1f07fe997f690" }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "904f086fd7335986e87a0f0432b1f07fe997f690" }
-hana-host = { git = "https://github.com/celestiaorg/hana", rev = "904f086fd7335986e87a0f0432b1f07fe997f690" }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "904f086fd7335986e87a0f0432b1f07fe997f690" }
+# TODO(fakedev9999): Bump to 1.0.0 once the release is out.
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", rev = "ebb7cf711c3f2eba951f3fb3211c1cb1f87475dc" }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", rev = "ebb7cf711c3f2eba951f3fb3211c1cb1f87475dc" }
+hana-host = { git = "https://github.com/celestiaorg/hana", rev = "ebb7cf711c3f2eba951f3fb3211c1cb1f87475dc" }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", rev = "ebb7cf711c3f2eba951f3fb3211c1cb1f87475dc" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
@@ -117,28 +118,28 @@ op-succinct-range-utils = { path = "programs/range/utils" }
 op-succinct-bindings = { path = "bindings" }
 
 # Alloy (Network)
-alloy-signer-local = { version = "0.15.8" }
-alloy-provider = { version = "0.15.8" }
-alloy-transport = { version = "0.15.8" }
-alloy-transport-http = { version = "0.15.8" }
-alloy-contract = { version = "0.15.8" }
-alloy-network = { version = "0.15.8" }
+alloy-signer-local = { version = "1.0.9" }
+alloy-provider = { version = "1.0.9" }
+alloy-transport = { version = "1.0.9" }
+alloy-transport-http = { version = "1.0.9" }
+alloy-contract = { version = "1.0.9" }
+alloy-network = { version = "1.0.9" }
 
 # Alloy
-alloy-rlp = { version = "0.3.11", default-features = false }
-alloy-trie = { version = "0.8.0", default-features = false }
-alloy-eips = { version = "0.15.8", default-features = false }
-alloy-serde = { version = "0.15.8", default-features = false }
-alloy-consensus = { version = "0.15.8", default-features = false }
-alloy-rpc-types = { version = "0.15.8", default-features = false }
-alloy-rpc-client = { version = "0.15.8", default-features = false }
-alloy-node-bindings = { version = "0.15.8", default-features = false }
-alloy-rpc-types-engine = { version = "0.15.8", default-features = false }
-alloy-rpc-types-beacon = { version = "0.15.8", default-features = false }
-alloy-rpc-types-eth = { version = "0.15.8", default-features = false }
-alloy-rpc-types-trace = { version = "0.15.8", default-features = false }
-alloy-signer = { version = "0.15.8", default-features = false }
-alloy = { version = "0.15.8", features = [
+alloy-rlp = { version = "0.3.12", default-features = false }
+alloy-trie = { version = "0.8.1", default-features = false, features = ["ethereum"] }
+alloy-eips = { version = "1.0.9", default-features = false }
+alloy-serde = { version = "1.0.9", default-features = false }
+alloy-consensus = { version = "1.0.9", default-features = false }
+alloy-rpc-types = { version = "1.0.9", default-features = false }
+alloy-rpc-client = { version = "1.0.9", default-features = false }
+alloy-node-bindings = { version = "1.0.9", default-features = false }
+alloy-rpc-types-engine = { version = "1.0.9", default-features = false }
+alloy-rpc-types-beacon = { version = "1.0.9", default-features = false }
+alloy-rpc-types-eth = { version = "1.0.9", default-features = false }
+alloy-rpc-types-trace = { version = "1.0.9", default-features = false }
+alloy-signer = { version = "1.0.9", default-features = false }
+alloy = { version = "1.0.9", features = [
     "reqwest",
     "network",
     "providers",
@@ -152,28 +153,29 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 ] }
 alloy-sol-types = { version = "1.0.0", default-features = false }
 alloy-sol-macro = { version = "1.0.0", default-features = false }
+alloy-chains = { version = "0.2.3", default-features = false }
 
 # OP Alloy
-op-alloy-consensus = { version = "=0.15.4", default-features = false }
-op-alloy-rpc-types = { version = "=0.15.4", default-features = false }
-op-alloy-rpc-types-engine = { version = "=0.15.4", default-features = false }
-op-alloy-network = { version = "=0.15.4", default-features = false }
+op-alloy-consensus = { version = "0.17.2", default-features = false }
+op-alloy-rpc-types = { version = "0.17.2", default-features = false }
+op-alloy-rpc-types-engine = { version = "0.17.2", default-features = false }
+op-alloy-network = { version = "0.17.2", default-features = false }
 
 # Execution
-alloy-evm = { version = "0.6.0", default-features = false, features = ["op"] }
-alloy-op-evm = { version = "0.6.0", default-features = false }
+alloy-evm = { version = "0.10.0", default-features = false }
+alloy-op-evm = { version = "0.10.0", default-features = false }
 # Use kzg-rs and substrate-bn for the zkVM.
-revm = { version = "22.0.0", default-features = false, features = [
+revm = { version = "24.0.1", default-features = false, features = [
     "kzg-rs",
     "bn",
 ] }
-op-revm = { version = "3.0.1", default-features = false }
+op-revm = { version = "5.0.1", default-features = false }
 
 # SP1
-sp1-sdk = { version = "5.0.0" }
-sp1-lib = { version = "5.0.0", features = ["verify"] }
-sp1-zkvm = { version = "5.0.0", features = ["verify"] }
-sp1-build = { version = "5.0.0" }
+sp1-sdk = { version = "=5.1.0" }
+sp1-lib = { version = "=5.1.0", features = ["verify"] }
+sp1-zkvm = { version = "=5.1.0", features = ["verify"] }
+sp1-build = { version = "=5.1.0" }
 
 # kzg
 kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }

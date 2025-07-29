@@ -11,7 +11,7 @@ use kona_driver::{Driver, DriverError, DriverPipeline, DriverResult, Executor, T
 use kona_genesis::RollupConfig;
 use kona_preimage::{CommsClient, PreimageKey};
 use kona_proof::{errors::OracleProviderError, HintType};
-use kona_protocol::{L2BlockInfo, OpAttributesWithParent};
+use kona_protocol::L2BlockInfo;
 use op_alloy_consensus::{OpBlock, OpTxEnvelope, OpTxType};
 use std::fmt::Debug;
 use tracing::{error, info, warn};
@@ -49,8 +49,8 @@ where
 /// - `target`: The target block number.
 ///
 /// ## Returns
-/// - `Ok((number, output_root))` - A tuple containing the number of the produced block and the
-///   output root.
+/// - `Ok((l2_safe_head, output_root))` - A tuple containing the [L2BlockInfo] of the produced block
+///   and the output root.
 /// - `Err(e)` - An error if the block could not be produced.
 pub async fn advance_to_target<E, DP, P>(
     driver: &mut Driver<E, DP, P>,
@@ -75,12 +75,8 @@ where
 
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-start: payload-derivation");
-        let OpAttributesWithParent { mut attributes, .. } = match driver
-            .pipeline
-            .produce_payload(tip_cursor.l2_safe_head)
-            .await
-        {
-            Ok(attrs) => attrs,
+        let mut attributes = match driver.pipeline.produce_payload(tip_cursor.l2_safe_head).await {
+            Ok(attrs) => attrs.take_inner(),
             Err(PipelineErrorKind::Critical(PipelineError::EndOfSource)) => {
                 warn!(target: "client", "Exhausted data source; Halting derivation and using current safe head.");
 
@@ -110,8 +106,8 @@ where
 
         #[cfg(target_os = "zkvm")]
         println!("cycle-tracker-report-start: block-execution");
-        let execution_result = match driver.executor.execute_payload(attributes.clone()).await {
-            Ok(header) => header,
+        let outcome = match driver.executor.execute_payload(attributes.clone()).await {
+            Ok(outcome) => outcome,
             Err(e) => {
                 error!(target: "client", "Failed to execute L2 block: {}", e);
 
@@ -155,7 +151,7 @@ where
 
         // Construct the block.
         let block = OpBlock {
-            header: execution_result.header.inner().clone(),
+            header: outcome.header.inner().clone(),
             body: BlockBody {
                 transactions: attributes
                     .transactions
@@ -174,7 +170,7 @@ where
             L2BlockInfo::from_block_and_genesis(&block, &driver.pipeline.rollup_config().genesis)?;
         let tip_cursor = TipCursor::new(
             l2_info,
-            execution_result.header,
+            outcome.header,
             driver.executor.compute_output_root().map_err(DriverError::Executor)?,
         );
 

@@ -8,7 +8,7 @@ use op_revm::{
     OpTransactionError,
 };
 use revm::{
-    context::{result::EVMError, Evm as RevmEvm, EvmData, TxEnv},
+    context::{result::EVMError, Evm as RevmEvm, TxEnv},
     handler::instructions::EthInstructions,
     inspector::NoOpInspector,
     Context, Inspector,
@@ -39,6 +39,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
         EVMError<DBError, OpTransactionError>;
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;
+    type Precompiles = OpZkvmPrecompiles;
 
     fn create_evm<DB: Database>(
         &self,
@@ -48,7 +49,8 @@ impl EvmFactory for ZkvmOpEvmFactory {
         let spec_id = *input.spec_id();
         let ctx = Context::op().with_db(db).with_block(input.block_env).with_cfg(input.cfg_env);
         let revm_evm = RevmOpEvm(RevmEvm {
-            data: EvmData { ctx, inspector: NoOpInspector {} },
+            ctx,
+            inspector: NoOpInspector {},
             instruction: EthInstructions::new_mainnet(),
             precompiles: OpZkvmPrecompiles::new_with_spec(spec_id),
         });
@@ -65,7 +67,8 @@ impl EvmFactory for ZkvmOpEvmFactory {
         let spec_id = *input.spec_id();
         let ctx = Context::op().with_db(db).with_block(input.block_env).with_cfg(input.cfg_env);
         let revm_evm = RevmOpEvm(RevmEvm {
-            data: EvmData { ctx, inspector },
+            ctx,
+            inspector,
             instruction: EthInstructions::new_mainnet(),
             precompiles: OpZkvmPrecompiles::new_with_spec(spec_id),
         });
