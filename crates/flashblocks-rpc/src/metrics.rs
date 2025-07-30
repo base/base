@@ -12,8 +12,8 @@ pub struct Metrics {
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
 
-    #[metric(describe = "Time taken to process a websocket message")]
-    pub websocket_processing_duration: Histogram,
+    #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
+    pub unexpected_block_order: Counter,
 
     #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
     pub get_transaction_count: Counter,
@@ -29,6 +29,9 @@ pub struct Metrics {
 
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
+
+    #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
+    pub block_processing_error: Counter,
 
     #[metric(describe = "Count of times flashblocks call is called")]
     pub call: Counter,

@@ -31,6 +31,9 @@ reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0
 reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
 # revm
@@ -41,15 +44,16 @@ revm-bytecode = { version = "6.0.1", default-features = false }
 alloy-primitives = { version = "1.2.0", default-features = false, features = [
     "map-foldhash",
 ] }
+alloy-genesis = { version = "1.0.23", default-features = false }
 alloy-eips = { version = "1.0.23", default-features = false }
 alloy-rpc-types = { version = "1.0.23", default-features = false }
 alloy-rpc-types-engine = { version = "1.0.23", default-features = false }
 alloy-rpc-types-eth = { version = "1.0.23" }
 alloy-consensus = { version = "1.0.23" }
 alloy-trie = { version = "0.9.0", default-features = false }
-nybbles = { version = "0.4.0", default-features = false }
 alloy-provider = { version = "1.0.23" }
-alloy-hardforks = "0.2.7"
+alloy-hardforks = { version = "0.2.12" }
+alloy-rpc-client = { version = "1.0.23" }
 
 # op-alloy
 op-alloy-rpc-types = { version = "0.18.12", default-features = false }
@@ -59,7 +63,7 @@ op-alloy-network = { version = "0.18.12", default-features = false }
 op-alloy-consensus = { version = "0.18.12", default-features = false }
 
 # rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "4f6c93ed1ecd9131cea14213368f3393dbade46a" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "98fff8e059870d192739dd42d41f5244c49f4b9c" }
 rustls = "0.23.23"
 
 # tokio
@@ -74,6 +78,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 
 # rpc
 jsonrpsee = { version = "0.25.1" }
+jsonrpsee-types = { version = "0.25.1" }
 
 # misc
 clap = { version = "4.4.3" }
@@ -89,3 +94,4 @@ uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 brotli = "8.0.1"
+arc-swap = "1.7.1"
