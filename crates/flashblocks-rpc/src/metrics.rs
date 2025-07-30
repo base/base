@@ -32,4 +32,7 @@ pub struct Metrics {
 
     #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
     pub block_processing_error: Counter,
+
+    #[metric(describe = "Count of times flashblocks call is called")]
+    pub call: Counter,
 }

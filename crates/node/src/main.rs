@@ -1,9 +1,9 @@
-use base_reth_flashblocks_rpc::{
-    rpc::EthApiExt, state::FlashblocksState, subscription::FlashblocksSubscriber,
-};
+use base_reth_flashblocks_rpc::rpc::EthApiExt;
 use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
+use base_reth_flashblocks_rpc::state::FlashblocksState;
+use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
@@ -37,11 +37,7 @@ fn main() {
         .run(|builder, flashblocks_rollup_args| async move {
             info!(message = "starting custom Base node");
 
-            let chain_spec = builder.config().chain.clone();
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
-
-            let flashblocks_state = Arc::new(FlashblocksState::new(chain_spec.clone()));
-
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
             let handle = builder
@@ -60,11 +56,13 @@ fn main() {
                                 .as_str(),
                         )?;
 
+                        let flashblocks_state =
+                            Arc::new(FlashblocksState::new(ctx.provider().clone()));
+
                         let mut flashblocks_client =
                             FlashblocksSubscriber::new(flashblocks_state.clone(), ws_url);
 
                         flashblocks_client.start();
-
                         let api_ext = EthApiExt::new(
                             ctx.registry.eth_api().clone(),
                             flashblocks_state.clone(),

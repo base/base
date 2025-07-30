@@ -15,7 +15,10 @@ use tracing::{error, info};
 use url::Url;
 
 use crate::metrics::Metrics;
-use crate::state::FlashblocksState;
+
+pub trait FlashblocksReceiver {
+    fn on_flashblock_received(&self, flashblock: Flashblock);
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 struct FlashbotsMessage {
@@ -47,14 +50,17 @@ enum ActorMessage {
     BestPayload { payload: Flashblock },
 }
 
-pub struct FlashblocksSubscriber {
-    flashblocks_state: Arc<FlashblocksState>,
+pub struct FlashblocksSubscriber<Receiver> {
+    flashblocks_state: Arc<Receiver>,
     metrics: Metrics,
     ws_url: Url,
 }
 
-impl FlashblocksSubscriber {
-    pub fn new(flashblocks_state: Arc<FlashblocksState>, ws_url: Url) -> Self {
+impl<Receiver> FlashblocksSubscriber<Receiver>
+where
+    Receiver: FlashblocksReceiver + Send + Sync + 'static,
+{
+    pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
         Self {
             ws_url,
             flashblocks_state,
@@ -69,7 +75,6 @@ impl FlashblocksSubscriber {
         );
 
         let ws_url = self.ws_url.clone();
-        let flashblocks_state = self.flashblocks_state.clone();
 
         let (sender, mut mailbox) = mpsc::channel(100);
 
@@ -132,6 +137,7 @@ impl FlashblocksSubscriber {
             }
         });
 
+        let flashblocks_state = self.flashblocks_state.clone();
         tokio::spawn(async move {
             while let Some(message) = mailbox.recv().await {
                 match message {

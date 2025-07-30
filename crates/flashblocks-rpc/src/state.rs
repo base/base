@@ -1,38 +1,66 @@
 use crate::metrics::Metrics;
-use crate::pending::PendingBlock;
+use crate::pending::{PendingBlock, PendingBlockBuilder};
 use crate::rpc::FlashblocksAPI;
-use crate::subscription::Flashblock;
-use alloy_primitives::{Address, TxHash, U256};
+use crate::subscription::{Flashblock, FlashblocksReceiver};
+use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
+use alloy_consensus::{Header, TxReceipt};
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::map::foldhash::HashMap;
+use alloy_primitives::map::B256HashMap;
+use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
+use alloy_rpc_types::TransactionTrait;
+use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use arc_swap::ArcSwapOption;
+use eyre::eyre;
+use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
-use reth_optimism_chainspec::OpChainSpec;
+use op_alloy_rpc_types::Transaction;
+use reth::chainspec::{ChainSpecProvider, EthChainSpec};
+use reth::providers::{BlockReaderIdExt, StateProviderFactory};
+use reth::revm::context::result::ResultAndState;
+use reth::revm::database::StateProviderDatabase;
+use reth::revm::{DatabaseCommit, State};
+use reth_evm::{ConfigureEvm, Evm};
+use reth_optimism_chainspec::OpHardforks;
+use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
+use reth_optimism_rpc::OpReceiptBuilder;
+use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Sender;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info};
 
 // Buffer 4s of Flashblocks
 const BUFFER_SIZE: usize = 20;
 
 #[derive(Debug, Clone)]
-pub struct FlashblocksState {
+pub struct FlashblocksState<Client> {
     pending_block: Arc<ArcSwapOption<PendingBlock>>,
-
     flashblock_sender: Sender<Flashblock>,
     metrics: Metrics,
-    chain_spec: Arc<OpChainSpec>,
+    client: Client,
 }
 
-impl FlashblocksState {
-    pub fn new(chain_spec: Arc<OpChainSpec>) -> Self {
+impl<Client> FlashblocksState<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + 'static,
+{
+    pub fn new(client: Client) -> Self {
         Self {
             pending_block: Arc::new(ArcSwapOption::new(None)),
-            chain_spec,
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
             metrics: Metrics::default(),
+            client,
         }
     }
 
@@ -41,12 +69,13 @@ impl FlashblocksState {
         pending_block: &Arc<PendingBlock>,
         flashblock: &Flashblock,
     ) -> bool {
-        flashblock.metadata.block_number == pending_block.block_number
-            && flashblock.index == pending_block.flashblock_idx + 1
+        flashblock.metadata.block_number == pending_block.block_number()
+            && flashblock.index == pending_block.flashblock_index() + 1
     }
 
-    fn update_block(&self, block: eyre::Result<PendingBlock>, start_time: Instant) {
-        match block {
+    fn update_block(&self, flashblocks: Vec<Flashblock>) {
+        let start_time = Instant::now();
+        match self.process_flashblock(flashblocks) {
             Ok(block) => {
                 self.pending_block.swap(Some(Arc::new(block)));
                 self.metrics
@@ -54,37 +83,265 @@ impl FlashblocksState {
                     .record(start_time.elapsed());
             }
             Err(e) => {
-                warn!(message = "could not process Flashblock", error = %e);
+                error!(message = "could not process Flashblock", error = %e);
                 self.metrics.block_processing_error.increment(1);
             }
         }
     }
 
-    pub fn on_flashblock_received(&self, flashblock: Flashblock) {
-        let start_time = Instant::now();
+    fn process_flashblock(&self, flashblocks: Vec<Flashblock>) -> eyre::Result<PendingBlock> {
+        let mut pending_block_builder = PendingBlockBuilder::new();
+
+        let base = flashblocks
+            .first()
+            .ok_or(eyre!("cannot build a pendingblock from no flashblocks"))?
+            .base
+            .clone()
+            .ok_or(eyre!("first flashblock does not contain a base"))?;
+
+        let latest_flashblock = flashblocks.last().cloned().unwrap(); // Must have a last Flashblock if we have a first
+
+        let transactions = flashblocks
+            .iter()
+            .flat_map(|flashblock| flashblock.diff.transactions.clone())
+            .collect();
+
+        let withdrawals = flashblocks
+            .iter()
+            .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
+            .collect();
+
+        let receipt_by_hash = flashblocks
+            .iter()
+            .map(|flashblock| flashblock.metadata.receipts.clone())
+            .fold(HashMap::default(), |mut acc, receipts| {
+                acc.extend(receipts);
+                acc
+            });
+
+        let updated_balances = flashblocks
+            .iter()
+            .map(|flashblock| flashblock.metadata.new_account_balances.clone())
+            .fold(HashMap::default(), |mut acc, balances| {
+                acc.extend(balances);
+                acc
+            });
+
+        pending_block_builder.with_flashblocks(flashblocks);
+
+        let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+            payload_inner: ExecutionPayloadV2 {
+                withdrawals,
+                payload_inner: ExecutionPayloadV1 {
+                    parent_hash: base.parent_hash,
+                    fee_recipient: base.fee_recipient,
+                    state_root: latest_flashblock.diff.state_root,
+                    receipts_root: latest_flashblock.diff.receipts_root,
+                    logs_bloom: latest_flashblock.diff.logs_bloom,
+                    prev_randao: base.prev_randao,
+                    block_number: base.block_number,
+                    gas_limit: base.gas_limit,
+                    gas_used: latest_flashblock.diff.gas_used,
+                    timestamp: base.timestamp,
+                    extra_data: base.extra_data.clone(),
+                    base_fee_per_gas: base.base_fee_per_gas,
+                    block_hash: latest_flashblock.diff.block_hash,
+                    transactions,
+                },
+            },
+        };
+
+        let block: OpBlock = execution_payload.try_into_block()?;
+        let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
+
+        let header = block.header.clone().seal_slow();
+        pending_block_builder.with_header(header.clone());
+
+        let mut gas_used = 0;
+        let mut next_log_index = 0;
+
+        let previous_block = header.number - 1;
+        let state = self
+            .client
+            .state_by_block_number_or_tag(BlockNumberOrTag::Number(previous_block))?;
+        let state = StateProviderDatabase::new(state);
+        let db = State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build();
+
+        let block_env_attributes = OpNextBlockEnvAttributes {
+            timestamp: base.timestamp,
+            suggested_fee_recipient: base.fee_recipient,
+            prev_randao: base.prev_randao,
+            gas_limit: base.gas_limit,
+            parent_beacon_block_root: Some(base.parent_beacon_block_root),
+            extra_data: base.extra_data.clone(),
+        };
+        let previous_header = self.client.header_by_number(previous_block)?.ok_or(eyre!(
+            "Failed to extract header for block number {}. Skipping eth_call override setting",
+            previous_block
+        ))?;
+
+        let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
+        let evm_env = evm_config.next_evm_env(&previous_header, &block_env_attributes)?;
+
+        let mut evm = evm_config.evm_with_env(db, evm_env);
+        let mut state_cache_builder = StateOverridesBuilder::default();
+
+        for (idx, transaction) in block.body.transactions.iter().enumerate() {
+            let sender = match transaction.recover_signer() {
+                Ok(signer) => signer,
+                Err(err) => return Err(err.into()),
+            };
+
+            pending_block_builder.increment_nonce(sender);
+
+            let receipt = receipt_by_hash
+                .get(&transaction.tx_hash())
+                .cloned()
+                .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
+
+            let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
+            let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
+
+            // Build Transaction
+            let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
+                let deposit_receipt = receipt
+                    .as_deposit_receipt()
+                    .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
+
+                (
+                    deposit_receipt.deposit_receipt_version,
+                    deposit_receipt.deposit_nonce,
+                )
+            } else {
+                (None, None)
+            };
+
+            let effective_gas_price = if transaction.is_deposit() {
+                0
+            } else {
+                block
+                    .base_fee_per_gas
+                    .map(|base_fee| {
+                        transaction
+                            .effective_tip_per_gas(base_fee)
+                            .unwrap_or_default()
+                            + base_fee as u128
+                    })
+                    .unwrap_or_else(|| transaction.max_fee_per_gas())
+            };
+
+            let rpc_txn = Transaction {
+                inner: alloy_rpc_types_eth::Transaction {
+                    inner: envelope,
+                    block_hash: Some(header.hash()),
+                    block_number: Some(base.block_number),
+                    transaction_index: Some(idx as u64),
+                    effective_gas_price: Some(effective_gas_price),
+                },
+                deposit_nonce,
+                deposit_receipt_version,
+            };
+
+            pending_block_builder.with_transaction(rpc_txn);
+            // End Transaction
+
+            // Receipt Generation
+            let meta = TransactionMeta {
+                tx_hash: transaction.tx_hash(),
+                index: idx as u64,
+                block_hash: header.hash(),
+                block_number: block.number,
+                base_fee: block.base_fee_per_gas,
+                excess_blob_gas: block.excess_blob_gas,
+                timestamp: block.timestamp,
+            };
+
+            let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+                receipt: Cow::Borrowed(&receipt),
+                tx: Recovered::new_unchecked(transaction, sender),
+                gas_used: receipt.cumulative_gas_used() - gas_used,
+                next_log_index,
+                meta,
+            };
+
+            let op_receipt = OpReceiptBuilder::new(
+                self.client.chain_spec().as_ref(),
+                input,
+                &mut l1_block_info,
+            )?
+            .build();
+
+            pending_block_builder.with_receipt(transaction.tx_hash(), op_receipt);
+
+            gas_used = receipt.cumulative_gas_used();
+            next_log_index += receipt.logs().len();
+
+            // EVM Transaction
+            let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
+            for (addr, acc) in &state {
+                let state_diff = B256HashMap::<B256>::from_iter(
+                    acc.storage
+                        .iter()
+                        .map(|(&key, slot)| (key.into(), slot.present_value.into())),
+                );
+                let acc_override = AccountOverride {
+                    balance: Some(acc.info.balance),
+                    nonce: Some(acc.info.nonce),
+                    code: acc.info.code.clone().map(|code| code.bytes()),
+                    state: None,
+                    state_diff: Some(state_diff),
+                    move_precompile_to: None,
+                };
+                state_cache_builder = state_cache_builder.append(*addr, acc_override);
+            }
+            evm.db_mut().commit(state);
+            // End EVM Transaction
+        }
+
+        pending_block_builder.with_state_overrides(state_cache_builder.build());
+
+        for (address, balance) in updated_balances {
+            pending_block_builder.with_account_balance(address, balance);
+        }
+
+        pending_block_builder.build()
+    }
+}
+
+impl<Client> FlashblocksReceiver for FlashblocksState<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + 'static,
+{
+    fn on_flashblock_received(&self, flashblock: Flashblock) {
         match self.pending_block.load_full() {
             Some(pending_block) => {
                 if flashblock.index == 0 {
                     self.metrics
                         .flashblocks_in_block
-                        .record((pending_block.flashblock_idx + 1) as f64);
+                        .record((pending_block.flashblock_index() + 1) as f64);
 
-                    self.update_block(
-                        PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()),
-                        start_time,
-                    );
+                    self.update_block(vec![flashblock.clone()]);
                 } else if self.is_next_flashblock(&pending_block, &flashblock) {
-                    self.update_block(
-                        PendingBlock::extend_block(&pending_block, flashblock.clone()),
-                        start_time,
-                    );
-                } else if pending_block.block_number != flashblock.metadata.block_number {
+                    let mut flashblocks = pending_block.get_flashblocks();
+                    flashblocks.push(flashblock.clone());
+
+                    self.update_block(flashblocks);
+                } else if pending_block.block_number() != flashblock.metadata.block_number {
                     self.metrics.unexpected_block_order.increment(1);
                     self.pending_block.swap(None);
 
-                    info!(
+                    error!(
                         message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                        curr_block = %pending_block.block_number,
+                        curr_block = %pending_block.block_number(),
                         new_block = %flashblock.metadata.block_number,
                     );
                 } else {
@@ -92,17 +349,14 @@ impl FlashblocksState {
 
                     info!(
                         message = "None sequential Flashblocks, keeping cache",
-                        curr_block = %pending_block.block_number,
+                        curr_block = %pending_block.block_number(),
                         new_block = %flashblock.metadata.block_number,
                     );
                 }
             }
             None => {
                 if flashblock.index == 0 {
-                    self.update_block(
-                        PendingBlock::new_block(self.chain_spec.clone(), flashblock.clone()),
-                        start_time,
-                    );
+                    self.update_block(vec![flashblock.clone()]);
                 } else {
                     debug!(message = "waiting for first Flashblock")
                 }
@@ -113,7 +367,7 @@ impl FlashblocksState {
     }
 }
 
-impl FlashblocksAPI for FlashblocksState {
+impl<Client> FlashblocksAPI for FlashblocksState<Client> {
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
         self.pending_block.load_full().map(|pb| pb.get_block(full))
     }
@@ -146,374 +400,10 @@ impl FlashblocksAPI for FlashblocksState {
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock> {
         self.flashblock_sender.subscribe()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::subscription::Metadata;
-    use alloy_consensus::Receipt;
-    use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{address, b256, bytes, Address, Bytes, B256, U256};
-    use alloy_provider::network::ReceiptResponse;
-    use alloy_rpc_types_engine::PayloadId;
-    use op_alloy_consensus::OpDepositReceipt;
-    use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_primitives::OpReceipt;
-    use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-    use std::str::FromStr;
-
-    const BLOCK_NUM: u64 = 100;
-
-    const FEE_RECIPIENT: Address = address!("0x1234567890123456789012345678901234567890");
-    // https://basescan.org/tx/0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6
-    const BLOCK_INFO_SENDER: Address = address!("0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001");
-    const BLOCK_INFO_HASH: B256 =
-        b256!("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6");
-    const BLOCK_INFO_TXN: Bytes = bytes!("0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000");
-
-    // https://sepolia.basescan.org/tx/0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c
-    const TX1_SENDER: Address = address!("0xb63d5Fd2e6c53fE06680c47736aba771211105e4");
-    const TX1_HASH: B256 =
-        b256!("0x3cbbc9a6811ac5b2a2e5780bdb67baffc04246a59f39e398be048f1b2d05460c");
-    const TX1_DATA: Bytes = bytes!("0x02f87483014a3482017e8459682f0084596830a98301f1d094b01866f195533de16eb929b73f87280693ca0cb480844e71d92dc001a0a658c18bdba29dd4022ee6640fdd143691230c12b3c8c86cf5c1a1f1682cc1e2a0248a28763541ebed2b87ecea63a7024b5c2b7de58539fa64c887b08f5faf29c1");
-
-    //https://sepolia.basescan.org/tx/0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8
-    const TX2_SENDER: Address = address!("0x6E5e56b972374e4fDe8390dF0033397Df931A49D");
-    const TX2_HASH: B256 =
-        b256!("0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8");
-    const TX2_DATA: Bytes = bytes!("0xf8cd82016d8316e5708302c01c94f39635f2adf40608255779ff742afe13de31f57780b8646e530e9700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000156ddc81eed2a36d68302948ba0a608703e79b22164f74523d188a11f81c25a65dd59535bab1cd1d8b30d115f3ea07f4cfbbad77a139c9209d3bded89091867ff6b548dd714109c61d1f8e7a84d14");
-
-    fn new_state() -> FlashblocksState {
-        let chain_spec = Arc::new(
-            OpChainSpecBuilder::base_mainnet()
-                .ecotone_activated()
-                .build(),
-        );
-
-        FlashblocksState::new(chain_spec)
-    }
-
-    fn create_first_flashblock(number: u64) -> Flashblock {
-        Flashblock {
-            index: 0,
-            payload_id: PayloadId::new([0; 8]),
-            base: Some(ExecutionPayloadBaseV1 {
-                fee_recipient: FEE_RECIPIENT,
-                block_number: number,
-                gas_limit: 1000000,
-                timestamp: 1234567890,
-                base_fee_per_gas: U256::from(10000),
-                ..Default::default()
-            }),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![BLOCK_INFO_TXN],
-                ..Default::default()
-            },
-            metadata: Metadata {
-                block_number: 1,
-                receipts: {
-                    let mut receipts = HashMap::default();
-                    receipts.insert(
-                        BLOCK_INFO_HASH,
-                        OpReceipt::Deposit(OpDepositReceipt {
-                            inner: Receipt {
-                                status: true.into(),
-                                cumulative_gas_used: 10000,
-                                logs: vec![],
-                            },
-                            deposit_nonce: Some(4012991u64),
-                            deposit_receipt_version: None,
-                        }),
-                    );
-                    receipts
-                },
-                new_account_balances: HashMap::default(),
-            },
-        }
-    }
-
-    fn create_second_flashblock() -> Flashblock {
-        Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![TX1_DATA, TX2_DATA],
-                withdrawals: vec![],
-                state_root: B256::repeat_byte(0x1),
-                receipts_root: B256::repeat_byte(0x2),
-                logs_bloom: Default::default(),
-                gas_used: 21000,
-                block_hash: B256::repeat_byte(0x3),
-                withdrawals_root: Default::default(),
-            },
-            metadata: Metadata {
-                block_number: 1,
-                receipts: {
-                    let mut receipts = HashMap::default();
-                    receipts.insert(
-                        TX1_HASH,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 21000,
-                            logs: vec![],
-                        }),
-                    );
-                    receipts.insert(
-                        TX2_HASH,
-                        OpReceipt::Legacy(Receipt {
-                            status: true.into(),
-                            cumulative_gas_used: 42000,
-                            logs: vec![],
-                        }),
-                    );
-                    receipts
-                },
-                new_account_balances: {
-                    let mut map = HashMap::default();
-                    map.insert(FEE_RECIPIENT, U256::from_str("0x1234").unwrap());
-                    map
-                },
-            },
-        }
-    }
-
-    #[test]
-    fn test_processing_error() {
-        let state = new_state();
-
-        assert!(state.get_block(true).is_none());
-
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-
-        let current_block = state.get_block(true).unwrap();
-
-        let invalid_flashblock = Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![TX1_DATA, TX2_DATA],
-                withdrawals: vec![],
-                gas_used: 21000,
-                ..Default::default()
-            },
-            metadata: Metadata {
-                block_number: 1,
-                receipts: HashMap::default(), // invalid because it's missing the receipts for txns
-                new_account_balances: HashMap::default(),
-            },
-        };
-
-        state.on_flashblock_received(invalid_flashblock);
-
-        // When the flashblock is invalid, the chain doesn't progress
-        assert_eq!(state.get_block(true).unwrap().hash(), current_block.hash());
-    }
-
-    #[test]
-    fn test_get_balance() {
-        let alice = Address::random();
-        let bob = Address::random();
-
-        let state = new_state();
-
-        assert!(state.get_balance(alice).is_none());
-        assert!(state.get_balance(bob).is_none());
-
-        let mut fb1 = create_first_flashblock(BLOCK_NUM);
-        fb1.metadata
-            .new_account_balances
-            .insert(alice, U256::from(1000));
-
-        state.on_flashblock_received(fb1);
-        assert_eq!(
-            state.get_balance(alice).expect("should be set"),
-            U256::from(1000)
-        );
-        assert!(state.get_balance(bob).is_none());
-
-        let mut fb2 = create_second_flashblock();
-        fb2.metadata
-            .new_account_balances
-            .insert(alice, U256::from(2000));
-        fb2.metadata
-            .new_account_balances
-            .insert(bob, U256::from(1000));
-
-        state.on_flashblock_received(fb2);
-        assert_eq!(
-            state.get_balance(alice).expect("should be set"),
-            U256::from(2000)
-        );
-        assert_eq!(
-            state.get_balance(bob).expect("should be set"),
-            U256::from(1000)
-        );
-    }
-
-    #[test]
-    fn test_transaction_count() {
-        let state = new_state();
-
-        assert_eq!(
-            state.get_transaction_count(BLOCK_INFO_SENDER),
-            U256::from(0)
-        );
-        assert_eq!(state.get_transaction_count(TX1_SENDER), U256::from(0));
-        assert_eq!(state.get_transaction_count(TX2_SENDER), U256::from(0));
-
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-
-        assert_eq!(
-            state.get_transaction_count(BLOCK_INFO_SENDER),
-            U256::from(1)
-        );
-        assert_eq!(state.get_transaction_count(TX1_SENDER), U256::from(0));
-        assert_eq!(state.get_transaction_count(TX2_SENDER), U256::from(0));
-
-        state.on_flashblock_received(create_second_flashblock());
-
-        assert_eq!(
-            state.get_transaction_count(BLOCK_INFO_SENDER),
-            U256::from(1)
-        );
-        assert_eq!(state.get_transaction_count(TX1_SENDER), U256::from(1));
-        assert_eq!(state.get_transaction_count(TX2_SENDER), U256::from(1));
-    }
-
-    #[test]
-    fn test_get_receipt() {
-        let state = new_state();
-        assert!(state.get_transaction_receipt(BLOCK_INFO_HASH).is_none());
-        assert!(state.get_transaction_receipt(TX1_HASH).is_none());
-        assert!(state.get_transaction_receipt(TX2_HASH).is_none());
-
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-        let block_info_receipt = state.get_transaction_receipt(BLOCK_INFO_HASH).unwrap();
-
-        assert_eq!(block_info_receipt.gas_used(), 10000);
-        assert_eq!(block_info_receipt.cumulative_gas_used(), 10000);
-        assert_eq!(block_info_receipt.block_number(), Some(BLOCK_NUM));
-
-        assert!(state.get_transaction_receipt(TX1_HASH).is_none());
-        assert!(state.get_transaction_receipt(TX2_HASH).is_none());
-
-        state.on_flashblock_received(create_second_flashblock());
-
-        let tx1_receipt = state.get_transaction_receipt(TX1_HASH).unwrap();
-        assert_eq!(tx1_receipt.gas_used(), 11000);
-        assert_eq!(tx1_receipt.cumulative_gas_used(), 21000);
-
-        let tx2_receipt = state.get_transaction_receipt(TX2_HASH).unwrap();
-        assert_eq!(tx2_receipt.gas_used(), 21000);
-        assert_eq!(tx2_receipt.cumulative_gas_used(), 42000);
-    }
-
-    #[test]
-    fn test_get_block() {
-        let state = new_state();
-        assert!(state.get_block(true).is_none());
-        assert!(state.get_block(false).is_none());
-
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-        assert_eq!(
-            state
-                .get_block(false)
-                .expect("should be set")
-                .transactions
-                .as_hashes()
-                .expect("should be hashes"),
-            vec![BLOCK_INFO_HASH,]
-        );
-
-        state.on_flashblock_received(create_second_flashblock());
-
-        let block = state.get_block(false).unwrap();
-        assert_eq!(
-            block.transactions.as_hashes().expect("should be hashes"),
-            vec![BLOCK_INFO_HASH, TX1_HASH, TX2_HASH,]
-        );
-
-        assert_eq!(block.header.state_root, B256::repeat_byte(0x1));
-        assert_eq!(block.header.receipts_root, B256::repeat_byte(0x2));
-        assert_eq!(block.header.gas_used, 21000);
-        assert_eq!(block.header.base_fee_per_gas, Some(10000));
-    }
-
-    #[test]
-    fn test_new_block_clears_current_block() {
-        let state = new_state();
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-        state.on_flashblock_received(create_second_flashblock());
-
-        let current_block = state.get_block(true).unwrap();
-
-        assert_eq!(current_block.number(), BLOCK_NUM);
-        assert_eq!(current_block.transactions.len(), 3);
-
-        let new_block = create_first_flashblock(BLOCK_NUM + 1);
-        state.on_flashblock_received(new_block);
-
-        let updated_block = state.get_block(true).unwrap();
-        assert_eq!(updated_block.number(), BLOCK_NUM + 1);
-        assert_eq!(updated_block.transactions.len(), 1);
-    }
-
-    #[test]
-    fn test_skip_initial_non_zero_index_payload() {
-        let state = new_state();
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-        assert_eq!(
-            state.get_block(true).expect("should be set").number(),
-            BLOCK_NUM
-        );
-
-        let payload = Flashblock {
-            payload_id: PayloadId::new([0; 8]),
-            index: 1, // Non-zero index but no base in cache
-            base: None,
-            diff: ExecutionPayloadFlashblockDeltaV1::default(),
-            metadata: Metadata {
-                block_number: BLOCK_NUM + 1,
-                ..Default::default()
-            },
-        };
-
-        state.on_flashblock_received(payload);
-
-        assert!(state.get_block(true).is_none());
-    }
-
-    #[test]
-    fn test_non_sequential_payload_ignored() {
-        let state = new_state();
-        assert!(state.get_block(true).is_none());
-        state.on_flashblock_received(create_first_flashblock(BLOCK_NUM));
-        // Just the block info transaction
-        assert_eq!(
-            state
-                .get_block(true)
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
-
-        let mut third_payload = create_second_flashblock();
-        third_payload.index = 3;
-
-        state.on_flashblock_received(third_payload);
-        // Still the block info transaction, the txns in the third payload are ignored as it's
-        // missing a Flashblock
-        assert_eq!(
-            state
-                .get_block(true)
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
+    fn get_state_overrides(&self) -> Option<StateOverride> {
+        self.pending_block
+            .load_full()
+            .and_then(|pb| pb.get_state_overrides())
     }
 }
