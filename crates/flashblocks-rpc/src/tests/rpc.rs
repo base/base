@@ -2,17 +2,21 @@
 mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, Metadata};
+    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use alloy_consensus::Receipt;
+    use alloy_eips::BlockNumberOrTag;
+    use alloy_eips::BlockNumberOrTag::Pending;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
-    use alloy_primitives::{address, b256, Address, Bytes, TxHash, B256, U256};
+    use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256};
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::TransactionInput;
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
+    use op_alloy_rpc_types::OpTransactionRequest;
     use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
     use reth::core::exit::NodeExitFuture;
@@ -106,7 +110,7 @@ mod tests {
             .extend_rpc_modules(move |ctx| {
                 // We are not going to use the websocket connection to send payloads so we use
                 // a dummy url.
-                let flashblocks_state = Arc::new(FlashblocksState::new(chain_spec.clone()));
+                let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
 
                 let api_ext =
                     EthApiExt::new(ctx.registry.eth_api().clone(), flashblocks_state.clone());
@@ -157,7 +161,7 @@ mod tests {
                 fee_recipient: Address::ZERO,
                 prev_randao: B256::default(),
                 block_number: 1,
-                gas_limit: 0,
+                gas_limit: 30_000_000,
                 timestamp: 0,
                 extra_data: Bytes::new(),
                 base_fee_per_gas: U256::ZERO,
@@ -189,11 +193,44 @@ mod tests {
         }
     }
 
-    fn create_second_payload() -> Flashblock {
-        // Create second payload (index 1) with transactions
-        let tx1 = Bytes::from_str("0x02f9041783014a348301d48d8459682f008459682f6a830493e09400a739e4479c97289801654ec1a52a67077613c080b903a437946af700000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000008ac7230489e8000000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000365746800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e8000000000000000000000000000000000000000000000000000000000000000001a0000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000002400000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000077365706f6c696100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a30783438656438353962326366306339623662616338643731346531623634363132643132323464366400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c001a0566779287abe153521da0266841d92ba4ee6aebfa8dc4ddb8103237312405f13a022ecbaf20da5401e4229dba4afadb22434be624684ce8e5d62aa04e2f638f631").unwrap();
-        let tx2 = Bytes::from_str("0xf8cd82016d8316e5708302c01c94f39635f2adf40608255779ff742afe13de31f57780b8646e530e9700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000001bc16d674ec8000000000000000000000000000000000000000000000000000156ddc81eed2a36d68302948ba0a608703e79b22164f74523d188a11f81c25a65dd59535bab1cd1d8b30d115f3ea07f4cfbbad77a139c9209d3bded89091867ff6b548dd714109c61d1f8e7a84d14").unwrap();
+    const TEST_ADDRESS: Address = address!("0x1234567890123456789012345678901234567890");
+    const PENDING_BALANCE: u64 = 4660;
 
+    const DEPOSIT_SENDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    const TX_SENDER: Address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
+
+    const DEPOSIT_TX_HASH: TxHash =
+        b256!("0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548");
+    const TRANSFER_ETH_HASH: TxHash =
+        b256!("0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a");
+
+    const DEPLOYMENT_HASH: TxHash =
+        b256!("0xa9353897b4ab350ae717eefdad4c9cb613e684f5a490c82a44387d8d5a2f8197");
+
+    const INCREMENT_HASH: TxHash =
+        b256!("0x993ad6a332752f6748636ce899b3791e4a33f7eece82c0db4556c7339c1b2929");
+
+    const COUNTER_ADDRESS: Address = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+
+    // NOTE:
+    // To create tx use cast mktx/
+    // Example: `cast mktx --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --nonce 1 --gas-limit 100000 --gas-price 1499576 --chain 84532 --value 0 --priority-gas-price 0 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x`
+    // Create second payload (index 1) with transactions
+    // tx1 hash: 0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548 (deposit transaction)
+    // tx2 hash: 0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a
+    const DEPOSIT_TX: Bytes = bytes!("0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3");
+    const TRANSFER_ETH_TX: Bytes = bytes!("0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31");
+
+    // NOTE:
+    // Following txns deploy a simple Counter contract (Compiled with solc 0.8.13)
+    // Only contains a `uin256 public number` and a function increment() { number++ };
+    // Following txn calls increment once, so number should be 1
+    // Raw Bytecode: 0x608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033
+    const DEPLOYMENT_TX: Bytes = bytes!("0x02f901db83014a3401808449504f8083030d408080b90183608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033c080a034278436b367f7b73ab6dc7c7cc09f8880104513f8b8fb691b498257de97a5bca05cb702ebad2aadf9f225bf5f8685ea03d194bf7a2ea05b1d27a1bd33169f9fe0");
+    // Increment tx: call increment()
+    const INCREMENT_TX: Bytes = bytes!("0x02f86d83014a3402808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a0a9c1a565668084d4052bbd9bc3abce8555a06aed6651c82c2756ac8a83a79fa2a03427f440ce4910a5227ea0cedb60b06cf0bea2dbbac93bd37efa91a474c29d89");
+
+    fn create_second_payload() -> Flashblock {
         let payload = Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 1,
@@ -203,7 +240,7 @@ mod tests {
                 receipts_root: B256::default(),
                 gas_used: 0,
                 block_hash: B256::default(),
-                transactions: vec![tx1, tx2],
+                transactions: vec![DEPOSIT_TX, TRANSFER_ETH_TX, DEPLOYMENT_TX, INCREMENT_TX],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
@@ -213,18 +250,38 @@ mod tests {
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
-                        TX1_HASH,
+                        DEPOSIT_TX_HASH,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 31000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012992u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                    receipts.insert(
+                        TRANSFER_ETH_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 31000,
+                            cumulative_gas_used: 55000,
                             logs: vec![],
                         }),
                     );
                     receipts.insert(
-                        TX2_HASH,
+                        DEPLOYMENT_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 55000,
+                            cumulative_gas_used: 172279,
+                            logs: vec![],
+                        }),
+                    );
+                    receipts.insert(
+                        INCREMENT_HASH,
+                        OpReceipt::Legacy(Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 172279 + 44000,
                             logs: vec![],
                         }),
                     );
@@ -233,6 +290,7 @@ mod tests {
                 new_account_balances: {
                     let mut map = HashMap::default();
                     map.insert(TEST_ADDRESS, U256::from(PENDING_BALANCE));
+                    map.insert(COUNTER_ADDRESS, U256::from(0));
                     map
                 },
             },
@@ -240,17 +298,6 @@ mod tests {
 
         payload
     }
-
-    const TEST_ADDRESS: Address = address!("0x1234567890123456789012345678901234567890");
-    const PENDING_BALANCE: u64 = 4660;
-
-    const TX1_SENDER: Address = address!("0x48ed859B2Cf0c9b6bac8d714E1b64612D1224D6d");
-    const TX2_SENDER: Address = address!("0x6e5e56b972374e4fde8390df0033397df931a49d");
-
-    const TX1_HASH: TxHash =
-        b256!("0x10b758f54be7d521724a8bd1bbac1da097cf3f552f6a105bb11bc569b8dd3b91");
-    const TX2_HASH: TxHash =
-        b256!("0xa6155b295085d3b87a3c86e342fe11c3b22f9952d0d85d9d34d223b7d6a17cd8");
 
     #[tokio::test]
     async fn test_get_pending_block() -> eyre::Result<()> {
@@ -292,7 +339,7 @@ mod tests {
             .expect("pending block expected");
 
         assert_eq!(block.number(), 1);
-        assert_eq!(block.transactions.hashes().len(), 3);
+        assert_eq!(block.transactions.hashes().len(), 5);
 
         Ok(())
     }
@@ -319,24 +366,30 @@ mod tests {
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
-        assert!(provider.get_transaction_by_hash(TX1_HASH).await?.is_none());
-        assert!(provider.get_transaction_by_hash(TX2_HASH).await?.is_none());
+        assert!(provider
+            .get_transaction_by_hash(DEPOSIT_TX_HASH)
+            .await?
+            .is_none());
+        assert!(provider
+            .get_transaction_by_hash(TRANSFER_ETH_HASH)
+            .await?
+            .is_none());
 
         node.send_test_payloads().await?;
 
         let tx1 = provider
-            .get_transaction_by_hash(TX1_HASH)
+            .get_transaction_by_hash(DEPOSIT_TX_HASH)
             .await?
             .expect("tx1 expected");
-        assert_eq!(tx1.tx_hash(), TX1_HASH);
-        assert_eq!(tx1.from(), TX1_SENDER);
+        assert_eq!(tx1.tx_hash(), DEPOSIT_TX_HASH);
+        assert_eq!(tx1.from(), DEPOSIT_SENDER);
 
         let tx2 = provider
-            .get_transaction_by_hash(TX2_HASH)
+            .get_transaction_by_hash(TRANSFER_ETH_HASH)
             .await?
             .expect("tx2 expected");
-        assert_eq!(tx2.tx_hash(), TX2_HASH);
-        assert_eq!(tx2.from(), TX2_SENDER);
+        assert_eq!(tx2.tx_hash(), TRANSFER_ETH_HASH);
+        assert_eq!(tx2.from(), TX_SENDER);
 
         // TODO: Verify more properties of the txns here.
 
@@ -349,19 +402,19 @@ mod tests {
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
-        let receipt = provider.get_transaction_receipt(TX1_HASH).await?;
+        let receipt = provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?;
         assert_eq!(receipt.is_none(), true);
 
         node.send_test_payloads().await?;
 
         let receipt = provider
-            .get_transaction_receipt(TX1_HASH)
+            .get_transaction_receipt(DEPOSIT_TX_HASH)
             .await?
             .expect("receipt expected");
         assert_eq!(receipt.gas_used(), 21000);
 
         let receipt = provider
-            .get_transaction_receipt(TX2_HASH)
+            .get_transaction_receipt(TRANSFER_ETH_HASH)
             .await?
             .expect("receipt expected");
         assert_eq!(receipt.gas_used(), 24000); // 45000 - 21000
@@ -378,17 +431,194 @@ mod tests {
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
-        assert_eq!(provider.get_transaction_count(TX1_SENDER).await?, 0);
+        assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
         assert_eq!(
-            provider.get_transaction_count(TX2_SENDER).pending().await?,
+            provider.get_transaction_count(TX_SENDER).pending().await?,
             0
         );
 
         node.send_test_payloads().await?;
 
-        assert_eq!(provider.get_transaction_count(TX1_SENDER).await?, 0);
+        assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
         assert_eq!(
-            provider.get_transaction_count(TX2_SENDER).pending().await?,
+            provider.get_transaction_count(TX_SENDER).pending().await?,
+            3
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_eth_call() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        let provider = node.provider().await?;
+
+        // We ensure that eth_call will succeed because we are on plain state
+        let send_eth_call = OpTransactionRequest::default()
+            .from(TX_SENDER)
+            .transaction_type(0)
+            .gas_limit(200000)
+            .nonce(1)
+            .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
+            .value(U256::from(9999999999849942300000u128))
+            .input(TransactionInput::new(bytes!("0x")));
+
+        let res = provider
+            .call(send_eth_call.clone())
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+
+        assert!(res.is_ok());
+
+        node.send_test_payloads().await?;
+
+        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // this eth_call with fail
+        let res = provider
+            .call(send_eth_call)
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
+
+        // read number from counter contract
+        let eth_call = OpTransactionRequest::default()
+            .from(TX_SENDER)
+            .transaction_type(0)
+            .gas_limit(20000000)
+            .nonce(4)
+            .to(COUNTER_ADDRESS)
+            .value(U256::ZERO)
+            .input(TransactionInput::new(bytes!("0x8381f58a")));
+        let res = provider.call(eth_call).await;
+        assert!(res.is_ok());
+        assert_eq!(
+            U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
+            U256::from(1)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_processing_error() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_payload(create_first_payload()).await?;
+
+        let current_block = provider.get_block_by_number(Pending).await?;
+
+        let invalid_flashblock = Flashblock {
+            index: 1,
+            base: None,
+            payload_id: PayloadId::new([0; 8]),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![DEPOSIT_TX],
+                withdrawals: vec![],
+                gas_used: 21000,
+                ..Default::default()
+            },
+            metadata: Metadata {
+                receipts: HashMap::default(), // invalid because it's missing the receipts for txns
+                new_account_balances: HashMap::default(),
+                block_number: 1,
+            },
+        };
+
+        node.send_payload(invalid_flashblock).await?;
+
+        let pending_block = provider.get_block_by_number(Pending).await?;
+
+        // When the flashblock is invalid, the chain doesn't progress
+        assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_new_block_clears_current_block() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_payload(create_first_payload()).await?;
+
+        let current_block = provider.get_block_by_number(Pending).await?.unwrap();
+
+        assert_eq!(current_block.number(), 1);
+        assert_eq!(current_block.transactions.len(), 1);
+
+        let invalid_flashblock = Flashblock {
+            index: 1,
+            base: None,
+            payload_id: PayloadId::new([0; 8]),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                transactions: vec![],
+                withdrawals: vec![],
+                gas_used: 21000,
+                ..Default::default()
+            },
+            metadata: Metadata {
+                receipts: HashMap::default(),
+                new_account_balances: HashMap::default(),
+                block_number: 100, // invalid because it's a new block in the future w/out base data
+            },
+        };
+
+        node.send_payload(invalid_flashblock).await?;
+
+        let current_block = provider.get_block_by_number(Pending).await?;
+
+        assert!(current_block.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_non_sequential_payload_ignored() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        assert!(provider.get_block_by_number(Pending).await?.is_none());
+
+        node.send_payload(create_first_payload()).await?;
+
+        // Just the block info transaction
+        assert_eq!(
+            provider
+                .get_block_by_number(Pending)
+                .await?
+                .expect("should be set")
+                .transactions
+                .len(),
+            1
+        );
+
+        let mut third_payload = create_second_payload();
+        third_payload.index = 3;
+
+        node.send_payload(third_payload).await?;
+
+        // Still the block info transaction, the txns in the third payload are ignored as it's
+        // missing a Flashblock
+        assert_eq!(
+            provider
+                .get_block_by_number(Pending)
+                .await?
+                .expect("should be set")
+                .transactions
+                .len(),
             1
         );
 

@@ -34,6 +34,7 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
 # revm
 revm = { version = "27.0.3", default-features = false }
@@ -62,7 +63,7 @@ op-alloy-network = { version = "0.18.12", default-features = false }
 op-alloy-consensus = { version = "0.18.12", default-features = false }
 
 # rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "v0.7.4" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "98fff8e059870d192739dd42d41f5244c49f4b9c" }
 rustls = "0.23.23"
 
 # tokio

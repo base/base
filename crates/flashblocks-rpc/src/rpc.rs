@@ -2,22 +2,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::metrics::Metrics;
-use crate::state::FlashblocksState;
 use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::Address;
 use alloy_primitives::TxHash;
 use alloy_primitives::U256;
+use alloy_rpc_types_eth::state::StateOverride;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use op_alloy_network::Optimism;
+use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
 use reth::rpc::server_types::eth::EthApiError::TransactionConfirmationTimeout;
-use reth_rpc_eth_api::helpers::EthBlocks;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
+use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
 use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast;
@@ -46,6 +47,8 @@ pub trait FlashblocksAPI {
 
     /// Creates a subscription to receive flashblock updates.
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
+
+    fn get_state_overrides(&self) -> Option<StateOverride>;
 }
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -86,17 +89,24 @@ pub trait EthApiOverride {
         &self,
         transaction: alloy_primitives::Bytes,
     ) -> RpcResult<RpcReceipt<Optimism>>;
+
+    #[method(name = "call")]
+    async fn call(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes>;
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth> {
+pub struct EthApiExt<Eth, FB> {
     eth_api: Eth,
-    flashblocks_state: Arc<FlashblocksState>,
+    flashblocks_state: Arc<FB>,
     metrics: Metrics,
 }
 
-impl<Eth> EthApiExt<Eth> {
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FlashblocksState>) -> Self {
+impl<Eth, FB> EthApiExt<Eth, FB> {
+    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
         Self {
             eth_api,
             flashblocks_state,
@@ -106,9 +116,10 @@ impl<Eth> EthApiExt<Eth> {
 }
 
 #[async_trait]
-impl<Eth> EthApiOverrideServer for EthApiExt<Eth>
+impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
     async fn block_by_number(
@@ -265,11 +276,31 @@ where
             }
         }
     }
+
+    async fn call(
+        &self,
+        transaction: OpTransactionRequest,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<alloy_primitives::Bytes> {
+        let block_id = block_number.unwrap_or_default();
+        let mut overrides = alloy_rpc_types_eth::state::EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.call.increment(1);
+            overrides.state = self.flashblocks_state.get_state_overrides()
+        }
+
+        // Delegate to the underlying eth_api
+        EthCall::call(&self.eth_api, transaction, block_number, overrides)
+            .await
+            .map_err(Into::into)
+    }
 }
 
-impl<Eth> EthApiExt<Eth>
+impl<Eth, FB> EthApiExt<Eth, FB>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
 {
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
