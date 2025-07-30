@@ -217,7 +217,7 @@ Corresponds to a verifier [SafetyLevel](./verifier.md#safety).
 
 `STRING`, one of:
 - `invalid`
-- `unsafe`: equivalent to safety of the `latest` RPC label.
+- `unsafe`: matching local-unsafe, equivalent to safety of the `latest` RPC label.
 - `cross-unsafe`
 - `local-safe`
 - `safe`: matching cross-safe, named `safe` to match the RPC label.
