@@ -101,7 +101,7 @@ PROPOSER_METRICS_PORT=9000               # The port to expose metrics on
 
 ## Running
 
-To run the proposer:
+To run the proposer, from the fault-proof directory:
    ```bash
    cargo run --bin proposer
    ```
@@ -130,6 +130,7 @@ The proposer will run indefinitely, creating new games and optionally resolving 
 - Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
 ### Game Resolution
 When enabled (`ENABLE_GAME_RESOLUTION=true`), the proposer:
+- **Fast Finality**: Immediately resolves proven games (UnchallengedAndValidProofProvided or ChallengedAndValidProofProvided)
 - Monitors unchallenged games
 - Resolves games after their challenge period expires
 - Respects parent-child game relationships in resolution

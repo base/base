@@ -62,6 +62,7 @@ tracing.workspace = true
 hex.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strum_macros.workspace = true
+tikv-jemallocator = "0.6.0"
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
