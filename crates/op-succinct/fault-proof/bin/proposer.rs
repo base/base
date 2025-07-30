@@ -16,6 +16,10 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_signer_utils::Signer;
+use tikv_jemallocator::Jemalloc;
+
+#[global_allocator]
+static ALLOCATOR: Jemalloc = Jemalloc;
 
 #[derive(Parser)]
 struct Args {

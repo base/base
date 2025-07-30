@@ -7533,6 +7533,7 @@ dependencies = [
  "sp1-sdk",
  "strum 0.27.1",
  "strum_macros 0.27.1",
+ "tikv-jemallocator",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",

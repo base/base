@@ -386,7 +386,7 @@ where
     }
 
     /// Handles claiming bonds from resolved games.
-    #[tracing::instrument(name = "[[Claiming Bonds]]", skip(self))]
+    #[tracing::instrument(name = "[[Claiming Proposer Bonds]]", skip(self))]
     async fn handle_bond_claiming(&self) -> Result<Action> {
         if let Some(game_address) = self
             .factory
@@ -394,10 +394,14 @@ where
                 self.config.game_type,
                 self.config.max_games_to_check_for_bond_claiming,
                 self.prover_address,
+                Mode::Proposer,
             )
             .await?
         {
-            tracing::info!("Attempting to claim bond from game {:?}", game_address);
+            tracing::info!(
+                "Attempting to claim bond from game {:?} where proposer won",
+                game_address
+            );
 
             // Create a contract instance for the game
             let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
@@ -414,7 +418,7 @@ where
             {
                 Ok(receipt) => {
                     tracing::info!(
-                        "\x1b[1mSuccessfully claimed bond from game {:?} with tx {:?}\x1b[0m",
+                        "\x1b[1mSuccessfully claimed proposer bond from game {:?} with tx {:?}\x1b[0m",
                         game_address,
                         receipt.transaction_hash
                     );
@@ -422,13 +426,13 @@ where
                     Ok(Action::Performed)
                 }
                 Err(e) => Err(anyhow::anyhow!(
-                    "Failed to claim bond from game {:?}: {:?}",
+                    "Failed to claim proposer bond from game {:?}: {:?}",
                     game_address,
                     e
                 )),
             }
         } else {
-            tracing::info!("No new games to claim bonds from");
+            tracing::info!("No games found where proposer won to claim bonds from");
 
             Ok(Action::Skipped)
         }
@@ -878,6 +882,7 @@ where
     /// - Ok(true): Resolution task was successfully spawned
     /// - Ok(false): No work needed (no games to resolve)
     /// - Err: Actual error occurred during task spawning
+    #[tracing::instrument(name = "[[Proposer Resolving]]", skip(self))]
     async fn spawn_game_resolution_task(&self) -> Result<bool> {
         let proposer = self.clone();
         let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
@@ -915,6 +920,7 @@ where
                 self.config.game_type,
                 self.config.max_games_to_check_for_bond_claiming,
                 self.prover_address,
+                Mode::Proposer,
             )
             .await?
             .is_some();
