@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Instant};
 use crate::{
     metrics::OpRBuilderMetrics,
     primitives::bundle::{Bundle, BundleResult},
-    tx::{FBPooledTransaction, MaybeRevertingTransaction},
+    tx::{FBPooledTransaction, MaybeFlashblockFilter, MaybeRevertingTransaction},
 };
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
@@ -147,7 +147,9 @@ where
         let pool_transaction =
             FBPooledTransaction::from(OpPooledTransaction::from_pooled(recovered))
                 .with_reverted_hashes(bundle.reverting_hashes.clone().unwrap_or_default())
-                .with_conditional(conditional);
+                .with_flashblock_number_min(conditional.flashblock_number_min)
+                .with_flashblock_number_max(conditional.flashblock_number_max)
+                .with_conditional(conditional.transaction_conditional);
 
         let hash = self
             .pool

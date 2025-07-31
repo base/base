@@ -25,8 +25,10 @@ use super::FUNDED_PRIVATE_KEYS;
 
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
-    pub block_number_max: Option<u64>,
     pub block_number_min: Option<u64>,
+    pub block_number_max: Option<u64>,
+    pub flashblock_number_min: Option<u64>,
+    pub flashblock_number_max: Option<u64>,
     pub min_timestamp: Option<u64>,
     pub max_timestamp: Option<u64>,
 }
@@ -194,8 +196,10 @@ impl TransactionBuilder {
                 } else {
                     None
                 },
-                block_number_max: bundle_opts.block_number_max,
                 block_number_min: bundle_opts.block_number_min,
+                block_number_max: bundle_opts.block_number_max,
+                flashblock_number_min: bundle_opts.block_number_min,
+                flashblock_number_max: bundle_opts.block_number_max,
                 min_timestamp: bundle_opts.min_timestamp,
                 max_timestamp: bundle_opts.max_timestamp,
             };

@@ -182,10 +182,8 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .with_revert() // the transaction reverts but it is included in the block
         .with_reverted_hash()
         .with_bundle(BundleOpts {
-            block_number_max: None,
             block_number_min: Some(2),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         })
         .send()
         .await?;
@@ -204,8 +202,7 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .with_bundle(BundleOpts {
             block_number_max: Some(4),
             block_number_min: Some(4),
-            min_timestamp: None,
-            max_timestamp: None,
+            ..Default::default()
         })
         .send()
         .await?;
@@ -270,8 +267,7 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
             .with_bundle(BundleOpts {
                 block_number_max,
                 block_number_min,
-                min_timestamp: None,
-                max_timestamp: None,
+                ..Default::default()
             })
             .send()
             .await

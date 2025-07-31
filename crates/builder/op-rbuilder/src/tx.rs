@@ -13,7 +13,10 @@ use reth_primitives::{kzg::KzgSettings, Recovered};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
 
-pub trait FBPoolTransaction: MaybeRevertingTransaction + OpPooledTx {}
+pub trait FBPoolTransaction:
+    MaybeRevertingTransaction + OpPooledTx + MaybeFlashblockFilter
+{
+}
 
 #[derive(Clone, Debug)]
 pub struct FBPooledTransaction {
@@ -23,6 +26,9 @@ pub struct FBPooledTransaction {
     /// this is the list of hashes of the transactions that reverted. If the
     /// transaction is not a bundle, this is `None`.
     pub reverted_hashes: Option<Vec<B256>>,
+
+    pub flashblock_number_min: Option<u64>,
+    pub flashblock_number_max: Option<u64>,
 }
 
 impl FBPoolTransaction for FBPooledTransaction {}
@@ -46,6 +52,33 @@ impl MaybeRevertingTransaction for FBPooledTransaction {
 
     fn reverted_hashes(&self) -> Option<Vec<B256>> {
         self.reverted_hashes.clone()
+    }
+}
+
+pub trait MaybeFlashblockFilter {
+    fn with_flashblock_number_min(self, flashblock_number_min: Option<u64>) -> Self;
+    fn with_flashblock_number_max(self, flashblock_number_max: Option<u64>) -> Self;
+    fn flashblock_number_min(&self) -> Option<u64>;
+    fn flashblock_number_max(&self) -> Option<u64>;
+}
+
+impl MaybeFlashblockFilter for FBPooledTransaction {
+    fn with_flashblock_number_min(mut self, flashblock_number_min: Option<u64>) -> Self {
+        self.flashblock_number_min = flashblock_number_min;
+        self
+    }
+
+    fn with_flashblock_number_max(mut self, flashblock_number_max: Option<u64>) -> Self {
+        self.flashblock_number_max = flashblock_number_max;
+        self
+    }
+
+    fn flashblock_number_min(&self) -> Option<u64> {
+        self.flashblock_number_min
+    }
+
+    fn flashblock_number_max(&self) -> Option<u64> {
+        self.flashblock_number_max
     }
 }
 
@@ -74,6 +107,8 @@ impl PoolTransaction for FBPooledTransaction {
         Self {
             inner,
             reverted_hashes: None,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
         }
     }
 
@@ -232,6 +267,8 @@ impl From<OpPooledTransaction> for FBPooledTransaction {
         Self {
             inner: tx,
             reverted_hashes: None,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
         }
     }
 }
@@ -256,6 +293,8 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
         FBPooledTransaction {
             inner: self.inner.with_conditional(conditional),
             reverted_hashes: self.reverted_hashes,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
         }
     }
 }

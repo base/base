@@ -2,7 +2,7 @@ use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
         context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
-        flashblocks::config::FlashBlocksConfigExt,
+        flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
         generator::{BlockCell, BuildArguments},
         BuilderConfig, BuilderTx,
     },
@@ -42,7 +42,10 @@ use rollup_boost::{
 use serde::{Deserialize, Serialize};
 use std::{
     ops::{Div, Rem},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 use tokio::sync::{
@@ -61,7 +64,7 @@ struct ExtraExecutionInfo {
 #[derive(Debug, Default)]
 struct FlashblocksExtraCtx {
     /// Current flashblock index
-    pub flashblock_index: u64,
+    pub flashblock_index: Arc<AtomicU64>,
     /// Target flashblock count
     pub target_flashblock_count: u64,
 }
@@ -69,7 +72,7 @@ struct FlashblocksExtraCtx {
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
     pub fn flashblock_index(&self) -> u64 {
-        self.extra_ctx.flashblock_index
+        self.extra_ctx.flashblock_index.load(Ordering::Relaxed)
     }
 
     /// Returns the target flashblock count
@@ -79,8 +82,10 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
     /// Increments the flashblock index
     pub fn increment_flashblock_index(&mut self) -> u64 {
-        self.extra_ctx.flashblock_index += 1;
-        self.extra_ctx.flashblock_index
+        self.extra_ctx
+            .flashblock_index
+            .fetch_add(1, Ordering::Relaxed);
+        self.flashblock_index()
     }
 
     /// Sets the target flashblock count
@@ -248,7 +253,7 @@ where
             builder_signer: self.config.builder_signer,
             metrics: Default::default(),
             extra_ctx: FlashblocksExtraCtx {
-                flashblock_index: 0,
+                flashblock_index: Arc::new(AtomicU64::new(0)),
                 target_flashblock_count: self.config.flashblocks_per_block(),
             },
         };
@@ -430,10 +435,13 @@ where
                         .build();
 
                     let best_txs_start_time = Instant::now();
-                    let best_txs = BestPayloadTransactions::new(
-                        // We are not using without_updates in here, so arriving transaction could target the current block
-                        self.pool
-                            .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+                    let best_txs = BestFlashblocksTxs::new(
+                        BestPayloadTransactions::new(
+                            self.pool.best_transactions_with_attributes(
+                                ctx.best_transaction_attributes(),
+                            ),
+                        ),
+                        ctx.extra_ctx.flashblock_index.clone(),
                     );
                     let transaction_pool_fetch_time = best_txs_start_time.elapsed();
                     ctx.metrics
