@@ -3,7 +3,7 @@ use alloy_primitives::{keccak256, Log as PrimitiveLog, LogData, B256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolEvent;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use hana_blobstream::blobstream::{blobstream_address, SP1Blobstream};
 use op_succinct_host_utils::fetcher::OPSuccinctDataFetcher;
 use serde::{Deserialize, Serialize};
@@ -21,11 +21,27 @@ impl CelestiaL1SafeHead {
     }
 }
 
-/// Response structure from Celestia indexer RPC.
+/// Response structure from op-celestia-indexer RPC supporting both Celestia and Ethereum DA.
 #[derive(Debug, Deserialize, Serialize)]
-pub struct CelestiaLocationResponse {
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum DALocationResponse {
+    Celestia { data: CelestiaLocationData },
+    Ethereum { data: EthereumLocationData },
+}
+
+/// Celestia DA-specific location data.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CelestiaLocationData {
     pub height: u64,
     pub commitment: String,
+    pub l2_range: L2Range,
+    pub l1_block: u64,
+}
+
+/// Ethereum DA-specific location data.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct EthereumLocationData {
+    pub tx_hash: String,
     pub l2_range: L2Range,
     pub l1_block: u64,
 }
@@ -167,19 +183,18 @@ async fn find_minimum_blobstream_block(
     }
 }
 
-/// Query the Celestia indexer for the location of an L2 block.
-async fn query_celestia_indexer(l2_block: u64) -> Result<Option<CelestiaLocationResponse>> {
+/// Query the op-celestia-indexer for the location of an L2 block (supports both Celestia and
+/// Ethereum DA).
+async fn query_indexer(l2_block: u64) -> Result<Option<DALocationResponse>> {
     // Get the indexer RPC endpoint from environment variable.
-    let indexer_rpc = std::env::var("CELESTIA_INDEXER_RPC").unwrap_or_else(|_| {
-        // Default to localhost if not set.
-        "http://localhost:57220".to_string()
-    });
+    let indexer_rpc =
+        std::env::var("CELESTIA_INDEXER_RPC").context("CELESTIA_INDEXER_RPC is not set")?;
 
     // Create the RPC request.
     let client = reqwest::Client::new();
     let request_body = serde_json::json!({
         "jsonrpc": "2.0",
-        "method": "admin_getCelestiaLocation",
+        "method": "admin_getDALocation",
         "params": [l2_block],
         "id": 1
     });
@@ -189,7 +204,7 @@ async fn query_celestia_indexer(l2_block: u64) -> Result<Option<CelestiaLocation
         .json(&request_body)
         .send()
         .await
-        .map_err(|e| anyhow!("Failed to query Celestia indexer: {}", e))?;
+        .map_err(|e| anyhow!("Failed to query op-celestia-indexer: {}", e))?;
 
     let json_response: serde_json::Value =
         response.json().await.map_err(|e| anyhow!("Failed to parse indexer response: {}", e))?;
@@ -213,60 +228,75 @@ async fn query_celestia_indexer(l2_block: u64) -> Result<Option<CelestiaLocation
 
     serde_json::from_value(result.clone())
         .map(Some)
-        .map_err(|e| anyhow!("Failed to parse Celestia location response: {}", e))
+        .map_err(|e| anyhow!("Failed to parse `admin_getDALocation` response: {}", e))
 }
 
-/// Find the earliest safe L1 block with Celestia batches committed via Blobstream.
-/// Uses the Celestia indexer to efficiently locate the L1 block where the L2 block's
-/// Celestia data has been committed to Ethereum through Blobstream.
+/// Find the earliest safe L1 block for the given L2 block using the op-celestia-indexer.
 pub async fn get_celestia_safe_head_info(
     fetcher: &OPSuccinctDataFetcher,
     l2_reference_block: u64,
 ) -> Result<Option<CelestiaL1SafeHead>> {
-    // Query the Celestia indexer for this L2 block's location.
-    match query_celestia_indexer(l2_reference_block).await {
-        Ok(Some(location)) => {
-            tracing::info!(
-                "Celestia indexer returned location for L2 block {}: height {}, L1 block {}",
-                l2_reference_block,
-                location.height,
-                location.l1_block
-            );
+    // Query the op-celestia-indexer for this L2 block's location.
+    match query_indexer(l2_reference_block).await {
+        Ok(Some(location)) => match location {
+            DALocationResponse::Celestia { data } => {
+                tracing::info!(
+                    "op-celestia-indexer returned Celestia location for L2 block {}: height {}, L1 block {}",
+                    l2_reference_block,
+                    data.height,
+                    data.l1_block
+                );
 
-            // Find the minimum L1 block that contains the Blobstream proof
-            match find_minimum_blobstream_block(location.height, location.l1_block, fetcher).await {
-                Ok(safe_l1_block) => {
-                    tracing::info!(
-                        "Using L1 block {} (Blobstream proof found) for L2 block {}",
-                        safe_l1_block,
-                        l2_reference_block
-                    );
-                    Ok(Some(CelestiaL1SafeHead {
-                        l1_block_number: safe_l1_block,
-                        l2_safe_head_number: l2_reference_block,
-                    }))
-                }
-                Err(e) => {
-                    // If we can't find a Blobstream proof, return an error
-                    Err(anyhow!(
-                        "Failed to find Blobstream proof for Celestia height {}: {}",
-                        location.height,
-                        e
-                    ))
+                // Find the minimum L1 block that contains the Blobstream proof
+                match find_minimum_blobstream_block(data.height, data.l1_block, fetcher).await {
+                    Ok(safe_l1_block) => {
+                        tracing::info!(
+                            "Using L1 block {} (Blobstream proof found) for L2 block {}",
+                            safe_l1_block,
+                            l2_reference_block
+                        );
+                        Ok(Some(CelestiaL1SafeHead {
+                            l1_block_number: safe_l1_block,
+                            l2_safe_head_number: l2_reference_block,
+                        }))
+                    }
+                    Err(e) => {
+                        // If we can't find a Blobstream proof, return an error
+                        Err(anyhow!(
+                            "Failed to find Blobstream proof for Celestia height {}: {}",
+                            data.height,
+                            e
+                        ))
+                    }
                 }
             }
-        }
+            DALocationResponse::Ethereum { data } => {
+                tracing::info!(
+                    "op-celestia-indexer returned Ethereum DA location for L2 block {}: tx_hash {}, L1 block {}",
+                    l2_reference_block,
+                    data.tx_hash,
+                    data.l1_block
+                );
+
+                // For Ethereum DA, use the L1 block directly
+                Ok(Some(CelestiaL1SafeHead {
+                    l1_block_number: data.l1_block,
+                    l2_safe_head_number: l2_reference_block,
+                }))
+            }
+        },
         Ok(None) => {
             // Indexer doesn't have data for this block, return error
-            Err(anyhow!("Celestia indexer has no data for L2 block {}", l2_reference_block))
+            Err(anyhow!("op-celestia-indexer has no data for L2 block {}", l2_reference_block))
         }
-        Err(e) => Err(anyhow!("Celestia indexer error: {}", e)),
+        Err(e) => Err(anyhow!("op-celestia-indexer error: {}", e)),
     }
 }
 
-/// Find the highest L2 block that can be safely proven given Celestia's Blobstream commitments.
+/// Find the highest L2 block that can be safely proven given Celestia's Blobstream commitments or
+/// batch data posted on L1.
 /// Uses binary search from latest_proposed_block_number down to L2 finalized block, checking
-/// each block with get_celestia_safe_head_info to see if Celestia data is available.
+/// each block with get_celestia_safe_head_info to see if l2 data is available.
 pub async fn get_highest_finalized_l2_block(
     fetcher: &OPSuccinctDataFetcher,
     latest_proposed_block_number: u64,
@@ -289,19 +319,19 @@ pub async fn get_highest_finalized_l2_block(
     while low <= high {
         let mid = low + (high - low) / 2;
 
-        tracing::debug!("Testing L2 block {} for Celestia data availability", mid);
+        tracing::debug!("Testing L2 block {} for availability", mid);
 
-        // Check if this L2 block has Celestia data available via get_celestia_safe_head_info
+        // Check if this L2 block has data available via get_celestia_safe_head_info
         match get_celestia_safe_head_info(fetcher, mid).await {
             Ok(Some(_safe_head)) => {
-                // This block has Celestia data available, try to find a higher one
-                tracing::debug!("L2 block {} has Celestia data available", mid);
+                // This block has data available, try to find a higher one
+                tracing::debug!("L2 block {} has data available", mid);
                 result = Some(mid);
                 low = mid + 1;
             }
             Ok(None) => {
-                // No Celestia data for this block, search lower
-                tracing::debug!("L2 block {} has no Celestia data available", mid);
+                // No data for this block, search lower
+                tracing::debug!("L2 block {} has no data available", mid);
                 high = mid - 1;
             }
             Err(e) => {
