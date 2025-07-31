@@ -233,14 +233,16 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes all sequencer transactions that are included in the payload attributes.
     pub fn execute_sequencer_transactions<DB, E: Debug + Default>(
         &self,
-        db: &mut State<DB>,
+        state: &mut State<DB>,
     ) -> Result<ExecutionInfo<E>, PayloadBuilderError>
     where
         DB: Database<Error = ProviderError> + std::fmt::Debug,
     {
         let mut info = ExecutionInfo::with_capacity(self.attributes().transactions.len());
 
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut evm = self
+            .evm_config
+            .evm_with_env(&mut *state, self.evm_env.clone());
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -321,7 +323,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     pub fn execute_best_transactions<DB, E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
-        db: &mut State<DB>,
+        state: &mut State<DB>,
         mut best_txs: impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
@@ -337,7 +339,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let mut num_bundles_reverted = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
-        let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+        let mut evm = self
+            .evm_config
+            .evm_with_env(&mut *state, self.evm_env.clone());
 
         info!(
             target: "payload_builder",
@@ -543,7 +547,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     pub fn add_builder_tx<DB, Extra: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<Extra>,
-        db: &mut State<DB>,
+        state: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
     ) -> Option<()>
@@ -556,23 +560,27 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 let chain_id = self.chain_id();
                 // Create and sign the transaction
                 let builder_tx =
-                    signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
+                    signed_builder_tx(state, builder_tx_gas, message, signer, base_fee, chain_id)?;
 
-                let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
+                let mut evm = self
+                    .evm_config
+                    .evm_with_env(&mut *state, self.evm_env.clone());
 
-                let ResultAndState { result, state } = evm
+                let ResultAndState {
+                    result,
+                    state: new_state,
+                } = evm
                     .transact(&builder_tx)
                     .map_err(|err| PayloadBuilderError::EvmExecutionError(Box::new(err)))?;
 
                 // Add gas used by the transaction to cumulative gas used, before creating the receipt
-                let gas_used = result.gas_used();
-                info.cumulative_gas_used += gas_used;
+                info.cumulative_gas_used += result.gas_used();
 
                 let ctx = ReceiptBuilderCtx {
                     tx: builder_tx.inner(),
                     evm: &evm,
                     result,
-                    state: &state,
+                    state: &new_state,
                     cumulative_gas_used: info.cumulative_gas_used,
                 };
                 info.receipts.push(self.build_receipt(ctx, None));
@@ -580,7 +588,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 // Release the db reference by dropping evm
                 drop(evm);
                 // Commit changes
-                db.commit(state);
+                state.commit(new_state);
 
                 // Append sender and transaction to the respective lists
                 info.executed_senders.push(builder_tx.signer());
@@ -599,7 +607,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     // it's possible to do this without db at all
     pub fn estimate_builder_tx_da_size<DB>(
         &self,
-        db: &mut State<DB>,
+        state: &mut State<DB>,
         builder_tx_gas: u64,
         message: Vec<u8>,
     ) -> Option<u64>
@@ -612,7 +620,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 let chain_id = self.chain_id();
                 // Create and sign the transaction
                 let builder_tx =
-                    signed_builder_tx(db, builder_tx_gas, message, signer, base_fee, chain_id)?;
+                    signed_builder_tx(state, builder_tx_gas, message, signer, base_fee, chain_id)?;
                 Ok(op_alloy_flz::tx_estimated_size_fjord_bytes(
                     builder_tx.encoded_2718().as_slice(),
                 ))
@@ -648,7 +656,7 @@ pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
 
 /// Creates signed builder tx to Address::ZERO and specified message as input
 pub fn signed_builder_tx<DB>(
-    db: &mut State<DB>,
+    state: &mut State<DB>,
     builder_tx_gas: u64,
     message: Vec<u8>,
     signer: Signer,
@@ -659,7 +667,7 @@ where
     DB: Database<Error = ProviderError>,
 {
     // Create message with block number for the builder to sign
-    let nonce = db
+    let nonce = state
         .load_cache_account(signer.address)
         .map(|acc| acc.account_info().unwrap_or_default().nonce)
         .map_err(|_| {

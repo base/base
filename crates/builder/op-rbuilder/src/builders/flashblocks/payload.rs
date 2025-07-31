@@ -254,12 +254,12 @@ where
         };
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let state = StateProviderDatabase::new(&state_provider);
+        let db = StateProviderDatabase::new(&state_provider);
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
-        let mut db = State::builder()
-            .with_database(state)
+        let mut state = State::builder()
+            .with_database(db)
             .with_bundle_update()
             .build();
 
@@ -269,20 +269,20 @@ where
             .builder_signer()
             .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
         let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(&mut db, builder_tx_gas, message.clone())
+            .estimate_builder_tx_da_size(&mut state, builder_tx_gas, message.clone())
             .unwrap_or(0);
 
-        let mut info = execute_pre_steps(&mut db, &ctx)?;
+        let mut info = execute_pre_steps(&mut state, &ctx)?;
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
         ctx.metrics.sequencer_tx_gauge.set(sequencer_tx_time);
 
         // If we have payload with txpool we add first builder tx right after deposits
         if !ctx.attributes().no_tx_pool {
-            ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+            ctx.add_builder_tx(&mut info, &mut state, builder_tx_gas, message.clone());
         }
 
-        let (payload, fb_payload, mut bundle_state) = build_block(db, &ctx, &mut info)?;
+        let (payload, fb_payload, mut bundle_state) = build_block(state, &ctx, &mut info)?;
 
         best_payload.set(payload.clone());
         self.ws_pub
@@ -414,7 +414,7 @@ where
                         "Building flashblock",
                     );
                     let flashblock_build_start_time = Instant::now();
-                    let state = StateProviderDatabase::new(&state_provider);
+                    let db = StateProviderDatabase::new(&state_provider);
                     // If it is the last flashblock, we need to account for the builder tx
                     if ctx.is_last_flashblock() {
                         total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
@@ -423,8 +423,8 @@ where
                             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
                         }
                     }
-                    let mut db = State::builder()
-                        .with_database(state)
+                    let mut state = State::builder()
+                        .with_database(db)
                         .with_bundle_update()
                         .with_bundle_prestate(bundle_state)
                         .build();
@@ -446,7 +446,7 @@ where
                     let tx_execution_start_time = Instant::now();
                     ctx.execute_best_transactions(
                         &mut info,
-                        &mut db,
+                        &mut state,
                         best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
@@ -476,11 +476,11 @@ where
 
                     // If it is the last flashblocks, add the builder txn to the block if enabled
                     if ctx.is_last_flashblock() {
-                        ctx.add_builder_tx(&mut info, &mut db, builder_tx_gas, message.clone());
+                        ctx.add_builder_tx(&mut info, &mut state, builder_tx_gas, message.clone());
                     };
 
                     let total_block_built_duration = Instant::now();
-                    let build_result = build_block(db, &ctx, &mut info);
+                    let build_result = build_block(state, &ctx, &mut info);
                     let total_block_built_duration = total_block_built_duration.elapsed();
                     ctx.metrics
                         .total_block_built_duration

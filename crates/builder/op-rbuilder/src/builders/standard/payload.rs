@@ -280,22 +280,22 @@ where
         let builder = OpBuilder::new(best);
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let state = StateProviderDatabase::new(state_provider);
+        let db = StateProviderDatabase::new(state_provider);
         let metrics = ctx.metrics.clone();
 
         if ctx.attributes().no_tx_pool {
-            let db = State::builder()
-                .with_database(state)
+            let state = State::builder()
+                .with_database(db)
                 .with_bundle_update()
                 .build();
-            builder.build(db, ctx)
+            builder.build(state, ctx)
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
-            let db = State::builder()
-                .with_database(cached_reads.as_db_mut(state))
+            let state = State::builder()
+                .with_database(cached_reads.as_db_mut(db))
                 .with_bundle_update()
                 .build();
-            builder.build(db, ctx)
+            builder.build(state, ctx)
         }
         .map(|out| {
             let total_block_building_time = block_build_start_time.elapsed();
