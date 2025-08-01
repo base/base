@@ -12,6 +12,9 @@
   - [Valid Withdrawal](#valid-withdrawal)
   - [Invalid Withdrawal](#invalid-withdrawal)
   - [L2 Withdrawal Sender](#l2-withdrawal-sender)
+  - [Receive Default Gas Limit](#receive-default-gas-limit)
+  - [Minimum Gas Limit](#minimum-gas-limit)
+  - [Unsafe Target](#unsafe-target)
   - [Block Output](#block-output)
   - [Output Root](#output-root)
   - [Super Output](#super-output)
@@ -50,6 +53,10 @@
   - [donateETH](#donateeth)
   - [finalizeWithdrawalTransactionExternalProof](#finalizewithdrawaltransactionexternalproof)
   - [numProofSubmitters](#numproofsubmitters)
+  - [receive](#receive)
+  - [minimumGasLimit](#minimumgaslimit)
+  - [superchainConfig](#superchainconfig)
+  - [disputeGameBlacklist](#disputegameblacklist)
   - [depositTransaction](#deposittransaction)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
@@ -118,6 +125,25 @@ The **L2 Withdrawal Sender** is the address of the account that triggered a give
 transaction on L2. The `OptimismPortal` is expected to expose a variable that includes this value
 when [finalizing](#finalized-withdrawal) a withdrawal.
 
+### Receive Default Gas Limit
+
+The receive default gas limit is the gas limit provided for simple ETH deposits that are triggered
+when a user sends ETH to the `OptimismPortal` via the `receive` function. This gas limit is
+currently set to a value of 100000 gas.
+
+### Minimum Gas Limit
+
+The minimum gas limit is the minimum amount of L2 gas that must be purchased when creating a
+deposit transaction. This limit increases linearly based on the size of the calldata to prevent
+users from creating L2 resource usage without paying for it. The minimum gas limit is calculated
+as: calldata_byte_count * 40 + 21000.
+
+### Unsafe Target
+
+An **Unsafe Target** is a target address that is considered unsafe for withdrawal or deposit
+transactions. Unsafe targets include the OptimismPortal contract itself and the ETHLockbox
+contract. Targeting these addresses could potentially create attack vectors.
+
 ### Block Output
 
 A **Block Output**, commonly called an **Output**, is a data structure that wraps the key hash
@@ -147,7 +173,7 @@ Where:
 ### Output Root
 
 An **Output Root** is a commitment to a [Block Output](#block-output). A detailed description of
-this commitment can be found [here](../../protocol/proposals.md#l2-output-commitment-construction).
+this commitment can be found [on this page](../../protocol/proposals.md#l2-output-commitment-construction).
 
 ### Super Output
 
@@ -300,7 +326,6 @@ see this as a critical system risk.
 - MUST set the value of the `SystemConfig` contract.
 - MUST set the value of the `AnchorStateRegistry` contract.
 - MUST set the value of the `ETHLockbox` contract.
-- MUST set `superRootsActive` to either `true` or `false`.
 - MUST set the value of the [L2 Withdrawal Sender](#l2-withdrawal-sender) variable to the default
   value if the value is not set already.
 - MUST initialize the resource metering configuration.
@@ -362,8 +387,7 @@ has not been initialized then this value will be `address(0)` and should not be 
 Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an `OptimismPortal`
 that uses dispute games that argue over [Super Roots](#super-root).
 
-- MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
-- MUST revert if the withdrawal target is the address of the `ETHLockbox` contract.
+- MUST revert if the withdrawal target is an [unsafe target](#unsafe-target).
 - MUST revert if the withdrawal is being proven against a game that is not a
   [Proper Game](./anchor-state-registry.md#proper-game).
 - MUST revert if the withdrawal is being proven against a game that is not a
@@ -393,8 +417,7 @@ that uses dispute games that argue over [Super Roots](#super-root).
 Allows a user to [prove](#proven-withdrawal) a withdrawal transaction within an `OptimismPortal`
 that uses dispute games that argue over [Output Roots](#output-root).
 
-- MUST revert if the withdrawal target is the address of the `OptimismPortal` itself.
-- MUST revert if the withdrawal target is the address of the `ETHLockbox` contract.
+- MUST revert if the withdrawal target is an [Unsafe Target](#unsafe-target).
 - MUST revert if the withdrawal is being proven against a game that is not a
   [Proper Game](./anchor-state-registry.md#proper-game).
 - MUST revert if the withdrawal is being proven against a game that is not a
@@ -444,6 +467,8 @@ Allows a user to [finalize](#finalized-withdrawal) a withdrawal transaction.
 - MUST unset the L2 Withdrawal Sender after the withdrawal call.
 - MUST emit a `WithdrawalFinalized` event with the withdrawal hash and success status.
 - MUST lock any unused ETH back into the ETHLockbox if the call to the target address fails.
+- MUST revert if the withdrawal call fails and the transaction origin is the estimation address, to
+  help determine exact gas costs.
 
 ### migrateLiquidity
 
@@ -483,9 +508,7 @@ by another address.
 
 - MUST revert if the system is paused.
 - MUST revert if the function is called while a previous withdrawal is being executed.
-- MUST revert if the target address is the OptimismPortal or the ETHLockbox. Note that the target
-  address is permitted to be the address of *another* OptimismPortal contract but it cannot be the
-  address if this contract.
+- MUST revert if the target address is an [Unsafe Target](#unsafe-target).
 - MUST revert if the withdrawal being finalized does not pass `checkWithdrawal` when using the specified proof submitter.
 - MUST mark the withdrawal as finalized.
 - MUST set the L2 Withdrawal Sender variable correctly.
@@ -496,6 +519,8 @@ by another address.
 - MUST unset the L2 Withdrawal Sender after the withdrawal call.
 - MUST emit a `WithdrawalFinalized` event with the withdrawal hash and success status.
 - MUST lock any unused ETH back into the ETHLockbox if the call to the target address fails.
+- MUST revert if the withdrawal call fails and the transaction origin is the estimation address, to
+  help determine exact gas costs.
 
 ### numProofSubmitters
 
@@ -503,6 +528,41 @@ Returns the number of proof submitters for a given withdrawal hash.
 
 - MUST return the length of the proofSubmitters array for the specified withdrawal hash.
 - MUST NOT change state.
+
+### receive
+
+Accepts ETH value and creates a deposit transaction to the sender's address on L2.
+
+- MUST be payable and accept ETH.
+- MUST create a deposit transaction where the sender and target are the same address, refer to
+  [depositTransaction](#deposittransaction) for full specification of expected behavior.
+- MUST use the [receive default gas limit](#receive-default-gas-limit) as the gas limit.
+- MUST set contract creation flag to false.
+- MUST use empty data for the deposit.
+- MUST transform the sender address to its alias if the caller is a contract.
+- MUST emit a TransactionDeposited event with the appropriate parameters.
+
+### minimumGasLimit
+
+Computes the minimum gas limit for a deposit transaction based on calldata size.
+
+- MUST calculate the minimum gas limit using the formula: calldata_byte_count * 40 + 21000.
+
+### superchainConfig
+
+Returns the `SuperchainConfig` contract address.
+
+- MUST return the address of the `SuperchainConfig` contract stored in the `SystemConfig` contract
+  that was set during initialization.
+
+### disputeGameBlacklist
+
+**Legacy Function**
+
+Checks if a dispute game is blacklisted.
+
+- MUST delegate to the blacklist of the `AnchorStateRegistry` contract that was set during initialization.
+- MUST return whether the given dispute game is blacklisted.
 
 ### depositTransaction
 
@@ -512,8 +572,9 @@ address will be aliased when retrieved using `tx.origin` or `msg.sender`. Consid
 using the CrossDomainMessenger contracts for a simpler developer experience.
 
 - MUST lock any ETH value (msg.value) in the ETHLockbox contract.
+- MUST apply resource metering to the gas limit parameter to prevent spam.
 - MUST revert if the target address is not address(0) for contract creations.
-- MUST revert if the gas limit provided is too low based on the calldata size.
+- MUST revert if the gas limit provided is below the [minimum gas limit](#minimum-gas-limit).
 - MUST revert if the calldata is too large (> 120,000 bytes).
 - MUST transform the sender address to its alias if the caller is a contract.
 - MUST emit a TransactionDeposited event with the from address, to address, deposit version, and opaque data.
