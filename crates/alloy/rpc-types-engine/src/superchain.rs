@@ -22,9 +22,9 @@ use derive_more::derive::{Display, From};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct SuperchainSignal {
-    /// The recommended Supercain Protocol Version.
+    /// The recommended Superchain Protocol Version.
     pub recommended: ProtocolVersion,
-    /// The minimum Supercain Protocol Version required.
+    /// The minimum Superchain Protocol Version required.
     pub required: ProtocolVersion,
 }
 
