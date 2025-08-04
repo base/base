@@ -193,9 +193,9 @@ where
     ) -> Result<(), PayloadBuilderError> {
         let block_build_start_time = Instant::now();
         let BuildArguments {
+            mut cached_reads,
             config,
             cancel: block_cancel,
-            ..
         } = args;
 
         // We log only every 100th block to reduce usage
@@ -264,7 +264,7 @@ where
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();
         let mut state = State::builder()
-            .with_database(db)
+            .with_database(cached_reads.as_db_mut(db))
             .with_bundle_update()
             .build();
 

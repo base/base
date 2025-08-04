@@ -1,15 +1,19 @@
+use alloy_primitives::B256;
 use futures_util::{Future, FutureExt};
 use reth::{
     providers::{BlockReaderIdExt, StateProviderFactory},
     tasks::TaskSpawner,
 };
-use reth_basic_payload_builder::{BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig};
-use reth_node_api::{PayloadBuilderAttributes, PayloadKind};
+use reth_basic_payload_builder::{
+    BasicPayloadJobGeneratorConfig, HeaderForPayload, PayloadConfig, PrecachedState,
+};
+use reth_node_api::{NodePrimitives, PayloadBuilderAttributes, PayloadKind};
 use reth_payload_builder::{
     KeepPayloadJobAlive, PayloadBuilderError, PayloadJob, PayloadJobGenerator,
 };
 use reth_payload_primitives::BuiltPayload;
 use reth_primitives_traits::HeaderTy;
+use reth_provider::CanonStateNotification;
 use reth_revm::cached::CachedReads;
 use std::{
     sync::{Arc, Mutex},
@@ -74,6 +78,8 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     last_payload: Arc<Mutex<CancellationToken>>,
     /// The extra block deadline in seconds
     extra_block_deadline: std::time::Duration,
+    /// Stored `cached_reads` for new payload jobs.
+    pre_cached: Option<PrecachedState>,
 }
 
 // === impl EmptyBlockPayloadJobGenerator ===
@@ -97,7 +103,17 @@ impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
             ensure_only_one_payload,
             last_payload: Arc::new(Mutex::new(CancellationToken::new())),
             extra_block_deadline,
+            pre_cached: None,
         }
+    }
+
+    /// Returns the pre-cached reads for the given parent header if it matches the cached state's
+    /// block.
+    fn maybe_pre_cached(&self, parent: B256) -> Option<CachedReads> {
+        self.pre_cached
+            .as_ref()
+            .filter(|pc| pc.block == parent)
+            .map(|pc| pc.cached.clone())
     }
 }
 
@@ -182,11 +198,37 @@ where
             cancel: cancel_token,
             deadline,
             build_complete: None,
+            cached_reads: self.maybe_pre_cached(parent_header.hash()),
         };
 
         job.spawn_build_job();
 
         Ok(job)
+    }
+
+    fn on_new_state<N: NodePrimitives>(&mut self, new_state: CanonStateNotification<N>) {
+        let mut cached = CachedReads::default();
+
+        // extract the state from the notification and put it into the cache
+        let committed = new_state.committed();
+        let new_execution_outcome = committed.execution_outcome();
+        for (addr, acc) in new_execution_outcome.bundle_accounts_iter() {
+            if let Some(info) = acc.info.clone() {
+                // we want pre cache existing accounts and their storage
+                // this only includes changed accounts and storage but is better than nothing
+                let storage = acc
+                    .storage
+                    .iter()
+                    .map(|(key, slot)| (*key, slot.present_value))
+                    .collect();
+                cached.insert_account(addr, info, storage);
+            }
+        }
+
+        self.pre_cached = Some(PrecachedState {
+            block: committed.tip().hash(),
+            cached,
+        });
     }
 }
 
@@ -214,6 +256,11 @@ where
     pub(crate) cancel: CancellationToken,
     pub(crate) deadline: Pin<Box<Sleep>>, // Add deadline
     pub(crate) build_complete: Option<oneshot::Receiver<Result<(), PayloadBuilderError>>>,
+    /// Caches all disk reads for the state the new payloads builds on
+    ///
+    /// This is used to avoid reading the same state over and over again when new attempts are
+    /// triggered, because during the building process we'll repeatedly execute the transactions.
+    pub(crate) cached_reads: Option<CachedReads>,
 }
 
 impl<Tasks, Builder> PayloadJob for BlockPayloadJob<Tasks, Builder>
@@ -274,10 +321,10 @@ where
 
         let (tx, rx) = oneshot::channel();
         self.build_complete = Some(rx);
-
+        let cached_reads = self.cached_reads.take().unwrap_or_default();
         self.executor.spawn_blocking(Box::pin(async move {
             let args = BuildArguments {
-                cached_reads: Default::default(),
+                cached_reads,
                 config: payload_config,
                 cancel,
             };
