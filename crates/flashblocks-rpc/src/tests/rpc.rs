@@ -74,15 +74,12 @@ mod tests {
             &self,
             tx: Bytes,
         ) -> eyre::Result<RpcReceipt<Optimism>> {
-            // ② build an Alloy RpcClient that speaks HTTP
             let url     = format!("http://{}", self.http_api_addr);
             let client  = RpcClient::new_http(url.parse()?);
     
-            // ③ call the method via the *generic* `request` helper
-            //    note: we must wrap the single param in a *tuple* → (tx,)
             let receipt = client
                 .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
-                .await?;            // RpcCall is a future; .await sends + waits
+                .await?;           
     
             Ok(receipt)
         }
@@ -651,26 +648,19 @@ mod tests {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
 
-       // base payload (index 0) so a pending block exists
         node.send_payload(create_first_payload()).await?;
 
-        // raw bytes already signed for chain-id 10
-        let raw = TRANSFER_ETH_TX;
-
-        // run the sync RPC and, in parallel, deliver the payload that contains the tx
-        let (receipt_res, payload_res) = tokio::join!(
-            node.send_raw_transaction_sync(raw),          // waits up to 6 s
+        // run the Tx sync and, in parallel, deliver the payload that contains the Tx
+        let (receipt_result, payload_result) = tokio::join!(
+            node.send_raw_transaction_sync(TRANSFER_ETH_TX),          // waits up to 6 s
             async {
-                // give the RPC a tiny head-start
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
             }
         );
 
-        // both futures must succeed
-        payload_res?;
-        let receipt = receipt_res?;
-
+        payload_result?;
+        let receipt = receipt_result?;
         
         assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
