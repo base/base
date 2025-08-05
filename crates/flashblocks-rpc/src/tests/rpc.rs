@@ -88,13 +88,14 @@ mod tests {
     async fn setup_node() -> eyre::Result<NodeContext> {
         let tasks = TaskManager::current();
         let exec = tasks.executor();
+        const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
         let genesis: Genesis = serde_json::from_str(include_str!("assets/genesis.json")).unwrap();
         let chain_spec = Arc::new(
             OpChainSpecBuilder::base_mainnet()
                 .genesis(genesis)
                 .ecotone_activated()
-                .chain(Chain::from(84532u64))
+                .chain(Chain::from(BASE_SEPOLIA_CHAIN_ID))
                 .build(),
         );
 
