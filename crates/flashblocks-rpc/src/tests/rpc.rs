@@ -33,6 +33,9 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
+    use reth_rpc_eth_api::RpcReceipt;
+    use reth::chainspec::Chain;
+
 
     pub struct NodeContext {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
@@ -66,6 +69,23 @@ mod tests {
 
             Ok(())
         }
+
+        pub async fn send_raw_transaction_sync(
+            &self,
+            tx: Bytes,
+        ) -> eyre::Result<RpcReceipt<Optimism>> {
+            // ② build an Alloy RpcClient that speaks HTTP
+            let url     = format!("http://{}", self.http_api_addr);
+            let client  = RpcClient::new_http(url.parse()?);
+    
+            // ③ call the method via the *generic* `request` helper
+            //    note: we must wrap the single param in a *tuple* → (tx,)
+            let receipt = client
+                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
+                .await?;            // RpcCall is a future; .await sends + waits
+    
+            Ok(receipt)
+        }
     }
 
     async fn setup_node() -> eyre::Result<NodeContext> {
@@ -77,6 +97,7 @@ mod tests {
             OpChainSpecBuilder::base_mainnet()
                 .genesis(genesis)
                 .ecotone_activated()
+                .chain(Chain::from(84532u64))
                 .build(),
         );
 
@@ -622,6 +643,36 @@ mod tests {
             1
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_sync() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+       // base payload (index 0) so a pending block exists
+        node.send_payload(create_first_payload()).await?;
+
+        // raw bytes already signed for chain-id 10
+        let raw = TRANSFER_ETH_TX;
+
+        // run the sync RPC and, in parallel, deliver the payload that contains the tx
+        let (receipt_res, payload_res) = tokio::join!(
+            node.send_raw_transaction_sync(raw),          // waits up to 6 s
+            async {
+                // give the RPC a tiny head-start
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                node.send_payload(create_second_payload()).await
+            }
+        );
+
+        // both futures must succeed
+        payload_res?;
+        let receipt = receipt_res?;
+
+        
+        assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
     }
 }
