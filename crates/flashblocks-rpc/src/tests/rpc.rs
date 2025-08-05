@@ -19,6 +19,7 @@ mod tests {
     use op_alloy_rpc_types::OpTransactionRequest;
     use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
+    use reth::chainspec::Chain;
     use reth::core::exit::NodeExitFuture;
     use reth::tasks::TaskManager;
     use reth_optimism_chainspec::OpChainSpecBuilder;
@@ -26,6 +27,7 @@ mod tests {
     use reth_optimism_node::OpNode;
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
+    use reth_rpc_eth_api::RpcReceipt;
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use serde_json;
     use std::any::Any;
@@ -66,17 +68,33 @@ mod tests {
 
             Ok(())
         }
+
+        pub async fn send_raw_transaction_sync(
+            &self,
+            tx: Bytes,
+        ) -> eyre::Result<RpcReceipt<Optimism>> {
+            let url = format!("http://{}", self.http_api_addr);
+            let client = RpcClient::new_http(url.parse()?);
+
+            let receipt = client
+                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
+                .await?;
+
+            Ok(receipt)
+        }
     }
 
     async fn setup_node() -> eyre::Result<NodeContext> {
         let tasks = TaskManager::current();
         let exec = tasks.executor();
+        const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
         let genesis: Genesis = serde_json::from_str(include_str!("assets/genesis.json")).unwrap();
         let chain_spec = Arc::new(
             OpChainSpecBuilder::base_mainnet()
                 .genesis(genesis)
                 .ecotone_activated()
+                .chain(Chain::from(BASE_SEPOLIA_CHAIN_ID))
                 .build(),
         );
 
@@ -622,6 +640,27 @@ mod tests {
             1
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_sync() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        node.send_payload(create_first_payload()).await?;
+
+        // run the Tx sync and, in parallel, deliver the payload that contains the Tx
+        let (receipt_result, payload_result) =
+            tokio::join!(node.send_raw_transaction_sync(TRANSFER_ETH_TX), async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                node.send_payload(create_second_payload()).await
+            });
+
+        payload_result?;
+        let receipt = receipt_result?;
+
+        assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
     }
 }
