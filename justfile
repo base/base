@@ -23,6 +23,9 @@ fix-clippy:
 build:
     cargo build --release
 
+build-maxperf:
+    cargo build --profile maxperf --features jemalloc
+
 clean:
     cargo clean
 
