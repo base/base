@@ -16,6 +16,9 @@ use reth_optimism_node::OpNode;
 use tracing::info;
 use url::Url;
 
+#[global_allocator]
+static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
+
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
 struct FlashblocksRollupArgs {
