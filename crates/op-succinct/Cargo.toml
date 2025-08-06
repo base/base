@@ -24,7 +24,7 @@ edition = "2021"
 authors = ["ratankaliani", "zachobront", "fakedev9999", "yuwen01"]
 homepage = "https://succinctlabs.github.io/op-succinct/"
 repository = "https://github.com/succinctlabs/op-succinct"
-version = "3.0.0-rc.1"
+version = "3.0.0"
 
 [workspace.dependencies]
 # general
@@ -127,7 +127,9 @@ alloy-network = { version = "1.0.9" }
 
 # Alloy
 alloy-rlp = { version = "0.3.12", default-features = false }
-alloy-trie = { version = "0.8.1", default-features = false, features = ["ethereum"] }
+alloy-trie = { version = "0.8.1", default-features = false, features = [
+    "ethereum",
+] }
 alloy-eips = { version = "1.0.9", default-features = false }
 alloy-serde = { version = "1.0.9", default-features = false }
 alloy-consensus = { version = "1.0.9", default-features = false }

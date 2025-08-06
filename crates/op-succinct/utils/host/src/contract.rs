@@ -30,6 +30,15 @@ sol! {
         external
         payable
         whenNotOptimistic;
+
+        function dgfProposeL2Output(
+            bytes32 _configName,
+            bytes32 _outputRoot,
+            uint256 _l2BlockNumber,
+            uint256 _l1BlockNumber,
+            bytes memory _proof,
+            address _proverAddress
+        ) external payable whenNotOptimistic returns (address _game);
     }
 }
 

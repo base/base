@@ -1,9 +1,8 @@
 use std::{collections::HashMap, env, str::FromStr, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{network::ReceiptResponse, Provider};
-use alloy_sol_types::SolValue;
 use anyhow::{anyhow, Context, Result};
 use futures_util::{stream, StreamExt, TryStreamExt};
 use op_succinct_client_utils::{boot::hash_rollup_config, types::u32_to_u8};
@@ -925,21 +924,16 @@ where
                 .call()
                 .await?;
 
-            let extra_data = <(U256, U256, Address, B256, Bytes)>::abi_encode_packed(&(
-                U256::from(completed_agg_proof.end_block as u64),
-                U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap() as u64),
-                self.requester_config.prover_address,
-                self.requester_config.op_succinct_config_name_hash,
-                completed_agg_proof.proof.as_ref().unwrap().clone().into(),
-            ));
-
             let transaction_request = self
                 .contract_config
-                .dgf_contract
-                .create(
-                    OP_SUCCINCT_VALIDITY_DISPUTE_GAME_TYPE,
+                .l2oo_contract
+                .dgfProposeL2Output(
+                    self.requester_config.op_succinct_config_name_hash,
                     output.output_root,
-                    extra_data.into(),
+                    U256::from(completed_agg_proof.end_block),
+                    U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
+                    completed_agg_proof.proof.as_ref().unwrap().clone().into(),
+                    self.requester_config.prover_address,
                 )
                 .value(init_bond)
                 .into_transaction_request();
@@ -952,7 +946,7 @@ where
                 )
                 .await?
         } else {
-            // Propose the L2 output.
+            // Propose the L2 output to the L2OutputOracle directly.
             let transaction_request = self
                 .contract_config
                 .l2oo_contract

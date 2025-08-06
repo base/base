@@ -29,8 +29,8 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
     bool public wasRespectedGameTypeWhenCreated;
 
     /// @notice Semantic version.
-    /// @custom:semver v3.0.0-rc.1
-    string public constant version = "v3.0.0-rc.1";
+    /// @custom:semver v3.0.0
+    string public constant version = "v3.0.0";
 
     constructor(address _l2OutputOracle) {
         L2_OUTPUT_ORACLE = _l2OutputOracle;
@@ -46,6 +46,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
         wasRespectedGameTypeWhenCreated = true;
 
         OPSuccinctL2OutputOracle oracle = OPSuccinctL2OutputOracle(L2_OUTPUT_ORACLE);
+
         oracle.proposeL2Output(
             configName(), rootClaim().raw(), l2BlockNumber(), l1BlockNumber(), proof(), proverAddress()
         );
@@ -63,6 +64,7 @@ contract OPSuccinctDisputeGame is ISemver, Clone, IDisputeGame {
 
     /// @notice Getter for the creator of the dispute game.
     /// @dev `clones-with-immutable-args` argument #1
+    /// Note: for validly created OPSuccinctDisputeGames, the creator is always the L2_OUTPUT_ORACLE.
     /// @return The creator of the dispute game.
     function gameCreator() public pure returns (address) {
         return _getArgAddress(0x00);
