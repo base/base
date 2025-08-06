@@ -1596,6 +1596,7 @@ dependencies = [
  "op-alloy-rpc-types-engine",
  "reqwest",
  "reth",
+ "reth-cli-util",
  "reth-optimism-chainspec",
  "reth-optimism-cli",
  "reth-optimism-evm",

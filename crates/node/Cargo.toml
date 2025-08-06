@@ -26,6 +26,7 @@ reth-rpc-convert.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
+reth-cli-util.workspace = true
 
 # revm
 revm.workspace = true
@@ -79,3 +80,7 @@ eyre.workspace = true
 uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
+
+[features]
+default = []
+jemalloc = ["reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc"]

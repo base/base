@@ -82,7 +82,13 @@ You can build the project using the `justfile` for a release build:
 just build
 ```
 
-Alternatively, you can use Cargo directly:
+Alternatively, if performance is critical, you can build with all optimizations enabled + jemalloc:
+
+```bash
+just build-maxperf
+```
+
+Otherwise, you can use Cargo directly:
 
 ```bash
 cargo build --release --bin base-reth-node
