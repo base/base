@@ -45,6 +45,9 @@ contract OPSuccinctDFGDeployer is Script, Utils {
         // Cast the factory proxy to the factory contract
         DisputeGameFactory gameFactory = DisputeGameFactory(address(factoryProxy));
 
+        // Set the dispute game factory address.
+        l2OutputOracleProxy.setDisputeGameFactory(address(gameFactory));
+
         // Set the init bond and implementation for the game type
         gameFactory.setImplementation(GameTypes.OP_SUCCINCT, IDisputeGame(address(game)));
 

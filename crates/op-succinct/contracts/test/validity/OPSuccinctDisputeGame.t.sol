@@ -44,7 +44,7 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
 
     // Fixed parameters.
     GameType gameType = GameTypes.OP_SUCCINCT;
-    Claim rootClaim = Claim.wrap(keccak256("rootClaim"));
+    bytes32 rootClaim = keccak256("rootClaim");
 
     // Game creation parameters.
     uint256 l2BlockNumber = 2000;
@@ -71,6 +71,9 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
         // Register our reference implementation under the specified gameType.
         factory.setImplementation(gameType, IDisputeGame(address(gameImpl)));
 
+        // Set the dispute game factory address.
+        l2OutputOracle.setDisputeGameFactory(address(factory));
+
         // Create a game
         vm.startBroadcast(proposer);
 
@@ -78,14 +81,11 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
         warpRollAndCheckpoint(l2OutputOracle, 4001, l1BlockNumber);
 
         bytes memory proof = bytes("");
+
         game = OPSuccinctDisputeGame(
             address(
-                factory.create(
-                    gameType,
-                    rootClaim,
-                    abi.encodePacked(
-                        l2BlockNumber, l1BlockNumber, proposer, l2OutputOracle.GENESIS_CONFIG_NAME(), proof
-                    )
+                l2OutputOracle.dgfProposeL2Output(
+                    l2OutputOracle.GENESIS_CONFIG_NAME(), rootClaim, l2BlockNumber, l1BlockNumber, proof, proposer
                 )
             )
         );
@@ -108,8 +108,8 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
 
         // Check the game fields.
         assertEq(game.gameType().raw(), gameType.raw());
-        assertEq(game.gameCreator(), proposer);
-        assertEq(game.rootClaim().raw(), rootClaim.raw());
+        assertEq(game.gameCreator(), address(l2OutputOracle));
+        assertEq(game.rootClaim().raw(), rootClaim);
         assertEq(game.l2BlockNumber(), l2BlockNumber);
         assertEq(game.l1BlockNumber(), l1BlockNumber);
         assertEq(game.proverAddress(), proposer);
@@ -159,5 +159,28 @@ contract OPSuccinctDisputeGameTest is Test, Utils {
         );
 
         vm.stopPrank();
+    }
+
+    // =========================================
+    // Test: Cannot propose output directly when dispute game is active
+    // =========================================
+    function testCannotProposeOutputDirectlyWhenDisputeGameIsActive() public {
+        vm.startBroadcast(proposer);
+        vm.deal(proposer, 1 ether);
+
+        // Warp forward to the block we want to propose and checkpoint
+        uint256 newL1BlockNumber = l1BlockNumber + 500;
+        warpRollAndCheckpoint(l2OutputOracle, 2000, newL1BlockNumber);
+
+        bytes memory proof = bytes("");
+        bytes32 configName = l2OutputOracle.GENESIS_CONFIG_NAME();
+        vm.expectRevert(
+            "L2OutputOracle: cannot propose L2 output from outside DisputeGameFactory.create while disputeGameFactory is set"
+        );
+        l2OutputOracle.proposeL2Output(
+            configName, keccak256("outputRoot"), l2BlockNumber + 1000, newL1BlockNumber, proof, proposer
+        );
+
+        vm.stopBroadcast();
     }
 }

@@ -47,7 +47,7 @@ In these deployment logs, `0x6B3342821680031732Bc7d4E88A6528478aF9E38` is the ad
 
 ### Existing `DisputeGameFactory`
 
-If you already have a `DisputeGameFactory` contract, you must call the `setImplementation` function to set the canonical dispute game implementation to `OPSuccinctDisputeGame`.
+If you already have a `DisputeGameFactory` contract, you must call the `setImplementation` function to set the canonical dispute game implementation to `OPSuccinctDisputeGame`. You must additionally set the `disputeGameFactory` variable in the `OPSuccinctL2OutputOracle` contract to the address of the `DisputeGameFactory` contract.
 
 ```solidity
     // The game type for the OP_SUCCINCT proof system.
@@ -55,6 +55,9 @@ If you already have a `DisputeGameFactory` contract, you must call the `setImple
 
     // Set the canonical dispute game implementation.
     gameFactory.setImplementation(gameType, IDisputeGame(address(game)));
+
+    // Set the dispute game factory in the OPSuccinctL2OutputOracle contract.
+    opsuccinctL2OutputOracle.setDisputeGameFactory(gameFactory);
 ```
 ## Use OP Succinct with `OptimismPortal2`
 
@@ -62,3 +65,4 @@ Once you have a `DisputeGameFactory` contract, you can use OP Succinct with `Opt
 
 With this environment variable set, the proposer will create, initialize and finalize a new `OPSuccinctDisputeGame` contract on the `DisputeGameFactory` contract with every aggregation proof.
 
+Note: The proposer will create dispute games by calling the `dgfProposeL2Output` function on the `OPSuccinctL2OutputOracle` contract, which calls `create` on the underlying dispute game factory contract. This is a security measure to prevent proposers from creating dispute games directly on the L2OutputOracle contract when using the OptimismPortal2 interface.

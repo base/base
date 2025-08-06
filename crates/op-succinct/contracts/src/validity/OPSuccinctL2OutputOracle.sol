@@ -7,6 +7,9 @@ import {Types} from "@optimism/src/libraries/Types.sol";
 import {AggregationOutputs} from "../lib/Types.sol";
 import {Constants} from "@optimism/src/libraries/Constants.sol";
 import {ISP1Verifier} from "@sp1-contracts/src/ISP1Verifier.sol";
+import {GameType, GameTypes, Claim} from "@optimism/src/dispute/lib/Types.sol";
+import {IDisputeGame} from "interfaces/dispute/IDisputeGame.sol";
+import {IDisputeGameFactory} from "interfaces/dispute/IDisputeGameFactory.sol";
 
 /// @custom:proxied
 /// @title OPSuccinctL2OutputOracle
@@ -115,6 +118,14 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice The genesis configuration name.
     bytes32 public constant GENESIS_CONFIG_NAME = keccak256("opsuccinct_genesis");
 
+    /// @notice The dispute game factory contract.
+    /// If running with the L2OutputOracle directly, without the OPSuccinctDisputeGame wrapper,
+    /// this is set to the zero address.
+    address public disputeGameFactory;
+
+    /// @notice Whether or not we are inside a call to DisputeGameFactory.create.
+    bool internal _enteredDGFCreate;
+
     ////////////////////////////////////////////////////////////
     //                         Events                         //
     ////////////////////////////////////////////////////////////
@@ -146,6 +157,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param configName The name of the configuration that was deleted.
     event OpSuccinctConfigDeleted(bytes32 indexed configName);
 
+    /// @notice Emitted when the verifier address is updated.
+    /// @param oldVerifier The old verifier address.
+    /// @param newVerifier The new verifier address.
+    event VerifierUpdated(address indexed oldVerifier, address indexed newVerifier);
+
     /// @notice Emitted when the owner address is updated.
     /// @param previousOwner The previous owner address.
     /// @param newOwner The new owner address.
@@ -166,6 +182,10 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @param finalizationPeriodSeconds The new finalization period in seconds.
     event OptimisticModeToggled(bool indexed enabled, uint256 finalizationPeriodSeconds);
 
+    /// @notice Emitted when the dispute game factory address is set.
+    /// @param disputeGameFactory The dispute game factory address.
+    event DisputeGameFactorySet(address indexed disputeGameFactory);
+
     ////////////////////////////////////////////////////////////
     //                         Errors                         //
     ////////////////////////////////////////////////////////////
@@ -178,8 +198,8 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     error L1BlockHashNotCheckpointed();
 
     /// @notice Semantic version.
-    /// @custom:semver v3.0.0-rc.1
-    string public constant version = "v3.0.0-rc.1";
+    /// @custom:semver v3.0.0
+    string public constant version = "v3.0.0";
 
     /// @notice The version of the initializer on the contract. Used for managing upgrades.
     uint8 public constant initializerVersion = 3;
@@ -259,6 +279,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         verifier = _initParams.verifier;
 
         owner = _initParams.owner;
+
+        _enteredDGFCreate = false;
+
+        // This is set to the zero address by default.
+        disputeGameFactory = address(0);
     }
 
     /// @notice Deletes all output proposals after and including the proposal that corresponds to
@@ -338,6 +363,20 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
             "L2OutputOracle: cannot propose L2 output in the future"
         );
 
+        // If the dispute game factory is set, make sure that we are calling this function from within
+        // DisputeGameFactory.create.
+        if (disputeGameFactory != address(0)) {
+            require(
+                _enteredDGFCreate,
+                "L2OutputOracle: cannot propose L2 output from outside DisputeGameFactory.create while disputeGameFactory is set"
+            );
+        } else {
+            require(
+                !_enteredDGFCreate,
+                "L2OutputOracle: cannot propose L2 output from inside DisputeGameFactory.create without setting disputeGameFactory"
+            );
+        }
+
         require(_outputRoot != bytes32(0), "L2OutputOracle: L2 output proposal cannot be the zero hash");
 
         OpSuccinctConfig memory config = opSuccinctConfigs[_configName];
@@ -387,11 +426,11 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         payable
         whenOptimistic
     {
-        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing),
-        // or the fallback timeout has been exceeded allowing anyone to propose.
+        // The proposer must be explicitly approved, or the zero address must be approved (permissionless proposing).
+        // In optimistic mode, there is NO permissionless fallback timeout. That is, no matter how long it has been since the last proposal,
+        // non-permissioned proposers cannot propose in optimistic mode.
         require(
-            approvedProposers[msg.sender] || approvedProposers[address(0)]
-                || (block.timestamp - lastProposalTimestamp() > fallbackTimeout),
+            approvedProposers[msg.sender] || approvedProposers[address(0)],
             "L2OutputOracle: only approved proposers can propose new outputs"
         );
 
@@ -431,6 +470,35 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
                 l2BlockNumber: uint128(_l2BlockNumber)
             })
         );
+    }
+
+    /// @notice Proposes an L2 output through the dispute game factory.
+    /// @dev We can only invoke `disputeGameFactory.create` through this function, ensuring that
+    ///      no one can interact with `proposeL2Output` directly when the dispute game factory is set.
+    /// @param _configName The name of the OpSuccinctConfig to use.
+    /// @param _outputRoot The root of the L2 output to propose.
+    /// @param _l2BlockNumber The L2 block number of the output to propose.
+    /// @param _l1BlockNumber The L1 block number of the output to propose.
+    /// @param _proof The proof of the output to propose.
+    /// @param _proverAddress The address of the prover to use.
+    /// @return _game The dispute game created.
+    function dgfProposeL2Output(
+        bytes32 _configName,
+        bytes32 _outputRoot,
+        uint256 _l2BlockNumber,
+        uint256 _l1BlockNumber,
+        bytes memory _proof,
+        address _proverAddress
+    ) external payable whenNotOptimistic returns (IDisputeGame _game) {
+        require(disputeGameFactory != address(0), "L2OutputOracle: dispute game factory is not set");
+
+        _enteredDGFCreate = true;
+        _game = IDisputeGameFactory(disputeGameFactory).create{value: msg.value}(
+            GameTypes.OP_SUCCINCT,
+            Claim.wrap(_outputRoot),
+            abi.encodePacked(_l2BlockNumber, _l1BlockNumber, _proverAddress, _configName, _proof)
+        );
+        _enteredDGFCreate = false;
     }
 
     /// @notice Checkpoints a block hash at a given block number.
@@ -580,7 +648,14 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         emit OpSuccinctConfigDeleted(_configName);
     }
 
-    /// Updates the owner address.
+    /// @notice Updates the verifier address.
+    /// @param _verifier The new verifier address.
+    function updateVerifier(address _verifier) external onlyOwner {
+        emit VerifierUpdated(verifier, _verifier);
+        verifier = _verifier;
+    }
+
+    /// @notice Updates the owner address.
     /// @param _owner The new owner address.
     function transferOwnership(address _owner) external onlyOwner {
         emit OwnershipTransferred(owner, _owner);
@@ -607,6 +682,13 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         finalizationPeriodSeconds = _finalizationPeriodSeconds;
         optimisticMode = true;
         emit OptimisticModeToggled(true, _finalizationPeriodSeconds);
+    }
+
+    /// @notice Sets the dispute game factory address.
+    /// @param _disputeGameFactory The dispute game factory address.
+    function setDisputeGameFactory(address _disputeGameFactory) external onlyOwner {
+        disputeGameFactory = _disputeGameFactory;
+        emit DisputeGameFactorySet(_disputeGameFactory);
     }
 
     /// @notice Disables optimistic mode.
