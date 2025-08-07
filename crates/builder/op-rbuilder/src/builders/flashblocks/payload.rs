@@ -456,15 +456,12 @@ where
                     // We got block cancelled, we won't need anything from the block at this point
                     // Caution: this assume that block cancel token only cancelled when new FCU is received
                     if block_cancel.is_cancelled() {
-                        ctx.metrics.block_built_success.increment(1);
-                        ctx.metrics
-                            .flashblock_count
-                            .record(ctx.flashblock_index() as f64);
-                        debug!(
-                            target: "payload_builder",
-                            message = "Payload building complete, job cancelled during execution"
+                        self.record_flashblocks_metrics(
+                            &ctx,
+                            flashblocks_per_block,
+                            &span,
+                            "Payload building complete, channel closed or job cancelled",
                         );
-                        span.record("flashblock_count", ctx.flashblock_index());
                         return Ok(());
                     }
 
@@ -514,15 +511,12 @@ where
                             // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
                             // To ensure that we will return same blocks as rollup-boost (to leverage caches)
                             if block_cancel.is_cancelled() {
-                                ctx.metrics.block_built_success.increment(1);
-                                ctx.metrics
-                                    .flashblock_count
-                                    .record(ctx.flashblock_index() as f64);
-                                debug!(
-                                    target: "payload_builder",
-                                    message = "Payload building complete, job cancelled during execution"
+                                self.record_flashblocks_metrics(
+                                    &ctx,
+                                    flashblocks_per_block,
+                                    &span,
+                                    "Payload building complete, channel closed or job cancelled",
                                 );
-                                span.record("flashblock_count", ctx.flashblock_index());
                                 return Ok(());
                             }
                             self.ws_pub
@@ -563,25 +557,43 @@ where
                     }
                 }
                 None => {
-                    // Exit loop if channel closed or cancelled
-                    ctx.metrics.block_built_success.increment(1);
-                    ctx.metrics
-                        .flashblock_count
-                        .record(ctx.flashblock_index() as f64);
-                    ctx.metrics
-                        .missing_flashblocks_count
-                        .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
-                    debug!(
-                        target: "payload_builder",
-                        message = "Payload building complete, channel closed or job cancelled",
-                        missing_falshblocks = flashblocks_per_block.saturating_sub(ctx.flashblock_index()),
-                        reduced_flashblocks = self.config.flashblocks_per_block().saturating_sub(flashblocks_per_block),
+                    self.record_flashblocks_metrics(
+                        &ctx,
+                        flashblocks_per_block,
+                        &span,
+                        "Payload building complete, channel closed or job cancelled",
                     );
-                    span.record("flashblock_count", ctx.flashblock_index());
                     return Ok(());
                 }
             }
         }
+    }
+
+    /// Do some logging and metric recording when we stop build flashblocks
+    fn record_flashblocks_metrics(
+        &self,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        flashblocks_per_block: u64,
+        span: &tracing::Span,
+        message: &str,
+    ) {
+        ctx.metrics.block_built_success.increment(1);
+        ctx.metrics
+            .flashblock_count
+            .record(ctx.flashblock_index() as f64);
+        ctx.metrics
+            .missing_flashblocks_count
+            .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
+
+        debug!(
+            target: "payload_builder",
+            message = message,
+            flashblocks_per_block = flashblocks_per_block,
+            flashblock_index = ctx.flashblock_index(),
+            config_flashblocks_per_block = self.config.flashblocks_per_block(),
+        );
+
+        span.record("flashblock_count", ctx.flashblock_index());
     }
 
     /// Spawn task that will send new flashblock level cancel token in steady intervals (first interval
