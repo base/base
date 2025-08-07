@@ -300,13 +300,6 @@ where
             payload_id = fb_payload.payload_id.to_string(),
         );
 
-        ctx.metrics
-            .payload_num_tx
-            .record(info.executed_transactions.len() as f64);
-        ctx.metrics
-            .payload_num_tx_gauge
-            .set(info.executed_transactions.len() as f64);
-
         if ctx.attributes().no_tx_pool {
             info!(
                 target: "payload_builder",
@@ -320,6 +313,12 @@ where
             ctx.metrics
                 .total_block_built_gauge
                 .set(total_block_building_time);
+            ctx.metrics
+                .payload_num_tx
+                .record(info.executed_transactions.len() as f64);
+            ctx.metrics
+                .payload_num_tx_gauge
+                .set(info.executed_transactions.len() as f64);
 
             // return early since we don't need to build a block with transactions from the pool
             return Ok(());
@@ -458,6 +457,7 @@ where
                     if block_cancel.is_cancelled() {
                         self.record_flashblocks_metrics(
                             &ctx,
+                            &info,
                             flashblocks_per_block,
                             &span,
                             "Payload building complete, channel closed or job cancelled",
@@ -513,6 +513,7 @@ where
                             if block_cancel.is_cancelled() {
                                 self.record_flashblocks_metrics(
                                     &ctx,
+                                    &info,
                                     flashblocks_per_block,
                                     &span,
                                     "Payload building complete, channel closed or job cancelled",
@@ -559,6 +560,7 @@ where
                 None => {
                     self.record_flashblocks_metrics(
                         &ctx,
+                        &info,
                         flashblocks_per_block,
                         &span,
                         "Payload building complete, channel closed or job cancelled",
@@ -573,6 +575,7 @@ where
     fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &ExecutionInfo<ExtraExecutionInfo>,
         flashblocks_per_block: u64,
         span: &tracing::Span,
         message: &str,
@@ -584,6 +587,12 @@ where
         ctx.metrics
             .missing_flashblocks_count
             .record(flashblocks_per_block.saturating_sub(ctx.flashblock_index()) as f64);
+        ctx.metrics
+            .payload_num_tx
+            .record(info.executed_transactions.len() as f64);
+        ctx.metrics
+            .payload_num_tx_gauge
+            .set(info.executed_transactions.len() as f64);
 
         debug!(
             target: "payload_builder",
