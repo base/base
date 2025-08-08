@@ -1,4 +1,4 @@
-# Flashblock ETL ExEx — Real-time Pending Block Indexer
+# Flashblock ETL ExEx — Real-time flashblock state streaming
 
 Flashblock ETL ExEx maintains a real-time snapshot of the next block being built, assembled from incoming “flashblock” chunks.
 It lets RPC clients query that pending block—transactions, receipts, balances, nonces, and `eth_call` state overrides—before it becomes canonical.
