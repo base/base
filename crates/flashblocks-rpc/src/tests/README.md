@@ -29,8 +29,6 @@ Our north star ([#51]):
                                   publish/clear via PendingWriter   RPC reads via PendingView
 ```
 
-- Mermaid diagram
-
 ```mermaid
 graph TD
     A["Flashblock Stream"] -->|"Base (index=0)<br/>+ Deltas (index=1,2,...)"| B["PendingBlockBuilder"]
@@ -62,13 +60,13 @@ graph TD
     A -.->|"Feeds into"| O
     B -.->|"Creates"| C
     
-    %% Styling
-    classDef stream fill:#e1f5fe
-    classDef processing fill:#f3e5f5
-    classDef storage fill:#fff3e0
-    classDef interface fill:#e8f5e8
-    classDef rpc fill:#fff8e1
-    classDef exex fill:#ffebee
+    %% Styling with better contrast
+    classDef stream fill:#f0f8ff,stroke:#333,stroke-width:2px,color:#000
+    classDef processing fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+    classDef storage fill:#fffaf0,stroke:#333,stroke-width:2px,color:#000
+    classDef interface fill:#f0fff0,stroke:#333,stroke-width:2px,color:#000
+    classDef rpc fill:#fffff0,stroke:#333,stroke-width:2px,color:#000
+    classDef exex fill:#fff5f5,stroke:#333,stroke-width:2px,color:#000
     
     class A stream
     class B,C processing
