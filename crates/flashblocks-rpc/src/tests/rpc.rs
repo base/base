@@ -3,13 +3,15 @@ mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::pending::PendingWriter;
+    use crate::pending::PendingView;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use alloy_consensus::Receipt;
+    use alloy_consensus::Header;
     use alloy_eips::BlockNumberOrTag;
     use alloy_eips::BlockNumberOrTag::Pending;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
-    use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256};
+    use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256, Sealable};
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
@@ -45,6 +47,7 @@ mod tests {
         _node: Box<dyn Any + Sync + Send>,
         _task_manager: TaskManager,
         writer: Arc<dyn PendingWriter + Send + Sync>,
+        view: Arc<dyn PendingView + Send + Sync>,
     }
 
     impl NodeContext {
@@ -85,6 +88,9 @@ mod tests {
 
             Ok(receipt)
         }
+
+        pub fn view(&self) -> Arc<dyn PendingView + Send + Sync> { self.view.clone() }
+        pub fn writer(&self) -> Arc<dyn PendingWriter + Send + Sync> { self.writer.clone() }
     }
 
     async fn setup_node() -> eyre::Result<NodeContext> {
@@ -125,6 +131,10 @@ mod tests {
             Arc::new(OnceCell::new());
         let writer_cell_for_closure = writer_cell.clone();
 
+        // Cell to smuggle the PendingView handle out of the RPC module closure
+        let view_cell: Arc<OnceCell<Arc<dyn PendingView + Send + Sync>>> = Arc::new(OnceCell::new());
+        let view_cell_for_closure = view_cell.clone();
+
         let NodeHandle {
             node,
             node_exit_future,
@@ -141,6 +151,10 @@ mod tests {
                 // expose writer handle for tests via trait object
                 let writer: Arc<dyn PendingWriter + Send + Sync> = flashblocks_state.clone();
                 let _ = writer_cell_for_closure.set(writer);
+
+                // expose view handle for tests via trait object
+                let view: Arc<dyn PendingView + Send + Sync> = flashblocks_state.clone();
+                let _ = view_cell_for_closure.set(view);
 
                 let api_ext =
                     EthApiExt::new(ctx.registry.eth_api().clone(), flashblocks_state.clone());
@@ -159,10 +173,8 @@ mod tests {
             .launch()
             .await?;
 
-        let writer = writer_cell
-            .get()
-            .expect("writer set")
-            .clone();
+        let writer = writer_cell.get().expect("writer set").clone();
+        let view = view_cell.get().expect("view set").clone();
 
         let http_api_addr = node
             .rpc_server_handle()
@@ -176,12 +188,97 @@ mod tests {
             _node: Box::new(node),
             _task_manager: tasks,
             writer,
+            view,
         })
+    }
+
+    // --- Test helpers for constructing minimal PendingBlocks ---
+    use crate::pending::PendingBlock;
+    use crate::pending::PendingBlockBuilder;
+
+    fn test_pending_block(height: u64) -> PendingBlock {
+        // Minimal sealed header with the desired height
+        let mut header = Header::default();
+        header.number = height;
+        let sealed = header.seal_slow();
+
+        // Minimal Flashblock to satisfy builder constraints
+        let fb = Flashblock {
+            payload_id: PayloadId::new([0; 8]),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number: height,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata {
+                block_number: height,
+                receipts: HashMap::default(),
+                new_account_balances: HashMap::default(),
+            },
+        };
+
+        let mut builder = PendingBlockBuilder::new();
+        builder.with_header(sealed);
+        builder.with_flashblocks(vec![fb]);
+        builder.build().expect("valid pending block")
+    }
+
+    fn test_pending_block_with_details(height: u64, fb_index: u64, addr: Address, balance: U256, tx_count: u64) -> PendingBlock {
+        let mut header = Header::default();
+        header.number = height;
+        let sealed = header.seal_slow();
+
+        let fb = Flashblock {
+            payload_id: PayloadId::new([0; 8]),
+            index: fb_index,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number: height,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1::default(),
+            metadata: Metadata {
+                block_number: height,
+                receipts: HashMap::default(),
+                new_account_balances: {
+                    let mut m = HashMap::default();
+                    m.insert(addr, balance);
+                    m
+                },
+            },
+        };
+
+        let mut builder = PendingBlockBuilder::new();
+        builder.with_header(sealed);
+        builder.with_flashblocks(vec![fb]);
+        for _ in 0..tx_count {
+            builder.increment_nonce(addr);
+        }
+        builder.with_account_balance(addr, balance);
+        // Add a trivial empty overrides map
+        let overrides = alloy_rpc_types_eth::state::StateOverridesBuilder::default().build();
+        builder.with_state_overrides(overrides);
+        builder.build().expect("valid pending block")
     }
 
     fn create_first_payload() -> Flashblock {
         let block_info_tx = Bytes::from_str(
-            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
+            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000"
+        )
             .unwrap();
 
         let block_info_txn_hash =
@@ -708,6 +805,103 @@ mod tests {
             .await?;
         assert!(after.is_none(), "pending snapshot should be cleared once canon >= pending");
 
+        Ok(())
+    }
+
+    // --- New tests for PendingView and PendingWriter ---
+
+    #[tokio::test]
+    async fn pending_writer_set_is_visible_to_view() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        // Initially no pending snapshot
+        assert_eq!(node.view.block_number(), 0);
+
+        // Set a synthetic pending snapshot
+        let pb = test_pending_block(42);
+        node.writer.set_view(pb);
+
+        // View should observe the height immediately
+        assert_eq!(node.view.block_number(), 42);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clear_removes_pending_snapshot() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        node.writer.set_view(test_pending_block(5));
+        assert_eq!(node.view.block_number(), 5);
+
+        node.writer.clear();
+        assert_eq!(node.view.block_number(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clear_on_catchup_respects_height() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        node.writer.set_view(test_pending_block(10));
+        assert_eq!(node.view.block_number(), 10);
+
+        // Canon lower → should not clear
+        node.writer.clear_on_canonical_catchup(9);
+        assert_eq!(node.view.block_number(), 10);
+
+        // Canon equal → should clear
+        node.writer.clear_on_canonical_catchup(10);
+        assert_eq!(node.view.block_number(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn view_getters_match_pending_snapshot() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        let addr = TEST_ADDRESS;
+        let balance = U256::from(PENDING_BALANCE);
+        let tx_count = 3u64;
+
+        let pb = test_pending_block_with_details(7, 2, addr, balance, tx_count);
+        node.writer.set_view(pb);
+
+        // Verify getters reflect the snapshot
+        assert_eq!(node.view.block_number(), 7);
+        assert_eq!(node.view.flashblock_index(), 2);
+        assert_eq!(node.view.get_transaction_count(addr), U256::from(tx_count));
+        assert_eq!(node.view.get_balance(addr), Some(balance));
+        assert!(node.view.get_state_overrides().is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_reads_and_writes_are_consistent() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let writer = node.writer();
+        let view = node.view();
+
+        let writer_task = tokio::spawn(async move {
+            for h in 0..50u64 {
+                writer.set_view(test_pending_block(h));
+                tokio::task::yield_now().await;
+            }
+        });
+
+        let reader_task = tokio::spawn(async move {
+            for _ in 0..50u64 {
+                let _ = view.get_block(false);
+                tokio::task::yield_now().await;
+            }
+        });
+
+        writer_task.await.unwrap();
+        reader_task.await.unwrap();
         Ok(())
     }
 }
