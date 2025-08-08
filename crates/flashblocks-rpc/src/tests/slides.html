@@ -79,11 +79,11 @@
 
         <!-- Slide 1: Problem Statement (with GitHub Issue image) -->
         <div class="slide active">
-            <h2>(GitHub Issue #51)</h2>
+            <h2>reth-node repo(GitHub Issue #51)</h2>
             <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
                 <img src="./github_issue_51.png" alt="GitHub Issue #51 - Invalidate flashblocks when canonical blocks are more recent" style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
             </div>
-            <p><span class="highlight">Goal:</span> Connect FlashblocksState to the canonical commit stream and clear pending when <code>canon_height ≥ pending_height</code>.</p>
+            <p><span class="highlight">Goal:</span> Connect FlashblocksState to the canonical chain stream and clear pending pending flashblocks are more recent <code>canonical_height ≥ pendingFlashblock_height</code>
         </div>
 
         <!-- Slide 2: Overview -->
@@ -92,7 +92,7 @@
             <ul>
                 <li><strong>Flashblocks:</strong> Base protocol's real-time "next block" data feed</li>
                 <li><strong>ETL:</strong> Extract (stream from websocket), Transform (assemble base + deltas), Load (materialize in-memory view)</li>
-                <li><strong>ExEx:</strong> Reth Execution Extension, hooks into canonical commit events to clear stale pending snapshots</li>
+                <li><strong>ExEx:</strong> Reth Execution Extension, hooks into canonical chain events to clear stale pending snapshots</li>
             </ul>
             <div class="sequence-step">
                 <strong>Key Innovation:</strong> Combines real-time streaming with canonical chain awareness for consistent pending state management
@@ -102,15 +102,11 @@
         <!-- Slide 3: Flashblocks in Base -->
         <div class="slide">
             <h2>Flashblocks in Base Protocol</h2>
-            <p><em>Reference: https://blog.base.dev/accelerating-base-with-flashblocks</em></p>
-            <ul>
-                <li>Instead of waiting for full block propagation, Base emits "flashblock" chunks during block assembly</li>
-                <li><span class="highlight">Index 0 = Base Snapshot</span> — the partial block at first emission</li>
-                <li><span class="highlight">Index 1, 2... = Deltas</span> — incremental changes until block sealing</li>
-            </ul>
-            <div class="sequence-step">
-                This enables sub-second latency for pending transaction visibility instead of waiting for full block propagation
+            <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
+                <img src="./flashblockpic.png" alt="Flashblocks in Base Protocol" style="max-width: 100%; max-height: 400px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
             </div>
+            <p>Flashblocks are sub-blocks issued by the block builder and streamed to nodes every 200ms, allowing for early confirmation times.</p>
+            <p>Each Flashblock contains ~10% of the transactions (by gas) of a regular block, and a series of Flashblocks can be combined to recreate a full block. They are an optional addition for nodes and applications that want to have a faster UX.</p>
         </div>
 
         <!-- Slide 4: Delta-Streaming Pattern -->
