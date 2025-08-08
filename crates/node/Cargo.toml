@@ -64,6 +64,9 @@ futures.workspace = true
 futures-util.workspace = true
 reqwest.workspace = true
 
+# reth-exex
+reth-exex.workspace = true
+
 # rpc
 jsonrpsee.workspace = true
 
@@ -80,6 +83,7 @@ eyre.workspace = true
 uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
+once_cell.workspace = true
 
 [features]
 default = []

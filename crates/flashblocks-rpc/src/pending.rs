@@ -11,6 +11,31 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth_rpc_eth_api::RpcBlock;
 
+pub trait PendingView: Send + Sync {
+    fn block_number(&self) -> BlockNumber;
+    fn flashblock_index(&self) -> u64;
+    fn get_block(&self, full: bool) -> RpcBlock<Optimism>;
+    fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt>;
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<Transaction>;
+    fn get_transaction_count(&self, address: Address) -> U256;
+    fn get_balance(&self, address: Address) -> Option<U256>;
+    fn get_state_overrides(&self) -> Option<StateOverride>;
+}
+
+pub trait PendingWriter {
+    /// Called when a new Flashblock chunk arrives.
+    fn on_flashblock_received(&self, fb: Flashblock);
+
+    /// Atomically publish a new snapshot.
+    fn set_view(&self, pb: PendingBlock);
+
+    /// Atomically clear the snapshot.
+    fn clear(&self);
+
+    /// Clear only if canonical height has caught up.
+    fn clear_on_canonical_catchup(&self, canon: u64);
+}
+
 pub struct PendingBlockBuilder {
     pub flashblocks: Vec<Flashblock>,
     pub header: Option<Sealed<Header>>,
@@ -167,5 +192,32 @@ impl PendingBlock {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
+    }
+}
+
+impl PendingView for PendingBlock {
+    fn block_number(&self) -> BlockNumber {
+        self.block_number()
+    }
+    fn flashblock_index(&self) -> u64 {
+        self.flashblock_index()
+    }
+    fn get_block(&self, full: bool) -> RpcBlock<Optimism> {
+        self.get_block(full)
+    }
+    fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
+        self.get_receipt(tx_hash)
+    }
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<Transaction> {
+        self.get_transaction_by_hash(tx_hash)
+    }
+    fn get_transaction_count(&self, address: Address) -> U256 {
+        self.get_transaction_count(address)
+    }
+    fn get_balance(&self, address: Address) -> Option<U256> {
+        self.get_balance(address)
+    }
+    fn get_state_overrides(&self) -> Option<StateOverride> {
+        self.get_state_overrides()
     }
 }

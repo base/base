@@ -1,5 +1,5 @@
 use crate::metrics::Metrics;
-use crate::pending::{PendingBlock, PendingBlockBuilder};
+use crate::pending::{PendingBlock, PendingBlockBuilder, PendingView, PendingWriter};
 use crate::rpc::FlashblocksAPI;
 use crate::subscription::{Flashblock, FlashblocksReceiver};
 use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
@@ -7,15 +7,17 @@ use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::map::B256HashMap;
-use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
+use alloy_primitives::{Address, BlockNumber, Sealable, TxHash, B256, U256};
+use alloy_provider::network::primitives::BlockTransactions;
 use alloy_rpc_types::TransactionTrait;
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::Header as RPCHeader;
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
-use op_alloy_rpc_types::Transaction;
+use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::chainspec::{ChainSpecProvider, EthChainSpec};
 use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
@@ -41,7 +43,7 @@ const BUFFER_SIZE: usize = 20;
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksState<Client> {
-    pending_block: Arc<ArcSwapOption<PendingBlock>>,
+    pending: Arc<ArcSwapOption<PendingBlock>>,
     flashblock_sender: Sender<Flashblock>,
     metrics: Metrics,
     client: Client,
@@ -57,10 +59,56 @@ where
 {
     pub fn new(client: Client) -> Self {
         Self {
-            pending_block: Arc::new(ArcSwapOption::new(None)),
+            pending: Arc::new(ArcSwapOption::new(None)),
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
             metrics: Metrics::default(),
             client,
+        }
+    }
+
+    /// Install/replace the current pending snapshot and record what we replaced.
+    pub fn set_view(&self, view: PendingBlock) {
+        if let Some(prev) = self.pending.swap(Some(std::sync::Arc::new(view))) {
+            // ⬇️ you have the previous snapshot here: perfect for metrics/logs
+            self.metrics.pending_set.increment(1);
+            self.metrics
+                .pending_snapshot_height
+                .set(prev.block_number() as f64);
+            self.metrics
+                .pending_snapshot_fb_index
+                .set(prev.flashblock_index() as f64);
+            // (Optional) tx count, etc., if you want:
+            // self.metrics.last_replaced_tx_count.set(prev.get_block(false).transactions.len() as i64);
+        }
+    }
+
+    /// Clear the pending snapshot unconditionally (and record it if there was one).
+    pub fn clear(&self) {
+        if let Some(prev) = self.pending.swap(None) {
+            self.metrics.pending_clear_catchup.increment(1);
+            self.metrics
+                .pending_snapshot_height
+                .set(prev.block_number() as f64);
+            self.metrics
+                .pending_snapshot_fb_index
+                .set(prev.flashblock_index() as f64);
+        }
+    }
+
+    /// Clear only when canonical has caught up to (or passed) the pending block number.
+    pub fn clear_on_canonical_catchup(&self, canon_number: u64) {
+        if let Some(cur) = self.pending.load_full() {
+            if cur.block_number() <= canon_number {
+                if let Some(prev) = self.pending.swap(None) {
+                    self.metrics.pending_clear_catchup.increment(1);
+                    self.metrics
+                        .pending_snapshot_height
+                        .set(prev.block_number() as f64);
+                    self.metrics
+                        .pending_snapshot_fb_index
+                        .set(prev.flashblock_index() as f64);
+                }
+            }
         }
     }
 
@@ -77,7 +125,7 @@ where
         let start_time = Instant::now();
         match self.process_flashblock(flashblocks) {
             Ok(block) => {
-                self.pending_block.swap(Some(Arc::new(block)));
+                self.set_view(block);
                 self.metrics
                     .block_processing_duration
                     .record(start_time.elapsed());
@@ -322,7 +370,7 @@ where
         + 'static,
 {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
-        match self.pending_block.load_full() {
+        match self.pending.load_full() {
             Some(pending_block) => {
                 if flashblock.index == 0 {
                     self.metrics
@@ -337,7 +385,7 @@ where
                     self.update_block(flashblocks);
                 } else if pending_block.block_number() != flashblock.metadata.block_number {
                     self.metrics.unexpected_block_order.increment(1);
-                    self.pending_block.swap(None);
+                    self.pending.swap(None);
 
                     error!(
                         message = "Received Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
@@ -367,32 +415,159 @@ where
     }
 }
 
+impl<Client> PendingView for FlashblocksState<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    fn block_number(&self) -> BlockNumber {
+        self.pending
+            .load_full()
+            .map(|pb| pb.block_number())
+            .unwrap_or_default()
+    }
+
+    fn flashblock_index(&self) -> u64 {
+        self.pending
+            .load_full()
+            .map(|pb| pb.flashblock_index())
+            .unwrap_or_default()
+    }
+
+    fn get_block(&self, full: bool) -> RpcBlock<Optimism> {
+        self.pending
+            .load_full()
+            .map(|pb| pb.get_block(full))
+            .unwrap_or_else(|| {
+                // Return empty block if no pending block
+                RpcBlock::<Optimism> {
+                    header: RPCHeader::default(),
+                    transactions: BlockTransactions::Hashes(vec![]),
+                    uncles: Vec::new(),
+                    withdrawals: None,
+                }
+            })
+    }
+
+    fn get_receipt(&self, tx_hash: TxHash) -> Option<OpTransactionReceipt> {
+        self.pending
+            .load_full()
+            .and_then(|pb| pb.get_receipt(tx_hash))
+    }
+
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<Transaction> {
+        self.pending
+            .load_full()
+            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+    }
+
+    fn get_transaction_count(&self, address: Address) -> U256 {
+        self.pending
+            .load_full()
+            .map(|pb| pb.get_transaction_count(address))
+            .unwrap_or_default()
+    }
+
+    fn get_balance(&self, address: Address) -> Option<U256> {
+        self.pending
+            .load_full()
+            .and_then(|pb| pb.get_balance(address))
+    }
+
+    fn get_state_overrides(&self) -> Option<StateOverride> {
+        self.pending
+            .load_full()
+            .and_then(|pb| pb.get_state_overrides())
+    }
+}
+
+impl<Client> PendingWriter for FlashblocksState<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    fn on_flashblock_received(&self, fb: Flashblock) {
+        // Delegate to the existing FlashblocksReceiver implementation
+        FlashblocksReceiver::on_flashblock_received(self, fb);
+    }
+
+    fn set_view(&self, pb: PendingBlock) {
+        if let Some(prev) = self.pending.swap(Some(Arc::new(pb))) {
+            self.metrics.pending_set.increment(1);
+            self.metrics
+                .pending_snapshot_height
+                .set(prev.block_number() as f64);
+            self.metrics
+                .pending_snapshot_fb_index
+                .set(prev.flashblock_index() as f64);
+        }
+    }
+
+    fn clear(&self) {
+        if let Some(prev) = self.pending.swap(None) {
+            self.metrics.pending_clear_catchup.increment(1);
+            self.metrics
+                .pending_snapshot_height
+                .set(prev.block_number() as f64);
+            self.metrics
+                .pending_snapshot_fb_index
+                .set(prev.flashblock_index() as f64);
+        }
+    }
+
+    fn clear_on_canonical_catchup(&self, canon: u64) {
+        if let Some(cur) = self.pending.load_full() {
+            if cur.block_number() <= canon {
+                if let Some(prev) = self.pending.swap(None) {
+                    self.metrics.pending_clear_catchup.increment(1);
+                    self.metrics
+                        .pending_snapshot_height
+                        .set(prev.block_number() as f64);
+                    self.metrics
+                        .pending_snapshot_fb_index
+                        .set(prev.flashblock_index() as f64);
+                }
+            }
+        }
+    }
+}
+
 impl<Client> FlashblocksAPI for FlashblocksState<Client> {
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.pending_block.load_full().map(|pb| pb.get_block(full))
+        self.pending.load_full().map(|pb| pb.get_block(full))
     }
 
     fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.pending_block
+        self.pending
             .load_full()
             .and_then(|pb| pb.get_receipt(tx_hash))
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
-        self.pending_block
+        self.pending
             .load_full()
             .map(|pb| pb.get_transaction_count(address))
             .unwrap_or_else(|| U256::from(0))
     }
 
     fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
-        self.pending_block
+        self.pending
             .load_full()
             .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
-        self.pending_block
+        self.pending
             .load_full()
             .and_then(|pb| pb.get_balance(address))
     }
@@ -402,7 +577,7 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
     }
 
     fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.pending_block
+        self.pending
             .load_full()
             .and_then(|pb| pb.get_state_overrides())
     }

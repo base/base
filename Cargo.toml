@@ -53,6 +53,7 @@ reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
 # revm
 revm = { version = "27.0.3", default-features = false }
@@ -113,3 +114,4 @@ time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 brotli = "8.0.1"
 arc-swap = "1.7.1"
+once_cell = "1.19"
