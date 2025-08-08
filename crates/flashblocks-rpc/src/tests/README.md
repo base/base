@@ -1,13 +1,13 @@
-# Flashblocks — Real-time Pending Block Indexer (with ExEx)
+# Flashblock ETL ExEx — Real-time Pending Block Indexer
 
-Flashblocks maintains a real-time snapshot of the next block being built, assembled from incoming “flashblock” chunks.
+Flashblock ETL ExEx maintains a real-time snapshot of the next block being built, assembled from incoming “flashblock” chunks.
 It lets RPC clients query that pending block—transactions, receipts, balances, nonces, and `eth_call` state overrides—before it becomes canonical.
 
 An Execution Extension (ExEx) watches the canonical chain and clears the pending snapshot as soon as `canon_height ≥ pending_height`, so stale data is never served.
 
 Our north star ([#51]):
 
-> Invalidate Flashblocks when canonical blocks are more recent.
+> Invalidate flashblocks when canonical blocks are more recent.
 > Connect `FlashblocksState` to the canonical state stream and clear pending when we have a canonical block with an equal or higher block number. This makes outages gracefully degrade to canonical-only reads.
 
 ---
@@ -24,7 +24,7 @@ Our north star ([#51]):
 ## Architecture (stream → assemble → expose → clear)
 
 ```
-[Flashblocks stream] → [PendingBlockBuilder] → [ArcSwapOption<Arc<…>> store]
+[Flashblock stream] → [PendingBlockBuilder] → [ArcSwapOption<Arc<…>> store]
                                               ↑                         ↓
                                   publish/clear via PendingWriter   RPC reads via PendingView
 ```
@@ -33,7 +33,7 @@ Our north star ([#51]):
 
 ```mermaid
 graph TD
-    A["Flashblocks Stream"] -->|"Base (index=0)<br/>+ Deltas (index=1,2,...)"| B["PendingBlockBuilder"]
+    A["Flashblock Stream"] -->|"Base (index=0)<br/>+ Deltas (index=1,2,...)"| B["PendingBlockBuilder"]
     
     B -->|"Merges diffs<br/>Executes txs<br/>Produces receipts"| C["PendingBlock Snapshot"]
     
@@ -119,7 +119,7 @@ pub trait PendingView: Send + Sync {
 
 ```rust
 pub trait PendingWriter {
-    /// Called when a new Flashblock chunk arrives (receiver path).
+    /// Called when a new flashblock chunk arrives (receiver path).
     fn on_flashblock_received(&self, fb: Flashblock);
 
     /// Atomically publish a new snapshot.
@@ -269,9 +269,27 @@ To be 100% sure in your tree, search for:
 
 ---
 
+## Performance and scaling
+
+- **Performance profile: I/O-bound**
+  - Flashblock ETL ExEx is dominated by I/O rather than CPU.
+  - The core snapshot assembly is in-memory and fast; latency comes from waiting on inbound data and serving outbound requests.
+
+- **Where the I/O is**
+  - **Network I/O**: websocket subscription to the Flashblock feed; ExEx notifications from the canonical commit stream.
+  - **IPC/RPC I/O**: serving RPC that reads the pending snapshot; occasional fallbacks to canonical provider for balances/state.
+  - **Disk I/O (indirect)**: when the canonical provider fetches state/blocks from its DB.
+
+- **Implications for scaling**
+  - Optimize I/O paths (stable websocket feeds, minimize blocking calls, use timeouts/backoff).
+  - Keep reads lock-free via `ArcSwapOption` to scale concurrent RPC readers without contention.
+  - Use bounded channels and backpressure for flashblock ingestion to avoid memory bloat under load.
+  - ExEx catch-up is event-driven and cheap (O(1) atomic clear), adding negligible CPU overhead.
+  - Prefer async provider calls and avoid synchronous/blocking disk access on hot paths.
+
 # Future work: real-data test harness
 
-Today our tests use small synthetic flashblocks to exercise the pipeline (builder → snapshot → RPC) and the ExEx catch-up clear. That’s great for coverage and speed, but we should also validate with real Flashblock payloads captured from the live websocket.
+Today our tests use small synthetic flashblocks to exercise the pipeline (builder → snapshot → RPC) and the ExEx catch-up clear. That’s great for coverage and speed, but we should also validate with real flashblock payloads captured from the live websocket.
 
 ## Compressed plan
 
