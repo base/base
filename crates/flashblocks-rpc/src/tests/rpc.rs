@@ -904,4 +904,32 @@ mod tests {
         reader_task.await.unwrap();
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_without_catchup_pending_is_stale() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        // 1) Seed pending #1 (base + delta)
+        node.send_payload(create_first_payload()).await?;
+        node.send_payload(create_second_payload()).await?;
+
+        // Sanity: pending exists and is for block #1
+        let pb = provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .await?
+            .expect("pending block should exist");
+        assert_eq!(pb.number(), 1);
+
+        // 2) Do NOT call clear_on_canonical_catchup.
+        //    Pending still serves the snapshot that was set (stale risk if canon has caught up).
+        let still = provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .await?
+            .expect("pending block should still be served without catch-up clear");
+        assert_eq!(still.number(), 1);
+
+        Ok(())
+    }
 }
