@@ -2,6 +2,7 @@
 mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
+    use crate::pending::PendingWriter;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
@@ -35,6 +36,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
+    use once_cell::sync::OnceCell;
 
     pub struct NodeContext {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
@@ -42,6 +44,7 @@ mod tests {
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
         _task_manager: TaskManager,
+        writer: Arc<dyn PendingWriter + Send + Sync>,
     }
 
     impl NodeContext {
@@ -117,6 +120,11 @@ mod tests {
         // Start websocket server to simulate the builder and send payloads back to the node
         let (sender, mut receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
 
+        // Cell to smuggle the PendingWriter handle out of the RPC module closure
+        let writer_cell: Arc<OnceCell<Arc<dyn PendingWriter + Send + Sync>>> =
+            Arc::new(OnceCell::new());
+        let writer_cell_for_closure = writer_cell.clone();
+
         let NodeHandle {
             node,
             node_exit_future,
@@ -130,6 +138,10 @@ mod tests {
                 // a dummy url.
                 let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
 
+                // expose writer handle for tests via trait object
+                let writer: Arc<dyn PendingWriter + Send + Sync> = flashblocks_state.clone();
+                let _ = writer_cell_for_closure.set(writer);
+
                 let api_ext =
                     EthApiExt::new(ctx.registry.eth_api().clone(), flashblocks_state.clone());
 
@@ -137,8 +149,8 @@ mod tests {
 
                 tokio::spawn(async move {
                     while let Some((payload, tx)) = receiver.recv().await {
-                        flashblocks_state.on_flashblock_received(payload);
-                        tx.send(()).unwrap();
+                        FlashblocksReceiver::on_flashblock_received(flashblocks_state.as_ref(), payload);
+                        let _ = tx.send(());
                     }
                 });
 
@@ -146,6 +158,11 @@ mod tests {
             })
             .launch()
             .await?;
+
+        let writer = writer_cell
+            .get()
+            .expect("writer set")
+            .clone();
 
         let http_api_addr = node
             .rpc_server_handle()
@@ -158,6 +175,7 @@ mod tests {
             _node_exit_future: node_exit_future,
             _node: Box::new(node),
             _task_manager: tasks,
+            writer,
         })
     }
 
@@ -661,6 +679,35 @@ mod tests {
         let receipt = receipt_result?;
 
         assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_canonical_catchup_clears_pending() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        // Seed pending block #1 (base + delta)
+        node.send_payload(create_first_payload()).await?;
+        node.send_payload(create_second_payload()).await?;
+
+        // Sanity: pending exists and is for block #1
+        let pb = provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .await?
+            .expect("pending block should exist");
+        assert_eq!(pb.number(), 1);
+
+        // Simulate canonical catching up to (≥) pending height
+        node.writer.clear_on_canonical_catchup(1);
+
+        // Now pending should be cleared; RPC should return None for Pending
+        let after = provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .await?;
+        assert!(after.is_none(), "pending snapshot should be cleared once canon >= pending");
+
         Ok(())
     }
 }
