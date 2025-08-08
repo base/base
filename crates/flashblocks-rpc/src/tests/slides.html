@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flashblock ETL ExEx - Streaming Data Architecture</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); overflow: hidden; }
+        .slideshow-container { position: relative; width: 100%; height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .slide { display: none; width: 90%; max-width: 1000px; background: white; border-radius: 20px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); padding: 40px; text-align: center; animation: slideIn 0.5s ease-in-out; }
+        .slide.active { display: block; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        h1 { color: #333; font-size: 2.5em; margin-bottom: 20px; background: linear-gradient(45deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        h2 { color: #444; font-size: 2em; margin-bottom: 15px; }
+        h3 { color: #666; font-size: 1.5em; margin: 20px 0 10px 0; }
+        p, li { color: #666; font-size: 1.1em; line-height: 1.6; margin-bottom: 10px; }
+        ul { text-align: left; max-width: 800px; margin: 0 auto; }
+        .code-block { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 20px; margin: 20px 0; font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace; font-size: 0.9em; text-align: left; overflow-x: auto; }
+        .flow-diagram { background: #f8f9fa; border: 2px solid #dee2e6; border-radius: 10px; padding: 20px; margin: 20px 0; font-family: monospace; font-size: 1em; line-height: 1.8; }
+        .controls { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; z-index: 1000; }
+        .btn { background: rgba(255,255,255,0.9); border: none; padding: 12px 24px; border-radius: 25px; cursor: pointer; font-size: 16px; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .btn:hover { background: white; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .slide-counter { position: fixed; top: 30px; right: 30px; background: rgba(255,255,255,0.9); padding: 10px 20px; border-radius: 20px; font-weight: 600; color: #666; }
+        .highlight { background: linear-gradient(120deg, #a8edea 0%, #fed6e3 100%); padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+        .problem-statement { background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 10px; margin: 20px 0; font-style: italic; font-weight: 600; }
+        .sequence-step { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 15px; margin: 10px 0; border-radius: 0 8px 8px 0; }
+        .performance-metric { display: inline-block; background: #e8f5e8; border: 2px solid #4caf50; padding: 10px 15px; margin: 5px; border-radius: 20px; font-weight: 600; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <div class="slideshow-container">
+        <div class="slide-counter">
+            <span id="current-slide">1</span> / <span id="total-slides">10</span>
+        </div>
+        <div class="slide active">
+            <h1>🚀 Flashblock ETL ExEx</h1>
+            <h2>Streaming Data Architecture</h2>
+            <div style="margin: 40px 0; padding: 30px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 15px; color: white;">
+                <h3 style="color: white; font-size: 1.8em; margin-bottom: 15px;">Building Real-Time Flashblock Data Streams</h3>
+                <p style="color: white; font-size: 1.2em; margin: 0;">Implementing delta-streaming patterns with canonical chain awareness for high-performance pending state management</p>
+            </div>
+        </div>
+
+        <!-- Slide 2: About Me -->
+        <div class="slide">
+            <h2>👨‍💻 About Me</h2>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 40px; margin: 40px 0;">
+                <img src="./uniswap_digital-132.jpeg" alt="Profile" style="width: 220px; height: auto; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); object-fit: cover;" />
+                <div style="text-align: left; max-width: 600px;">
+                    <h3 style="color: #667eea; margin-bottom: 20px;">Software Engineer & Blockchain Developer</h3>
+                    <ul style="font-size: 1.1em; line-height: 1.8;">
+                        <li>Specializing in high-performance blockchain infrastructure</li>
+                        <li>Experience with Rust, Go, and distributed systems</li>
+                        <li>Focus on real-time data streaming and ETL pipelines</li>
+                        <li>Contributing to Reth ecosystem and Execution Extensions</li>
+                        <li>Passionate about optimizing blockchain node performance</li>
+                    </ul>
+                    <div style="margin-top: 16px;">
+                        <div class="sequence-step" style="margin: 0 0 10px 0;">
+                            <strong>tl;dr:</strong>
+                            <div>Current dev rel at Atrium Academy</div>
+                            <div>I love open source — and love Rust open source even more.</div>
+                        </div>
+                        <div style="font-size: 1.05em;">
+                            Links:
+                            <a href="https://github.com/DeluxeRaph" target="_blank" rel="noopener noreferrer">GitHub: @DeluxeRaph</a>
+                            &nbsp;|&nbsp;
+                            <a href="https://x.com/villagefarmerr?s=21&t=UwOpwNOVe8JHdycxnEfQnQ" target="_blank" rel="noopener noreferrer">X: @villagefarmerr</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="sequence-step">
+                <strong>Today's Focus:</strong> Solving stale pending data issues through intelligent canonical chain integration
+            </div>
+        </div>
+
+        <!-- Slide 1: Problem Statement (with GitHub Issue image) -->
+        <div class="slide active">
+            <h2>(GitHub Issue #51)</h2>
+            <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
+                <img src="./github_issue_51.png" alt="GitHub Issue #51 - Invalidate flashblocks when canonical blocks are more recent" style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            </div>
+            <p><span class="highlight">Goal:</span> Connect FlashblocksState to the canonical commit stream and clear pending when <code>canon_height ≥ pending_height</code>.</p>
+        </div>
+
+        <!-- Slide 2: Overview -->
+        <div class="slide">
+            <h2>Flashblock ETL ExEx Overview</h2>
+            <ul>
+                <li><strong>Flashblocks:</strong> Base protocol's real-time "next block" data feed</li>
+                <li><strong>ETL:</strong> Extract (stream from websocket), Transform (assemble base + deltas), Load (materialize in-memory view)</li>
+                <li><strong>ExEx:</strong> Reth Execution Extension, hooks into canonical commit events to clear stale pending snapshots</li>
+            </ul>
+            <div class="sequence-step">
+                <strong>Key Innovation:</strong> Combines real-time streaming with canonical chain awareness for consistent pending state management
+            </div>
+        </div>
+
+        <!-- Slide 3: Flashblocks in Base -->
+        <div class="slide">
+            <h2>Flashblocks in Base Protocol</h2>
+            <p><em>Reference: https://blog.base.dev/accelerating-base-with-flashblocks</em></p>
+            <ul>
+                <li>Instead of waiting for full block propagation, Base emits "flashblock" chunks during block assembly</li>
+                <li><span class="highlight">Index 0 = Base Snapshot</span> — the partial block at first emission</li>
+                <li><span class="highlight">Index 1, 2... = Deltas</span> — incremental changes until block sealing</li>
+            </ul>
+            <div class="sequence-step">
+                This enables sub-second latency for pending transaction visibility instead of waiting for full block propagation
+            </div>
+        </div>
+
+        <!-- Slide 4: Delta-Streaming Pattern -->
+        <div class="slide">
+            <h2>Delta-Streaming Pattern in Flashblock ETL ExEx</h2>
+            <div class="sequence-step">1. <strong>Base snapshot arrives</strong> (index=0) → create new PendingBlock</div>
+            <div class="sequence-step">2. <strong>Subsequent chunks</strong> (index=1,2...) → merge diffs into in-memory pending snapshot</div>
+            <div class="sequence-step">3. <strong>Guards:</strong>
+                <ul>
+                    <li>Same-block, out-of-order deltas ignored</li>
+                    <li>New block without base clears state until next base arrives</li>
+                </ul>
+            </div>
+            <div class="sequence-step">4. <strong>Canonical commits</strong> → clear_on_canonical_catchup drops snapshot if canon_height ≥ pending_height</div>
+        </div>
+
+        <!-- Slide 5: Data Flow Architecture -->
+        <div class="slide">
+            <h2>Data Flow Architecture</h2>
+            <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
+                <img src="./exexIndexData Flow Architecture.png" alt="Flashblock ETL ExEx Data Flow Architecture" style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+            </div>
+            <ul style="font-size: 0.9em; margin-top: 10px;">
+                <li><strong>ArcSwapOption store</strong> is the single source of truth</li>
+                <li>Both <span class="highlight">Flashblock stream ingestion</span> and <span class="highlight">Canonical commit listener (ExEx)</span> modify it</li>
+                <li>Lock-free reads enable high-performance RPC serving</li>
+            </ul>
+        </div>
+
+        <!-- Slide 6: Execution Extension Hook -->
+        <div class="slide">
+            <h2>Execution Extension (ExEx) Hook</h2>
+            <ul>
+                <li>Installed with <code>.install_exex_if(...)</code> in main.rs</li>
+                <li>Listens to canonical commits (<code>note.committed_chain()</code>)</li>
+                <li>For each committed block → <code>fb.clear_on_canonical_catchup(b.number)</code></li>
+                <li><strong>Guarantees:</strong> No stale pending block is ever served once canonical has caught up</li>
+            </ul>
+            <div class="sequence-step">
+                This solves the core issue where pending data could become stale relative to canonical chain progress
+            </div>
+        </div>
+
+        <!-- Slide 7: RPC Behavior -->
+        <div class="slide">
+            <h2>RPC Behavior & Interface</h2>
+            <ul>
+                <li><strong>eth_getBlockByNumber(Pending)</strong> → returns pending snapshot if exists; else None</li>
+                <li><strong>eth_getBalance / eth_getTransactionCount / eth_getTransactionByHash / eth_getTransactionReceipt</strong> → prefer pending view; fallback to canonical</li>
+                <li><strong>eth_call(Pending)</strong> → applies pending state overrides</li>
+            </ul>
+            <div class="sequence-step">
+                Clean separation between pending and canonical data sources with intelligent fallback behavior
+            </div>
+        </div>
+
+        <!-- Slide 8: Performance Profile -->
+        <div class="slide">
+            <h2>Performance Profile</h2>
+            <h3>I/O-bound Operations:</h3>
+            <div class="performance-metric">Network I/O: Flashblocks websocket + ExEx notifications</div>
+            <div class="performance-metric">RPC I/O: Pending view reads + canonical fallbacks</div>
+            <div class="performance-metric">Disk I/O: only when canonical provider hits DB</div>
+            
+            <h3>Low Latency Design:</h3>
+            <ul>
+                <li>Lock-free reads via <code>ArcSwapOption</code></li>
+                <li>Atomic snapshot swaps/clears</li>
+                <li>In-memory pending state materialization</li>
+            </ul>
+        </div>
+
+        <!-- Slide 9: Future Work -->
+        <div class="slide">
+            <h2>Future Work & Testing</h2>
+            <h3>Testing the Fix:</h3>
+            <ul>
+                <li><strong>Happy Path:</strong> Seed pending block → assert it's served → simulate catch-up → assert cleared</li>
+                <li><strong>Without Catch-Up:</strong> Seed pending block → skip clear_on_canonical_catchup → assert stale snapshot still served</li>
+            </ul>
+            
+            <h3>Real-Data Replay Tests:</h3>
+            <ul>
+                <li>Capture NDJSON from live Flashblocks feed</li>
+                <li>Replay into <code>on_flashblock_received</code></li>
+                <li>Use mock provider for deterministic headers/state</li>
+                <li>Assert golden RPC outputs before/after canonical catch-up</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="btn" id="prev-btn" onclick="changeSlide(-1)">← Previous</button>
+        <button class="btn" id="next-btn" onclick="changeSlide(1)">Next →</button>
+    </div>
+
+    <script>
+        let currentSlide = 1;
+        const totalSlides = document.querySelectorAll('.slide').length;
+        document.getElementById('total-slides').textContent = totalSlides;
+
+        function showSlide(n) {
+            const slides = document.querySelectorAll('.slide');
+            if (n > totalSlides) currentSlide = 1;
+            if (n < 1) currentSlide = totalSlides;
+            slides.forEach(slide => slide.classList.remove('active'));
+            slides[currentSlide - 1].classList.add('active');
+            document.getElementById('current-slide').textContent = currentSlide;
+            document.getElementById('prev-btn').disabled = currentSlide === 1;
+            document.getElementById('next-btn').disabled = currentSlide === totalSlides;
+        }
+
+        function changeSlide(direction) { currentSlide += direction; showSlide(currentSlide); }
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'ArrowLeft') changeSlide(-1);
+            if (event.key === 'ArrowRight') changeSlide(1);
+            if (event.key === 'Home') { currentSlide = 1; showSlide(currentSlide); }
+            if (event.key === 'End') { currentSlide = totalSlides; showSlide(currentSlide); }
+        });
+
+        showSlide(currentSlide);
+    </script>
+</body>
+</html>
+
