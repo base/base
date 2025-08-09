@@ -641,6 +641,21 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         disputeGameFactory_ = DISPUTE_GAME_FACTORY;
     }
 
+    /// @notice Returns the rollup config hash.
+    function rollupConfigHash() external view returns (bytes32 rollupConfigHash_) {
+        rollupConfigHash_ = ROLLUP_CONFIG_HASH;
+    }
+
+    /// @notice Returns the aggregation vkey.
+    function aggregationVkey() external view returns (bytes32 aggregationVkey_) {
+        aggregationVkey_ = AGGREGATION_VKEY;
+    }
+
+    /// @notice Returns the range vkey commitment.
+    function rangeVkeyCommitment() external view returns (bytes32 rangeVkeyCommitment_) {
+        rangeVkeyCommitment_ = RANGE_VKEY_COMMITMENT;
+    }
+
     /// @notice Returns the challenger bond amount.
     function challengerBond() external view returns (uint256 challengerBond_) {
         challengerBond_ = CHALLENGER_BOND;
