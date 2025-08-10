@@ -76,11 +76,11 @@ fn verify_data_commitment_event(
 
     // Check if the target Celestia height is within the range of this event
     let is_within_range = target_celestia_height >= decoded_event.startBlock &&
-        target_celestia_height <= decoded_event.endBlock;
+        target_celestia_height < decoded_event.endBlock;
 
     if is_within_range {
         tracing::info!(
-            "Found matching DataCommitmentStored event covering Celestia height {} (range: {}-{})",
+            "Found matching DataCommitmentStored event covering Celestia height {} (range: [{}, {}))",
             target_celestia_height,
             decoded_event.startBlock,
             decoded_event.endBlock
