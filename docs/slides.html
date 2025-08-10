@@ -36,7 +36,7 @@
         </div>
         <div class="slide active">
             <h1>🚀 Flashblock ETL ExEx</h1>
-            <h2>Streaming Data Architecture</h2>
+            <h2>Real-time flashblock state streaming</h2>
             <div style="margin: 40px 0; padding: 30px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 15px; color: white;">
                 <h3 style="color: white; font-size: 1.8em; margin-bottom: 15px;">Building Real-Time Flashblock Data Streams</h3>
                 <p style="color: white; font-size: 1.2em; margin: 0;">Implementing delta-streaming patterns with canonical chain awareness for high-performance pending state management</p>
@@ -83,7 +83,7 @@
             <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
                 <img src="./github_issue_51.png" alt="GitHub Issue #51 - Invalidate flashblocks when canonical blocks are more recent" style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
             </div>
-            <p><span class="highlight">Goal:</span> Connect FlashblocksState to the canonical chain stream and clear pending pending flashblocks are more recent <code>canonical_height ≥ pendingFlashblock_height</code>
+            <p><span class="highlight">Goal:</span> Connect FlashblocksState to the canonical chain to stream and clear pending flashblocks that have an older block height than the canonical chain  <code>canonical_height ≥ pendingFlashblock_height</code>
         </div>
 
         <!-- Slide 2: Overview -->
@@ -125,16 +125,27 @@
 
         <!-- Slide 5: Data Flow Architecture -->
         <div class="slide">
-            <h2>Data Flow Architecture</h2>
+            <h2>ArcSwapOption</h2>
+          
             <div style="display: flex; justify-content: center; align-items: center; margin: 20px 0;">
-                <img src="./exexIndexData Flow Architecture.png" alt="Flashblock ETL ExEx Data Flow Architecture" style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+              <img
+                src="./exexIndexData Flow Architecture.png"
+                alt="Flashblock ETL ExEx Data Flow Architecture"
+                style="max-width: 100%; max-height: 500px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);"
+              >
             </div>
-            <ul style="font-size: 0.9em; margin-top: 10px;">
-                <li><strong>ArcSwapOption store</strong> is the single source of truth</li>
-                <li>Both <span class="highlight">Flashblock stream ingestion</span> and <span class="highlight">Canonical commit listener (ExEx)</span> modify it</li>
-                <li>Lock-free reads enable high-performance RPC serving</li>
-            </ul>
-        </div>
+          
+            <h3 style="margin-top: 20px;">Why It’s Fast</h3>
+            <div class="sequence-step" style="margin-top: 10px;">
+              <ul style="margin: 0; padding-left: 18px;">
+                <li><strong>Atomic storage pointer swaps</strong> → updates happen in a single CPU instruction, so both reads and writes are extremely fast.</li>
+                <li><strong>No locking needed</strong> → we never block other threads, even under heavy RPC load.</li>
+                <li><strong>Lock-free reads via <code>ArcSwapOption</code></strong> → constant-time lookups.</li>
+                <li><strong>In-memory materialization</strong> → no DB hits for pending state.</li>
+              </ul>
+            </div>
+          </div>
+
 
         <!-- Slide 6: Execution Extension Hook -->
         <div class="slide">
