@@ -198,6 +198,7 @@ impl Database {
         Ok(flashblock_id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn store_transaction(
         &self,
         flashblock_id: Uuid,
@@ -229,6 +230,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn store_withdrawal(
         &self,
         flashblock_id: Uuid,
@@ -261,6 +263,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn store_receipt(
         &self,
         flashblock_id: Uuid,
@@ -296,7 +299,7 @@ impl Database {
         .bind(receipt.tx_type() as i32)
         .bind(receipt.status())
         .bind(receipt.cumulative_gas_used() as i64)
-        .bind(serde_json::to_value(&receipt.logs())?)
+        .bind(serde_json::to_value(receipt.logs())?)
         .bind(deposit_nonce)
         .bind(deposit_receipt_version)
         .execute(&self.pool)
@@ -305,6 +308,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn store_account_balance(
         &self,
         flashblock_id: Uuid,

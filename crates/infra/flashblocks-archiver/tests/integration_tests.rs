@@ -9,10 +9,7 @@ use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::PayloadId;
 use common::PostgresTestContainer;
 use flashblocks_archiver::{
-    config::{BuilderConfig},
-    types::Metadata, 
-    websocket::WebSocketManager,
-    FlashblockMessage
+    config::BuilderConfig, types::Metadata, websocket::WebSocketManager, FlashblockMessage,
 };
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
@@ -374,8 +371,11 @@ async fn test_database_transaction_isolation() -> anyhow::Result<()> {
     let database2 = Database::new(&setup.postgres.database_url, 5).await?;
 
     let flashblock_clone = flashblock.clone();
-    let handle1 =
-        tokio::spawn(async move { database1.store_flashblock(setup.builder_id, &flashblock).await });
+    let handle1 = tokio::spawn(async move {
+        database1
+            .store_flashblock(setup.builder_id, &flashblock)
+            .await
+    });
 
     let handle2 = tokio::spawn(async move {
         database2

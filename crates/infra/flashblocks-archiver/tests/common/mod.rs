@@ -36,6 +36,7 @@ impl PostgresTestContainer {
         })
     }
 
+    #[allow(dead_code)]
     pub async fn create_test_builder(&self, url: &str, name: Option<&str>) -> anyhow::Result<Uuid> {
         self.database.get_or_create_builder(url, name).await
     }

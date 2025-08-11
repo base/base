@@ -26,7 +26,7 @@ impl FlashblocksArchiver {
         let mut builder_ids = HashMap::new();
         for builder_config in &config.builders {
             let builder_id = database
-                .get_or_create_builder(&builder_config.url.to_string(), Some(&builder_config.name))
+                .get_or_create_builder(builder_config.url.as_ref(), Some(&builder_config.name))
                 .await?;
             builder_ids.insert(builder_config.name.clone(), builder_id);
         }
