@@ -133,7 +133,7 @@ impl From<OpTransactionReceiptFields> for OtherFields {
     }
 }
 
-/// L1 block info extracted from inout of first transaction in every block.
+/// L1 block info extracted from input of first transaction in every block.
 ///
 /// The subset of [`OpTransactionReceiptFields`], that encompasses L1 block
 /// info:
