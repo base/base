@@ -1,4 +1,4 @@
-use alloy::rpc::types::txpool::TxpoolContent;
+use alloy_rpc_types::txpool::TxpoolContent;
 use mempool_rebroadcaster::rebroadcaster::Rebroadcaster;
 use std::path::Path;
 

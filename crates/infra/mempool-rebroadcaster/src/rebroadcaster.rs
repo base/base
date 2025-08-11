@@ -1,15 +1,15 @@
 use std::{collections::HashMap, error::Error};
 
-use alloy::{
-    consensus::Transaction,
-    eips::{
-        eip2718::{EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID},
-        BlockId, Encodable2718,
-    },
-    primitives::B256,
-    providers::{ext::TxPoolApi, Provider, ProviderBuilder, RootProvider},
-    rpc::types::{txpool::TxpoolContent, Transaction as RpcTransaction},
+use alloy_consensus::Transaction;
+use alloy_eips::eip2718::{
+    EIP1559_TX_TYPE_ID, EIP2930_TX_TYPE_ID, EIP7702_TX_TYPE_ID, LEGACY_TX_TYPE_ID,
 };
+use alloy_eips::Encodable2718;
+use alloy_primitives::B256;
+use alloy_provider::{ext::TxPoolApi, Provider, ProviderBuilder, RootProvider};
+use alloy_rpc_types::txpool::TxpoolContent;
+use alloy_rpc_types_eth::{BlockId, Transaction as RpcTransaction};
+
 use tracing::{debug, error, info, warn};
 
 const IGNORED_ERRORS: [&str; 3] = [
