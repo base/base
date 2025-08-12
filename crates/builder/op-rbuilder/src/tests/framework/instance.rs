@@ -2,7 +2,7 @@ use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    revert_protection::{EthApiExtServer, EthApiOverrideServer, RevertProtectionExt},
+    revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
         create_test_db,
         framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
@@ -126,15 +126,15 @@ impl LocalInstance {
 
                     let pool = ctx.pool().clone();
                     let provider = ctx.provider().clone();
-                    let revert_protection_ext =
-                        RevertProtectionExt::new(pool, provider, ctx.registry.eth_api().clone());
+                    let revert_protection_ext = RevertProtectionExt::new(
+                        pool,
+                        provider,
+                        ctx.registry.eth_api().clone(),
+                        reverted_cache,
+                    );
 
                     ctx.modules
-                        .merge_configured(revert_protection_ext.bundle_api().into_rpc())?;
-
-                    ctx.modules.replace_configured(
-                        revert_protection_ext.eth_api(reverted_cache).into_rpc(),
-                    )?;
+                        .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
                 Ok(())
