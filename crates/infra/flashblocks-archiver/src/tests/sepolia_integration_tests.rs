@@ -1,13 +1,12 @@
-mod common;
-
-use alloy_primitives::map::foldhash::{HashMap, HashMapExt};
-use common::PostgresTestContainer;
-use flashblocks_archiver::{
+use crate::{
     archiver::FlashblocksArchiver,
     config::{ArchiverConfig, BuilderConfig, Config, DatabaseConfig},
+    tests::common::PostgresTestContainer,
     types::Metadata,
+    websocket::WebSocketManager,
     FlashblockMessage,
 };
+use alloy_primitives::map::foldhash::{HashMap, HashMapExt};
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use std::time::Duration;
@@ -190,8 +189,7 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     let json_bytes = sample_json.as_bytes();
 
     let setup = SepoliaTestSetup::new().await?;
-    let manager =
-        flashblocks_archiver::websocket::WebSocketManager::new(setup.config.builders[0].clone());
+    let manager = WebSocketManager::new(setup.config.builders[0].clone());
 
     // This should work for plain JSON
     let result = manager.try_decode_message(json_bytes);
@@ -300,8 +298,7 @@ async fn test_database_constraint_violations() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_malformed_message_handling() -> anyhow::Result<()> {
     let setup = SepoliaTestSetup::new().await?;
-    let manager =
-        flashblocks_archiver::websocket::WebSocketManager::new(setup.config.builders[0].clone());
+    let manager = WebSocketManager::new(setup.config.builders[0].clone());
 
     // Test various malformed messages
     let test_cases: Vec<(&[u8], &str)> = vec![
@@ -326,8 +323,7 @@ async fn test_malformed_message_handling() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_large_message_handling() -> anyhow::Result<()> {
     let setup = SepoliaTestSetup::new().await?;
-    let manager =
-        flashblocks_archiver::websocket::WebSocketManager::new(setup.config.builders[0].clone());
+    let manager = WebSocketManager::new(setup.config.builders[0].clone());
 
     // Create a very large JSON message (should still be handled gracefully)
     let large_string = "x".repeat(1_000_000); // 1MB string

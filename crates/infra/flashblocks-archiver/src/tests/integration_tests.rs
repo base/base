@@ -1,5 +1,7 @@
-mod common;
-
+use crate::{
+    config::BuilderConfig, tests::common::PostgresTestContainer, types::Metadata,
+    websocket::WebSocketManager, Database, FlashblockMessage,
+};
 use alloy_primitives::{
     map::foldhash::{HashMap, HashMapExt},
     utils::parse_ether,
@@ -7,10 +9,6 @@ use alloy_primitives::{
 };
 use alloy_rpc_types::Withdrawal;
 use alloy_rpc_types_engine::PayloadId;
-use common::PostgresTestContainer;
-use flashblocks_archiver::{
-    config::BuilderConfig, types::Metadata, websocket::WebSocketManager, FlashblockMessage,
-};
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use tracing::info;
@@ -35,7 +33,7 @@ impl TestSetup {
         })
     }
 
-    fn database(&self) -> &flashblocks_archiver::database::Database {
+    fn database(&self) -> &Database {
         &self.postgres.database
     }
 
@@ -366,7 +364,6 @@ async fn test_database_transaction_isolation() -> anyhow::Result<()> {
     let flashblock = setup.create_test_flashblock(88888, 0);
 
     // Try to insert the same flashblock from two concurrent tasks
-    use flashblocks_archiver::database::Database;
     let database1 = Database::new(&setup.postgres.database_url, 5).await?;
     let database2 = Database::new(&setup.postgres.database_url, 5).await?;
 

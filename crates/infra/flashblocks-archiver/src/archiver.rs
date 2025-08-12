@@ -1,10 +1,11 @@
 use crate::database::Database;
+use crate::metrics::Metrics;
 use crate::websocket::WebSocketPool;
 use crate::{config::Config, FlashblockMessage};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::time::Duration;
-use tokio::time::{interval, timeout};
+use std::time::{Duration, Instant};
+use tokio::time::interval;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -13,6 +14,7 @@ pub struct FlashblocksArchiver {
     config: Config,
     database: Database,
     builder_ids: HashMap<String, Uuid>,
+    metrics: Metrics,
 }
 
 impl FlashblocksArchiver {
@@ -35,6 +37,7 @@ impl FlashblocksArchiver {
             config,
             database,
             builder_ids,
+            metrics: Metrics::default(),
         })
     }
 
@@ -74,6 +77,7 @@ impl FlashblocksArchiver {
                                 if batch.len() >= self.config.archiver.batch_size {
                                     if let Err(e) = self.flush_batch(&mut batch).await {
                                         error!("Failed to flush batch: {}", e);
+                                        self.metrics.flush_batch_error.increment(1);
                                     }
                                 }
                             } else {
@@ -114,59 +118,27 @@ impl FlashblocksArchiver {
 
         info!("Flushing batch of {} flashblock messages", batch.len());
 
-        let mut stored_count = 0;
-        let mut error_count = 0;
-
         for (builder_id, payload) in batch.drain(..) {
-            match timeout(
-                Duration::from_secs(30),
-                self.database.store_flashblock(builder_id, &payload),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {
-                    stored_count += 1;
+            let start = Instant::now();
+            match self.database.store_flashblock(builder_id, &payload).await {
+                Ok(_) => {
                     info!(
                         "Stored flashblock: block {}, index {}, payload_id {}",
                         payload.metadata.block_number, payload.index, payload.payload_id
                     );
                 }
-                Ok(Err(e)) => {
-                    error_count += 1;
+                Err(e) => {
                     error!(
                         "Failed to store flashblock (block {}, index {}): {}",
                         payload.metadata.block_number, payload.index, e
                     );
                 }
-                Err(_) => {
-                    error_count += 1;
-                    error!(
-                        "Timeout storing flashblock (block {}, index {})",
-                        payload.metadata.block_number, payload.index
-                    );
-                }
             }
-        }
-
-        if stored_count > 0 {
-            info!("Successfully stored {} flashblock messages", stored_count);
-        }
-        if error_count > 0 {
-            warn!("Failed to store {} flashblock messages", error_count);
+            self.metrics
+                .store_flashblock_duration
+                .record(start.elapsed());
         }
 
         Ok(())
-    }
-
-    pub async fn get_latest_block_numbers(&self) -> Result<HashMap<String, u64>> {
-        let mut result = HashMap::new();
-
-        for (builder_name, builder_id) in &self.builder_ids {
-            if let Some(block_number) = self.database.get_latest_block_number(*builder_id).await? {
-                result.insert(builder_name.clone(), block_number);
-            }
-        }
-
-        Ok(result)
     }
 }

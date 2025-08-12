@@ -1,4 +1,4 @@
-use flashblocks_archiver::database::Database;
+use crate::database::Database;
 use testcontainers_modules::postgres::Postgres;
 use uuid::Uuid;
 
