@@ -77,7 +77,10 @@ async fn test_base_sepolia_flashblocks_connection() -> anyhow::Result<()> {
             if flashblocks.is_empty() {
                 warn!(message = "No flashblocks received during test period - this may be normal if no blocks are being produced");
             } else {
-                info!(message = "Received flashblocks during test", count = flashblocks.len());
+                info!(
+                    message = "Received flashblocks during test",
+                    count = flashblocks.len()
+                );
             }
         }
         Err(_) => {
@@ -125,7 +128,10 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
         .await?;
 
     if flashblocks_count > 0 {
-        info!(message = "Found flashblocks in database", count = flashblocks_count);
+        info!(
+            message = "Found flashblocks in database",
+            count = flashblocks_count
+        );
 
         // Validate relationships between tables
         let orphaned_transactions = sqlx::query_scalar::<_, i64>(

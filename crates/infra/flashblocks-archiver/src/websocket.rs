@@ -153,7 +153,10 @@ impl WebSocketPool {
         // Drop the original sender so receiver will close when all tasks are done
         drop(sender);
 
-        info!(message = "Started WebSocket connections", connection_count = self.managers.len());
+        info!(
+            message = "Started WebSocket connections",
+            connection_count = self.managers.len()
+        );
         Ok(receiver)
     }
 }
