@@ -12,30 +12,14 @@ CREATE TABLE IF NOT EXISTS builders (
 -- Flashblocks table - stores the full flashblock messages
 CREATE TABLE IF NOT EXISTS flashblocks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
     builder_id UUID NOT NULL REFERENCES builders(id),
     payload_id TEXT NOT NULL,
     flashblock_index BIGINT NOT NULL,
+
     block_number BIGINT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     raw_message JSONB NOT NULL,
-    
-    -- Base payload fields (when present)
-    parent_beacon_block_root TEXT,
-    parent_hash TEXT,
-    fee_recipient TEXT,
-    prev_randao TEXT,
-    gas_limit BIGINT,
-    base_timestamp BIGINT,
-    extra_data TEXT,
-    base_fee_per_gas TEXT, -- Stored as hex string for U256
-    
-    -- Delta/diff fields
-    state_root TEXT NOT NULL,
-    receipts_root TEXT NOT NULL,
-    logs_bloom TEXT NOT NULL,
-    gas_used BIGINT NOT NULL,
-    block_hash TEXT NOT NULL,
-    withdrawals_root TEXT,
     
     UNIQUE(builder_id, payload_id, flashblock_index)
 );
@@ -43,9 +27,11 @@ CREATE TABLE IF NOT EXISTS flashblocks (
 -- Transactions table - stores individual transactions from flashblocks
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
     flashblock_id UUID NOT NULL REFERENCES flashblocks(id) ON DELETE CASCADE,
     builder_id UUID NOT NULL REFERENCES builders(id),
     payload_id TEXT NOT NULL,
+    
     flashblock_index BIGINT NOT NULL,
     block_number BIGINT NOT NULL,
     

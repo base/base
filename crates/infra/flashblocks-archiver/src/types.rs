@@ -42,24 +42,6 @@ pub struct Flashblock {
     pub block_number: i64,
     pub received_at: DateTime<Utc>,
     pub raw_message: Value,
-
-    // Base payload fields
-    pub parent_beacon_block_root: Option<String>,
-    pub parent_hash: Option<String>,
-    pub fee_recipient: Option<String>,
-    pub prev_randao: Option<String>,
-    pub gas_limit: Option<i64>,
-    pub base_timestamp: Option<i64>,
-    pub extra_data: Option<String>,
-    pub base_fee_per_gas: Option<String>,
-
-    // Delta fields
-    pub state_root: String,
-    pub receipts_root: String,
-    pub logs_bloom: String,
-    pub gas_used: i64,
-    pub block_hash: String,
-    pub withdrawals_root: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]

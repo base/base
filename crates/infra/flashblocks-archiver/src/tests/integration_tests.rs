@@ -242,10 +242,9 @@ async fn test_flashblock_with_no_base() -> anyhow::Result<()> {
     assert_eq!(stored_flashblocks.len(), 1);
 
     let stored = &stored_flashblocks[0];
-    // Base fields should be None
-    assert!(stored.parent_beacon_block_root.is_none());
-    assert!(stored.parent_hash.is_none());
-    assert!(stored.fee_recipient.is_none());
+    // Verify basic fields are correctly stored
+    assert_eq!(stored.block_number, 12347);
+    assert_eq!(stored.flashblock_index, 0);
 
     Ok(())
 }
@@ -298,7 +297,6 @@ async fn test_malformed_brotli_edge_cases() -> anyhow::Result<()> {
         "Should fail to parse decompressed invalid JSON"
     );
 
-    info!(message = "Malformed brotli edge cases test completed");
     Ok(())
 }
 
@@ -350,7 +348,6 @@ async fn test_websocket_manager_edge_cases() -> anyhow::Result<()> {
         info!(message = "Edge case failed", description = %description, error = %error_msg);
     }
 
-    info!(message = "WebSocket manager edge cases test completed");
     Ok(())
 }
 
@@ -398,6 +395,5 @@ async fn test_database_transaction_isolation() -> anyhow::Result<()> {
 
     assert_eq!(count, 1, "Only one flashblock should exist in database");
 
-    info!(message = "Database transaction isolation test completed");
     Ok(())
 }

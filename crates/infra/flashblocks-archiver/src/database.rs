@@ -1,5 +1,5 @@
 use crate::types::{Flashblock, FlashblockMessage};
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::keccak256;
 use anyhow::Result;
 use sqlx::PgPool;
 use tracing::info;
@@ -65,34 +65,14 @@ impl Database {
         let flashblock_id = sqlx::query_scalar::<_, Uuid>(
             r#"
             INSERT INTO flashblocks (
-                builder_id, payload_id, flashblock_index, block_number, raw_message,
-                parent_beacon_block_root, parent_hash, fee_recipient, prev_randao,
-                gas_limit, base_timestamp, extra_data, base_fee_per_gas,
-                state_root, receipts_root, logs_bloom, gas_used, block_hash, withdrawals_root
+                builder_id, payload_id, flashblock_index, block_number, raw_message
             ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9,
-                $10, $11, $12, $13,
-                $14, $15, $16, $17, $18, $19
+                $1, $2, $3, $4, $5
             ) 
             ON CONFLICT (builder_id, payload_id, flashblock_index) 
             DO UPDATE SET 
                 block_number = EXCLUDED.block_number,
                 raw_message = EXCLUDED.raw_message,
-                parent_beacon_block_root = EXCLUDED.parent_beacon_block_root,
-                parent_hash = EXCLUDED.parent_hash,
-                fee_recipient = EXCLUDED.fee_recipient,
-                prev_randao = EXCLUDED.prev_randao,
-                gas_limit = EXCLUDED.gas_limit,
-                base_timestamp = EXCLUDED.base_timestamp,
-                extra_data = EXCLUDED.extra_data,
-                base_fee_per_gas = EXCLUDED.base_fee_per_gas,
-                state_root = EXCLUDED.state_root,
-                receipts_root = EXCLUDED.receipts_root,
-                logs_bloom = EXCLUDED.logs_bloom,
-                gas_used = EXCLUDED.gas_used,
-                block_hash = EXCLUDED.block_hash,
-                withdrawals_root = EXCLUDED.withdrawals_root,
                 received_at = NOW()
             RETURNING id
             "#,
@@ -102,56 +82,6 @@ impl Database {
         .bind(payload.index as i64)
         .bind(payload.metadata.block_number as i64)
         .bind(raw_message)
-        // Base fields
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.parent_beacon_block_root)),
-        )
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.parent_hash)),
-        )
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.fee_recipient)),
-        )
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.prev_randao)),
-        )
-        .bind(payload.base.as_ref().map(|b| b.gas_limit as i64))
-        .bind(payload.base.as_ref().map(|b| b.timestamp as i64))
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.extra_data)),
-        )
-        .bind(
-            payload
-                .base
-                .as_ref()
-                .map(|b| format!("{:#x}", b.base_fee_per_gas)),
-        )
-        // Delta fields
-        .bind(format!("{:#x}", payload.diff.state_root))
-        .bind(format!("{:#x}", payload.diff.receipts_root))
-        .bind(format!("{:#x}", payload.diff.logs_bloom))
-        .bind(payload.diff.gas_used as i64)
-        .bind(format!("{:#x}", payload.diff.block_hash))
-        .bind(if payload.diff.withdrawals_root == B256::ZERO {
-            None
-        } else {
-            Some(format!("{:#x}", payload.diff.withdrawals_root))
-        })
         .fetch_one(&self.pool)
         .await?;
 

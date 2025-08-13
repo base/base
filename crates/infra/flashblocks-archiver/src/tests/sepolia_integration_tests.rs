@@ -199,7 +199,6 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     let result = manager.try_decode_message(&invalid_brotli);
     assert!(result.is_err(), "Invalid brotli data should fail");
 
-    info!(message = "Brotli decompression tests completed");
     Ok(())
 }
 
@@ -225,7 +224,6 @@ async fn test_websocket_error_handling() -> anyhow::Result<()> {
     let result = FlashblocksArchiver::new(args).await;
     assert!(result.is_err(), "Should fail with invalid database URL");
 
-    info!(message = "WebSocket error handling test completed");
     Ok(())
 }
 
@@ -255,7 +253,6 @@ async fn test_database_constraint_violations() -> anyhow::Result<()> {
         "Same URL should return same builder ID"
     );
 
-    info!(message = "Database constraint violation tests completed");
     Ok(())
 }
 
@@ -309,7 +306,6 @@ async fn test_large_message_handling() -> anyhow::Result<()> {
         "Error should not be about size limits"
     );
 
-    info!(message = "Large message handling test completed");
     Ok(())
 }
 
@@ -381,6 +377,5 @@ async fn test_database_transaction_rollback() -> anyhow::Result<()> {
         "Second insertion should succeed with UPSERT (updates existing record)"
     );
 
-    info!(message = "Database transaction rollback test completed");
     Ok(())
 }
