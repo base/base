@@ -1,9 +1,6 @@
 use crate::{
-    archiver::FlashblocksArchiver,
-    config::{ArchiverConfig, BuilderConfig, Config, DatabaseConfig},
-    tests::common::PostgresTestContainer,
-    types::Metadata,
-    websocket::WebSocketManager,
+    archiver::FlashblocksArchiver, cli::FlashblocksArchiverArgs,
+    tests::common::PostgresTestContainer, types::Metadata, websocket::WebSocketManager,
     FlashblockMessage,
 };
 use alloy_primitives::map::foldhash::{HashMap, HashMapExt};
@@ -12,36 +9,28 @@ use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
-use url::Url;
 
 struct SepoliaTestSetup {
     postgres: PostgresTestContainer,
-    config: Config,
+    args: FlashblocksArchiverArgs,
 }
 
 impl SepoliaTestSetup {
     async fn new() -> anyhow::Result<Self> {
         let postgres = PostgresTestContainer::new("test_sepolia_flashblocks").await?;
 
-        let config = Config {
-            database: DatabaseConfig {
-                url: postgres.database_url.clone(),
-                max_connections: 5,
-                connect_timeout_seconds: 30,
-            },
-            builders: vec![BuilderConfig {
-                name: "base_sepolia".to_string(),
-                url: Url::parse("wss://sepolia.flashblocks.base.org/ws")?,
-                reconnect_delay_seconds: 5,
-            }],
-            archiver: ArchiverConfig {
-                buffer_size: 100,
-                batch_size: 10,
-                flush_interval_seconds: 1,
-            },
+        let args = FlashblocksArchiverArgs {
+            database_url: postgres.database_url.clone(),
+            database_max_connections: 5,
+            database_connect_timeout_seconds: 30,
+            builder_urls: vec!["wss://sepolia.flashblocks.base.org/ws".to_string()],
+            reconnect_delay_seconds: 5,
+            buffer_size: 100,
+            batch_size: 10,
+            flush_interval_seconds: 1,
         };
 
-        Ok(Self { postgres, config })
+        Ok(Self { postgres, args })
     }
 }
 
@@ -57,7 +46,7 @@ async fn test_base_sepolia_flashblocks_connection() -> anyhow::Result<()> {
     info!("Starting Base Sepolia flashblocks test");
 
     // Create archiver
-    let archiver = FlashblocksArchiver::new(setup.config).await?;
+    let archiver = FlashblocksArchiver::new(setup.args.clone()).await?;
 
     // Test connection and receive at least one message within 30 seconds
     let result = timeout(Duration::from_secs(30), async {
@@ -106,7 +95,7 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
         .try_init();
 
     let setup = SepoliaTestSetup::new().await?;
-    let archiver = FlashblocksArchiver::new(setup.config).await?;
+    let archiver = FlashblocksArchiver::new(setup.args.clone()).await?;
 
     // Run for longer to collect more data
     let result = timeout(Duration::from_secs(60), async {
@@ -150,25 +139,6 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
             "No orphaned transactions should exist"
         );
 
-        let orphaned_receipts = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM receipts r 
-             WHERE NOT EXISTS (SELECT 1 FROM flashblocks f WHERE f.id = r.flashblock_id)",
-        )
-        .fetch_one(setup.postgres.database.get_pool())
-        .await?;
-        assert_eq!(orphaned_receipts, 0, "No orphaned receipts should exist");
-
-        let orphaned_balances = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM account_balances ab 
-             WHERE NOT EXISTS (SELECT 1 FROM flashblocks f WHERE f.id = ab.flashblock_id)",
-        )
-        .fetch_one(setup.postgres.database.get_pool())
-        .await?;
-        assert_eq!(
-            orphaned_balances, 0,
-            "No orphaned account balances should exist"
-        );
-
         info!("Data integrity validation passed");
     } else {
         warn!("No flashblocks received - skipping data integrity tests");
@@ -189,7 +159,8 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     let json_bytes = sample_json.as_bytes();
 
     let setup = SepoliaTestSetup::new().await?;
-    let manager = WebSocketManager::new(setup.config.builders[0].clone());
+    let builders = setup.args.parse_builders()?;
+    let manager = WebSocketManager::new(builders[0].clone());
 
     // This should work for plain JSON
     let result = manager.try_decode_message(json_bytes);
@@ -239,26 +210,19 @@ async fn test_websocket_error_handling() -> anyhow::Result<()> {
         .try_init();
 
     // Test with invalid WebSocket URL
-    let config = Config {
-        database: DatabaseConfig {
-            url: "postgresql://invalid_url".to_string(),
-            max_connections: 5,
-            connect_timeout_seconds: 1,
-        },
-        builders: vec![BuilderConfig {
-            name: "invalid_builder".to_string(),
-            url: Url::parse("wss://invalid.nonexistent.domain.com/ws")?,
-            reconnect_delay_seconds: 1,
-        }],
-        archiver: ArchiverConfig {
-            buffer_size: 10,
-            batch_size: 5,
-            flush_interval_seconds: 1,
-        },
+    let args = FlashblocksArchiverArgs {
+        database_url: "postgresql://invalid_url".to_string(),
+        database_max_connections: 5,
+        database_connect_timeout_seconds: 1,
+        builder_urls: vec!["wss://invalid.nonexistent.domain.com/ws".to_string()],
+        reconnect_delay_seconds: 1,
+        buffer_size: 10,
+        batch_size: 5,
+        flush_interval_seconds: 1,
     };
 
     // This should fail to create the archiver due to database connection failure
-    let result = FlashblocksArchiver::new(config).await;
+    let result = FlashblocksArchiver::new(args).await;
     assert!(result.is_err(), "Should fail with invalid database URL");
 
     info!("WebSocket error handling test completed");
@@ -298,7 +262,8 @@ async fn test_database_constraint_violations() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_malformed_message_handling() -> anyhow::Result<()> {
     let setup = SepoliaTestSetup::new().await?;
-    let manager = WebSocketManager::new(setup.config.builders[0].clone());
+    let builders = setup.args.parse_builders()?;
+    let manager = WebSocketManager::new(builders[0].clone());
 
     // Test various malformed messages
     let test_cases: Vec<(&[u8], &str)> = vec![
@@ -323,7 +288,8 @@ async fn test_malformed_message_handling() -> anyhow::Result<()> {
 #[tokio::test]
 async fn test_large_message_handling() -> anyhow::Result<()> {
     let setup = SepoliaTestSetup::new().await?;
-    let manager = WebSocketManager::new(setup.config.builders[0].clone());
+    let builders = setup.args.parse_builders()?;
+    let manager = WebSocketManager::new(builders[0].clone());
 
     // Create a very large JSON message (should still be handled gracefully)
     let large_string = "x".repeat(1_000_000); // 1MB string
@@ -409,9 +375,10 @@ async fn test_database_transaction_rollback() -> anyhow::Result<()> {
         .database
         .store_flashblock(builder_id, &payload)
         .await;
+    // With UPSERT, the second insertion should now succeed (update the existing record)
     assert!(
-        result2.is_err(),
-        "Second insertion should fail due to unique constraint"
+        result2.is_ok(),
+        "Second insertion should succeed with UPSERT (updates existing record)"
     );
 
     info!("Database transaction rollback test completed");

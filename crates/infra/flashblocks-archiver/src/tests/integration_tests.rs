@@ -1,5 +1,5 @@
 use crate::{
-    config::BuilderConfig, tests::common::PostgresTestContainer, types::Metadata,
+    cli::BuilderConfig, tests::common::PostgresTestContainer, types::Metadata,
     websocket::WebSocketManager, Database, FlashblockMessage,
 };
 use alloy_primitives::{
@@ -382,12 +382,12 @@ async fn test_database_transaction_isolation() -> anyhow::Result<()> {
 
     let (result1, result2) = tokio::join!(handle1, handle2);
 
-    // Exactly one should succeed, one should fail due to unique constraint
+    // With UPSERT, both should succeed (second one updates the first)
     let success_count = [result1?, result2?].iter().filter(|r| r.is_ok()).count();
 
     assert_eq!(
-        success_count, 1,
-        "Exactly one insertion should succeed due to unique constraint"
+        success_count, 2,
+        "Both insertions should succeed with UPSERT behavior"
     );
 
     // Verify only one flashblock exists

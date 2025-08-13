@@ -1,7 +1,7 @@
 mod metrics;
 
 pub mod archiver;
-pub mod config;
+pub mod cli;
 pub mod database;
 pub mod types;
 pub mod websocket;
@@ -10,6 +10,6 @@ pub mod websocket;
 mod tests;
 
 pub use archiver::*;
-pub use config::*;
+pub use cli::*;
 pub use database::Database;
 pub use types::*;

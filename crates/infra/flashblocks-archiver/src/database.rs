@@ -1,9 +1,6 @@
 use crate::types::{Flashblock, FlashblockMessage};
-use alloy_consensus::TxReceipt;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types_engine::PayloadId;
+use alloy_primitives::{keccak256, B256};
 use anyhow::Result;
-use reth_optimism_primitives::OpReceipt;
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
@@ -16,6 +13,10 @@ pub struct Database {
 impl Database {
     pub fn get_pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
     }
 
     pub async fn new(database_url: &str, max_connections: u32) -> Result<Self> {
@@ -35,28 +36,22 @@ impl Database {
     }
 
     pub async fn get_or_create_builder(&self, url: &str, name: Option<&str>) -> Result<Uuid> {
-        let existing = sqlx::query_scalar::<_, Uuid>("SELECT id FROM builders WHERE url = $1")
-            .bind(url)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        if let Some(id) = existing {
-            return Ok(id);
-        }
-
         let id = sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO builders (url, name) VALUES ($1, $2) RETURNING id",
+            r#"
+            INSERT INTO builders (url, name) 
+            VALUES ($1, $2) 
+            ON CONFLICT (url) 
+            DO UPDATE SET 
+                name = EXCLUDED.name,
+                updated_at = NOW()
+            RETURNING id
+            "#,
         )
         .bind(url)
         .bind(name)
         .fetch_one(&self.pool)
         .await?;
 
-        info!(
-            "Created new builder: {} ({})",
-            name.unwrap_or("unnamed"),
-            url
-        );
         Ok(id)
     }
 
@@ -79,7 +74,27 @@ impl Database {
                 $6, $7, $8, $9,
                 $10, $11, $12, $13,
                 $14, $15, $16, $17, $18, $19
-            ) RETURNING id
+            ) 
+            ON CONFLICT (builder_id, payload_id, flashblock_index) 
+            DO UPDATE SET 
+                block_number = EXCLUDED.block_number,
+                raw_message = EXCLUDED.raw_message,
+                parent_beacon_block_root = EXCLUDED.parent_beacon_block_root,
+                parent_hash = EXCLUDED.parent_hash,
+                fee_recipient = EXCLUDED.fee_recipient,
+                prev_randao = EXCLUDED.prev_randao,
+                gas_limit = EXCLUDED.gas_limit,
+                base_timestamp = EXCLUDED.base_timestamp,
+                extra_data = EXCLUDED.extra_data,
+                base_fee_per_gas = EXCLUDED.base_fee_per_gas,
+                state_root = EXCLUDED.state_root,
+                receipts_root = EXCLUDED.receipts_root,
+                logs_bloom = EXCLUDED.logs_bloom,
+                gas_used = EXCLUDED.gas_used,
+                block_hash = EXCLUDED.block_hash,
+                withdrawals_root = EXCLUDED.withdrawals_root,
+                received_at = NOW()
+            RETURNING id
             "#,
         )
         .bind(builder_id)
@@ -140,8 +155,8 @@ impl Database {
         .fetch_one(&self.pool)
         .await?;
 
-        // Store transactions
         for (tx_index, tx_data) in payload.diff.transactions.iter().enumerate() {
+            let tx_hash = keccak256(tx_data);
             self.store_transaction(
                 flashblock_id,
                 builder_id,
@@ -149,48 +164,8 @@ impl Database {
                 payload.index as i64,
                 payload.metadata.block_number as i64,
                 tx_data.as_ref(),
+                &format!("{:#x}", tx_hash),
                 tx_index as i32,
-            )
-            .await?;
-        }
-
-        // Store withdrawals
-        for withdrawal in &payload.diff.withdrawals {
-            self.store_withdrawal(
-                flashblock_id,
-                builder_id,
-                &payload.payload_id,
-                payload.index as i64,
-                payload.metadata.block_number as i64,
-                withdrawal,
-            )
-            .await?;
-        }
-
-        // Store receipts from metadata
-        for (tx_hash, receipt) in &payload.metadata.receipts {
-            self.store_receipt(
-                flashblock_id,
-                builder_id,
-                &payload.payload_id,
-                payload.index as i64,
-                payload.metadata.block_number as i64,
-                tx_hash,
-                receipt,
-            )
-            .await?;
-        }
-
-        // Store account balances from metadata
-        for (address, balance) in &payload.metadata.new_account_balances {
-            self.store_account_balance(
-                flashblock_id,
-                builder_id,
-                &payload.payload_id,
-                payload.index as i64,
-                payload.metadata.block_number as i64,
-                address,
-                balance,
             )
             .await?;
         }
@@ -207,14 +182,20 @@ impl Database {
         flashblock_index: i64,
         block_number: i64,
         tx_data: &[u8],
+        tx_hash: &str,
         tx_index: i32,
     ) -> Result<()> {
         sqlx::query(
             r#"
             INSERT INTO transactions (
                 flashblock_id, builder_id, payload_id, flashblock_index, 
-                block_number, tx_data, tx_index
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                block_number, tx_data, tx_hash, tx_index
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (flashblock_id, tx_index) 
+            DO UPDATE SET 
+                tx_data = EXCLUDED.tx_data,
+                tx_hash = EXCLUDED.tx_hash,
+                created_at = NOW()
             "#,
         )
         .bind(flashblock_id)
@@ -223,117 +204,8 @@ impl Database {
         .bind(flashblock_index)
         .bind(block_number)
         .bind(tx_data)
+        .bind(tx_hash)
         .bind(tx_index)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn store_withdrawal(
-        &self,
-        flashblock_id: Uuid,
-        builder_id: Uuid,
-        payload_id: &PayloadId,
-        flashblock_index: i64,
-        block_number: i64,
-        withdrawal: &alloy_rpc_types::Withdrawal,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO withdrawals (
-                flashblock_id, builder_id, payload_id, flashblock_index,
-                block_number, withdrawal_index, validator_index, address, amount
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            "#,
-        )
-        .bind(flashblock_id)
-        .bind(builder_id)
-        .bind(payload_id.to_string())
-        .bind(flashblock_index)
-        .bind(block_number)
-        .bind(withdrawal.index as i64)
-        .bind(withdrawal.validator_index as i64)
-        .bind(format!("{:#x}", withdrawal.address))
-        .bind(withdrawal.amount as i64)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn store_receipt(
-        &self,
-        flashblock_id: Uuid,
-        builder_id: Uuid,
-        payload_id: &PayloadId,
-        flashblock_index: i64,
-        block_number: i64,
-        tx_hash: &B256,
-        receipt: &OpReceipt,
-    ) -> Result<()> {
-        let (deposit_nonce, deposit_receipt_version) = match receipt {
-            OpReceipt::Deposit(receipt) => (
-                receipt.deposit_nonce.map(|n| n as i64),
-                receipt.deposit_receipt_version.map(|v| v as i64),
-            ),
-            _ => (None, None),
-        };
-
-        sqlx::query(
-            r#"
-            INSERT INTO receipts (
-                flashblock_id, builder_id, payload_id, flashblock_index, block_number,
-                tx_hash, tx_type, status, cumulative_gas_used, logs, deposit_nonce, deposit_receipt_version
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            "#,
-        )
-        .bind(flashblock_id)
-        .bind(builder_id)
-        .bind(payload_id.to_string())
-        .bind(flashblock_index)
-        .bind(block_number)
-        .bind(tx_hash.to_string())
-        .bind(receipt.tx_type() as i32)
-        .bind(receipt.status())
-        .bind(receipt.cumulative_gas_used() as i64)
-        .bind(serde_json::to_value(receipt.logs())?)
-        .bind(deposit_nonce)
-        .bind(deposit_receipt_version)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn store_account_balance(
-        &self,
-        flashblock_id: Uuid,
-        builder_id: Uuid,
-        payload_id: &PayloadId,
-        flashblock_index: i64,
-        block_number: i64,
-        address: &Address,
-        balance: &U256,
-    ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO account_balances (
-                flashblock_id, builder_id, payload_id, flashblock_index,
-                block_number, address, balance
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(flashblock_id)
-        .bind(builder_id)
-        .bind(payload_id.to_string())
-        .bind(flashblock_index)
-        .bind(block_number)
-        .bind(address.to_string())
-        .bind(balance.to_string())
         .execute(&self.pool)
         .await?;
 
