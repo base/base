@@ -112,6 +112,8 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Configuration values that are specific to the block builder implementation used.
     pub specific: Specific,
+    /// Maximum gas a transaction can use before being excluded.
+    pub max_gas_per_txn: Option<u64>,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -145,6 +147,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             da_config: OpDAConfig::default(),
             specific: S::default(),
             sampling_ratio: 100,
+            max_gas_per_txn: None,
         }
     }
 }
@@ -164,6 +167,7 @@ where
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
+            max_gas_per_txn: args.max_gas_per_txn,
             specific: S::try_from(args)?,
         })
     }

@@ -1,5 +1,9 @@
-use crate::tests::{LocalInstance, TransactionBuilderExt};
+use crate::{
+    args::OpRbuilderArgs,
+    tests::{LocalInstance, TransactionBuilderExt},
+};
 use alloy_primitives::TxHash;
+
 use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -186,6 +190,109 @@ async fn test_no_tx_pool(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     // now lets try to build a block with no transactions
     let _ = driver.build_new_block_with_no_tx_pool().await?;
+
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    max_gas_per_txn: Some(25000),
+    ..Default::default()
+})]
+async fn chain_produces_big_tx_with_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
+
+    // insert valid txn under limit
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    // insert txn with gas usage above limit
+    let tx_high_gas = driver
+        .create_transaction()
+        .random_big_transaction()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
+
+    if_standard! {
+        assert_eq!(
+            txs.len(),
+            3,
+            "Should have 3 transactions"
+        );
+    }
+
+    if_flashblocks! {
+        assert_eq!(
+            txs.len(),
+            4,
+            "Should have 4 transactions"
+        );
+    }
+
+    // assert we included the tx with gas under limit
+    let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
+    assert!(inclusion_result.is_some());
+
+    // assert we do not include the tx with gas above limit
+    let exclusion_result = txs.hashes().find(|hash| hash == tx_high_gas.tx_hash());
+    assert!(exclusion_result.is_none());
+
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    ..Default::default()
+})]
+async fn chain_produces_big_tx_without_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+
+    #[cfg(target_os = "linux")]
+    let driver = driver
+        .with_validation_node(crate::tests::ExternalNode::reth().await?)
+        .await?;
+
+    // insert txn with gas usage but there is no limit
+    let tx = driver
+        .create_transaction()
+        .random_big_transaction()
+        .send()
+        .await
+        .expect("Failed to send transaction");
+
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let txs = block.transactions;
+
+    // assert we included the tx
+    let inclusion_result = txs.hashes().find(|hash| hash == tx.tx_hash());
+    assert!(inclusion_result.is_some());
+
+    if_standard! {
+        assert_eq!(
+            txs.len(),
+            3,
+            "Should have 3 transactions"
+        );
+    }
+
+    if_flashblocks! {
+        assert_eq!(
+            txs.len(),
+            4,
+            "Should have 4 transactions"
+        );
+    }
 
     Ok(())
 }

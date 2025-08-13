@@ -275,6 +275,7 @@ where
             builder_signer: self.config.builder_signer,
             metrics: self.metrics.clone(),
             extra_ctx: Default::default(),
+            max_gas_per_txn: self.config.max_gas_per_txn,
         };
 
         let builder = OpBuilder::new(best);

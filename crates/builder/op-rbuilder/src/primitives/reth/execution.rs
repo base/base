@@ -19,6 +19,7 @@ pub enum TxnExecutionResult {
     Success,
     Reverted,
     RevertedAndExcluded,
+    MaxGasUsageExceeded,
 }
 
 #[derive(Default, Debug)]

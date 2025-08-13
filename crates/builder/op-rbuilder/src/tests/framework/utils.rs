@@ -23,6 +23,7 @@ use super::{TransactionBuilder, FUNDED_PRIVATE_KEYS};
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
     fn random_reverting_transaction(self) -> Self;
+    fn random_big_transaction(self) -> Self;
 }
 
 impl TransactionBuilderExt for TransactionBuilder {
@@ -32,6 +33,12 @@ impl TransactionBuilderExt for TransactionBuilder {
 
     fn random_reverting_transaction(self) -> Self {
         self.with_create().with_input(hex!("60006000fd").into()) // PUSH1 0x00 PUSH1 0x00 REVERT
+    }
+
+    fn random_big_transaction(self) -> Self {
+        // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d PUSH1 0x13 PUSH1 0x00 CREATE2
+        self.with_create()
+            .with_input(hex!("6c63ffffffff60005260046000f36000526002600d60136000f5").into())
     }
 }
 

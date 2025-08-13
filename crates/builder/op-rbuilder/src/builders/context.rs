@@ -70,6 +70,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Extra context for the payload builder
     pub extra_ctx: ExtraCtx,
+    /// Max gas that can be used by a transaction.
+    pub max_gas_per_txn: Option<u64>,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -495,6 +497,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
             let gas_used = result.gas_used();
+            if let Some(max_gas_per_txn) = self.max_gas_per_txn {
+                if gas_used > max_gas_per_txn {
+                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
+                }
+            }
+
             info.cumulative_gas_used += gas_used;
             // record tx da size
             info.cumulative_da_bytes_used += tx_da_size;
