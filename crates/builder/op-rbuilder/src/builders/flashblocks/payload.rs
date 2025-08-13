@@ -290,9 +290,13 @@ where
         let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info)?;
 
         best_payload.set(payload.clone());
-        self.ws_pub
+        let flashblock_byte_size = self
+            .ws_pub
             .publish(&fb_payload)
             .map_err(PayloadBuilderError::other)?;
+        ctx.metrics
+            .flashblock_byte_size_histogram
+            .record(flashblock_byte_size as f64);
 
         info!(
             target: "payload_builder",
@@ -520,7 +524,8 @@ where
                                 );
                                 return Ok(());
                             }
-                            self.ws_pub
+                            let flashblock_byte_size = self
+                                .ws_pub
                                 .publish(&fb_payload)
                                 .map_err(PayloadBuilderError::other)?;
 
@@ -530,7 +535,7 @@ where
                                 .record(flashblock_build_start_time.elapsed());
                             ctx.metrics
                                 .flashblock_byte_size_histogram
-                                .record(new_payload.block().size() as f64);
+                                .record(flashblock_byte_size as f64);
                             ctx.metrics
                                 .flashblock_num_tx_histogram
                                 .record(info.executed_transactions.len() as f64);
