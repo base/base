@@ -43,12 +43,12 @@ impl FlashblocksArchiver {
     pub async fn run(&self) -> Result<()> {
         let builders = self.args.parse_builders()?;
         info!(
-            "Starting FlashblocksArchiver with {} builders",
-            builders.len()
+            message = "Starting FlashblocksArchiver",
+            builders_count = builders.len()
         );
 
         if builders.is_empty() {
-            warn!("No builders configured, archiver will not collect any data");
+            warn!(message = "No builders configured, archiver will not collect any data");
             return Ok(());
         }
 
@@ -56,11 +56,9 @@ impl FlashblocksArchiver {
         let mut receiver = ws_pool.start().await?;
 
         let mut batch = Vec::with_capacity(self.args.batch_size);
-        let mut flush_interval = interval(Duration::from_secs(
-            self.args.flush_interval_seconds,
-        ));
+        let mut flush_interval = interval(Duration::from_secs(self.args.flush_interval_seconds));
 
-        info!("FlashblocksArchiver started, listening for flashblock messages");
+        info!(message = "FlashblocksArchiver started, listening for flashblock messages");
 
         loop {
             tokio::select! {
@@ -72,19 +70,19 @@ impl FlashblocksArchiver {
 
                                 if batch.len() >= self.args.batch_size {
                                     if let Err(e) = self.flush_batch(&mut batch) {
-                                        error!("Failed to flush batch: {}", e);
+                                        error!(message = "Failed to flush batch", error = %e);
                                         self.metrics.flush_batch_error.increment(1);
                                     }
                                 }
                             } else {
-                                warn!("Received message from unknown builder: {}", builder_name);
+                                warn!(message = "Received message from unknown builder", builder_name = %builder_name);
                             }
                         }
                         None => {
-                            info!("All WebSocket connections closed, flushing remaining data");
+                            info!(message = "All WebSocket connections closed, flushing remaining data");
                             if !batch.is_empty() {
                                 if let Err(e) = self.flush_batch(&mut batch) {
-                                    error!("Failed to flush final batch: {}", e);
+                                    error!(message = "Failed to flush final batch", error = %e);
                                 }
                             }
                             break;
@@ -96,14 +94,14 @@ impl FlashblocksArchiver {
                 _ = flush_interval.tick() => {
                     if !batch.is_empty() {
                         if let Err(e) = self.flush_batch(&mut batch) {
-                            error!("Failed to flush batch on timer: {}", e);
+                            error!(message = "Failed to flush batch on timer", error = %e);
                         }
                     }
                 }
             }
         }
 
-        info!("FlashblocksArchiver stopped");
+        info!(message = "FlashblocksArchiver stopped");
         Ok(())
     }
 
@@ -112,28 +110,20 @@ impl FlashblocksArchiver {
             return Ok(());
         }
 
-        info!("Flushing batch of {} flashblock messages", batch.len());
+        info!(
+            message = "Flushing batch of flashblock messages",
+            batch_size = batch.len()
+        );
 
         for (builder_id, payload) in batch.drain(..) {
             let database = self.database.get_pool().clone();
             let metrics = self.metrics.clone();
-            
+
             tokio::spawn(async move {
                 let start = Instant::now();
                 let db = Database::from_pool(database);
-                match db.store_flashblock(builder_id, &payload).await {
-                    Ok(_) => {
-                        info!(
-                            "Stored flashblock: block {}, index {}, payload_id {}",
-                            payload.metadata.block_number, payload.index, payload.payload_id
-                        );
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to store flashblock (block {}, index {}): {}",
-                            payload.metadata.block_number, payload.index, e
-                        );
-                    }
+                if let Err(e) = db.store_flashblock(builder_id, &payload).await {
+                    error!(message = "Failed to store flashblock", block_number = payload.metadata.block_number, index = payload.index, error = %e);
                 }
                 metrics.store_flashblock_duration.record(start.elapsed());
             });

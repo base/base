@@ -25,13 +25,13 @@ impl Database {
             .connect(database_url)
             .await?;
 
-        info!("Connected to database");
+        info!(message = "Connected to database");
         Ok(Self { pool })
     }
 
     pub async fn run_migrations(&self) -> Result<()> {
         sqlx::migrate!("./migrations").run(&self.pool).await?;
-        info!("Database migrations completed");
+        info!(message = "Database migrations completed");
         Ok(())
     }
 

@@ -27,20 +27,14 @@ impl WebSocketManager {
         loop {
             match self.connect_and_listen(&sender).await {
                 Ok(_) => {
-                    info!(
-                        "WebSocket connection to {} ended normally",
-                        self.config.name
-                    );
+                    info!(message = "WebSocket connection ended normally", builder_name = %self.config.name);
                 }
                 Err(e) => {
-                    error!("WebSocket connection to {} failed: {}", self.config.name, e);
+                    error!(message = "WebSocket connection failed", builder_name = %self.config.name, error = %e);
                 }
             }
 
-            info!(
-                "Reconnecting to {} in {} seconds",
-                self.config.name, self.config.reconnect_delay_seconds
-            );
+            info!(message = "Reconnecting to builder", builder_name = %self.config.name, delay_seconds = self.config.reconnect_delay_seconds);
             reconnect_interval.tick().await;
         }
     }
@@ -49,16 +43,13 @@ impl WebSocketManager {
         &self,
         sender: &tokio::sync::mpsc::UnboundedSender<(String, FlashblockMessage)>,
     ) -> Result<()> {
-        info!(
-            "Connecting to builder: {} at {}",
-            self.config.name, self.config.url
-        );
+        info!(message = "Connecting to builder", builder_name = %self.config.name, url = %self.config.url);
 
         let (ws_stream, _) = connect_async(self.config.url.as_str())
             .await
             .map_err(|e| anyhow!("Failed to connect to {}: {}", self.config.url, e))?;
 
-        info!("Connected to builder: {}", self.config.name);
+        info!(message = "Connected to builder", builder_name = %self.config.name);
 
         let (_, mut read) = ws_stream.split();
 
@@ -68,19 +59,16 @@ impl WebSocketManager {
                 Ok(Message::Binary(data)) => match self.try_decode_message(&data) {
                     Ok(payload) => {
                         if let Err(e) = sender.send((self.config.name.clone(), payload)) {
-                            error!("Failed to send parsed binary message to channel: {}", e);
+                            error!(message = "Failed to send parsed binary message to channel", error = %e);
                             break;
                         }
                     }
                     Err(e) => {
-                        warn!(
-                            "Failed to decompress/parse binary message from {}: {}",
-                            self.config.name, e
-                        );
+                        warn!(message = "Failed to decompress/parse binary message", builder_name = %self.config.name, error = %e);
                     }
                 },
                 Err(e) => {
-                    error!("WebSocket error from {}: {}", self.config.name, e);
+                    error!(message = "WebSocket error", builder_name = %self.config.name, error = %e);
                     break;
                 }
                 _ => {}
@@ -157,7 +145,7 @@ impl WebSocketPool {
 
             tokio::spawn(async move {
                 if let Err(e) = manager_clone.start(manager_sender).await {
-                    error!("WebSocket manager failed: {}", e);
+                    error!(message = "WebSocket manager failed", error = %e);
                 }
             });
         }
@@ -165,7 +153,7 @@ impl WebSocketPool {
         // Drop the original sender so receiver will close when all tasks are done
         drop(sender);
 
-        info!("Started {} WebSocket connections", self.managers.len());
+        info!(message = "Started WebSocket connections", connection_count = self.managers.len());
         Ok(receiver)
     }
 }

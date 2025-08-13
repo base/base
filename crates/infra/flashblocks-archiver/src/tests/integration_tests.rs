@@ -258,7 +258,7 @@ async fn test_malformed_brotli_edge_cases() -> anyhow::Result<()> {
         reconnect_delay_seconds: 5,
     });
 
-    info!("Testing malformed brotli edge cases");
+    info!(message = "Testing malformed brotli edge cases");
 
     let test_cases = vec![
         // Empty data
@@ -276,7 +276,7 @@ async fn test_malformed_brotli_edge_cases() -> anyhow::Result<()> {
     for (data, description) in test_cases {
         let result = manager.try_decode_message(&data);
         assert!(result.is_err(), "Should fail for: {}", description);
-        info!("Correctly rejected {}: {:?}", description, result.err());
+        info!(message = "Correctly rejected test case", description = %description, error = ?result.err());
     }
 
     // Test brotli compression/decompression round trip with invalid JSON
@@ -298,7 +298,7 @@ async fn test_malformed_brotli_edge_cases() -> anyhow::Result<()> {
         "Should fail to parse decompressed invalid JSON"
     );
 
-    info!("Malformed brotli edge cases test completed");
+    info!(message = "Malformed brotli edge cases test completed");
     Ok(())
 }
 
@@ -310,7 +310,7 @@ async fn test_websocket_manager_edge_cases() -> anyhow::Result<()> {
         reconnect_delay_seconds: 1,
     });
 
-    info!("Testing WebSocket manager edge cases");
+    info!(message = "Testing WebSocket manager edge cases");
 
     // Test with various edge case inputs
     let edge_cases = vec![
@@ -347,10 +347,10 @@ async fn test_websocket_manager_edge_cases() -> anyhow::Result<()> {
         assert!(result.is_err(), "Should fail for: {}", description);
 
         let error_msg = format!("{:?}", result.err().unwrap());
-        info!("Edge case '{}' failed with: {}", description, error_msg);
+        info!(message = "Edge case failed", description = %description, error = %error_msg);
     }
 
-    info!("WebSocket manager edge cases test completed");
+    info!(message = "WebSocket manager edge cases test completed");
     Ok(())
 }
 
@@ -358,7 +358,7 @@ async fn test_websocket_manager_edge_cases() -> anyhow::Result<()> {
 async fn test_database_transaction_isolation() -> anyhow::Result<()> {
     let setup = TestSetup::new().await?;
 
-    info!("Testing database transaction isolation");
+    info!(message = "Testing database transaction isolation");
 
     // Create two identical flashblocks to test unique constraint handling
     let flashblock = setup.create_test_flashblock(88888, 0);
@@ -398,6 +398,6 @@ async fn test_database_transaction_isolation() -> anyhow::Result<()> {
 
     assert_eq!(count, 1, "Only one flashblock should exist in database");
 
-    info!("Database transaction isolation test completed");
+    info!(message = "Database transaction isolation test completed");
     Ok(())
 }

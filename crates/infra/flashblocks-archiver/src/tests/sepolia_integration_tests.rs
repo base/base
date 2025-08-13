@@ -43,7 +43,7 @@ async fn test_base_sepolia_flashblocks_connection() -> anyhow::Result<()> {
 
     let setup = SepoliaTestSetup::new().await?;
 
-    info!("Starting Base Sepolia flashblocks test");
+    info!(message = "Starting Base Sepolia flashblocks test");
 
     // Create archiver
     let archiver = FlashblocksArchiver::new(setup.args.clone()).await?;
@@ -66,7 +66,7 @@ async fn test_base_sepolia_flashblocks_connection() -> anyhow::Result<()> {
 
     match result {
         Ok(_) => {
-            info!("Successfully connected to Base Sepolia flashblocks");
+            info!(message = "Successfully connected to Base Sepolia flashblocks");
 
             // Check if we received any data
             let flashblocks = setup
@@ -75,9 +75,9 @@ async fn test_base_sepolia_flashblocks_connection() -> anyhow::Result<()> {
                 .get_flashblocks_by_block_number(0)
                 .await?;
             if flashblocks.is_empty() {
-                warn!("No flashblocks received during test period - this may be normal if no blocks are being produced");
+                warn!(message = "No flashblocks received during test period - this may be normal if no blocks are being produced");
             } else {
-                info!("Received {} flashblocks during test", flashblocks.len());
+                info!(message = "Received flashblocks during test", count = flashblocks.len());
             }
         }
         Err(_) => {
@@ -110,7 +110,7 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
     .await;
 
     if result.is_err() {
-        warn!("Test timeout - proceeding with data validation");
+        warn!(message = "Test timeout - proceeding with data validation");
     }
 
     // Validate data integrity
@@ -125,7 +125,7 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
         .await?;
 
     if flashblocks_count > 0 {
-        info!("Found {} flashblocks in database", flashblocks_count);
+        info!(message = "Found flashblocks in database", count = flashblocks_count);
 
         // Validate relationships between tables
         let orphaned_transactions = sqlx::query_scalar::<_, i64>(
@@ -139,9 +139,9 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
             "No orphaned transactions should exist"
         );
 
-        info!("Data integrity validation passed");
+        info!(message = "Data integrity validation passed");
     } else {
-        warn!("No flashblocks received - skipping data integrity tests");
+        warn!(message = "No flashblocks received - skipping data integrity tests");
     }
 
     Ok(())
@@ -166,10 +166,7 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     let result = manager.try_decode_message(json_bytes);
     if result.is_err() {
         // This is expected as our sample JSON might not match the exact FlashblocksPayloadV1 structure
-        info!(
-            "Plain JSON parsing failed as expected (structure mismatch): {:?}",
-            result.err()
-        );
+        info!(message = "Plain JSON parsing failed as expected (structure mismatch)", error = ?result.err());
     }
 
     // Test 2: Brotli compressed JSON
@@ -184,10 +181,7 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     // This should decompress and then fail parsing (due to structure mismatch)
     let result = manager.try_decode_message(&compressed);
     if result.is_err() {
-        info!(
-            "Brotli decompression + parsing failed as expected (structure mismatch): {:?}",
-            result.err()
-        );
+        info!(message = "Brotli decompression + parsing failed as expected (structure mismatch)", error = ?result.err());
     }
 
     // Test 3: Empty data
@@ -199,7 +193,7 @@ async fn test_brotli_decompression() -> anyhow::Result<()> {
     let result = manager.try_decode_message(&invalid_brotli);
     assert!(result.is_err(), "Invalid brotli data should fail");
 
-    info!("Brotli decompression tests completed");
+    info!(message = "Brotli decompression tests completed");
     Ok(())
 }
 
@@ -225,7 +219,7 @@ async fn test_websocket_error_handling() -> anyhow::Result<()> {
     let result = FlashblocksArchiver::new(args).await;
     assert!(result.is_err(), "Should fail with invalid database URL");
 
-    info!("WebSocket error handling test completed");
+    info!(message = "WebSocket error handling test completed");
     Ok(())
 }
 
@@ -255,7 +249,7 @@ async fn test_database_constraint_violations() -> anyhow::Result<()> {
         "Same URL should return same builder ID"
     );
 
-    info!("Database constraint violation tests completed");
+    info!(message = "Database constraint violation tests completed");
     Ok(())
 }
 
@@ -278,10 +272,10 @@ async fn test_malformed_message_handling() -> anyhow::Result<()> {
     for (data, description) in test_cases {
         let result = manager.try_decode_message(data);
         assert!(result.is_err(), "Should fail for {}", description);
-        info!("Correctly rejected {}: {:?}", description, result.err());
+        info!(message = "Correctly rejected test case", description = %description, error = ?result.err());
     }
 
-    info!("Malformed message handling tests completed");
+    info!(message = "Malformed message handling tests completed");
     Ok(())
 }
 
@@ -309,7 +303,7 @@ async fn test_large_message_handling() -> anyhow::Result<()> {
         "Error should not be about size limits"
     );
 
-    info!("Large message handling test completed");
+    info!(message = "Large message handling test completed");
     Ok(())
 }
 
@@ -381,6 +375,6 @@ async fn test_database_transaction_rollback() -> anyhow::Result<()> {
         "Second insertion should succeed with UPSERT (updates existing record)"
     );
 
-    info!("Database transaction rollback test completed");
+    info!(message = "Database transaction rollback test completed");
     Ok(())
 }
