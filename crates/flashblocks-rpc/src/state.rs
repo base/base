@@ -9,9 +9,7 @@ use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
 use alloy_rpc_types::TransactionTrait;
-use alloy_rpc_types_engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
-};
+use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
@@ -96,7 +94,12 @@ where
     fn process_flashblock(&self, flashblocks: Vec<Flashblock>) -> eyre::Result<PendingBlock> {
         let mut pending_block_builder = PendingBlockBuilder::new();
         // Number of txs in the block until last flashblock txs start
-        let txs_offset = flashblocks.iter().rev().skip(1).map(|flashblock| flashblock.diff.transactions.len()).sum::<usize>();
+        let txs_offset = flashblocks
+            .iter()
+            .rev()
+            .skip(1)
+            .map(|flashblock| flashblock.diff.transactions.len())
+            .sum::<usize>();
 
         let base = flashblocks
             .first()
@@ -218,7 +221,7 @@ where
             let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
             // Preserve recovered transaction from the last flashblock
             // +1 to account for idx being the index
-            if idx + 1> txs_offset {
+            if idx + 1 > txs_offset {
                 last_fb_recovered_txs.push(recovered_transaction);
             }
 
@@ -298,8 +301,7 @@ where
         }
         let mut state_cache_builder = StateOverridesBuilder::default();
         // Execute recovered transaction that belongs to the last flashblocks
-        for tx in last_fb_recovered_txs
-        {
+        for tx in last_fb_recovered_txs {
             // EVM Transaction
             let ResultAndState { state, .. } = evm.transact(tx)?;
             for (addr, acc) in &state {
