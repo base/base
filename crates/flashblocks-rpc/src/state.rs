@@ -9,7 +9,9 @@ use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{Address, Sealable, TxHash, B256, U256};
 use alloy_rpc_types::TransactionTrait;
-use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
+use alloy_rpc_types_engine::{
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+};
 use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
@@ -20,6 +22,7 @@ use reth::chainspec::{ChainSpecProvider, EthChainSpec};
 use reth::providers::{BlockReaderIdExt, StateProviderFactory};
 use reth::revm::context::result::ResultAndState;
 use reth::revm::database::StateProviderDatabase;
+use reth::revm::db::CacheDB;
 use reth::revm::{DatabaseCommit, State};
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpHardforks;
@@ -30,6 +33,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::borrow::Cow;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -94,7 +98,7 @@ where
 
         let base = flashblocks
             .first()
-            .ok_or(eyre!("cannot build a pendingblock from no flashblocks"))?
+            .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
             .base
             .clone()
             .ok_or(eyre!("first flashblock does not contain a base"))?;
@@ -171,7 +175,11 @@ where
             .with_database(state)
             .with_bundle_update()
             .build();
-
+        let mut db = CacheDB::new(db);
+        if let Some(pending_block) = self.pending_block.load().deref() {
+            db.cache = pending_block.get_state_cache();
+            db.db.transition_state = pending_block.get_state_transitions();
+        }
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp: base.timestamp,
             suggested_fee_recipient: base.fee_recipient,
@@ -189,8 +197,8 @@ where
         let evm_env = evm_config.next_evm_env(&previous_header, &block_env_attributes)?;
 
         let mut evm = evm_config.evm_with_env(db, evm_env);
-        let mut state_cache_builder = StateOverridesBuilder::default();
 
+        let mut recovered_transactions = Vec::with_capacity(block.body.transactions.len());
         for (idx, transaction) in block.body.transactions.iter().enumerate() {
             let sender = match transaction.recover_signer() {
                 Ok(signer) => signer,
@@ -206,6 +214,8 @@ where
 
             let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
             let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
+            // Preserve recovered transaction to use in execution later
+            recovered_transactions.push(recovered_transaction);
 
             // Build Transaction
             let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
@@ -280,9 +290,16 @@ where
 
             gas_used = receipt.cumulative_gas_used();
             next_log_index += receipt.logs().len();
-
+        }
+        let mut state_cache_builder = StateOverridesBuilder::default();
+        // Execute recovered transaction that belongs to the last flashblocks
+        for tx in recovered_transactions
+            .into_iter()
+            .rev()
+            .take(latest_flashblock.diff.transactions.len())
+        {
             // EVM Transaction
-            let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
+            let ResultAndState { state, .. } = evm.transact(tx)?;
             for (addr, acc) in &state {
                 let state_diff = B256HashMap::<B256>::from_iter(
                     acc.storage
@@ -302,8 +319,11 @@ where
             evm.db_mut().commit(state);
             // End EVM Transaction
         }
-
         pending_block_builder.with_state_overrides(state_cache_builder.build());
+        // Preserve current state transition and cache from cachedb
+        let CacheDB { cache, db } = evm.into_db();
+        pending_block_builder.with_transition_state(db.transition_state);
+        pending_block_builder.with_state_cache(cache);
 
         for (address, balance) in updated_balances {
             pending_block_builder.with_account_balance(address, balance);
