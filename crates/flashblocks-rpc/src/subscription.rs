@@ -107,6 +107,9 @@ where
                                         );
                                     }
                                 },
+                                Ok(Message::Text(_)) => {
+                                    error!("Received flashblock as plaintext, only compressed flashblocks supported. Set up websocket-proxy to use compressed flashblocks.");
+                                }
                                 Ok(Message::Close(_)) => {
                                     info!(message = "WebSocket connection closed by upstream");
                                     break;
