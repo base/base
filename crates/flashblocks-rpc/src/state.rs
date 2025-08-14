@@ -95,6 +95,8 @@ where
 
     fn process_flashblock(&self, flashblocks: Vec<Flashblock>) -> eyre::Result<PendingBlock> {
         let mut pending_block_builder = PendingBlockBuilder::new();
+        // Number of txs in the block until last flashblock txs start
+        let txs_offset = flashblocks.iter().rev().skip(1).map(|flashblock| flashblock.diff.transactions.len()).sum::<usize>();
 
         let base = flashblocks
             .first()
@@ -198,7 +200,7 @@ where
 
         let mut evm = evm_config.evm_with_env(db, evm_env);
 
-        let mut recovered_transactions = Vec::with_capacity(block.body.transactions.len());
+        let mut last_fb_recovered_txs = Vec::with_capacity(block.body.transactions.len());
         for (idx, transaction) in block.body.transactions.iter().enumerate() {
             let sender = match transaction.recover_signer() {
                 Ok(signer) => signer,
@@ -214,8 +216,11 @@ where
 
             let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
             let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
-            // Preserve recovered transaction to use in execution later
-            recovered_transactions.push(recovered_transaction);
+            // Preserve recovered transaction from the last flashblock
+            // +1 to account for idx being the index
+            if idx + 1> txs_offset {
+                last_fb_recovered_txs.push(recovered_transaction);
+            }
 
             // Build Transaction
             let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
@@ -293,10 +298,7 @@ where
         }
         let mut state_cache_builder = StateOverridesBuilder::default();
         // Execute recovered transaction that belongs to the last flashblocks
-        for tx in recovered_transactions
-            .into_iter()
-            .rev()
-            .take(latest_flashblock.diff.transactions.len())
+        for tx in last_fb_recovered_txs
         {
             // EVM Transaction
             let ResultAndState { state, .. } = evm.transact(tx)?;
