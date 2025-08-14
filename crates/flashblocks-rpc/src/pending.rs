@@ -9,6 +9,7 @@ use alloy_rpc_types_eth::Header as RPCHeader;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use reth::revm::db::{Cache, TransitionState};
 use reth_rpc_eth_api::RpcBlock;
 
 pub struct PendingBlockBuilder {
@@ -20,6 +21,8 @@ pub struct PendingBlockBuilder {
     pub transactions_by_hash: HashMap<B256, Transaction>,
     pub transactions: Vec<Transaction>,
     pub state_overrides: Option<StateOverride>,
+    pub state_cache: Cache,
+    pub transition_state: Option<TransitionState>,
 }
 
 impl PendingBlockBuilder {
@@ -33,6 +36,8 @@ impl PendingBlockBuilder {
             transaction_receipts: HashMap::default(),
             transactions_by_hash: HashMap::default(),
             state_overrides: None,
+            state_cache: Cache::default(),
+            transition_state: None,
         }
     }
 
@@ -85,6 +90,21 @@ impl PendingBlockBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn with_state_cache(&mut self, cache: Cache) -> &Self {
+        self.state_cache = cache;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_transition_state(
+        &mut self,
+        transition_state: Option<TransitionState>,
+    ) -> &Self {
+        self.transition_state = transition_state;
+        self
+    }
+
     pub(crate) fn build(self) -> eyre::Result<PendingBlock> {
         let header = self.header.ok_or_else(|| eyre!("missing header"))?;
 
@@ -101,6 +121,8 @@ impl PendingBlockBuilder {
             transactions: self.transactions,
             flashblocks: self.flashblocks,
             state_overrides: self.state_overrides,
+            state_cache: self.state_cache,
+            transition_state: self.transition_state,
         })
     }
 }
@@ -115,6 +137,8 @@ pub struct PendingBlock {
     transactions_by_hash: HashMap<B256, Transaction>,
     transactions: Vec<Transaction>,
     state_overrides: Option<StateOverride>,
+    state_cache: Cache,
+    transition_state: Option<TransitionState>,
 }
 
 impl PendingBlock {
@@ -167,5 +191,12 @@ impl PendingBlock {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
+    }
+
+    pub fn get_state_cache(&self) -> Cache {
+        self.state_cache.clone()
+    }
+    pub fn get_state_transitions(&self) -> Option<TransitionState> {
+        self.transition_state.clone()
     }
 }
