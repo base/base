@@ -18,7 +18,8 @@ pub async fn execute_multi(
     let start_time = Instant::now();
     let prover = ProverClient::builder().mock().build();
 
-    let (_, report) = prover.execute(get_range_elf_embedded(), &sp1_stdin).run().unwrap();
+    let (_, report) =
+        prover.execute(get_range_elf_embedded(), &sp1_stdin).calculate_gas(true).run().unwrap();
 
     let execution_duration = start_time.elapsed();
 

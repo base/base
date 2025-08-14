@@ -203,7 +203,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let network_prover = self.network_prover.clone();
         // Move the CPU-intensive operation to a dedicated thread.
         let (pv, report) = match tokio::task::spawn_blocking(move || {
-            network_prover.execute(get_range_elf_embedded(), &stdin).run()
+            network_prover.execute(get_range_elf_embedded(), &stdin).calculate_gas(true).run()
         })
         .await?
         {
@@ -254,7 +254,11 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         let network_prover = self.network_prover.clone();
         // Move the CPU-intensive operation to a dedicated thread.
         let (pv, report) = match tokio::task::spawn_blocking(move || {
-            network_prover.execute(AGGREGATION_ELF, &stdin).deferred_proof_verification(false).run()
+            network_prover
+                .execute(AGGREGATION_ELF, &stdin)
+                .calculate_gas(true)
+                .deferred_proof_verification(false)
+                .run()
         })
         .await?
         {
