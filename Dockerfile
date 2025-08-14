@@ -19,4 +19,6 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+ENTRYPOINT [ "./base-reth-node" ]
+
 COPY --from=build /app/target/release/base-reth-node ./
