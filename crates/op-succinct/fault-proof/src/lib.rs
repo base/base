@@ -741,23 +741,29 @@ where
             "Attempting to resolve game"
         );
         let contract = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
+
+        // Get L2 block number for context
+        let l2_block_number = contract.l2BlockNumber().call().await?;
+
         let transaction_request = contract.resolve().into_transaction_request();
         match signer.send_transaction_request(l1_rpc.clone(), transaction_request).await {
             Ok(receipt) => {
                 tracing::info!(
-                    game_address = ?game_address,
                     game_index = %index,
+                    game_address = ?game_address,
+                    l2_block_end = %l2_block_number,
                     tx_hash = ?receipt.transaction_hash,
-                    "\x1b[1mSuccessfully resolved game\x1b[0m"
+                    "Game resolved successfully"
                 );
                 Ok(Action::Performed)
             }
             Err(e) => {
                 tracing::error!(
-                    game_address = ?game_address,
                     game_index = %index,
+                    game_address = ?game_address,
+                    l2_block_end = %l2_block_number,
                     error = ?e,
-                    "Failed to resolve game"
+                    "Game resolution failed"
                 );
                 Err(e)
             }

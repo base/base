@@ -77,6 +77,16 @@ pub enum ProposerGauge {
         message = "Total number of metrics errors encountered by the proposer"
     )]
     MetricsError,
+    #[strum(
+        serialize = "op_succinct_fp_total_instruction_cycles",
+        message = "Total instruction cycles from last successful game proving"
+    )]
+    TotalInstructionCycles,
+    #[strum(
+        serialize = "op_succinct_fp_total_sp1_gas",
+        message = "Total SP1 gas used in last successful game proving"
+    )]
+    TotalSP1Gas,
 }
 
 impl MetricsGauge for ProposerGauge {}
