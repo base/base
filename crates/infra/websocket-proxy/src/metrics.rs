@@ -50,6 +50,15 @@ pub struct Metrics {
 
     #[metric(describe = "Count of clients disconnected due to pong timeout")]
     pub client_pong_disconnects: Counter,
+
+    #[metric(describe = "Number of ping attempts sent to upstream")]
+    pub ping_attempts: Counter,
+
+    #[metric(describe = "Number of ping failures")]
+    pub ping_failures: Counter,
+
+    #[metric(describe = "Number of pings sent to upstream")]
+    pub ping_sent: Counter,
 }
 
 impl Metrics {
