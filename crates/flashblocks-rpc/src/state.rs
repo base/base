@@ -66,6 +66,35 @@ where
         }
     }
 
+    pub fn clear(&self) {
+        if let Some(prev) = self.pending_block.swap(None) {
+            self.metrics.pending_clear_catchup.increment(1);
+            self.metrics
+                .pending_snapshot_height
+                .set(prev.block_number() as f64);
+            self.metrics
+                .pending_snapshot_fb_index
+                .set(prev.flashblock_index() as f64);
+        }
+    }
+
+    pub fn clear_on_canonical_catchup(&self, canonical_number: u64) {
+        if let Some(cur) = self.pending_block.load_full() {
+            if cur.block_number() <= canonical_number {
+                // clear the pending flashblockblock
+                if let Some(prev) = self.pending_block.swap(None) {
+                    self.metrics.pending_clear_catchup.increment(1);
+                    self.metrics
+                        .pending_snapshot_height
+                        .set(prev.block_number() as f64);
+                    self.metrics
+                        .pending_snapshot_fb_index
+                        .set(prev.flashblock_index() as f64);
+                }
+            }
+        }
+    }
+
     fn is_next_flashblock(
         &self,
         pending_block: &Arc<PendingBlock>,

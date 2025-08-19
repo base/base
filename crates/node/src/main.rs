@@ -1,4 +1,7 @@
 use base_reth_flashblocks_rpc::rpc::EthApiExt;
+use futures_util::TryStreamExt;
+use once_cell::sync::OnceCell;
+use reth_exex::ExExEvent;
 use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
@@ -43,11 +46,37 @@ fn main() {
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
+            // Shared cell for a single FlashblocksState instance
+            let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
+
             let handle = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
+                .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
+                    let fb_cell = fb_cell.clone();
+                    move |mut ctx| async move {
+                        // Initialize or reuse the shared state (created with ctx.provider())
+                        let fb = fb_cell
+                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .clone();
+                        Ok(async move {
+                            // Handle ExEx notifications (TryStream version)
+                            while let Some(note) = ctx.notifications.try_next().await? {
+                                if let Some(committed) = note.committed_chain() {
+                                    for b in committed.blocks_iter() {
+                                        fb.clear_on_canonical_catchup(b.number);
+                                    }
+                                    let _ = ctx.events.send(ExExEvent::FinishedHeight(
+                                        committed.tip().num_hash(),
+                                    ));
+                                }
+                            }
+                            Ok(())
+                        })
+                    }
+                })
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
@@ -59,17 +88,14 @@ fn main() {
                                 .as_str(),
                         )?;
 
-                        let flashblocks_state =
-                            Arc::new(FlashblocksState::new(ctx.provider().clone()));
+                        let fb = fb_cell
+                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .clone();
 
-                        let mut flashblocks_client =
-                            FlashblocksSubscriber::new(flashblocks_state.clone(), ws_url);
-
+                        let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
                         flashblocks_client.start();
-                        let api_ext = EthApiExt::new(
-                            ctx.registry.eth_api().clone(),
-                            flashblocks_state.clone(),
-                        );
+
+                        let api_ext = EthApiExt::new(ctx.registry.eth_api().clone(), fb);
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
                     } else {
                         info!(message = "flashblocks integration is disabled");
