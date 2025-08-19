@@ -108,7 +108,7 @@ L1_BEACON_RPC=           # L1 Beacon RPC endpoint URL
 L2_NODE_RPC=             # L2 Node RPC endpoint URL
 ```
 
-To get a whitelisted key on the Succinct Prover Network for OP Succinct, fill out this [form](https://docs.google.com/forms/d/e/1FAIpQLSd2Yil8TrU54cIuohH1WvDvbxTusyqh5rsDmMAtGC85-Arshg/viewform?ref=https://succinctlabs.github.io/op-succinct/).
+For the Succinct Prover Network setup, see the [quickstart guide](https://docs.succinct.xyz/docs/sp1/prover-network/quickstart).
 
 ## Building Images Manually
 
