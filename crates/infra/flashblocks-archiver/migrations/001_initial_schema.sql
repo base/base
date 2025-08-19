@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS flashblocks (
 
     block_number BIGINT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    raw_message JSONB NOT NULL,
     
     UNIQUE(builder_id, payload_id, flashblock_index)
 );

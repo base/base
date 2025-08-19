@@ -60,19 +60,16 @@ impl Database {
         builder_id: Uuid,
         payload: &FlashblockMessage,
     ) -> Result<Uuid> {
-        let raw_message = serde_json::to_value(payload)?;
-
         let flashblock_id = sqlx::query_scalar::<_, Uuid>(
             r#"
             INSERT INTO flashblocks (
-                builder_id, payload_id, flashblock_index, block_number, raw_message
+                builder_id, payload_id, flashblock_index, block_number
             ) VALUES (
-                $1, $2, $3, $4, $5
+                $1, $2, $3, $4
             ) 
             ON CONFLICT (builder_id, payload_id, flashblock_index) 
             DO UPDATE SET 
                 block_number = EXCLUDED.block_number,
-                raw_message = EXCLUDED.raw_message,
                 received_at = NOW()
             RETURNING id
             "#,
@@ -81,7 +78,6 @@ impl Database {
         .bind(payload.payload_id.to_string())
         .bind(payload.index as i64)
         .bind(payload.metadata.block_number as i64)
-        .bind(raw_message)
         .fetch_one(&self.pool)
         .await?;
 

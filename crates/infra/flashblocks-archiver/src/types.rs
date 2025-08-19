@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +40,6 @@ pub struct Flashblock {
     pub flashblock_index: i64,
     pub block_number: i64,
     pub received_at: DateTime<Utc>,
-    pub raw_message: Value,
 }
 
 #[derive(Debug, sqlx::FromRow)]

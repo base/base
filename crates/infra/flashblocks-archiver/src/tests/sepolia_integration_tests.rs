@@ -133,6 +133,60 @@ async fn test_sepolia_data_integrity() -> anyhow::Result<()> {
             count = flashblocks_count
         );
 
+        // Calculate storage size for flashblocks table
+        let flashblocks_size: Option<i64> =
+            sqlx::query_scalar("SELECT pg_total_relation_size('flashblocks')")
+                .fetch_one(setup.postgres.database.get_pool())
+                .await?;
+
+        // Calculate storage size for transactions table
+        let transactions_size: Option<i64> =
+            sqlx::query_scalar("SELECT pg_total_relation_size('transactions')")
+                .fetch_one(setup.postgres.database.get_pool())
+                .await?;
+
+        // Get transaction count
+        let transactions_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions")
+            .fetch_one(setup.postgres.database.get_pool())
+            .await?;
+
+        let flashblocks_size_bytes = flashblocks_size.unwrap_or(0);
+        let transactions_size_bytes = transactions_size.unwrap_or(0);
+        let total_size_bytes = flashblocks_size_bytes + transactions_size_bytes;
+
+        // Calculate average sizes
+        let avg_flashblock_size = if flashblocks_count > 0 {
+            flashblocks_size_bytes / flashblocks_count
+        } else {
+            0
+        };
+        let avg_transaction_size = if transactions_count > 0 {
+            transactions_size_bytes / transactions_count
+        } else {
+            0
+        };
+        let avg_total_size_per_flashblock = if flashblocks_count > 0 {
+            total_size_bytes / flashblocks_count
+        } else {
+            0
+        };
+
+        info!(
+            message = "Database storage analysis",
+            flashblocks_count = flashblocks_count,
+            transactions_count = transactions_count,
+            flashblocks_table_size_bytes = flashblocks_size_bytes,
+            flashblocks_table_size_kb = flashblocks_size_bytes / 1024,
+            transactions_table_size_bytes = transactions_size_bytes,
+            transactions_table_size_kb = transactions_size_bytes / 1024,
+            total_size_bytes = total_size_bytes,
+            total_size_kb = total_size_bytes / 1024,
+            avg_flashblock_size_bytes = avg_flashblock_size,
+            avg_transaction_size_bytes = avg_transaction_size,
+            avg_total_size_per_flashblock_bytes = avg_total_size_per_flashblock,
+            avg_total_size_per_flashblock_kb = avg_total_size_per_flashblock / 1024
+        );
+
         // Validate relationships between tables
         let orphaned_transactions = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM transactions t 
