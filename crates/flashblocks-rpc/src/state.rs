@@ -27,6 +27,7 @@ use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
+use reth_primitives_traits::RecoveredBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
@@ -78,9 +79,9 @@ where
         }
     }
 
-    pub fn clear_on_canonical_catchup(&self, canonical_number: u64) {
+    pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         if let Some(cur) = self.pending_block.load_full() {
-            if cur.block_number() <= canonical_number {
+            if cur.block_number() <= block.number {
                 // clear the pending flashblockblock
                 if let Some(prev) = self.pending_block.swap(None) {
                     self.metrics.pending_clear_catchup.increment(1);
