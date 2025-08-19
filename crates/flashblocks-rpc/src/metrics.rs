@@ -35,4 +35,15 @@ pub struct Metrics {
 
     #[metric(describe = "Count of times flashblocks call is called")]
     pub call: Counter,
+
+    #[metric(
+        describe = "Number of times pending snapshot was cleared because canonical caught up"
+    )]
+    pub pending_clear_catchup: Counter,
+
+    #[metric(describe = "Pending snapshot flashblock index (current)")]
+    pub pending_snapshot_fb_index: Gauge,
+
+    #[metric(describe = "Pending snapshot block number (current)")]
+    pub pending_snapshot_height: Gauge,
 }
