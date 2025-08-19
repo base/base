@@ -20,7 +20,10 @@ pub enum RateLimitType {
 #[derive(Error, Debug)]
 pub enum RateLimitError {
     #[error("Rate Limit Reached: {reason}")]
-    Limit { reason: String, limit_type: RateLimitType },
+    Limit {
+        reason: String,
+        limit_type: RateLimitType,
+    },
 }
 
 #[clippy::has_significant_drop]

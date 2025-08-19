@@ -179,20 +179,24 @@ where
 
         let (ping_error_tx, mut ping_error_rx) = oneshot::channel();
         let options = self.options.clone();
+        let metrics = self.metrics.clone();
         let mut pong_deadline = Instant::now() + options.initial_grace_period;
 
         let ping_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(options.ping_interval);
             loop {
                 interval.tick().await;
+                metrics.ping_attempts.increment(1);
                 if let Err(e) = write.send(Message::Ping(bytes::Bytes::new())).await {
                     error!(
                         message = "failed to send ping to upstream",
                         error = e.to_string()
                     );
+                    metrics.ping_failures.increment(1);
                     let _ = ping_error_tx.send(e);
                     break;
                 }
+                metrics.ping_sent.increment(1);
             }
         });
 
