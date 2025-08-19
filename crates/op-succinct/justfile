@@ -278,10 +278,10 @@ add-config config_name env_file=".env" *features='':
     
     # First fetch rollup config using the env file
     if [ -z "{{features}}" ]; then
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release -- --env-file {{env_file}}
     else
         echo "Fetching rollup config with features: {{features}}"
-        RUST_LOG=info cargo run --bin fetch-rollup-config --release --features {{features}} -- --env-file {{env_file}}
+        RUST_LOG=info cargo run --bin fetch-l2oo-config --release --features {{features}} -- --env-file {{env_file}}
     fi
     
     # Load environment variables
