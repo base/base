@@ -4,11 +4,10 @@ use std::time::Duration;
 use crate::metrics::Metrics;
 use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
-use alloy_primitives::{Address, Sealable, TxHash, U256};
+use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
-use alloy_rpc_types::{BlockOverrides, TransactionTrait};
-use alloy_rpc_types::{BlockTransactions, Header};
+use alloy_rpc_types::BlockOverrides;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -370,7 +369,7 @@ where
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.simulate_v1.increment(1);
-            pending_overrides.state = self.cache.get::<StateOverride>(&CacheKey::PendingOverrides);
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 
         // Prepend flashblocks pending overrides to the block state calls
