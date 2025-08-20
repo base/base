@@ -24,6 +24,22 @@ pub const VERGEN_CARGO_FEATURES: &str = env!("VERGEN_CARGO_FEATURES");
 /// The build profile name.
 pub const BUILD_PROFILE_NAME: &str = env!("OP_RBUILDER_BUILD_PROFILE");
 
+/// The short version information for op-rbuilder.
+pub const SHORT_VERSION: &str = env!("OP_RBUILDER_SHORT_VERSION");
+
+/// The long version information for op-rbuilder.
+pub const LONG_VERSION: &str = concat!(
+    env!("OP_RBUILDER_LONG_VERSION_0"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_1"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_2"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_3"),
+    "\n",
+    env!("OP_RBUILDER_LONG_VERSION_4"),
+);
+
 pub const VERSION: VersionInfo = VersionInfo {
     version: CARGO_PKG_VERSION,
     build_timestamp: VERGEN_BUILD_TIMESTAMP,

@@ -1,6 +1,6 @@
 use crate::{
     builders::BuilderMode,
-    metrics::{CARGO_PKG_VERSION, VERGEN_GIT_SHA},
+    metrics::{LONG_VERSION, SHORT_VERSION},
 };
 use clap_builder::{CommandFactory, FromArgMatches};
 pub use op::{FlashblocksArgs, OpRbuilderArgs, TelemetryArgs};
@@ -82,7 +82,8 @@ impl CliExt for Cli {
     /// Parses commands and overrides versions
     fn set_version() -> Self {
         let matches = Cli::command()
-            .version(format!("{CARGO_PKG_VERSION} ({VERGEN_GIT_SHA})"))
+            .version(SHORT_VERSION)
+            .long_version(LONG_VERSION)
             .about("Block builder designed for the Optimism stack")
             .author("Flashbots")
             .name("op-rbuilder")
