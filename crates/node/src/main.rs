@@ -46,7 +46,6 @@ fn main() {
             let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
             let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
 
-            // Shared cell for a single FlashblocksState instance
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
             let handle = builder
@@ -57,16 +56,14 @@ fn main() {
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
                     move |mut ctx| async move {
-                        // Initialize or reuse the shared state (created with ctx.provider())
                         let fb = fb_cell
                             .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
                             .clone();
                         Ok(async move {
-                            // Handle ExEx notifications (TryStream version)
                             while let Some(note) = ctx.notifications.try_next().await? {
                                 if let Some(committed) = note.committed_chain() {
                                     for b in committed.blocks_iter() {
-                                        fb.clear_on_canonical_catchup(b.number);
+                                        fb.on_canonical_block_received(b);
                                     }
                                     let _ = ctx.events.send(ExExEvent::FinishedHeight(
                                         committed.tip().num_hash(),
