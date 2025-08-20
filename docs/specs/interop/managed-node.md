@@ -19,6 +19,7 @@
     - [interop_invalidateBlock](#interop_invalidateblock)
     - [interop_provideL1](#interop_providel1)
     - [interop_reset](#interop_reset)
+    - [interop_resetPreInterop](#interop_resetpreinterop)
   - [DB](#db)
     - [interop_updateCrossSafe](#interop_updatecrosssafe)
     - [interop_updateCrossUnsafe](#interop_updatecrossunsafe)
@@ -193,6 +194,14 @@ payload (lUnsafe, xUnsafe, lSafe, xSafe, finalized: BlockID)
 Forces a reset to a specific local-unsafe/local-safe/finalized starting point only if the blocks did exist. Resets may
 override local-unsafe, to reset the very end of the chain. Resets may override local-safe, since post-interop we need
 the local-safe block derivation to continue.
+
+#### interop_resetPreInterop
+
+```javascript
+payload()
+```
+
+Forces a pre-interop reset on the node. It means resetting the node to a state before the Interop upgrade
 
 ### DB
 
