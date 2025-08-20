@@ -1,9 +1,9 @@
 //! RPC component builder
 
 use reth_node_api::AddOnsContext;
-use reth_node_builder::rpc::{EngineApiBuilder, EngineValidatorBuilder};
-use reth_node_core::version::{CARGO_PKG_VERSION, CLIENT_CODE, VERGEN_GIT_SHA};
-use reth_optimism_node::{OpEngineTypes, OP_NAME_CLIENT};
+use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
+use reth_node_core::version::{version_metadata, CLIENT_CODE};
+use reth_optimism_node::OpEngineTypes;
 use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
 pub use reth_optimism_rpc::OpEngineApi;
 use reth_payload_builder::PayloadStore;
@@ -22,7 +22,8 @@ use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion, SuperchainSignal,
 };
-use reth_node_api::{EngineTypes, EngineValidator};
+use reth::builder::NodeTypes;
+use reth_node_api::{EngineApiValidator, EngineTypes};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_rpc::OpEngineApiServer;
 use reth_rpc_api::IntoEngineApiRpcModule;
@@ -49,7 +50,8 @@ where
 impl<N, EV> EngineApiBuilder<N> for OpEngineApiBuilder<EV>
 where
     N: NodeComponents,
-    EV: EngineValidatorBuilder<N>,
+    EV: PayloadValidatorBuilder<N>,
+    EV::Validator: EngineApiValidator<<N::Types as NodeTypes>::Payload>,
 {
     type EngineApi = OpEngineApiExt<N::Provider, N::Pool, EV::Validator>;
 
@@ -61,9 +63,9 @@ where
         let engine_validator = engine_validator_builder.build(ctx).await?;
         let client = ClientVersionV1 {
             code: CLIENT_CODE,
-            name: OP_NAME_CLIENT.to_string(),
-            version: CARGO_PKG_VERSION.to_string(),
-            commit: VERGEN_GIT_SHA.to_string(),
+            name: version_metadata().name_client.to_string(),
+            version: version_metadata().cargo_pkg_version.to_string(),
+            commit: version_metadata().vergen_git_sha.to_string(),
         };
         let inner = reth_rpc_engine_api::EngineApi::new(
             ctx.node.provider().clone(),
@@ -90,7 +92,7 @@ impl<Provider, Pool, Validator> OpEngineApiExt<Provider, Pool, Validator>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + 'static,
     Pool: TransactionPool + 'static,
-    Validator: EngineValidator<OpEngineTypes>,
+    Validator: EngineApiValidator<OpEngineTypes>,
 {
     pub fn new(engine: OpEngineApi<Provider, OpEngineTypes, Pool, Validator, OpChainSpec>) -> Self {
         Self { inner: engine }
@@ -103,7 +105,7 @@ impl<Provider, Pool, Validator> OpRbuilderEngineApiServer<OpEngineTypes>
 where
     Provider: HeaderProvider + BlockReader + StateProviderFactory + 'static,
     Pool: TransactionPool + 'static,
-    Validator: EngineValidator<OpEngineTypes>,
+    Validator: EngineApiValidator<OpEngineTypes>,
 {
     async fn new_payload_v2(&self, payload: ExecutionPayloadInputV2) -> RpcResult<PayloadStatus> {
         self.inner.new_payload_v2(payload).await

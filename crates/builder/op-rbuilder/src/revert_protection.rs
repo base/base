@@ -152,13 +152,15 @@ where
                 .with_flashblock_number_max(conditional.flashblock_number_max)
                 .with_conditional(conditional.transaction_conditional);
 
-        let hash = self
+        let outcome = self
             .pool
             .add_transaction(TransactionOrigin::Local, pool_transaction)
             .await
             .map_err(EthApiError::from)?;
 
-        let result = BundleResult { bundle_hash: hash };
+        let result = BundleResult {
+            bundle_hash: outcome.hash,
+        };
         Ok(result)
     }
 }
