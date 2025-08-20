@@ -25,13 +25,16 @@ impl From<BlobData> for BlobStore {
             .rev()
             .collect();
 
-        kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
+        match kzg_rs::KzgProof::verify_blob_kzg_proof_batch(
             blobs,
             value.commitments,
             value.proofs,
             &get_kzg_settings(),
-        )
-        .expect("Failed to verify blob KZG proofs.");
+        ) {
+            Ok(true) => {} // Verification passed
+            Ok(false) => panic!("KZG proof verification failed: invalid proofs"),
+            Err(e) => panic!("KZG proof verification error: {}", e),
+        }
 
         Self { versioned_blobs }
     }
