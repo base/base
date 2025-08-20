@@ -1,0 +1,141 @@
+use alloy_primitives::TxHash;
+use eyre::Result;
+use futures::StreamExt;
+use reth::api::{BlockBody, FullNodeComponents};
+use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
+use reth::transaction_pool::TransactionPool;
+use reth_exex::{ExExContext, ExExEvent, ExExNotification};
+use reth_optimism_node::OpNode;
+use reth_tracing::tracing::info;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use tokio_stream::wrappers::ReceiverStream;
+
+/// Simple ExEx that tracks transaction timing from mempool to inclusion
+struct Tracker {
+    /// Map of transaction hash to timestamp when first seen in mempool
+    txs: HashMap<TxHash, Instant>,
+}
+
+impl Tracker {
+    fn new() -> Self {
+        Self {
+            txs: HashMap::new(),
+        }
+    }
+
+    fn mempool_tx(&mut self, tx_hash: TxHash) {
+        let now = Instant::now();
+        self.txs.entry(tx_hash).or_insert(now);
+        info!(target: "transaction-tracing-info", "Transaction {} added to mempool", tx_hash);
+    }
+
+    fn block_inclusion(&mut self, tx_hash: TxHash, block_number: u64) {
+        let inclusion_time = Instant::now();
+
+        if let Some(mempool_time) = self.txs.remove(&tx_hash) {
+            let time_in_mempool = inclusion_time.duration_since(mempool_time);
+
+            info!(
+                target: "transaction-tracing-info",
+                "Transaction {} included in block {} after {}ms",
+                tx_hash,
+                block_number,
+                time_in_mempool.as_millis()
+            );
+        } else {
+            info!(
+                target: "transaction-tracing-info",
+                "Transaction {} included in block {} (not tracked in mempool)",
+                tx_hash,
+                block_number,
+            );
+        }
+    }
+
+    // Cleanup old entries in our map that have been sitting in the mempool for too long
+    fn cleanup(&mut self) {
+        const MAX_AGE: Duration = Duration::from_secs(300); // 5 minutes
+        let now = Instant::now();
+
+        let before_count = self.txs.len();
+        self.txs
+            .retain(|_, &mut timestamp| now.duration_since(timestamp) < MAX_AGE);
+
+        let after_count = self.txs.len();
+        if before_count > after_count {
+            info!(target: "transaction-tracing-info", "Cleaned up {} old mempool entries", before_count - after_count);
+        }
+    }
+}
+
+async fn transaction_tracing_exex<Node: FullNodeComponents>(
+    mut ctx: ExExContext<Node>,
+) -> Result<()> {
+    info!(target: "transaction-tracing-info", "Starting transaction tracking ExEx");
+
+    let mut track = Tracker::new();
+
+    // Subscribe to events from the mempool
+    let pool = ctx.pool().clone();
+    let mempool_receiver = pool.pending_transactions_listener();
+    let mut mempool_stream = ReceiverStream::new(mempool_receiver);
+
+    loop {
+        tokio::select! {
+            // New events from the mempool
+            Some(tx_hash) = mempool_stream.next() => {
+                track.mempool_tx(tx_hash);
+            }
+
+            // Chain notifications
+            Some(notification) = ctx.notifications.next() => {
+                match notification {
+                    Ok(ExExNotification::ChainCommitted { new }) => {
+                        // Process all transactions in committed chain
+                        for (block_number, block) in new.blocks() {
+                            for transaction in block.body().transactions() {
+                                track.block_inclusion(*transaction.tx_hash(), *block_number);
+                            }
+                        }
+                        // Periodic cleanup
+                        track.cleanup();
+                        ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
+                    }
+                    Ok(ExExNotification::ChainReorged { old: _, new }) => {
+                        info!(target: "transaction-tracing-info", "Chain reorg detected, tip: {}", new.tip().number());
+                        // Handle reorg by updating tracking as needed
+                        for (block_number, block) in new.blocks() {
+                            for transaction in block.body().transactions() {
+                                track.block_inclusion(*transaction.tx_hash(), *block_number);
+                            }
+                        }
+                        ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
+                    }
+                    Ok(ExExNotification::ChainReverted { old }) => {
+                        info!(target: "transaction-tracing-info", "Chain reverted, old tip: {}", old.tip().number());
+                        ctx.events.send(ExExEvent::FinishedHeight(old.tip().num_hash()))?;
+                    }
+                    Err(e) => {
+                        info!(target: "transaction-tracing-info", "Notification error: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    reth_optimism_cli::Cli::parse_args().run(|builder, _args| async move {
+        let handle = builder
+            .node(OpNode::default())
+            .install_exex("transaction-tracing", |ctx| async move {
+                Ok(transaction_tracing_exex(ctx))
+            })
+            .launch()
+            .await?;
+
+        handle.wait_for_node_exit().await
+    })
+}

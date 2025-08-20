@@ -11938,6 +11938,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "transaction-tracing"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "eyre",
+ "futures",
+ "reth",
+ "reth-exex",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+ "reth-primitives",
+ "reth-tracing",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "tree_hash"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

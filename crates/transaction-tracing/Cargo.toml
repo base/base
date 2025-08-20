@@ -1,0 +1,31 @@
+[package]
+name = "transaction-tracing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+
+# alloy
+alloy-primitives.workspace = true
+
+# async
+futures.workspace = true
+tokio-stream.workspace = true
+tokio.workspace = true
+
+# misc
+eyre.workspace = true

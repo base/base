@@ -8,7 +8,7 @@ repository = "https://github.com/base/reth"
 
 [workspace]
 resolver = "2"
-members = ["crates/flashblocks-rpc", "crates/node"]
+members = ["crates/flashblocks-rpc", "crates/node", "crates/transaction-tracing"]
 
 default-members = ["crates/node"]
 
