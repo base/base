@@ -5,12 +5,13 @@ mod tests {
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;
-    use alloy_consensus::Receipt;
     use alloy_consensus::Transaction;
+    use alloy_consensus::Receipt;
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
     use alloy_genesis::{Genesis, GenesisAccount};
     use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{Address, Bytes, B256, U256};
+    use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
+    use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
     use reth::builder::NodeTypesWithDBAdapter;
@@ -169,12 +170,14 @@ mod tests {
         transactions: Vec<Bytes>,
         receipts: HashMap<B256, OpReceipt>,
         harness: Arc<TestHarness>,
+        canonical_block_number: Option<BlockNumber>,
         index: u64,
     }
 
     impl FlashblockBuilder {
         pub fn new_base(harness: &Arc<TestHarness>) -> Self {
             Self {
+                canonical_block_number: None,
                 transactions: vec![BLOCK_INFO_TXN],
                 receipts: {
                     let mut receipts = alloy_primitives::map::HashMap::default();
@@ -198,11 +201,17 @@ mod tests {
         }
         pub fn new(harness: &Arc<TestHarness>, index: u64) -> Self {
             Self {
+                canonical_block_number: None,
                 transactions: Vec::new(),
                 receipts: HashMap::default(),
                 harness: harness.clone(),
                 index,
             }
+        }
+
+        pub fn with_receipts(&mut self, receipts: HashMap<B256, OpReceipt>) -> &mut Self {
+            self.receipts = receipts;
+            self
         }
 
         pub fn with_transactions(&mut self, transactions: Vec<TransactionSigned>) -> &mut Self {
@@ -225,8 +234,14 @@ mod tests {
             self
         }
 
+        pub fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
+            self.canonical_block_number = Some(num);
+            self
+        }
+
         pub fn build(&self) -> Flashblock {
             let current_block = self.harness.current_canonical_block();
+            let canonical_block_num = self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
             let base = if self.index == 0 {
                 Some(ExecutionPayloadBaseV1 {
@@ -234,7 +249,7 @@ mod tests {
                     parent_hash: current_block.hash(),
                     fee_recipient: Address::random(),
                     prev_randao: B256::random(),
-                    block_number: current_block.number + 1,
+                    block_number: canonical_block_num,
                     gas_limit: current_block.gas_limit,
                     timestamp: current_block.timestamp + 2,
                     extra_data: Bytes::new(),
@@ -259,7 +274,7 @@ mod tests {
                     transactions: self.transactions.clone(),
                 },
                 metadata: Metadata {
-                    block_number: current_block.number + 1,
+                    block_number: canonical_block_num,
                     receipts: self.receipts.clone(),
                     new_account_balances: HashMap::default(),
                 },
@@ -337,6 +352,98 @@ mod tests {
                 .balance
                 .expect("should be changed due to receiving funds"),
             U256::from(100_100_000)
+        );
+    }
+
+    #[test]
+    fn test_missing_receipts_will_not_process() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new_base(&test).build()
+        );
+
+        let current_block = test.flashblocks.get_block(true);
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![
+                    test.build_transaction_to_send_eth(User::Alice, User::Bob, 100)
+                ])
+                .with_receipts(HashMap::default()) // Clear the receipts
+                .build()
+
+        );
+
+        let pending_block = test.flashblocks.get_block(true);
+
+        // When the flashblock is invalid, the chain doesn't progress
+        assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
+    }
+
+    #[test]
+    fn test_new_block_clears_current_block() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new_base(&test).build()
+        );
+
+        let current_block = test.flashblocks.get_block(true)
+            .expect("should be a block");
+
+        assert_eq!(current_block.header().number, 1);
+        assert_eq!(current_block.transactions.len(), 1);
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new(&test, 1)
+                .with_canonical_block_number(100)
+                .build()
+        );
+
+        let current_block = test.flashblocks.get_block(true);
+        assert!(current_block.is_none());
+    }
+
+    #[test]
+    fn test_non_sequential_payload_ignored() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        assert!(test.flashblocks.get_block(true).is_none());
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new_base(&test).build()
+        );
+
+        // Just the block info transaction
+        assert_eq!(
+            test.flashblocks.get_block(true)
+                .expect("should be set")
+                .transactions
+                .len(),
+            1
+        );
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new(&test, 3)
+                .with_transactions(vec![
+                    test.build_transaction_to_send_eth(User::Alice, User::Bob, 100)
+                ])
+                .build()
+        );
+
+        // Still the block info transaction, the txns in the third payload are ignored as it's
+        // missing a Flashblock
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("should be set")
+                .transactions
+                .len(),
+            1
         );
     }
 }
