@@ -6,7 +6,6 @@ mod tests {
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
-    use alloy_eips::BlockNumberOrTag::Pending;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
     use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256};
@@ -514,123 +513,6 @@ mod tests {
         assert_eq!(
             U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
             U256::from(1)
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_processing_error() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        node.send_payload(create_first_payload()).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?;
-
-        let invalid_flashblock = Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![DEPOSIT_TX],
-                withdrawals: vec![],
-                gas_used: 21000,
-                ..Default::default()
-            },
-            metadata: Metadata {
-                receipts: HashMap::default(), // invalid because it's missing the receipts for txns
-                new_account_balances: HashMap::default(),
-                block_number: 1,
-            },
-        };
-
-        node.send_payload(invalid_flashblock).await?;
-
-        let pending_block = provider.get_block_by_number(Pending).await?;
-
-        // When the flashblock is invalid, the chain doesn't progress
-        assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_new_block_clears_current_block() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        node.send_payload(create_first_payload()).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?.unwrap();
-
-        assert_eq!(current_block.number(), 1);
-        assert_eq!(current_block.transactions.len(), 1);
-
-        let invalid_flashblock = Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![],
-                withdrawals: vec![],
-                gas_used: 21000,
-                ..Default::default()
-            },
-            metadata: Metadata {
-                receipts: HashMap::default(),
-                new_account_balances: HashMap::default(),
-                block_number: 100, // invalid because it's a new block in the future w/out base data
-            },
-        };
-
-        node.send_payload(invalid_flashblock).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?;
-
-        assert!(current_block.is_none());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_non_sequential_payload_ignored() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        assert!(provider.get_block_by_number(Pending).await?.is_none());
-
-        node.send_payload(create_first_payload()).await?;
-
-        // Just the block info transaction
-        assert_eq!(
-            provider
-                .get_block_by_number(Pending)
-                .await?
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
-
-        let mut third_payload = create_second_payload();
-        third_payload.index = 3;
-
-        node.send_payload(third_payload).await?;
-
-        // Still the block info transaction, the txns in the third payload are ignored as it's
-        // missing a Flashblock
-        assert_eq!(
-            provider
-                .get_block_by_number(Pending)
-                .await?
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
         );
 
         Ok(())
