@@ -67,18 +67,6 @@ where
         }
     }
 
-    pub fn clear(&self) {
-        if let Some(prev) = self.pending_block.swap(None) {
-            self.metrics.pending_clear_catchup.increment(1);
-            self.metrics
-                .pending_snapshot_height
-                .set(prev.block_number() as f64);
-            self.metrics
-                .pending_snapshot_fb_index
-                .set(prev.flashblock_index() as f64);
-        }
-    }
-
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         if let Some(cur) = self.pending_block.load_full() {
             if cur.block_number() <= block.number {
@@ -105,7 +93,7 @@ where
             && flashblock.index == pending_block.flashblock_index() + 1
     }
 
-    fn update_block(&self, flashblocks: Vec<Flashblock>) {
+    fn update_pending_block(&self, flashblocks: Vec<Flashblock>) {
         let start_time = Instant::now();
         match self.process_flashblock(flashblocks) {
             Ok(block) => {
@@ -211,10 +199,19 @@ where
             .with_bundle_update()
             .build();
         let mut db = CacheDB::new(db);
-        if let Some(pending_block) = self.pending_block.load().deref() {
+
+        let mut state_cache_builder = if let Some(pending_block) = self.pending_block.load().deref()
+        {
             db.cache = pending_block.get_state_cache();
             db.db.transition_state = pending_block.get_state_transitions();
-        }
+            let current_overrides = pending_block
+                .get_state_overrides()
+                .unwrap_or_else(StateOverride::default);
+            StateOverridesBuilder::new(current_overrides)
+        } else {
+            StateOverridesBuilder::default()
+        };
+
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp: base.timestamp,
             suggested_fee_recipient: base.fee_recipient,
@@ -329,7 +326,7 @@ where
             gas_used = receipt.cumulative_gas_used();
             next_log_index += receipt.logs().len();
         }
-        let mut state_cache_builder = StateOverridesBuilder::default();
+
         // Execute recovered transaction that belongs to the last flashblocks
         for tx in last_fb_recovered_txs {
             // EVM Transaction
@@ -383,12 +380,12 @@ where
                         .flashblocks_in_block
                         .record((pending_block.flashblock_index() + 1) as f64);
 
-                    self.update_block(vec![flashblock.clone()]);
+                    self.update_pending_block(vec![flashblock.clone()]);
                 } else if self.is_next_flashblock(&pending_block, &flashblock) {
                     let mut flashblocks = pending_block.get_flashblocks();
                     flashblocks.push(flashblock.clone());
 
-                    self.update_block(flashblocks);
+                    self.update_pending_block(flashblocks);
                 } else if pending_block.block_number() != flashblock.metadata.block_number {
                     self.metrics.unexpected_block_order.increment(1);
                     self.pending_block.swap(None);
@@ -410,7 +407,7 @@ where
             }
             None => {
                 if flashblock.index == 0 {
-                    self.update_block(vec![flashblock.clone()]);
+                    self.update_pending_block(vec![flashblock.clone()]);
                 } else {
                     debug!(message = "waiting for first Flashblock")
                 }

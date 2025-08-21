@@ -24,7 +24,6 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-provider.workspace = true
 reth-tracing.workspace = true
-reth-e2e-test-utils.workspace = true
 reth-optimism-cli.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
@@ -73,4 +72,10 @@ metrics-derive.workspace = true
 eyre.workspace = true
 brotli.workspace = true
 arc-swap.workspace = true
-once_cell.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+reth-db.workspace = true
+reth-testing-utils.workspace = true
+reth-db-common.workspace = true
+reth-e2e-test-utils.workspace = true

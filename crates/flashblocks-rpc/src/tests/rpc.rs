@@ -3,6 +3,7 @@ mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
+    use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
     use alloy_eips::BlockNumberOrTag::Pending;
@@ -162,14 +163,6 @@ mod tests {
     }
 
     fn create_first_payload() -> Flashblock {
-        let block_info_tx = Bytes::from_str(
-            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
-            .unwrap();
-
-        let block_info_txn_hash =
-            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
-                .unwrap();
-
         Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
@@ -185,7 +178,7 @@ mod tests {
                 base_fee_per_gas: U256::ZERO,
             }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![block_info_tx],
+                transactions: vec![BLOCK_INFO_TXN],
                 ..Default::default()
             },
             metadata: Metadata {
@@ -193,7 +186,7 @@ mod tests {
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
-                        block_info_txn_hash,
+                        BLOCK_INFO_TXN_HASH,
                         OpReceipt::Deposit(OpDepositReceipt {
                             inner: Receipt {
                                 status: true.into(),
