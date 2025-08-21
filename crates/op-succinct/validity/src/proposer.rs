@@ -252,7 +252,7 @@ where
 
             // Log details for each created range proof request.
             for request in &new_range_requests {
-                info!(
+                debug!(
                     start_block = request.start_block,
                     end_block = request.end_block,
                     "Range proof request created and inserted into database"
