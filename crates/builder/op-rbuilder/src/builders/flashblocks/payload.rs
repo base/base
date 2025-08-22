@@ -43,10 +43,7 @@ use rollup_boost::{
 use serde::{Deserialize, Serialize};
 use std::{
     ops::{Div, Rem},
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, OnceLock,
-    },
+    sync::{Arc, OnceLock},
     time::Instant,
 };
 use tokio::sync::{
@@ -65,7 +62,7 @@ struct ExtraExecutionInfo {
 #[derive(Debug, Default)]
 struct FlashblocksExtraCtx {
     /// Current flashblock index
-    pub flashblock_index: Arc<AtomicU64>,
+    pub flashblock_index: u64,
     /// Target flashblock count
     pub target_flashblock_count: u64,
 }
@@ -73,7 +70,7 @@ struct FlashblocksExtraCtx {
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
     pub fn flashblock_index(&self) -> u64 {
-        self.extra_ctx.flashblock_index.load(Ordering::Relaxed)
+        self.extra_ctx.flashblock_index
     }
 
     /// Returns the target flashblock count
@@ -83,10 +80,8 @@ impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
 
     /// Increments the flashblock index
     pub fn increment_flashblock_index(&mut self) -> u64 {
-        self.extra_ctx
-            .flashblock_index
-            .fetch_add(1, Ordering::Relaxed);
-        self.flashblock_index()
+        self.extra_ctx.flashblock_index += 1;
+        self.extra_ctx.flashblock_index
     }
 
     /// Sets the target flashblock count
@@ -261,7 +256,7 @@ where
             builder_signer: self.config.builder_signer,
             metrics: Default::default(),
             extra_ctx: FlashblocksExtraCtx {
-                flashblock_index: Arc::new(AtomicU64::new(0)),
+                flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
             },
             max_gas_per_txn: self.config.max_gas_per_txn,
@@ -378,6 +373,11 @@ where
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
 
+        // Create best_transaction iterator
+        let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
+            self.pool
+                .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+        ));
         // This channel coordinates flashblock building
         let (fb_cancel_token_rx, mut fb_cancel_token_tx) =
             mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
@@ -443,13 +443,13 @@ where
                     }
 
                     let best_txs_start_time = Instant::now();
-                    let best_txs = BestFlashblocksTxs::new(
+                    best_txs.refresh_iterator(
                         BestPayloadTransactions::new(
                             self.pool.best_transactions_with_attributes(
                                 ctx.best_transaction_attributes(),
                             ),
                         ),
-                        ctx.extra_ctx.flashblock_index.clone(),
+                        ctx.flashblock_index(),
                     );
                     let transaction_pool_fetch_time = best_txs_start_time.elapsed();
                     ctx.metrics
@@ -463,10 +463,19 @@ where
                     ctx.execute_best_transactions(
                         &mut info,
                         &mut state,
-                        best_txs,
+                        &mut best_txs,
                         total_gas_per_batch.min(ctx.block_gas_limit()),
                         total_da_per_batch,
                     )?;
+                    // Extract last transactions
+                    let new_transactions = info.executed_transactions
+                        [info.extra.last_flashblock_index..]
+                        .to_vec()
+                        .iter()
+                        .map(|tx| tx.tx_hash())
+                        .collect::<Vec<_>>();
+                    best_txs.mark_commited(new_transactions);
+
                     // We got block cancelled, we won't need anything from the block at this point
                     // Caution: this assume that block cancel token only cancelled when new FCU is received
                     if block_cancel.is_cancelled() {

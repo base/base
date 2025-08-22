@@ -326,7 +326,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         &self,
         info: &mut ExecutionInfo<E>,
         state: &mut State<DB>,
-        mut best_txs: impl PayloadTxsBounds,
+        best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError>

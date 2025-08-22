@@ -404,7 +404,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
 
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();
-            let best_txs = best(ctx.best_transaction_attributes());
+            let mut best_txs = best(ctx.best_transaction_attributes());
             let transaction_pool_fetch_time = best_txs_start_time.elapsed();
             ctx.metrics
                 .transaction_pool_fetch_duration
@@ -417,7 +417,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 .execute_best_transactions(
                     &mut info,
                     state,
-                    best_txs,
+                    &mut best_txs,
                     block_gas_limit,
                     block_da_limit,
                 )?
