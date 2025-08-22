@@ -30,12 +30,7 @@ use derive_more;
 #[repr(i32)]
 #[try_from(repr)]
 pub enum SuperchainDAError {
-    // -3204XX DEADLINE_EXCEEDED errors
-    /// Happens when a chain database is not initialized yet.
-    #[error("chain database is not initialized")]
-    UninitializedChainDatabase = -320400,
-
-    // -3205XX NOT_FOUND errors
+    //-------------------------------- -3205XX NOT_FOUND errors --------------------------------//
     /// Happens when we try to retrieve data that is not available (pruned).
     /// It may also happen if we erroneously skip data, that was not considered a conflict, if the
     /// DB is corrupted.
@@ -46,7 +41,7 @@ pub enum SuperchainDAError {
     #[error("unsupported chain id")]
     UnknownChain = -320501,
 
-    // -3206XX ALREADY_EXISTS errors
+    //--------------------------------- -3206XX ALREADY_EXISTS ---------------------------------//
     /// Happens when we know for sure that there is different canonical data.
     #[error("conflicting data exists in the database")]
     ConflictingData = -320600,
@@ -59,17 +54,26 @@ pub enum SuperchainDAError {
     #[error("data is already known and didn't change anything")]
     IneffectiveData = -320601,
 
-    // -3209XX FAILED_PRECONDITION errors
+    //-------------------------- -3209XX FAILED_PRECONDITION errors ----------------------------//
     /// Happens when you try to add data to the DB, but it does not actually fit onto
     /// the latest data.
     /// (by being too old or new).
     #[error("data is out of order (too old or new)")]
     OutOfOrder = -320900,
 
+    /// Happens when something was assumed from the DB, but then invalidated due to e.g. a reorg.
+    #[error("invalidated read")]
+    InvalidatedRead = -32901,
+
     /// Happens when we know for sure that a replacement block is needed before progress
     /// can be made.
     #[error("waiting for replacement block before progress can be made")]
     AwaitingReplacement = -320901,
+
+    //--------------------------------- -3210XX ABORTED errors ---------------------------------//
+    /// Happens when we fail to rewind the chain (reorg response).
+    #[error("rewind failed")]
+    RewindFailed = -321000,
 
     // -3211XX OUT_OF_RANGE errors
     /// Happens when data is accessed, but access is not allowed, because of a limited
@@ -79,19 +83,19 @@ pub enum SuperchainDAError {
     #[error("data access not allowed due to limited scope")]
     OutOfScope = -321100,
 
-    // -3212XX UNIMPLEMENTED errors
+    //------------------------------ -3212XX UNIMPLEMENTED errors ------------------------------//
     /// Happens when you try to get the previous block of the first block.
     /// E.g. when trying to determine the previous source block for the first L1 block
     /// in the database.
     #[error("cannot get parent of first block in database")]
     NoParentForFirstBlock = -321200,
 
-    // -3214XX UNAVAILABLE errors
+    //------------------------------- -3214XX UNAVAILABLE errors -------------------------------//
     /// Happens when data is just not yet available.
     #[error("data is not yet available (from the future)")]
     FutureData = -321401,
 
-    // -3215XX DATA_LOSS errors
+    //-------------------------------- -3215XX DATA_LOSS errors --------------------------------//
     /// Happens when we search the DB, know the data may be there, but is not (e.g.
     /// different revision).
     #[error("data may exist but was not found (possibly different revision)")]
