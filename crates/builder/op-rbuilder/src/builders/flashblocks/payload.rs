@@ -1,25 +1,25 @@
 use super::{config::FlashblocksConfig, wspub::WebSocketPublisher};
 use crate::{
     builders::{
-        context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx},
+        BuilderConfig, BuilderTx,
+        context::{OpPayloadBuilderCtx, estimate_gas_for_builder_tx},
         flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
         generator::{BlockCell, BuildArguments},
-        BuilderConfig, BuilderTx,
     },
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
 };
 use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
-use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE, Encodable2718};
-use alloy_primitives::{map::foldhash::HashMap, Address, B256, U256};
+use alloy_eips::{Encodable2718, eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use core::time::Duration;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::BuildOutcome;
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
-use reth_evm::{execute::BlockBuilder, ConfigureEvm};
+use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -34,7 +34,7 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
+    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use revm::Database;
 use rollup_boost::{
@@ -48,7 +48,7 @@ use std::{
 };
 use tokio::sync::{
     mpsc,
-    mpsc::{error::SendError, Sender},
+    mpsc::{Sender, error::SendError},
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
@@ -362,7 +362,9 @@ where
         if let Some(da_limit) = da_per_batch {
             // We error if we can't insert any tx aside from builder tx in flashblock
             if da_limit / 2 < builder_tx_da_size {
-                error!("Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included.");
+                error!(
+                    "Builder tx da size subtraction caused max_da_block_size to be 0. No transaction would be included."
+                );
             }
         }
         let mut total_da_per_batch = da_per_batch;
@@ -568,7 +570,9 @@ where
                                 if let Some(da) = total_da_per_batch.as_mut() {
                                     *da += da_limit;
                                 } else {
-                                    error!("Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set");
+                                    error!(
+                                        "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                                    );
                                 }
                             }
 

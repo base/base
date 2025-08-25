@@ -28,13 +28,13 @@
 //! configurations.
 
 use alloy_primitives::hex;
-use clap::{parser::ValueSource, CommandFactory};
+use clap::{CommandFactory, parser::ValueSource};
 use core::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     ops::Range,
     time::Duration,
 };
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_network_peers::TrustedPeer;
 use reth_optimism_chainspec::OpChainSpec;

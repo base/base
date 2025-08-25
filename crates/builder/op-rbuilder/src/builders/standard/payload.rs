@@ -1,21 +1,21 @@
 use crate::{
-    builders::{generator::BuildArguments, BuilderConfig},
+    builders::{BuilderConfig, generator::BuildArguments},
     flashtestations::service::spawn_flashtestations_service,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
 };
 use alloy_consensus::{
-    constants::EMPTY_WITHDRAWALS, proofs, BlockBody, Header, EMPTY_OMMER_ROOT_HASH,
+    BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
-use reth_evm::{execute::BlockBuilder, ConfigureEvm};
+use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, PayloadBuilderError};
-use reth_node_builder::{components::PayloadBuilderBuilder, BuilderContext};
+use reth_node_builder::{BuilderContext, components::PayloadBuilderBuilder};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -28,7 +28,7 @@ use reth_provider::{
     StorageRootProvider,
 };
 use reth_revm::{
-    database::StateProviderDatabase, db::states::bundle_state::BundleRetention, State,
+    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
@@ -38,7 +38,7 @@ use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::super::context::{estimate_gas_for_builder_tx, OpPayloadBuilderCtx};
+use super::super::context::{OpPayloadBuilderCtx, estimate_gas_for_builder_tx};
 
 pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
 

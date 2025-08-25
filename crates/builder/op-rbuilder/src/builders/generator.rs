@@ -20,7 +20,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{
-    sync::{oneshot, Notify},
+    sync::{Notify, oneshot},
     time::{Duration, Sleep},
 };
 use tokio_util::sync::CancellationToken;
@@ -471,14 +471,14 @@ mod tests {
     use reth::tasks::TokioTaskExecutor;
     use reth_chain_state::ExecutedBlockWithTrieUpdates;
     use reth_node_api::NodePrimitives;
-    use reth_optimism_payload_builder::{payload::OpPayloadBuilderAttributes, OpPayloadPrimitives};
+    use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;
     use reth_primitives::SealedBlock;
     use reth_provider::test_utils::MockEthProvider;
-    use reth_testing_utils::generators::{random_block_range, BlockRangeParams};
+    use reth_testing_utils::generators::{BlockRangeParams, random_block_range};
     use tokio::{
         task,
-        time::{sleep, Duration},
+        time::{Duration, sleep},
     };
 
     #[tokio::test]

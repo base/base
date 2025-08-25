@@ -1,7 +1,7 @@
 use core::time::Duration;
 
-use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
-use alloy_primitives::{address, hex, Bytes, TxKind, B256, U256};
+use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
+use alloy_primitives::{B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;

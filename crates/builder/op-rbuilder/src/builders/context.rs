@@ -1,7 +1,7 @@
 use alloy_consensus::{
-    conditional::BlockConditionalAttributes, Eip658Value, Transaction, TxEip1559,
+    Eip658Value, Transaction, TxEip1559, conditional::BlockConditionalAttributes,
 };
-use alloy_eips::{eip7623::TOTAL_COST_FLOOR_PER_TOKEN, Encodable2718, Typed2718};
+use alloy_eips::{Encodable2718, Typed2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::Withdrawals;
@@ -12,7 +12,7 @@ use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
-    eth::receipt_builder::ReceiptBuilderCtx, ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError,
+    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
@@ -24,16 +24,16 @@ use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction,
     estimated_da_size::DataAvailabilitySized,
-    interop::{is_valid_interop, MaybeInteropTransaction},
+    interop::{MaybeInteropTransaction, is_valid_interop},
 };
 use reth_payload_builder::PayloadId;
 use reth_primitives::{Recovered, SealedHeader};
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_provider::ProviderError;
-use reth_revm::{context::Block, State};
+use reth_revm::{State, context::Block};
 use reth_transaction_pool::{BestTransactionsAttributes, PoolTransaction};
 use revm::{
-    context::result::ResultAndState, interpreter::as_u64_saturated, Database, DatabaseCommit,
+    Database, DatabaseCommit, context::result::ResultAndState, interpreter::as_u64_saturated,
 };
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -397,24 +397,24 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            if let Some(conditional) = conditional {
-                // TODO: ideally we should get this from the txpool stream
-                if !conditional.matches_block_attributes(&block_attr) {
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            // TODO: ideally we should get this from the txpool stream
+            if let Some(conditional) = conditional
+                && !conditional.matches_block_attributes(&block_attr)
+            {
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             // TODO: remove this condition and feature once we are comfortable enabling interop for everything
             if cfg!(feature = "interop") {
                 // We skip invalid cross chain txs, they would be removed on the next block update in
                 // the maintenance job
-                if let Some(interop) = interop {
-                    if !is_valid_interop(interop, self.config.attributes.timestamp()) {
-                        log_txn(TxnExecutionResult::InteropFailed);
-                        best_txs.mark_invalid(tx.signer(), tx.nonce());
-                        continue;
-                    }
+                if let Some(interop) = interop
+                    && !is_valid_interop(interop, self.config.attributes.timestamp())
+                {
+                    log_txn(TxnExecutionResult::InteropFailed);
+                    best_txs.mark_invalid(tx.signer(), tx.nonce());
+                    continue;
                 }
             }
 

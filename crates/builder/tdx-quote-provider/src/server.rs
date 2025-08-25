@@ -1,12 +1,12 @@
 use std::{net::SocketAddr, sync::Arc, time::Instant};
 
 use axum::{
+    Router,
     body::Body,
     extract::{Path, State},
     http::{Response, StatusCode},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use serde_json::json;
 use tokio::{net::TcpListener, signal};
@@ -14,7 +14,7 @@ use tracing::info;
 
 use crate::{
     metrics::Metrics,
-    provider::{get_attestation_provider, AttestationConfig, AttestationProvider},
+    provider::{AttestationConfig, AttestationProvider, get_attestation_provider},
 };
 
 /// Server configuration

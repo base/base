@@ -8,14 +8,14 @@ use crate::{
 use alloy_json_rpc::RpcObject;
 use alloy_primitives::B256;
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use moka::future::Cache;
-use reth::rpc::api::eth::{helpers::FullEthApi, RpcReceipt};
-use reth_optimism_txpool::{conditional::MaybeConditionalTransaction, OpPooledTransaction};
+use reth::rpc::api::eth::{RpcReceipt, helpers::FullEthApi};
+use reth_optimism_txpool::{OpPooledTransaction, conditional::MaybeConditionalTransaction};
 use reth_provider::StateProviderFactory;
-use reth_rpc_eth_types::{utils::recover_raw_transaction, EthApiError};
+use reth_rpc_eth_types::{EthApiError, utils::recover_raw_transaction};
 use reth_transaction_pool::{PoolTransaction, TransactionOrigin, TransactionPool};
 use tracing::error;
 
@@ -94,19 +94,16 @@ where
         &self,
         hash: B256,
     ) -> RpcResult<Option<RpcReceipt<Eth::NetworkTypes>>> {
-        match self.eth_api.transaction_receipt(hash).await.unwrap() {
-            Some(receipt) => Ok(Some(receipt)),
-            None => {
-                // Try to find the transaction in the reverted cache
-                if self.reverted_cache.get(&hash).await.is_some() {
-                    return Err(EthApiError::InvalidParams(
-                        "the transaction was dropped from the pool".into(),
-                    )
-                    .into());
-                } else {
-                    return Ok(None);
-                }
-            }
+        if let Some(receipt) = self.eth_api.transaction_receipt(hash).await.unwrap() {
+            Ok(Some(receipt))
+        } else if self.reverted_cache.get(&hash).await.is_some() {
+            // Found the transaction in the reverted cache
+            Err(
+                EthApiError::InvalidParams("the transaction was dropped from the pool".into())
+                    .into(),
+            )
+        } else {
+            Ok(None)
         }
     }
 }

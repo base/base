@@ -4,9 +4,8 @@ use crate::{
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
-        create_test_db,
-        framework::{driver::ChainDriver, BUILDER_PRIVATE_KEY},
-        EngineApi, Ipc, TransactionPoolObserver,
+        EngineApi, Ipc, TransactionPoolObserver, create_test_db,
+        framework::{BUILDER_PRIVATE_KEY, driver::ChainDriver},
     },
     tx::FBPooledTransaction,
     tx_signer::Signer,
@@ -34,8 +33,8 @@ use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::{
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};

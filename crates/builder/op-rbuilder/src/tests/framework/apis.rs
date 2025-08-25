@@ -1,11 +1,11 @@
 use super::DEFAULT_JWT_TOKEN;
-use alloy_eips::{eip7685::Requests, BlockNumberOrTag};
+use alloy_eips::{BlockNumberOrTag, eip7685::Requests};
 use alloy_primitives::B256;
 
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadStatus};
 use core::{future::Future, marker::PhantomData};
 use jsonrpsee::{
-    core::{client::SubscriptionClientT, RpcResult},
+    core::{RpcResult, client::SubscriptionClientT},
     proc_macros::rpc,
 };
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
@@ -74,7 +74,7 @@ pub struct EngineApi<P: Protocol = Ipc> {
 }
 
 impl<P: Protocol> EngineApi<P> {
-    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static {
+    async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
         P::client(self.jwt_secret, self.address.clone()).await
     }
 }

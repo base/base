@@ -1,6 +1,6 @@
-use crate::tests::{framework::ONE_ETH, ChainDriverExt, LocalInstance};
+use crate::tests::{ChainDriverExt, LocalInstance, framework::ONE_ETH};
 use alloy_consensus::Transaction;
-use futures::{future::join_all, stream, StreamExt};
+use futures::{StreamExt, future::join_all, stream};
 use macros::rb_test;
 
 /// This test ensures that the transactions are ordered by fee priority in the block.

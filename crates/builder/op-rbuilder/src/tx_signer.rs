@@ -1,11 +1,11 @@
 use std::str::FromStr;
 
 use alloy_consensus::SignableTransaction;
-use alloy_primitives::{Address, Signature, B256, U256};
+use alloy_primitives::{Address, B256, Signature, U256};
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
-use secp256k1::{rand::rngs::OsRng, Message, PublicKey, Secp256k1, SecretKey, SECP256K1};
+use secp256k1::{Message, PublicKey, SECP256K1, Secp256k1, SecretKey, rand::rngs::OsRng};
 use sha3::{Digest, Keccak256};
 
 /// Simple struct to sign txs/messages.
@@ -103,8 +103,8 @@ pub fn public_key_to_address(public_key: &PublicKey) -> Address {
 #[cfg(test)]
 mod test {
     use super::*;
-    use alloy_consensus::{transaction::SignerRecoverable, TxEip1559};
-    use alloy_primitives::{address, fixed_bytes, TxKind as TransactionKind};
+    use alloy_consensus::{TxEip1559, transaction::SignerRecoverable};
+    use alloy_primitives::{TxKind as TransactionKind, address, fixed_bytes};
     #[test]
     fn test_sign_transaction() {
         let secret =

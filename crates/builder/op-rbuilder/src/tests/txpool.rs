@@ -1,5 +1,5 @@
 use crate::tests::{
-    default_node_config, BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH,
+    BlockTransactionsExt, ChainDriverExt, LocalInstance, ONE_ETH, default_node_config,
 };
 use macros::rb_test;
 use reth::args::TxPoolArgs;

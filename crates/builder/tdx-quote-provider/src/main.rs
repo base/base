@@ -1,7 +1,7 @@
 use clap::Parser;
 use dotenvy::dotenv;
 use metrics_exporter_prometheus::PrometheusBuilder;
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::filter::EnvFilter;
 
 use crate::server::{Server, ServerConfig};

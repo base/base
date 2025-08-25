@@ -12,14 +12,13 @@ use std::{io, net::TcpListener, sync::Arc};
 use tokio::{
     net::TcpStream,
     sync::{
-        broadcast::{self, error::RecvError, Receiver},
+        broadcast::{self, Receiver, error::RecvError},
         watch,
     },
 };
 use tokio_tungstenite::{
-    accept_async,
+    WebSocketStream, accept_async,
     tungstenite::{Message, Utf8Bytes},
-    WebSocketStream,
 };
 use tracing::{debug, warn};
 

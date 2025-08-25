@@ -1,5 +1,5 @@
 use crate::args::TelemetryArgs;
-use tracing_subscriber::{filter::Targets, Layer};
+use tracing_subscriber::{Layer, filter::Targets};
 
 /// Setup telemetry layer with sampling and custom endpoint configuration
 pub fn setup_telemetry_layer(
@@ -9,10 +9,10 @@ pub fn setup_telemetry_layer(
 
     // Otlp uses evn vars inside
     if let Some(endpoint) = &args.otlp_endpoint {
-        std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint) };
     }
     if let Some(headers) = &args.otlp_headers {
-        std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers);
+        unsafe { std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", headers) };
     }
 
     // Create OTLP layer with custom configuration

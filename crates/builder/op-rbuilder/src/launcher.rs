@@ -4,7 +4,7 @@ use reth_optimism_rpc::OpEthApiBuilder;
 use crate::{
     args::*,
     builders::{BuilderConfig, BuilderMode, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    metrics::{record_flag_gauge_metrics, VERSION},
+    metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
@@ -18,8 +18,8 @@ use reth_db::mdbx::DatabaseEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_cli::chainspec::OpChainSpecParser;
 use reth_optimism_node::{
-    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
     OpNode,
+    node::{OpAddOns, OpAddOnsBuilder, OpEngineValidatorBuilder, OpPoolBuilder},
 };
 use reth_transaction_pool::TransactionPool;
 use std::{marker::PhantomData, sync::Arc};

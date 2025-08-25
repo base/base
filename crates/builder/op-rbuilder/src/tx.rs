@@ -1,16 +1,17 @@
-use alloy_consensus::{conditional::BlockConditionalAttributes, BlobTransactionValidationError};
-use alloy_eips::{eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization, Typed2718};
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
-use alloy_rpc_types_eth::{erc4337::TransactionConditional, AccessList};
+use std::{borrow::Cow, sync::Arc};
+
+use alloy_consensus::{BlobTransactionValidationError, conditional::BlockConditionalAttributes};
+use alloy_eips::{Typed2718, eip7594::BlobTransactionSidecarVariant, eip7702::SignedAuthorization};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
+use alloy_rpc_types_eth::{AccessList, erc4337::TransactionConditional};
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_optimism_txpool::{
-    conditional::MaybeConditionalTransaction, estimated_da_size::DataAvailabilitySized,
-    interop::MaybeInteropTransaction, OpPooledTransaction, OpPooledTx,
+    OpPooledTransaction, OpPooledTx, conditional::MaybeConditionalTransaction,
+    estimated_da_size::DataAvailabilitySized, interop::MaybeInteropTransaction,
 };
-use reth_primitives::{kzg::KzgSettings, Recovered};
+use reth_primitives::{Recovered, kzg::KzgSettings};
 use reth_primitives_traits::InMemorySize;
 use reth_transaction_pool::{EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction};
-use std::{borrow::Cow, sync::Arc};
 
 pub trait FBPoolTransaction:
     MaybeRevertingTransaction + OpPooledTx + MaybeFlashblockFilter

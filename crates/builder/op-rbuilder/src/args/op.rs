@@ -5,7 +5,7 @@
 //! clap [Args](clap::Args) for optimism rollup configuration
 
 use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
 use reth_optimism_node::args::RollupArgs;

@@ -1,5 +1,5 @@
 use std::{fs::File, io::Read, sync::Arc};
-use tdx::{device::DeviceOptions, error::TdxError, Tdx};
+use tdx::{Tdx, device::DeviceOptions, error::TdxError};
 use thiserror::Error;
 use tracing::info;
 

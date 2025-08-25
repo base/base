@@ -2,22 +2,22 @@
 
 use reth_node_api::AddOnsContext;
 use reth_node_builder::rpc::{EngineApiBuilder, PayloadValidatorBuilder};
-use reth_node_core::version::{version_metadata, CLIENT_CODE};
+use reth_node_core::version::{CLIENT_CODE, version_metadata};
 use reth_optimism_node::OpEngineTypes;
-use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
 pub use reth_optimism_rpc::OpEngineApi;
+use reth_optimism_rpc::engine::OP_ENGINE_CAPABILITIES;
 use reth_payload_builder::PayloadStore;
 use reth_rpc_engine_api::EngineCapabilities;
 
 use crate::traits::NodeComponents;
 use alloy_eips::eip7685::Requests;
-use alloy_primitives::{BlockHash, B256, U64};
+use alloy_primitives::{B256, BlockHash, U64};
 use alloy_rpc_types_engine::{
     ClientVersionV1, ExecutionPayloadBodiesV1, ExecutionPayloadInputV2, ExecutionPayloadV3,
     ForkchoiceState, ForkchoiceUpdated, PayloadId, PayloadStatus,
 };
 use jsonrpsee::proc_macros::rpc;
-use jsonrpsee_core::{server::RpcModule, RpcResult};
+use jsonrpsee_core::{RpcResult, server::RpcModule};
 use op_alloy_rpc_types_engine::{
     OpExecutionPayloadEnvelopeV3, OpExecutionPayloadEnvelopeV4, OpExecutionPayloadV4,
     OpPayloadAttributes, ProtocolVersion, SuperchainSignal,

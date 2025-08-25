@@ -1,7 +1,7 @@
 use alloy_consensus::TxEip1559;
 use alloy_eips::Encodable2718;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{keccak256, Address, Bytes, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, keccak256};
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_transport::TransportResult;
 use op_alloy_consensus::OpTypedTransaction;
@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use alloy_provider::{PendingTransactionBuilder, Provider, ProviderBuilder};
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall, SolValue};
+use alloy_sol_types::{SolCall, SolValue, sol};
 use op_alloy_network::Optimism;
 use tracing::{debug, error, info};
 

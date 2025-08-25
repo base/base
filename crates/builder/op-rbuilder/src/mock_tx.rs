@@ -1,23 +1,23 @@
 use crate::tx::MaybeFlashblockFilter;
 use alloy_consensus::{
-    error::ValueError, transaction::Recovered, EthereumTxEnvelope, TxEip4844, TxEip4844WithSidecar,
-    TxType,
+    EthereumTxEnvelope, TxEip4844, TxEip4844WithSidecar, TxType, error::ValueError,
+    transaction::Recovered,
 };
 use alloy_eips::{
+    Typed2718,
     eip2930::AccessList,
-    eip4844::{env_settings::KzgSettings, BlobTransactionValidationError},
+    eip4844::{BlobTransactionValidationError, env_settings::KzgSettings},
     eip7594::BlobTransactionSidecarVariant,
     eip7702::SignedAuthorization,
-    Typed2718,
 };
-use alloy_primitives::{Address, Bytes, TxHash, TxKind, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256};
 use reth::primitives::TransactionSigned;
 use reth_primitives_traits::{InMemorySize, SignedTransaction};
 use reth_transaction_pool::{
-    identifier::TransactionId,
-    test_utils::{MockTransaction, MockTransactionFactory},
     EthBlobTransactionSidecar, EthPoolTransaction, PoolTransaction, TransactionOrigin,
     ValidPoolTransaction,
+    identifier::TransactionId,
+    test_utils::{MockTransaction, MockTransactionFactory},
 };
 use std::{sync::Arc, time::Instant};
 

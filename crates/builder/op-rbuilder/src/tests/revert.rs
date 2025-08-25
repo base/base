@@ -6,8 +6,8 @@ use crate::{
     args::OpRbuilderArgs,
     primitives::bundle::MAX_BLOCK_RANGE_BLOCKS,
     tests::{
-        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance,
-        OpRbuilderArgsTestExt, TransactionBuilderExt, ONE_ETH,
+        BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt, LocalInstance, ONE_ETH,
+        OpRbuilderArgsTestExt, TransactionBuilderExt,
     },
 };
 
@@ -134,10 +134,12 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
         .await?;
 
     let block2 = driver.build_new_block().await?; // Block 2
-    assert!(block2
-        .transactions
-        .hashes()
-        .includes(valid_bundle.tx_hash()));
+    assert!(
+        block2
+            .transactions
+            .hashes()
+            .includes(valid_bundle.tx_hash())
+    );
 
     let bundle_opts = BundleOpts {
         block_number_max: Some(4),
@@ -285,13 +287,15 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     }
 
     // A bundle with a block out of range is invalid
-    assert!(send_bundle(
-        &driver,
-        Some(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1),
-        None
-    )
-    .await
-    .is_err());
+    assert!(
+        send_bundle(
+            &driver,
+            Some(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1),
+            None
+        )
+        .await
+        .is_err()
+    );
 
     // A bundle with a min block number higher than the max block is invalid
     assert!(send_bundle(&driver, Some(1), Some(2)).await.is_err());
@@ -302,9 +306,11 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
             .await
             .is_ok()
     );
-    assert!(send_bundle(&driver, Some(next_valid_block), Some(0))
-        .await
-        .is_ok());
+    assert!(
+        send_bundle(&driver, Some(next_valid_block), Some(0))
+            .await
+            .is_ok()
+    );
 
     // A bundle with a min block equal to max block is valid
     assert!(
@@ -316,18 +322,24 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
     // Test min-only cases (no max specified)
     // A bundle with only min block that's within the default range is valid
     let default_max = current_block + MAX_BLOCK_RANGE_BLOCKS;
-    assert!(send_bundle(&driver, None, Some(current_block))
-        .await
-        .is_ok());
-    assert!(send_bundle(&driver, None, Some(default_max - 1))
-        .await
-        .is_ok());
+    assert!(
+        send_bundle(&driver, None, Some(current_block))
+            .await
+            .is_ok()
+    );
+    assert!(
+        send_bundle(&driver, None, Some(default_max - 1))
+            .await
+            .is_ok()
+    );
     assert!(send_bundle(&driver, None, Some(default_max)).await.is_ok());
 
     // A bundle with only min block that exceeds the default max range is invalid
-    assert!(send_bundle(&driver, None, Some(default_max + 1))
-        .await
-        .is_err());
+    assert!(
+        send_bundle(&driver, None, Some(default_max + 1))
+            .await
+            .is_err()
+    );
 
     Ok(())
 }

@@ -9,12 +9,12 @@ use tracing::{info, warn};
 use crate::{
     builders::BuilderTx,
     traits::NodeBounds,
-    tx_signer::{generate_ethereum_keypair, Signer},
+    tx_signer::{Signer, generate_ethereum_keypair},
 };
 
 use super::{
     args::FlashtestationsArgs,
-    attestation::{get_attestation_provider, AttestationConfig, AttestationProvider},
+    attestation::{AttestationConfig, AttestationProvider, get_attestation_provider},
     tx_manager::TxManager,
 };
 

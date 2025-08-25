@@ -1,7 +1,7 @@
 use metrics::IntoF64;
 use reth_metrics::{
-    metrics::{gauge, Counter, Gauge, Histogram},
     Metrics,
+    metrics::{Counter, Gauge, Histogram, gauge},
 };
 
 use crate::args::OpRbuilderArgs;

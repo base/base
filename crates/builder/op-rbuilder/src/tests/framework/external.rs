@@ -1,6 +1,6 @@
 use alloy_consensus::constants::EMPTY_WITHDRAWALS;
-use alloy_eips::{eip7685::Requests, BlockNumberOrTag, Encodable2718};
-use alloy_primitives::{keccak256, private::alloy_rlp::Encodable, B256, U256};
+use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
+use alloy_primitives::{B256, U256, keccak256, private::alloy_rlp::Encodable};
 use alloy_provider::{Identity, Provider, ProviderBuilder, RootProvider};
 use alloy_rpc_types_engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadStatusEnum,
@@ -10,6 +10,7 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
 use std::path::{Path, PathBuf};
 use testcontainers::bollard::{
+    Docker,
     container::{
         AttachContainerOptions, Config, CreateContainerOptions, RemoveContainerOptions,
         StartContainerOptions, StopContainerOptions,
@@ -17,7 +18,6 @@ use testcontainers::bollard::{
     exec::{CreateExecOptions, StartExecResults},
     image::CreateImageOptions,
     secret::{ContainerCreateResponse, HostConfig},
-    Docker,
 };
 use tokio::signal;
 use tracing::{debug, warn};
@@ -353,7 +353,7 @@ async fn relax_permissions(docker: &Docker, container: &str, path: &str) -> eyre
                 return Err(eyre::eyre!(
                     "Failed to relax permissions for {path}: {}",
                     String::from_utf8_lossy(&message)
-                ))
+                ));
             }
             _ => continue,
         };

@@ -1,4 +1,4 @@
-use alloy_primitives::{utils::parse_ether, Address, U256};
+use alloy_primitives::{Address, U256, utils::parse_ether};
 
 use crate::tx_signer::Signer;
 

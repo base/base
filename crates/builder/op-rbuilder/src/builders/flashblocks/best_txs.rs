@@ -103,7 +103,7 @@ mod tests {
     };
     use alloy_consensus::Transaction;
     use reth_payload_util::{BestPayloadTransactions, PayloadTransactions};
-    use reth_transaction_pool::{pool::PendingPool, CoinbaseTipOrdering, PoolTransaction};
+    use reth_transaction_pool::{CoinbaseTipOrdering, PoolTransaction, pool::PendingPool};
     use std::sync::Arc;
 
     #[test]

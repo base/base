@@ -56,10 +56,7 @@ impl CliExt for Cli {
             return self;
         };
 
-        let options = match PlaygroundOptions::new(playground_dir) {
-            Ok(options) => options,
-            Err(e) => exit(e),
-        };
+        let options = PlaygroundOptions::new(playground_dir).unwrap_or_else(|e| exit(e));
 
         options.apply(self)
     }

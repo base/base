@@ -4,8 +4,8 @@ use crate::{
     tx_signer::Signer,
 };
 use alloy_consensus::TxEip1559;
-use alloy_eips::{eip2718::Encodable2718, BlockNumberOrTag};
-use alloy_primitives::{hex, Address, Bytes, TxHash, TxKind, B256, U256};
+use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider, RootProvider};
 use core::cmp::max;
 use dashmap::DashMap;
@@ -134,15 +134,14 @@ impl TransactionBuilder {
     }
 
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
-        let signer = match self.signer {
-            Some(signer) => signer,
-            None => Signer::try_from_secret(
+        let signer = self.signer.unwrap_or_else(|| {
+            Signer::try_from_secret(
                 FUNDED_PRIVATE_KEYS[self.key.unwrap_or(0) as usize]
                     .parse()
                     .expect("invalid hardcoded builder private key"),
             )
-            .expect("Failed to create signer from hardcoded private key"),
-        };
+            .expect("Failed to create signer from hardcoded private key")
+        });
 
         let nonce = match self.nonce {
             Some(nonce) => nonce,
