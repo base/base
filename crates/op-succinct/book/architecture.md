@@ -11,12 +11,11 @@ This document explains the standard OP Stack components and the lightweight modi
 In the specification of the [standard OP Stack design](https://specs.optimism.io/), there are 4 main components.
 
 1. OP Geth: Execution engine for the L2.
-2. OP Batcher: Collects and batches users transactions efficiently and posts to L1. 
+2. OP Batcher: Collects and batches users transactions efficiently and posts to L1.
 3. OP Node: Reads batch data from L1, and passes to OP Geth to perform state transitions.
 4. OP Proposer: Posts state roots from OP Node to L1. Enables withdrawal processing.
 
 ![OP Stack Architecture](./assets/opstack_architecture_0424.png)
-
 
 ## OP Succinct Design
 
