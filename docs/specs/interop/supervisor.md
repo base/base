@@ -26,6 +26,7 @@
   - [Methods](#methods)
     - [`supervisor_crossDerivedToSource`](#supervisor_crossderivedtosource)
     - [`supervisor_localUnsafe`](#supervisor_localunsafe)
+    - [`supervisor_localSafe`](#supervisor_localsafe)
     - [`supervisor_crossSafe`](#supervisor_crosssafe)
     - [`supervisor_finalized`](#supervisor_finalized)
     - [`supervisor_finalizedL1`](#supervisor_finalizedl1)
@@ -239,6 +240,13 @@ Parameters:
 - `chainID`: `ChainID`
 
 Returns: `BlockID`
+
+#### `supervisor_localSafe`
+
+Parameters:
+- `chainID`: `ChainID`
+
+Returns: `DerivedIDPair`
 
 #### `supervisor_crossSafe`
 
