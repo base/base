@@ -25,7 +25,7 @@
 - [OP Succinct Lite (Fault Proofs)](./fault_proofs/intro.md)
   - [Architecture](./fault_proofs/fault_proof_architecture.md)
   - [Quick Start](./fault_proofs/quick_start.md)
-  - [Contracts](./fault_proofs/contracts.md)
+  - [Contract Management](./fault_proofs/contracts.md)
     - [Deploy FP Contracts](./fault_proofs/deploy.md)
     - [Upgrade FP Contracts](./fault_proofs/upgrade.md)
   - [Running OP Succinct Lite](./fault_proofs/validity-mode.md)

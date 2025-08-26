@@ -9,6 +9,10 @@ To run OP Succinct or OP Succinct Lite, you will need the following RPCs in your
 - `L2_RPC`: L2 Execution Node (`op-geth`)
 - `L2_NODE_RPC`: L2 Rollup Node (`op-node`)
 
+<div class="warning">
+When running the proposer in production, it is recommended that your L2 nodes are in the same region/network to minimize latency. Otherwise, tasks like witness generation can take significantly longer and become a bottleneck.
+</div>
+
 ## Required Accessible Endpoints
 
 The RPCs must support the following endpoints:
