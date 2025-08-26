@@ -5,7 +5,7 @@ use crate::OpTxEnvelope;
 use alloy_consensus::{
     Extended, SignableTransaction, Signed, TransactionEnvelope, TxEip7702, TxEnvelope,
     error::ValueError,
-    transaction::{TxEip1559, TxEip2930, TxLegacy},
+    transaction::{TxEip1559, TxEip2930, TxHashRef, TxLegacy},
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Signature, TxHash, bytes};
@@ -162,6 +162,12 @@ impl From<OpPooledTransaction> for alloy_consensus::transaction::PooledTransacti
             OpPooledTransaction::Eip1559(tx) => tx.into(),
             OpPooledTransaction::Eip7702(tx) => tx.into(),
         }
+    }
+}
+
+impl TxHashRef for OpPooledTransaction {
+    fn tx_hash(&self) -> &B256 {
+        Self::hash(self)
     }
 }
 

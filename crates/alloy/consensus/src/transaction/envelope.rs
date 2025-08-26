@@ -4,8 +4,9 @@ use crate::{
 };
 use alloy_consensus::{
     EthereumTxEnvelope, Extended, Sealable, Sealed, SignableTransaction, Signed,
-    TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy, error::ValueError,
-    transaction::TransactionInfo,
+    TransactionEnvelope, TxEip1559, TxEip2930, TxEip7702, TxEnvelope, TxLegacy,
+    error::ValueError,
+    transaction::{TransactionInfo, TxHashRef},
 };
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{B256, Bytes, Signature, TxHash};
@@ -421,6 +422,12 @@ impl OpTxEnvelope {
             Self::Eip7702(t) => t.eip2718_encoded_length(),
             Self::Deposit(t) => t.eip2718_encoded_length(),
         }
+    }
+}
+
+impl TxHashRef for OpTxEnvelope {
+    fn tx_hash(&self) -> &B256 {
+        Self::hash(self)
     }
 }
 
