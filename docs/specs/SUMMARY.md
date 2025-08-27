@@ -17,6 +17,7 @@
       - [Rollup Node P2P](./protocol/rollup-node-p2p.md)
       - [Derivation](./protocol/derivation.md)
     - [Batch Submitter](./protocol/batcher.md)
+  - [Flashblocks](./protocol/flashblocks.md)
   - [Fault Proof](fault-proof/index.md)
     - [Cannon Fault Proof VM](fault-proof/cannon-fault-proof-vm.md)
     - [Stage One Decentralization](fault-proof/stage-one/index.md)
