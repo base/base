@@ -117,13 +117,21 @@ identifier determines which systems or chains are affected by the pause:
 - When the identifier is a non-zero address, the pause applies specifically to the chain or set of
   chains associated with that identifier.
 
-The identifier must be an `ETHLockbox` address or `address(0)`. This allows for targeted pausing of
-either specific chains, the interop set (which shares an `ETHLockbox` contract), or the all chains
-that share the same `SuperchainConfig` when `address(0)` is used as the identifier.
+(-v4.1.0) The identifier must be an `ETHLockbox` address or `address(0)`. This allows for targeted
+pausing of either specific chains, the interop set (which shares an `ETHLockbox` contract), or all
+chains that share the same `SuperchainConfig` when `address(0)` is used as the identifier.
 
-OP Chains are expected to integrate with the `SuperchainConfig` via their `SystemConfig` contract,
-which will check for the status of the pause by passing along the address of the `ETHLockbox`
-being used within that system as the Pause Identifier.
+(-v4.1.0) OP Chains are expected to integrate with the `SuperchainConfig` via their `SystemConfig`
+contract, which will check for the status of the pause by passing along the address of the
+`ETHLockbox` being used within that system as the Pause Identifier.
+
+(+v4.1.0) The identifier must be an `ETHLockbox` address, an `OptimismPortal` address, or
+`address(0)`. This allows for targeted pausing of specific chains, the interop set (which shares an
+`ETHLockbox` contract), or all chains that share the same `SuperchainConfig` when `address(0)` is
+used as the identifier. When the `ETHLockbox`
+[Customizable Feature](./system-config.md#customizable-feature) is enabled, the `ETHLockbox`
+address is to be used as the pause identifier. When the `ETHLockbox` feature is disabled or the
+`ETHLockbox` address has not yet been configured, the `OptimismPortal` address is to be used.
 
 ### Stage 1 Rollup
 

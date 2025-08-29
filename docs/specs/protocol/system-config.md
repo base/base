@@ -14,11 +14,14 @@
     - [Post-Ecotone Scalar Encoding](#post-ecotone-scalar-encoding)
   - [Unsafe Block Signer](#unsafe-block-signer)
   - [L2 Gas Limit](#l2-gas-limit)
+  - [Customizable Feature](#customizable-feature)
 - [Functionality](#functionality)
   - [System Config Updates](#system-config-updates)
 - [Function Specification](#function-specification)
   - [initialize](#initialize)
   - [upgrade](#upgrade)
+  - [setFeatureEnabled](#setfeatureenabled)
+  - [isFeatureEnabled](#isfeatureenabled)
   - [minimumGasLimit](#minimumgaslimit)
   - [maximumGasLimit](#maximumgaslimit)
   - [unsafeBlockSigner](#unsafeblocksigner)
@@ -152,6 +155,16 @@ The gas limit may not be set to a value larger than the
 [maximum gas limit](./configurability.md#gas-limit). This is to ensure that L2 blocks are fault
 provable and of reasonable size to be processed by the client software.
 
+### Customizable Feature
+
+A **Customizable Feature** is a component of the OP Stack that is maintained as a production-grade
+element of the stack behind some sort of toggle. A Customizable Feature is distinct from other
+types of feature-flagged code because it is part of the mainline OP Stack and is intended to remain
+as a supported configuration option indefinitely. Unlike short-lived feature flags, which exist
+only to keep develop releasable while work is in progress, customizable features are permanent,
+user-facing options. They must be fully documented, tested in all supported modes, and designed for
+long-term maintainability.
+
 ## Functionality
 
 ### System Config Updates
@@ -193,6 +206,22 @@ In version `0`, the following update types are supported:
 - MUST set the L2 chain ID to the provided value.
 - MUST set the SuperchainConfig contract address to the provided value.
 - MUST clear the old dispute game factory address from storage (now derived from OptimismPortal).
+
+### setFeatureEnabled
+
+(+v4.1.0)
+
+- Used to enable or disable a [Customizable Feature](#customizable-feature).
+- Takes a bytes32 feature string and a boolean as an input.
+- MUST only be triggerable by the ProxyAdmin or its owner.
+- MUST toggle the feature flag on or off, based on the value of the boolean.
+
+### isFeatureEnabled
+
+(+v4.1.0)
+
+- Takes a bytes32 feature string as an input.
+- Returns true if the feature is enabled and false otherwise.
 
 ### minimumGasLimit
 
@@ -245,13 +274,22 @@ Returns the block number at which the op-node can start searching for logs.
 
 ### paused
 
-This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by using the
-chain's `ETHLockbox` address as the [Pause Identifier](./stage-1.md#pause-identifier). Returns the
-current pause state of the system by checking if the `SuperchainConfig` is paused for this chain's
-`ETHLockbox`.
+(-v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
+using the chain's `ETHLockbox` address as the [Pause Identifier](./stage-1.md#pause-identifier).
+Returns the current pause state of the system by checking if the `SuperchainConfig` is paused for
+this chain's `ETHLockbox`.
 
-- MUST return true if `SuperchainConfig.paused(optimismPortal().ethLockbox())` returns true OR if
-  `SuperchainConfig.paused(address(0))` returns true.
+(+v4.1.0) This function integrates with the [Pause Mechanism](./stage-1.md#pause-mechanism) by
+using either the chain's `ETHLockbox` address or the chain's `OptimismPortal` address as the
+[Pause Identifier](./stage-1.md#pause-identifier).
+
+- (-v4.1.0) MUST return true if `SuperchainConfig.paused(optimismPortal().ethLockbox())` returns
+  true OR if `SuperchainConfig.paused(address(0))` returns true.
+- (+v4.1.0) MUST return true if `SuperchainConfig.paused(optimismPortal().ethLockbox())` returns
+  true AND the system is configured to use the `ETHLockbox` contract.
+- (+v4.1.0) MUST return true if `SuperchainConfig.paused(optimismPortal())` returns true AND the
+  system is NOT configured to use the `ETHLockbox` contract.
+- (+v4.1.0) MUST return true if `SuperchainConfig.paused(address(0))` returns true.
 - MUST return false otherwise.
 
 ### superchainConfig
