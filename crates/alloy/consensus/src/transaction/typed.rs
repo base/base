@@ -166,6 +166,13 @@ impl OpTypedTransaction {
             Self::Deposit(tx) => tx.tx_hash(),
         }
     }
+
+    /// Convenience function to convert this typed transaction into an [`OpTxEnvelope`].
+    ///
+    /// Note: If this is a [`OpTypedTransaction::Deposit`] variant, the signature will be ignored.
+    pub fn into_envelope(self, signature: Signature) -> OpTxEnvelope {
+        self.into_signed(signature).into()
+    }
 }
 
 impl Typed2718 for OpTypedTransaction {
