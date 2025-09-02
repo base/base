@@ -1621,6 +1621,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "tracing",
+ "transaction-tracing",
  "url",
  "uuid",
 ]

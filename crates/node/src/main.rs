@@ -30,6 +30,10 @@ struct FlashblocksRollupArgs {
 
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
+
+    /// Enable transaction tracing ExEx for mempool-to-block timing analysis
+    #[arg(long)]
+    pub enable_transaction_tracing: bool,
 }
 
 impl FlashblocksRollupArgs {
@@ -53,6 +57,9 @@ fn main() {
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
+                .install_exex_if(flashblocks_rollup_args.enable_transaction_tracing, "transaction-tracing", |ctx| async move {
+                    Ok(transaction_tracing::transaction_tracing_exex(ctx))
+                })
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
                     move |mut ctx| async move {

@@ -5,7 +5,6 @@ use reth::api::{BlockBody, FullNodeComponents};
 use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
 use reth::transaction_pool::TransactionPool;
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_optimism_node::OpNode;
 use reth_tracing::tracing::info;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -69,7 +68,7 @@ impl Tracker {
     }
 }
 
-async fn transaction_tracing_exex<Node: FullNodeComponents>(
+pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
 ) -> Result<()> {
     info!(target: "transaction-tracing-info", "Starting transaction tracking ExEx");
@@ -126,16 +125,3 @@ async fn transaction_tracing_exex<Node: FullNodeComponents>(
     }
 }
 
-fn main() -> Result<()> {
-    reth_optimism_cli::Cli::parse_args().run(|builder, _args| async move {
-        let handle = builder
-            .node(OpNode::default())
-            .install_exex("transaction-tracing", |ctx| async move {
-                Ok(transaction_tracing_exex(ctx))
-            })
-            .launch()
-            .await?;
-
-        handle.wait_for_node_exit().await
-    })
-}
