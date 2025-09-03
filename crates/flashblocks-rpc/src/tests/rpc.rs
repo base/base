@@ -72,12 +72,13 @@ mod tests {
         pub async fn send_raw_transaction_sync(
             &self,
             tx: Bytes,
+            timeout_ms: Option<u64>,
         ) -> eyre::Result<RpcReceipt<Optimism>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
 
             let receipt = client
-                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
+                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx, timeout_ms))
                 .await?;
 
             Ok(receipt)
