@@ -35,7 +35,7 @@ pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 /// Error code for timeout error.
 ///
 /// Specs <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7966.md#method-name>.
-pub const ETH_ERROR_CODE_TIMEOUT: i32 = 4;
+pub const ETH_ERROR_CODE_TIMEOUT: i32 = -32004;
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
