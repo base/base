@@ -33,7 +33,7 @@ Before running the tests, ensure you have:
 
 ## Available Tests
 
-### End-to-End Tests (`fault_proof/tests/e2e.rs`)
+### End-to-End Tests (`fault-proof/tests/e2e.rs`)
 
 The test suite includes two comprehensive end-to-end tests that validate the complete fault dispute game lifecycle:
 

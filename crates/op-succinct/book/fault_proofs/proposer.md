@@ -25,7 +25,11 @@ The proposer performs several key functions:
 
 ## Configuration
 
-The proposer is configured through various environment variables. Create a `.env.proposer` file in the fault_proof directory:
+The proposer is configured through environment variables.
+
+Create a `.env` file in the `fault-proof` directory with all required variables. This single file is used by:
+- Docker Compose (for both variable substitution and runtime configuration)
+- Direct binary execution (source it with `. .env` before running)
 
 ### Required Environment Variables
 
