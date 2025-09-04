@@ -13,12 +13,12 @@ This guide explains how to run the OP Succinct Lite using Docker Compose.
 
 The fault proof system consists of two main components:
 
-- **Proposer**: Creates and defends claims about L2 state. See `fault_proof/Dockerfile.proposer`.
-- **Challenger**: Monitors and challenges invalid claims. See `fault_proof/Dockerfile.challenger`.
+- **Proposer**: Creates and defends claims about L2 state. See `fault-proof/Dockerfile.proposer`.
+- **Challenger**: Monitors and challenges invalid claims. See `fault-proof/Dockerfile.challenger`.
 
 ## Quick Start
 
-1. Create environment files under the `fault_proof` directory for both components:
+1. Create environment files under the `fault-proof` directory for both components:
 
 ### Proposer Configuration (.env.proposer)
 

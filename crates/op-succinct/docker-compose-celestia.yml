@@ -10,6 +10,36 @@ services:
     ports:
       - "5432:5432"
 
+  op-celestia-indexer:
+    image: opcelestia/op-celestia-indexer:op-node-v1.13.6-rc.1
+    container_name: op-celestia-indexer
+    restart: unless-stopped
+    ports:
+      - "57220:57220"
+    env_file:
+      - ${ENV_FILE:-.env}
+    command:
+      - op-celestia-indexer
+      - --start-l1-block=${START_L1_BLOCK}
+      - --batch-inbox-address=${BATCH_INBOX_ADDRESS}
+      - --l1-eth-rpc=${L1_RPC}
+      - --l2-eth-rpc=${L2_RPC}
+      - --op-node-rpc=${L2_NODE_RPC}
+      - --rpc.enable-admin
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=57220
+      - --da.rpc=${CELESTIA_CONNECTION}
+      - --da.namespace=${NAMESPACE}
+      - --db-path=/data/indexer.db
+    volumes:
+      - indexer-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:57220"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   op-succinct-celestia:
     build:
       context: .
@@ -18,9 +48,12 @@ services:
       - ${ENV_FILE:-.env}
     environment:
       - DATABASE_URL=postgres://op-succinct@postgres:5432/op-succinct
+      - CELESTIA_INDEXER_RPC=http://op-celestia-indexer:57220
     depends_on:
       - postgres
+      - op-celestia-indexer
     restart: unless-stopped
 
 volumes:
   postgres-data:
+  indexer-data:
