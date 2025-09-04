@@ -1,20 +1,27 @@
-use std::{io::Read, sync::Arc};
+use std::{io::Read, sync::Arc, time::Duration};
 
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
-use futures_util::StreamExt;
+use futures_util::{SinkExt as _, StreamExt};
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::time::interval;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use tracing::{error, info};
+use tracing::{error, info, trace, warn};
 use url::Url;
 
 use crate::metrics::Metrics;
+
+/// Interval of liveness check of upstream, in milliseconds.
+pub const PING_INTERVAL_MS: u64 = 500;
+
+/// Max duration of backoff before reconnecting to upstream.
+pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
 pub trait FlashblocksReceiver {
     fn on_flashblock_received(&self, flashblock: Flashblock);
@@ -80,49 +87,92 @@ where
 
         let metrics = self.metrics.clone();
         tokio::spawn(async move {
-            let mut backoff = std::time::Duration::from_secs(1);
-            const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(10);
+            let mut backoff = Duration::from_secs(1);
 
             loop {
                 match connect_async(ws_url.as_str()).await {
                     Ok((ws_stream, _)) => {
                         info!(message = "WebSocket connection established");
 
-                        let (_, mut read) = ws_stream.split();
+                        let mut ping_interval = interval(Duration::from_millis(PING_INTERVAL_MS));
+                        let mut awaiting_pong_resp = false;
 
-                        while let Some(msg) = read.next().await {
-                            metrics.upstream_messages.increment(1);
+                        let (mut write, mut read) = ws_stream.split();
 
-                            match msg {
-                                Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
-                                    Ok(payload) => {
-                                        let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
-                                            error!(message = "Failed to publish message to channel", error = %e);
-                                        });
-                                    }
-                                    Err(e) => {
-                                        error!(
-                                            message = "error decoding flashblock message",
-                                            error = %e
-                                        );
+                        'conn: loop {
+                            tokio::select! {
+                                Some(msg) = read.next() => {
+                                    metrics.upstream_messages.increment(1);
+
+                                    match msg {
+                                        Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
+                                            Ok(payload) => {
+                                                let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
+                                                    error!(message = "Failed to publish message to channel", error = %e);
+                                                });
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                                    message = "error decoding flashblock message",
+                                                    error = %e
+                                                );
+                                            }
+                                        },
+                                        Ok(Message::Text(_)) => {
+                                            error!("Received flashblock as plaintext, only compressed flashblocks supported. Set up websocket-proxy to use compressed flashblocks.");
+                                        }
+                                        Ok(Message::Close(_)) => {
+                                            info!(message = "WebSocket connection closed by upstream");
+                                            break;
+                                        }
+                                        Ok(Message::Pong(data)) => {
+                                            trace!(target: "flashblocks_rpc::subscription",
+                                                ?data,
+                                                "Received pong from upstream"
+                                            );
+                                            awaiting_pong_resp = false
+                                        }
+                                        Err(e) => {
+                                            metrics.upstream_errors.increment(1);
+                                            error!(
+                                                message = "error receiving message",
+                                                error = %e
+                                            );
+                                            break;
+                                        }
+                                        _ => {}
                                     }
                                 },
-                                Ok(Message::Text(_)) => {
-                                    error!("Received flashblock as plaintext, only compressed flashblocks supported. Set up websocket-proxy to use compressed flashblocks.");
-                                }
-                                Ok(Message::Close(_)) => {
-                                    info!(message = "WebSocket connection closed by upstream");
-                                    break;
-                                }
-                                Err(e) => {
-                                    metrics.upstream_errors.increment(1);
-                                    error!(
-                                        message = "error receiving message",
-                                        error = %e
+                                _ = ping_interval.tick() => {
+                                    if awaiting_pong_resp {
+                                          warn!(
+                                            target: "flashblocks_rpc::subscription",
+                                            ?backoff,
+                                            timeout_ms = PING_INTERVAL_MS,
+                                            "No pong response from upstream, reconnecting",
+                                        );
+
+                                        backoff = sleep(&metrics, backoff).await;
+                                        break 'conn;
+                                    }
+
+                                    trace!(target: "flashblocks_rpc::subscription",
+                                        "Sending ping to upstream"
                                     );
-                                    break;
+
+                                    if let Err(error) = write.send(Message::Ping(Default::default())).await {
+                                        warn!(
+                                            target: "flashblocks_rpc::subscription",
+                                            ?backoff,
+                                            %error,
+                                            "WebSocket connection lost, reconnecting",
+                                        );
+
+                                        backoff = sleep(&metrics, backoff).await;
+                                        break 'conn;
+                                    }
+                                    awaiting_pong_resp = true
                                 }
-                                _ => {}
                             }
                         }
                     }
@@ -132,8 +182,8 @@ where
                             backoff_duration = ?backoff,
                             error = %e
                         );
-                        tokio::time::sleep(backoff).await;
-                        backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+
+                        backoff = sleep(&metrics, backoff).await;
                         continue;
                     }
                 }
@@ -151,6 +201,13 @@ where
             }
         });
     }
+}
+
+/// Sleeps for given backoff duration. Returns incremented backoff duration, capped at [`MAX_BACKOFF`].
+async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
+    metrics.reconnect_attempts.increment(1);
+    tokio::time::sleep(backoff).await;
+    std::cmp::min(backoff * 2, MAX_BACKOFF)
 }
 
 fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {
