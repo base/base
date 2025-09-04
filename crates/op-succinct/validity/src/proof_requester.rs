@@ -12,7 +12,10 @@ use sp1_sdk::{
     network::{proto::types::ExecutionStatus, FulfillmentStrategy},
     NetworkProver, SP1Proof, SP1ProofMode, SP1ProofWithPublicValues, SP1Stdin, SP1_CIRCUIT_VERSION,
 };
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -152,6 +155,8 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             .strategy(self.range_strategy)
             .skip_simulation(true)
             .cycle_limit(1_000_000_000_000)
+            .gas_limit(1_000_000_000_000)
+            .timeout(Duration::from_secs(4 * 60 * 60))
             .request_async()
             .await
         {
@@ -172,6 +177,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             .prove(&self.program_config.agg_pk, &stdin)
             .mode(self.agg_mode)
             .strategy(self.agg_strategy)
+            .timeout(Duration::from_secs(4 * 60 * 60))
             .request_async()
             .await
         {
