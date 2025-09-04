@@ -199,7 +199,7 @@ where
 
             // Create a transaction to claim credit
             let transaction_request =
-                game.claimCredit(self.challenger_address).into_transaction_request();
+                game.claimCredit(self.challenger_address).gas(200_000).into_transaction_request();
 
             match self
                 .signer
