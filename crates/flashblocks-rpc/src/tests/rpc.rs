@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::rpc::ETH_ERROR_CODE_TIMEOUT;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
@@ -540,5 +541,22 @@ mod tests {
 
         assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_sync_timeout() {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await.unwrap();
+
+        // fail request immediately by passing timeout of 0 ms
+        let receipt_result = node
+            .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
+            .await;
+
+        assert!(receipt_result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(&ETH_ERROR_CODE_TIMEOUT.to_string()));
     }
 }
