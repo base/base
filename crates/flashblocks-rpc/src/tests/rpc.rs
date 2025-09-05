@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::rpc::ETH_ERROR_CODE_TIMEOUT;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
@@ -72,12 +73,13 @@ mod tests {
         pub async fn send_raw_transaction_sync(
             &self,
             tx: Bytes,
+            timeout_ms: Option<u64>,
         ) -> eyre::Result<RpcReceipt<Optimism>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
 
             let receipt = client
-                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
+                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx, timeout_ms))
                 .await?;
 
             Ok(receipt)
@@ -526,16 +528,35 @@ mod tests {
         node.send_payload(create_first_payload()).await?;
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
-        let (receipt_result, payload_result) =
-            tokio::join!(node.send_raw_transaction_sync(TRANSFER_ETH_TX), async {
+        let (receipt_result, payload_result) = tokio::join!(
+            node.send_raw_transaction_sync(TRANSFER_ETH_TX, None),
+            async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
-            });
+            }
+        );
 
         payload_result?;
         let receipt = receipt_result?;
 
         assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_sync_timeout() {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await.unwrap();
+
+        // fail request immediately by passing timeout of 0 ms
+        let receipt_result = node
+            .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
+            .await;
+
+        assert!(receipt_result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(&ETH_ERROR_CODE_TIMEOUT.to_string()));
     }
 }
