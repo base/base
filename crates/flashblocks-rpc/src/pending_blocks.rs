@@ -145,8 +145,8 @@ impl PendingBlocks {
         let block_transactions: Vec<Transaction> = self
             .transactions
             .iter()
-            .cloned()
             .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
+            .cloned()
             .collect();
 
         let transactions = if full {

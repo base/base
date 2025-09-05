@@ -124,7 +124,7 @@ where
         for flashblock in flashblocks {
             flashblocks_per_block
                 .entry(flashblock.metadata.block_number)
-                .or_insert(Vec::new())
+                .or_default()
                 .push(flashblock.clone());
         }
 
