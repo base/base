@@ -49,7 +49,7 @@ extended by future upgrades.
 
 ### Minimum Base Fee in `PayloadAttributesV3`
 
-The Engine API [`PayloadAttributesV3`](../exec-engine.md#extended-payloadattributesv3) is extended in Jovian with a new
+The Engine API [`PayloadAttributesV3`](../exec-engine.md#extended-payloadattributesv3) is extended with a new
 field `minBaseFee`. The existing `eip1559Params` remains 8 bytes (Holocene format).
 
 ```text
@@ -66,6 +66,8 @@ PayloadAttributesV3: {
     minBaseFee: QUANTITY or null
 }
 ```
+
+The `minBaseFee` MUST be `null` prior to the Jovian fork, and MUST be non-`null` after the Jovian fork.
 
 ### Rationale
 
