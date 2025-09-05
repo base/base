@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::fb_state::FlashblocksState;
     use crate::rpc::FlashblocksAPI;
-    use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;

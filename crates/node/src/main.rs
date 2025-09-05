@@ -4,8 +4,8 @@ use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
 use std::sync::Arc;
 
+use base_reth_flashblocks_rpc::fb_state::FlashblocksState;
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
-use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
 use clap::Parser;
 use reth::builder::Node;

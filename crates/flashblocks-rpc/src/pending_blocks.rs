@@ -1,55 +1,52 @@
-use crate::subscription::Flashblock;
-use alloy_consensus::Header;
-use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, BlockNumber, Sealed, TxHash, B256, U256};
-use alloy_provider::network::primitives::BlockTransactions;
+use alloy_consensus::{Header, Sealed};
+use alloy_primitives::{
+    map::foldhash::{HashMap, HashMapExt},
+    Address, BlockNumber, TxHash, B256, U256,
+};
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types_eth::state::StateOverride;
+use alloy_rpc_types::{state::StateOverride, BlockTransactions};
 use alloy_rpc_types_eth::Header as RPCHeader;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::db::{Cache, TransitionState};
 use reth_rpc_eth_api::RpcBlock;
 
-pub struct PendingBlockBuilder {
-    pub flashblocks: Vec<Flashblock>,
-    pub header: Option<Sealed<Header>>,
-    pub account_balances: HashMap<Address, U256>,
-    pub transaction_count: HashMap<Address, U256>,
-    pub transaction_receipts: HashMap<B256, OpTransactionReceipt>,
-    pub transactions_by_hash: HashMap<B256, Transaction>,
-    pub transactions: Vec<Transaction>,
-    pub state_overrides: Option<StateOverride>,
-    pub state_cache: Cache,
-    pub transition_state: Option<TransitionState>,
+use crate::subscription::Flashblock;
+
+pub struct PendingBlocksBuilder {
+    flashblocks: Vec<Flashblock>,
+    headers: Vec<Sealed<Header>>,
+    transactions: Vec<Transaction>,
+    account_balances: HashMap<Address, U256>,
+    transaction_count: HashMap<Address, U256>,
+    transaction_receipts: HashMap<B256, OpTransactionReceipt>,
+    transactions_by_hash: HashMap<B256, Transaction>,
+    state_overrides: Option<StateOverride>,
 }
 
-impl PendingBlockBuilder {
+impl PendingBlocksBuilder {
     pub fn new() -> Self {
         Self {
-            header: None,
             flashblocks: Vec::new(),
-            transactions: Default::default(),
-            account_balances: HashMap::default(),
-            transaction_count: HashMap::default(),
-            transaction_receipts: HashMap::default(),
-            transactions_by_hash: HashMap::default(),
+            headers: Vec::new(),
+            transactions: Vec::new(),
+            account_balances: HashMap::new(),
+            transaction_count: HashMap::new(),
+            transaction_receipts: HashMap::new(),
+            transactions_by_hash: HashMap::new(),
             state_overrides: None,
-            state_cache: Cache::default(),
-            transition_state: None,
         }
     }
 
     #[inline]
-    pub(crate) fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
-        self.state_overrides = Some(state_overrides);
+    pub fn with_flashblocks(&mut self, flashblocks: Vec<Flashblock>) -> &Self {
+        self.flashblocks.extend(flashblocks);
         self
     }
 
     #[inline]
-    pub(crate) fn with_header(&mut self, header: Sealed<Header>) -> &Self {
-        self.header = Some(header);
+    pub fn with_header(&mut self, header: Sealed<Header>) -> &Self {
+        self.headers.push(header);
         self
     }
 
@@ -85,85 +82,86 @@ impl PendingBlockBuilder {
     }
 
     #[inline]
-    pub(crate) fn with_flashblocks(&mut self, flashblocks: Vec<Flashblock>) -> &Self {
-        self.flashblocks = flashblocks;
+    pub(crate) fn with_state_overrides(&mut self, state_overrides: StateOverride) -> &Self {
+        self.state_overrides = Some(state_overrides);
         self
     }
 
-    #[inline]
-    pub(crate) fn with_state_cache(&mut self, cache: Cache) -> &Self {
-        self.state_cache = cache;
-        self
-    }
-
-    #[inline]
-    pub(crate) fn with_transition_state(
-        &mut self,
-        transition_state: Option<TransitionState>,
-    ) -> &Self {
-        self.transition_state = transition_state;
-        self
-    }
-
-    pub(crate) fn build(self) -> eyre::Result<PendingBlock> {
-        let header = self.header.ok_or_else(|| eyre!("missing header"))?;
+    pub(crate) fn build(self) -> eyre::Result<PendingBlocks> {
+        if self.headers.is_empty() {
+            return Err(eyre!("missing headers"));
+        }
 
         if self.flashblocks.is_empty() {
             return Err(eyre!("no flashblocks"));
         }
 
-        Ok(PendingBlock {
-            header,
+        Ok(PendingBlocks {
+            flashblocks: self.flashblocks,
+            headers: self.headers,
+            transactions: self.transactions,
             account_balances: self.account_balances,
             transaction_count: self.transaction_count,
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
-            transactions: self.transactions,
-            flashblocks: self.flashblocks,
             state_overrides: self.state_overrides,
-            state_cache: self.state_cache,
-            transition_state: self.transition_state,
         })
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PendingBlock {
+pub struct PendingBlocks {
     flashblocks: Vec<Flashblock>,
-    header: Sealed<Header>,
+    headers: Vec<Sealed<Header>>,
+    transactions: Vec<Transaction>,
+
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
-    transactions: Vec<Transaction>,
     state_overrides: Option<StateOverride>,
-    state_cache: Cache,
-    transition_state: Option<TransitionState>,
 }
 
-impl PendingBlock {
-    pub fn block_number(&self) -> BlockNumber {
-        self.header.number
+impl PendingBlocks {
+    pub fn latest_block_number(&self) -> BlockNumber {
+        self.headers.last().unwrap().number
     }
 
-    pub fn flashblock_index(&self) -> u64 {
+    pub fn latest_flashblock_index(&self) -> u64 {
         self.flashblocks.last().unwrap().index
+    }
+
+    pub fn latest_header(&self) -> Sealed<Header> {
+        self.headers.last().unwrap().clone()
     }
 
     pub fn get_flashblocks(&self) -> Vec<Flashblock> {
         self.flashblocks.clone()
     }
 
-    pub fn get_block(&self, full: bool) -> RpcBlock<Optimism> {
+    pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
+        let header = self.latest_header();
+        let block_number = header.number;
+        let block_transactions: Vec<Transaction> = self
+            .transactions
+            .iter()
+            .cloned()
+            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
+            .collect();
+
         let transactions = if full {
-            BlockTransactions::Full(self.transactions.clone())
+            BlockTransactions::Full(block_transactions.clone())
         } else {
-            let tx_hashes = self.transactions.iter().map(|tx| tx.tx_hash()).collect();
-            BlockTransactions::Hashes(tx_hashes)
+            let tx_hashes: Vec<B256> = block_transactions
+                .clone()
+                .iter()
+                .map(|tx| tx.tx_hash())
+                .collect();
+            BlockTransactions::Hashes(tx_hashes.clone())
         };
 
         RpcBlock::<Optimism> {
-            header: RPCHeader::from_consensus(self.header.clone(), None, None),
+            header: RPCHeader::from_consensus(header.clone(), None, None),
             transactions,
             uncles: Vec::new(),
             withdrawals: None,
@@ -191,12 +189,5 @@ impl PendingBlock {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
-    }
-
-    pub fn get_state_cache(&self) -> Cache {
-        self.state_cache.clone()
-    }
-    pub fn get_state_transitions(&self) -> Option<TransitionState> {
-        self.transition_state.clone()
     }
 }

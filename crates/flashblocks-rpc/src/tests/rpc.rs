@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use crate::fb_state::FlashblocksState;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
-    use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::Receipt;
