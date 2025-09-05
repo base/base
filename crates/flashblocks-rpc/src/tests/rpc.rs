@@ -527,11 +527,13 @@ mod tests {
         node.send_payload(create_first_payload()).await?;
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
-        let (receipt_result, payload_result) =
-            tokio::join!(node.send_raw_transaction_sync(TRANSFER_ETH_TX), async {
+        let (receipt_result, payload_result) = tokio::join!(
+            node.send_raw_transaction_sync(TRANSFER_ETH_TX, None),
+            async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
-            });
+            }
+        );
 
         payload_result?;
         let receipt = receipt_result?;
