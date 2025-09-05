@@ -34,6 +34,8 @@ impl TransactionBuilderExt for TransactionBuilder {
         self.with_create().with_input(hex!("60006000fd").into()) // PUSH1 0x00 PUSH1 0x00 REVERT
     }
 
+    // This transaction is big in the sense that it uses a lot of gas. The exact
+    // amount it uses is 86220 gas.
     fn random_big_transaction(self) -> Self {
         // PUSH13 0x63ffffffff60005260046000f3 PUSH1 0x00 MSTORE PUSH1 0x02 PUSH1 0x0d PUSH1 0x13 PUSH1 0x00 CREATE2
         self.with_create()

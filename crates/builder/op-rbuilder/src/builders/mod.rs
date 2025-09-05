@@ -10,6 +10,7 @@ use reth_optimism_payload_builder::config::OpDAConfig;
 use crate::{
     args::OpRbuilderArgs,
     flashtestations::args::FlashtestationsArgs,
+    gas_limiter::args::GasLimiterArgs,
     traits::{NodeBounds, PoolBounds},
     tx_signer::Signer,
 };
@@ -114,6 +115,9 @@ pub struct BuilderConfig<Specific: Clone> {
     pub specific: Specific,
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
+
+    /// Address gas limiter stuff
+    pub gas_limiter_config: GasLimiterArgs,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -132,6 +136,8 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
             .field("specific", &self.specific)
+            .field("max_gas_per_txn", &self.max_gas_per_txn)
+            .field("gas_limiter_config", &self.gas_limiter_config)
             .finish()
     }
 }
@@ -148,6 +154,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             specific: S::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
+            gas_limiter_config: GasLimiterArgs::default(),
         }
     }
 }
@@ -168,6 +175,7 @@ where
             da_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
+            gas_limiter_config: args.gas_limiter.clone(),
             specific: S::try_from(args)?,
         })
     }

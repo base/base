@@ -9,6 +9,9 @@ mod flashblocks;
 mod data_availability;
 
 #[cfg(test)]
+mod gas_limiter;
+
+#[cfg(test)]
 mod ordering;
 
 #[cfg(test)]

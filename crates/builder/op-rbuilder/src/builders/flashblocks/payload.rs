@@ -6,6 +6,7 @@ use crate::{
         flashblocks::{best_txs::BestFlashblocksTxs, config::FlashBlocksConfigExt},
         generator::{BlockCell, BuildArguments},
     },
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, PoolBounds},
@@ -118,6 +119,8 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
     /// Builder events handle to send BuiltPayload events
     pub payload_builder_handle:
         Arc<OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>,
+    /// Rate limiting based on gas. This is an optional feature.
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
@@ -134,6 +137,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
+        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Ok(Self {
             evm_config,
             pool,
@@ -143,6 +147,7 @@ impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
             metrics,
             builder_tx,
             payload_builder_handle,
+            address_gas_limiter,
         })
     }
 }
@@ -260,10 +265,13 @@ where
                 target_flashblock_count: self.config.flashblocks_per_block(),
             },
             max_gas_per_txn: self.config.max_gas_per_txn,
+            address_gas_limiter: self.address_gas_limiter.clone(),
         };
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(&state_provider);
+
+        self.address_gas_limiter.refresh(ctx.block_number());
 
         // 1. execute the pre steps and seal an early block with that
         let sequencer_tx_start_time = Instant::now();

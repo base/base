@@ -104,6 +104,7 @@ parking_lot.workspace = true
 url.workspace = true
 anyhow = "1"
 opentelemetry = { workspace = true, optional = true }
+dashmap.workspace = true
 
 tower = "0.5"
 futures = "0.3"
@@ -124,7 +125,6 @@ ureq = "2.10"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", branch = "main" }
 
-dashmap = { version = "6.1", optional = true }
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
 tar = { version = "0.4", optional = true }
@@ -146,7 +146,6 @@ alloy-provider = { workspace = true, default-features = true, features = [
 ] }
 tempfile = "3.8"
 macros = { path = "src/tests/framework/macros" }
-dashmap = { version = "6.1" }
 nanoid = { version = "0.4" }
 reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
@@ -175,7 +174,6 @@ min-debug-logs = ["tracing/release_max_level_debug"]
 min-trace-logs = ["tracing/release_max_level_trace"]
 
 testing = [
-    "dashmap",
     "nanoid",
     "reth-ipc",
     "reth-node-builder/test-utils",

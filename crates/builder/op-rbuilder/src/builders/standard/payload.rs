@@ -1,6 +1,7 @@
 use crate::{
     builders::{BuilderConfig, generator::BuildArguments},
     flashtestations::service::spawn_flashtestations_service,
+    gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
     traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
@@ -99,6 +100,8 @@ pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
     pub best_transactions: Txs,
     /// The metrics for the builder
     pub metrics: Arc<OpRBuilderMetrics>,
+    /// Rate limiting based on gas. This is an optional feature.
+    pub address_gas_limiter: AddressGasLimiter,
 }
 
 impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
@@ -109,6 +112,7 @@ impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
         client: Client,
         config: BuilderConfig<()>,
     ) -> Self {
+        let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
             pool,
             client,
@@ -116,6 +120,7 @@ impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
             evm_config,
             best_transactions: (),
             metrics: Default::default(),
+            address_gas_limiter,
         }
     }
 }
@@ -276,9 +281,12 @@ where
             metrics: self.metrics.clone(),
             extra_ctx: Default::default(),
             max_gas_per_txn: self.config.max_gas_per_txn,
+            address_gas_limiter: self.address_gas_limiter.clone(),
         };
 
         let builder = OpBuilder::new(best);
+
+        self.address_gas_limiter.refresh(ctx.block_number());
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
         let db = StateProviderDatabase::new(state_provider);

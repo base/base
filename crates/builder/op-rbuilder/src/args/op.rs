@@ -4,7 +4,10 @@
 
 //! clap [Args](clap::Args) for optimism rollup configuration
 
-use crate::{flashtestations::args::FlashtestationsArgs, tx_signer::Signer};
+use crate::{
+    flashtestations::args::FlashtestationsArgs, gas_limiter::args::GasLimiterArgs,
+    tx_signer::Signer,
+};
 use anyhow::{Result, anyhow};
 use clap::Parser;
 use reth_optimism_cli::commands::Commands;
@@ -60,6 +63,8 @@ pub struct OpRbuilderArgs {
     pub telemetry: TelemetryArgs,
     #[command(flatten)]
     pub flashtestations: FlashtestationsArgs,
+    #[command(flatten)]
+    pub gas_limiter: GasLimiterArgs,
 }
 
 impl Default for OpRbuilderArgs {
