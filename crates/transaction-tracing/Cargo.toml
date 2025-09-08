@@ -1,5 +1,5 @@
 [package]
-name = "transaction-tracing"
+name = "base-reth-transaction-tracing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

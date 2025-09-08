@@ -14,7 +14,7 @@ workspace = true
 [dependencies]
 # internal
 base-reth-flashblocks-rpc.workspace = true
-transaction-tracing = { path = "../transaction-tracing" }
+base-reth-transaction-tracing.workspace = true
 
 # reth
 reth.workspace = true

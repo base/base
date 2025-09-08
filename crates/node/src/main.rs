@@ -7,6 +7,7 @@ use std::sync::Arc;
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
+use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use reth::builder::Node;
 use reth::{
@@ -60,7 +61,7 @@ fn main() {
                 .install_exex_if(
                     flashblocks_rollup_args.enable_transaction_tracing,
                     "transaction-tracing",
-                    |ctx| async move { Ok(transaction_tracing::transaction_tracing_exex(ctx)) },
+                    |ctx| async move { Ok(transaction_tracing_exex(ctx)) },
                 )
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
