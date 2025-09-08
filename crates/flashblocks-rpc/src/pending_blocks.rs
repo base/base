@@ -139,6 +139,10 @@ impl PendingBlocks {
         self.flashblocks.clone()
     }
 
+    pub fn get_headers(&self) -> Vec<Sealed<Header>> {
+        self.headers.clone()
+    }
+
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
         let header = self.latest_header();
         let block_number = header.number;

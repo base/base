@@ -79,10 +79,22 @@ where
                         .set(prev.latest_flashblock_index() as f64);
                 }
             } else {
-                // Clear everything not necessary
-                // and re-process flashblocks
+                // If we had a reorg, we need to reset all flashblocks state
+                let mut headers = pending_blocks.get_headers();
+                headers.retain(|header| header.number > block.number);
+                let mut expected_parent_hash = block.hash();
+                for header in headers {
+                    if header.parent_hash != expected_parent_hash {
+                        self.pending_blocks.swap(None);
+                        return;
+                    }
+                    expected_parent_hash = header.hash();
+                }
+
+                // If no reorg, we clear everything not necessary and re-process
                 let mut flashblocks = pending_blocks.get_flashblocks();
                 flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
+
                 self.update_pending_blocks(&flashblocks);
             }
         }
