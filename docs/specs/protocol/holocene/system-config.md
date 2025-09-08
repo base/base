@@ -22,15 +22,12 @@ The `SystemConfig` is updated to allow for dynamic EIP-1559 parameters.
 
 ### `ConfigUpdate`
 
-The following `ConfigUpdate` event is defined where the `CONFIG_VERSION` is `uint256(0)`:
+When the configuration is updated, a [`ConfigUpdate`](../system-config.html#system-config-updates) event
+MUST be emitted with the following parameters:
 
-| Name | Value | Definition | Usage |
+| `version` | `updateType` | `data` | Usage |
 | ---- | ----- | --- | -- |
-| `BATCHER` | `uint8(0)` | `abi.encode(address)` | Modifies the account that is authorized to progress the safe chain |
-| `FEE_SCALARS` | `uint8(1)` | `abi.encode(uint256(0), (uint256(0x01) << 248) \| (uint256(_blobbasefeeScalar) << 32) \| _basefeeScalar)` | Modifies the fee scalars |
-| `GAS_LIMIT` | `uint8(2)` | `abi.encode(uint64 _gasLimit)` | Modifies the L2 gas limit |
-| `UNSAFE_BLOCK_SIGNER` | `uint8(3)` | `abi.encode(address)` | Modifies the account that is authorized to progress the unsafe chain |
-| `EIP_1559_PARAMS` | `uint8(4)` | `abi.encode((uint256(_denominator) << 32) \| _elasticity)` | Modifies the EIP-1559 denominator and elasticity |
+| `uint256(0)` | `uint8(4)` | `abi.encode((uint256(_denominator) << 32) \| _elasticity)` | Modifies the EIP-1559 denominator and elasticity |
 
 Note that the above encoding is the format emitted by the SystemConfig event, which differs from the format in extraData
 from the block header.
@@ -47,7 +44,7 @@ The following actions should happen during the initialization of the `SystemConf
 Intentionally absent from this is `emit ConfigUpdate.EIP_1559_PARAMS`.
 As long as these values are unset, the default values will be used.
 Requiring 1559 parameters to be set during initialization would add a strict requirement
-that the L2 hardforks before the L1 contracts, and this is complicated to manage in a
+that the L2 hardforks before the L1 contracts are upgraded, and this is complicated to manage in a
 world of many chains.
 
 ### Modifying EIP-1559 Parameters

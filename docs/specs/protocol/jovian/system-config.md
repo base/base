@@ -6,6 +6,7 @@
 
 - [Minimum Base Fee Configuration](#minimum-base-fee-configuration)
   - [`ConfigUpdate`](#configupdate)
+  - [Initialization](#initialization)
   - [Modifying Minimum Base Fee](#modifying-minimum-base-fee)
   - [Interface](#interface)
     - [Minimum Base Fee Parameters](#minimum-base-fee-parameters)
@@ -30,25 +31,35 @@ function setMinBaseFee(uint64 minBaseFee) external onlyOwner;
 
 ### `ConfigUpdate`
 
-The following `ConfigUpdate` event is defined where the `CONFIG_VERSION` is `uint256(0)`:
+When the configuration is updated, a [`ConfigUpdate`](../system-config.html#system-config-updates) event
+MUST be emitted with the following parameters:
 
-| Name | Value | Definition | Usage |
+| `version` | `updateType` | `data` | Usage |
 | ---- | ----- | --- | -- |
-| `BATCHER` | `uint8(0)` | `abi.encode(address)` | Modifies the account that is authorized to progress the safe chain |
-| `FEE_SCALARS` | `uint8(1)` | `(uint256(0x01) << 248) \| (uint256(_blobbasefeeScalar) << 32) \| _basefeeScalar` | Modifies the fee scalars |
-| `GAS_LIMIT` | `uint8(2)` | `abi.encode(uint64 _gasLimit)` | Modifies the L2 gas limit |
-| `UNSAFE_BLOCK_SIGNER` | `uint8(3)` | `abi.encode(address)` | Modifies the account that is authorized to progress the unsafe chain |
-| `EIP_1559_PARAMS` | `uint8(4)` | `uint256(uint64(uint32(_denominator))) << 32 \| uint64(uint32(_elasticity))` | Modifies the EIP-1559 denominator and elasticity |
-| `OPERATOR_FEE_PARAMS` | `uint8(5)` | `uint256(_operatorFeeScalar) << 64 \| _operatorFeeConstant` | Modifies the operator fee scalar and constant |
-| `MIN_BASE_FEE` | `uint8(6)` | `abi.encode(uint64(_minBaseFee))` | Modifies the minimum base fee (wei) |
+| `uint256(0)` | `uint8(6)` | `abi.encode(uint64(_minBaseFee))` | Modifies the minimum base fee (wei) |
+
+### Initialization
+
+The following actions should happen during the initialization of the `SystemConfig`:
+
+- `emit ConfigUpdate.BATCHER`
+- `emit ConfigUpdate.FEE_SCALARS`
+- `emit ConfigUpdate.GAS_LIMIT`
+- `emit ConfigUpdate.UNSAFE_BLOCK_SIGNER`
+
+Intentionally absent from this is `emit ConfigUpdate.EIP_1559_PARAMS` and `emit ConfigUpdate.MIN_BASE_FEE`.
+As long as these values are unset, the default values will be used.
+Requiring these parameters to be set during initialization would add a strict requirement
+that the L2 hardforks before the L1 contracts are upgraded, and this is complicated to manage in a
+world of many chains.
 
 ### Modifying Minimum Base Fee
 
-Upon update, the contract emits a `ConfigUpdate` event with a new `UpdateType` value `MIN_BASE_FEE`, enabling nodes
+Upon update, the contract emits the `ConfigUpdate` event above, enabling nodes
 to derive the configuration from L1 logs.
 
 Implementations MUST incorporate the configured value into the block header `extraData` as specified in
-`./exec-engine.md`.
+`./exec-engine.md`. Until the first such event is emitted, a default value of `0` should be used.
 
 ### Interface
 
