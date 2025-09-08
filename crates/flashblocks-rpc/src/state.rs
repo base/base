@@ -93,6 +93,13 @@ where
         pending_blocks: &Arc<PendingBlocks>,
         flashblock: &Flashblock,
     ) -> bool {
+        info!(
+            message = "checking if flashblock is next",
+            flashblock_block_number = flashblock.metadata.block_number,
+            flashblock_index = flashblock.index,
+            pending_blocks_block_number = pending_blocks.latest_block_number(),
+            pending_blocks_flashblock_index = pending_blocks.latest_flashblock_index(),
+        );
         let is_next_of_block = flashblock.metadata.block_number
             == pending_blocks.latest_block_number()
             && flashblock.index == pending_blocks.latest_flashblock_index() + 1;

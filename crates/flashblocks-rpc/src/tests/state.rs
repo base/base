@@ -73,10 +73,26 @@ mod tests {
         }
 
         fn account_state(&self, u: User) -> Account {
-            self.provider
+            let basic_account = self
+                .provider
                 .basic_account(&self.address(u))
                 .expect("can lookup account state")
-                .expect("should be existing account state")
+                .expect("should be existing account state");
+
+            let nonce = self
+                .flashblocks
+                .get_transaction_count(self.address(u))
+                .to::<u64>();
+            let balance = self
+                .flashblocks
+                .get_balance(self.address(u))
+                .unwrap_or(basic_account.balance);
+
+            Account {
+                nonce,
+                balance,
+                bytecode_hash: basic_account.bytecode_hash,
+            }
         }
 
         fn build_transaction_to_send_eth(
@@ -91,6 +107,7 @@ mod tests {
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
                 .gas_limit(21_000)
+                .max_fee_per_gas(200)
                 .into_eip1559()
         }
 
@@ -355,6 +372,117 @@ mod tests {
                 .balance
                 .expect("should be changed due to receiving funds"),
             U256::from(100_100_000)
+        );
+    }
+
+    #[test]
+    fn test_state_overrides_persisted_across_blocks() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        let initial_base = FlashblockBuilder::new_base(&test).build();
+        let initial_block_number = initial_base.metadata.block_number;
+        test.flashblocks.on_flashblock_received(initial_base);
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+
+        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(!test
+            .flashblocks
+            .get_state_overrides()
+            .unwrap()
+            .contains_key(&test.address(User::Alice)));
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        );
+
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_100_000)
+        );
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new_base(&test)
+                .with_canonical_block_number(initial_block_number)
+                .build(),
+        );
+
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .header
+                .number,
+            initial_block_number + 1
+        );
+
+        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(test
+            .flashblocks
+            .get_state_overrides()
+            .unwrap()
+            .contains_key(&test.address(User::Alice)));
+
+        test.flashblocks.on_flashblock_received(
+            FlashblockBuilder::new(&test, 1)
+                .with_canonical_block_number(initial_block_number)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        );
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_200_000)
         );
     }
 
