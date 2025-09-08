@@ -25,7 +25,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
-struct FlashblocksRollupArgs {
+struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
@@ -37,19 +37,19 @@ struct FlashblocksRollupArgs {
     pub enable_transaction_tracing: bool,
 }
 
-impl FlashblocksRollupArgs {
+impl Args {
     fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
 }
 
 fn main() {
-    Cli::<OpChainSpecParser, FlashblocksRollupArgs>::parse()
-        .run(|builder, flashblocks_rollup_args| async move {
+    Cli::<OpChainSpecParser, Args>::parse()
+        .run(|builder, args| async move {
             info!(message = "starting custom Base node");
 
-            let flashblocks_enabled = flashblocks_rollup_args.flashblocks_enabled();
-            let op_node = OpNode::new(flashblocks_rollup_args.rollup_args.clone());
+            let flashblocks_enabled = args.flashblocks_enabled();
+            let op_node = OpNode::new(args.rollup_args.clone());
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
@@ -59,7 +59,7 @@ fn main() {
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
                 .install_exex_if(
-                    flashblocks_rollup_args.enable_transaction_tracing,
+                    args.enable_transaction_tracing,
                     "transaction-tracing",
                     |ctx| async move { Ok(transaction_tracing_exex(ctx)) },
                 )
@@ -89,8 +89,7 @@ fn main() {
                         info!(message = "Starting Flashblocks");
 
                         let ws_url = Url::parse(
-                            flashblocks_rollup_args
-                                .websocket_url
+                            args.websocket_url
                                 .expect("WEBSOCKET_URL must be set when Flashblocks is enabled")
                                 .as_str(),
                         )?;
