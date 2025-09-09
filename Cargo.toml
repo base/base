@@ -8,7 +8,7 @@ repository = "https://github.com/base/reth"
 
 [workspace]
 resolver = "2"
-members = ["crates/flashblocks-rpc", "crates/node"]
+members = ["crates/flashblocks-rpc", "crates/node", "crates/transaction-tracing"]
 
 default-members = ["crates/node"]
 
@@ -35,6 +35,7 @@ codegen-units = 1
 # internal
 base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-node = { path = "crates/node" }
+base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.7.0" }
