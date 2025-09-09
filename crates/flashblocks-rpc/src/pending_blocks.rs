@@ -9,6 +9,7 @@ use alloy_rpc_types_eth::Header as RPCHeader;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
+use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_eth_api::RpcBlock;
 
 use crate::subscription::Flashblock;
@@ -16,12 +17,16 @@ use crate::subscription::Flashblock;
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,
+
     transactions: Vec<Transaction>,
     account_balances: HashMap<Address, U256>,
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
+    transaction_state: HashMap<B256, EvmState>,
     state_overrides: Option<StateOverride>,
+
+    db_cache: Cache,
 }
 
 impl PendingBlocksBuilder {
@@ -34,7 +39,9 @@ impl PendingBlocksBuilder {
             transaction_count: HashMap::new(),
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
+            transaction_state: HashMap::new(),
             state_overrides: None,
+            db_cache: Cache::default(),
         }
     }
 
@@ -55,6 +62,18 @@ impl PendingBlocksBuilder {
         self.transactions_by_hash
             .insert(transaction.tx_hash(), transaction.clone());
         self.transactions.push(transaction);
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_db_cache(&mut self, cache: Cache) -> &Self {
+        self.db_cache = cache;
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
+        self.transaction_state.insert(hash, state);
         self
     }
 
@@ -104,12 +123,14 @@ impl PendingBlocksBuilder {
             transaction_count: self.transaction_count,
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
+            transaction_state: self.transaction_state,
             state_overrides: self.state_overrides,
+            db_cache: self.db_cache,
         })
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PendingBlocks {
     flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,
@@ -119,7 +140,10 @@ pub struct PendingBlocks {
     transaction_count: HashMap<Address, U256>,
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
+    transaction_state: HashMap<B256, EvmState>,
     state_overrides: Option<StateOverride>,
+
+    db_cache: Cache,
 }
 
 impl PendingBlocks {
@@ -139,19 +163,26 @@ impl PendingBlocks {
         self.flashblocks.clone()
     }
 
-    pub fn get_headers(&self) -> Vec<Sealed<Header>> {
-        self.headers.clone()
+    pub fn get_transaction_state(&self, hash: B256) -> Option<EvmState> {
+        self.transaction_state.get(&hash).cloned()
+    }
+
+    pub fn get_db_cache(&self) -> Cache {
+        self.db_cache.clone()
+    }
+
+    pub fn get_transactions_for_block(&self, block_number: BlockNumber) -> Vec<Transaction> {
+        self.transactions
+            .iter()
+            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
+            .cloned()
+            .collect()
     }
 
     pub fn get_latest_block(&self, full: bool) -> RpcBlock<Optimism> {
         let header = self.latest_header();
         let block_number = header.number;
-        let block_transactions: Vec<Transaction> = self
-            .transactions
-            .iter()
-            .filter(|tx| tx.block_number.unwrap_or(0) == block_number)
-            .cloned()
-            .collect();
+        let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
         let transactions = if full {
             BlockTransactions::Full(block_transactions.clone())

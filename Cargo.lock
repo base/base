@@ -1536,7 +1536,6 @@ dependencies = [
  "brotli",
  "eyre",
  "futures-util",
- "itertools 0.14.0",
  "jsonrpsee 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonrpsee-types 0.25.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "metrics",

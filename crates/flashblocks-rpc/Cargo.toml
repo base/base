@@ -72,7 +72,6 @@ metrics-derive.workspace = true
 eyre.workspace = true
 brotli.workspace = true
 arc-swap.workspace = true
-itertools.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
