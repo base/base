@@ -5,10 +5,17 @@ use reth::api::{BlockBody, FullNodeComponents};
 use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
 use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_tracing::tracing::info;
+use reth_tracing::tracing::debug;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio_stream::wrappers::ReceiverStream;
+
+/// Types of transaction events to track
+#[derive(Debug)]
+enum TxEvent {
+    Dropped,
+    Replaced,
+}
 
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
@@ -23,19 +30,19 @@ impl Tracker {
         }
     }
 
-    fn mempool_tx(&mut self, tx_hash: TxHash) {
+    fn transaction_inserted(&mut self, tx_hash: TxHash) {
         let now = Instant::now();
         self.txs.entry(tx_hash).or_insert(now);
-        info!(target: "transaction-tracing", "Transaction {} added to mempool", tx_hash);
+        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, "Transaction added to mempool");
     }
 
-    fn block_inclusion(&mut self, tx_hash: TxHash, block_number: u64) {
+    fn transaction_included_in_block(&mut self, tx_hash: TxHash, block_number: u64) {
         let inclusion_time = Instant::now();
 
         if let Some(mempool_time) = self.txs.remove(&tx_hash) {
             let time_in_mempool = inclusion_time.duration_since(mempool_time);
 
-            info!(
+            debug!(
                 target: "transaction-tracing",
                 tx_hash = ?tx_hash,
                 block_number = ?block_number,
@@ -43,7 +50,7 @@ impl Tracker {
                 "Transaction included in block",
             );
         } else {
-            info!(
+            debug!(
                 target: "transaction-tracing",
                 tx_hash = ?tx_hash,
                 block_number = ?block_number,
@@ -53,10 +60,10 @@ impl Tracker {
     }
 
     // Handle transaction event (drop, invalid, etc.)
-    fn handle_transaction_event(&mut self, tx_hash: TxHash, event: &str) {
+    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mempool_time) = self.txs.remove(&tx_hash) {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
-            info!(
+            debug!(
                 target: "transaction-tracing",
                 tx_hash = ?tx_hash,
                 event = ?event,
@@ -77,7 +84,7 @@ impl Tracker {
 
         let after_count = self.txs.len();
         if before_count > after_count {
-            info!(target: "transaction-tracing", "Cleaned up {} old mempool entries", before_count - after_count);
+            debug!(target: "transaction-tracing", entries_removed = before_count - after_count, "Cleaned up old mempool entries");
         }
     }
 }
@@ -85,7 +92,7 @@ impl Tracker {
 pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
 ) -> Result<()> {
-    info!(target: "transaction-tracing", "Starting transaction tracking ExEx");
+    debug!(target: "transaction-tracing", "Starting transaction tracking ExEx");
 
     let mut track = Tracker::new();
 
@@ -101,18 +108,18 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
         tokio::select! {
             // New events from the mempool
             Some(tx_hash) = mempool_stream.next() => {
-                track.mempool_tx(tx_hash);
+                track.transaction_inserted(tx_hash);
             }
 
             // Track # of transactions dropped and replaced
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
                     FullTransactionEvent::Discarded(tx_hash) => {
-                        track.handle_transaction_event(tx_hash, "tx dropped");
+                        track.transaction_event(tx_hash, TxEvent::Dropped);
                     }
                     FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
                         let tx_hash = transaction.hash();
-                        track.handle_transaction_event(*tx_hash, "tx replaced");
+                        track.transaction_event(*tx_hash, TxEvent::Replaced);
                     }
                     _ => {
                         // Other events (mined, replaced, etc.)
@@ -127,7 +134,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         // Process all transactions in committed chain
                         for (block_number, block) in new.blocks() {
                             for transaction in block.body().transactions() {
-                                track.block_inclusion(*transaction.tx_hash(), *block_number);
+                                track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
                             }
                         }
                         // Periodic cleanup
@@ -135,21 +142,21 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
                     }
                     Ok(ExExNotification::ChainReorged { old: _, new }) => {
-                        info!(target: "transaction-tracing", "Chain reorg detected, tip: {}", new.tip().number());
+                        debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
                         for (block_number, block) in new.blocks() {
                             for transaction in block.body().transactions() {
-                                track.block_inclusion(*transaction.tx_hash(), *block_number);
+                                track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
                             }
                         }
                         track.cleanup();
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
                     }
                     Ok(ExExNotification::ChainReverted { old }) => {
-                        info!(target: "transaction-tracing", "Chain reverted, old tip: {}", old.tip().number());
+                        debug!(target: "transaction-tracing", old_tip = ?old.tip().number(), "Chain reverted");
                         ctx.events.send(ExExEvent::FinishedHeight(old.tip().num_hash()))?;
                     }
                     Err(e) => {
-                        info!(target: "transaction-tracing", "Notification error: {}", e);
+                        debug!(target: "transaction-tracing", "Notification error: {}", e);
                         return Err(e);
                     }
                 }
