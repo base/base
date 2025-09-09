@@ -33,7 +33,7 @@ struct Args {
     pub websocket_url: Option<String>,
 
     /// Enable transaction tracing ExEx for mempool-to-block timing analysis
-    #[arg(long)]
+    #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
 }
 
@@ -49,6 +49,7 @@ fn main() {
             info!(message = "starting custom Base node");
 
             let flashblocks_enabled = args.flashblocks_enabled();
+            let transaction_tracing_enabled = args.enable_transaction_tracing;
             let op_node = OpNode::new(args.rollup_args.clone());
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
@@ -58,9 +59,11 @@ fn main() {
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
-                .install_exex("transaction-tracing", |ctx| async move {
-                    Ok(transaction_tracing_exex(ctx))
-                })
+                .install_exex_if(
+                    transaction_tracing_enabled,
+                    "transaction-tracing",
+                    |ctx| async move { Ok(transaction_tracing_exex(ctx)) },
+                )
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
                     move |mut ctx| async move {
