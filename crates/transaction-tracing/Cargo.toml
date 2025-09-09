@@ -12,12 +12,12 @@ workspace = true
 
 [dependencies]
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
+reth.workspace = true
+reth-exex.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-cli.workspace = true
+reth-tracing.workspace = true
+reth-primitives.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
