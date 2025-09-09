@@ -1634,6 +1634,8 @@ dependencies = [
  "eyre",
  "futures",
  "lru 0.16.1",
+ "metrics",
+ "metrics-derive",
  "reth",
  "reth-exex",
  "reth-optimism-cli",

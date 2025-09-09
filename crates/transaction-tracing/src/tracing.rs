@@ -16,6 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 enum TxEvent {
     Dropped,
     Replaced,
+    BlockInclusion,
 }
 
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
@@ -38,18 +39,8 @@ impl Tracker {
     }
 
     fn transaction_included_in_block(&mut self, tx_hash: TxHash, block_number: u64) {
-        let inclusion_time = Instant::now();
-
-        if let Some(mempool_time) = self.txs.pop(&tx_hash) {
-            let time_in_mempool = inclusion_time.duration_since(mempool_time);
-
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                block_number = ?block_number,
-                time_in_mempool = ?time_in_mempool.as_millis(),
-                "Transaction included in block",
-            );
+        if self.txs.contains(&tx_hash) {
+            self.transaction_event(tx_hash, TxEvent::BlockInclusion);
         } else {
             debug!(
                 target: "transaction-tracing",
@@ -60,10 +51,20 @@ impl Tracker {
         }
     }
 
-    // Handle transaction event (drop, invalid, etc.)
+    // Handle transaction event (drop, replace, block inclusion, etc.)
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mempool_time) = self.txs.pop(&tx_hash) {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+            // Record histogram with event label
+            let event_label = match event {
+                TxEvent::Dropped => "dropped",
+                TxEvent::Replaced => "replaced",
+                TxEvent::BlockInclusion => "block_inclusion",
+            };
+            metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
+                .record(time_in_mempool.as_millis() as f64);
+
             debug!(
                 target: "transaction-tracing",
                 tx_hash = ?tx_hash,
