@@ -1652,6 +1652,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-trie",
  "base-reth-flashblocks-rpc",
+ "base-reth-transaction-tracing",
  "chrono",
  "clap",
  "eyre",
@@ -1693,6 +1694,26 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "base-reth-transaction-tracing"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "eyre",
+ "futures",
+ "lru 0.16.1",
+ "metrics",
+ "metrics-derive",
+ "reth",
+ "reth-exex",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+ "reth-primitives",
+ "reth-tracing",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -5293,6 +5314,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "lru"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfe949189f46fabb938b3a9a0be30fdd93fd8a09260da863399a8cf3db756ec8"
+dependencies = [
+ "hashbrown 0.15.4",
 ]
 
 [[package]]
