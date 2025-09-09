@@ -38,19 +38,6 @@ impl Tracker {
         debug!(target: "transaction-tracing", tx_hash = ?tx_hash, "Transaction added to mempool");
     }
 
-    fn transaction_included_in_block(&mut self, tx_hash: TxHash, block_number: u64) {
-        if self.txs.contains(&tx_hash) {
-            self.transaction_event(tx_hash, TxEvent::BlockInclusion);
-        } else {
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                block_number = ?block_number,
-                "Transaction included in block (not tracked by ExEx)",
-            );
-        }
-    }
-
     // Handle transaction event (drop, replace, block inclusion, etc.)
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mempool_time) = self.txs.pop(&tx_hash) {
@@ -71,6 +58,12 @@ impl Tracker {
                 event = ?event,
                 time_in_mempool = ?time_in_mempool.as_millis(),
                 "Transaction event",
+            );
+        } else {
+            debug!(
+                target: "transaction-tracing",
+                tx_hash = ?tx_hash,
+                "Transaction included in block (not tracked by ExEx)",
             );
         }
     }
@@ -119,18 +112,18 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                 match notification {
                     Ok(ExExNotification::ChainCommitted { new }) => {
                         // Process all transactions in committed chain
-                        for (block_number, block) in new.blocks() {
+                        for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
                     }
                     Ok(ExExNotification::ChainReorged { old: _, new }) => {
                         debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
-                        for (block_number, block) in new.blocks() {
+                        for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
