@@ -63,12 +63,12 @@ contract Utils is Test, JSONDecoder {
             bytes memory multisigCalldata = "";
 
             if (cfg.proxyAdmin == address(0)) {
-                multisigCalldata = abi.encodeWithSelector(
-                    Proxy.upgradeToAndCall.selector, cfg.opSuccinctL2OutputOracleImpl, initializationParams
-                );
+                multisigCalldata =
+                    abi.encodeCall(Proxy.upgradeToAndCall, (cfg.opSuccinctL2OutputOracleImpl, initializationParams));
             } else {
-                multisigCalldata = abi.encodeWithSelector(
-                    ProxyAdmin.upgradeAndCall.selector, cfg.opSuccinctL2OutputOracleImpl, initializationParams
+                multisigCalldata = abi.encodeCall(
+                    ProxyAdmin.upgradeAndCall,
+                    (payable(l2OutputOracleProxy), cfg.opSuccinctL2OutputOracleImpl, initializationParams)
                 );
             }
 
