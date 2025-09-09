@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::ETH_ERROR_CODE_TIMEOUT;
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
@@ -14,6 +13,7 @@ mod tests {
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_rpc_types_eth::TransactionInput;
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -553,10 +553,11 @@ mod tests {
             .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
             .await;
 
+        let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
         assert!(receipt_result
             .err()
             .unwrap()
             .to_string()
-            .contains(&ETH_ERROR_CODE_TIMEOUT.to_string()));
+            .contains(format!("{}", error_code).as_str()));
     }
 }

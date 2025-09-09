@@ -17,6 +17,7 @@ use jsonrpsee_types::ErrorObjectOwned;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
+use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
@@ -31,12 +32,6 @@ use tracing::{debug, trace, warn};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
-
-/// Error code for timeout error.
-///
-/// Specs <https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7966.md#method-name>.
-// todo: replace with <https://github.com/paradigmxyz/reth/issues/18251>
-pub const ETH_ERROR_CODE_TIMEOUT: i32 = 4;
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
@@ -293,11 +288,10 @@ where
                         }
                     }
                 _ = time::sleep(timeout) => {
-                    return Err(ErrorObjectOwned::owned(
-                        ETH_ERROR_CODE_TIMEOUT,
-                        format!("transaction confirmation timed out after {timeout_ms} ms"),
-                        None::<()>,
-                    ));
+                    return Err(EthApiError::TransactionConfirmationTimeout {
+                        hash: tx_hash,
+                        duration: timeout,
+                    }.into());
                 }
             }
         }
