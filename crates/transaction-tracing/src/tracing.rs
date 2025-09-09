@@ -1,13 +1,14 @@
 use alloy_primitives::TxHash;
 use eyre::Result;
 use futures::StreamExt;
+use lru::LruCache;
 use reth::api::{BlockBody, FullNodeComponents};
 use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
 use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::debug;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::num::NonZeroUsize;
+use std::time::Instant;
 use tokio_stream::wrappers::ReceiverStream;
 
 /// Types of transaction events to track
@@ -20,26 +21,26 @@ enum TxEvent {
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
-    txs: HashMap<TxHash, Instant>,
+    txs: LruCache<TxHash, Instant>,
 }
 
 impl Tracker {
     fn new() -> Self {
         Self {
-            txs: HashMap::new(),
+            txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
         }
     }
 
     fn transaction_inserted(&mut self, tx_hash: TxHash) {
         let now = Instant::now();
-        self.txs.entry(tx_hash).or_insert(now);
+        self.txs.put(tx_hash, now);
         debug!(target: "transaction-tracing", tx_hash = ?tx_hash, "Transaction added to mempool");
     }
 
     fn transaction_included_in_block(&mut self, tx_hash: TxHash, block_number: u64) {
         let inclusion_time = Instant::now();
 
-        if let Some(mempool_time) = self.txs.remove(&tx_hash) {
+        if let Some(mempool_time) = self.txs.pop(&tx_hash) {
             let time_in_mempool = inclusion_time.duration_since(mempool_time);
 
             debug!(
@@ -61,7 +62,7 @@ impl Tracker {
 
     // Handle transaction event (drop, invalid, etc.)
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
-        if let Some(mempool_time) = self.txs.remove(&tx_hash) {
+        if let Some(mempool_time) = self.txs.pop(&tx_hash) {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
             debug!(
                 target: "transaction-tracing",
@@ -70,21 +71,6 @@ impl Tracker {
                 time_in_mempool = ?time_in_mempool.as_millis(),
                 "Transaction event",
             );
-        }
-    }
-
-    // Cleanup old entries in our map that have been sitting in the mempool for too long
-    fn cleanup(&mut self) {
-        const MAX_AGE: Duration = Duration::from_secs(300); // 5 minutes
-        let now = Instant::now();
-
-        let before_count = self.txs.len();
-        self.txs
-            .retain(|_, &mut timestamp| now.duration_since(timestamp) < MAX_AGE);
-
-        let after_count = self.txs.len();
-        if before_count > after_count {
-            debug!(target: "transaction-tracing", entries_removed = before_count - after_count, "Cleaned up old mempool entries");
         }
     }
 }
@@ -137,8 +123,6 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                                 track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
                             }
                         }
-                        // Periodic cleanup
-                        track.cleanup();
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
                     }
                     Ok(ExExNotification::ChainReorged { old: _, new }) => {
@@ -148,7 +132,6 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                                 track.transaction_included_in_block(*transaction.tx_hash(), *block_number);
                             }
                         }
-                        track.cleanup();
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
                     }
                     Ok(ExExNotification::ChainReverted { old }) => {
