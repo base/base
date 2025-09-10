@@ -354,26 +354,19 @@ where
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256> {
         let block_id = block_number.unwrap_or_default();
-        // TODO: Uncomment this when Reth is bumped beyond 1.6.0 and our fix is merged
-        // let mut pending_overrides = EvmOverrides::default();
-        // // If the call is to pending block use cached override (if they exist)
-        // if block_id.is_pending() {
-        //     self.metrics.estimate_gas.increment(1);
-        //     pending_overrides.state = self.flashblocks_state.get_state_overrides();
-        // }
+        let mut pending_overrides = EvmOverrides::default();
+        // If the call is to pending block use cached override (if they exist)
+        if block_id.is_pending() {
+            self.metrics.estimate_gas.increment(1);
+            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+        }
 
-        // let mut state_overrides_builder =
-        //     StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
-        // state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
-        // let final_overrides = state_overrides_builder.build();
+        let mut state_overrides_builder =
+            StateOverridesBuilder::new(pending_overrides.state.unwrap_or_default());
+        state_overrides_builder = state_overrides_builder.extend(overrides.unwrap_or_default());
+        let final_overrides = state_overrides_builder.build();
 
-        // EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
-        //     .await
-        //     .map_err(Into::into)
-
-        // TODO: Remove this and uncomment above
-        // For now, we just delegate to the underlying eth_api
-        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, overrides)
+        EthCall::estimate_gas_at(&self.eth_api, transaction, block_id, Some(final_overrides))
             .await
             .map_err(Into::into)
     }
