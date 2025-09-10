@@ -91,7 +91,13 @@ where
                 if tracked_txn_hashes.len() != block_txn_hashes.len()
                     || tracked_txn_hashes != block_txn_hashes
                 {
+                    debug!(
+                        message = "reorg detected, clearing pending blocks",
+                        latest_pending_block = pending_blocks.latest_block_number(),
+                        canonical_block = block.number
+                    );
                     self.pending_blocks.swap(None);
+                    self.metrics.pending_clear_reorg.increment(1);
                     return;
                 }
 
