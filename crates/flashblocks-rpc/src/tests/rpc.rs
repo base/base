@@ -12,6 +12,7 @@ mod tests {
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
+    use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
     use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_rpc_types_eth::TransactionInput;
@@ -490,7 +491,7 @@ mod tests {
         // We included heavy spending transaction and now don't have enough funds for this request, so
         // this eth_call with fail
         let res = provider
-            .call(send_eth_call)
+            .call(send_eth_call.nonce(3))
             .block(BlockNumberOrTag::Pending.into())
             .await;
 
@@ -516,6 +517,115 @@ mod tests {
         assert_eq!(
             U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
             U256::from(1)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_eth_estimate_gas() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+
+        let provider = node.provider().await?;
+
+        // We ensure that eth_estimate_gas will succeed because we are on plain state
+        let send_estimate_gas = OpTransactionRequest::default()
+            .from(TX_SENDER)
+            .transaction_type(0)
+            .gas_limit(200000)
+            .nonce(1)
+            .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
+            .value(U256::from(9999999999849942300000u128))
+            .input(TransactionInput::new(bytes!("0x")));
+
+        let res = provider
+            .estimate_gas(send_estimate_gas.clone())
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+
+        assert!(res.is_ok());
+
+        node.send_test_payloads().await?;
+
+        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // this eth_estimate_gas with fail
+        let res = provider
+            .estimate_gas(send_estimate_gas.nonce(3))
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
+
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_eth_simulate_v1() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+        node.send_test_payloads().await?;
+
+        let simulate_call = SimulatePayload {
+            block_state_calls: vec![SimBlock {
+                calls: vec![
+                    // read number from counter contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .value(U256::ZERO)
+                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .into(),
+                    // increment() value in contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .input(TransactionInput::new(bytes!("0xd09de08a")))
+                        .into(),
+                    // read number from counter contract
+                    OpTransactionRequest::default()
+                        .from(address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"))
+                        .transaction_type(0)
+                        .gas_limit(200000)
+                        .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
+                        .value(U256::ZERO)
+                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .into(),
+                ],
+                block_overrides: None,
+                state_overrides: None,
+            }],
+            trace_transfers: false,
+            validation: true,
+            return_full_transactions: true,
+        };
+        let simulate_res = provider
+            .simulate(&simulate_call)
+            .block_id(BlockNumberOrTag::Pending.into())
+            .await;
+        assert!(simulate_res.is_ok());
+        let block = simulate_res.unwrap();
+        assert_eq!(block.len(), 1);
+        assert_eq!(block[0].calls.len(), 3);
+        assert_eq!(
+            block[0].calls[0].return_data,
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
+        );
+        assert_eq!(block[0].calls[1].return_data, bytes!("0x"));
+        assert_eq!(
+            block[0].calls[2].return_data,
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000002")
         );
 
         Ok(())
