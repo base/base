@@ -12,10 +12,12 @@ use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
+use jsonrpsee_types::error::INVALID_PARAMS_CODE;
+use jsonrpsee_types::ErrorObjectOwned;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
-use reth::rpc::server_types::eth::EthApiError::TransactionConfirmationTimeout;
+use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
@@ -27,6 +29,9 @@ use tokio::time;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::{debug, trace, warn};
+
+/// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
+pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
@@ -88,6 +93,7 @@ pub trait EthApiOverride {
     async fn send_raw_transaction_sync(
         &self,
         transaction: alloy_primitives::Bytes,
+        timeout_ms: Option<u64>,
     ) -> RpcResult<RpcReceipt<Optimism>>;
 
     #[method(name = "call")]
@@ -253,8 +259,21 @@ where
     async fn send_raw_transaction_sync(
         &self,
         transaction: alloy_primitives::Bytes,
+        timeout_ms: Option<u64>,
     ) -> RpcResult<RpcReceipt<Optimism>> {
         debug!(message = "rpc::send_raw_transaction_sync");
+
+        let timeout_ms = match timeout_ms {
+            Some(ms) if ms > MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS => {
+                return Err(ErrorObjectOwned::owned(
+                    INVALID_PARAMS_CODE,
+                    format!("time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"),
+                    None::<()>,
+                ))
+            },
+            Some(ms) => ms,
+            _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
+        };
 
         let tx_hash = match EthTransactions::send_raw_transaction(&self.eth_api, transaction).await
         {
@@ -264,10 +283,11 @@ where
 
         debug!(
             message = "rpc::send_raw_transaction_sync::sent_transaction",
-            tx_hash = %tx_hash
+            tx_hash = %tx_hash,
+            timeout_ms = timeout_ms,
         );
 
-        const TIMEOUT_DURATION: Duration = Duration::from_secs(6);
+        let timeout = Duration::from_millis(timeout_ms);
         loop {
             tokio::select! {
                 receipt = self.wait_for_flashblocks_receipt(tx_hash) => {
@@ -284,11 +304,11 @@ where
                             continue
                         }
                     }
-                _ = time::sleep(TIMEOUT_DURATION) => {
-                    return Err(TransactionConfirmationTimeout {
+                _ = time::sleep(timeout) => {
+                    return Err(EthApiError::TransactionConfirmationTimeout {
                         hash: tx_hash,
-                        duration: TIMEOUT_DURATION,
-                    }.into_rpc_err());
+                        duration: timeout,
+                    }.into());
                 }
             }
         }

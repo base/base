@@ -54,4 +54,7 @@ pub struct Metrics {
 
     #[metric(describe = "Pending snapshot block number (current)")]
     pub pending_snapshot_height: Gauge,
+
+    #[metric(describe = "Total number of WebSocket reconnection attempts")]
+    pub reconnect_attempts: Counter,
 }

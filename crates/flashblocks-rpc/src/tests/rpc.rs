@@ -3,9 +3,9 @@ mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
+    use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
-    use alloy_eips::BlockNumberOrTag::Pending;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
     use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256};
@@ -14,6 +14,7 @@ mod tests {
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
+    use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_rpc_types_eth::TransactionInput;
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -73,12 +74,13 @@ mod tests {
         pub async fn send_raw_transaction_sync(
             &self,
             tx: Bytes,
+            timeout_ms: Option<u64>,
         ) -> eyre::Result<RpcReceipt<Optimism>> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
 
             let receipt = client
-                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx,))
+                .request::<_, RpcReceipt<Optimism>>("eth_sendRawTransactionSync", (tx, timeout_ms))
                 .await?;
 
             Ok(receipt)
@@ -163,14 +165,6 @@ mod tests {
     }
 
     fn create_first_payload() -> Flashblock {
-        let block_info_tx = Bytes::from_str(
-            "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000")
-            .unwrap();
-
-        let block_info_txn_hash =
-            B256::from_str("0xba56c8b0deb460ff070f8fca8e2ee01e51a3db27841cc862fdd94cc1a47662b6")
-                .unwrap();
-
         Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 0,
@@ -186,7 +180,7 @@ mod tests {
                 base_fee_per_gas: U256::ZERO,
             }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![block_info_tx],
+                transactions: vec![BLOCK_INFO_TXN],
                 ..Default::default()
             },
             metadata: Metadata {
@@ -194,7 +188,7 @@ mod tests {
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
-                        block_info_txn_hash,
+                        BLOCK_INFO_TXN_HASH,
                         OpReceipt::Deposit(OpDepositReceipt {
                             inner: Receipt {
                                 status: true.into(),
@@ -637,123 +631,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_processing_error() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        node.send_payload(create_first_payload()).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?;
-
-        let invalid_flashblock = Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![DEPOSIT_TX],
-                withdrawals: vec![],
-                gas_used: 21000,
-                ..Default::default()
-            },
-            metadata: Metadata {
-                receipts: HashMap::default(), // invalid because it's missing the receipts for txns
-                new_account_balances: HashMap::default(),
-                block_number: 1,
-            },
-        };
-
-        node.send_payload(invalid_flashblock).await?;
-
-        let pending_block = provider.get_block_by_number(Pending).await?;
-
-        // When the flashblock is invalid, the chain doesn't progress
-        assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_new_block_clears_current_block() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        node.send_payload(create_first_payload()).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?.unwrap();
-
-        assert_eq!(current_block.number(), 1);
-        assert_eq!(current_block.transactions.len(), 1);
-
-        let invalid_flashblock = Flashblock {
-            index: 1,
-            base: None,
-            payload_id: PayloadId::new([0; 8]),
-            diff: ExecutionPayloadFlashblockDeltaV1 {
-                transactions: vec![],
-                withdrawals: vec![],
-                gas_used: 21000,
-                ..Default::default()
-            },
-            metadata: Metadata {
-                receipts: HashMap::default(),
-                new_account_balances: HashMap::default(),
-                block_number: 100, // invalid because it's a new block in the future w/out base data
-            },
-        };
-
-        node.send_payload(invalid_flashblock).await?;
-
-        let current_block = provider.get_block_by_number(Pending).await?;
-
-        assert!(current_block.is_none());
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_non_sequential_payload_ignored() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
-        let node = setup_node().await?;
-        let provider = node.provider().await?;
-
-        assert!(provider.get_block_by_number(Pending).await?.is_none());
-
-        node.send_payload(create_first_payload()).await?;
-
-        // Just the block info transaction
-        assert_eq!(
-            provider
-                .get_block_by_number(Pending)
-                .await?
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
-
-        let mut third_payload = create_second_payload();
-        third_payload.index = 3;
-
-        node.send_payload(third_payload).await?;
-
-        // Still the block info transaction, the txns in the third payload are ignored as it's
-        // missing a Flashblock
-        assert_eq!(
-            provider
-                .get_block_by_number(Pending)
-                .await?
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_send_raw_transaction_sync() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
@@ -761,16 +638,36 @@ mod tests {
         node.send_payload(create_first_payload()).await?;
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
-        let (receipt_result, payload_result) =
-            tokio::join!(node.send_raw_transaction_sync(TRANSFER_ETH_TX), async {
+        let (receipt_result, payload_result) = tokio::join!(
+            node.send_raw_transaction_sync(TRANSFER_ETH_TX, None),
+            async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
-            });
+            }
+        );
 
         payload_result?;
         let receipt = receipt_result?;
 
         assert_eq!(receipt.transaction_hash(), TRANSFER_ETH_HASH);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_send_raw_transaction_sync_timeout() {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await.unwrap();
+
+        // fail request immediately by passing timeout of 0 ms
+        let receipt_result = node
+            .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
+            .await;
+
+        let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
+        assert!(receipt_result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(format!("{}", error_code).as_str()));
     }
 }
