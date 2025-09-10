@@ -521,49 +521,49 @@ mod tests {
         Ok(())
     }
 
-    // #[tokio::test]
-    // async fn test_eth_estimate_gas() -> eyre::Result<()> {
-    //     reth_tracing::init_test_tracing();
-    //     let node = setup_node().await?;
+    #[tokio::test]
+    async fn test_eth_estimate_gas() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
 
-    //     let provider = node.provider().await?;
+        let provider = node.provider().await?;
 
-    //     // We ensure that eth_estimate_gas will succeed because we are on plain state
-    //     let send_estimate_gas = OpTransactionRequest::default()
-    //         .from(TX_SENDER)
-    //         .transaction_type(0)
-    //         .gas_limit(200000)
-    //         .nonce(1)
-    //         .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
-    //         .value(U256::from(9999999999849942300000u128))
-    //         .input(TransactionInput::new(bytes!("0x")));
+        // We ensure that eth_estimate_gas will succeed because we are on plain state
+        let send_estimate_gas = OpTransactionRequest::default()
+            .from(TX_SENDER)
+            .transaction_type(0)
+            .gas_limit(200000)
+            .nonce(1)
+            .to(address!("0xf39635f2adf40608255779ff742afe13de31f577"))
+            .value(U256::from(9999999999849942300000u128))
+            .input(TransactionInput::new(bytes!("0x")));
 
-    //     let res = provider
-    //         .estimate_gas(send_estimate_gas.clone())
-    //         .block(BlockNumberOrTag::Pending.into())
-    //         .await;
+        let res = provider
+            .estimate_gas(send_estimate_gas.clone())
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
 
-    //     assert!(res.is_ok());
+        assert!(res.is_ok());
 
-    //     node.send_test_payloads().await?;
+        node.send_test_payloads().await?;
 
-    //     // We included heavy spending transaction and now don't have enough funds for this request, so
-    //     // this eth_estimate_gas with fail
-    //     let res = provider
-    //         .estimate_gas(send_estimate_gas.nonce(3))
-    //         .block(BlockNumberOrTag::Pending.into())
-    //         .await;
+        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // this eth_estimate_gas with fail
+        let res = provider
+            .estimate_gas(send_estimate_gas.nonce(3))
+            .block(BlockNumberOrTag::Pending.into())
+            .await;
 
-    //     assert!(res.is_err());
-    //     assert!(res
-    //         .unwrap_err()
-    //         .as_error_resp()
-    //         .unwrap()
-    //         .message
-    //         .contains("insufficient funds for gas"));
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_eth_simulate_v1() -> eyre::Result<()> {
