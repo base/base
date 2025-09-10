@@ -5,29 +5,40 @@ mod tests {
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;
-    use alloy_consensus::Receipt;
+    use alloy_consensus::{BlockHeader, Receipt};
     use alloy_consensus::{Header, Transaction};
-    use alloy_eips::{BlockHashOrNumber, Encodable2718};
-    use alloy_genesis::{Genesis, GenesisAccount};
+    use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
+    use alloy_genesis::GenesisAccount;
     use alloy_primitives::map::foldhash::HashMap;
     use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
     use reth::builder::NodeTypesWithDBAdapter;
-    use reth::chainspec::Chain;
     use reth::providers::{AccountReader, BlockNumReader, BlockReader};
+    use reth::revm::database::StateProviderDatabase;
     use reth::transaction_pool::test_utils::TransactionBuilder;
     use reth_db::{test_utils::TempDatabase, DatabaseEnv};
-    use reth_optimism_chainspec::OpChainSpecBuilder;
+    use reth_evm::execute::Executor;
+    use reth_evm::ConfigureEvm;
+    use reth_optimism_chainspec::{OpChainSpecBuilder, BASE_MAINNET};
+    use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_node::OpNode;
-    use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt};
-    use reth_primitives::TransactionSigned;
+    use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::providers::BlockchainProvider;
     use reth_provider::test_utils::create_test_provider_factory_with_node_types;
+    use reth_provider::{
+        BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
+    };
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
+    // so it can be processed by the state processor
+    const SLEEP_TIME: u64 = 10;
 
     #[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
     enum User {
@@ -36,13 +47,13 @@ mod tests {
         Charlie,
     }
 
-    struct TestHarness {
-        flashblocks: FlashblocksState<
-            BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
-        >,
-        provider:
-            BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>>,
+    type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 
+    #[derive(Debug, Clone)]
+    struct TestHarness {
+        flashblocks: FlashblocksState<BlockchainProvider<NodeTypes>>,
+        provider: BlockchainProvider<NodeTypes>,
+        factory: ProviderFactory<NodeTypes>,
         user_to_address: HashMap<User, Address>,
         user_to_private_key: HashMap<User, B256>,
     }
@@ -73,10 +84,26 @@ mod tests {
         }
 
         fn account_state(&self, u: User) -> Account {
-            self.provider
+            let basic_account = self
+                .provider
                 .basic_account(&self.address(u))
                 .expect("can lookup account state")
-                .expect("should be existing account state")
+                .expect("should be existing account state");
+
+            let nonce = self
+                .flashblocks
+                .get_transaction_count(self.address(u))
+                .to::<u64>();
+            let balance = self
+                .flashblocks
+                .get_balance(self.address(u))
+                .unwrap_or(basic_account.balance);
+
+            Account {
+                nonce,
+                balance,
+                bytecode_hash: basic_account.bytecode_hash,
+            }
         }
 
         fn build_transaction_to_send_eth(
@@ -84,17 +111,112 @@ mod tests {
             from: User,
             to: User,
             amount: u128,
-        ) -> TransactionSigned {
-            TransactionBuilder::default()
+        ) -> OpTransactionSigned {
+            let txn = TransactionBuilder::default()
                 .signer(self.signer(from))
                 .to(self.address(to))
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
                 .gas_limit(21_000)
+                .max_fee_per_gas(200)
                 .into_eip1559()
+                .as_eip1559()
+                .unwrap()
+                .clone();
+
+            OpTransactionSigned::Eip1559(txn)
         }
 
-        fn new() -> Arc<Self> {
+        fn build_transaction_to_send_eth_with_nonce(
+            &self,
+            from: User,
+            to: User,
+            amount: u128,
+            nonce: u64,
+        ) -> OpTransactionSigned {
+            let txn = TransactionBuilder::default()
+                .signer(self.signer(from))
+                .to(self.address(to))
+                .nonce(nonce)
+                .value(amount)
+                .gas_limit(21_000)
+                .max_fee_per_gas(200)
+                .into_eip1559()
+                .as_eip1559()
+                .unwrap()
+                .clone();
+
+            OpTransactionSigned::Eip1559(txn)
+        }
+
+        async fn send_flashblock(&self, flashblock: Flashblock) {
+            self.flashblocks.on_flashblock_received(flashblock);
+            sleep(Duration::from_millis(SLEEP_TIME)).await;
+        }
+
+        async fn new_canonical_block(&mut self, mut user_transactions: Vec<OpTransactionSigned>) {
+            let current_tip = self.current_canonical_block();
+
+            let deposit_transaction =
+                OpTransactionSigned::decode_2718_exact(BLOCK_INFO_TXN.iter().as_slice()).unwrap();
+
+            let mut transactions: Vec<OpTransactionSigned> = vec![deposit_transaction];
+            transactions.append(&mut user_transactions);
+
+            let block = OpBlock::new_sealed(
+                SealedHeader::new_unhashed(Header {
+                    parent_beacon_block_root: Some(current_tip.hash()),
+                    parent_hash: current_tip.hash(),
+                    number: current_tip.number() + 1,
+                    timestamp: current_tip.header().timestamp() + 2,
+                    gas_limit: current_tip.header().gas_limit(),
+                    ..Header::default()
+                }),
+                OpBlockBody {
+                    transactions,
+                    ommers: vec![],
+                    withdrawals: None,
+                },
+            )
+            .try_recover()
+            .expect("able to recover block");
+
+            let provider = self.factory.provider().unwrap();
+
+            // Execute the block to produce a block execution output
+            let mut block_execution_output = OpEvmConfig::optimism(self.provider.chain_spec())
+                .batch_executor(StateProviderDatabase::new(LatestStateProviderRef::new(
+                    &provider,
+                )))
+                .execute(&block)
+                .unwrap();
+
+            block_execution_output.state.reverts.sort();
+
+            let execution_outcome = ExecutionOutcome {
+                bundle: block_execution_output.state.clone(),
+                receipts: vec![block_execution_output.receipts.clone()],
+                first_block: block.number,
+                requests: vec![block_execution_output.requests.clone()],
+            };
+
+            // Commit the block's execution outcome to the database
+            let provider_rw = self.factory.provider_rw().unwrap();
+            provider_rw
+                .append_blocks_with_state(
+                    vec![block.clone()],
+                    &execution_outcome,
+                    Default::default(),
+                    Default::default(),
+                )
+                .unwrap();
+            provider_rw.commit().unwrap();
+
+            self.flashblocks.on_canonical_block_received(&block);
+            sleep(Duration::from_millis(SLEEP_TIME)).await;
+        }
+
+        fn new() -> Self {
             let keys = reth_testing_utils::generators::generate_keys(&mut rand::rng(), 3);
             let alice_signer = keys[0];
             let bob_signer = keys[1];
@@ -119,20 +241,24 @@ mod tests {
                 ),
             ];
 
-            let genesis = Genesis::default()
-                .with_gas_limit(100_000_000)
-                .extend_accounts(items);
+            let genesis = BASE_MAINNET
+                .genesis
+                .clone()
+                .extend_accounts(items)
+                .with_gas_limit(100_000_000);
 
-            let factory = create_test_provider_factory_with_node_types::<OpNode>(Arc::new(
-                OpChainSpecBuilder::default()
-                    .chain(Chain::dev())
-                    .genesis(genesis)
-                    .build(),
-            ));
+            let chain_spec = OpChainSpecBuilder::base_mainnet()
+                .genesis(genesis)
+                .isthmus_activated()
+                .build();
+
+            let factory =
+                create_test_provider_factory_with_node_types::<OpNode>(Arc::new(chain_spec));
 
             assert!(reth_db_common::init::init_genesis(&factory).is_ok());
 
-            let provider = BlockchainProvider::new(factory).expect("able to setup provider");
+            let provider =
+                BlockchainProvider::new(factory.clone()).expect("able to setup provider");
 
             let block = provider
                 .block(BlockHashOrNumber::Number(0))
@@ -142,10 +268,12 @@ mod tests {
                 .expect("able to recover block");
 
             let flashblocks = FlashblocksState::new(provider.clone());
+            flashblocks.start();
 
             flashblocks.on_canonical_block_received(&block);
 
-            Arc::new(Self {
+            Self {
+                factory,
                 flashblocks,
                 provider,
                 user_to_address: {
@@ -162,20 +290,20 @@ mod tests {
                     res.insert(User::Charlie, charli_signer.secret_bytes().into());
                     res
                 },
-            })
+            }
         }
     }
 
     struct FlashblockBuilder {
         transactions: Vec<Bytes>,
         receipts: HashMap<B256, OpReceipt>,
-        harness: Arc<TestHarness>,
+        harness: TestHarness,
         canonical_block_number: Option<BlockNumber>,
         index: u64,
     }
 
     impl FlashblockBuilder {
-        pub fn new_base(harness: &Arc<TestHarness>) -> Self {
+        pub fn new_base(harness: &TestHarness) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: vec![BLOCK_INFO_TXN],
@@ -199,7 +327,7 @@ mod tests {
                 harness: harness.clone(),
             }
         }
-        pub fn new(harness: &Arc<TestHarness>, index: u64) -> Self {
+        pub fn new(harness: &TestHarness, index: u64) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: Vec::new(),
@@ -214,7 +342,7 @@ mod tests {
             self
         }
 
-        pub fn with_transactions(&mut self, transactions: Vec<TransactionSigned>) -> &mut Self {
+        pub fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
             assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
             self.transactions.clear();
 
@@ -285,14 +413,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_state_overrides_persisted_across_flashblocks() {
+    #[tokio::test]
+    async fn test_state_overrides_persisted_across_flashblocks() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
-
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
         assert_eq!(
             test.flashblocks
                 .get_block(true)
@@ -309,7 +436,7 @@ mod tests {
             .unwrap()
             .contains_key(&test.address(User::Alice)));
 
-        test.flashblocks.on_flashblock_received(
+        test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
                 .with_transactions(vec![test.build_transaction_to_send_eth(
                     User::Alice,
@@ -317,7 +444,8 @@ mod tests {
                     100_000,
                 )])
                 .build(),
-        );
+        )
+        .await;
 
         let pending = test.flashblocks.get_block(true);
         assert!(pending.is_some());
@@ -339,8 +467,8 @@ mod tests {
             U256::from(100_100_000)
         );
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new(&test, 2).build());
+        test.send_flashblock(FlashblockBuilder::new(&test, 2).build())
+            .await;
 
         let overrides = test
             .flashblocks
@@ -358,17 +486,232 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_missing_receipts_will_not_process() {
+    #[tokio::test]
+    async fn test_state_overrides_persisted_across_blocks() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        let initial_base = FlashblockBuilder::new_base(&test).build();
+        let initial_block_number = initial_base.metadata.block_number;
+        test.send_flashblock(initial_base).await;
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+
+        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(!test
+            .flashblocks
+            .get_state_overrides()
+            .unwrap()
+            .contains_key(&test.address(User::Alice)));
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        )
+        .await;
+
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_100_000)
+        );
+
+        test.send_flashblock(
+            FlashblockBuilder::new_base(&test)
+                .with_canonical_block_number(initial_block_number)
+                .build(),
+        )
+        .await;
+
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .header
+                .number,
+            initial_block_number + 1
+        );
+
+        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(test
+            .flashblocks
+            .get_state_overrides()
+            .unwrap()
+            .contains_key(&test.address(User::Alice)));
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_canonical_block_number(initial_block_number)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        )
+        .await;
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_200_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_all_pending_state_cleared_upon_canonical_block_reorg() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
+        assert_eq!(
+            test.flashblocks
+                .get_block(true)
+                .expect("block is built")
+                .transactions
+                .len(),
+            1
+        );
+        assert!(test.flashblocks.get_state_overrides().is_some());
+        assert!(!test
+            .flashblocks
+            .get_state_overrides()
+            .unwrap()
+            .contains_key(&test.address(User::Alice)));
+
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        )
+        .await;
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_100_000)
+        );
+
+        test.send_flashblock(
+            FlashblockBuilder::new_base(&test)
+                .with_canonical_block_number(1)
+                .build(),
+        )
+        .await;
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_canonical_block_number(1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100_000,
+                )])
+                .build(),
+        )
+        .await;
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_200_000)
+        );
+
+        test.new_canonical_block(vec![test.build_transaction_to_send_eth_with_nonce(
+            User::Alice,
+            User::Bob,
+            100,
+            0,
+        )])
+        .await;
+
+        assert!(test.flashblocks.get_block(true).is_none());
+        assert!(test.flashblocks.get_state_overrides().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_missing_receipts_will_not_process() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
 
         let current_block = test.flashblocks.get_block(true);
 
-        test.flashblocks.on_flashblock_received(
+        test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
                 .with_transactions(vec![test.build_transaction_to_send_eth(
                     User::Alice,
@@ -377,7 +720,8 @@ mod tests {
                 )])
                 .with_receipts(HashMap::default()) // Clear the receipts
                 .build(),
-        );
+        )
+        .await;
 
         let pending_block = test.flashblocks.get_block(true);
 
@@ -385,38 +729,65 @@ mod tests {
         assert_eq!(pending_block.unwrap().hash(), current_block.unwrap().hash());
     }
 
-    #[test]
-    fn test_flashblock_for_new_canonical_block_clears_older_flashblocks() {
+    #[tokio::test]
+    async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
 
         let current_block = test.flashblocks.get_block(true).expect("should be a block");
 
         assert_eq!(current_block.header().number, 1);
         assert_eq!(current_block.transactions.len(), 1);
 
-        test.flashblocks.on_flashblock_received(
+        test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
                 .with_canonical_block_number(100)
                 .build(),
-        );
+        )
+        .await;
 
         let current_block = test.flashblocks.get_block(true);
         assert!(current_block.is_none());
     }
 
-    #[test]
-    fn test_non_sequential_payload_ignored() {
+    #[tokio::test]
+    async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
+        reth_tracing::init_test_tracing();
+        let test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
+
+        let current_block = test.flashblocks.get_block(true).expect("should be a block");
+
+        assert_eq!(current_block.header().number, 1);
+        assert_eq!(current_block.transactions.len(), 1);
+
+        test.send_flashblock(
+            FlashblockBuilder::new_base(&test)
+                .with_canonical_block_number(1)
+                .build(),
+        )
+        .await;
+
+        let current_block = test.flashblocks.get_block(true).expect("should be a block");
+
+        assert_eq!(current_block.header().number, 2);
+        assert_eq!(current_block.transactions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_non_sequential_payload_ignored() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
         assert!(test.flashblocks.get_block(true).is_none());
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
 
         // Just the block info transaction
         assert_eq!(
@@ -428,7 +799,7 @@ mod tests {
             1
         );
 
-        test.flashblocks.on_flashblock_received(
+        test.send_flashblock(
             FlashblockBuilder::new(&test, 3)
                 .with_transactions(vec![test.build_transaction_to_send_eth(
                     User::Alice,
@@ -436,7 +807,8 @@ mod tests {
                     100,
                 )])
                 .build(),
-        );
+        )
+        .await;
 
         // Still the block info transaction, the txns in the third payload are ignored as it's
         // missing a Flashblock
@@ -450,45 +822,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_canonical_block_clears_older_flashblocks() {
+    #[tokio::test]
+    async fn test_duplicate_flashblock_ignored() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
-
-        assert_eq!(
-            test.flashblocks
-                .get_block(true)
-                .expect("should have pending block one")
-                .number(),
-            1
-        );
-
-        let block = OpBlock::new_sealed(
-            SealedHeader::new_unhashed(Header {
-                number: 3, // Greater than the current Flashblock block number of 1
-                ..Header::default()
-            }),
-            OpBlockBody::default(),
-        )
-        .try_recover()
-        .expect("able to recover block");
-
-        test.flashblocks.on_canonical_block_received(&block);
-
-        // Flashblock is cleared, as canonical data is more recent
-        assert!(test.flashblocks.get_block(true).is_none());
-    }
-
-    #[test]
-    fn test_duplicate_flashblock_ignored() {
-        reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
-
-        test.flashblocks
-            .on_flashblock_received(FlashblockBuilder::new_base(&test).build());
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
 
         let fb = FlashblockBuilder::new(&test, 1)
             .with_transactions(vec![test.build_transaction_to_send_eth(
@@ -498,12 +838,46 @@ mod tests {
             )])
             .build();
 
-        test.flashblocks.on_flashblock_received(fb.clone());
+        test.send_flashblock(fb.clone()).await;
         let block = test.flashblocks.get_block(true);
 
-        test.flashblocks.on_flashblock_received(fb.clone());
+        test.send_flashblock(fb.clone()).await;
         let block_two = test.flashblocks.get_block(true);
 
         assert_eq!(block, block_two);
+    }
+
+    #[tokio::test]
+    async fn test_progress_canonical_blocks_without_flashblocks() {
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        let genesis_block = test.current_canonical_block();
+        assert_eq!(genesis_block.number, 0);
+        assert_eq!(genesis_block.transaction_count(), 0);
+        assert!(test.flashblocks.get_block(true).is_none());
+
+        test.new_canonical_block(vec![test.build_transaction_to_send_eth(
+            User::Alice,
+            User::Bob,
+            100,
+        )])
+        .await;
+
+        let block_one = test.current_canonical_block();
+        assert_eq!(block_one.number, 1);
+        assert_eq!(block_one.transaction_count(), 2);
+        assert!(test.flashblocks.get_block(true).is_none());
+
+        test.new_canonical_block(vec![
+            test.build_transaction_to_send_eth(User::Bob, User::Charlie, 100),
+            test.build_transaction_to_send_eth(User::Charlie, User::Alice, 1000),
+        ])
+        .await;
+
+        let block_one = test.current_canonical_block();
+        assert_eq!(block_one.number, 2);
+        assert_eq!(block_one.transaction_count(), 3);
+        assert!(test.flashblocks.get_block(true).is_none());
     }
 }

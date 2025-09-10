@@ -41,6 +41,9 @@ pub struct Metrics {
     )]
     pub pending_clear_catchup: Counter,
 
+    #[metric(describe = "Number of times pending snapshot was cleared because of reorg")]
+    pub pending_clear_reorg: Counter,
+
     #[metric(describe = "Pending snapshot flashblock index (current)")]
     pub pending_snapshot_fb_index: Gauge,
 
