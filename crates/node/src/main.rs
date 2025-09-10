@@ -101,6 +101,7 @@ fn main() {
                         let fb = fb_cell
                             .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
                             .clone();
+                        fb.start();
 
                         let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
                         flashblocks_client.start();

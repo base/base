@@ -130,7 +130,7 @@ impl PendingBlocksBuilder {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PendingBlocks {
     flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,

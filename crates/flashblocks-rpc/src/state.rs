@@ -37,17 +37,24 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast::{self, Sender};
+use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
-// Buffer 4s of flashblocks
+// Buffer 4s of flashblocks for flashblock_sender
 const BUFFER_SIZE: usize = 20;
+
+enum StateUpdate {
+    Canonical(RecoveredBlock<OpBlock>),
+    Flashblock(Flashblock),
+}
 
 #[derive(Debug, Clone)]
 pub struct FlashblocksState<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+    queue: mpsc::UnboundedSender<StateUpdate>,
     flashblock_sender: Sender<Flashblock>,
-    metrics: Metrics,
-    client: Client,
+    state_processor: StateProcessor<Client>,
 }
 
 impl<Client> FlashblocksState<Client>
@@ -59,94 +66,283 @@ where
         + 'static,
 {
     pub fn new(client: Client) -> Self {
+        let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
+        let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
+        let state_processor =
+            StateProcessor::new(client, pending_blocks.clone(), Arc::new(Mutex::new(rx)));
+
         Self {
-            pending_blocks: Arc::new(ArcSwapOption::new(None)),
+            pending_blocks,
+            queue: tx,
             flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
-            metrics: Metrics::default(),
-            client,
+            state_processor,
         }
+    }
+
+    pub fn start(&self) {
+        let sp = self.state_processor.clone();
+        tokio::spawn(async move {
+            sp.start().await;
+        });
     }
 
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
-        if let Some(pending_blocks) = self.pending_blocks.load_full() {
-            if pending_blocks.latest_block_number() <= block.number {
-                if let Some(prev) = self.pending_blocks.swap(None) {
+        match self.queue.send(StateUpdate::Canonical(block.clone())) {
+            Ok(_) => {
+                debug!(
+                    message = "added canonical block to processing queue",
+                    block_number = block.number
+                )
+            }
+            Err(e) => {
+                error!(message = "could not add canonical block to processing queue", block_number = block.number, error = %e);
+            }
+        }
+    }
+}
+
+impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
+    fn on_flashblock_received(&self, flashblock: Flashblock) {
+        match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
+            Ok(_) => {
+                debug!(
+                    message = "added flashblock to processing queue",
+                    block_number = flashblock.metadata.block_number,
+                    flashblock_index = flashblock.index
+                );
+            }
+            Err(e) => {
+                error!(message = "could not add flashblock to processing queue", block_number = flashblock.metadata.block_number, flashblock_index = flashblock.index, error = %e);
+            }
+        }
+
+        _ = self.flashblock_sender.send(flashblock);
+    }
+}
+
+impl<Client> FlashblocksAPI for FlashblocksState<Client> {
+    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
+        self.pending_blocks
+            .load_full()
+            .map(|pb| pb.get_latest_block(full))
+    }
+
+    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
+        self.pending_blocks
+            .load_full()
+            .and_then(|pb| pb.get_receipt(tx_hash))
+    }
+
+    fn get_transaction_count(&self, address: Address) -> U256 {
+        self.pending_blocks
+            .load_full()
+            .map(|pb| pb.get_transaction_count(address))
+            .unwrap_or_else(|| U256::from(0))
+    }
+
+    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
+        self.pending_blocks
+            .load_full()
+            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+    }
+
+    fn get_balance(&self, address: Address) -> Option<U256> {
+        self.pending_blocks
+            .load_full()
+            .and_then(|pb| pb.get_balance(address))
+    }
+
+    fn subscribe_to_flashblocks(&self) -> tokio::sync::broadcast::Receiver<Flashblock> {
+        self.flashblock_sender.subscribe()
+    }
+
+    fn get_state_overrides(&self) -> Option<StateOverride> {
+        self.pending_blocks
+            .load_full()
+            .and_then(|pb| pb.get_state_overrides())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StateProcessor<Client> {
+    rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+    pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+    metrics: Metrics,
+    client: Client,
+}
+
+impl<Client> StateProcessor<Client>
+where
+    Client: StateProviderFactory
+        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
+        + BlockReaderIdExt<Header = Header>
+        + Clone
+        + 'static,
+{
+    fn new(
+        client: Client,
+        pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+        rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+    ) -> Self {
+        Self {
+            metrics: Metrics::default(),
+            pending_blocks,
+            client,
+            rx,
+        }
+    }
+
+    async fn start(&self) {
+        while let Some(update) = self.rx.lock().await.recv().await {
+            let prev_pending_blocks = self.pending_blocks.load_full();
+            match update {
+                StateUpdate::Canonical(block) => {
+                    info!(
+                        message = "processing canonical block",
+                        block_number = block.number
+                    );
+                    match self.process_canonical_block(prev_pending_blocks, &block) {
+                        Ok(new_pending_blocks) => {
+                            self.pending_blocks.swap(new_pending_blocks);
+                        }
+                        Err(e) => {
+                            error!(message = "could not process canonical block", error = %e);
+                        }
+                    }
+                }
+                StateUpdate::Flashblock(flashblock) => {
+                    let start_time = Instant::now();
+                    info!(
+                        message = "processing flashblock",
+                        block_number = flashblock.metadata.block_number,
+                        flashblock_index = flashblock.index
+                    );
+                    match self.process_flashblock(prev_pending_blocks, &flashblock) {
+                        Ok(new_pending_blocks) => {
+                            self.pending_blocks.swap(new_pending_blocks);
+                            self.metrics
+                                .block_processing_duration
+                                .record(start_time.elapsed());
+                        }
+                        Err(e) => {
+                            error!(message = "could not process Flashblock", error = %e);
+                            self.metrics.block_processing_error.increment(1);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_canonical_block(
+        &self,
+        prev_pending_blocks: Option<Arc<PendingBlocks>>,
+        block: &RecoveredBlock<OpBlock>,
+    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+        match &prev_pending_blocks {
+            Some(pending_blocks) => {
+                if pending_blocks.latest_block_number() <= block.number {
                     self.metrics.pending_clear_catchup.increment(1);
                     self.metrics
                         .pending_snapshot_height
-                        .set(prev.latest_block_number() as f64);
+                        .set(pending_blocks.latest_block_number() as f64);
                     self.metrics
                         .pending_snapshot_fb_index
-                        .set(prev.latest_flashblock_index() as f64);
+                        .set(pending_blocks.latest_flashblock_index() as f64);
+
+                    Ok(None)
+                } else {
+                    // If we had a reorg, we need to reset all flashblocks state
+                    let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
+                    let tracked_txn_hashes: HashSet<_> =
+                        tracked_txns.clone().iter().map(|tx| tx.tx_hash()).collect();
+                    let block_txn_hashes: HashSet<_> =
+                        block.body().transactions().map(|tx| tx.tx_hash()).collect();
+
+                    // Reorg
+                    if tracked_txn_hashes.len() != block_txn_hashes.len()
+                        || tracked_txn_hashes != block_txn_hashes
+                    {
+                        debug!(
+                            message = "reorg detected, clearing pending blocks",
+                            latest_pending_block = pending_blocks.latest_block_number(),
+                            canonical_block = block.number
+                        );
+                        self.metrics.pending_clear_reorg.increment(1);
+
+                        return Ok(None);
+                    }
+
+                    // If no reorg, we clear everything not necessary and re-process
+                    let mut flashblocks = pending_blocks.get_flashblocks();
+                    flashblocks
+                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
+
+                    self.build_pending_state(prev_pending_blocks, &flashblocks)
                 }
-            } else {
-                // If we had a reorg, we need to reset all flashblocks state
-                let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
-                let tracked_txn_hashes: HashSet<_> =
-                    tracked_txns.clone().iter().map(|tx| tx.tx_hash()).collect();
-                let block_txn_hashes: HashSet<_> =
-                    block.body().transactions().map(|tx| tx.tx_hash()).collect();
-
-                // Reorg
-                if tracked_txn_hashes.len() != block_txn_hashes.len()
-                    || tracked_txn_hashes != block_txn_hashes
-                {
-                    debug!(
-                        message = "reorg detected, clearing pending blocks",
-                        latest_pending_block = pending_blocks.latest_block_number(),
-                        canonical_block = block.number
-                    );
-                    self.pending_blocks.swap(None);
-                    self.metrics.pending_clear_reorg.increment(1);
-                    return;
-                }
-
-                // If no reorg, we clear everything not necessary and re-process
-                let mut flashblocks = pending_blocks.get_flashblocks();
-                flashblocks.retain(|flashblock| flashblock.metadata.block_number > block.number);
-
-                self.update_pending_blocks(&flashblocks);
+            }
+            None => {
+                debug!(message = "no pending state to update with canonical block, skipping");
+                Ok(None)
             }
         }
     }
 
-    fn is_next_flashblock(
+    fn process_flashblock(
         &self,
-        pending_blocks: &Arc<PendingBlocks>,
+        prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblock: &Flashblock,
-    ) -> bool {
-        let is_next_of_block = flashblock.metadata.block_number
-            == pending_blocks.latest_block_number()
-            && flashblock.index == pending_blocks.latest_flashblock_index() + 1;
-        let is_first_of_next_block = flashblock.metadata.block_number
-            == pending_blocks.latest_block_number() + 1
-            && flashblock.index == 0;
+    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
+        match &prev_pending_blocks {
+            Some(pending_blocks) => {
+                if self.is_next_flashblock(pending_blocks, flashblock) {
+                    if flashblock.index == 0 {
+                        self.metrics
+                            .flashblocks_in_block
+                            .record((pending_blocks.latest_flashblock_index() + 1) as f64);
+                    }
 
-        is_next_of_block || is_first_of_next_block
-    }
+                    let mut flashblocks = pending_blocks.get_flashblocks();
+                    flashblocks.push(flashblock.clone());
+                    self.build_pending_state(prev_pending_blocks, &flashblocks)
+                } else if pending_blocks.latest_block_number() != flashblock.metadata.block_number {
+                    // We have received a non-zero flashblock for a new block
+                    self.metrics.unexpected_block_order.increment(1);
+                    error!(
+                        message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
+                        curr_block = %pending_blocks.latest_block_number(),
+                        new_block = %flashblock.metadata.block_number,
+                    );
+                    Ok(None)
+                } else {
+                    // We have received a non-sequential flashblock for the current block
+                    self.metrics.unexpected_block_order.increment(1);
 
-    fn update_pending_blocks(&self, flashblocks: &Vec<Flashblock>) {
-        let start_time = Instant::now();
-        let prev_pending_blocks = self.pending_blocks.load_full();
-        match self.process_flashblocks(prev_pending_blocks, flashblocks) {
-            Ok(pending_blocks) => {
-                self.pending_blocks.swap(Some(Arc::new(pending_blocks)));
-                self.metrics
-                    .block_processing_duration
-                    .record(start_time.elapsed());
+                    info!(
+                        message = "Received non-sequential Flashblock, ignoring and moving on",
+                        curr_block = %pending_blocks.latest_block_number(),
+                        new_block = %flashblock.metadata.block_number,
+                    );
+
+                    Ok(Some(pending_blocks.clone()))
+                }
             }
-            Err(e) => {
-                error!(message = "could not process Flashblock", error = %e);
-                self.metrics.block_processing_error.increment(1);
+            None => {
+                if flashblock.index == 0 {
+                    self.build_pending_state(None, &vec![flashblock.clone()])
+                } else {
+                    debug!(message = "waiting for first Flashblock");
+                    Ok(None)
+                }
             }
         }
     }
 
-    fn process_flashblocks(
+    fn build_pending_state(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &Vec<Flashblock>,
-    ) -> eyre::Result<PendingBlocks> {
+    ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
         for flashblock in flashblocks {
@@ -413,112 +609,21 @@ where
 
         pending_blocks_builder.with_db_cache(db.cache);
         pending_blocks_builder.with_state_overrides(state_cache_builder.build());
-        pending_blocks_builder.build()
-    }
-}
-
-impl<Client> FlashblocksReceiver for FlashblocksState<Client>
-where
-    Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
-        + 'static,
-{
-    fn on_flashblock_received(&self, flashblock: Flashblock) {
-        match self.pending_blocks.load_full() {
-            Some(pending_blocks) => {
-                // We have received the next flashblock for the current block, or flashblock 0 for next block
-                if self.is_next_flashblock(&pending_blocks, &flashblock) {
-                    if flashblock.index == 0 {
-                        self.metrics
-                            .flashblocks_in_block
-                            .record((pending_blocks.latest_flashblock_index() + 1) as f64);
-                    }
-
-                    let mut flashblocks = pending_blocks.get_flashblocks();
-                    flashblocks.push(flashblock.clone());
-                    self.update_pending_blocks(&flashblocks);
-                } else if pending_blocks.latest_block_number() != flashblock.metadata.block_number {
-                    // We have received a non-zero flashblock for a new block
-                    self.metrics.unexpected_block_order.increment(1);
-                    self.pending_blocks.swap(None);
-
-                    error!(
-                        message = "Received non-zero index Flashblock for new block, zeroing Flashblocks until we receive a base Flashblock",
-                        curr_block = %pending_blocks.latest_block_number(),
-                        new_block = %flashblock.metadata.block_number,
-                    );
-                } else {
-                    // We have received a non-sequential flashblock for the current block
-                    self.metrics.unexpected_block_order.increment(1);
-
-                    info!(
-                        message = "Received non-sequential Flashblock, ignoring and moving on",
-                        curr_block = %pending_blocks.latest_block_number(),
-                        new_block = %flashblock.metadata.block_number,
-                    );
-                }
-            }
-            None => {
-                if flashblock.index == 0 {
-                    self.update_pending_blocks(&vec![flashblock.clone()]);
-                } else {
-                    debug!(message = "waiting for first Flashblock")
-                }
-            }
-        }
-
-        _ = self.flashblock_sender.send(flashblock);
-    }
-}
-
-impl<Client> FlashblocksAPI for FlashblocksState<Client>
-where
-    Client: StateProviderFactory
-        + ChainSpecProvider<ChainSpec: EthChainSpec<Header = Header> + OpHardforks>
-        + BlockReaderIdExt<Header = Header>
-        + Clone
-        + 'static,
-{
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.pending_blocks
-            .load_full()
-            .map(|pb| pb.get_latest_block(full))
+        Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
 
-    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.pending_blocks
-            .load_full()
-            .and_then(|pb| pb.get_receipt(tx_hash))
-    }
+    fn is_next_flashblock(
+        &self,
+        pending_blocks: &Arc<PendingBlocks>,
+        flashblock: &Flashblock,
+    ) -> bool {
+        let is_next_of_block = flashblock.metadata.block_number
+            == pending_blocks.latest_block_number()
+            && flashblock.index == pending_blocks.latest_flashblock_index() + 1;
+        let is_first_of_next_block = flashblock.metadata.block_number
+            == pending_blocks.latest_block_number() + 1
+            && flashblock.index == 0;
 
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.pending_blocks
-            .load_full()
-            .map(|pb| pb.get_transaction_count(address))
-            .unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
-        self.pending_blocks
-            .load_full()
-            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.pending_blocks
-            .load_full()
-            .and_then(|pb| pb.get_balance(address))
-    }
-
-    fn subscribe_to_flashblocks(&self) -> tokio::sync::broadcast::Receiver<Flashblock> {
-        self.flashblock_sender.subscribe()
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.pending_blocks
-            .load_full()
-            .and_then(|pb| pb.get_state_overrides())
+        is_next_of_block || is_first_of_next_block
     }
 }
