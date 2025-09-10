@@ -169,450 +169,244 @@ where
             .build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
-        match &prev_pending_blocks {
+        let mut db = match &prev_pending_blocks {
+            Some(pending_blocks) => CacheDB {
+                cache: pending_blocks.get_db_cache(),
+                db: state,
+            },
+            None => CacheDB::new(state),
+        };
+        let mut state_cache_builder = match &prev_pending_blocks {
             Some(pending_blocks) => {
-                let mut db = CacheDB {
-                    cache: pending_blocks.get_db_cache(),
-                    db: state,
-                };
-                let mut state_cache_builder = StateOverridesBuilder::new(
-                    pending_blocks.get_state_overrides().unwrap_or_default(),
-                );
-                for (block_number, flashblocks) in flashblocks_per_block {
-                    let nested_db = db.nest();
-                    let base = flashblocks
-                        .first()
-                        .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
-                        .base
-                        .clone()
-                        .ok_or(eyre!("first flashblock does not contain a base"))?;
+                StateOverridesBuilder::new(pending_blocks.get_state_overrides().unwrap_or_default())
+            }
+            None => StateOverridesBuilder::default(),
+        };
+        for (_block_number, flashblocks) in flashblocks_per_block {
+            let nested_db = db.nest();
+            let base = flashblocks
+                .first()
+                .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
+                .base
+                .clone()
+                .ok_or(eyre!("first flashblock does not contain a base"))?;
 
-                    let latest_flashblock = flashblocks
-                        .last()
-                        .cloned()
-                        .ok_or(eyre!("cannot build a pending block from no flashblocks"))?;
+            let latest_flashblock = flashblocks
+                .last()
+                .cloned()
+                .ok_or(eyre!("cannot build a pending block from no flashblocks"))?;
 
-                    let transactions: Vec<Bytes> = flashblocks
-                        .iter()
-                        .flat_map(|flashblock| flashblock.diff.transactions.clone())
-                        .collect();
+            let transactions: Vec<Bytes> = flashblocks
+                .iter()
+                .flat_map(|flashblock| flashblock.diff.transactions.clone())
+                .collect();
 
-                    let withdrawals: Vec<Withdrawal> = flashblocks
-                        .iter()
-                        .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-                        .collect();
+            let withdrawals: Vec<Withdrawal> = flashblocks
+                .iter()
+                .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
+                .collect();
 
-                    let receipt_by_hash = flashblocks
-                        .iter()
-                        .map(|flashblock| flashblock.metadata.receipts.clone())
-                        .fold(HashMap::default(), |mut acc, receipts| {
-                            acc.extend(receipts);
-                            acc
-                        });
+            let receipt_by_hash = flashblocks
+                .iter()
+                .map(|flashblock| flashblock.metadata.receipts.clone())
+                .fold(HashMap::default(), |mut acc, receipts| {
+                    acc.extend(receipts);
+                    acc
+                });
 
-                    let updated_balances = flashblocks
-                        .iter()
-                        .map(|flashblock| flashblock.metadata.new_account_balances.clone())
-                        .fold(HashMap::default(), |mut acc, balances| {
-                            acc.extend(balances);
-                            acc
-                        });
+            let updated_balances = flashblocks
+                .iter()
+                .map(|flashblock| flashblock.metadata.new_account_balances.clone())
+                .fold(HashMap::default(), |mut acc, balances| {
+                    acc.extend(balances);
+                    acc
+                });
 
-                    pending_blocks_builder.with_flashblocks(flashblocks.clone());
-                    let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
-                        blob_gas_used: 0,
-                        excess_blob_gas: 0,
-                        payload_inner: ExecutionPayloadV2 {
-                            withdrawals,
-                            payload_inner: ExecutionPayloadV1 {
-                                parent_hash: base.parent_hash,
-                                fee_recipient: base.fee_recipient,
-                                state_root: latest_flashblock.diff.state_root,
-                                receipts_root: latest_flashblock.diff.receipts_root,
-                                logs_bloom: latest_flashblock.diff.logs_bloom,
-                                prev_randao: base.prev_randao,
-                                block_number: base.block_number,
-                                gas_limit: base.gas_limit,
-                                gas_used: latest_flashblock.diff.gas_used,
-                                timestamp: base.timestamp,
-                                extra_data: base.extra_data.clone(),
-                                base_fee_per_gas: base.base_fee_per_gas,
-                                block_hash: latest_flashblock.diff.block_hash,
-                                transactions,
-                            },
-                        },
-                    };
+            pending_blocks_builder.with_flashblocks(flashblocks.clone());
 
-                    let block: OpBlock = execution_payload.try_into_block()?;
-                    let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
-                    let header = block.header.clone().seal_slow();
-                    pending_blocks_builder.with_header(header.clone());
-
-                    let block_env_attributes = OpNextBlockEnvAttributes {
-                        timestamp: base.timestamp,
-                        suggested_fee_recipient: base.fee_recipient,
+            let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+                payload_inner: ExecutionPayloadV2 {
+                    withdrawals,
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: base.parent_hash,
+                        fee_recipient: base.fee_recipient,
+                        state_root: latest_flashblock.diff.state_root,
+                        receipts_root: latest_flashblock.diff.receipts_root,
+                        logs_bloom: latest_flashblock.diff.logs_bloom,
                         prev_randao: base.prev_randao,
+                        block_number: base.block_number,
                         gas_limit: base.gas_limit,
-                        parent_beacon_block_root: Some(base.parent_beacon_block_root),
+                        gas_used: latest_flashblock.diff.gas_used,
+                        timestamp: base.timestamp,
                         extra_data: base.extra_data.clone(),
-                    };
+                        base_fee_per_gas: base.base_fee_per_gas,
+                        block_hash: latest_flashblock.diff.block_hash,
+                        transactions,
+                    },
+                },
+            };
 
-                    let evm_env =
-                        evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
-                    let mut evm = evm_config.evm_with_env(nested_db, evm_env);
+            let block: OpBlock = execution_payload.try_into_block()?;
+            let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
+            let header = block.header.clone().seal_slow();
+            pending_blocks_builder.with_header(header.clone());
 
-                    let mut gas_used = 0;
-                    let mut next_log_index = 0;
+            let block_env_attributes = OpNextBlockEnvAttributes {
+                timestamp: base.timestamp,
+                suggested_fee_recipient: base.fee_recipient,
+                prev_randao: base.prev_randao,
+                gas_limit: base.gas_limit,
+                parent_beacon_block_root: Some(base.parent_beacon_block_root),
+                extra_data: base.extra_data.clone(),
+            };
 
-                    for (idx, transaction) in block.body.transactions.iter().enumerate() {
-                        let sender = match transaction.recover_signer() {
-                            Ok(signer) => signer,
-                            Err(err) => return Err(err.into()),
-                        };
-                        pending_blocks_builder.increment_nonce(sender);
+            let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
+            let mut evm = evm_config.evm_with_env(nested_db, evm_env);
 
-                        let receipt = receipt_by_hash
-                            .get(&transaction.tx_hash())
-                            .cloned()
-                            .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
+            let mut gas_used = 0;
+            let mut next_log_index = 0;
 
-                        let recovered_transaction =
-                            Recovered::new_unchecked(transaction.clone(), sender);
-                        let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
+            for (idx, transaction) in block.body.transactions.iter().enumerate() {
+                let sender = match transaction.recover_signer() {
+                    Ok(signer) => signer,
+                    Err(err) => return Err(err.into()),
+                };
+                pending_blocks_builder.increment_nonce(sender);
 
-                        // Build Transaction
-                        let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                            let deposit_receipt = receipt
-                                .as_deposit_receipt()
-                                .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
+                let receipt = receipt_by_hash
+                    .get(&transaction.tx_hash())
+                    .cloned()
+                    .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
 
-                            (
-                                deposit_receipt.deposit_receipt_version,
-                                deposit_receipt.deposit_nonce,
-                            )
-                        } else {
-                            (None, None)
-                        };
+                let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
+                let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
 
-                        let effective_gas_price = if transaction.is_deposit() {
-                            0
-                        } else {
-                            block
-                                .base_fee_per_gas
-                                .map(|base_fee| {
-                                    transaction
-                                        .effective_tip_per_gas(base_fee)
-                                        .unwrap_or_default()
-                                        + base_fee as u128
-                                })
-                                .unwrap_or_else(|| transaction.max_fee_per_gas())
-                        };
+                // Build Transaction
+                let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
+                    let deposit_receipt = receipt
+                        .as_deposit_receipt()
+                        .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
 
-                        let rpc_txn = Transaction {
-                            inner: alloy_rpc_types_eth::Transaction {
-                                inner: envelope,
-                                block_hash: Some(header.hash()),
-                                block_number: Some(base.block_number),
-                                transaction_index: Some(idx as u64),
-                                effective_gas_price: Some(effective_gas_price),
-                            },
-                            deposit_nonce,
-                            deposit_receipt_version,
-                        };
+                    (
+                        deposit_receipt.deposit_receipt_version,
+                        deposit_receipt.deposit_nonce,
+                    )
+                } else {
+                    (None, None)
+                };
 
-                        pending_blocks_builder.with_transaction(rpc_txn);
+                let effective_gas_price = if transaction.is_deposit() {
+                    0
+                } else {
+                    block
+                        .base_fee_per_gas
+                        .map(|base_fee| {
+                            transaction
+                                .effective_tip_per_gas(base_fee)
+                                .unwrap_or_default()
+                                + base_fee as u128
+                        })
+                        .unwrap_or_else(|| transaction.max_fee_per_gas())
+                };
 
-                        // Receipt Generation
-                        let meta = TransactionMeta {
-                            tx_hash: transaction.tx_hash(),
-                            index: idx as u64,
-                            block_hash: header.hash(),
-                            block_number: block.number,
-                            base_fee: block.base_fee_per_gas,
-                            excess_blob_gas: block.excess_blob_gas,
-                            timestamp: block.timestamp,
-                        };
+                let rpc_txn = Transaction {
+                    inner: alloy_rpc_types_eth::Transaction {
+                        inner: envelope,
+                        block_hash: Some(header.hash()),
+                        block_number: Some(base.block_number),
+                        transaction_index: Some(idx as u64),
+                        effective_gas_price: Some(effective_gas_price),
+                    },
+                    deposit_nonce,
+                    deposit_receipt_version,
+                };
 
-                        let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
-                            receipt: Cow::Borrowed(&receipt),
-                            tx: Recovered::new_unchecked(transaction, sender),
-                            gas_used: receipt.cumulative_gas_used() - gas_used,
-                            next_log_index,
-                            meta,
-                        };
+                pending_blocks_builder.with_transaction(rpc_txn);
 
-                        let op_receipt = OpReceiptBuilder::new(
-                            self.client.chain_spec().as_ref(),
-                            input,
-                            &mut l1_block_info,
-                        )?
-                        .build();
+                // Receipt Generation
+                let meta = TransactionMeta {
+                    tx_hash: transaction.tx_hash(),
+                    index: idx as u64,
+                    block_hash: header.hash(),
+                    block_number: block.number,
+                    base_fee: block.base_fee_per_gas,
+                    excess_blob_gas: block.excess_blob_gas,
+                    timestamp: block.timestamp,
+                };
 
-                        pending_blocks_builder.with_receipt(transaction.tx_hash(), op_receipt);
+                let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+                    receipt: Cow::Borrowed(&receipt),
+                    tx: Recovered::new_unchecked(transaction, sender),
+                    gas_used: receipt.cumulative_gas_used() - gas_used,
+                    next_log_index,
+                    meta,
+                };
 
-                        gas_used = receipt.cumulative_gas_used();
-                        next_log_index += receipt.logs().len();
+                let op_receipt = OpReceiptBuilder::new(
+                    self.client.chain_spec().as_ref(),
+                    input,
+                    &mut l1_block_info,
+                )?
+                .build();
 
+                pending_blocks_builder.with_receipt(transaction.tx_hash(), op_receipt);
+                gas_used = receipt.cumulative_gas_used();
+                next_log_index += receipt.logs().len();
+
+                let mut should_execute_transaction = false;
+                match &prev_pending_blocks {
+                    Some(pending_blocks) => {
                         match pending_blocks.get_transaction_state(transaction.tx_hash()) {
                             Some(state) => {
                                 pending_blocks_builder
                                     .with_transaction_state(transaction.tx_hash(), state);
                             }
                             None => {
-                                let ResultAndState { state, .. } =
-                                    evm.transact(recovered_transaction)?;
-                                for (addr, acc) in &state {
-                                    let state_diff =
-                                        B256HashMap::<B256>::from_iter(acc.storage.iter().map(
-                                            |(&key, slot)| (key.into(), slot.present_value.into()),
-                                        ));
-                                    let acc_override = AccountOverride {
-                                        balance: Some(acc.info.balance),
-                                        nonce: Some(acc.info.nonce),
-                                        code: acc.info.code.clone().map(|code| code.bytes()),
-                                        state: None,
-                                        state_diff: Some(state_diff),
-                                        move_precompile_to: None,
-                                    };
-                                    state_cache_builder =
-                                        state_cache_builder.append(*addr, acc_override);
-                                    pending_blocks_builder.with_transaction_state(
-                                        transaction.tx_hash(),
-                                        state.clone(),
-                                    );
-                                }
-                                evm.db_mut().commit(state);
+                                should_execute_transaction = true;
                             }
                         }
                     }
-
-                    for (address, balance) in updated_balances {
-                        pending_blocks_builder.with_account_balance(address, balance);
+                    None => {
+                        should_execute_transaction = true;
                     }
-
-                    db = evm.into_db().flatten();
-                    last_block_header = block.header.clone();
                 }
 
-                pending_blocks_builder.with_db_cache(db.cache);
-                pending_blocks_builder.with_state_overrides(state_cache_builder.build());
-            }
-            None => {
-                let mut db = CacheDB::new(state);
-                let mut state_cache_builder = StateOverridesBuilder::default();
-                for (_, flashblocks) in flashblocks_per_block {
-                    let nested_db = db.nest();
-                    let base = flashblocks
-                        .first()
-                        .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
-                        .base
-                        .clone()
-                        .ok_or(eyre!("first flashblock does not contain a base"))?;
-
-                    let latest_flashblock = flashblocks
-                        .last()
-                        .cloned()
-                        .ok_or(eyre!("cannot build a pending block from no flashblocks"))?;
-
-                    let transactions: Vec<Bytes> = flashblocks
-                        .iter()
-                        .flat_map(|flashblock| flashblock.diff.transactions.clone())
-                        .collect();
-
-                    let withdrawals: Vec<Withdrawal> = flashblocks
-                        .iter()
-                        .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
-                        .collect();
-
-                    let receipt_by_hash = flashblocks
-                        .iter()
-                        .map(|flashblock| flashblock.metadata.receipts.clone())
-                        .fold(HashMap::default(), |mut acc, receipts| {
-                            acc.extend(receipts);
-                            acc
-                        });
-
-                    let updated_balances = flashblocks
-                        .iter()
-                        .map(|flashblock| flashblock.metadata.new_account_balances.clone())
-                        .fold(HashMap::default(), |mut acc, balances| {
-                            acc.extend(balances);
-                            acc
-                        });
-
-                    pending_blocks_builder.with_flashblocks(flashblocks.clone());
-
-                    let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
-                        blob_gas_used: 0,
-                        excess_blob_gas: 0,
-                        payload_inner: ExecutionPayloadV2 {
-                            withdrawals,
-                            payload_inner: ExecutionPayloadV1 {
-                                parent_hash: base.parent_hash,
-                                fee_recipient: base.fee_recipient,
-                                state_root: latest_flashblock.diff.state_root,
-                                receipts_root: latest_flashblock.diff.receipts_root,
-                                logs_bloom: latest_flashblock.diff.logs_bloom,
-                                prev_randao: base.prev_randao,
-                                block_number: base.block_number,
-                                gas_limit: base.gas_limit,
-                                gas_used: latest_flashblock.diff.gas_used,
-                                timestamp: base.timestamp,
-                                extra_data: base.extra_data.clone(),
-                                base_fee_per_gas: base.base_fee_per_gas,
-                                block_hash: latest_flashblock.diff.block_hash,
-                                transactions,
-                            },
-                        },
-                    };
-
-                    let block: OpBlock = execution_payload.try_into_block()?;
-                    let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
-
-                    let header = block.header.clone().seal_slow();
-
-                    pending_blocks_builder.with_header(header.clone());
-
-                    let block_env_attributes = OpNextBlockEnvAttributes {
-                        timestamp: base.timestamp,
-                        suggested_fee_recipient: base.fee_recipient,
-                        prev_randao: base.prev_randao,
-                        gas_limit: base.gas_limit,
-                        parent_beacon_block_root: Some(base.parent_beacon_block_root),
-                        extra_data: base.extra_data.clone(),
-                    };
-
-                    let evm_env =
-                        evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
-                    let mut evm = evm_config.evm_with_env(nested_db, evm_env);
-
-                    let mut gas_used = 0;
-                    let mut next_log_index = 0;
-
-                    for (idx, transaction) in block.body.transactions.iter().enumerate() {
-                        let sender = match transaction.recover_signer() {
-                            Ok(signer) => signer,
-                            Err(err) => return Err(err.into()),
+                if should_execute_transaction {
+                    let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
+                    for (addr, acc) in &state {
+                        let state_diff = B256HashMap::<B256>::from_iter(
+                            acc.storage
+                                .iter()
+                                .map(|(&key, slot)| (key.into(), slot.present_value.into())),
+                        );
+                        let acc_override = AccountOverride {
+                            balance: Some(acc.info.balance),
+                            nonce: Some(acc.info.nonce),
+                            code: acc.info.code.clone().map(|code| code.bytes()),
+                            state: None,
+                            state_diff: Some(state_diff),
+                            move_precompile_to: None,
                         };
-                        pending_blocks_builder.increment_nonce(sender);
-
-                        let receipt = receipt_by_hash
-                            .get(&transaction.tx_hash())
-                            .cloned()
-                            .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
-
-                        let recovered_transaction =
-                            Recovered::new_unchecked(transaction.clone(), sender);
-                        let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
-
-                        // Build Transaction
-                        let (deposit_receipt_version, deposit_nonce) = if transaction.is_deposit() {
-                            let deposit_receipt = receipt
-                                .as_deposit_receipt()
-                                .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
-
-                            (
-                                deposit_receipt.deposit_receipt_version,
-                                deposit_receipt.deposit_nonce,
-                            )
-                        } else {
-                            (None, None)
-                        };
-
-                        let effective_gas_price = if transaction.is_deposit() {
-                            0
-                        } else {
-                            block
-                                .base_fee_per_gas
-                                .map(|base_fee| {
-                                    transaction
-                                        .effective_tip_per_gas(base_fee)
-                                        .unwrap_or_default()
-                                        + base_fee as u128
-                                })
-                                .unwrap_or_else(|| transaction.max_fee_per_gas())
-                        };
-
-                        let rpc_txn = Transaction {
-                            inner: alloy_rpc_types_eth::Transaction {
-                                inner: envelope,
-                                block_hash: Some(header.hash()),
-                                block_number: Some(base.block_number),
-                                transaction_index: Some(idx as u64),
-                                effective_gas_price: Some(effective_gas_price),
-                            },
-                            deposit_nonce,
-                            deposit_receipt_version,
-                        };
-
-                        pending_blocks_builder.with_transaction(rpc_txn);
-
-                        // Receipt Generation
-                        let meta = TransactionMeta {
-                            tx_hash: transaction.tx_hash(),
-                            index: idx as u64,
-                            block_hash: header.hash(),
-                            block_number: block.number,
-                            base_fee: block.base_fee_per_gas,
-                            excess_blob_gas: block.excess_blob_gas,
-                            timestamp: block.timestamp,
-                        };
-
-                        let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
-                            receipt: Cow::Borrowed(&receipt),
-                            tx: Recovered::new_unchecked(transaction, sender),
-                            gas_used: receipt.cumulative_gas_used() - gas_used,
-                            next_log_index,
-                            meta,
-                        };
-
-                        let op_receipt = OpReceiptBuilder::new(
-                            self.client.chain_spec().as_ref(),
-                            input,
-                            &mut l1_block_info,
-                        )?
-                        .build();
-
-                        pending_blocks_builder.with_receipt(transaction.tx_hash(), op_receipt);
-
-                        gas_used = receipt.cumulative_gas_used();
-                        next_log_index += receipt.logs().len();
-
-                        // EVM Transaction
-                        let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
-                        for (addr, acc) in &state {
-                            let state_diff = B256HashMap::<B256>::from_iter(
-                                acc.storage
-                                    .iter()
-                                    .map(|(&key, slot)| (key.into(), slot.present_value.into())),
-                            );
-                            let acc_override = AccountOverride {
-                                balance: Some(acc.info.balance),
-                                nonce: Some(acc.info.nonce),
-                                code: acc.info.code.clone().map(|code| code.bytes()),
-                                state: None,
-                                state_diff: Some(state_diff),
-                                move_precompile_to: None,
-                            };
-                            state_cache_builder = state_cache_builder.append(*addr, acc_override);
-                            pending_blocks_builder
-                                .with_transaction_state(transaction.tx_hash(), state.clone());
-                        }
-                        evm.db_mut().commit(state);
+                        state_cache_builder = state_cache_builder.append(*addr, acc_override);
+                        pending_blocks_builder
+                            .with_transaction_state(transaction.tx_hash(), state.clone());
                     }
-
-                    for (address, balance) in updated_balances {
-                        pending_blocks_builder.with_account_balance(address, balance);
-                    }
-
-                    db = evm.into_db().flatten();
-                    last_block_header = block.header.clone();
+                    evm.db_mut().commit(state);
                 }
-                pending_blocks_builder.with_db_cache(db.cache);
-                pending_blocks_builder.with_state_overrides(state_cache_builder.build());
             }
+
+            for (address, balance) in updated_balances {
+                pending_blocks_builder.with_account_balance(address, balance);
+            }
+
+            db = evm.into_db().flatten();
+            last_block_header = block.header.clone();
         }
 
+        pending_blocks_builder.with_db_cache(db.cache);
+        pending_blocks_builder.with_state_overrides(state_cache_builder.build());
         pending_blocks_builder.build()
     }
 }
