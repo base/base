@@ -39,7 +39,7 @@ use std::time::Instant;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Buffer 4s of flashblocks for flashblock_sender
 const BUFFER_SIZE: usize = 20;
@@ -241,6 +241,15 @@ where
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         match &prev_pending_blocks {
             Some(pending_blocks) => {
+                let mut flashblocks = pending_blocks.get_flashblocks();
+                let num_flashblocks_for_canon = flashblocks
+                    .iter()
+                    .filter(|fb| fb.metadata.block_number == block.number)
+                    .count();
+                self.metrics
+                    .flashblocks_in_block
+                    .record(num_flashblocks_for_canon as f64);
+
                 if pending_blocks.latest_block_number() <= block.number {
                     self.metrics.pending_clear_catchup.increment(1);
                     self.metrics
@@ -263,7 +272,7 @@ where
                     if tracked_txn_hashes.len() != block_txn_hashes.len()
                         || tracked_txn_hashes != block_txn_hashes
                     {
-                        debug!(
+                        warn!(
                             message = "reorg detected, clearing pending blocks",
                             latest_pending_block = pending_blocks.latest_block_number(),
                             canonical_block = block.number
@@ -274,15 +283,6 @@ where
                     }
 
                     // If no reorg, we clear everything not necessary and re-process
-                    let mut flashblocks = pending_blocks.get_flashblocks();
-                    let num_flashblocks_for_canon = flashblocks
-                        .iter()
-                        .filter(|fb| fb.metadata.block_number == block.number)
-                        .count();
-                    self.metrics
-                        .flashblocks_in_block
-                        .record(num_flashblocks_for_canon as f64);
-
                     flashblocks
                         .retain(|flashblock| flashblock.metadata.block_number > block.number);
 
