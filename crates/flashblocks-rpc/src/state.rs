@@ -197,7 +197,7 @@ where
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
-                    info!(
+                    debug!(
                         message = "processing canonical block",
                         block_number = block.number
                     );
@@ -212,7 +212,7 @@ where
                 }
                 StateUpdate::Flashblock(flashblock) => {
                     let start_time = Instant::now();
-                    info!(
+                    debug!(
                         message = "processing flashblock",
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
