@@ -275,6 +275,14 @@ where
 
                     // If no reorg, we clear everything not necessary and re-process
                     let mut flashblocks = pending_blocks.get_flashblocks();
+                    let num_flashblocks_for_canon = flashblocks
+                        .iter()
+                        .filter(|fb| fb.metadata.block_number == block.number)
+                        .count();
+                    self.metrics
+                        .flashblocks_in_block
+                        .record(num_flashblocks_for_canon as f64);
+
                     flashblocks
                         .retain(|flashblock| flashblock.metadata.block_number > block.number);
 
@@ -296,12 +304,6 @@ where
         match &prev_pending_blocks {
             Some(pending_blocks) => {
                 if self.is_next_flashblock(pending_blocks, flashblock) {
-                    if flashblock.index == 0 {
-                        self.metrics
-                            .flashblocks_in_block
-                            .record((pending_blocks.latest_flashblock_index() + 1) as f64);
-                    }
-
                     let mut flashblocks = pending_blocks.get_flashblocks();
                     flashblocks.push(flashblock.clone());
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
