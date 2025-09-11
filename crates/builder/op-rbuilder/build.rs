@@ -43,6 +43,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .describe(false, true, None)
         .dirty(true)
         .sha(false)
+        .commit_author_name(true)
+        .commit_author_email(true)
+        .commit_message(true)
         .build()?;
 
     emitter.add_instructions(&git_builder)?;
@@ -51,6 +54,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sha = env::var("VERGEN_GIT_SHA")?;
     let sha_short = &sha[0..7];
 
+    // Set short SHA
+    println!("cargo:rustc-env=VERGEN_GIT_SHA_SHORT={}", &sha[..8]);
+
+    let author_name = env::var("VERGEN_GIT_COMMIT_AUTHOR_NAME")?;
+    let author_email = env::var("VERGEN_GIT_COMMIT_AUTHOR_EMAIL")?;
+    let author_full = format!("{} <{}>", author_name, author_email);
+
+    // Set author full name
+    println!("cargo:rustc-env=VERGEN_GIT_COMMIT_AUTHOR={}", author_full);
+
     let is_dirty = env::var("VERGEN_GIT_DIRTY")? == "true";
     // > git describe --always --tags
     // if not on a tag: v0.2.0-beta.3-82-g1939939b
@@ -58,9 +71,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let not_on_tag = env::var("VERGEN_GIT_DESCRIBE")?.ends_with(&format!("-g{sha_short}"));
     let version_suffix = if is_dirty || not_on_tag { "-dev" } else { "" };
     println!("cargo:rustc-env=OP_RBUILDER_VERSION_SUFFIX={version_suffix}");
-
-    // Set short SHA
-    println!("cargo:rustc-env=VERGEN_GIT_SHA_SHORT={}", &sha[..8]);
 
     // Set the build profile
     let out_dir = env::var("OUT_DIR").unwrap();
@@ -86,6 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // - The build datetime
     // - The build features
     // - The build profile
+    // - The latest commit message and author
     //
     // Example:
     //
@@ -95,6 +106,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Build Timestamp: 2023-05-19T01:47:19.815651705Z
     // Build Features: jemalloc
     // Build Profile: maxperf
+    // Latest Commit: 'message' by John Doe <john.doe@example.com>
     // ```
     println!("cargo:rustc-env=OP_RBUILDER_LONG_VERSION_0=Version: {pkg_version}{version_suffix}");
     println!("cargo:rustc-env=OP_RBUILDER_LONG_VERSION_1=Commit SHA: {sha}");
@@ -107,6 +119,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         env::var("VERGEN_CARGO_FEATURES")?
     );
     println!("cargo:rustc-env=OP_RBUILDER_LONG_VERSION_4=Build Profile: {profile}");
+    println!(
+        "cargo:rustc-env=OP_RBUILDER_LONG_VERSION_5=Latest Commit: '{}' by {}",
+        env::var("VERGEN_GIT_COMMIT_MESSAGE")?.trim_end(),
+        author_full
+    );
 
     // The version information for op-rbuilder formatted for P2P (devp2p).
     // - The latest version from Cargo.toml
