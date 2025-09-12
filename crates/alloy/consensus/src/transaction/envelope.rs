@@ -172,7 +172,7 @@ impl<T> TryFrom<EthereumTxEnvelope<T>> for OpTxEnvelope {
 }
 
 impl TryFrom<OpTxEnvelope> for TxEnvelope {
-    type Error = OpTxEnvelope;
+    type Error = ValueError<OpTxEnvelope>;
 
     fn try_from(value: OpTxEnvelope) -> Result<Self, Self::Error> {
         value.try_into_eth_envelope()
@@ -268,13 +268,16 @@ impl OpTxEnvelope {
     /// Attempts to convert the optimism variant into an ethereum [`TxEnvelope`].
     ///
     /// Returns the envelope as error if it is a variant unsupported on ethereum: [`TxDeposit`]
-    pub fn try_into_eth_envelope(self) -> Result<TxEnvelope, Self> {
+    pub fn try_into_eth_envelope(self) -> Result<TxEnvelope, ValueError<Self>> {
         match self {
             Self::Legacy(tx) => Ok(tx.into()),
             Self::Eip2930(tx) => Ok(tx.into()),
             Self::Eip1559(tx) => Ok(tx.into()),
             Self::Eip7702(tx) => Ok(tx.into()),
-            tx @ Self::Deposit(_) => Err(tx),
+            tx @ Self::Deposit(_) => Err(ValueError::new(
+                tx,
+                "Deposit transactions cannot be converted to ethereum transaction",
+            )),
         }
     }
 

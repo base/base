@@ -1,6 +1,7 @@
 use crate::{OpTxEnvelope, OpTxType, TxDeposit};
 use alloy_consensus::{
-    SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
+    EthereumTypedTransaction, SignableTransaction, Signed, Transaction, TxEip1559, TxEip2930,
+    TxEip7702, TxLegacy, Typed2718, TypedTransaction, error::ValueError,
     transaction::RlpEcdsaEncodableTx,
 };
 use alloy_eips::{Encodable2718, eip2718::IsTyped2718, eip2930::AccessList};
@@ -76,6 +77,14 @@ impl From<OpTxEnvelope> for OpTypedTransaction {
             OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx.strip_signature()),
             OpTxEnvelope::Deposit(tx) => Self::Deposit(tx.into_inner()),
         }
+    }
+}
+
+impl<Eip4844> TryFrom<OpTypedTransaction> for EthereumTypedTransaction<Eip4844> {
+    type Error = ValueError<OpTypedTransaction>;
+
+    fn try_from(value: OpTypedTransaction) -> Result<Self, Self::Error> {
+        value.try_into_eth_variant()
     }
 }
 
@@ -172,6 +181,33 @@ impl OpTypedTransaction {
     /// Note: If this is a [`OpTypedTransaction::Deposit`] variant, the signature will be ignored.
     pub fn into_envelope(self, signature: Signature) -> OpTxEnvelope {
         self.into_signed(signature).into()
+    }
+
+    /// Attempts to convert the optimism variant into an ethereum [`TypedTransaction`].
+    ///
+    /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
+    /// [`TxDeposit`]
+    pub fn try_into_eth(self) -> Result<TypedTransaction, ValueError<Self>> {
+        self.try_into_eth_variant()
+    }
+
+    /// Attempts to convert the optimism variant into an ethereum [`TypedTransaction`].
+    ///
+    /// Returns the typed transaction as error if it is a variant unsupported on ethereum:
+    /// [`TxDeposit`]
+    pub fn try_into_eth_variant<Eip4844>(
+        self,
+    ) -> Result<EthereumTypedTransaction<Eip4844>, ValueError<Self>> {
+        match self {
+            Self::Legacy(tx) => Ok(tx.into()),
+            Self::Eip2930(tx) => Ok(tx.into()),
+            Self::Eip1559(tx) => Ok(tx.into()),
+            Self::Eip7702(tx) => Ok(tx.into()),
+            tx @ Self::Deposit(_) => Err(ValueError::new(
+                tx,
+                "Deposit transactions cannot be converted to ethereum transaction",
+            )),
+        }
     }
 }
 
