@@ -66,7 +66,7 @@ impl LocalInstance {
     /// This method does not prefund any accounts, so before sending any transactions
     /// make sure that sender accounts are funded.
     pub async fn new<P: PayloadBuilder>(args: OpRbuilderArgs) -> eyre::Result<Self> {
-        Self::new_with_config::<P>(args, default_node_config()).await
+        Box::pin(Self::new_with_config::<P>(args, default_node_config())).await
     }
 
     /// Creates a new local instance of the OP builder node with the given arguments,
