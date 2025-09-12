@@ -1,0 +1,37 @@
+[package]
+name = "op-succinct-eigenda-host-utils"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+# sp1
+sp1-sdk.workspace = true
+sp1-core-executor = { version = "=5.1.0" }
+sp1-prover = { version = "=5.1.0" }
+
+# local
+op-succinct-eigenda-client-utils.workspace = true
+op-succinct-client-utils.workspace = true
+op-succinct-host-utils.workspace = true
+
+# kona
+kona-preimage.workspace = true
+kona-proof.workspace = true
+
+# hokulea
+hokulea-eigenda.workspace = true
+hokulea-host-bin.workspace = true
+hokulea-proof.workspace = true
+hokulea-witgen.workspace = true
+canoe-sp1-cc-host.workspace = true
+
+# alloy
+alloy-eips.workspace = true
+alloy-primitives.workspace = true
+
+# general
+anyhow.workspace = true
+async-trait.workspace = true
+rkyv.workspace = true
+serde_cbor.workspace = true

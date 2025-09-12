@@ -58,6 +58,26 @@ impl WitnessData for DefaultWitnessData {
     }
 }
 
+#[derive(Clone, Debug, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct EigenDAWitnessData {
+    pub preimage_store: PreimageStore,
+    pub blob_data: BlobData,
+    // EigenDABlobWitnessData.
+    // See https://github.com/Layr-Labs/hokulea/blob/0a6200cd0f22caa28aca040e47860dd42893ae26/crates/proof/src/eigenda_blob_witness.rs.
+    pub eigenda_data: Option<Vec<u8>>,
+}
+
+#[async_trait]
+impl WitnessData for EigenDAWitnessData {
+    fn from_parts(preimage_store: PreimageStore, blob_data: BlobData) -> Self {
+        Self { preimage_store, blob_data, eigenda_data: None }
+    }
+
+    fn into_parts(self) -> (PreimageStore, BlobData) {
+        (self.preimage_store, self.blob_data)
+    }
+}
+
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
 )]

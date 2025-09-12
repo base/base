@@ -1,0 +1,58 @@
+services:
+  op-succinct-lite-proposer-eigenda:
+    build:
+      context: ..
+      dockerfile: fault-proof/Dockerfile.proposer.eigenda
+    image: op-succinct-lite-proposer-eigenda:latest
+    container_name: op-succinct-lite-proposer-eigenda
+    restart: unless-stopped
+    env_file:
+      - .env.proposer
+    command: ["proposer"]
+
+  op-succinct-lite-challenger-eigenda:
+    build:
+      context: ..
+      dockerfile: fault-proof/Dockerfile.challenger
+    image: op-succinct-lite-challenger-eigenda:latest
+    container_name: op-succinct-lite-challenger-eigenda
+    restart: unless-stopped
+    env_file:
+      - .env.challenger
+    command: ["challenger"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "${FP_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "${FP_GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./grafana/alerts:/var/lib/grafana/alerts
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+volumes:
+  prometheus_data:
+  grafana_data:

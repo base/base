@@ -89,7 +89,7 @@ async fn execute_blocks_and_write_stats_csv<H: OPSuccinctHost>(
 
     // Execute the program for each block range in parallel.
     execution_inputs.par_iter().for_each(|(sp1_stdin, (range, block_data))| {
-        let result = prover.execute(get_range_elf_embedded(), sp1_stdin).calculate_gas(true).run();
+        let result = prover.execute(get_range_elf_embedded(), sp1_stdin).deferred_proof_verification(false).run();
 
         if let Some(err) = result.as_ref().err() {
             log::warn!(

@@ -35,4 +35,9 @@ pub fn build_all() {
     //     "celestia-range-elf-embedded",
     //     Some(vec!["embedded".to_string()]),
     // );
+    // build_program(
+    //     "range/eigenda",
+    //     "eigenda-range-elf-embedded",
+    //     Some(vec!["embedded".to_string()]),
+    // );
 }

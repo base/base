@@ -44,6 +44,9 @@ cargo prove build --output-directory ../../../elf --elf-name range-elf-embedded 
 cd ../celestia
 cargo prove build --output-directory ../../../elf --elf-name celestia-range-elf-embedded --docker --tag v5.1.0 --features embedded
 
+cd ../eigenda
+cargo prove build --output-directory ../../../elf --elf-name eigenda-range-elf-embedded --docker --tag v5.1.0 --features embedded
+
 # Build the aggregation-elf
 cd ../../aggregation
 cargo prove build --output-directory ../../elf --elf-name aggregation-elf --docker --tag v5.1.0

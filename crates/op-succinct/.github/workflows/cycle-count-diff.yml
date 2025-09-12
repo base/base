@@ -25,6 +25,13 @@ jobs:
         uses: ./.github/actions/setup
         with:
            submodules: recursive
+      
+      - name: Install SP1 toolchain
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up 
+          ~/.sp1/bin/cargo-prove prove --version
+          source ~/.bashrc
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1

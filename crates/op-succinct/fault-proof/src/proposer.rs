@@ -185,6 +185,7 @@ where
                 .network_prover
                 .execute(get_range_elf_embedded(), &sp1_stdin)
                 .calculate_gas(true)
+                .deferred_proof_verification(false)
                 .run()?;
 
             // Record execution stats

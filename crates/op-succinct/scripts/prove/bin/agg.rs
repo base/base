@@ -94,8 +94,12 @@ async fn main() -> Result<()> {
     if args.prove {
         prover.prove(&agg_pk, &stdin).groth16().run().expect("proving failed");
     } else {
-        let (_, report) =
-            prover.execute(AGGREGATION_ELF, &stdin).calculate_gas(true).run().unwrap();
+        let (_, report) = prover
+            .execute(AGGREGATION_ELF, &stdin)
+            .calculate_gas(true)
+            .deferred_proof_verification(false)
+            .run()
+            .unwrap();
         println!("report: {report:?}");
     }
 

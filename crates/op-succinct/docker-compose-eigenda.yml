@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: op-succinct
+      POSTGRES_DB: op-succinct
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  op-succinct-eigenda:
+    build:
+      context: .
+      dockerfile: ./validity/Dockerfile.eigenda
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      - DATABASE_URL=postgres://op-succinct@postgres:5432/op-succinct
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
