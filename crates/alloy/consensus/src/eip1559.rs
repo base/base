@@ -49,8 +49,9 @@ pub fn decode_eip_1559_params(eip_1559_params: B64) -> (u32, u32) {
 ///
 /// Returns (`elasticity`, `denominator`)
 pub fn decode_holocene_extra_data(extra_data: &[u8]) -> Result<(u32, u32), EIP1559ParamError> {
-    if extra_data.len() < 9 {
-        return Err(EIP1559ParamError::NoEIP1559Params);
+    // Holocene extra data is always 9 _exactly_ bytes
+    if extra_data.len() != 9 {
+        return Err(EIP1559ParamError::InvalidExtraDataLength);
     }
 
     if extra_data[0] != HOLOCENE_EXTRA_DATA_VERSION_BYTE {
@@ -156,6 +157,24 @@ mod tests {
         let eip_1559_params = B64::ZERO;
         let extra_data = encode_holocene_extra_data(eip_1559_params, BaseFeeParams::new(80, 60));
         assert_eq!(extra_data.unwrap(), Bytes::copy_from_slice(&[0, 0, 0, 0, 80, 0, 0, 0, 60]));
+    }
+
+    #[test]
+    fn test_encode_holocene_invalid_length() {
+        let eip_1559_params = B64::ZERO;
+        let extra_data = encode_holocene_extra_data(eip_1559_params, BaseFeeParams::new(80, 60));
+        let res = decode_holocene_extra_data(&extra_data.unwrap()[..8]).unwrap_err();
+        assert_eq!(res, EIP1559ParamError::InvalidExtraDataLength);
+    }
+
+    /// It shouldn't be possible to decode jovian extra data with holocene decoding
+    #[test]
+    fn test_decode_holocene_invalid_length() {
+        let eip_1559_params = B64::ZERO;
+        let extra_data = encode_jovian_extra_data(eip_1559_params, BaseFeeParams::new(80, 60), 0);
+        let res = decode_holocene_extra_data(&extra_data.unwrap()).unwrap_err();
+
+        assert_eq!(res, EIP1559ParamError::InvalidExtraDataLength);
     }
 
     #[test]
