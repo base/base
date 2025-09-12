@@ -5,6 +5,8 @@ members = [
     "utils/build",
     "utils/celestia/client",
     "utils/celestia/host",
+    "utils/eigenda/client",
+    "utils/eigenda/host",
     "utils/proof",
     "utils/signer",
     "utils/ethereum/client",
@@ -100,6 +102,14 @@ hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-bet
 hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
 hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
 
+# hokulea
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
+
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }
 op-succinct-client-utils = { path = "utils/client" }
@@ -112,6 +122,8 @@ op-succinct-ethereum-client-utils = { path = "utils/ethereum/client" }
 op-succinct-ethereum-host-utils = { path = "utils/ethereum/host" }
 op-succinct-celestia-client-utils = { path = "utils/celestia/client" }
 op-succinct-celestia-host-utils = { path = "utils/celestia/host" }
+op-succinct-eigenda-client-utils = { path = "utils/eigenda/client" }
+op-succinct-eigenda-host-utils = { path = "utils/eigenda/host" }
 op-succinct-proof-utils = { path = "utils/proof" }
 op-succinct-signer-utils = { path = "utils/signer" }
 op-succinct-range-utils = { path = "programs/range/utils" }
@@ -191,7 +203,7 @@ lto = "fat"
 
 [patch.crates-io]
 tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }
-sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.9-sp1-4.0.0" }
 substrate-bn = { git = "https://github.com/sp1-patches/bn", tag = "patch-0.6.0-sp1-5.0.0" }
 sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
 p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-5.0.0" }

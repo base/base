@@ -25,6 +25,12 @@ jobs:
         version: nightly
     - run: rustup toolchain install stable --profile minimal
     - uses: Swatinem/rust-cache@v2  
+    - name: Install SP1 toolchain
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up 
+          ~/.sp1/bin/cargo-prove prove --version
+          source ~/.bashrc
     - name: Test
       run: cargo test --release -- --skip test_cycle_count_diff --skip test_post_to_github --skip test_honest_proposer --skip test_honest_challenger
       env:
