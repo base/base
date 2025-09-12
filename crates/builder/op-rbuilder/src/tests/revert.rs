@@ -31,10 +31,9 @@ async fn monitor_transaction_gc(rbuilder: LocalInstance) -> eyre::Result<()> {
             .create_transaction()
             .random_reverting_transaction()
             .with_signer(accounts[i].clone())
-            .with_bundle(BundleOpts {
-                block_number_max: Some(latest_block_number + i as u64 + 1),
-                ..Default::default()
-            })
+            .with_bundle(
+                BundleOpts::default().with_block_number_max(latest_block_number + i as u64 + 1),
+            )
             .send()
             .await?;
         pending_txn.push(txn);
@@ -141,10 +140,7 @@ async fn bundle(rbuilder: LocalInstance) -> eyre::Result<()> {
             .includes(valid_bundle.tx_hash())
     );
 
-    let bundle_opts = BundleOpts {
-        block_number_max: Some(4),
-        ..Default::default()
-    };
+    let bundle_opts = BundleOpts::default().with_block_number_max(4);
 
     let reverted_bundle = driver
         .create_transaction()
@@ -183,10 +179,7 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert() // the transaction reverts but it is included in the block
         .with_reverted_hash()
-        .with_bundle(BundleOpts {
-            block_number_min: Some(2),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_block_number_min(2))
         .send()
         .await?;
 
@@ -201,11 +194,11 @@ async fn bundle_min_block_number(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert()
         .with_reverted_hash()
-        .with_bundle(BundleOpts {
-            block_number_max: Some(4),
-            block_number_min: Some(4),
-            ..Default::default()
-        })
+        .with_bundle(
+            BundleOpts::default()
+                .with_block_number_max(4)
+                .with_block_number_min(4),
+        )
         .send()
         .await?;
 
@@ -232,10 +225,7 @@ async fn bundle_min_timestamp(rbuilder: LocalInstance) -> eyre::Result<()> {
         .create_transaction()
         .with_revert() // the transaction reverts but it is included in the block
         .with_reverted_hash()
-        .with_bundle(BundleOpts {
-            min_timestamp: Some(initial_timestamp + 2),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_min_timestamp(initial_timestamp + 2))
         .send()
         .await?;
 
@@ -261,84 +251,121 @@ async fn bundle_range_limits(rbuilder: LocalInstance) -> eyre::Result<()> {
 
     async fn send_bundle(
         driver: &ChainDriver,
-        block_number_max: Option<u64>,
-        block_number_min: Option<u64>,
+        bundle: BundleOpts,
     ) -> eyre::Result<PendingTransactionBuilder<Optimism>> {
-        driver
-            .create_transaction()
-            .with_bundle(BundleOpts {
-                block_number_max,
-                block_number_min,
-                ..Default::default()
-            })
-            .send()
-            .await
+        driver.create_transaction().with_bundle(bundle).send().await
     }
 
     // Max block cannot be a past block
-    assert!(send_bundle(&driver, Some(1), None).await.is_err());
+    assert!(
+        send_bundle(&driver, BundleOpts::default().with_block_number_max(1))
+            .await
+            .is_err()
+    );
 
     // Bundles are valid if their max block in in between the current block and the max block range
     let current_block = 2;
     let next_valid_block = current_block + 1;
 
     for i in next_valid_block..next_valid_block + MAX_BLOCK_RANGE_BLOCKS {
-        assert!(send_bundle(&driver, Some(i), None).await.is_ok());
+        assert!(
+            send_bundle(&driver, BundleOpts::default().with_block_number_max(i))
+                .await
+                .is_ok()
+        );
     }
 
     // A bundle with a block out of range is invalid
     assert!(
         send_bundle(
             &driver,
-            Some(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1),
-            None
+            BundleOpts::default()
+                .with_block_number_max(next_valid_block + MAX_BLOCK_RANGE_BLOCKS + 1)
         )
         .await
         .is_err()
     );
 
     // A bundle with a min block number higher than the max block is invalid
-    assert!(send_bundle(&driver, Some(1), Some(2)).await.is_err());
+    assert!(
+        send_bundle(
+            &driver,
+            BundleOpts::default()
+                .with_block_number_max(1)
+                .with_block_number_min(2)
+        )
+        .await
+        .is_err()
+    );
 
     // A bundle with a min block number lower or equal to the current block is valid
     assert!(
-        send_bundle(&driver, Some(next_valid_block), Some(current_block))
-            .await
-            .is_ok()
+        send_bundle(
+            &driver,
+            BundleOpts::default()
+                .with_block_number_max(next_valid_block)
+                .with_block_number_min(current_block)
+        )
+        .await
+        .is_ok()
     );
     assert!(
-        send_bundle(&driver, Some(next_valid_block), Some(0))
-            .await
-            .is_ok()
+        send_bundle(
+            &driver,
+            BundleOpts::default().with_block_number_max(next_valid_block)
+        )
+        .await
+        .is_ok()
     );
 
     // A bundle with a min block equal to max block is valid
     assert!(
-        send_bundle(&driver, Some(next_valid_block), Some(next_valid_block))
-            .await
-            .is_ok()
+        send_bundle(
+            &driver,
+            BundleOpts::default()
+                .with_block_number_max(next_valid_block)
+                .with_block_number_min(next_valid_block)
+        )
+        .await
+        .is_ok()
     );
 
     // Test min-only cases (no max specified)
     // A bundle with only min block that's within the default range is valid
     let default_max = current_block + MAX_BLOCK_RANGE_BLOCKS;
     assert!(
-        send_bundle(&driver, None, Some(current_block))
-            .await
-            .is_ok()
+        send_bundle(
+            &driver,
+            BundleOpts::default().with_block_number_min(current_block)
+        )
+        .await
+        .is_ok()
     );
     assert!(
-        send_bundle(&driver, None, Some(default_max - 1))
-            .await
-            .is_ok()
+        send_bundle(
+            &driver,
+            BundleOpts::default().with_block_number_min(default_max - 1)
+        )
+        .await
+        .is_ok()
     );
-    assert!(send_bundle(&driver, None, Some(default_max)).await.is_ok());
+    assert!(
+        send_bundle(
+            &driver,
+            BundleOpts::default().with_block_number_min(default_max)
+        )
+        .await
+        .is_ok()
+    );
 
     // A bundle with only min block that exceeds the default max range is invalid
     assert!(
-        send_bundle(&driver, None, Some(default_max + 1))
-            .await
-            .is_err()
+        send_bundle(
+            &driver,
+            BundleOpts::default().with_block_number_min(default_max + 1)
+        )
+        .await
+        .is_err()
     );
 
     Ok(())
@@ -387,10 +414,7 @@ async fn check_transaction_receipt_status_message(rbuilder: LocalInstance) -> ey
     let reverting_tx = driver
         .create_transaction()
         .random_reverting_transaction()
-        .with_bundle(BundleOpts {
-            block_number_max: Some(3),
-            ..Default::default()
-        })
+        .with_bundle(BundleOpts::default().with_block_number_max(3))
         .send()
         .await?;
     let tx_hash = reverting_tx.tx_hash();

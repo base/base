@@ -10,6 +10,7 @@ use crate::{
     tx::FBPooledTransaction,
     tx_signer::Signer,
 };
+use alloy_primitives::B256;
 use alloy_provider::{Identity, ProviderBuilder, RootProvider};
 use clap::Parser;
 use core::{
@@ -20,10 +21,11 @@ use core::{
     task::{Context, Poll},
     time::Duration,
 };
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use moka::future::Cache;
 use nanoid::nanoid;
 use op_alloy_network::Optimism;
+use parking_lot::Mutex;
 use reth::{
     args::{DatadirArgs, NetworkArgs, RpcServerArgs},
     core::exit::NodeExitFuture,
@@ -38,8 +40,12 @@ use reth_optimism_node::{
 };
 use reth_optimism_rpc::OpEthApiBuilder;
 use reth_transaction_pool::{AllTransactionsEvents, TransactionPool};
+use rollup_boost::FlashblocksPayloadV1;
 use std::sync::{Arc, LazyLock};
-use tokio::sync::oneshot;
+use tokio::{sync::oneshot, task::JoinHandle};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -225,6 +231,10 @@ impl LocalInstance {
         format!("ws://{ipaddr}:{port}/")
     }
 
+    pub fn spawn_flashblocks_listener(&self) -> FlashblocksListener {
+        FlashblocksListener::new(self.flashblocks_ws_url())
+    }
+
     pub fn rpc_ipc(&self) -> &str {
         &self.config.rpc.ipcpath
     }
@@ -344,4 +354,99 @@ fn pool_component(args: &OpRbuilderArgs) -> OpPoolBuilder<FBPooledTransaction> {
             rollup_args.supervisor_http.clone(),
             rollup_args.supervisor_safety_level,
         )
+}
+
+/// A utility for listening to flashblocks WebSocket messages during tests.
+///
+/// This provides a reusable way to capture and inspect flashblocks that are produced
+/// during test execution, eliminating the need for duplicate WebSocket listening code.
+pub struct FlashblocksListener {
+    pub flashblocks: Arc<Mutex<Vec<FlashblocksPayloadV1>>>,
+    pub cancellation_token: CancellationToken,
+    pub handle: JoinHandle<eyre::Result<()>>,
+}
+
+impl FlashblocksListener {
+    /// Create a new flashblocks listener that connects to the given WebSocket URL.
+    ///
+    /// The listener will automatically parse incoming messages as FlashblocksPayloadV1.
+    fn new(flashblocks_ws_url: String) -> Self {
+        let flashblocks = Arc::new(Mutex::new(Vec::new()));
+        let cancellation_token = CancellationToken::new();
+
+        let flashblocks_clone = flashblocks.clone();
+        let cancellation_token_clone = cancellation_token.clone();
+
+        let handle = tokio::spawn(async move {
+            let (ws_stream, _) = connect_async(flashblocks_ws_url).await?;
+            let (_, mut read) = ws_stream.split();
+
+            loop {
+                tokio::select! {
+                    _ = cancellation_token_clone.cancelled() => {
+                        break Ok(());
+                    }
+                    Some(Ok(Message::Text(text))) = read.next() => {
+                        let fb = serde_json::from_str(&text).unwrap();
+                        warn!("GOT FB: {fb:#?}");
+                        flashblocks_clone.lock().push(fb);
+                    }
+                }
+            }
+        });
+
+        Self {
+            flashblocks,
+            cancellation_token,
+            handle,
+        }
+    }
+
+    /// Get a snapshot of all received flashblocks
+    pub fn get_flashblocks(&self) -> Vec<FlashblocksPayloadV1> {
+        self.flashblocks.lock().clone()
+    }
+
+    /// Find a flashblock by index
+    pub fn find_flashblock(&self, index: u64) -> Option<FlashblocksPayloadV1> {
+        self.flashblocks
+            .lock()
+            .iter()
+            .find(|fb| fb.index == index)
+            .cloned()
+    }
+
+    /// Check if any flashblock contains the given transaction hash
+    pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
+        let tx_hash_str = format!("{:#x}", tx_hash);
+        self.flashblocks.lock().iter().any(|fb| {
+            if let Some(receipts) = fb.metadata.get("receipts") {
+                if let Some(receipts_obj) = receipts.as_object() {
+                    return receipts_obj.contains_key(&tx_hash_str);
+                }
+            }
+            false
+        })
+    }
+
+    /// Find which flashblock index contains the given transaction hash
+    pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
+        let tx_hash_str = format!("{:#x}", tx_hash);
+        self.flashblocks.lock().iter().find_map(|fb| {
+            if let Some(receipts) = fb.metadata.get("receipts") {
+                if let Some(receipts_obj) = receipts.as_object() {
+                    if receipts_obj.contains_key(&tx_hash_str) {
+                        return Some(fb.index);
+                    }
+                }
+            }
+            None
+        })
+    }
+
+    /// Stop the listener and wait for it to complete
+    pub async fn stop(self) -> eyre::Result<()> {
+        self.cancellation_token.cancel();
+        self.handle.await?
+    }
 }

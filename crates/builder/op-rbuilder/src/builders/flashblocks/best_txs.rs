@@ -74,6 +74,7 @@ where
                 if self.current_flashblock_number > max {
                     debug!(
                         target: "payload_builder",
+                        tx_hash = ?tx.hash(),
                         sender = ?tx.sender(),
                         nonce = tx.nonce(),
                         current_flashblock = self.current_flashblock_number,

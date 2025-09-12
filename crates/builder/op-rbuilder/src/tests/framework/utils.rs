@@ -15,7 +15,7 @@ use reth_db::{
 };
 use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConfig};
 use reth_optimism_chainspec::OpChainSpec;
-use std::sync::Arc;
+use std::{net::TcpListener, sync::Arc};
 
 use super::{FUNDED_PRIVATE_KEYS, TransactionBuilder};
 
@@ -227,4 +227,15 @@ pub fn create_test_db(config: NodeConfig<OpChainSpec>) -> Arc<TempDatabase<Datab
     )
     .expect(ERROR_DB_CREATION);
     Arc::new(TempDatabase::new(db, path))
+}
+
+/// Gets an available port by first binding to port 0 -- instructing the OS to
+/// find and assign one. Then the listener is dropped when this goes out of
+/// scope, freeing the port for the next time this function is called.
+pub fn get_available_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .expect("Failed to bind to random port")
+        .local_addr()
+        .expect("Failed to get local address")
+        .port()
 }

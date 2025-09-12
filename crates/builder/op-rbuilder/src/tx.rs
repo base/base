@@ -293,8 +293,8 @@ impl MaybeConditionalTransaction for FBPooledTransaction {
         FBPooledTransaction {
             inner: self.inner.with_conditional(conditional),
             reverted_hashes: self.reverted_hashes,
-            flashblock_number_min: None,
-            flashblock_number_max: None,
+            flashblock_number_min: self.flashblock_number_min,
+            flashblock_number_max: self.flashblock_number_max,
         }
     }
 }
