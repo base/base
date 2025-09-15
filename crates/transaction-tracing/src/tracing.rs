@@ -22,7 +22,7 @@ enum TxEvent {
 
 /// Types of pools a transaction can be in
 #[derive(Debug, Clone, PartialEq)]
-enum Pools {
+enum Pool {
     Pending,
     Queued,
 }
@@ -32,7 +32,7 @@ struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
     txs: LruCache<TxHash, Instant>,
     /// Map of transaction hash to current state
-    tx_states: LruCache<TxHash, Pools>,
+    tx_states: LruCache<TxHash, Pool>,
 }
 
 impl Tracker {
@@ -58,13 +58,13 @@ impl Tracker {
     }
 
     /// Track a transaction moving from one pool to another
-    fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pools) {
+    fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
         // if we've seen the transaction pending or queued before, track the pending <> queue transition
         if let Some(prev_pool) = self.tx_states.get(&tx_hash) {
             if prev_pool != &pool {
                 let event = match (prev_pool, &pool) {
-                    (Pools::Pending, Pools::Queued) => Some(TxEvent::PendingToQueued),
-                    (Pools::Queued, Pools::Pending) => Some(TxEvent::QueuedToPending),
+                    (Pool::Pending, Pool::Queued) => Some(TxEvent::PendingToQueued),
+                    (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
                     _ => None,
                 };
                 if let Some(tx_event) = event {
@@ -128,11 +128,11 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                 match full_event {
                     FullTransactionEvent::Pending(tx_hash) => {
                         track.transaction_inserted(tx_hash);
-                        track.transaction_moved(tx_hash, Pools::Pending);
+                        track.transaction_moved(tx_hash, Pool::Pending);
                     }
                     FullTransactionEvent::Queued(tx_hash) => {
                         track.transaction_inserted(tx_hash);
-                        track.transaction_moved(tx_hash, Pools::Queued);
+                        track.transaction_moved(tx_hash, Pool::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_event(tx_hash, TxEvent::Dropped);
