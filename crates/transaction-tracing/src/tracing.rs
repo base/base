@@ -9,7 +9,6 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::debug;
 use std::num::NonZeroUsize;
 use std::time::Instant;
-use tokio_stream::wrappers::ReceiverStream;
 
 /// Types of transaction events to track
 #[derive(Debug)]
@@ -78,22 +77,19 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
 
     // Subscribe to events from the mempool
     let pool = ctx.pool().clone();
-    let mempool_receiver = pool.pending_transactions_listener();
-    let mut mempool_stream = ReceiverStream::new(mempool_receiver);
-
-    // Subscribe to all transaction events to detect drops/replacements
     let mut all_events_stream = pool.all_transactions_event_listener();
 
     loop {
         tokio::select! {
-            // New events from the mempool
-            Some(tx_hash) = mempool_stream.next() => {
-                track.transaction_inserted(tx_hash);
-            }
-
             // Track # of transactions dropped and replaced
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
+                    FullTransactionEvent::Pending(tx_hash) => {
+                        track.transaction_inserted(tx_hash);
+                    }
+                    FullTransactionEvent::Queued(tx_hash) => {
+                        track.transaction_inserted(tx_hash);
+                    }
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_event(tx_hash, TxEvent::Dropped);
                     }
@@ -102,7 +98,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         track.transaction_event(*tx_hash, TxEvent::Replaced);
                     }
                     _ => {
-                        // Other events (mined, replaced, etc.)
+                        // Other events
                     }
                 }
             }
