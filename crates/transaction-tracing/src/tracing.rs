@@ -9,7 +9,6 @@ use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::debug;
 use std::num::NonZeroUsize;
 use std::time::Instant;
-use tokio_stream::wrappers::ReceiverStream;
 
 /// Types of transaction events to track
 #[derive(Debug)]
@@ -17,28 +16,69 @@ enum TxEvent {
     Dropped,
     Replaced,
     BlockInclusion,
+    PendingToQueued,
+    QueuedToPending,
+}
+
+/// Types of pools a transaction can be in
+#[derive(Debug, Clone, PartialEq)]
+enum Pool {
+    Pending,
+    Queued,
 }
 
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
     txs: LruCache<TxHash, Instant>,
+    /// Map of transaction hash to current state
+    tx_states: LruCache<TxHash, Pool>,
 }
 
 impl Tracker {
+    /// Create a new tracker
     fn new() -> Self {
         Self {
             txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
+            tx_states: LruCache::new(NonZeroUsize::new(20000).unwrap()),
         }
     }
 
+    /// Track the first time we see a transaction in the mempool
     fn transaction_inserted(&mut self, tx_hash: TxHash) {
+        // if we've seen the tx before, don't track it again. for example,
+        // if a tx was pending then moved to queued, we don't want to update the timestamp
+        // with the queued timestamp.
+        if self.txs.contains(&tx_hash) {
+            return;
+        }
+
         let now = Instant::now();
         self.txs.put(tx_hash, now);
-        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, "Transaction added to mempool");
     }
 
-    // Handle transaction event (drop, replace, block inclusion, etc.)
+    /// Track a transaction moving from one pool to another
+    fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
+        // if we've seen the transaction pending or queued before, track the pending <> queue transition
+        if let Some(prev_pool) = self.tx_states.get(&tx_hash) {
+            if prev_pool != &pool {
+                let event = match (prev_pool, &pool) {
+                    (Pool::Pending, Pool::Queued) => Some(TxEvent::PendingToQueued),
+                    (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
+                    _ => None,
+                };
+                if let Some(tx_event) = event {
+                    self.transaction_event(tx_hash, tx_event);
+                }
+            }
+        }
+
+        // update the new pool the transaction is in
+        self.tx_states.put(tx_hash, pool.clone());
+        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
+    }
+
+    /// Track a transaction event
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mempool_time) = self.txs.pop(&tx_hash) {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
@@ -48,6 +88,8 @@ impl Tracker {
                 TxEvent::Dropped => "dropped",
                 TxEvent::Replaced => "replaced",
                 TxEvent::BlockInclusion => "block_inclusion",
+                TxEvent::PendingToQueued => "pending_to_queued",
+                TxEvent::QueuedToPending => "queued_to_pending",
             };
             metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
                 .record(time_in_mempool.as_millis() as f64);
@@ -73,27 +115,25 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
 ) -> Result<()> {
     debug!(target: "transaction-tracing", "Starting transaction tracking ExEx");
-
     let mut track = Tracker::new();
 
     // Subscribe to events from the mempool
     let pool = ctx.pool().clone();
-    let mempool_receiver = pool.pending_transactions_listener();
-    let mut mempool_stream = ReceiverStream::new(mempool_receiver);
-
-    // Subscribe to all transaction events to detect drops/replacements
     let mut all_events_stream = pool.all_transactions_event_listener();
 
     loop {
         tokio::select! {
-            // New events from the mempool
-            Some(tx_hash) = mempool_stream.next() => {
-                track.transaction_inserted(tx_hash);
-            }
-
             // Track # of transactions dropped and replaced
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
+                    FullTransactionEvent::Pending(tx_hash) => {
+                        track.transaction_inserted(tx_hash);
+                        track.transaction_moved(tx_hash, Pool::Pending);
+                    }
+                    FullTransactionEvent::Queued(tx_hash) => {
+                        track.transaction_inserted(tx_hash);
+                        track.transaction_moved(tx_hash, Pool::Queued);
+                    }
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_event(tx_hash, TxEvent::Dropped);
                     }
@@ -102,7 +142,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         track.transaction_event(*tx_hash, TxEvent::Replaced);
                     }
                     _ => {
-                        // Other events (mined, replaced, etc.)
+                        // Other events
                     }
                 }
             }
