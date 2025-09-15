@@ -20,8 +20,9 @@ enum TxEvent {
     QueuedToPending,
 }
 
+/// Types of pools a transaction can be in
 #[derive(Debug, Clone, PartialEq)]
-enum TxState {
+enum Pools {
     Pending,
     Queued,
 }
@@ -31,10 +32,11 @@ struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
     txs: LruCache<TxHash, Instant>,
     /// Map of transaction hash to current state
-    tx_states: LruCache<TxHash, TxState>,
+    tx_states: LruCache<TxHash, Pools>,
 }
 
 impl Tracker {
+    /// Create a new tracker
     fn new() -> Self {
         Self {
             txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
@@ -42,30 +44,41 @@ impl Tracker {
         }
     }
 
-    fn transaction_inserted(&mut self, tx_hash: TxHash, state: TxState) {
+    /// Track the first time we see a transaction in the mempool
+    fn transaction_inserted(&mut self, tx_hash: TxHash) {
+        // if we've seen the tx before, don't track it again. for example,
+        // if a tx was pending then moved to queued, we don't want to update the timestamp
+        // with the queued timestamp.
+        if self.txs.contains(&tx_hash) {
+            return;
+        }
+
         let now = Instant::now();
         self.txs.put(tx_hash, now);
+    }
 
-        // Track state transitions using the existing TxEvent pattern
-        if let Some(previous_state) = self.tx_states.get(&tx_hash) {
-            if previous_state != &state {
-                let transition_event = match (previous_state, &state) {
-                    (TxState::Pending, TxState::Queued) => Some(TxEvent::PendingToQueued),
-                    (TxState::Queued, TxState::Pending) => Some(TxEvent::QueuedToPending),
+    /// Track a transaction moving from one pool to another
+    fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pools) {
+        // if we've seen the transaction pending or queued before, track the pending <> queue transition
+        if let Some(prev_pool) = self.tx_states.get(&tx_hash) {
+            if prev_pool != &pool {
+                let event = match (prev_pool, &pool) {
+                    (Pools::Pending, Pools::Queued) => Some(TxEvent::PendingToQueued),
+                    (Pools::Queued, Pools::Pending) => Some(TxEvent::QueuedToPending),
                     _ => None,
                 };
-
-                if let Some(event) = transition_event {
-                    self.transaction_event(tx_hash, event);
+                if let Some(tx_event) = event {
+                    self.transaction_event(tx_hash, tx_event);
                 }
             }
         }
 
-        self.tx_states.put(tx_hash, state.clone());
-        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?state, "Transaction state updated");
+        // update the new pool the transaction is in
+        self.tx_states.put(tx_hash, pool.clone());
+        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
     }
 
-    // Handle transaction event (drop, replace, block inclusion, etc.)
+    /// Track a transaction event
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mempool_time) = self.txs.pop(&tx_hash) {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
@@ -102,7 +115,6 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
 ) -> Result<()> {
     debug!(target: "transaction-tracing", "Starting transaction tracking ExEx");
-
     let mut track = Tracker::new();
 
     // Subscribe to events from the mempool
@@ -115,10 +127,12 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
                     FullTransactionEvent::Pending(tx_hash) => {
-                        track.transaction_inserted(tx_hash, TxState::Pending);
+                        track.transaction_inserted(tx_hash);
+                        track.transaction_moved(tx_hash, Pools::Pending);
                     }
                     FullTransactionEvent::Queued(tx_hash) => {
-                        track.transaction_inserted(tx_hash, TxState::Queued);
+                        track.transaction_inserted(tx_hash);
+                        track.transaction_moved(tx_hash, Pools::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_event(tx_hash, TxEvent::Dropped);
