@@ -634,6 +634,75 @@ impl OpExecutionPayload {
 
         Ok(base_payload)
     }
+
+    /// Returns an iterator over the decoded transactions in this payload.
+    ///
+    /// This iterator will decode transactions on the fly.
+    pub fn decoded_transactions<T: Decodable2718>(
+        &self,
+    ) -> impl Iterator<Item = alloy_eips::eip2718::Eip2718Result<T>> + '_ {
+        self.transactions().iter().map(|tx_bytes| T::decode_2718_exact(tx_bytes.as_ref()))
+    }
+
+    /// Returns iterator over decoded transactions with their original encoded bytes.
+    ///
+    /// This iterator will decode transactions on the fly and return them with their bytes.
+    pub fn decoded_transactions_with_encoded<T: Decodable2718>(
+        &self,
+    ) -> impl Iterator<Item = alloy_eips::eip2718::Eip2718Result<alloy_eips::eip2718::WithEncoded<T>>> + '_
+    {
+        self.transactions().iter().map(|tx_bytes| {
+            T::decode_2718_exact(tx_bytes.as_ref())
+                .map(|tx| alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), tx))
+        })
+    }
+
+    /// Returns an iterator over the recovered transactions in this payload.
+    ///
+    /// This iterator will decode and recover signer addresses for transactions on the fly.
+    pub fn recovered_transactions<T>(
+        &self,
+    ) -> impl Iterator<
+        Item = Result<
+            alloy_consensus::transaction::Recovered<T>,
+            alloy_consensus::crypto::RecoveryError,
+        >,
+    > + '_
+    where
+        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+    {
+        self.decoded_transactions::<T>().map(|res| {
+            res.map_err(alloy_consensus::crypto::RecoveryError::from_source)
+                .and_then(|tx| tx.try_into_recovered())
+        })
+    }
+
+    /// Returns an iterator over the recovered transactions in this payload with their
+    /// original encoded bytes.
+    ///
+    /// This iterator will decode and recover signer addresses for transactions on the fly
+    /// and return them with their bytes.
+    pub fn recovered_transactions_with_encoded<T>(
+        &self,
+    ) -> impl Iterator<
+        Item = Result<
+            alloy_eips::eip2718::WithEncoded<alloy_consensus::transaction::Recovered<T>>,
+            alloy_consensus::crypto::RecoveryError,
+        >,
+    > + '_
+    where
+        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+    {
+        self.transactions().iter().map(|tx_bytes| {
+            T::decode_2718_exact(tx_bytes.as_ref())
+                .map_err(alloy_consensus::crypto::RecoveryError::from_source)
+                .and_then(|tx| {
+                    tx.try_into_recovered().map(|recovered| {
+                        alloy_eips::eip2718::WithEncoded::new(tx_bytes.clone(), recovered)
+                    })
+                })
+        })
+    }
 }
 
 #[cfg(test)]
