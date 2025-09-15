@@ -389,6 +389,19 @@ impl OpTxEnvelope {
         }
     }
 
+    /// Return the reference to signature.
+    ///
+    /// Returns `None` if this is a deposit variant.
+    pub const fn signature(&self) -> Option<&Signature> {
+        match self {
+            Self::Legacy(tx) => Some(tx.signature()),
+            Self::Eip2930(tx) => Some(tx.signature()),
+            Self::Eip1559(tx) => Some(tx.signature()),
+            Self::Eip7702(tx) => Some(tx.signature()),
+            Self::Deposit(_) => None,
+        }
+    }
+
     /// Return the [`OpTxType`] of the inner txn.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
