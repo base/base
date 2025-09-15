@@ -43,6 +43,7 @@
   - [setGasLimit](#setgaslimit)
   - [setEIP1559Params](#seteip1559params)
   - [setOperatorFeeScalars](#setoperatorfeescalars)
+  - [setMinBaseFee](#setminbasefee)
   - [resourceConfig](#resourceconfig)
   - [guardian](#guardian)
 
@@ -186,6 +187,7 @@ In version `0`, the following update types are supported:
 - Type `3`: `unsafeBlockSigner` overwrite, as `address` payload
 - Type `4`: `eip1559Params` overwrite, as `uint256` payload encoding denomination and elasticity
 - Type `5`: `operatorFeeParams` overwrite, as `uint256` payload encoding scalar and constant
+- Type `6`: `minBaseFee` overwrite, as `uint64` payload
 
 ## Function Specification
 
@@ -357,6 +359,14 @@ Allows the owner to update the operator fee parameters.
 - MUST revert if called by an address other than the owner.
 - MUST update the operatorFeeScalar and operatorFeeConstant values.
 - MUST emit a ConfigUpdate event with the UpdateType.OPERATOR_FEE_PARAMS type.
+
+### setMinBaseFee
+
+Starting at Jovian, this function allows the owner to update the minimum base fee parameter.
+
+- MUST revert if called by an address other than the owner.
+- MUST update the minBaseFee value.
+- MUST emit a ConfigUpdate event with the UpdateType.MIN_BASE_FEE type.
 
 ### resourceConfig
 
