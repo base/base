@@ -123,32 +123,37 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
 impl<Client> FlashblocksAPI for FlashblocksState<Client> {
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .map(|pb| pb.get_latest_block(full))
     }
 
     fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .and_then(|pb| pb.get_receipt(tx_hash))
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .map(|pb| pb.get_transaction_count(address))
             .unwrap_or_else(|| U256::from(0))
     }
 
     fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .and_then(|pb| pb.get_balance(address))
     }
 
@@ -158,7 +163,8 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
 
     fn get_state_overrides(&self) -> Option<StateOverride> {
         self.pending_blocks
-            .load_full()
+            .load()
+            .as_ref()
             .and_then(|pb| pb.get_state_overrides())
     }
 }
