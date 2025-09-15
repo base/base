@@ -285,13 +285,13 @@ contracts deployed on layer 1.<br/>
 **Requirement:** Disabled<br/>
 **Notes:** Simple clear restriction.<br/>
 
-### [Operator Fee Scalar](exec-engine.md#operator-fees)
+### [Operator Fee Scalar](isthmus/exec-engine.md#operator-fee)
 
 **Description:** Operator fee scalar -- used to calculate the operator fee<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
 **Requirement:** 0 <br/>
 
-### [Operator Fee Constant](exec-engine.md#operator-fees)
+### [Operator Fee Constant](isthmus/exec-engine.md#operator-fee)
 
 **Description:** Operator fee constant -- used to calculate the operator fee<br/>
 **Administrator:** [System Config Owner](#admin-roles)<br/>
