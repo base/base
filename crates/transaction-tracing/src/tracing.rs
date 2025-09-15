@@ -16,25 +16,53 @@ enum TxEvent {
     Dropped,
     Replaced,
     BlockInclusion,
+    PendingToQueued,
+    QueuedToPending,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum TxState {
+    Pending,
+    Queued,
 }
 
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
     txs: LruCache<TxHash, Instant>,
+    /// Map of transaction hash to current state
+    tx_states: LruCache<TxHash, TxState>,
 }
 
 impl Tracker {
     fn new() -> Self {
         Self {
             txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
+            tx_states: LruCache::new(NonZeroUsize::new(20000).unwrap()),
         }
     }
 
-    fn transaction_inserted(&mut self, tx_hash: TxHash) {
+    fn transaction_inserted(&mut self, tx_hash: TxHash, state: TxState) {
         let now = Instant::now();
         self.txs.put(tx_hash, now);
-        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, "Transaction added to mempool");
+
+        // Track state transitions using the existing TxEvent pattern
+        if let Some(previous_state) = self.tx_states.get(&tx_hash) {
+            if previous_state != &state {
+                let transition_event = match (previous_state, &state) {
+                    (TxState::Pending, TxState::Queued) => Some(TxEvent::PendingToQueued),
+                    (TxState::Queued, TxState::Pending) => Some(TxEvent::QueuedToPending),
+                    _ => None,
+                };
+
+                if let Some(event) = transition_event {
+                    self.transaction_event(tx_hash, event);
+                }
+            }
+        }
+
+        self.tx_states.put(tx_hash, state.clone());
+        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?state, "Transaction state updated");
     }
 
     // Handle transaction event (drop, replace, block inclusion, etc.)
@@ -47,6 +75,8 @@ impl Tracker {
                 TxEvent::Dropped => "dropped",
                 TxEvent::Replaced => "replaced",
                 TxEvent::BlockInclusion => "block_inclusion",
+                TxEvent::PendingToQueued => "pending_to_queued",
+                TxEvent::QueuedToPending => "queued_to_pending",
             };
             metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
                 .record(time_in_mempool.as_millis() as f64);
@@ -85,10 +115,10 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
                     FullTransactionEvent::Pending(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxState::Pending);
                     }
                     FullTransactionEvent::Queued(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxState::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_event(tx_hash, TxEvent::Dropped);
