@@ -37,6 +37,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
+use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -222,6 +223,7 @@ where
 
         let chain_spec = self.client.chain_spec();
         let timestamp = config.attributes.timestamp();
+        let calculate_state_root = self.config.specific.calculate_state_root;
         let block_env_attributes = OpNextBlockEnvAttributes {
             timestamp,
             suggested_fee_recipient: config.attributes.suggested_fee_recipient(),
@@ -299,18 +301,25 @@ where
             ctx.add_builder_tx(&mut info, &mut state, builder_tx_gas, message.clone());
         }
 
-        let (payload, fb_payload) = build_block(&mut state, &ctx, &mut info)?;
+        let (payload, fb_payload) = build_block(
+            &mut state,
+            &ctx,
+            &mut info,
+            calculate_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
+        )?;
 
         best_payload.set(payload.clone());
         self.send_payload_to_engine(payload);
-
-        let flashblock_byte_size = self
-            .ws_pub
-            .publish(&fb_payload)
-            .map_err(PayloadBuilderError::other)?;
-        ctx.metrics
-            .flashblock_byte_size_histogram
-            .record(flashblock_byte_size as f64);
+        // not emitting flashblock if no_tx_pool in FCU, it's just syncing
+        if !ctx.attributes().no_tx_pool {
+            let flashblock_byte_size = self
+                .ws_pub
+                .publish(&fb_payload)
+                .map_err(PayloadBuilderError::other)?;
+            ctx.metrics
+                .flashblock_byte_size_histogram
+                .record(flashblock_byte_size as f64);
+        }
 
         info!(
             target: "payload_builder",
@@ -513,7 +522,8 @@ where
                     };
 
                     let total_block_built_duration = Instant::now();
-                    let build_result = build_block(&mut state, &ctx, &mut info);
+                    let build_result =
+                        build_block(&mut state, &ctx, &mut info, calculate_state_root);
                     let total_block_built_duration = total_block_built_duration.elapsed();
                     ctx.metrics
                         .total_block_built_duration
@@ -823,6 +833,7 @@ fn build_block<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
     info: &mut ExecutionInfo<ExtraExecutionInfo>,
+    calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + AsRef<P>,
@@ -867,28 +878,34 @@ where
     // TODO: maybe recreate state with bundle in here
     // // calculate the state root
     let state_root_start_time = Instant::now();
-    let state_provider = state.database.as_ref();
-    let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
-    let (state_root, trie_output) = {
-        state
-            .database
-            .as_ref()
-            .state_root_with_updates(hashed_state.clone())
-            .inspect_err(|err| {
-                warn!(target: "payload_builder",
-                parent_header=%ctx.parent().hash(),
-                    %err,
-                    "failed to calculate state root for payload"
-                );
-            })?
-    };
-    let state_root_calculation_time = state_root_start_time.elapsed();
-    ctx.metrics
-        .state_root_calculation_duration
-        .record(state_root_calculation_time);
-    ctx.metrics
-        .state_root_calculation_gauge
-        .set(state_root_calculation_time);
+    let mut state_root = B256::ZERO;
+    let mut trie_output = TrieUpdates::default();
+    let mut hashed_state = HashedPostState::default();
+
+    if calculate_state_root {
+        let state_provider = state.database.as_ref();
+        hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+        (state_root, trie_output) = {
+            state
+                .database
+                .as_ref()
+                .state_root_with_updates(hashed_state.clone())
+                .inspect_err(|err| {
+                    warn!(target: "payload_builder",
+                    parent_header=%ctx.parent().hash(),
+                        %err,
+                        "failed to calculate state root for payload"
+                    );
+                })?
+        };
+        let state_root_calculation_time = state_root_start_time.elapsed();
+        ctx.metrics
+            .state_root_calculation_duration
+            .record(state_root_calculation_time);
+        ctx.metrics
+            .state_root_calculation_gauge
+            .set(state_root_calculation_time);
+    }
 
     let mut requests_hash = None;
     let withdrawals_root = if ctx

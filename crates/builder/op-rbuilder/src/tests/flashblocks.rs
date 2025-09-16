@@ -16,6 +16,7 @@ use crate::{
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -53,6 +54,7 @@ async fn smoke_dynamic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -90,6 +92,7 @@ async fn smoke_dynamic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -127,6 +130,7 @@ async fn smoke_classic_unichain(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 50,
         flashblocks_fixed: true,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -164,6 +168,7 @@ async fn smoke_classic_base(rbuilder: LocalInstance) -> eyre::Result<()> {
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -203,6 +208,7 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -240,6 +246,7 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -299,6 +306,7 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -354,6 +362,7 @@ async fn test_flashblock_max_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
+        flashblocks_calculate_state_root: true,
     },
     ..Default::default()
 })]
@@ -387,4 +396,48 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
     assert_eq!(6, flashblocks.len());
 
     flashblocks_listener.stop().await
+}
+
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    flashblocks: FlashblocksArgs {
+        enabled: true,
+        flashblocks_port: 1239,
+        flashblocks_addr: "127.0.0.1".into(),
+        flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
+        flashblocks_calculate_state_root: false,
+    },
+    ..Default::default()
+})]
+async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> eyre::Result<()> {
+    use alloy_primitives::B256;
+
+    let driver = rbuilder.driver().await?;
+
+    // Send a transaction to ensure block has some activity
+    let _tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .send()
+        .await?;
+
+    // Build a block with current timestamp (not historical) and calculate_state_root: false
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+
+    // Verify that flashblocks are still produced (block should have transactions)
+    assert!(
+        block.transactions.len() > 2,
+        "Block should contain transactions"
+    ); // deposit + builder tx + user tx
+
+    // Verify that state root is not calculated (should be zero)
+    assert_eq!(
+        block.header.state_root,
+        B256::ZERO,
+        "State root should be zero when calculate_state_root is false"
+    );
+
+    Ok(())
 }
