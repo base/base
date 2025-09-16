@@ -36,5 +36,5 @@ The pre-Isthmus values are migrated over 1:1.
 Blocks after the Isthmus activation block contain all pre-Isthmus values 1:1,
 and also set the following new attributes:
 
-- The `operatorFeeScalar` is set to `0`.
-- The `operatorFeeConstant` is set to `0`.
+- `operatorFeeScalar`
+- `operatorFeeConstant`
