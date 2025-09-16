@@ -12,7 +12,7 @@ pub trait BuilderTx {
 // Scaffolding for how to construct the end of block builder transaction
 // This will be the regular end of block transaction without the TEE key
 #[derive(Clone)]
-pub struct StandardBuilderTx {
+pub(super) struct StandardBuilderTx {
     #[allow(dead_code)]
     pub signer: Option<Signer>,
 }

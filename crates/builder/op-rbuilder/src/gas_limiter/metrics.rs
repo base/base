@@ -7,7 +7,7 @@ use crate::gas_limiter::error::GasLimitError;
 
 #[derive(Metrics, Clone)]
 #[metrics(scope = "op_rbuilder.gas_limiter")]
-pub struct GasLimiterMetrics {
+pub(super) struct GasLimiterMetrics {
     /// Transactions rejected by gas limits Labeled by reason: "per_address",
     /// "global", "burst"
     pub rejections: Counter,
@@ -23,7 +23,11 @@ pub struct GasLimiterMetrics {
 }
 
 impl GasLimiterMetrics {
-    pub fn record_gas_check(&self, check_result: &Result<bool, GasLimitError>, duration: Duration) {
+    pub(super) fn record_gas_check(
+        &self,
+        check_result: &Result<bool, GasLimitError>,
+        duration: Duration,
+    ) {
         if let Ok(created_new_bucket) = check_result {
             if *created_new_bucket {
                 self.active_address_count.increment(1);
@@ -35,7 +39,7 @@ impl GasLimiterMetrics {
         self.check_time.record(duration);
     }
 
-    pub fn record_refresh(&self, removed_addresses: usize, duration: Duration) {
+    pub(super) fn record_refresh(&self, removed_addresses: usize, duration: Duration) {
         self.active_address_count
             .decrement(removed_addresses as f64);
         self.refresh_duration.record(duration);

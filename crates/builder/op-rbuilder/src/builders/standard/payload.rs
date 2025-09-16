@@ -336,7 +336,7 @@ where
 /// And finally
 /// 5. build the block: compute all roots (txs, state)
 #[derive(derive_more::Debug)]
-pub struct OpBuilder<'a, Txs> {
+pub(super) struct OpBuilder<'a, Txs> {
     /// Yields the best transaction to include if transactions from the mempool are allowed.
     best: Box<dyn FnOnce(BestTransactionsAttributes) -> Txs + 'a>,
 }
@@ -351,14 +351,14 @@ impl<'a, Txs> OpBuilder<'a, Txs> {
 
 /// Holds the state after execution
 #[derive(Debug)]
-pub struct ExecutedPayload {
+pub(super) struct ExecutedPayload {
     /// Tracked execution info
     pub info: ExecutionInfo,
 }
 
 impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub fn execute<DB, P>(
+    pub(super) fn execute<DB, P>(
         self,
         state: &mut State<DB>,
         ctx: &OpPayloadBuilderCtx,
@@ -466,7 +466,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     }
 
     /// Builds the payload on top of the state.
-    pub fn build<DB, P>(
+    pub(super) fn build<DB, P>(
         self,
         mut state: State<DB>,
         ctx: OpPayloadBuilderCtx,

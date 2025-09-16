@@ -50,7 +50,7 @@ use url::{Host, Url};
 
 use super::Cli;
 
-pub struct PlaygroundOptions {
+pub(super) struct PlaygroundOptions {
     /// Sets node.chain in NodeCommand
     pub chain: Arc<OpChainSpec>,
 
@@ -78,7 +78,7 @@ pub struct PlaygroundOptions {
 
 impl PlaygroundOptions {
     /// Creates a new `PlaygroundOptions` instance with the specified genesis path.
-    pub fn new(path: &Path) -> Result<Self> {
+    pub(super) fn new(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Err(eyre!(
                 "Playground data directory {} does not exist",
@@ -112,7 +112,7 @@ impl PlaygroundOptions {
         })
     }
 
-    pub fn apply(self, cli: Cli) -> Cli {
+    pub(super) fn apply(self, cli: Cli) -> Cli {
         let mut cli = cli;
         let Commands::Node(ref mut node) = cli.command else {
             // playground defaults are only relevant if running the node commands.

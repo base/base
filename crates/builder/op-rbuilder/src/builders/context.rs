@@ -50,7 +50,7 @@ use crate::{
 
 /// Container type that holds all necessities to build a new payload.
 #[derive(Debug)]
-pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
+pub(super) struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     /// The type that knows how to perform system calls and configure the evm.
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
@@ -79,41 +79,41 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the parent block the payload will be build on.
-    pub fn parent(&self) -> &SealedHeader {
+    pub(super) fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
     }
 
     /// Returns the builder attributes.
-    pub const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
+    pub(super) const fn attributes(&self) -> &OpPayloadBuilderAttributes<OpTransactionSigned> {
         &self.config.attributes
     }
 
     /// Returns the withdrawals if shanghai is active.
-    pub fn withdrawals(&self) -> Option<&Withdrawals> {
+    pub(super) fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
             .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
     /// Returns the block gas limit to target.
-    pub fn block_gas_limit(&self) -> u64 {
+    pub(super) fn block_gas_limit(&self) -> u64 {
         self.attributes()
             .gas_limit
             .unwrap_or(self.evm_env.block_env.gas_limit)
     }
 
     /// Returns the block number for the block.
-    pub fn block_number(&self) -> u64 {
+    pub(super) fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
     /// Returns the current base fee
-    pub fn base_fee(&self) -> u64 {
+    pub(super) fn base_fee(&self) -> u64 {
         self.evm_env.block_env.basefee
     }
 
     /// Returns the current blob gas price.
-    pub fn get_blob_gasprice(&self) -> Option<u64> {
+    pub(super) fn get_blob_gasprice(&self) -> Option<u64> {
         self.evm_env
             .block_env
             .blob_gasprice()
@@ -123,7 +123,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the blob fields for the header.
     ///
     /// This will always return `Some(0)` after ecotone.
-    pub fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
+    pub(super) fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
         // OP doesn't support blobs/EIP-4844.
         // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
         // Need [Some] or [None] based on hardfork to match block hash.
@@ -137,7 +137,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the extra data for the block.
     ///
     /// After holocene this extracts the extradata from the paylpad
-    pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
+    pub(super) fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
         if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
@@ -152,52 +152,52 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Returns the current fee settings for transactions from the mempool
-    pub fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
+    pub(super) fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(self.base_fee(), self.get_blob_gasprice())
     }
 
     /// Returns the unique id for this payload job.
-    pub fn payload_id(&self) -> PayloadId {
+    pub(super) fn payload_id(&self) -> PayloadId {
         self.attributes().payload_id()
     }
 
     /// Returns true if regolith is active for the payload.
-    pub fn is_regolith_active(&self) -> bool {
+    pub(super) fn is_regolith_active(&self) -> bool {
         self.chain_spec
             .is_regolith_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if ecotone is active for the payload.
-    pub fn is_ecotone_active(&self) -> bool {
+    pub(super) fn is_ecotone_active(&self) -> bool {
         self.chain_spec
             .is_ecotone_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if canyon is active for the payload.
-    pub fn is_canyon_active(&self) -> bool {
+    pub(super) fn is_canyon_active(&self) -> bool {
         self.chain_spec
             .is_canyon_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if holocene is active for the payload.
-    pub fn is_holocene_active(&self) -> bool {
+    pub(super) fn is_holocene_active(&self) -> bool {
         self.chain_spec
             .is_holocene_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
-    pub fn is_isthmus_active(&self) -> bool {
+    pub(super) fn is_isthmus_active(&self) -> bool {
         self.chain_spec
             .is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
-    pub fn chain_id(&self) -> u64 {
+    pub(super) fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
     }
 
     /// Returns the builder signer
-    pub fn builder_signer(&self) -> Option<Signer> {
+    pub(super) fn builder_signer(&self) -> Option<Signer> {
         self.builder_signer
     }
 }
@@ -236,7 +236,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Executes all sequencer transactions that are included in the payload attributes.
-    pub fn execute_sequencer_transactions<DB, E: Debug + Default>(
+    pub(super) fn execute_sequencer_transactions<DB, E: Debug + Default>(
         &self,
         state: &mut State<DB>,
     ) -> Result<ExecutionInfo<E>, PayloadBuilderError>
@@ -325,7 +325,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Executes the given best transactions and updates the execution info.
     ///
     /// Returns `Ok(Some(())` if the job was cancelled.
-    pub fn execute_best_transactions<DB, E: Debug + Default>(
+    pub(super) fn execute_best_transactions<DB, E: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<E>,
         state: &mut State<DB>,
@@ -567,7 +567,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         Ok(None)
     }
 
-    pub fn add_builder_tx<DB, Extra: Debug + Default>(
+    pub(super) fn add_builder_tx<DB, Extra: Debug + Default>(
         &self,
         info: &mut ExecutionInfo<Extra>,
         state: &mut State<DB>,
@@ -628,7 +628,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Calculates EIP 2718 builder transaction size
     // TODO: this function could be improved, ideally we shouldn't take mut ref to db and maybe
     // it's possible to do this without db at all
-    pub fn estimate_builder_tx_da_size<DB>(
+    pub(super) fn estimate_builder_tx_da_size<DB>(
         &self,
         state: &mut State<DB>,
         builder_tx_gas: u64,
@@ -656,7 +656,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 }
 
-pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
+pub(super) fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
     // Count zero and non-zero bytes
     let (zero_bytes, nonzero_bytes) = input.iter().fold((0, 0), |(zeros, nonzeros), &byte| {
         if byte == 0 {
@@ -678,7 +678,7 @@ pub fn estimate_gas_for_builder_tx(input: Vec<u8>) -> u64 {
 }
 
 /// Creates signed builder tx to Address::ZERO and specified message as input
-pub fn signed_builder_tx<DB>(
+pub(super) fn signed_builder_tx<DB>(
     state: &mut State<DB>,
     builder_tx_gas: u64,
     message: Vec<u8>,

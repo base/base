@@ -71,36 +71,36 @@ struct FlashblocksExtraCtx {
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
     /// Returns the current flashblock index
-    pub fn flashblock_index(&self) -> u64 {
+    pub(crate) fn flashblock_index(&self) -> u64 {
         self.extra_ctx.flashblock_index
     }
 
     /// Returns the target flashblock count
-    pub fn target_flashblock_count(&self) -> u64 {
+    pub(crate) fn target_flashblock_count(&self) -> u64 {
         self.extra_ctx.target_flashblock_count
     }
 
     /// Increments the flashblock index
-    pub fn increment_flashblock_index(&mut self) -> u64 {
+    pub(crate) fn increment_flashblock_index(&mut self) -> u64 {
         self.extra_ctx.flashblock_index += 1;
         self.extra_ctx.flashblock_index
     }
 
     /// Sets the target flashblock count
-    pub fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
+    pub(crate) fn set_target_flashblock_count(&mut self, target_flashblock_count: u64) -> u64 {
         self.extra_ctx.target_flashblock_count = target_flashblock_count;
         self.extra_ctx.target_flashblock_count
     }
 
     /// Returns if the flashblock is the last one
-    pub fn is_last_flashblock(&self) -> bool {
+    pub(crate) fn is_last_flashblock(&self) -> bool {
         self.flashblock_index() == self.target_flashblock_count() - 1
     }
 }
 
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct OpPayloadBuilder<Pool, Client, BT> {
+pub(super) struct OpPayloadBuilder<Pool, Client, BT> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -126,7 +126,7 @@ pub struct OpPayloadBuilder<Pool, Client, BT> {
 
 impl<Pool, Client, BT> OpPayloadBuilder<Pool, Client, BT> {
     /// `OpPayloadBuilder` constructor.
-    pub fn new(
+    pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
@@ -656,7 +656,7 @@ where
     }
 
     /// Sends built payload via payload builder handle broadcast channel to the engine
-    pub fn send_payload_to_engine(&self, payload: OpBuiltPayload) {
+    pub(super) fn send_payload_to_engine(&self, payload: OpBuiltPayload) {
         // Send built payload as created one
         match self.payload_builder_handle.get() {
             Some(handle) => {
@@ -676,7 +676,7 @@ where
 
     /// Spawn task that will send new flashblock level cancel token in steady intervals (first interval
     /// may vary if --flashblocks.dynamic enabled)
-    pub fn spawn_timer_task(
+    pub(super) fn spawn_timer_task(
         &self,
         block_cancel: CancellationToken,
         fb_cancel_token_tx: Sender<Option<CancellationToken>>,
@@ -723,7 +723,7 @@ where
 
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
-    pub fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
+    pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
         if self.config.specific.fixed {
             return (
                 self.config.flashblocks_per_block(),

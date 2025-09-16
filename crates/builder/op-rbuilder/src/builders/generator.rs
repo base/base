@@ -34,7 +34,7 @@ use tracing::info;
 ///
 /// Generic parameters `Pool` and `Client` represent the transaction pool and
 /// Ethereum client types.
-pub trait PayloadBuilder: Send + Sync + Clone {
+pub(super) trait PayloadBuilder: Send + Sync + Clone {
     /// The payload attributes type to accept for building.
     type Attributes: PayloadBuilderAttributes;
     /// The type of the built payload.
@@ -61,7 +61,7 @@ pub trait PayloadBuilder: Send + Sync + Clone {
 
 /// The generator type that creates new jobs that builds empty blocks.
 #[derive(Debug)]
-pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
+pub(super) struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// The client that can interact with the chain.
     client: Client,
     /// How to spawn building tasks
@@ -87,7 +87,7 @@ pub struct BlockPayloadJobGenerator<Client, Tasks, Builder> {
 impl<Client, Tasks, Builder> BlockPayloadJobGenerator<Client, Tasks, Builder> {
     /// Creates a new [EmptyBlockPayloadJobGenerator] with the given config and custom
     /// [PayloadBuilder]
-    pub fn with_builder(
+    pub(super) fn with_builder(
         client: Client,
         executor: Tasks,
         config: BasicPayloadJobGeneratorConfig,
@@ -238,7 +238,7 @@ use std::{
 };
 
 /// A [PayloadJob] that builds empty blocks.
-pub struct BlockPayloadJob<Tasks, Builder>
+pub(super) struct BlockPayloadJob<Tasks, Builder>
 where
     Builder: PayloadBuilder,
 {
@@ -296,7 +296,7 @@ where
     }
 }
 
-pub struct BuildArguments<Attributes, Payload: BuiltPayload> {
+pub(super) struct BuildArguments<Attributes, Payload: BuiltPayload> {
     /// Previously cached disk reads
     pub cached_reads: CachedReads,
     /// How to configure the payload.
@@ -313,7 +313,7 @@ where
     Builder::Attributes: Unpin + Clone,
     Builder::BuiltPayload: Unpin + Clone,
 {
-    pub fn spawn_build_job(&mut self) {
+    pub(super) fn spawn_build_job(&mut self) {
         let builder = self.builder.clone();
         let payload_config = self.config.clone();
         let cell = self.cell.clone();
@@ -367,12 +367,12 @@ where
 }
 
 // A future that resolves when a payload becomes available in the BlockCell
-pub struct ResolvePayload<T> {
+pub(super) struct ResolvePayload<T> {
     future: WaitForValue<T>,
 }
 
 impl<T> ResolvePayload<T> {
-    pub fn new(future: WaitForValue<T>) -> Self {
+    pub(super) fn new(future: WaitForValue<T>) -> Self {
         Self { future }
     }
 }
@@ -389,39 +389,39 @@ impl<T: Clone> Future for ResolvePayload<T> {
 }
 
 #[derive(Clone)]
-pub struct BlockCell<T> {
+pub(super) struct BlockCell<T> {
     inner: Arc<Mutex<Option<T>>>,
     notify: Arc<Notify>,
 }
 
 impl<T: Clone> BlockCell<T> {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(None)),
             notify: Arc::new(Notify::new()),
         }
     }
 
-    pub fn set(&self, value: T) {
+    pub(super) fn set(&self, value: T) {
         let mut inner = self.inner.lock().unwrap();
         *inner = Some(value);
         self.notify.notify_one();
     }
 
-    pub fn get(&self) -> Option<T> {
+    pub(super) fn get(&self) -> Option<T> {
         let inner = self.inner.lock().unwrap();
         inner.clone()
     }
 
     // Return a future that resolves when value is set
-    pub fn wait_for_value(&self) -> WaitForValue<T> {
+    pub(super) fn wait_for_value(&self) -> WaitForValue<T> {
         WaitForValue { cell: self.clone() }
     }
 }
 
 #[derive(Clone)]
 // Future that resolves when a value is set in BlockCell
-pub struct WaitForValue<T> {
+pub(super) struct WaitForValue<T> {
     cell: BlockCell<T>,
 }
 
