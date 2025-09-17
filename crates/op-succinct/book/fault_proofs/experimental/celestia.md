@@ -61,6 +61,25 @@ docker run -d \
 
 When running separately, set `CELESTIA_INDEXER_RPC=http://localhost:57220` in your `.env` file.
 
+## Celestia Contract Configuration
+
+CelestiaDA deployments also require CelestiaDA-specific verification key commitments and rollup config hashes. Always compile these values with the `celestia` feature flag so the range verification key commitment aligns with the Celestia range ELF, the aggregation verification key, and the rollup config hash:
+
+```bash
+# From the repository root
+cargo run --bin config --release --features celestia -- --env-file fault-proof/.env
+```
+
+The command prints the `Range Verification Key Hash`, `Aggregation Verification Key Hash`, and `Rollup Config Hash`. Confirm these values before updating on-chain storage in `OPSuccinctFaultDisputeGame`.
+
+When you use the `just` helper below, include the `celestia` argument so `fetch-fault-dispute-game-config` runs with the correct feature set. If you run `fetch-fault-dispute-game-config` manually, append `--features celestia`; otherwise the script emits the default Ethereum DA values and your games will revert with `ProofInvalid()` when submitting proofs.
+
+## Deploying `OPSuccinctFaultDisputeGame` with Celestia features
+
+```bash
+just deploy-fdg-contracts .env celestia
+```
+
 ## Run Services with Celestia DA
 
 ```bash

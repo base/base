@@ -28,6 +28,25 @@ See [EigenDA Proxy](https://github.com/Layr-Labs/eigenda/tree/master/api/proxy) 
 
 After running the proxy, set `EIGENDA_PROXY_ADDRESS=http://127.0.0.1:3100` in the `.env.proposer` file.
 
+## EigenDA Contract Configuration
+
+EigenDA deployments also require EigenDA-specific verification key commitments and rollup config hashes. Always compile these values with the `eigenda` feature flag so the range verification key commitment aligns with the EigenDA range ELF, the shared aggregation verification key is re-derived, and the rollup config hash mirrors the configuration returned by your rollup node:
+
+```bash
+# From the repository root
+cargo run --bin config --release --features eigenda -- --env-file fault-proof/.env
+```
+
+The command prints the `Range Verification Key Hash`, `Aggregation Verification Key Hash`, and `Rollup Config Hash`. Confirm these values before updating on-chain storage in `OPSuccinctFaultDisputeGame`.
+
+When you use the `just` helper below, include the `eigenda` argument so `fetch-fault-dispute-game-config` runs with the correct feature set. If you run `fetch-fault-dispute-game-config` manually, append `--features eigenda`; otherwise the script emits the default Ethereum DA values and your games will revert with `ProofInvalid()` when submitting proofs.
+
+## Deploying `OPSuccinctFaultDisputeGame` with EigenDA features
+
+```bash
+just deploy-fdg-contracts .env eigenda
+```
+
 ## Run Services with EigenDA DA
 
 ```bash
