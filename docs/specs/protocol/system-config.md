@@ -44,6 +44,7 @@
   - [setEIP1559Params](#seteip1559params)
   - [setOperatorFeeScalars](#setoperatorfeescalars)
   - [setMinBaseFee](#setminbasefee)
+  - [setDAFootprintGasScalar](#setdafootprintgasscalar)
   - [resourceConfig](#resourceconfig)
   - [guardian](#guardian)
 
@@ -188,6 +189,7 @@ In version `0`, the following update types are supported:
 - Type `4`: `eip1559Params` overwrite, as `uint256` payload encoding denomination and elasticity
 - Type `5`: `operatorFeeParams` overwrite, as `uint256` payload encoding scalar and constant
 - Type `6`: `minBaseFee` overwrite, as `uint64` payload
+- Type `7`: `daFootprintGasScalar` overwrite, as `uint16` payload
 
 ## Function Specification
 
@@ -367,6 +369,14 @@ Starting at Jovian, this function allows the owner to update the minimum base fe
 - MUST revert if called by an address other than the owner.
 - MUST update the minBaseFee value.
 - MUST emit a ConfigUpdate event with the UpdateType.MIN_BASE_FEE type.
+
+### setDAFootprintGasScalar
+
+Starting at Jovian, this function allows the owner to update the DA footprint gas scalar.
+
+- MUST revert if called by an address other than the owner.
+- MUST update the daFootprintGasScalar value.
+- MUST emit a ConfigUpdate event with the UpdateType.DA_FOOTPRINT_GAS_SCALAR type.
 
 ### resourceConfig
 

@@ -8,6 +8,9 @@
   - [Minimum Base Fee in Block Header](#minimum-base-fee-in-block-header)
   - [Minimum Base Fee in `PayloadAttributesV3`](#minimum-base-fee-in-payloadattributesv3)
   - [Rationale](#rationale)
+- [DA Footprint Block Limit](#da-footprint-block-limit)
+  - [Scalar loading](#scalar-loading)
+  - [Rationale](#rationale-1)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -77,3 +80,57 @@ This retains the purity of the function that computes the next block's base fee 
 header, while still allowing them to be dynamically configured. Dynamic configuration is handled
 similarly to `gasLimit`, with the derivation pipeline providing the appropriate `SystemConfig`
 contract values to the block builder via `PayloadAttributesV3` parameters.
+
+## DA Footprint Block Limit
+
+A DA footprint block limit is introduced to limit the total amount of estimated compressed
+transaction data that can fit into a block.
+ For each transaction, a new resource called DA footprint is tracked, next to its gas usage.
+ It is scaled to the gas dimension so that its block total can also be limited by
+ the block gas limit, like a block's total gas usage.
+
+Let a block's `daFootprint` be defined as follows:
+
+```python
+def daFootprint(block)
+  daFootprint = 0
+  for tx in block.txs:
+      if !tx.IsDepositTx
+        daUsageEstimate = max(minTransactionSize, intercept + fastlzCoef * tx.fastlzSize / 1e6)
+        daFootprint += daUsageEstimate * daFootprintGasScalar
+  return daFootprint 
+```
+
+where `intercept`, `minTransactionSize`, `fastLzCoef` and `fastlzSize`
+are defined in the [Fjord specs](../fjord/exec-engine.md) and `/` represents integer division.
+
+From Jovian, the `gasUsed` property of each block header is equal to the maximum over
+that block's `daFootprint` and the sum of the gas used by each transaction
+(the pre-Jovian definition of a block's `gasUsed` field).
+As a result, blocks with high DA usage may cause the base fee to increase in subsequent blocks.
+
+The `gasUsed` must continue to be less than or equal to the block gas limit, meaning that
+(since the `daFootprint` must also be less than or equal to the block gas limit),
+blocks may have no more than `gasLimit/daFootprintGasScalar` total estimated DA usage.
+
+### Scalar loading
+
+The `daFootprintGasScalar` is loaded in a similar way to the `operatorFeeScalar` and `operatorFeeConstant`
+[included](../isthmus/exec-engine.md#operator-fee) in the Isthmus fork. It can be read in two interchangable ways:
+
+- read from the deposited L1 attributes (`daFootprintGasScalar`) of the current L2 block
+(decoded according to the [jovian schema](./l1-attributes.md))
+- read from the L1 Block Info contract (`0x4200000000000000000000000000000000000015`)
+  - using the solidity getter function `daFootprintGasScalar`
+  - using a direct storage-read: big-endian `uint16` in slot `9` at offset `0`.
+
+It takes on a default value as described in the section on [L1 Attributes](./l1-attributes.md).
+
+### Rationale
+
+While the current L1 fee mechanism charges for DA usage based on an estimate of the DA footprint of a transaction, it
+does not influence future base fee calculations. As a result, excessive DA usage is not efficiently reflected in the fee
+market, leading to suboptimal resource prices.
+
+By changing the meaning of the `gasUsed` field in times of high DA demand, the fee market can properly adjust without reverting
+to priority fee auctions (an inferior experience for users).

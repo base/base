@@ -11,6 +11,12 @@
   - [Interface](#interface)
     - [Minimum Base Fee Parameters](#minimum-base-fee-parameters)
       - [`minBaseFee`](#minbasefee)
+- [DA Footprint Configuration](#da-footprint-configuration)
+  - [`ConfigUpdate`](#configupdate-1)
+  - [Modifying DA Footprint Gas Scalar](#modifying-da-footprint-gas-scalar)
+  - [Interface](#interface-1)
+    - [DA Footprint Gas Scalar Parameters](#da-footprint-gas-scalar-parameters)
+      - [`daFootprintGasScalar`](#dafootprintgasscalar)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -71,4 +77,40 @@ This function returns the currently configured minimum base fee in wei.
 
 ```solidity
 function minBaseFee() external view returns (uint64);
+```
+
+## DA Footprint Configuration
+
+Jovian adds a `uint16` configuration value to `SystemConfig` to control the [`daFootprintGasScalar`](./derivation.md).
+
+The configuration is updated via a new method on `SystemConfig`:
+
+```solidity
+function setDAFootprintGasScalar(uint16 daFootprintGasScalar) external onlyOwner;
+```
+
+### `ConfigUpdate`
+
+When the configuration is updated, a [`ConfigUpdate`](../system-config.html#system-config-updates) event
+MUST be emitted with the following parameters:
+
+| `version` | `updateType` | `data` | Usage |
+| ---- | ----- | --- | -- |
+| `uint256(0)` | `uint8(7)` | `abi.encode(uint16(_daFootprintGasScalar))` | Modifies the DA footprint gas scalar |
+
+### Modifying DA Footprint Gas Scalar
+
+Upon update, the contract emits the `ConfigUpdate` event above, enabling nodes
+to derive the configuration from L1 logs.
+
+### Interface
+
+#### DA Footprint Gas Scalar Parameters
+
+##### `daFootprintGasScalar`
+
+This function returns the currently configured DA footprint gas scalar.
+
+```solidity
+function daFootprintGasScalar() external view returns (uint16);
 ```

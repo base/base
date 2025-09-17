@@ -68,6 +68,8 @@
       - [Predeploys](./protocol/isthmus/predeploys.md)
     - [Jovian](./protocol/jovian/overview.md)
       - [Execution Engine](./protocol/jovian/exec-engine.md)
+      - [Derivation](./protocol/jovian/derivation.md)
+      - [L1 Attributes](./protocol/jovian/l1-attributes.md)
       - [System Config](./protocol/jovian/system-config.md)
 - [Governance]()
   - [Governance Token](./governance/gov-token.md)
