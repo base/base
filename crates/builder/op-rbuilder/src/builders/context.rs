@@ -460,6 +460,21 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 .record(tx_simulation_start_time.elapsed());
             self.metrics.tx_byte_size.record(tx.inner().size() as f64);
             num_txs_simulated += 1;
+
+            // Run the per-address gas limiting before checking if the tx has
+            // reverted or not, as this is a check against maliciously searchers
+            // sending txs that are expensive to compute but always revert.
+            let gas_used = result.gas_used();
+            if self
+                .address_gas_limiter
+                .consume_gas(tx.signer(), gas_used)
+                .is_err()
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
+            }
+
             if result.is_success() {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
@@ -480,23 +495,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            let gas_used = result.gas_used();
             if let Some(max_gas_per_txn) = self.max_gas_per_txn {
                 if gas_used > max_gas_per_txn {
                     log_txn(TxnExecutionResult::MaxGasUsageExceeded);
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 }
-            }
-
-            if self
-                .address_gas_limiter
-                .consume_gas(tx.signer(), gas_used)
-                .is_err()
-            {
-                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                best_txs.mark_invalid(tx.signer(), tx.nonce());
-                continue;
             }
 
             info.cumulative_gas_used += gas_used;
