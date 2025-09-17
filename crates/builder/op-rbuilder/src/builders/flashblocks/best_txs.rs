@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, TxHash};
 use reth_payload_util::PayloadTransactions;
-use reth_transaction_pool::PoolTransaction;
-use std::collections::HashSet;
+use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
+use std::{collections::HashSet, sync::Arc};
 use tracing::debug;
 
 use crate::tx::MaybeFlashblockFilter;
@@ -9,9 +9,9 @@ use crate::tx::MaybeFlashblockFilter;
 pub(super) struct BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    inner: I,
+    inner: reth_payload_util::BestPayloadTransactions<T, I>,
     current_flashblock_number: u64,
     // Transactions that were already commited to the state. Using them again would cause NonceTooLow
     // so we skip them
@@ -21,9 +21,9 @@ where
 impl<T, I> BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction,
-    I: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
-    pub(super) fn new(inner: I) -> Self {
+    pub(super) fn new(inner: reth_payload_util::BestPayloadTransactions<T, I>) -> Self {
         Self {
             inner,
             current_flashblock_number: 0,
@@ -33,7 +33,11 @@ where
 
     /// Replaces current iterator with new one. We use it on new flashblock building, to refresh
     /// priority boundaries
-    pub(super) fn refresh_iterator(&mut self, inner: I, current_flashblock_number: u64) {
+    pub(super) fn refresh_iterator(
+        &mut self,
+        inner: reth_payload_util::BestPayloadTransactions<T, I>,
+        current_flashblock_number: u64,
+    ) {
         self.inner = inner;
         self.current_flashblock_number = current_flashblock_number;
     }
@@ -47,7 +51,7 @@ where
 impl<T, I> PayloadTransactions for BestFlashblocksTxs<T, I>
 where
     T: PoolTransaction + MaybeFlashblockFilter,
-    I: PayloadTransactions<Transaction = T>,
+    I: Iterator<Item = Arc<ValidPoolTransaction<T>>>,
 {
     type Transaction = T;
 

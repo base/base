@@ -38,6 +38,7 @@ use reth_provider::{
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
+use reth_transaction_pool::TransactionPool;
 use reth_trie::{HashedPostState, updates::TrieUpdates};
 use revm::Database;
 use rollup_boost::{
@@ -49,12 +50,22 @@ use std::{
     sync::{Arc, OnceLock},
     time::Instant,
 };
-use tokio::sync::{
-    mpsc,
-    mpsc::{Sender, error::SendError},
-};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, metadata::Level, span, warn};
+
+type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
+    <Pool as TransactionPool>::Transaction,
+    Box<
+        dyn reth_transaction_pool::BestTransactions<
+                Item = Arc<
+                    reth_transaction_pool::ValidPoolTransaction<
+                        <Pool as TransactionPool>::Transaction,
+                    >,
+                >,
+            >,
+    >,
+>;
 
 #[derive(Debug, Default)]
 struct ExtraExecutionInfo {
@@ -65,9 +76,19 @@ struct ExtraExecutionInfo {
 #[derive(Debug, Default)]
 pub struct FlashblocksExtraCtx {
     /// Current flashblock index
-    pub flashblock_index: u64,
-    /// Target flashblock count
-    pub target_flashblock_count: u64,
+    flashblock_index: u64,
+    /// Target flashblock count per block
+    target_flashblock_count: u64,
+    /// Total gas left for the current flashblock
+    target_gas_for_batch: u64,
+    /// Total DA bytes left for the current flashblock
+    total_da_per_batch: Option<u64>,
+    /// Gas limit per flashblock
+    gas_per_batch: u64,
+    /// DA bytes limit per flashblock
+    da_per_batch: Option<u64>,
+    /// Whether to calculate the state root for each flashblock
+    calculate_state_root: bool,
 }
 
 impl OpPayloadBuilderCtx<FlashblocksExtraCtx> {
@@ -190,7 +211,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExtraCtx>,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Send + Sync,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -200,7 +221,7 @@ where
     /// Given build arguments including an Optimism client, transaction pool,
     /// and configuration, this function creates a transaction payload. Returns
     /// a result indicating success with the payload or an error in case of failure.
-    fn build_payload(
+    async fn build_payload(
         &self,
         args: BuildArguments<OpPayloadBuilderAttributes<OpTransactionSigned>, OpBuiltPayload>,
         best_payload: BlockCell<OpBuiltPayload>,
@@ -270,6 +291,11 @@ where
             extra_ctx: FlashblocksExtraCtx {
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
+                target_gas_for_batch: 0,
+                total_da_per_batch: None,
+                gas_per_batch: 0,
+                da_per_batch: None,
+                calculate_state_root,
             },
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
@@ -373,7 +399,7 @@ where
             .first_flashblock_time_offset
             .record(first_flashblock_offset.as_millis() as f64);
         let gas_per_batch = ctx.block_gas_limit() / ctx.target_flashblock_count();
-        let mut total_gas_per_batch = gas_per_batch;
+        let target_gas_for_batch = gas_per_batch;
         let da_per_batch = ctx
             .da_config
             .max_da_block_size()
@@ -390,24 +416,59 @@ where
         let mut total_da_per_batch = da_per_batch;
 
         // Account for already included builder tx
-        total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
+        ctx.extra_ctx.target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
         if let Some(da_limit) = total_da_per_batch.as_mut() {
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
+        ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+        ctx.extra_ctx.gas_per_batch = gas_per_batch;
+        ctx.extra_ctx.da_per_batch = da_per_batch;
 
         // Create best_transaction iterator
         let mut best_txs = BestFlashblocksTxs::new(BestPayloadTransactions::new(
             self.pool
                 .best_transactions_with_attributes(ctx.best_transaction_attributes()),
         ));
-        // This channel coordinates flashblock building
-        let (fb_cancel_token_tx, mut fb_cancel_token_rx) =
-            mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
-        self.spawn_timer_task(
-            block_cancel.clone(),
-            fb_cancel_token_tx,
-            first_flashblock_offset,
-        );
+        let interval = self.config.specific.interval;
+        let (tx, mut rx) = mpsc::channel((self.config.flashblocks_per_block() + 1) as usize);
+        let mut fb_cancel = block_cancel.child_token();
+        ctx.cancel = fb_cancel.clone();
+
+        tokio::spawn({
+            let block_cancel = block_cancel.clone();
+
+            async move {
+                let mut timer = tokio::time::interval_at(
+                    tokio::time::Instant::now()
+                        .checked_add(first_flashblock_offset)
+                        .expect("can add flashblock offset to current time"),
+                    interval,
+                );
+
+                loop {
+                    tokio::select! {
+                        _ = timer.tick() => {
+                            // cancel current payload building job
+                            fb_cancel.cancel();
+                            fb_cancel = block_cancel.child_token();
+                            // this will tick at first_flashblock_offset,
+                            // starting the second flashblock
+                            if tx.send(fb_cancel.clone()).await.is_err() {
+                                // receiver channel was dropped, return.
+                                // this will only happen if the `build_payload` function returns,
+                                // due to payload building error or the main cancellation token being
+                                // cancelled.
+                                return;
+                            }
+                        }
+                        _ = block_cancel.cancelled() => {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+
         // Process flashblocks in a blocking loop
         loop {
             let fb_span = if span.is_none() {
@@ -421,208 +482,35 @@ where
             };
             let _entered = fb_span.enter();
 
-            // We get token from time loop. Token from this channel means that we need to start build flashblock
-            // Cancellation of this token means that we need to stop building flashblock.
-            // If channel return None it means that we built all flashblock or parent_token got cancelled
-            let fb_cancel_token =
-                tokio::task::block_in_place(|| fb_cancel_token_rx.blocking_recv()).flatten();
-
-            match fb_cancel_token {
-                Some(cancel_token) => {
-                    // fallback block is index 0, so we need to increment here
-                    ctx.increment_flashblock_index();
-                    // We use fb_cancel_token inside context so we could exit from
-                    // execute_best_transaction without cancelling parent token
-                    ctx.cancel = cancel_token;
-                    // TODO: remove this
-                    if ctx.flashblock_index() > ctx.target_flashblock_count() {
-                        info!(
-                            target: "payload_builder",
-                            target = ctx.target_flashblock_count(),
-                            flashblock_index = ctx.flashblock_index(),
-                            block_number = ctx.block_number(),
-                            "Skipping flashblock reached target",
-                        );
-                        continue;
-                    }
-                    // Continue with flashblock building
-                    info!(
+            // build first flashblock immediately
+            match self.build_next_flashblock(
+                &mut ctx,
+                &mut info,
+                &mut state,
+                &state_provider,
+                &mut best_txs,
+                &block_cancel,
+                &best_payload,
+                &fb_span,
+            ) {
+                Ok(()) => {}
+                Err(err) => {
+                    error!(
                         target: "payload_builder",
-                        block_number = ctx.block_number(),
-                        flashblock_index = ctx.flashblock_index(),
-                        target_gas = total_gas_per_batch,
-                        gas_used = info.cumulative_gas_used,
-                        target_da = total_da_per_batch.unwrap_or(0),
-                        da_used = info.cumulative_da_bytes_used,
-                        "Building flashblock",
-                    );
-                    let flashblock_build_start_time = Instant::now();
-
-                    let builder_txs = self.builder_tx.simulate_builder_txs(
-                        &state_provider,
-                        &mut info,
-                        &ctx,
-                        &mut state,
-                    )?;
-                    let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
-                    let builder_tx_da_size: u64 =
-                        builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
-
-                    total_gas_per_batch = total_gas_per_batch.saturating_sub(builder_tx_gas);
-                    // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-                    if let Some(da_limit) = total_da_per_batch.as_mut() {
-                        *da_limit = da_limit.saturating_sub(builder_tx_da_size);
-                    }
-
-                    let best_txs_start_time = Instant::now();
-                    best_txs.refresh_iterator(
-                        BestPayloadTransactions::new(
-                            self.pool.best_transactions_with_attributes(
-                                ctx.best_transaction_attributes(),
-                            ),
-                        ),
+                        "Failed to build flashblock {}, flashblock {}: {}",
+                        ctx.block_number(),
                         ctx.flashblock_index(),
+                        err
                     );
-                    let transaction_pool_fetch_time = best_txs_start_time.elapsed();
-                    ctx.metrics
-                        .transaction_pool_fetch_duration
-                        .record(transaction_pool_fetch_time);
-                    ctx.metrics
-                        .transaction_pool_fetch_gauge
-                        .set(transaction_pool_fetch_time);
-
-                    let tx_execution_start_time = Instant::now();
-                    ctx.execute_best_transactions(
-                        &mut info,
-                        &mut state,
-                        &mut best_txs,
-                        total_gas_per_batch.min(ctx.block_gas_limit()),
-                        total_da_per_batch,
-                    )?;
-                    // Extract last transactions
-                    let new_transactions = info.executed_transactions
-                        [info.extra.last_flashblock_index..]
-                        .to_vec()
-                        .iter()
-                        .map(|tx| tx.tx_hash())
-                        .collect::<Vec<_>>();
-                    best_txs.mark_commited(new_transactions);
-
-                    // We got block cancelled, we won't need anything from the block at this point
-                    // Caution: this assume that block cancel token only cancelled when new FCU is received
-                    if block_cancel.is_cancelled() {
-                        self.record_flashblocks_metrics(
-                            &ctx,
-                            &info,
-                            flashblocks_per_block,
-                            &span,
-                            "Payload building complete, channel closed or job cancelled",
-                        );
-                        return Ok(());
-                    }
-
-                    let payload_tx_simulation_time = tx_execution_start_time.elapsed();
-                    ctx.metrics
-                        .payload_tx_simulation_duration
-                        .record(payload_tx_simulation_time);
-                    ctx.metrics
-                        .payload_tx_simulation_gauge
-                        .set(payload_tx_simulation_time);
-
-                    self.builder_tx.add_builder_txs(
-                        &state_provider,
-                        &mut info,
-                        &ctx,
-                        &mut state,
-                    )?;
-
-                    let total_block_built_duration = Instant::now();
-                    let build_result =
-                        build_block(&mut state, &ctx, &mut info, calculate_state_root);
-                    let total_block_built_duration = total_block_built_duration.elapsed();
-                    ctx.metrics
-                        .total_block_built_duration
-                        .record(total_block_built_duration);
-                    ctx.metrics
-                        .total_block_built_gauge
-                        .set(total_block_built_duration);
-
-                    // Handle build errors with match pattern
-                    match build_result {
-                        Err(err) => {
-                            // Track invalid/bad block
-                            ctx.metrics.invalid_blocks_count.increment(1);
-                            error!(target: "payload_builder", "Failed to build block {}, flashblock {}: {}", ctx.block_number(), ctx.flashblock_index(), err);
-                            // Signal cancellation of the block building job
-                            block_cancel.cancel();
-                            // Return the error
-                            return Err(err);
-                        }
-                        Ok((new_payload, mut fb_payload)) => {
-                            fb_payload.index = ctx.flashblock_index();
-                            fb_payload.base = None;
-
-                            // We check that child_job got cancelled before sending flashblock.
-                            // This will ensure consistent timing between flashblocks.
-                            tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current()
-                                    .block_on(async { ctx.cancel.cancelled().await });
-                            });
-
-                            // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
-                            // To ensure that we will return same blocks as rollup-boost (to leverage caches)
-                            if block_cancel.is_cancelled() {
-                                self.record_flashblocks_metrics(
-                                    &ctx,
-                                    &info,
-                                    flashblocks_per_block,
-                                    &span,
-                                    "Payload building complete, channel closed or job cancelled",
-                                );
-                                return Ok(());
-                            }
-                            let flashblock_byte_size = self
-                                .ws_pub
-                                .publish(&fb_payload)
-                                .map_err(PayloadBuilderError::other)?;
-
-                            // Record flashblock build duration
-                            ctx.metrics
-                                .flashblock_build_duration
-                                .record(flashblock_build_start_time.elapsed());
-                            ctx.metrics
-                                .flashblock_byte_size_histogram
-                                .record(flashblock_byte_size as f64);
-                            ctx.metrics
-                                .flashblock_num_tx_histogram
-                                .record(info.executed_transactions.len() as f64);
-
-                            best_payload.set(new_payload.clone());
-                            self.send_payload_to_engine(new_payload);
-                            // Update bundle_state for next iteration
-                            total_gas_per_batch += gas_per_batch;
-                            if let Some(da_limit) = da_per_batch {
-                                if let Some(da) = total_da_per_batch.as_mut() {
-                                    *da += da_limit;
-                                } else {
-                                    error!(
-                                        "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
-                                    );
-                                }
-                            }
-
-                            info!(
-                                target: "payload_builder",
-                                message = "Flashblock built",
-                                flashblock_index = ctx.flashblock_index(),
-                                current_gas = info.cumulative_gas_used,
-                                current_da = info.cumulative_da_bytes_used,
-                                target_flashblocks = flashblocks_per_block,
-                            );
-                        }
-                    }
+                    return Err(err);
                 }
-                None => {
+            }
+
+            tokio::select! {
+                Some(fb_cancel) = rx.recv() => {
+                    ctx.cancel = fb_cancel;
+                },
+                _ = block_cancel.cancelled() => {
                     self.record_flashblocks_metrics(
                         &ctx,
                         &info,
@@ -634,6 +522,206 @@ where
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_next_flashblock<
+        DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
+        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+    >(
+        &self,
+        ctx: &mut OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &mut ExecutionInfo<ExtraExecutionInfo>,
+        state: &mut State<DB>,
+        state_provider: impl reth::providers::StateProvider + Clone,
+        best_txs: &mut NextBestFlashblocksTxs<Pool>,
+        block_cancel: &CancellationToken,
+        best_payload: &BlockCell<OpBuiltPayload>,
+        span: &tracing::Span,
+    ) -> Result<(), PayloadBuilderError> {
+        // fallback block is index 0, so we need to increment here
+        ctx.increment_flashblock_index();
+
+        // TODO: remove this
+        if ctx.flashblock_index() > ctx.target_flashblock_count() {
+            info!(
+                target: "payload_builder",
+                target = ctx.target_flashblock_count(),
+                flashblock_index = ctx.flashblock_index(),
+                block_number = ctx.block_number(),
+                "Skipping flashblock reached target",
+            );
+            return Ok(());
+        };
+
+        // Continue with flashblock building
+        let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
+        let mut total_da_per_batch = ctx.extra_ctx.total_da_per_batch;
+
+        info!(
+            target: "payload_builder",
+            block_number = ctx.block_number(),
+            flashblock_index = ctx.flashblock_index(),
+            target_gas = target_gas_for_batch,
+            gas_used = info.cumulative_gas_used,
+            target_da = total_da_per_batch.unwrap_or(0),
+            da_used = info.cumulative_da_bytes_used,
+            "Building flashblock",
+        );
+        let flashblock_build_start_time = Instant::now();
+
+        let builder_txs =
+            self.builder_tx
+                .simulate_builder_txs(&state_provider, info, ctx, state)?;
+
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
+        target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
+
+        // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
+        if let Some(da_limit) = total_da_per_batch.as_mut() {
+            *da_limit = da_limit.saturating_sub(builder_tx_da_size);
+        }
+
+        let best_txs_start_time = Instant::now();
+        best_txs.refresh_iterator(
+            BestPayloadTransactions::new(
+                self.pool
+                    .best_transactions_with_attributes(ctx.best_transaction_attributes()),
+            ),
+            ctx.flashblock_index(),
+        );
+        let transaction_pool_fetch_time = best_txs_start_time.elapsed();
+        ctx.metrics
+            .transaction_pool_fetch_duration
+            .record(transaction_pool_fetch_time);
+        ctx.metrics
+            .transaction_pool_fetch_gauge
+            .set(transaction_pool_fetch_time);
+
+        let tx_execution_start_time = Instant::now();
+        ctx.execute_best_transactions(
+            info,
+            state,
+            best_txs,
+            target_gas_for_batch.min(ctx.block_gas_limit()),
+            total_da_per_batch,
+        )?;
+        // Extract last transactions
+        let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
+            .to_vec()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>();
+        best_txs.mark_commited(new_transactions);
+
+        // We got block cancelled, we won't need anything from the block at this point
+        // Caution: this assume that block cancel token only cancelled when new FCU is received
+        if block_cancel.is_cancelled() {
+            self.record_flashblocks_metrics(
+                ctx,
+                info,
+                ctx.target_flashblock_count(),
+                span,
+                "Payload building complete, channel closed or job cancelled",
+            );
+            return Ok(());
+        }
+
+        let payload_tx_simulation_time = tx_execution_start_time.elapsed();
+        ctx.metrics
+            .payload_tx_simulation_duration
+            .record(payload_tx_simulation_time);
+        ctx.metrics
+            .payload_tx_simulation_gauge
+            .set(payload_tx_simulation_time);
+
+        self.builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state)?;
+
+        let total_block_built_duration = Instant::now();
+        let build_result = build_block(
+            state,
+            ctx,
+            info,
+            ctx.extra_ctx.calculate_state_root || ctx.attributes().no_tx_pool,
+        );
+        let total_block_built_duration = total_block_built_duration.elapsed();
+        ctx.metrics
+            .total_block_built_duration
+            .record(total_block_built_duration);
+        ctx.metrics
+            .total_block_built_gauge
+            .set(total_block_built_duration);
+
+        // Handle build errors with match pattern
+        match build_result {
+            Err(err) => {
+                // Track invalid/bad block
+                ctx.metrics.invalid_blocks_count.increment(1);
+                error!(target: "payload_builder", "Failed to build block {}, flashblock {}: {}", ctx.block_number(), ctx.flashblock_index(), err);
+                // Return the error
+                return Err(err);
+            }
+            Ok((new_payload, mut fb_payload)) => {
+                fb_payload.index = ctx.flashblock_index();
+                fb_payload.base = None;
+
+                // If main token got canceled in here that means we received get_payload and we should drop everything and now update best_payload
+                // To ensure that we will return same blocks as rollup-boost (to leverage caches)
+                if block_cancel.is_cancelled() {
+                    self.record_flashblocks_metrics(
+                        ctx,
+                        info,
+                        ctx.target_flashblock_count(),
+                        span,
+                        "Payload building complete, channel closed or job cancelled",
+                    );
+                    return Ok(());
+                }
+                let flashblock_byte_size = self
+                    .ws_pub
+                    .publish(&fb_payload)
+                    .map_err(PayloadBuilderError::other)?;
+
+                // Record flashblock build duration
+                ctx.metrics
+                    .flashblock_build_duration
+                    .record(flashblock_build_start_time.elapsed());
+                ctx.metrics
+                    .flashblock_byte_size_histogram
+                    .record(flashblock_byte_size as f64);
+                ctx.metrics
+                    .flashblock_num_tx_histogram
+                    .record(info.executed_transactions.len() as f64);
+
+                best_payload.set(new_payload.clone());
+                self.send_payload_to_engine(new_payload);
+                // Update bundle_state for next iteration
+                if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
+                    if let Some(da) = total_da_per_batch.as_mut() {
+                        *da += da_limit;
+                    } else {
+                        error!(
+                            "Builder end up in faulty invariant, if da_per_batch is set then total_da_per_batch must be set"
+                        );
+                    }
+                }
+
+                ctx.extra_ctx.target_gas_for_batch += ctx.extra_ctx.gas_per_batch;
+                ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+
+                info!(
+                    target: "payload_builder",
+                    message = "Flashblock built",
+                    flashblock_index = ctx.flashblock_index(),
+                    current_gas = info.cumulative_gas_used,
+                    current_da = info.cumulative_da_bytes_used,
+                    target_flashblocks = ctx.target_flashblock_count(),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Do some logging and metric recording when we stop build flashblocks
@@ -687,53 +775,6 @@ where
                 error!(message = "Payload builder handle is not setup, skipping sending payload")
             }
         }
-    }
-
-    /// Spawn task that will send new flashblock level cancel token in steady intervals (first interval
-    /// may vary if --flashblocks.dynamic enabled)
-    pub(super) fn spawn_timer_task(
-        &self,
-        block_cancel: CancellationToken,
-        fb_cancel_token_tx: Sender<Option<CancellationToken>>,
-        first_flashblock_offset: Duration,
-    ) {
-        let interval = self.config.specific.interval;
-        tokio::spawn(async move {
-            let cancelled: Option<Result<(), SendError<Option<CancellationToken>>>> = block_cancel
-                .run_until_cancelled(async {
-                    // Create first fb interval already started
-                    let mut timer = tokio::time::interval(first_flashblock_offset);
-                    timer.tick().await;
-                    let child_token = block_cancel.child_token();
-                    fb_cancel_token_tx
-                        .send(Some(child_token.clone()))
-                        .await?;
-                    timer.tick().await;
-                    // Time to build flashblock has ended so we cancel the token
-                    child_token.cancel();
-                    // We would start using regular intervals from here on
-                    let mut timer = tokio::time::interval(interval);
-                    timer.tick().await;
-                    loop {
-                        // Initiate fb job
-                        let child_token = block_cancel.child_token();
-                        debug!(target: "payload_builder", "Sending child cancel token to execution loop");
-                        fb_cancel_token_tx
-                            .send(Some(child_token.clone()))
-                            .await?;
-                        timer.tick().await;
-                        debug!(target: "payload_builder", "Cancelling child token to complete flashblock");
-                        // Cancel job once time is up
-                        child_token.cancel();
-                    }
-                })
-                .await;
-            if let Some(Err(err)) = cancelled {
-                error!(target: "payload_builder", "Timer task encountered error: {err}");
-            } else {
-                info!(target: "payload_builder", "Building job cancelled, stopping payload building");
-            }
-        });
     }
 
     /// Calculate number of flashblocks.
@@ -798,6 +839,7 @@ where
     }
 }
 
+#[async_trait::async_trait]
 impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
@@ -807,12 +849,12 @@ where
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
 
-    fn try_build(
+    async fn try_build(
         &self,
         args: BuildArguments<Self::Attributes, Self::BuiltPayload>,
         best_payload: BlockCell<Self::BuiltPayload>,
     ) -> Result<(), PayloadBuilderError> {
-        self.build_payload(args, best_payload)
+        self.build_payload(args, best_payload).await
     }
 }
 
