@@ -1,22 +1,22 @@
+use super::super::context::OpPayloadBuilderCtx;
 use crate::{
-    builders::{BuilderConfig, generator::BuildArguments},
-    flashtestations::service::spawn_flashtestations_service,
+    builders::{BuilderConfig, BuilderTransactions, generator::BuildArguments},
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::ExecutionInfo,
-    traits::{ClientBounds, NodeBounds, PayloadTxsBounds, PoolBounds},
+    traits::{ClientBounds, PayloadTxsBounds, PoolBounds},
 };
 use alloy_consensus::{
     BlockBody, EMPTY_OMMER_ROOT_HASH, Header, constants::EMPTY_WITHDRAWALS, proofs,
 };
 use alloy_eips::{eip7685::EMPTY_REQUESTS_HASH, merge::BEACON_NONCE};
+use alloy_evm::Database;
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
 use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, PayloadBuilderError};
-use reth_node_builder::{BuilderContext, components::PayloadBuilderBuilder};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
@@ -24,69 +24,20 @@ use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::RecoveredBlock;
-use reth_provider::{
-    ExecutionOutcome, HashedPostStateProvider, ProviderError, StateRootProvider,
-    StorageRootProvider,
-};
+use reth_provider::{ExecutionOutcome, StateProvider};
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
 };
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
 };
-use revm::Database;
 use std::{sync::Arc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use super::super::context::{OpPayloadBuilderCtx, estimate_gas_for_builder_tx};
-
-pub struct StandardPayloadBuilderBuilder(pub BuilderConfig<()>);
-
-impl<Node, Pool> PayloadBuilderBuilder<Node, Pool, OpEvmConfig> for StandardPayloadBuilderBuilder
-where
-    Node: NodeBounds,
-    Pool: PoolBounds,
-{
-    type PayloadBuilder = StandardOpPayloadBuilder<Pool, Node::Provider>;
-
-    async fn build_payload_builder(
-        self,
-        ctx: &BuilderContext<Node>,
-        pool: Pool,
-        _evm_config: OpEvmConfig,
-    ) -> eyre::Result<Self::PayloadBuilder> {
-        if self.0.flashtestations_config.flashtestations_enabled {
-            match spawn_flashtestations_service(self.0.flashtestations_config.clone(), ctx).await {
-                Ok(service) => service,
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
-                    return Ok(StandardOpPayloadBuilder::new(
-                        OpEvmConfig::optimism(ctx.chain_spec()),
-                        pool,
-                        ctx.provider().clone(),
-                        self.0.clone(),
-                    ));
-                }
-            };
-
-            if self.0.flashtestations_config.enable_block_proofs {
-                // TODO: flashtestations end of block transaction
-            }
-        }
-
-        Ok(StandardOpPayloadBuilder::new(
-            OpEvmConfig::optimism(ctx.chain_spec()),
-            pool,
-            ctx.provider().clone(),
-            self.0.clone(),
-        ))
-    }
-}
-
 /// Optimism's payload builder
 #[derive(Debug, Clone)]
-pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
+pub(super) struct StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs = ()> {
     /// The type responsible for creating the evm.
     pub evm_config: OpEvmConfig,
     /// The transaction pool
@@ -102,15 +53,18 @@ pub struct StandardOpPayloadBuilder<Pool, Client, Txs = ()> {
     pub metrics: Arc<OpRBuilderMetrics>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
+    /// The type responsible for creating the builder transactions
+    pub builder_tx: BuilderTx,
 }
 
-impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
+impl<Pool, Client, BuilderTx> StandardOpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
-    pub fn new(
+    pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
         client: Client,
         config: BuilderConfig<()>,
+        builder_tx: BuilderTx,
     ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Self {
@@ -121,12 +75,15 @@ impl<Pool, Client> StandardOpPayloadBuilder<Pool, Client> {
             best_transactions: (),
             metrics: Default::default(),
             address_gas_limiter,
+            builder_tx,
         }
     }
 }
 
 /// A type that returns a the [`PayloadTransactions`] that should be included in the pool.
-pub trait OpPayloadTransactions<Transaction>: Clone + Send + Sync + Unpin + 'static {
+pub(super) trait OpPayloadTransactions<Transaction>:
+    Clone + Send + Sync + Unpin + 'static
+{
     /// Returns an iterator that yields the transaction in the order they should get included in the
     /// new payload.
     fn best_transactions<Pool: TransactionPool<Transaction = Transaction>>(
@@ -151,11 +108,12 @@ impl<T: PoolTransaction> OpPayloadTransactions<T> for () {
     }
 }
 
-impl<Pool, Client, Txs> reth_basic_payload_builder::PayloadBuilder
-    for StandardOpPayloadBuilder<Pool, Client, Txs>
+impl<Pool, Client, BuilderTx, Txs> reth_basic_payload_builder::PayloadBuilder
+    for StandardOpPayloadBuilder<Pool, Client, BuilderTx, Txs>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BuilderTx: BuilderTransactions + Clone + Send + Sync,
     Txs: OpPayloadTransactions<Pool::Transaction>,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
@@ -214,10 +172,11 @@ where
     }
 }
 
-impl<Pool, Client, T> StandardOpPayloadBuilder<Pool, Client, T>
+impl<Pool, Client, BuilderTx, T> StandardOpPayloadBuilder<Pool, Client, BuilderTx, T>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
+    BuilderTx: BuilderTransactions + Clone,
 {
     /// Constructs an Optimism payload from the transactions sent via the
     /// Payload attributes by the sequencer. If the `no_tx_pool` argument is passed in
@@ -289,22 +248,21 @@ where
         self.address_gas_limiter.refresh(ctx.block_number());
 
         let state_provider = self.client.state_by_block_hash(ctx.parent().hash())?;
-        let db = StateProviderDatabase::new(state_provider);
+        let db = StateProviderDatabase::new(&state_provider);
         let metrics = ctx.metrics.clone();
-
         if ctx.attributes().no_tx_pool {
             let state = State::builder()
                 .with_database(db)
                 .with_bundle_update()
                 .build();
-            builder.build(state, ctx)
+            builder.build(state, &state_provider, ctx, self.builder_tx.clone())
         } else {
             // sequencer mode we can reuse cachedreads from previous runs
             let state = State::builder()
                 .with_database(cached_reads.as_db_mut(db))
                 .with_bundle_update()
                 .build();
-            builder.build(state, ctx)
+            builder.build(state, &state_provider, ctx, self.builder_tx.clone())
         }
         .map(|out| {
             let total_block_building_time = block_build_start_time.elapsed();
@@ -358,28 +316,29 @@ pub(super) struct ExecutedPayload {
 
 impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     /// Executes the payload and returns the outcome.
-    pub(super) fn execute<DB, P>(
+    pub(crate) fn execute<BuilderTx>(
         self,
-        state: &mut State<DB>,
+        state_provider: impl StateProvider,
+        db: &mut State<impl Database>,
         ctx: &OpPayloadBuilderCtx,
+        builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<ExecutedPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
-        P: StorageRootProvider,
+        BuilderTx: BuilderTransactions,
     {
         let Self { best } = self;
         info!(target: "payload_builder", id=%ctx.payload_id(), parent_header = ?ctx.parent().hash(), parent_number = ctx.parent().number, "building new payload");
 
         // 1. apply pre-execution changes
         ctx.evm_config
-            .builder_for_next_block(state, ctx.parent(), ctx.block_env_attributes.clone())
+            .builder_for_next_block(db, ctx.parent(), ctx.block_env_attributes.clone())
             .map_err(PayloadBuilderError::other)?
             .apply_pre_execution_changes()?;
 
         let sequencer_tx_start_time = Instant::now();
 
         // 3. execute sequencer transactions
-        let mut info = ctx.execute_sequencer_transactions(state)?;
+        let mut info = ctx.execute_sequencer_transactions(db)?;
 
         let sequencer_tx_time = sequencer_tx_start_time.elapsed();
         ctx.metrics.sequencer_tx_duration.record(sequencer_tx_time);
@@ -388,17 +347,16 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let message = format!("Block Number: {}", ctx.block_number())
-            .as_bytes()
-            .to_vec();
-        let builder_tx_gas = ctx
-            .builder_signer()
-            .map_or(0, |_| estimate_gas_for_builder_tx(message.clone()));
-        let block_gas_limit = ctx.block_gas_limit() - builder_tx_gas;
+        let builder_txs = builder_tx.simulate_builder_txs(&state_provider, &mut info, ctx, db)?;
+        let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
+        let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
+        if block_gas_limit == 0 {
+            error!(
+                "Builder tx gas subtraction resulted in block gas limit to be 0. No transactions would be included"
+            );
+        }
         // Save some space in the block_da_limit for builder tx
-        let builder_tx_da_size = ctx
-            .estimate_builder_tx_da_size(state, builder_tx_gas, message.clone())
-            .unwrap_or(0);
+        let builder_tx_da_size = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
@@ -424,7 +382,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             if ctx
                 .execute_best_transactions(
                     &mut info,
-                    state,
+                    db,
                     &mut best_txs,
                     block_gas_limit,
                     block_da_limit,
@@ -436,13 +394,13 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        ctx.add_builder_tx(&mut info, state, builder_tx_gas, message);
+        builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db)?;
 
         let state_merge_start_time = Instant::now();
 
         // merge all transitions into bundle state, this would apply the withdrawal balance changes
         // and 4788 contract call
-        state.merge_transitions(BundleRetention::Reverts);
+        db.merge_transitions(BundleRetention::Reverts);
 
         let state_transition_merge_time = state_merge_start_time.elapsed();
         ctx.metrics
@@ -466,24 +424,32 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
     }
 
     /// Builds the payload on top of the state.
-    pub(super) fn build<DB, P>(
+    pub(super) fn build<BuilderTx>(
         self,
-        mut state: State<DB>,
+        state: impl Database,
+        state_provider: impl StateProvider,
         ctx: OpPayloadBuilderCtx,
+        builder_tx: BuilderTx,
     ) -> Result<BuildOutcomeKind<OpBuiltPayload>, PayloadBuilderError>
     where
-        DB: Database<Error = ProviderError> + AsRef<P> + std::fmt::Debug,
-        P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
+        BuilderTx: BuilderTransactions,
     {
-        let ExecutedPayload { info } = match self.execute(&mut state, &ctx)? {
-            BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
-            BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
-            BuildOutcomeKind::Aborted { fees } => return Ok(BuildOutcomeKind::Aborted { fees }),
-        };
+        let mut db = State::builder()
+            .with_database(state)
+            .with_bundle_update()
+            .build();
+        let ExecutedPayload { info } =
+            match self.execute(&state_provider, &mut db, &ctx, builder_tx)? {
+                BuildOutcomeKind::Better { payload } | BuildOutcomeKind::Freeze(payload) => payload,
+                BuildOutcomeKind::Cancelled => return Ok(BuildOutcomeKind::Cancelled),
+                BuildOutcomeKind::Aborted { fees } => {
+                    return Ok(BuildOutcomeKind::Aborted { fees });
+                }
+            };
 
         let block_number = ctx.block_number();
         let execution_outcome = ExecutionOutcome::new(
-            state.take_bundle(),
+            db.take_bundle(),
             vec![info.receipts],
             block_number,
             Vec::new(),
@@ -504,12 +470,9 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // calculate the state root
         let state_root_start_time = Instant::now();
 
-        let state_provider = state.database.as_ref();
         let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
         let (state_root, trie_output) = {
-            state
-                .database
-                .as_ref()
+            state_provider
                 .state_root_with_updates(hashed_state.clone())
                 .inspect_err(|err| {
                     warn!(target: "payload_builder",
@@ -533,7 +496,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
             // `l2tol1-message-passer`
             (
                 Some(
-                    isthmus::withdrawals_root(execution_outcome.state(), state.database.as_ref())
+                    isthmus::withdrawals_root(execution_outcome.state(), state_provider)
                         .map_err(PayloadBuilderError::other)?,
                 ),
                 Some(EMPTY_REQUESTS_HASH),

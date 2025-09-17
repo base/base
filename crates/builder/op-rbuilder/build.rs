@@ -59,10 +59,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let author_name = env::var("VERGEN_GIT_COMMIT_AUTHOR_NAME")?;
     let author_email = env::var("VERGEN_GIT_COMMIT_AUTHOR_EMAIL")?;
-    let author_full = format!("{} <{}>", author_name, author_email);
+    let author_full = format!("{author_name} <{author_email}>");
 
     // Set author full name
-    println!("cargo:rustc-env=VERGEN_GIT_COMMIT_AUTHOR={}", author_full);
+    println!("cargo:rustc-env=VERGEN_GIT_COMMIT_AUTHOR={author_full}");
 
     let is_dirty = env::var("VERGEN_GIT_DIRTY")? == "true";
     // > git describe --always --tags

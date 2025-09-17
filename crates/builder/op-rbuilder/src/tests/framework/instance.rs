@@ -418,7 +418,7 @@ impl FlashblocksListener {
 
     /// Check if any flashblock contains the given transaction hash
     pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
-        let tx_hash_str = format!("{:#x}", tx_hash);
+        let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().any(|fb| {
             if let Some(receipts) = fb.metadata.get("receipts") {
                 if let Some(receipts_obj) = receipts.as_object() {
@@ -431,7 +431,7 @@ impl FlashblocksListener {
 
     /// Find which flashblock index contains the given transaction hash
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
-        let tx_hash_str = format!("{:#x}", tx_hash);
+        let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().find_map(|fb| {
             if let Some(receipts) = fb.metadata.get("receipts") {
                 if let Some(receipts_obj) = receipts.as_object() {

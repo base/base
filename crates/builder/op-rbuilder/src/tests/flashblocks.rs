@@ -189,7 +189,12 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         let block = driver
             .build_new_block_with_current_timestamp(Some(Duration::from_millis(i * 100)))
             .await?;
-        assert_eq!(block.transactions.len(), 8, "Got: {:?}", block.transactions); // 5 normal txn + deposit + 2 builder txn
+        assert_eq!(
+            block.transactions.len(),
+            8,
+            "Got: {:#?}",
+            block.transactions
+        ); // 5 normal txn + deposit + 2 builder txn
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 
@@ -383,17 +388,17 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
 
     let _block = driver.build_new_block_with_current_timestamp(None).await?;
 
-    // It ends up in the flashblock with index 3. Flashblock number and index
-    // are different.
+    // It ends up in the 2nd flashblock
     assert_eq!(
-        2 + 1,
+        2,
         flashblocks_listener
             .find_transaction_flashblock(tx1.tx_hash())
-            .unwrap()
+            .unwrap(),
+        "Transaction should be in the 2nd flashblock"
     );
 
     let flashblocks = flashblocks_listener.get_flashblocks();
-    assert_eq!(6, flashblocks.len());
+    assert_eq!(6, flashblocks.len(), "Flashblocks length should be 6");
 
     flashblocks_listener.stop().await
 }

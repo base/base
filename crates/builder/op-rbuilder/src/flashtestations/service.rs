@@ -2,12 +2,17 @@ use std::sync::Arc;
 
 use alloy_primitives::U256;
 use reth_node_builder::BuilderContext;
-use reth_optimism_primitives::OpTransactionSigned;
-use reth_primitives::Recovered;
+use reth_provider::StateProvider;
+use reth_revm::State;
+use revm::Database;
+use std::fmt::Debug;
 use tracing::{info, warn};
 
 use crate::{
-    builders::BuilderTx,
+    builders::{
+        BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, OpPayloadBuilderCtx,
+    },
+    primitives::reth::ExecutionInfo,
     traits::NodeBounds,
     tx_signer::{Signer, generate_ethereum_keypair},
 };
@@ -21,7 +26,7 @@ use super::{
 #[derive(Clone)]
 pub struct FlashtestationsService {
     // Attestation provider generating attestations
-    attestation_provider: Arc<Box<dyn AttestationProvider + Send + Sync>>,
+    attestation_provider: Arc<Box<dyn AttestationProvider + Send + Sync + 'static>>,
     // Handles the onchain attestation and TEE block building proofs
     tx_manager: TxManager,
     // TEE service generated key
@@ -86,24 +91,25 @@ impl FlashtestationsService {
     }
 }
 
-impl BuilderTx for FlashtestationsService {
-    fn estimated_builder_tx_gas(&self) -> u64 {
-        todo!()
-    }
+#[derive(Debug, Clone)]
+pub struct FlashtestationsBuilderTx {}
 
-    fn estimated_builder_tx_da_size(&self) -> Option<u64> {
-        todo!()
-    }
-
-    fn signed_builder_tx(&self) -> Result<Recovered<OpTransactionSigned>, secp256k1::Error> {
-        todo!()
+impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for FlashtestationsBuilderTx {
+    fn simulate_builder_txs<Extra: Debug + Default>(
+        &self,
+        _state_provider: impl StateProvider + Clone,
+        _info: &mut ExecutionInfo<Extra>,
+        _ctx: &OpPayloadBuilderCtx<ExtraCtx>,
+        _db: &mut State<impl Database>,
+    ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
+        Ok(vec![])
     }
 }
 
-pub async fn spawn_flashtestations_service<Node>(
+pub async fn bootstrap_flashtestations<Node>(
     args: FlashtestationsArgs,
     ctx: &BuilderContext<Node>,
-) -> eyre::Result<FlashtestationsService>
+) -> eyre::Result<FlashtestationsBuilderTx>
 where
     Node: NodeBounds,
 {
@@ -131,7 +137,7 @@ where
             },
         );
 
-    Ok(flashtestations_service)
+    Ok(FlashtestationsBuilderTx {})
 }
 
 #[cfg(test)]

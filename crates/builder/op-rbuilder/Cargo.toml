@@ -62,6 +62,7 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-contract.workspace = true
 alloy-eips.workspace = true
+alloy-evm.workspace = true
 alloy-rpc-types-beacon.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-transport-http.workspace = true

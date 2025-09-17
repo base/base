@@ -1,10 +1,12 @@
 use super::{FlashblocksConfig, payload::OpPayloadBuilder};
 use crate::{
     builders::{
-        BuilderConfig, BuilderTx, builder_tx::StandardBuilderTx,
+        BuilderConfig,
+        builder_tx::BuilderTransactions,
+        flashblocks::{builder_tx::FlashblocksBuilderTx, payload::FlashblocksExtraCtx},
         generator::BlockPayloadJobGenerator,
     },
-    flashtestations::service::spawn_flashtestations_service,
+    flashtestations::service::bootstrap_flashtestations,
     traits::{NodeBounds, PoolBounds},
 };
 use reth_basic_payload_builder::BasicPayloadJobGeneratorConfig;
@@ -18,16 +20,16 @@ use std::sync::Arc;
 pub struct FlashblocksServiceBuilder(pub BuilderConfig<FlashblocksConfig>);
 
 impl FlashblocksServiceBuilder {
-    fn spawn_payload_builder_service<Node, Pool, BT>(
+    fn spawn_payload_builder_service<Node, Pool, BuilderTx>(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
-        builder_tx: BT,
+        builder_tx: BuilderTx,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>>
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BT: BuilderTx + Unpin + Clone + Send + Sync + 'static,
+        BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
     {
         let once_lock = Arc::new(std::sync::OnceLock::new());
 
@@ -78,30 +80,22 @@ where
         pool: Pool,
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
-        tracing::debug!("Spawning flashblocks payload builder service");
         let signer = self.0.builder_signer;
-        if self.0.flashtestations_config.flashtestations_enabled {
-            let flashtestations_service = match spawn_flashtestations_service(
-                self.0.flashtestations_config.clone(),
-                ctx,
-            )
-            .await
-            {
-                Ok(service) => service,
+        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
+            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), ctx).await {
+                Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
-                    tracing::warn!(error = %e, "Failed to spawn flashtestations service, falling back to standard builder tx");
-                    return self.spawn_payload_builder_service(
-                        ctx,
-                        pool,
-                        StandardBuilderTx { signer },
-                    );
+                    tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
+                    None
                 }
-            };
-
-            if self.0.flashtestations_config.enable_block_proofs {
-                return self.spawn_payload_builder_service(ctx, pool, flashtestations_service);
             }
-        }
-        self.spawn_payload_builder_service(ctx, pool, StandardBuilderTx { signer })
+        } else {
+            None
+        };
+        self.spawn_payload_builder_service(
+            ctx,
+            pool,
+            FlashblocksBuilderTx::new(signer, flashtestations_builder_tx),
+        )
     }
 }
