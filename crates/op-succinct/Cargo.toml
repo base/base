@@ -96,11 +96,10 @@ kona-registry = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0
 kona-genesis = { git = "https://github.com/op-rs/kona", tag = "kona-client/v1.0.2", default-features = false }
 
 # hana
-# TODO(fakedev9999): Bump to 1.0.0 once the release is out.
-hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
-hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
-hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
-hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v0.1.0-beta.17" }
+hana-blobstream = { git = "https://github.com/celestiaorg/hana", tag = "v1.0.0" }
+hana-celestia = { git = "https://github.com/celestiaorg/hana", tag = "v1.0.0" }
+hana-host = { git = "https://github.com/celestiaorg/hana", tag = "v1.0.0" }
+hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v1.0.0" }
 
 # hokulea
 hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "0c8f62c" }
