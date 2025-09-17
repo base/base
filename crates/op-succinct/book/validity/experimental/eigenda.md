@@ -23,6 +23,19 @@ See [EigenDA Proxy](https://github.com/Layr-Labs/eigenda/tree/master/api/proxy) 
 
 After running the proxy, set `EIGENDA_PROXY_ADDRESS=http://127.0.0.1:3100` in your `.env` for OP Succinct to consume the proxy.
 
+## EigenDA Contract Configuration
+
+Before deploying or updating contracts, generate the EigenDA-specific verification key commitments and rollup config hash with the correct feature flag. This ensures the range verification key commitment matches the EigenDA range ELF:
+
+```bash
+# From the repository root
+cargo run --bin config --release --features eigenda -- --env-file .env
+```
+
+The command prints the `Range Verification Key Hash`, `Aggregation Verification Key Hash`, and `Rollup Config Hash`; keep these values and ensure they match what you publish on-chain in `OPSuccinctL2OutputOracle`.
+
+Whenever you rely on `just` helpers (`deploy-oracle`, `update-parameters`, etc.), include the `eigenda` argument so `fetch-l2oo-config` runs with the EigenDA feature enabled. If you invoke the Rust binaries directly, add `--features eigenda`; otherwise the script emits the default Ethereum DA values and your contracts will revert with `ProofInvalid()` when submitting proofs.
+
 ## Run the EigenDA Proposer Service
 
 Run the `op-succinct-eigenda` service.

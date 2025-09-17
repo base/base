@@ -82,6 +82,19 @@ To stop the `op-succinct-celestia` service, run:
 docker compose -f docker-compose-celestia.yml down
 ```
 
+## Celestia Contract Configuration
+
+Before deploying or updating contracts, generate the CelestiaDA-specific range verification key, aggregation verification key, and rollup config hash with the correct feature flag. This ensures the range verification key commitment matches the Celestia range ELF:
+
+```bash
+# From the repository root
+cargo run --bin config --release --features celestia -- --env-file .env
+```
+
+The command prints the `Range Verification Key Hash`, `Aggregation Verification Key Hash`, and `Rollup Config Hash`; keep these values and ensure they match what you publish on-chain in `OPSuccinctL2OutputOracle`.
+
+When you use the `just` helpers below, pass the `celestia` feature so `fetch-l2oo-config` runs with the correct ELFs. If you call the binaries manually (`fetch-l2oo-config`, `config`, etc.), append `--features celestia`; otherwise the script emits the default Ethereum DA values and your contracts will revert with `ProofInvalid()` when submitting proofs.
+
 ## Deploying `OPSuccinctL2OutputOracle` with Celestia features
 
 ```bash
