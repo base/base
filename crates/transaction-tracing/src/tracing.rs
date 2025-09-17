@@ -1,4 +1,5 @@
 use alloy_primitives::TxHash;
+use chrono::{DateTime, Local};
 use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
@@ -11,10 +12,12 @@ use std::num::NonZeroUsize;
 use std::time::Instant;
 
 /// Types of transaction events to track
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum TxEvent {
     Dropped,
     Replaced,
+    Pending,
+    Queued,
     BlockInclusion,
     PendingToQueued,
     QueuedToPending,
@@ -27,10 +30,13 @@ enum Pool {
     Queued,
 }
 
+/// History of events for a transaction
+type EventLog = Vec<(DateTime<Local>, TxEvent, Instant)>;
+
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
-    txs: LruCache<TxHash, Instant>,
+    txs: LruCache<TxHash, EventLog>,
     /// Map of transaction hash to current state
     tx_states: LruCache<TxHash, Pool>,
 }
@@ -44,8 +50,19 @@ impl Tracker {
         }
     }
 
+    /// Get the event log for a transaction
+    pub fn get_event_log(&self, tx_hash: TxHash) -> Option<String> {
+        self.txs.peek(&tx_hash).map(|event_log| {
+            event_log
+                .iter()
+                .map(|(timestamp, event, _)| format!("{:?} {:?}", timestamp, event))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    }
+
     /// Track the first time we see a transaction in the mempool
-    fn transaction_inserted(&mut self, tx_hash: TxHash) {
+    fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
         // if we've seen the tx before, don't track it again. for example,
         // if a tx was pending then moved to queued, we don't want to update the timestamp
         // with the queued timestamp.
@@ -53,8 +70,9 @@ impl Tracker {
             return;
         }
 
-        let now = Instant::now();
-        self.txs.put(tx_hash, now);
+        let mut event_log = EventLog::new();
+        event_log.push((Local::now(), event, Instant::now()));
+        self.txs.put(tx_hash, event_log);
     }
 
     /// Track a transaction moving from one pool to another
@@ -68,7 +86,7 @@ impl Tracker {
                     _ => None,
                 };
                 if let Some(tx_event) = event {
-                    self.transaction_event(tx_hash, tx_event);
+                    self.transaction_event(tx_hash, tx_event, Instant::now());
                 }
             }
         }
@@ -79,14 +97,21 @@ impl Tracker {
     }
 
     /// Track a transaction event
-    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
-        if let Some(mempool_time) = self.txs.pop(&tx_hash) {
+    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent, event_timestamp: Instant) {
+        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+            let mempool_time = event_log.first().unwrap().2;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+            // Update the change log with the new event
+            event_log.push((Local::now(), event, event_timestamp));
+            self.txs.put(tx_hash, event_log);
 
             // Record histogram with event label
             let event_label = match event {
                 TxEvent::Dropped => "dropped",
                 TxEvent::Replaced => "replaced",
+                TxEvent::Pending => "pending",
+                TxEvent::Queued => "queued",
                 TxEvent::BlockInclusion => "block_inclusion",
                 TxEvent::PendingToQueued => "pending_to_queued",
                 TxEvent::QueuedToPending => "queued_to_pending",
@@ -127,19 +152,19 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
                     FullTransactionEvent::Pending(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxEvent::Pending);
                         track.transaction_moved(tx_hash, Pool::Pending);
                     }
                     FullTransactionEvent::Queued(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxEvent::Queued);
                         track.transaction_moved(tx_hash, Pool::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
-                        track.transaction_event(tx_hash, TxEvent::Dropped);
+                        track.transaction_event(tx_hash, TxEvent::Dropped, Instant::now());
                     }
                     FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
                         let tx_hash = transaction.hash();
-                        track.transaction_event(*tx_hash, TxEvent::Replaced);
+                        track.transaction_event(*tx_hash, TxEvent::Replaced, Instant::now());
                     }
                     _ => {
                         // Other events
@@ -154,7 +179,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         // Process all transactions in committed chain
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion, Instant::now());
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
@@ -163,7 +188,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion, Instant::now());
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
