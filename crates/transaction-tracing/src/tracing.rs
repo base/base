@@ -1,5 +1,4 @@
 use alloy_primitives::TxHash;
-use chrono::{DateTime, Local};
 use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
@@ -7,12 +6,15 @@ use reth::api::{BlockBody, FullNodeComponents};
 use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
 use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_tracing::tracing::debug;
+use reth_tracing::tracing::{debug, info};
 use std::num::NonZeroUsize;
 use std::time::Instant;
 
+/// Max size of the LRU cache
+const MAX_SIZE: usize = 20000;
+
 /// Types of transaction events to track
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum TxEvent {
     Dropped,
     Replaced,
@@ -31,7 +33,7 @@ enum Pool {
 }
 
 /// History of events for a transaction
-type EventLog = Vec<(DateTime<Local>, TxEvent, Instant)>;
+type EventLog = (Instant, Vec<TxEvent>);
 
 /// Simple ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
@@ -45,20 +47,9 @@ impl Tracker {
     /// Create a new tracker
     fn new() -> Self {
         Self {
-            txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
-            tx_states: LruCache::new(NonZeroUsize::new(20000).unwrap()),
+            txs: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
+            tx_states: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
         }
-    }
-
-    /// Get the event log for a transaction
-    pub fn get_event_log(&self, tx_hash: TxHash) -> Option<String> {
-        self.txs.peek(&tx_hash).map(|event_log| {
-            event_log
-                .iter()
-                .map(|(timestamp, event, _)| format!("{:?} {:?}", timestamp, event))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
     }
 
     /// Track the first time we see a transaction in the mempool
@@ -70,9 +61,19 @@ impl Tracker {
             return;
         }
 
-        let mut event_log = EventLog::new();
-        event_log.push((Local::now(), event, Instant::now()));
-        self.txs.put(tx_hash, event_log);
+        // if the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
+        // before it gets evicted. this can be useful to see the full history of a transaction.
+        if self.txs.len() == MAX_SIZE {
+            if let Some((tx_hash, event_log)) = self.txs.peek_lru() {
+                event_log.1.iter().for_each(|event| {
+                    if *event != TxEvent::QueuedToPending {
+                        info!(target: "transaction-tracing", tx_hash = ?tx_hash, event = ?event, "Transaction event log")
+                    }
+                });
+            }
+        }
+
+        self.txs.put(tx_hash, (Instant::now(), vec![event]));
     }
 
     /// Track a transaction moving from one pool to another
@@ -86,7 +87,7 @@ impl Tracker {
                     _ => None,
                 };
                 if let Some(tx_event) = event {
-                    self.transaction_event(tx_hash, tx_event, Instant::now());
+                    self.transaction_event(tx_hash, tx_event);
                 }
             }
         }
@@ -97,13 +98,13 @@ impl Tracker {
     }
 
     /// Track a transaction event
-    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent, event_timestamp: Instant) {
+    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
-            let mempool_time = event_log.first().unwrap().2;
+            let mempool_time = event_log.0;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
             // Update the change log with the new event
-            event_log.push((Local::now(), event, event_timestamp));
+            event_log.1.push(event);
             self.txs.put(tx_hash, event_log);
 
             // Record histogram with event label
@@ -160,11 +161,11 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         track.transaction_moved(tx_hash, Pool::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
-                        track.transaction_event(tx_hash, TxEvent::Dropped, Instant::now());
+                        track.transaction_event(tx_hash, TxEvent::Dropped);
                     }
                     FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
                         let tx_hash = transaction.hash();
-                        track.transaction_event(*tx_hash, TxEvent::Replaced, Instant::now());
+                        track.transaction_event(*tx_hash, TxEvent::Replaced);
                     }
                     _ => {
                         // Other events
@@ -179,7 +180,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         // Process all transactions in committed chain
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion, Instant::now());
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
@@ -188,7 +189,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion, Instant::now());
+                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;

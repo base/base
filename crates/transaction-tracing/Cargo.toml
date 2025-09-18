@@ -32,4 +32,3 @@ eyre.workspace = true
 lru = "0.16.1"
 metrics.workspace = true
 metrics-derive.workspace = true
-chrono.workspace = true
