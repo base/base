@@ -8,35 +8,16 @@ use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::{debug, info};
 use std::num::NonZeroUsize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use crate::types::{EventLog, Pool, TxEvent};
 
 /// Max size of the LRU cache
 const MAX_SIZE: usize = 20000;
 
-/// Types of transaction events to track
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum TxEvent {
-    Dropped,
-    Replaced,
-    Pending,
-    Queued,
-    BlockInclusion,
-    PendingToQueued,
-    QueuedToPending,
-}
-
-/// Types of pools a transaction can be in
-#[derive(Debug, Clone, PartialEq)]
-enum Pool {
-    Pending,
-    Queued,
-}
-
-/// History of events for a transaction
-struct EventLog {
-    mempool_time: Instant,
-    events: Vec<TxEvent>,
-    limit: usize,
+fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
+    metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
+        .record(time_in_mempool.as_millis() as f64);
 }
 
 /// ExEx that tracks transaction timing from mempool to inclusion
@@ -107,8 +88,29 @@ impl Tracker {
                     (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
                     _ => None,
                 };
-                if let Some(tx_event) = event {
-                    self.transaction_event(tx_hash, tx_event);
+                if event.is_none() {
+                    return;
+                }
+
+                if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+                    let mempool_time = event_log.mempool_time;
+                    let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+                    if event_log.events.len() >= event_log.limit {
+                        self.log(
+                            &tx_hash,
+                            &event_log,
+                            "Transaction removed from cache due to limit",
+                        );
+                        // the tx is already removed from the cache on `pop`
+                        return;
+                    }
+                    // Update the event log & vec size
+                    event_log.events.push(event.unwrap());
+                    event_log.limit += 1;
+                    self.txs.put(tx_hash, event_log);
+
+                    record_histogram(time_in_mempool, event.unwrap());
                 }
             }
         }
@@ -126,78 +128,20 @@ impl Tracker {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
-            self.log(
-                &tx_hash,
-                &event_log,
-                match event {
-                    TxEvent::BlockInclusion => "Transaction included in block",
-                    TxEvent::Dropped => "Transaction dropped",
-                    _ => "",
-                },
-            );
-            metrics::histogram!("reth_transaction_tracing_tx_event", "event" => match event {
-                TxEvent::BlockInclusion => "block_inclusion",
-                TxEvent::Dropped => "dropped",
-                _ => "",
-            })
-            .record(time_in_mempool.as_millis() as f64);
+            self.log(&tx_hash, &event_log, &format!("Transaction {}", event));
+            record_histogram(time_in_mempool, event);
         }
     }
 
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
     fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
-        self.txs.pop(&tx_hash);
-        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
-
-        self.transaction_inserted(replaced_by, TxEvent::Replaced);
-    }
-
-    /// Track a transaction event
-    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
-        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+        if let Some(event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
+            debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
 
-            if event_log.events.len() >= event_log.limit {
-                self.log(
-                    &tx_hash,
-                    &event_log,
-                    "Transaction removed from cache due to limit",
-                );
-                // the tx is already removed from the cache on `pop`
-                return;
-            }
-
-            // Update the event log & vec size
-            event_log.events.push(event);
-            event_log.limit += 1;
-            self.txs.put(tx_hash, event_log);
-
-            // Record histogram with event label
-            let event_label = match event {
-                TxEvent::Replaced => "replaced",
-                TxEvent::Pending => "pending",
-                TxEvent::Queued => "queued",
-                TxEvent::PendingToQueued => "pending_to_queued",
-                TxEvent::QueuedToPending => "queued_to_pending",
-                _ => "",
-            };
-            metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
-                .record(time_in_mempool.as_millis() as f64);
-
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                event = ?event,
-                time_in_mempool = ?time_in_mempool.as_millis(),
-                "Transaction event",
-            );
-        } else {
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                "Transaction included in block (not tracked by ExEx)",
-            );
+            record_histogram(time_in_mempool, TxEvent::Replaced);
+            self.transaction_inserted(replaced_by, TxEvent::Replaced);
         }
     }
 }
