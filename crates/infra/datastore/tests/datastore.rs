@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, TxHash};
+use alloy_primitives::{Address, Bytes, TxHash, address, b256, bytes};
 use alloy_rpc_types_mev::EthSendBundle;
 use sqlx::PgPool;
 use testcontainers_modules::{
@@ -31,20 +31,19 @@ async fn setup_datastore() -> eyre::Result<TestHarness> {
     })
 }
 
-fn get_test_tx() -> eyre::Result<Bytes> {
-    "0x02f8bf8221058304f8c782038c83d2a76b833d0900942e85c218afcdeb3d3b3f0f72941b4861f915bbcf80b85102000e0000000bb800001010c78c430a094eb7ae67d41a7cca25cdb9315e63baceb03bf4529e57a6b1b900010001f4000a101010110111101111011011faa7efc8e6aa13b029547eecbf5d370b4e1e52eec080a009fc02a6612877cec7e1223f0a14f9a9507b82ef03af41fcf14bf5018ccf2242a0338b46da29a62d28745c828077327588dc82c03a4b0210e3ee1fd62c608f8fcd".parse::<Bytes>().map_err(|e| e.into())
-}
+const TX_DATA: Bytes = bytes!(
+    "0x02f8bf8221058304f8c782038c83d2a76b833d0900942e85c218afcdeb3d3b3f0f72941b4861f915bbcf80b85102000e0000000bb800001010c78c430a094eb7ae67d41a7cca25cdb9315e63baceb03bf4529e57a6b1b900010001f4000a101010110111101111011011faa7efc8e6aa13b029547eecbf5d370b4e1e52eec080a009fc02a6612877cec7e1223f0a14f9a9507b82ef03af41fcf14bf5018ccf2242a0338b46da29a62d28745c828077327588dc82c03a4b0210e3ee1fd62c608f8fcd"
+);
+const TX_HASH: TxHash = b256!("0x3ea7e1482485387e61150ee8e5c8cad48a14591789ac02cc2504046d96d0a5f4");
+const TX_SENDER: Address = address!("0x24ae36512421f1d9f6e074f00ff5b8393f5dd925");
 
 fn create_test_bundle_with_reverting_tx() -> eyre::Result<EthSendBundle> {
     Ok(EthSendBundle {
-        txs: vec![get_test_tx()?],
+        txs: vec![TX_DATA],
         block_number: 12345,
         min_timestamp: Some(1640995200),
         max_timestamp: Some(1640995260),
-        reverting_tx_hashes: vec![
-            "0x3ea7e1482485387e61150ee8e5c8cad48a14591789ac02cc2504046d96d0a5f4"
-                .parse::<TxHash>()?,
-        ],
+        reverting_tx_hashes: vec![TX_HASH],
         replacement_uuid: None,
         dropping_tx_hashes: vec![],
         refund_percent: None,
@@ -60,7 +59,7 @@ fn create_test_bundle(
     max_timestamp: Option<u64>,
 ) -> eyre::Result<EthSendBundle> {
     Ok(EthSendBundle {
-        txs: vec![get_test_tx()?],
+        txs: vec![TX_DATA],
         block_number,
         min_timestamp,
         max_timestamp,
@@ -126,15 +125,11 @@ async fn insert_and_get() -> eyre::Result<()> {
         "Min base fee should be non-negative"
     );
 
-    let expected_hash: TxHash =
-        "0x3ea7e1482485387e61150ee8e5c8cad48a14591789ac02cc2504046d96d0a5f4".parse()?;
-    let expected_sender: Address = "0x24ae36512421f1d9f6e074f00ff5b8393f5dd925".parse()?;
-
     assert_eq!(
-        metadata.txn_hashes[0], expected_hash,
+        metadata.txn_hashes[0], TX_HASH,
         "Transaction hash should match"
     );
-    assert_eq!(metadata.senders[0], expected_sender, "Sender should match");
+    assert_eq!(metadata.senders[0], TX_SENDER, "Sender should match");
 
     Ok(())
 }
