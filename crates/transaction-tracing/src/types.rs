@@ -11,6 +11,7 @@ pub enum TxEvent {
     BlockInclusion,
     PendingToQueued,
     QueuedToPending,
+    Overflowed,
 }
 
 impl Display for TxEvent {
@@ -31,4 +32,27 @@ pub struct EventLog {
     pub mempool_time: Instant,
     pub events: Vec<TxEvent>,
     pub limit: usize,
+}
+
+impl EventLog {
+    pub fn new(event: TxEvent) -> Self {
+        Self {
+            mempool_time: Instant::now(),
+            events: vec![event],
+            limit: 10,
+        }
+    }
+
+    pub fn push(&mut self, event: TxEvent) {
+        self.events.push(event);
+        self.limit += 1;
+    }
+
+    pub fn to_string(&self) -> String {
+        self.events
+            .iter()
+            .map(|event| event.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }

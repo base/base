@@ -38,14 +38,7 @@ impl Tracker {
     }
 
     fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
-        let events_string = event_log
-            .events
-            .iter()
-            .filter(|event| **event != TxEvent::QueuedToPending)
-            .map(|event| format!("{:?}", event))
-            .collect::<Vec<_>>()
-            .join("\n");
-
+        let events_string = event_log.to_string();
         if !events_string.is_empty() {
             info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = %events_string, %msg);
         }
@@ -68,14 +61,7 @@ impl Tracker {
             }
         }
 
-        self.txs.put(
-            tx_hash,
-            EventLog {
-                mempool_time: Instant::now(),
-                events: vec![event],
-                limit: 10,
-            },
-        );
+        self.txs.put(tx_hash, EventLog::new(event));
     }
 
     /// Track a transaction moving from one pool to another
@@ -102,12 +88,11 @@ impl Tracker {
                             &event_log,
                             "Transaction removed from cache due to limit",
                         );
+                        record_histogram(time_in_mempool, TxEvent::Overflowed);
                         // the tx is already removed from the cache on `pop`
                         return;
                     }
-                    // Update the event log & vec size
-                    event_log.events.push(event.unwrap());
-                    event_log.limit += 1;
+                    event_log.push(event.unwrap());
                     self.txs.put(tx_hash, event_log);
 
                     record_histogram(time_in_mempool, event.unwrap());
@@ -135,13 +120,25 @@ impl Tracker {
 
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
     fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
-        if let Some(event_log) = self.txs.pop(&tx_hash) {
+        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
             debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
 
+            // keep the event log put update the tx hash
+            if event_log.events.len() >= event_log.limit {
+                self.log(
+                    &tx_hash,
+                    &event_log,
+                    "Transaction removed from cache due to limit",
+                );
+                record_histogram(time_in_mempool, TxEvent::Overflowed);
+                return;
+            }
+            event_log.push(TxEvent::Replaced);
+            self.txs.put(replaced_by, event_log);
+
             record_histogram(time_in_mempool, TxEvent::Replaced);
-            self.transaction_inserted(replaced_by, TxEvent::Replaced);
         }
     }
 }
