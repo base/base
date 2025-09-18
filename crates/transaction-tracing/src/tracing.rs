@@ -144,6 +144,14 @@ impl Tracker {
         }
     }
 
+    /// Track a transaction being replaced by removing it from the cache and adding the new tx.
+    fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
+        self.txs.pop(&tx_hash);
+        debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
+
+        self.transaction_inserted(replaced_by, TxEvent::Replaced);
+    }
+
     /// Track a transaction event
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
@@ -220,9 +228,9 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                     FullTransactionEvent::Discarded(tx_hash) => {
                         track.transaction_completed(tx_hash, TxEvent::Dropped);
                     }
-                    FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
+                    FullTransactionEvent::Replaced{transaction, replaced_by} => {
                         let tx_hash = transaction.hash();
-                        track.transaction_event(*tx_hash, TxEvent::Replaced);
+                        track.transaction_replaced(*tx_hash, TxHash::from(replaced_by));
                     }
                     _ => {
                         // Other events
