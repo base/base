@@ -118,6 +118,32 @@ impl Tracker {
         debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
     }
 
+    /// Track a transaction being included in a block or dropped.
+    fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
+        // if a tx is included/dropped, log it and pop it so that we keep the LRU cache size small
+        // which will help longer-lived txs.
+        if let Some(event_log) = self.txs.pop(&tx_hash) {
+            let mempool_time = event_log.mempool_time;
+            let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+            self.log(
+                &tx_hash,
+                &event_log,
+                match event {
+                    TxEvent::BlockInclusion => "Transaction included in block",
+                    TxEvent::Dropped => "Transaction dropped",
+                    _ => "",
+                },
+            );
+            metrics::histogram!("reth_transaction_tracing_tx_event", "event" => match event {
+                TxEvent::BlockInclusion => "block_inclusion",
+                TxEvent::Dropped => "dropped",
+                _ => "",
+            })
+            .record(time_in_mempool.as_millis() as f64);
+        }
+    }
+
     /// Track a transaction event
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
@@ -141,13 +167,12 @@ impl Tracker {
 
             // Record histogram with event label
             let event_label = match event {
-                TxEvent::Dropped => "dropped",
                 TxEvent::Replaced => "replaced",
                 TxEvent::Pending => "pending",
                 TxEvent::Queued => "queued",
-                TxEvent::BlockInclusion => "block_inclusion",
                 TxEvent::PendingToQueued => "pending_to_queued",
                 TxEvent::QueuedToPending => "queued_to_pending",
+                _ => "",
             };
             metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
                 .record(time_in_mempool.as_millis() as f64);
@@ -193,7 +218,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         track.transaction_moved(tx_hash, Pool::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
-                        track.transaction_event(tx_hash, TxEvent::Dropped);
+                        track.transaction_completed(tx_hash, TxEvent::Dropped);
                     }
                     FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
                         let tx_hash = transaction.hash();
@@ -212,7 +237,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         // Process all transactions in committed chain
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
@@ -221,7 +246,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
