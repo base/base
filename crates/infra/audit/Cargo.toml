@@ -1,0 +1,34 @@
+[package]
+name = "tips-audit"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "tips-audit"
+path = "src/bin/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-rpc-types-mev = { workspace = true }
+op-alloy-consensus = { workspace = true }
+clap = { workspace = true }
+dotenvy = { workspace = true }
+rdkafka = { workspace = true }
+aws-config = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-credential-types = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
