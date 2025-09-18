@@ -33,9 +33,13 @@ enum Pool {
 }
 
 /// History of events for a transaction
-type EventLog = (Instant, Vec<TxEvent>);
+struct EventLog {
+    mempool_time: Instant,
+    events: Vec<TxEvent>,
+    limit: usize,
+}
 
-/// Simple ExEx that tracks transaction timing from mempool to inclusion
+/// ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
     txs: LruCache<TxHash, EventLog>,
@@ -52,6 +56,20 @@ impl Tracker {
         }
     }
 
+    fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
+        let events_string = event_log
+            .events
+            .iter()
+            .filter(|event| **event != TxEvent::QueuedToPending)
+            .map(|event| format!("{:?}", event))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if !events_string.is_empty() {
+            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = %events_string, %msg);
+        }
+    }
+
     /// Track the first time we see a transaction in the mempool
     fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
         // if we've seen the tx before, don't track it again. for example,
@@ -65,15 +83,18 @@ impl Tracker {
         // before it gets evicted. this can be useful to see the full history of a transaction.
         if self.txs.len() == MAX_SIZE {
             if let Some((tx_hash, event_log)) = self.txs.peek_lru() {
-                event_log.1.iter().for_each(|event| {
-                    if *event != TxEvent::QueuedToPending {
-                        info!(target: "transaction-tracing", tx_hash = ?tx_hash, event = ?event, "Transaction event log")
-                    }
-                });
+                self.log(tx_hash, event_log, "Transaction inserted");
             }
         }
 
-        self.txs.put(tx_hash, (Instant::now(), vec![event]));
+        self.txs.put(
+            tx_hash,
+            EventLog {
+                mempool_time: Instant::now(),
+                events: vec![event],
+                limit: 10,
+            },
+        );
     }
 
     /// Track a transaction moving from one pool to another
@@ -100,11 +121,22 @@ impl Tracker {
     /// Track a transaction event
     fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
-            let mempool_time = event_log.0;
+            let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
-            // Update the change log with the new event
-            event_log.1.push(event);
+            if event_log.events.len() >= event_log.limit {
+                self.log(
+                    &tx_hash,
+                    &event_log,
+                    "Transaction removed from cache due to limit",
+                );
+                // the tx is already removed from the cache on `pop`
+                return;
+            }
+
+            // Update the event log & vec size
+            event_log.events.push(event);
+            event_log.limit += 1;
             self.txs.put(tx_hash, event_log);
 
             // Record histogram with event label
