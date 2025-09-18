@@ -37,13 +37,6 @@ impl Tracker {
         }
     }
 
-    fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
-        let events_string = event_log.to_string();
-        if !events_string.is_empty() {
-            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = %events_string, %msg);
-        }
-    }
-
     /// Track the first time we see a transaction in the mempool
     fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
         // if we've seen the tx before, don't track it again. for example,
@@ -82,14 +75,8 @@ impl Tracker {
                     let mempool_time = event_log.mempool_time;
                     let time_in_mempool = Instant::now().duration_since(mempool_time);
 
-                    if event_log.events.len() >= event_log.limit {
-                        self.log(
-                            &tx_hash,
-                            &event_log,
-                            "Transaction removed from cache due to limit",
-                        );
-                        record_histogram(time_in_mempool, TxEvent::Overflowed);
-                        // the tx is already removed from the cache on `pop`
+                    if self.is_overflowed(&tx_hash, &event_log) {
+                        // the tx is already removed from the cache from `pop`
                         return;
                     }
                     event_log.push(event.unwrap());
@@ -107,12 +94,12 @@ impl Tracker {
 
     /// Track a transaction being included in a block or dropped.
     fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
-        // if a tx is included/dropped, log it and pop it so that we keep the LRU cache size small
-        // which will help longer-lived txs.
         if let Some(event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
+            // if a tx is included/dropped, log it and don't add it back to LRU so that we keep the LRU cache size small
+            // which will help longer-lived txs.
             self.log(&tx_hash, &event_log, &format!("Transaction {}", event));
             record_histogram(time_in_mempool, event);
         }
@@ -125,21 +112,36 @@ impl Tracker {
             let time_in_mempool = Instant::now().duration_since(mempool_time);
             debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
 
-            // keep the event log put update the tx hash
-            if event_log.events.len() >= event_log.limit {
-                self.log(
-                    &tx_hash,
-                    &event_log,
-                    "Transaction removed from cache due to limit",
-                );
-                record_histogram(time_in_mempool, TxEvent::Overflowed);
+            if self.is_overflowed(&tx_hash, &event_log) {
                 return;
             }
+            // keep the event log and update the tx hash
             event_log.push(TxEvent::Replaced);
             self.txs.put(replaced_by, event_log);
 
             record_histogram(time_in_mempool, TxEvent::Replaced);
         }
+    }
+
+    fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
+        let events_string = event_log.to_string();
+        if !events_string.is_empty() {
+            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = %events_string, %msg);
+        }
+    }
+
+    fn is_overflowed(&self, tx_hash: &TxHash, event_log: &EventLog) -> bool {
+        if event_log.events.len() < event_log.limit {
+            return false;
+        }
+
+        self.log(
+            tx_hash,
+            event_log,
+            "Transaction removed from cache due to limit",
+        );
+        record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
+        return true;
     }
 }
 
