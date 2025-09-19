@@ -22,10 +22,15 @@ derivation pipeline in the following order:
 ## Network Upgrade Transactions
 
 ### L1Block Deployment
-<!-- Generated with: ./scripts/run_gen_predeploy_docs.sh --optimism-repo-path ../optimism --fork-name Jovian
---contract-name L1Block --from-address 0x4210000000000000000000000000000000000006 --from-address-nonce 0
---git-commit-hash 7daaabbf2c2cce892aa171bc7e1331ad31bcc8ca --eth-rpc-url https://optimism.rpc.subquery.network/public
---proxy-address 0x4200000000000000000000000000000000000015 --copy-contract-bytecode true -->
+<!-- Generated with: ./scripts/run_gen_predeploy_docs.sh --optimism-repo-path ../../optimism \
+--fork-name Jovian \
+--contract-name L1Block \
+--from-address 0x4210000000000000000000000000000000000006 \
+--from-address-nonce 0 \
+--git-commit-hash 7daaabbf2c2cce892aa171bc7e1331ad31bcc8ca \
+--eth-rpc-url https://optimism.rpc.subquery.network/public \
+--proxy-address 0x4200000000000000000000000000000000000015 \
+--copy-contract-bytecode true -->
 
 The `L1Block` contract is deployed.
 
