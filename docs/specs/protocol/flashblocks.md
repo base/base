@@ -1,4 +1,3 @@
-
 # Flashblocks
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
@@ -13,10 +12,10 @@
   - [Parameters](#parameters)
   - [Data structures](#data-structures)
     - [**`FlashblocksPayloadV1`**](#flashblockspayloadv1)
-    - [ExecutionPayloadFlashblockDeltaV1](#executionpayloadflashblockdeltav1)
+    - [**`ExecutionPayloadFlashblockDeltaV1`**](#executionpayloadflashblockdeltav1)
     - [**`ExecutionPayloadStaticV1`**](#executionpayloadstaticv1)
     - [**`Metadata`**](#metadata)
-    - [AccountMetadata](#accountmetadata)
+    - [**`AccountMetadata`**](#accountmetadata)
     - [**`StorageSlot`**](#storageslot)
     - [**`TransactionMetadata`**](#transactionmetadata)
   - [System architecture](#system-architecture)
@@ -76,10 +75,9 @@ technology to enable quick verifiability over various networks of machines in ad
 
 This document assumes knowledge of the terminology, definitions, and other material in
 
-- [🔗 Ethereum Optimism Protocol Specs][ethereum-optimism](https://github.com/ethereum-optimism/)
+- [🔗 Ethereum Optimism Protocol Specs](https://github.com/ethereum-optimism/)
 - [🔗 OP Stack Engine API](https://specs.optimism.io/protocol/exec-engine.html#engine-api)
-- [🔗 External Block Production in OP Stack Design
-Doc][ethereum-optimism](https://github.com/ethereum-optimism/)
+- [🔗 External Block Production in OP Stack Design Doc](https://github.com/ethereum-optimism/)
 - [🔗 Ethereum Execution APIs](https://github.com/ethereum/execution-apis/tree/main)
 - [🔗 Introducing Rollup-Boost - Launching on Unichain](https://writings.flashbots.net/introducing-rollup-boost)
 - [🔗 Rollup-boost design doc](https://www.notion.so/RFD-1-Rollup-boost-1996b4a0d876802f95d1c98387e38162?pvs=21)
@@ -110,16 +108,15 @@ streamlined path for incremental adoption by node operators and existing infrast
 ## Terminology
 
 All terms, actors, and components are used in this document identically to how they are defined in the [OP Stack
-protocol definition][ethereum-optimism](https://github.com/ethereum-optimism/)
+protocol definition](https://github.com/ethereum-optimism/)
 
 Additional terms introduced:
 
 - **External Block Builder** - External Block Builders are first introduced to the OP Stack in the [External Block
-Production Design
-Document][ethereum-optimism](https://github.com/ethereum-optimism/) ****where
+Production Design Document](https://github.com/ethereum-optimism/) where
 they are described as an external party that the Sequencer can request blocks from.
 - **Rollup Boost** - A sidecar piece of software first introduced without name in the [External Block Production Design
-Document][ethereum-optimism](https://github.com/ethereum-optimism/) with two
+Document](https://github.com/ethereum-optimism/) with two
 roles:
     1. obfuscate the presence of External Block Builder software from the `op-node` and `op-geth` software
     2. manage communication from the sequencer with External Block Builders and handle block delivery to `op-node` .
@@ -153,20 +150,20 @@ class FlashblocksPayloadV1():
     static: Optional[ExecutionPayloadStaticV1]
     diff: ExecutionPayloadFlashblockDeltaV1
     metadata: FlashblocksMetadata
-```
-
 **Field descriptions:**
+
+```
 
 - `payload_id`: PayloadID is an identifier of the payload build process. The same for all flashblocks.
 - `index`: Index of the Flashblock within the parent block.
 - `parent_flash_hash`: SSZ hash of the parent flashblock in the sequence. For the first flashblock (index 0), the field
-  is empty.
+is empty.
 - `base` *(Optional)*: Reference execution payload serving as the unchanging base configuration.
 - `diff`: Container with fields representing changes from the base payload.
 - `metadata`: Supplementary information about the execution of the flashblock. For example: account state changes,
-  storage modifications, transaction receipts.
+storage modifications, transaction receipts.
 
-### ExecutionPayloadFlashblockDeltaV1
+### **`ExecutionPayloadFlashblockDeltaV1`**
 
 Container encoding only the mutable portions of the execution payload updated during Flashblock construction.
 
@@ -248,7 +245,7 @@ class FlashblockMetadata():
 - `accounts`: List of accounts with modified state in this flashblock.
 - `transactions`: List of transaction execution results in this flashblock.
 
-### AccountMetadata
+### **`AccountMetadata`**
 
 Container representing account state changes included in the Flashblock metadata. It is used by providers to fulfill
 the RPC requests.
@@ -340,9 +337,9 @@ This architecture shows the flow of data through the Flashblocks system:
 
 1. The **OP Node** initiates block production and sends requests to **Rollup Boost**
 2. **Rollup Boost** coordinates between multiple components:
-[-*+] It communicates with the **Block Builder** to create Flashblocks
-[-*+] It maintains a connection to the **Fallback EL** for reliability if the Block Builder fails
-[-*+] It propagates validated Flashblocks to the network via the **WebSocket Proxy**
+   - It communicates with the **Block Builder** to create Flashblocks
+   - It maintains a connection to the **Fallback EL** for reliability if the Block Builder fails
+   - It propagates validated Flashblocks to the network via the **WebSocket Proxy**
 3. The **WebSocket Proxy** distributes Flashblocks to multiple **RPC Providers**
 4. **RPC Providers** serve preconfirmation data to **End Users**
 
@@ -420,54 +417,55 @@ consisting of all delivered flashblocks propagating according to the OP Stack pr
 
 1. **Fork Choice Update**:
 
-   The Sequencer initiates the block-building cycle by sending an `engine_forkchoiceUpdated` with attributes call to
-   Rollup Boost as it normally would to its local Execution Engine.
+    The Sequencer initiates the block-building cycle by sending an `engine_forkchoiceUpdated` with attributes call to
+Rollup Boost as it normally would to its local Execution Engine.
 
 2. **Fork Choice Update Forwarding**:
 
-   Rollup Boost forwards the `engine_forkchoiceUpdated` call concurrently to:
+    Rollup Boost forwards the `engine_forkchoiceUpdated` call concurrently to:
 
    - The Sequencer's local Execution Engine
    - The External Block Builder
+
 3. **Flashblock Construction**:
 
-   Upon receiving the fork choice update, the External Block Builder constructs and continuously delivers
-   `FlashblocksPayloadV1` at intervals defined by `FLASHBLOCKS_TIME` following the **Flashblocks Construction Process**
-   defined in this document.
+    Upon receiving the fork choice update, the External Block Builder constructs and continuously delivers
+`FlashblocksPayloadV1` at intervals defined by `FLASHBLOCKS_TIME` following the **Flashblocks Construction Process**
+defined in this document.
 
-   It's important to emphasize that during this process, the External Block Builder sends only the incremental changes
-   in each Flashblock, not the full block state each time. Each `FlashblocksPayloadV1` contains just the delta from the
-   previous state (new transactions, updated state roots, etc.), allowing for efficient bandwidth usage and faster
-   propagation.
+    It's important to emphasize that during this process, the External Block Builder sends only the incremental changes
+in each Flashblock, not the full block state each time. Each `FlashblocksPayloadV1` contains just the delta from the
+previous state (new transactions, updated state roots, etc.), allowing for efficient bandwidth usage and faster
+propagation.
 
-   Only the first Flashblock (with `index` 0) includes the `static` field containing immutable block data, while
-   subsequent Flashblocks omit this field since this information remains constant throughout the block's construction.
-   Each Flashblock includes a `parent_flash_hash` that references the SSZ hash of the previous Flashblock in the sequence,
-   creating a hash-linked chain within the block.
+    Only the first Flashblock (with `index` 0) includes the `static` field containing immutable block data, while
+subsequent Flashblocks omit this field since this information remains constant throughout the block's construction.
+Each Flashblock includes a `parent_flash_hash` that references the SSZ hash of the previous Flashblock in the sequence,
+creating a hash-linked chain within the block.
 
-   The combined information received across all flashblocks is sufficient to fully reconstruct the complete block
-   without any additional data.
+    The combined information received across all flashblocks is sufficient to fully reconstruct the complete block
+without any additional data.
 
 4. **Flashblock Validation and Propagation**:
 
-   For each received `FlashblocksPayloadV1`, Rollup Boost validates it against the Sequencer's local Execution Engine
-   and according to the **Flashblocks Validity Rules** defined in this document. Upon successful validation, Rollup Boost
-   propagates the payload to all subscribed Flashblock-compatible RPC providers.
+    For each received `FlashblocksPayloadV1`, Rollup Boost validates it against the Sequencer’s local Execution Engine
+and according to the **Flashblocks Validity Rules** defined in this document. Upon successful validation, Rollup Boost
+propagates the payload to all subscribed Flashblock-compatible RPC providers.
 
 5. **Preconfirmed State Updates**:
 
-   Flashblock-compatible RPC providers insert validated payloads into their local Preconfirmed State Overlay,
-   providing immediate preconfirmation states to end-users via Flashblock-enhanced Ethereum JSON-RPC endpoints.
+    Flashblock-compatible RPC providers insert validated payloads into their local Preconfirmed State Overlay,
+providing immediate preconfirmation states to end-users via Flashblock-enhanced Ethereum JSON-RPC endpoints.
 
 6. **Final L2 Block Delivery**:
 
-   When the Sequencer calls `engine_getPayload`, Rollup Boost returns a single coherent block payload based on the
-   validated Flashblocks received since the last fork choice update. Note that this does not require additional external
-   requests or any last-minute processing.
+    When the Sequencer calls `engine_getPayload`, Rollup Boost returns a single coherent block payload based on the
+validated Flashblocks received since the last fork choice update. Note that this does not require additional external
+requests or any last-minute processing.
 
 7. **Full Block Propagation**:
 
-   The Sequencer propagates the aggregated block following standard OP Stack protocol rules.
+    The Sequencer propagates the aggregated block following standard OP Stack protocol rules.
 
 ```mermaid
 sequenceDiagram
@@ -600,25 +598,25 @@ constructing subsequent Flashblocks by following these steps for each interval:
 2. **Transaction Execution**
 
    - Sequentially execute selected transactions against a state snapshot derived from the current execution payload base
-     (ExecutionPayloadBaseV1) or the last validated flashblock
+(ExecutionPayloadBaseV1) or the last validated flashblock
    - Apply the transaction inclusion heuristics described earlier to determine when to stop including transactions
    - After transaction execution completes, apply all post-block execution rules as described in the Post-Block Execution
-     Rules section
+Rules section
 
 3. **Flashblock Payload Assembly**
 
    - After transaction execution, compute and record the following execution state updates:
-     - `state_root`: The new post-execution state root resulting from the executed transactions.
-     - `receipts_root`: The receipts trie root derived from execution outcomes.
-     - `logs_bloom`: Aggregated logs bloom from all emitted transaction logs within this flashblock.
-     - `gas_used`: Total gas consumed by executed transactions.
-     - `transactions`: Serialized transaction payloads included within the flashblock.
-     - `withdrawals` (if applicable): Withdrawals executed during the current flashblock interval (as per OP Stack
-       withdrawal specification).
-     - `block_hash`: Computed block hash uniquely identifying this flashblock execution state.
+   - `state_root`: The new post-execution state root resulting from the executed transactions.
+   - `receipts_root`: The receipts trie root derived from execution outcomes.
+   - `logs_bloom`: Aggregated logs bloom from all emitted transaction logs within this flashblock.
+   - `gas_used`: Total gas consumed by executed transactions.
+   - `transactions`: Serialized transaction payloads included within the flashblock.
+   - `withdrawals` (if applicable): Withdrawals executed during the current flashblock interval (as per OP Stack
+withdrawal specification).
+   - `block_hash`: Computed block hash uniquely identifying this flashblock execution state.
 
-   Note that each flashblock builds upon the state of all previous flashblocks, with these fields reflecting the
-   cumulative state after applying the new transactions in this particular flashblock.
+    Note that each flashblock builds upon the state of all previous flashblocks, with these fields reflecting the
+cumulative state after applying the new transactions in this particular flashblock.
 
    - Encapsulate these computed updates into `ExecutionPayloadFlashblockDeltaV1`.
 
@@ -626,14 +624,14 @@ constructing subsequent Flashblocks by following these steps for each interval:
 
    - Assign a monotonically incremented `index` to the newly constructed Flashblock payload.
    - Compute the SSZ hash of the previous Flashblock and assign it as the `parent_flash_hash` (for the first Flashblock
-     with index 0, this field is empty)
+with index 0, this field is empty)
 
 5. **Flashblock Delivery**
 
    - Package the `index`, `payload_id`,  `ExecutionPayloadFlashblockDeltaV1`, and metadata into a `FlashblocksPayloadV1`
-     payload.
+payload.
    - Deliver the assembled `FlashblocksPayloadV1` payload promptly to Rollup Boost via the designated Flashblocks
-     submission API.
+submission API.
 
 6. **Subsequent Flashblock Construction**
 
@@ -641,13 +639,13 @@ constructing subsequent Flashblocks by following these steps for each interval:
    - Revert any post-block execution changes as described in the Post-Block Execution Rules section
    - Reset the transaction execution context based on the newly delivered state.
    - Begin constructing the next `FlashblocksPayloadV1` payload, repeating from step 1 until a termination condition is
-     reached (e.g., end of block building period via `engine_getPayload` request).
+reached (e.g., end of block building period via `engine_getPayload` request).
 
 7. **Flashblock Construction Termination**
 
    - Flashblock construction continues iteratively until:
-     - Rollup Boost signals final block aggregation and propagation via `engine_getPayload`.
-     - A failure or timeout condition arises requiring failover procedures, detailed separately.
+   - Rollup Boost signals final block aggregation and propagation via `engine_getPayload`.
+   - A failure or timeout condition arises requiring failover procedures, detailed separately.
 
 ```mermaid
 sequenceDiagram
@@ -786,8 +784,8 @@ implementation.
 
     A flashblock is considered a valid block if:
 
-[-*+] It includes the first flashblock (with index 0 containing the base data)
-[-*+] It comprises a continuous sequence of flashblocks with incrementing indices.
+- It includes the first flashblock (with index 0 containing the base data)
+- It comprises a continuous sequence of flashblocks with incrementing indices.
 
 ## Flashblock System Invariants
 
@@ -1153,8 +1151,7 @@ RPC provider scans the `storage_slots` list for the requested key and returns 
 
 ## Transaction Propagation
 
-Similar to the design laid out in the [External Block
-Production][ethereum-optimism](https://github.com/ethereum-optimism/) design
+Similar to the design laid out in the [External Block Production](https://github.com/ethereum-optimism/) design
 document, Flashblocks makes no assumptions about how transactions are delivered to the block builder. A non-exhaustive
 list of valid approaches:
 
@@ -1268,7 +1265,7 @@ maintaining a Preconfirmation cache and responding with the relevant data on req
 # Implementation
 
 A feature complete implementation of all components described in this document can be found in the
-[rollup-boost][flashbots](https://github.com/flashbots/)
-[op-rbuilder][flashbots](https://github.com/flashbots/)
+[rollup-boost](https://github.com/flashbots/)
+[op-rbuilder](https://github.com/flashbots/)
 [flashblocks-websocket-proxy](https://github.com/base/flashblocks-websocket-proxy), and
 [reth-flashblocks](https://github.com/danyalprout/reth-flashblocks).
