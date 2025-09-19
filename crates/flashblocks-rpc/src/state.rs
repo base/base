@@ -89,7 +89,7 @@ where
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         match self.queue.send(StateUpdate::Canonical(block.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added canonical block to processing queue",
                     block_number = block.number
                 )
@@ -105,7 +105,7 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added flashblock to processing queue",
                     block_number = flashblock.metadata.block_number,
                     flashblock_index = flashblock.index
@@ -281,7 +281,11 @@ where
                         warn!(
                             message = "reorg detected, clearing pending blocks",
                             latest_pending_block = pending_blocks.latest_block_number(),
-                            canonical_block = block.number
+                            canonical_block = block.number,
+                            tracked_txn_hashes_len = tracked_txn_hashes.len(),
+                            block_txn_hashes_len = block_txn_hashes.len(),
+                            tracked_txn_hashes = ?tracked_txn_hashes,
+                            block_txn_hashes = ?block_txn_hashes,
                         );
                         self.metrics.pending_clear_reorg.increment(1);
 
