@@ -1,4 +1,5 @@
 use alloy_primitives::TxHash;
+use chrono::Local;
 use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
@@ -54,7 +55,7 @@ impl Tracker {
             }
         }
 
-        self.txs.put(tx_hash, EventLog::new(event));
+        self.txs.put(tx_hash, EventLog::new(Local::now(), event));
     }
 
     /// Track a transaction moving from one pool to another
@@ -79,7 +80,7 @@ impl Tracker {
                         // the tx is already removed from the cache from `pop`
                         return;
                     }
-                    event_log.push(event.unwrap());
+                    event_log.push(Local::now(), event.unwrap());
                     self.txs.put(tx_hash, event_log);
 
                     record_histogram(time_in_mempool, event.unwrap());
@@ -116,7 +117,7 @@ impl Tracker {
                 return;
             }
             // keep the event log and update the tx hash
-            event_log.push(TxEvent::Replaced);
+            event_log.push(Local::now(), TxEvent::Replaced);
             self.txs.put(replaced_by, event_log);
 
             record_histogram(time_in_mempool, TxEvent::Replaced);
@@ -124,9 +125,9 @@ impl Tracker {
     }
 
     fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
-        let events_string = event_log.to_string();
-        if !events_string.is_empty() {
-            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = %events_string, %msg);
+        let events = event_log.to_vec();
+        if !events.is_empty() {
+            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = ?events, %msg);
         }
     }
 

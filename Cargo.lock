@@ -1701,6 +1701,7 @@ name = "base-reth-transaction-tracing"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "chrono",
  "eyre",
  "futures",
  "lru 0.16.1",

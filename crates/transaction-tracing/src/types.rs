@@ -1,3 +1,4 @@
+use chrono::{DateTime, Local};
 use std::fmt::{self, Display};
 use std::time::Instant;
 
@@ -30,29 +31,31 @@ pub enum Pool {
 /// History of events for a transaction
 pub struct EventLog {
     pub mempool_time: Instant,
-    pub events: Vec<TxEvent>,
+    pub events: Vec<(DateTime<Local>, TxEvent)>,
     pub limit: usize,
 }
 
 impl EventLog {
-    pub fn new(event: TxEvent) -> Self {
+    pub fn new(t: DateTime<Local>, event: TxEvent) -> Self {
         Self {
             mempool_time: Instant::now(),
-            events: vec![event],
+            events: vec![(t, event)],
             limit: 10,
         }
     }
 
-    pub fn push(&mut self, event: TxEvent) {
-        self.events.push(event);
+    pub fn push(&mut self, t: DateTime<Local>, event: TxEvent) {
+        self.events.push((t, event));
         self.limit += 1;
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_vec(&self) -> Vec<String> {
         self.events
             .iter()
-            .map(|event| event.to_string())
+            .map(|(t, event)| {
+                // example: 2025-09-18 08:57:37.979 pm - Pending
+                format!("{} - {}", t.format("%Y-%m-%d %H:%M:%S%.3f"), event)
+            })
             .collect::<Vec<_>>()
-            .join("\n")
     }
 }
