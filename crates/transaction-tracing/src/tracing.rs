@@ -98,12 +98,18 @@ impl Tracker {
 
     /// Track a transaction being included in a block or dropped.
     fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
-        if let Some(event_log) = self.txs.pop(&tx_hash) {
+        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
-            // if a tx is included/dropped, log it and don't add it back to LRU so that we keep the LRU cache size small
-            // which will help longer-lived txs.
+            if self.is_overflowed(&tx_hash, &event_log) {
+                return;
+            }
+            // don't add it back to LRU so that we keep the LRU cache size small which will help longer-lived txs
+            // but do update the event log with the final event (i.e., included/dropped)
+            event_log.push(Local::now(), event);
+
+            // if a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             record_histogram(time_in_mempool, event);
         }
