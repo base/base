@@ -17,7 +17,17 @@ pub enum TxEvent {
 
 impl Display for TxEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+        let s = match self {
+            TxEvent::Dropped => "dropped",
+            TxEvent::Replaced => "replaced",
+            TxEvent::Pending => "pending",
+            TxEvent::Queued => "queued",
+            TxEvent::BlockInclusion => "block_inclusion",
+            TxEvent::PendingToQueued => "pending_to_queued",
+            TxEvent::QueuedToPending => "queued_to_pending",
+            TxEvent::Overflowed => "overflowed",
+        };
+        write!(f, "{s}")
     }
 }
 
