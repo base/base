@@ -89,7 +89,7 @@ where
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         match self.queue.send(StateUpdate::Canonical(block.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added canonical block to processing queue",
                     block_number = block.number
                 )
@@ -105,7 +105,7 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added flashblock to processing queue",
                     block_number = flashblock.metadata.block_number,
                     flashblock_index = flashblock.index
