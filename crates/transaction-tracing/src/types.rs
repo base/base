@@ -17,7 +17,7 @@ pub enum TxEvent {
 
 impl Display for TxEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -53,8 +53,8 @@ impl EventLog {
         self.events
             .iter()
             .map(|(t, event)| {
-                // example: 2025-09-18 08:57:37.979 pm - Pending
-                format!("{} - {}", t.format("%Y-%m-%d %H:%M:%S%.3f"), event)
+                // example: 08:57:37.979 pm - Pending
+                format!("{} - {}", t.format("%H:%M:%S%.3f"), event)
             })
             .collect::<Vec<_>>()
     }

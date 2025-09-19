@@ -104,7 +104,7 @@ impl Tracker {
 
             // if a tx is included/dropped, log it and don't add it back to LRU so that we keep the LRU cache size small
             // which will help longer-lived txs.
-            self.log(&tx_hash, &event_log, &format!("Transaction {}", event));
+            self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
             record_histogram(time_in_mempool, event);
         }
     }
@@ -149,7 +149,7 @@ impl Tracker {
             "Transaction removed from cache due to limit",
         );
         record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
-        return true;
+        true
     }
 }
 
