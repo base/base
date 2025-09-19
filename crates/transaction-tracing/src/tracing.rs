@@ -27,14 +27,17 @@ struct Tracker {
     txs: LruCache<TxHash, EventLog>,
     /// Map of transaction hash to current state
     tx_states: LruCache<TxHash, Pool>,
+    /// Enable `info` logs for transaction tracing
+    enable_logs: bool,
 }
 
 impl Tracker {
     /// Create a new tracker
-    fn new() -> Self {
+    fn new(enable_logs: bool) -> Self {
         Self {
             txs: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
             tx_states: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
+            enable_logs,
         }
     }
 
@@ -125,6 +128,10 @@ impl Tracker {
     }
 
     fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
+        if !self.enable_logs {
+            return;
+        }
+
         let events = event_log.to_vec();
         if !events.is_empty() {
             info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = ?events, %msg);
@@ -148,9 +155,10 @@ impl Tracker {
 
 pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
+    enable_logs: bool,
 ) -> Result<()> {
     debug!(target: "transaction-tracing", "Starting transaction tracking ExEx");
-    let mut track = Tracker::new();
+    let mut track = Tracker::new(enable_logs);
 
     // Subscribe to events from the mempool
     let pool = ctx.pool().clone();
