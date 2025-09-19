@@ -347,7 +347,8 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let builder_txs = builder_tx.simulate_builder_txs(&state_provider, &mut info, ctx, db)?;
+        let builder_txs =
+            builder_tx.simulate_builder_txs(&state_provider, &mut info, ctx, db, true)?;
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
         if block_gas_limit == 0 {
@@ -394,7 +395,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db)?;
+        builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, false)?;
 
         let state_merge_start_time = Instant::now();
 

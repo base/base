@@ -322,8 +322,19 @@ where
         let builder_txs = if ctx.attributes().no_tx_pool {
             vec![]
         } else {
-            self.builder_tx
-                .add_builder_txs(&state_provider, &mut info, &ctx, &mut state)?
+            match self.builder_tx.add_builder_txs(
+                &state_provider,
+                &mut info,
+                &ctx,
+                &mut state,
+                true,
+            ) {
+                Ok(builder_txs) => builder_txs,
+                Err(e) => {
+                    error!(target: "payload_builder", "Error adding builder txs to fallback block: {}", e);
+                    vec![]
+                }
+            }
         };
 
         // We subtract gas limit and da limit for builder transaction from the whole limit
@@ -571,8 +582,16 @@ where
         let flashblock_build_start_time = Instant::now();
 
         let builder_txs =
-            self.builder_tx
-                .simulate_builder_txs(&state_provider, info, ctx, state)?;
+            match self
+                .builder_tx
+                .add_builder_txs(&state_provider, info, ctx, state, true)
+            {
+                Ok(builder_txs) => builder_txs,
+                Err(e) => {
+                    error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                    vec![]
+                }
+            };
 
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let builder_tx_da_size: u64 = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
@@ -636,8 +655,16 @@ where
             .payload_tx_simulation_gauge
             .set(payload_tx_simulation_time);
 
-        self.builder_tx
-            .add_builder_txs(&state_provider, info, ctx, state)?;
+        match self
+            .builder_tx
+            .add_builder_txs(&state_provider, info, ctx, state, false)
+        {
+            Ok(builder_txs) => builder_txs,
+            Err(e) => {
+                error!(target: "payload_builder", "Error simulating builder txs: {}", e);
+                vec![]
+            }
+        };
 
         let total_block_built_duration = Instant::now();
         let build_result = build_block(

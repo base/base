@@ -1,3 +1,5 @@
+use alloy_primitives::Address;
+
 use crate::{args::OpRbuilderArgs, builders::BuilderConfig};
 use core::{
     net::{Ipv4Addr, SocketAddr},
@@ -31,6 +33,11 @@ pub struct FlashblocksConfig {
 
     /// Should we calculate state root for each flashblock
     pub calculate_state_root: bool,
+
+    /// The address of the flashblocks number contract.
+    ///
+    /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
+    pub flashblocks_number_contract_address: Option<Address>,
 }
 
 impl Default for FlashblocksConfig {
@@ -41,6 +48,7 @@ impl Default for FlashblocksConfig {
             leeway_time: Duration::from_millis(50),
             fixed: false,
             calculate_state_root: true,
+            flashblocks_number_contract_address: None,
         }
     }
 }
@@ -62,12 +70,16 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let calculate_state_root = args.flashblocks.flashblocks_calculate_state_root;
 
+        let flashblocks_number_contract_address =
+            args.flashblocks.flashblocks_number_contract_address;
+
         Ok(Self {
             ws_addr,
             interval,
             leeway_time,
             fixed,
             calculate_state_root,
+            flashblocks_number_contract_address,
         })
     }
 }
