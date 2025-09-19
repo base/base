@@ -4,6 +4,7 @@ use alloy_primitives::Address;
 use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sp1_sdk::network::FulfillmentStrategy;
 
 #[derive(Debug, Clone)]
 pub struct ProposerConfig {
@@ -21,6 +22,12 @@ pub struct ProposerConfig {
 
     /// Whether to use fast finality mode.
     pub fast_finality_mode: bool,
+
+    /// Proof fulfillment strategy for range proofs.
+    pub range_proof_strategy: FulfillmentStrategy,
+
+    /// Proof fulfillment strategy for aggregation proofs.
+    pub agg_proof_strategy: FulfillmentStrategy,
 
     /// The interval in blocks between proposing new games.
     pub proposal_interval_in_blocks: u64,
@@ -76,6 +83,22 @@ impl ProposerConfig {
             fast_finality_mode: env::var("FAST_FINALITY_MODE")
                 .unwrap_or("false".to_string())
                 .parse()?,
+            range_proof_strategy: if env::var("RANGE_PROOF_STRATEGY")
+                .unwrap_or("reserved".to_string())
+                .eq_ignore_ascii_case("hosted")
+            {
+                FulfillmentStrategy::Hosted
+            } else {
+                FulfillmentStrategy::Reserved
+            },
+            agg_proof_strategy: if env::var("AGG_PROOF_STRATEGY")
+                .unwrap_or("reserved".to_string())
+                .eq_ignore_ascii_case("hosted")
+            {
+                FulfillmentStrategy::Hosted
+            } else {
+                FulfillmentStrategy::Reserved
+            },
             proposal_interval_in_blocks: env::var("PROPOSAL_INTERVAL_IN_BLOCKS")
                 .unwrap_or("1800".to_string())
                 .parse()?,

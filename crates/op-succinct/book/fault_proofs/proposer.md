@@ -55,6 +55,8 @@ Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for t
 |----------|-------------|---------------|
 | `MOCK_MODE` | Whether to use mock mode | `false` |
 | `FAST_FINALITY_MODE` | Whether to use fast finality mode | `false` |
+| `RANGE_PROOF_STRATEGY` | Proof fulfillment strategy for range proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
+| `AGG_PROOF_STRATEGY` | Proof fulfillment strategy for aggregation proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
 | `PROPOSAL_INTERVAL_IN_BLOCKS` | Number of L2 blocks between proposals | `1800` |
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
 | `ENABLE_GAME_RESOLUTION` | Whether to enable automatic game resolution | `true` |
@@ -86,6 +88,8 @@ SIGNER_ADDRESS=          # Address of the account managed by the web3 signer
 # Optional Configuration
 MOCK_MODE=false                          # Whether to use mock mode
 FAST_FINALITY_MODE=false                 # Whether to use fast finality mode
+RANGE_PROOF_STRATEGY=reserved            # Set to hosted to use hosted proof strategy
+AGG_PROOF_STRATEGY=reserved              # Set to hosted to use hosted proof strategy
 PROPOSAL_INTERVAL_IN_BLOCKS=1800         # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                        # Polling interval in seconds
 ENABLE_GAME_RESOLUTION=false             # Whether to enable automatic game resolution

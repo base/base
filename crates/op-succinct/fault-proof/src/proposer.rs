@@ -20,8 +20,8 @@ use op_succinct_host_utils::{
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::Signer;
 use sp1_sdk::{
-    network::FulfillmentStrategy, NetworkProver, Prover, ProverClient, SP1ProofMode,
-    SP1ProofWithPublicValues, SP1ProvingKey, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    NetworkProver, Prover, ProverClient, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey,
+    SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 use tokio::{sync::Mutex, time};
 
@@ -218,7 +218,7 @@ where
                 .network_prover
                 .prove(&self.prover.range_pk, &sp1_stdin)
                 .compressed()
-                .strategy(FulfillmentStrategy::Hosted)
+                .strategy(self.config.range_proof_strategy)
                 .skip_simulation(true)
                 .cycle_limit(1_000_000_000_000)
                 .gas_limit(1_000_000_000_000)
@@ -282,6 +282,7 @@ where
                 .network_prover
                 .prove(&self.prover.agg_pk, &sp1_stdin)
                 .groth16()
+                .strategy(self.config.agg_proof_strategy)
                 .timeout(Duration::from_secs(4 * 60 * 60))
                 .run_async()
                 .await?
