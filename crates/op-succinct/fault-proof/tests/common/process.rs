@@ -35,6 +35,7 @@ pub async fn start_proposer(
         fetch_interval: 2,               // Check more frequently in tests
         game_type,
         max_games_to_check_for_defense: 100,
+        max_concurrent_defense_tasks: 8,
         enable_game_resolution: true,
         max_games_to_check_for_resolution: 100,
         max_games_to_check_for_bond_claiming: 100,

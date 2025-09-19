@@ -48,7 +48,7 @@ pub type TaskMap = HashMap<TaskId, (TaskHandle, TaskInfo)>;
 #[derive(Clone, Debug)]
 pub enum TaskInfo {
     GameCreation { block_number: U256 },
-    GameProving { game_address: Address },
+    GameProving { game_address: Address, is_defense: bool },
     GameResolution,
     BondClaim,
 }
@@ -355,7 +355,7 @@ where
             tracing::info!("Fast finality mode enabled: Spawning proof generation task");
 
             // Spawn a tracked proving task for the new game
-            if let Err(e) = self.spawn_game_proving_task(game_address).await {
+            if let Err(e) = self.spawn_game_proving_task(game_address, false).await {
                 tracing::warn!("Failed to spawn fast finality proof task: {:?}", e);
             }
         }
@@ -535,6 +535,15 @@ where
             as u64
     }
 
+    /// Count active defense tasks
+    async fn count_active_defense_tasks(&self) -> u64 {
+        let tasks = self.tasks.lock().await;
+        tasks
+            .iter()
+            .filter(|(_, (_, info))| matches!(info, TaskInfo::GameProving { is_defense: true, .. }))
+            .count() as u64
+    }
+
     /// Runs the proposer indefinitely.
     pub async fn run(self: Arc<Self>) -> Result<()> {
         tracing::info!("OP Succinct Proposer running...");
@@ -647,7 +656,7 @@ where
 
         // Check if we should defend games
         match self.spawn_game_defense_tasks().await {
-            Ok(true) => tracing::info!("Successfully spawned game defense task"),
+            Ok(true) => tracing::info!("Successfully spawned game defense tasks"),
             Ok(false) => tracing::debug!("No games need defense or task already active"),
             Err(e) => tracing::warn!("Failed to spawn game defense tasks: {:?}", e),
         }
@@ -696,7 +705,7 @@ where
             for (_, (_, info)) in tasks.iter() {
                 let task_type = match info {
                     TaskInfo::GameCreation { .. } => "GameCreation",
-                    TaskInfo::GameProving { game_address } => {
+                    TaskInfo::GameProving { game_address, .. } => {
                         proving_games.push(format!("{game_address:?}"));
                         "GameProving"
                     }
@@ -835,37 +844,48 @@ where
     #[tracing::instrument(name = "[[Defending]]", skip(self))]
     async fn spawn_game_defense_tasks(&self) -> Result<bool> {
         // Check if there are games needing defense
-        if let Some(game_address) = self
+        let game_addresses = self
             .factory
-            .get_oldest_defensible_game_address(
+            .get_defensible_game_addresses(
                 self.config.max_games_to_check_for_defense,
                 self.l1_provider.clone(),
                 self.l2_provider.clone(),
             )
-            .await?
-        {
+            .await?;
+
+        let mut active_defense_tasks_count = self.count_active_defense_tasks().await;
+        let mut tasks_spawned = false;
+        for game_address in game_addresses {
+            if active_defense_tasks_count >= self.config.max_concurrent_defense_tasks {
+                tracing::debug!(
+                    "The max concurrent proving tasks count ({}) has been reached",
+                    self.config.max_concurrent_defense_tasks,
+                );
+
+                return Ok(tasks_spawned)
+            }
+
             // Check if we already have a proving task for this game
             if !self.has_active_proving_for_game(game_address).await {
-                self.spawn_game_proving_task(game_address).await?;
-                Ok(true)
-            } else {
-                Ok(false) // Task already exists - no new work needed
+                self.spawn_game_proving_task(game_address, true).await?;
+                active_defense_tasks_count += 1;
+                tasks_spawned = true;
             }
-        } else {
-            Ok(false) // No games need defense - normal case
         }
+
+        Ok(tasks_spawned)
     }
 
     /// Check if there's an active proving task for a specific game
     async fn has_active_proving_for_game(&self, game_address: Address) -> bool {
         let tasks = self.tasks.lock().await;
         tasks.values().any(|(_, info)| {
-            matches!(info, TaskInfo::GameProving { game_address: addr } if *addr == game_address)
+            matches!(info, TaskInfo::GameProving { game_address: addr, .. } if *addr == game_address)
         })
     }
 
     /// Spawn a game proving task for a specific game
-    async fn spawn_game_proving_task(&self, game_address: Address) -> Result<()> {
+    async fn spawn_game_proving_task(&self, game_address: Address, is_defense: bool) -> Result<()> {
         let proposer: OPSuccinctProposer<P, H> = self.clone();
         let task_id = self.next_task_id.fetch_add(1, Ordering::Relaxed);
 
@@ -935,7 +955,7 @@ where
             })
         };
 
-        let task_info = TaskInfo::GameProving { game_address };
+        let task_info = TaskInfo::GameProving { game_address, is_defense };
         self.tasks.lock().await.insert(task_id, (handle, task_info));
         Ok(())
     }
