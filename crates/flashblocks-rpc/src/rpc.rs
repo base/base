@@ -170,7 +170,7 @@ where
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>> {
         debug!(
-            message = "rpc::block_by_number",
+            message = "rpc::get_transaction_receipt",
             tx_hash = %tx_hash
         );
 
@@ -321,6 +321,14 @@ where
         state_overrides: Option<StateOverride>,
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes> {
+        debug!(
+            message = "rpc::call",
+            transaction = ?transaction,
+            block_number = ?block_number,
+            state_overrides = ?state_overrides,
+            block_overrides = ?block_overrides,
+        );
+
         let block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
@@ -353,6 +361,13 @@ where
         block_number: Option<BlockId>,
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256> {
+        debug!(
+            message = "rpc::estimate_gas",
+            transaction = ?transaction,
+            block_number = ?block_number,
+            overrides = ?overrides,
+        );
+
         let block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
@@ -376,6 +391,11 @@ where
         opts: SimulatePayload<OpTransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Eth::NetworkTypes>>>> {
+        debug!(
+            message = "rpc::simulate_v1",
+            block_number = ?block_number,
+        );
+
         let block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
 
