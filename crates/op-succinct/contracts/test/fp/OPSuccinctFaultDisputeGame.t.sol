@@ -43,7 +43,7 @@ import {IOptimismPortal2} from "interfaces/L1/IOptimismPortal2.sol";
 import {IAnchorStateRegistry} from "interfaces/dispute/IAnchorStateRegistry.sol";
 
 // Utils
-import {MockOptimismPortal2} from "../../utils/MockOptimismPortal2.sol";
+import {MockOptimismPortal2} from "../../src/utils/MockOptimismPortal2.sol";
 
 contract OPSuccinctFaultDisputeGameTest is Test {
     // Event definitions matching those in OPSuccinctFaultDisputeGame.

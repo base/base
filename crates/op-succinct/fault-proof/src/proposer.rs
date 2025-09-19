@@ -368,8 +368,10 @@ where
     #[tracing::instrument(name = "[[Proposing]]", skip(self))]
     pub async fn handle_game_creation(&self) -> Result<Option<Address>> {
         // Get the latest valid proposal.
-        let latest_valid_proposal =
-            self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await?;
+        let latest_valid_proposal = self
+            .factory
+            .get_latest_valid_proposal(self.l2_provider.clone(), self.config.game_type)
+            .await?;
 
         // Determine next block number and parent game index.
         //
@@ -437,6 +439,7 @@ where
                 self.config.max_games_to_check_for_bond_claiming,
                 self.prover_address,
                 Mode::Proposer,
+                self.config.game_type,
             )
             .await?
         {
@@ -495,14 +498,17 @@ where
     /// Fetch the proposer metrics.
     async fn fetch_proposer_metrics(&self) -> Result<()> {
         // Get the latest valid proposal.
-        let latest_proposed_block_number =
-            match self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await? {
-                Some((l2_block_number, _game_index)) => l2_block_number,
-                None => {
-                    tracing::info!("No valid proposals found for metrics");
-                    self.factory.get_anchor_l2_block_number(self.config.game_type).await?
-                }
-            };
+        let latest_proposed_block_number = match self
+            .factory
+            .get_latest_valid_proposal(self.l2_provider.clone(), self.config.game_type)
+            .await?
+        {
+            Some((l2_block_number, _game_index)) => l2_block_number,
+            None => {
+                tracing::info!("No valid proposals found for metrics");
+                self.factory.get_anchor_l2_block_number(self.config.game_type).await?
+            }
+        };
 
         // Update metrics for latest game block number.
         ProposerGauge::LatestGameL2BlockNumber.set(latest_proposed_block_number.to::<u64>() as f64);
@@ -783,8 +789,10 @@ where
         }
 
         // Use the existing logic from handle_game_creation
-        let latest_valid_proposal =
-            self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await?;
+        let latest_valid_proposal = self
+            .factory
+            .get_latest_valid_proposal(self.l2_provider.clone(), self.config.game_type)
+            .await?;
 
         let (latest_proposed_block_number, next_l2_block_number_for_proposal, _) =
             match latest_valid_proposal {
@@ -818,8 +826,10 @@ where
 
     /// Get the next proposal block number
     async fn get_next_proposal_block(&self) -> Result<U256> {
-        let latest_valid_proposal =
-            self.factory.get_latest_valid_proposal(self.l2_provider.clone()).await?;
+        let latest_valid_proposal = self
+            .factory
+            .get_latest_valid_proposal(self.l2_provider.clone(), self.config.game_type)
+            .await?;
 
         match latest_valid_proposal {
             Some((latest_block, _)) => {
@@ -850,6 +860,7 @@ where
                 self.config.max_games_to_check_for_defense,
                 self.l1_provider.clone(),
                 self.l2_provider.clone(),
+                self.config.game_type,
             )
             .await?;
 
@@ -980,6 +991,7 @@ where
                     proposer.signer.clone(),
                     proposer.config.l1_rpc.clone(),
                     proposer.l1_provider.clone(),
+                    proposer.config.game_type,
                 )
                 .await
         });
@@ -1005,6 +1017,7 @@ where
                 self.config.max_games_to_check_for_bond_claiming,
                 self.prover_address,
                 Mode::Proposer,
+                self.config.game_type,
             )
             .await?
             .is_some();

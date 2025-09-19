@@ -1,7 +1,11 @@
 //! Contract deployment utilities for E2E tests.
 
-use alloy_primitives::Address;
-use anyhow::{anyhow, Result};
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_rpc_types_eth::{transaction::request::TransactionInput, TransactionRequest};
+use alloy_transport_http::reqwest::Url;
+use anyhow::{anyhow, Context, Result};
+use op_succinct_bindings::mock_permissioned_dispute_game::MockPermissionedDisputeGame;
+use op_succinct_signer_utils::Signer;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -114,4 +118,40 @@ pub async fn deploy_test_contracts(rpc_url: &str, private_key: &str) -> Result<D
     info!("  Game Implementation: {}", deployed_contracts.game_implementation);
 
     Ok(deployed_contracts)
+}
+
+pub async fn deploy_mock_permissioned_game(signer: &Signer, rpc: &Url) -> Result<Address> {
+    let bytecode = MockPermissionedDisputeGame::BYTECODE.clone();
+
+    let request =
+        TransactionRequest { input: TransactionInput::new(bytecode), ..Default::default() };
+
+    let receipt = signer
+        .send_transaction_request(rpc.clone(), request)
+        .await
+        .context("Failed to deploy mock permissioned dispute game")?;
+
+    receipt.contract_address.context("Mock game deployment lacked contract address")
+}
+
+pub async fn send_contract_transaction(
+    signer: &Signer,
+    rpc: &Url,
+    to: Address,
+    data: Bytes,
+    value: Option<U256>,
+) -> Result<()> {
+    let request = TransactionRequest {
+        to: Some(TxKind::Call(to)),
+        input: TransactionInput::new(data),
+        value,
+        ..Default::default()
+    };
+
+    signer
+        .send_transaction_request(rpc.clone(), request)
+        .await
+        .context("Failed to send contract transaction")?;
+
+    Ok(())
 }
