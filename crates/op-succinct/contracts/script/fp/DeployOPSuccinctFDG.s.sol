@@ -27,7 +27,7 @@ import {SP1MockVerifier} from "@sp1-contracts/src/SP1MockVerifier.sol";
 
 // Utils
 import {Utils} from "../../test/helpers/Utils.sol";
-import {MockOptimismPortal2} from "../../utils/MockOptimismPortal2.sol";
+import {MockOptimismPortal2} from "../../src/utils/MockOptimismPortal2.sol";
 
 contract DeployOPSuccinctFDG is Script, Utils {
     using stdJson for string;

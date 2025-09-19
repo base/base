@@ -3,7 +3,7 @@ use std::str::FromStr;
 use alloy_consensus::TxEnvelope;
 use alloy_eips::Decodable2718;
 use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{Provider, ProviderBuilder, Web3Signer};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
 use alloy_signer_local::PrivateKeySigner;
@@ -105,14 +105,16 @@ impl Signer {
                     .wallet(EthereumWallet::new(private_key.clone()))
                     .connect_http(l1_rpc);
 
-                // Set the from address to the Ethereum wallet address.
+                // Ensure the request has a `from` address so the wallet filler can sign it.
                 transaction_request.set_from(private_key.address());
-
-                // Fill the transaction request with all of the relevant gas and nonce information.
-                let filled_tx = provider.fill(transaction_request).await?;
+                if transaction_request.to.is_none() {
+                    // NOTE(fakedev9999): Anvil's wallet filler insists on a `to` field even for
+                    // deployments. Mark the request as contract creation so it can be signed.
+                    transaction_request.to = Some(TxKind::Create);
+                }
 
                 let receipt = provider
-                    .send_tx_envelope(filled_tx.as_envelope().unwrap().clone())
+                    .send_transaction(transaction_request)
                     .await
                     .context("Failed to send transaction")?
                     .with_required_confirmations(NUM_CONFIRMATIONS)
