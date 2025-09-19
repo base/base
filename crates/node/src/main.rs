@@ -38,6 +38,13 @@ struct Args {
         value_name = "ENABLE_TRANSACTION_TRACING"
     )]
     pub enable_transaction_tracing: bool,
+
+    /// Enable `info` logs for transaction tracing
+    #[arg(
+        long = "enable-transaction-tracing-logs",
+        value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
+    )]
+    pub enable_transaction_tracing_logs: bool,
 }
 
 impl Args {
@@ -65,7 +72,12 @@ fn main() {
                 .install_exex_if(
                     transaction_tracing_enabled,
                     "transaction-tracing",
-                    |ctx| async move { Ok(transaction_tracing_exex(ctx)) },
+                    move |ctx| async move {
+                        Ok(transaction_tracing_exex(
+                            ctx,
+                            args.enable_transaction_tracing_logs,
+                        ))
+                    },
                 )
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {
                     let fb_cell = fb_cell.clone();
