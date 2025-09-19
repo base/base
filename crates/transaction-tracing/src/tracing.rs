@@ -144,6 +144,8 @@ impl Tracker {
         }
     }
 
+    // if `is_overflowed` is true then we record an overflowed metric and log the event log
+    // and don't record the other event that was supposed to be recorded
     fn is_overflowed(&self, tx_hash: &TxHash, event_log: &EventLog) -> bool {
         if event_log.events.len() < event_log.limit {
             return false;
