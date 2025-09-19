@@ -179,6 +179,20 @@ where
         S: Fn(ProposalStatus) -> bool + Send + Sync,
         O: Fn(B256, B256) -> bool + Send + Sync;
 
+    /// Get all game addresses with a given condition.
+    async fn get_game_addresses<S, O>(
+        &self,
+        max_games_to_check: u64,
+        l1_provider: L1Provider,
+        l2_provider: L2Provider,
+        status_check: S,
+        output_root_check: O,
+        log_message: &str,
+    ) -> Result<Vec<Address>>
+    where
+        S: Fn(ProposalStatus) -> bool + Send + Sync,
+        O: Fn(B256, B256) -> bool + Send + Sync;
+
     /// Get the oldest challengable game address.
     ///
     /// This function checks a window of recent games, starting from.
@@ -190,19 +204,19 @@ where
         l2_provider: L2Provider,
     ) -> Result<Option<Address>>;
 
-    /// Get the oldest defensible game address.
+    /// Get the defensible game addresses.
     ///
     /// Defensible games are games with valid claims that have been challenged but have not been
     /// proven yet.
     ///
     /// This function checks a window of recent games, starting from
     /// (latest_game_index - max_games_to_check_for_defense) up to latest_game_index.
-    async fn get_oldest_defensible_game_address(
+    async fn get_defensible_game_addresses(
         &self,
         max_games_to_check_for_defense: u64,
         l1_provider: L1Provider,
         l2_provider: L2Provider,
-    ) -> Result<Option<Address>>;
+    ) -> Result<Vec<Address>>;
 
     /// Get the oldest game address with claimable bonds.
     ///
@@ -526,6 +540,81 @@ where
         Ok(None)
     }
 
+    async fn get_game_addresses<S, O>(
+        &self,
+        max_games_to_check: u64,
+        l1_provider: L1Provider,
+        l2_provider: L2Provider,
+        status_check: S,
+        output_root_check: O,
+        log_message: &str,
+    ) -> Result<Vec<Address>>
+    where
+        S: Fn(ProposalStatus) -> bool + Send + Sync,
+        O: Fn(B256, B256) -> bool + Send + Sync,
+    {
+        let Some(latest_game_index) = self.fetch_latest_game_index().await? else {
+            tracing::info!("No games exist yet");
+            return Ok(vec![]);
+        };
+
+        let mut addresses = vec![];
+        let mut game_index = latest_game_index.saturating_sub(U256::from(max_games_to_check));
+
+        while game_index <= latest_game_index {
+            let game_address = self.fetch_game_address_by_index(game_index).await?;
+            let game = OPSuccinctFaultDisputeGame::new(game_address, self.provider());
+            let claim_data = game.claimData().call().await?;
+
+            if !status_check(claim_data.status) {
+                tracing::debug!(
+                    "Game {:?} at index {:?} does not match status criteria, skipping",
+                    game_address,
+                    game_index
+                );
+                game_index += U256::from(1);
+                continue;
+            }
+
+            let current_timestamp = l1_provider
+                .get_block_by_number(BlockNumberOrTag::Latest)
+                .await?
+                .unwrap()
+                .header
+                .timestamp;
+            let deadline = U256::from(claim_data.deadline).to::<u64>();
+            if deadline < current_timestamp {
+                tracing::info!(
+                    "Game {:?} at index {:?} deadline {:?} has passed, skipping",
+                    game_address,
+                    game_index,
+                    deadline
+                );
+                game_index += U256::from(1);
+                continue;
+            }
+
+            let block_number = game.l2BlockNumber().call().await?;
+            let game_claim = game.rootClaim().call().await?;
+            let output_root = l2_provider.compute_output_root_at_block(block_number).await?;
+
+            if output_root_check(output_root, game_claim) {
+                tracing::info!(
+                    "{} {:?} at game index {:?} with L2 block number: {:?}",
+                    log_message,
+                    game_address,
+                    game_index,
+                    block_number
+                );
+                addresses.push(game_address);
+            }
+
+            game_index += U256::from(1);
+        }
+
+        Ok(addresses)
+    }
+
     /// Get the oldest challengable game address.
     async fn get_oldest_challengable_game_address(
         &self,
@@ -545,19 +634,19 @@ where
     }
 
     /// Get the oldest defensible game address.
-    async fn get_oldest_defensible_game_address(
+    async fn get_defensible_game_addresses(
         &self,
         max_games_to_check_for_defense: u64,
         l1_provider: L1Provider,
         l2_provider: L2Provider,
-    ) -> Result<Option<Address>> {
-        self.get_oldest_game_address(
+    ) -> Result<Vec<Address>> {
+        self.get_game_addresses(
             max_games_to_check_for_defense,
             l1_provider,
             l2_provider,
             |status| status == ProposalStatus::Challenged,
             |output_root, game_claim| output_root == game_claim,
-            "Oldest defensible game",
+            "Defensible games",
         )
         .await
     }
