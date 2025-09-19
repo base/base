@@ -11,6 +11,7 @@ use fault_proof::{
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_signer_utils::Signer;
+use sp1_sdk::network::FulfillmentStrategy;
 use tracing::Instrument;
 
 /// Start a proposer, and return a handle to the proposer task.
@@ -31,6 +32,8 @@ pub async fn start_proposer(
         factory_address: *factory_address,
         mock_mode: true,
         fast_finality_mode: false,
+        range_proof_strategy: FulfillmentStrategy::Hosted,
+        agg_proof_strategy: FulfillmentStrategy::Hosted,
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
         fetch_interval: 2,               // Check more frequently in tests
         game_type,
