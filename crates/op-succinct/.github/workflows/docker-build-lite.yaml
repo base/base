@@ -48,6 +48,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/lite-proposer
           tags: |
+            type=ref,event=tag
             type=sha
             latest
 
@@ -118,6 +119,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/lite-proposer-celestia
           tags: |
+            type=ref,event=tag
             type=sha
             latest
 
@@ -188,6 +190,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/lite-proposer-eigenda
           tags: |
+            type=ref,event=tag
             type=sha
             latest
 
@@ -258,6 +261,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/lite-challenger
           tags: |
+            type=ref,event=tag
             type=sha
             latest
 
