@@ -274,12 +274,14 @@ where
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
-                    // Reorg
+                    flashblocks
+                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
+
                     if tracked_txn_hashes.len() != block_txn_hashes.len()
                         || tracked_txn_hashes != block_txn_hashes
                     {
                         warn!(
-                            message = "reorg detected, clearing pending blocks",
+                            message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
                             latest_pending_block = pending_blocks.latest_block_number(),
                             canonical_block = block.number,
                             tracked_txn_hashes_len = tracked_txn_hashes.len(),
@@ -289,13 +291,11 @@ where
                         );
                         self.metrics.pending_clear_reorg.increment(1);
 
-                        return Ok(None);
+                        // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
+                        return self.build_pending_state(None, &flashblocks);
                     }
 
-                    // If no reorg, we clear everything not necessary and re-process
-                    flashblocks
-                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
-
+                    // If no reorg, we can continue building on top of the existing pending state
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
                 }
             }
@@ -343,7 +343,7 @@ where
                 if flashblock.index == 0 {
                     self.build_pending_state(None, &vec![flashblock.clone()])
                 } else {
-                    debug!(message = "waiting for first Flashblock");
+                    info!(message = "waiting for first Flashblock");
                     Ok(None)
                 }
             }

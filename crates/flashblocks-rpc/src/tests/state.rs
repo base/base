@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_pending_state_cleared_upon_canonical_block_reorg() {
+    async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         reth_tracing::init_test_tracing();
         let mut test = TestHarness::new();
 
@@ -697,8 +697,25 @@ mod tests {
         )])
         .await;
 
-        assert!(test.flashblocks.get_block(true).is_none());
-        assert!(test.flashblocks.get_state_overrides().is_none());
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_100_100)
+        );
     }
 
     #[tokio::test]
