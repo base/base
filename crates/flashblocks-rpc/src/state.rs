@@ -274,22 +274,29 @@ where
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
-                    // Reorg
-                    if tracked_txn_hashes.len() != block_txn_hashes.len()
-                        || tracked_txn_hashes != block_txn_hashes
-                    {
-                        warn!(
-                            message = "reorg detected, clearing pending blocks",
-                            latest_pending_block = pending_blocks.latest_block_number(),
-                            canonical_block = block.number,
-                            tracked_txn_hashes_len = tracked_txn_hashes.len(),
-                            block_txn_hashes_len = block_txn_hashes.len(),
-                            tracked_txn_hashes = ?tracked_txn_hashes,
-                            block_txn_hashes = ?block_txn_hashes,
-                        );
-                        self.metrics.pending_clear_reorg.increment(1);
+                    // If there are no tracked transactions, we probably ignored Flashblocks for this block
+                    // and we should not clear the pending state as it could have the base flashblock
+                    // for the next block
+                    // Therefore we only clear the pending state if there are tracked transactions
+                    // but those are different from the block transactions
+                    if tracked_txn_hashes.len() > 0 {
+                        // Reorg
+                        if tracked_txn_hashes.len() != block_txn_hashes.len()
+                            || tracked_txn_hashes != block_txn_hashes
+                        {
+                            warn!(
+                                message = "reorg detected, clearing pending blocks",
+                                latest_pending_block = pending_blocks.latest_block_number(),
+                                canonical_block = block.number,
+                                tracked_txn_hashes_len = tracked_txn_hashes.len(),
+                                block_txn_hashes_len = block_txn_hashes.len(),
+                                tracked_txn_hashes = ?tracked_txn_hashes,
+                                block_txn_hashes = ?block_txn_hashes,
+                            );
+                            self.metrics.pending_clear_reorg.increment(1);
 
-                        return Ok(None);
+                            return Ok(None);
+                        }
                     }
 
                     // If no reorg, we clear everything not necessary and re-process
@@ -343,7 +350,7 @@ where
                 if flashblock.index == 0 {
                     self.build_pending_state(None, &vec![flashblock.clone()])
                 } else {
-                    debug!(message = "waiting for first Flashblock");
+                    info!(message = "waiting for first Flashblock");
                     Ok(None)
                 }
             }
