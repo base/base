@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "aggregation"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-primitives 1.1.2",
@@ -2693,9 +2693,9 @@ dependencies = [
 
 [[package]]
 name = "celestia-proto"
-version = "0.8.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ad9997e960ce6a4ac0648a227430673583d649103ceb2d850395b1e32e4c647"
+checksum = "b6c8da7e4e1d4ae492170a9c551419e89e314c1438652bb512e00091b39bdf0b"
 dependencies = [
  "bytes",
  "prost 0.13.5",
@@ -2709,16 +2709,16 @@ dependencies = [
 
 [[package]]
 name = "celestia-rpc"
-version = "0.11.3"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4dc7f0e9052b62c489e9678cae4f161f63634cd4eea415c1aa46dc3f36dc7bd9"
+checksum = "ffa4ba3fd5eee79eeedf75668dd507428146c358e1985bec8f9e1c45a9abc91c"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "celestia-proto",
  "celestia-types",
  "http 1.3.1",
  "jsonrpsee",
- "prost 0.13.5",
  "serde",
  "serde_repr",
  "thiserror 1.0.69",
@@ -2727,9 +2727,9 @@ dependencies = [
 
 [[package]]
 name = "celestia-types"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f536bad6c2891ee5efbe3d7665393b7c18a6921254c3198036d603078000ced"
+checksum = "4c7d91261985b0c799a3e2a0a818509adc5a9a0fd25c480f23de97f8fe379f20"
 dependencies = [
  "base64 0.22.1",
  "bech32",
@@ -2748,7 +2748,7 @@ dependencies = [
  "multihash 0.19.3",
  "nmt-rs",
  "prost 0.13.5",
- "ruint",
+ "rust_decimal",
  "serde",
  "serde_repr",
  "sha2 0.10.9",
@@ -4651,7 +4651,7 @@ dependencies = [
 [[package]]
 name = "hana-blobstream"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-chains",
  "alloy-consensus 1.0.9",
@@ -4669,7 +4669,7 @@ dependencies = [
 [[package]]
 name = "hana-celestia"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-primitives 1.1.2",
  "async-trait",
@@ -4682,7 +4682,7 @@ dependencies = [
 [[package]]
 name = "hana-client"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-evm 0.10.0",
@@ -4707,7 +4707,7 @@ dependencies = [
 [[package]]
 name = "hana-host"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-primitives 1.1.2",
  "alloy-provider 1.0.9",
@@ -4738,7 +4738,7 @@ dependencies = [
 [[package]]
 name = "hana-oracle"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-primitives 1.1.2",
  "async-trait",
@@ -4755,7 +4755,7 @@ dependencies = [
 [[package]]
 name = "hana-proofs"
 version = "0.1.0"
-source = "git+https://github.com/celestiaorg/hana?tag=v1.0.0#e012cb64b415a8d9b727566031534e49da003cae"
+source = "git+https://github.com/celestiaorg/hana?tag=v1.0.1#c7921c0cbaeebc5cb654a919dc3781a60ed9fb6d"
 dependencies = [
  "alloy-primitives 1.1.2",
  "alloy-provider 1.0.9",
@@ -8101,7 +8101,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-bindings"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy",
  "alloy-sol-types",
@@ -8111,7 +8111,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-build-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "cargo_metadata",
  "sp1-build",
@@ -8119,7 +8119,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-celestia-client-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8137,7 +8137,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-celestia-host-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-eips 1.0.9",
@@ -8166,7 +8166,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-client-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-eips 1.0.9",
@@ -8219,7 +8219,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-eigenda-host-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-eips 1.0.9",
  "alloy-primitives 1.1.2",
@@ -8244,11 +8244,11 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-elfs"
-version = "3.2.0"
+version = "3.2.1"
 
 [[package]]
 name = "op-succinct-ethereum-client-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8264,7 +8264,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-ethereum-host-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-eips 1.0.9",
  "alloy-primitives 1.1.2",
@@ -8283,7 +8283,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-fp"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy",
  "alloy-contract",
@@ -8328,7 +8328,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-host-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-contract",
@@ -8382,7 +8382,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-proof-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "cfg-if",
  "op-succinct-celestia-host-utils",
@@ -8395,7 +8395,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-prove"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-primitives 1.1.2",
  "anyhow",
@@ -8418,7 +8418,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-range-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "anyhow",
  "kona-proof",
@@ -8431,7 +8431,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-scripts"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-eips 1.0.9",
  "alloy-primitives 1.1.2",
@@ -8460,7 +8460,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-signer-utils"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-consensus 1.0.9",
  "alloy-eips 1.0.9",
@@ -8477,7 +8477,7 @@ dependencies = [
 
 [[package]]
 name = "op-succinct-validity"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "alloy-eips 1.0.9",
  "alloy-primitives 1.1.2",
@@ -9850,7 +9850,7 @@ dependencies = [
 
 [[package]]
 name = "range"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "kona-proof",
  "op-succinct-client-utils",
@@ -9863,7 +9863,7 @@ dependencies = [
 
 [[package]]
 name = "range-celestia"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "kona-proof",
  "op-succinct-celestia-client-utils",
@@ -11322,6 +11322,17 @@ dependencies = [
  "ark-ff 0.5.0",
  "ark-serialize 0.5.0",
  "rust-kzg-bn254-primitives",
+]
+
+[[package]]
+name = "rust_decimal"
+version = "1.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8975fc98059f365204d635119cf9c5a60ae67b841ed49b5422a9a7e56cdfac0"
+dependencies = [
+ "arrayvec",
+ "num-traits",
+ "serde",
 ]
 
 [[package]]
