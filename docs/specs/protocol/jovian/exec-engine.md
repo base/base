@@ -83,26 +83,34 @@ contract values to the block builder via `PayloadAttributesV3` parameters.
 
 ## DA Footprint Block Limit
 
-A DA footprint block limit is introduced to limit the total amount of estimated compressed
+A _DA footprint block limit_ is introduced to limit the total amount of estimated compressed
 transaction data that can fit into a block.
- For each transaction, a new resource called DA footprint is tracked, next to its gas usage.
- It is scaled to the gas dimension so that its block total can also be limited by
- the block gas limit, like a block's total gas usage.
+For each transaction, a new resource called DA footprint is tracked, next to its gas usage.
+It is scaled to the gas dimension so that its block total can also be limited by
+the block gas limit, like a block's total gas usage.
 
 Let a block's `daFootprint` be defined as follows:
 
 ```python
-def daFootprint(block)
+def daFootprint(block: Block) -> int:
   daFootprint = 0
-  for tx in block.txs:
-      if !tx.IsDepositTx
-        daUsageEstimate = max(minTransactionSize, intercept + fastlzCoef * tx.fastlzSize / 1e6)
-        daFootprint += daUsageEstimate * daFootprintGasScalar
+
+  for tx in block.transactions:
+      if tx.type == DEPOSIT_TX_TYPE:
+          continue
+
+      daUsageEstimate = max(
+          minTransactionSize,
+          (intercept + fastlzCoef * tx.fastlzSize) // 1e6
+      )
+      daFootprint += daUsageEstimate * daFootprintGasScalar
+
   return daFootprint 
 ```
 
-where `intercept`, `minTransactionSize`, `fastLzCoef` and `fastlzSize`
-are defined in the [Fjord specs](../fjord/exec-engine.md) and `/` represents integer division.
+where `intercept`, `minTransactionSize`, `fastlzCoef` and `fastlzSize`
+are defined in the [Fjord specs](../fjord/exec-engine.md), `DEPOSIT_TX_TYPE` is `0x7E`,
+and `//` represents integer floor division.
 
 From Jovian, the `gasUsed` property of each block header is equal to the maximum over
 that block's `daFootprint` and the sum of the gas used by each transaction
@@ -112,6 +120,9 @@ As a result, blocks with high DA usage may cause the base fee to increase in sub
 The `gasUsed` must continue to be less than or equal to the block gas limit, meaning that
 (since the `daFootprint` must also be less than or equal to the block gas limit),
 blocks may have no more than `gasLimit/daFootprintGasScalar` total estimated DA usage.
+
+Note that, since the base fee continues to be updated according to a block's `gasUsed` field, the base fee may be
+directly influenced by DA usage.
 
 ### Scalar loading
 
@@ -128,9 +139,12 @@ It takes on a default value as described in the section on [L1 Attributes](./l1-
 
 ### Rationale
 
-While the current L1 fee mechanism charges for DA usage based on an estimate of the DA footprint of a transaction, it
-does not influence future base fee calculations. As a result, excessive DA usage is not efficiently reflected in the fee
-market, leading to suboptimal resource prices.
-
-By changing the meaning of the `gasUsed` field in times of high DA demand, the fee market can properly adjust without reverting
-to priority fee auctions (an inferior experience for users).
+While the current L1 fee mechanism charges for DA usage based on an estimate of the DA footprint of a transaction, no
+protocol mechanism currently reflects the limited available _DA throughput on L1_. E.g. on Ethereum L1 with Pectra
+enabled, the available blob throughput is `~96 kB/s` (with a target of `~64 kB/s`), but the calldata floor gas price of
+`40` for calldata-heavy L2 transactions allows for more incompressible transaction data to be included on most OP Stack
+chains than the Ethereum blob space could handle. This is currently mitigated at the policy level by batcher-sequencer
+throttling: a mechanism which artificially constricts block building. This can cause base fees to fall, which implies
+unnecessary losses for chain operators and a negative user experience (transaction inclusion delays, priority fee
+auctions). So hard-limiting a block's DA footprint in a way that also influences the base fee mitigates the
+aforementioned problems of policy-based solutions.
