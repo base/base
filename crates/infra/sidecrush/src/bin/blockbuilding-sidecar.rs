@@ -1,7 +1,7 @@
 use clap::Parser;
 use metrics_exporter_dogstatsd::DogStatsDBuilder;
 use sidecrush::blockbuilding_healthcheck::{
-    self, alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
+    alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
 };
 use tracing::Level;
 
