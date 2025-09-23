@@ -4,7 +4,7 @@ use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
 use reth::api::{BlockBody, FullNodeComponents};
-use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
+use reth::core::primitives::{transaction::TxHashRef, AlloyBlockHeader};
 use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::{debug, info};

@@ -32,7 +32,6 @@ use reth_primitives::RecoveredBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -551,7 +550,7 @@ where
                 };
 
                 let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
-                    receipt: Cow::Borrowed(&receipt),
+                    receipt: receipt.clone(),
                     tx: Recovered::new_unchecked(transaction, sender),
                     gas_used: receipt.cumulative_gas_used() - gas_used,
                     next_log_index,
