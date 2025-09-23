@@ -20,7 +20,7 @@ use tips_datastore::PostgresDatastore;
 #[command(author, version, about, long_about = None)]
 struct Config {
     /// Address to bind the RPC server to
-    #[arg(long, env = "TIPS_INGRESS_ADDRESS", default_value = "127.0.0.1")]
+    #[arg(long, env = "TIPS_INGRESS_ADDRESS", default_value = "0.0.0.0")]
     address: IpAddr,
 
     /// Port to bind the RPC server to
