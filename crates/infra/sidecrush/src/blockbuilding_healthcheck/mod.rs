@@ -58,7 +58,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
-    #[allow(unused_variables)]
     pub async fn run_health_check(&mut self) {
         let url = &self.node.url;
 
@@ -99,10 +98,11 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         // Publish gauges- correct metric?
         metrics::gauge!("base.blocks.head_age_ms").set(block_age_ms as f64);
 
-        // Encode state as 0/1/2
-        // ToDo: make enum for this
         let grace_ms = self.config.grace_period_ms;
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
+
+        // Encode state as 0/1/2
+        // ToDo: make enum for this
         let head_state = if block_age_ms >= unhealthy_ms {
             2.0
         } else if block_age_ms > grace_ms {
@@ -112,14 +112,14 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
         };
         metrics::gauge!("base.blocks.head_state").set(head_state);
 
-        // - If new head: emit one initial classification and reset stall flag.
-        // - If same head: emit a single stall event once it crosses unhealthy, then suppress further repeats.
+        // If new head: emit one initial classification and reset stall flag.
+        // If same head: emit a single stall event once it crosses unhealthy, then suppress further repeats.
         if let Some(cached) = self.cached_block_number {
             if cached == latest.number {
                 // Same head, evaluate for stall-at-unhealthy once (unless new instance suppression)
                 if !self.node.is_new_instance
                     && !self.stall_emitted_for_current
-                    && block_age_ms >= self.config.unhealthy_node_threshold_ms
+                    && block_age_ms >= unhealthy_ms
                 {
                     error!(
                         blockNumber = latest.number,
