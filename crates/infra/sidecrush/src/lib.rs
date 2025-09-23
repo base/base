@@ -1,4 +1,4 @@
 pub mod helloworld;
-pub mod healthcheck;
+pub mod blockbuilding_healthcheck;
 
 
