@@ -1,0 +1,32 @@
+[package]
+name = "blockbuilding-sidecar"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "blockbuilding_sidecar"
+path = "src/lib.rs"
+
+[[bin]]
+name = "blockbuilding-sidecar"
+path = "src/main.rs"
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true }
+metrics = { workspace = true }
+metrics-derive = { workspace = true }
+async-trait = "0.1"
+anyhow = "1.0"
+clap = { workspace = true }
+metrics-exporter-dogstatsd = "0.9"
+
+# Ethereum client deps (will be used for header fetching)
+alloy-provider = { workspace = true }
+alloy-transport-http = { workspace = true }
+alloy-rpc-types-eth = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+
+
