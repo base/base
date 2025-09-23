@@ -80,7 +80,7 @@ async fn insert_and_get() -> eyre::Result<()> {
 
     let insert_result = harness.data_store.insert_bundle(test_bundle.clone()).await;
     if let Err(ref err) = insert_result {
-        eprintln!("Insert failed with error: {:?}", err);
+        eprintln!("Insert failed with error: {err:?}");
     }
     assert!(insert_result.is_ok());
     let bundle_id = insert_result.unwrap();

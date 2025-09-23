@@ -143,7 +143,7 @@ async fn process_block(
         .get_block_by_number(block_number.into())
         .full()
         .await?
-        .ok_or_else(|| anyhow::anyhow!("Block {} not found", block_number))?;
+        .ok_or_else(|| anyhow::anyhow!("Block {block_number} not found"))?;
 
     let block_hash = block.header.hash;
 

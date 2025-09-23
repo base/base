@@ -110,7 +110,7 @@ impl MempoolEventReader for KafkaMempoolReader {
                 Ok(event_result)
             }
             Err(e) => {
-                println!("received error {:?}", e);
+                println!("received error {e:?}");
                 error!(error = %e, "Error receiving message from Kafka");
                 sleep(Duration::from_secs(1)).await;
                 Err(e.into())

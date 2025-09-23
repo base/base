@@ -19,7 +19,7 @@ impl TestHarness {
     pub async fn new() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let minio_container = MinIO::default().start().await?;
         let s3_port = minio_container.get_host_port_ipv4(9000).await?;
-        let s3_endpoint = format!("http://127.0.0.1:{}", s3_port);
+        let s3_endpoint = format!("http://127.0.0.1:{s3_port}");
 
         let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region("us-east-1")

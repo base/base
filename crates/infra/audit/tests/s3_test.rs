@@ -227,7 +227,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
         let key = if i % 4 == 0 {
             "shared-key".to_string()
         } else {
-            format!("unique-key-{}", i)
+            format!("unique-key-{i}")
         };
 
         let event = create_test_event(

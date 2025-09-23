@@ -22,8 +22,8 @@ pub enum S3Key {
 impl fmt::Display for S3Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            S3Key::Bundle(bundle_id) => write!(f, "bundles/{}", bundle_id),
-            S3Key::TransactionByHash(hash) => write!(f, "transactions/by_hash/{}", hash),
+            S3Key::Bundle(bundle_id) => write!(f, "bundles/{bundle_id}"),
+            S3Key::TransactionByHash(hash) => write!(f, "transactions/by_hash/{hash}"),
         }
     }
 }
@@ -291,9 +291,7 @@ impl S3MempoolEventReaderWriter {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                             } else {
                                 return Err(anyhow::anyhow!(
-                                    "Failed to write after {} attempts: {}",
-                                    MAX_RETRIES,
-                                    e
+                                    "Failed to write after {MAX_RETRIES} attempts: {e}"
                                 ));
                             }
                         }
@@ -334,7 +332,7 @@ impl S3MempoolEventReaderWriter {
             Err(e) => match &e {
                 SdkError::ServiceError(service_err) => match service_err.err() {
                     GetObjectError::NoSuchKey(_) => Ok((None, None)),
-                    _ => Err(anyhow::anyhow!("Failed to get object: {}", e)),
+                    _ => Err(anyhow::anyhow!("Failed to get object: {e}")),
                 },
                 _ => {
                     let error_string = e.to_string();
@@ -344,7 +342,7 @@ impl S3MempoolEventReaderWriter {
                     {
                         Ok((None, None))
                     } else {
-                        Err(anyhow::anyhow!("Failed to get object: {}", e))
+                        Err(anyhow::anyhow!("Failed to get object: {e}"))
                     }
                 }
             },

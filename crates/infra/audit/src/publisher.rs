@@ -50,7 +50,7 @@ impl KafkaMempoolEventPublisher {
                     error = %err,
                     "Failed to publish event"
                 );
-                Err(anyhow::anyhow!("Failed to publish event: {}", err))
+                Err(anyhow::anyhow!("Failed to publish event: {err}"))
             }
         }
     }
