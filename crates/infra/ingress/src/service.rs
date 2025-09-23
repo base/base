@@ -15,6 +15,8 @@ use tips_audit::{MempoolEvent, MempoolEventPublisher};
 use tips_datastore::BundleDatastore;
 use tracing::{info, warn};
 
+use crate::queue::QueuePublisher;
+
 #[rpc(server, namespace = "eth")]
 pub trait IngressApi {
     /// `eth_sendBundle` can be used to send your bundles to the builder.
@@ -30,34 +32,38 @@ pub trait IngressApi {
     async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
-pub struct IngressService<Store, Publisher> {
+pub struct IngressService<Store, Publisher, Queue> {
     provider: RootProvider<Optimism>,
     datastore: Store,
     dual_write_mempool: bool,
     publisher: Publisher,
+    queue: Queue,
 }
 
-impl<Store, Publisher> IngressService<Store, Publisher> {
+impl<Store, Publisher, Queue> IngressService<Store, Publisher, Queue> {
     pub fn new(
         provider: RootProvider<Optimism>,
         datastore: Store,
         dual_write_mempool: bool,
         publisher: Publisher,
+        queue: Queue,
     ) -> Self {
         Self {
             provider,
             datastore,
             dual_write_mempool,
             publisher,
+            queue,
         }
     }
 }
 
 #[async_trait]
-impl<Store, Publisher> IngressApiServer for IngressService<Store, Publisher>
+impl<Store, Publisher, Queue> IngressApiServer for IngressService<Store, Publisher, Queue>
 where
     Store: BundleDatastore + Sync + Send + 'static,
     Publisher: MempoolEventPublisher + Sync + Send + 'static,
+    Queue: QueuePublisher + Sync + Send + 'static,
 {
     async fn send_bundle(&self, _bundle: EthSendBundle) -> RpcResult<EthBundleHash> {
         warn!(
@@ -99,6 +105,13 @@ where
             ..Default::default()
         };
 
+        // queue the bundle
+        let sender = transaction.signer();
+        if let Err(e) = self.queue.publish(&bundle, sender).await {
+            warn!(message = "Failed to publish Queue::enqueue_bundle", sender = %sender, error = %e);
+        }
+
+        // TODO: have DB Writer consume from the queue and move the insert_bundle logic there
         let result = self
             .datastore
             .insert_bundle(bundle.clone())

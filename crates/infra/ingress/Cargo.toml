@@ -27,3 +27,7 @@ eyre.workspace = true
 dotenvy.workspace = true
 rdkafka.workspace = true
 reth-rpc-eth-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+backon.workspace = true
