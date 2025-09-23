@@ -1,4 +1,4 @@
-use blockbuilding_sidecar::healthcheck::{self, alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node};
+use sidecrush::healthcheck::{self, alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node};
 use clap::Parser;
 use tracing::Level;
 use metrics_exporter_dogstatsd::DogStatsDBuilder;

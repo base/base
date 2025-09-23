@@ -1,15 +1,7 @@
 [package]
-name = "blockbuilding-sidecar"
+name = "sidecrush"
 version = "0.1.0"
 edition = "2021"
-
-[lib]
-name = "blockbuilding_sidecar"
-path = "src/lib.rs"
-
-[[bin]]
-name = "blockbuilding-sidecar"
-path = "src/main.rs"
 
 [dependencies]
 tracing = { workspace = true }
@@ -28,5 +20,3 @@ alloy-transport-http = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
-
-
