@@ -19,7 +19,9 @@ impl AlloyEthClient {
 
 #[async_trait]
 impl EthClient for AlloyEthClient {
-    async fn latest_header(&self) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>> {
+    async fn latest_header(
+        &self,
+    ) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>> {
         let block = self
             .provider
             .get_block(BlockId::latest())
@@ -30,8 +32,9 @@ impl EthClient for AlloyEthClient {
         let number: u64 = block.header.number;
         let timestamp_unix_seconds: u64 = block.header.timestamp;
 
-        Ok(HeaderSummary { number, timestamp_unix_seconds })
+        Ok(HeaderSummary {
+            number,
+            timestamp_unix_seconds,
+        })
     }
 }
-
-

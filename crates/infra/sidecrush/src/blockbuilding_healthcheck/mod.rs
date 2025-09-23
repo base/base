@@ -14,8 +14,16 @@ pub struct HealthcheckConfig {
 }
 
 impl HealthcheckConfig {
-    pub fn new(poll_interval_ms: u64, grace_period_ms: u64, unhealthy_node_threshold_ms: u64) -> Self {
-        Self { poll_interval_ms, grace_period_ms, unhealthy_node_threshold_ms }
+    pub fn new(
+        poll_interval_ms: u64,
+        grace_period_ms: u64,
+        unhealthy_node_threshold_ms: u64,
+    ) -> Self {
+        Self {
+            poll_interval_ms,
+            grace_period_ms,
+            unhealthy_node_threshold_ms,
+        }
     }
 }
 
@@ -27,7 +35,10 @@ pub struct Node {
 
 impl Node {
     pub fn new(url: impl Into<String>, is_new_instance: bool) -> Self {
-        Self { url: url.into(), is_new_instance }
+        Self {
+            url: url.into(),
+            is_new_instance,
+        }
     }
 }
 
@@ -39,7 +50,9 @@ pub struct HeaderSummary {
 
 #[async_trait]
 pub trait EthClient: Send + Sync {
-    async fn latest_header(&self) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>>;
+    async fn latest_header(
+        &self,
+    ) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 #[derive(Debug)]
@@ -53,7 +66,13 @@ pub struct BlockProductionHealthChecker<C: EthClient> {
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
     pub fn new(node: Node, client: C, config: HealthcheckConfig) -> Self {
-        Self { node, client, config, cached_block_number: None, stall_emitted_for_current: false }
+        Self {
+            node,
+            client,
+            config,
+            cached_block_number: None,
+            stall_emitted_for_current: false,
+        }
     }
 }
 
@@ -88,7 +107,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             }
         };
 
-        // Compute age and gauges first 
+        // Compute age and gauges first
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0))
@@ -185,7 +204,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,11 +211,15 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
-    struct MockClient { header: Arc<Mutex<HeaderSummary>> }
+    struct MockClient {
+        header: Arc<Mutex<HeaderSummary>>,
+    }
 
     #[async_trait]
     impl EthClient for MockClient {
-        async fn latest_header(&self) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>> {
+        async fn latest_header(
+            &self,
+        ) -> Result<HeaderSummary, Box<dyn std::error::Error + Send + Sync>> {
             Ok(self.header.lock().unwrap().clone())
         }
     }
@@ -213,8 +235,13 @@ mod tests {
     async fn healthy_new_block_emits_healthy() {
         let cfg = HealthcheckConfig::new(1_000, 5_000, 15_000);
         let start = now_secs();
-        let shared_header = Arc::new(Mutex::new(HeaderSummary { number: 1, timestamp_unix_seconds: start }));
-        let client = MockClient { header: shared_header.clone() };
+        let shared_header = Arc::new(Mutex::new(HeaderSummary {
+            number: 1,
+            timestamp_unix_seconds: start,
+        }));
+        let client = MockClient {
+            header: shared_header.clone(),
+        };
         let node = Node::new("http://localhost:8545", false);
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
 
@@ -228,8 +255,13 @@ mod tests {
         let grace_ms = 5_000u64;
         let cfg = HealthcheckConfig::new(1_000, grace_ms, 15_000);
         let start = now_secs();
-        let shared_header = Arc::new(Mutex::new(HeaderSummary { number: 1, timestamp_unix_seconds: start }));
-        let client = MockClient { header: shared_header.clone() };
+        let shared_header = Arc::new(Mutex::new(HeaderSummary {
+            number: 1,
+            timestamp_unix_seconds: start,
+        }));
+        let client = MockClient {
+            header: shared_header.clone(),
+        };
         let node = Node::new("http://localhost:8545", false);
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
 
@@ -239,7 +271,10 @@ mod tests {
 
         // Next block arrives but is delayed beyond grace
         let delayed_ts = start.saturating_sub((grace_ms / 1000) + 1);
-        *shared_header.lock().unwrap() = HeaderSummary { number: 2, timestamp_unix_seconds: delayed_ts };
+        *shared_header.lock().unwrap() = HeaderSummary {
+            number: 2,
+            timestamp_unix_seconds: delayed_ts,
+        };
         checker.run_health_check().await;
         assert_eq!(checker.cached_block_number, Some(2));
         assert!(!checker.stall_emitted_for_current);
@@ -250,8 +285,13 @@ mod tests {
         let unhealthy_ms = 15_000u64;
         let cfg = HealthcheckConfig::new(1_000, 5_000, unhealthy_ms);
         let start = now_secs();
-        let shared_header = Arc::new(Mutex::new(HeaderSummary { number: 10, timestamp_unix_seconds: start }));
-        let client = MockClient { header: shared_header.clone() };
+        let shared_header = Arc::new(Mutex::new(HeaderSummary {
+            number: 10,
+            timestamp_unix_seconds: start,
+        }));
+        let client = MockClient {
+            header: shared_header.clone(),
+        };
         let node = Node::new("http://localhost:8545", false);
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
 
@@ -262,7 +302,10 @@ mod tests {
 
         // Same head, but now sufficiently old to be unhealthy -> emits stall once
         let unhealthy_ts = start.saturating_sub((unhealthy_ms / 1000) + 1);
-        *shared_header.lock().unwrap() = HeaderSummary { number: 10, timestamp_unix_seconds: unhealthy_ts };
+        *shared_header.lock().unwrap() = HeaderSummary {
+            number: 10,
+            timestamp_unix_seconds: unhealthy_ts,
+        };
         checker.run_health_check().await;
         assert!(checker.stall_emitted_for_current);
 

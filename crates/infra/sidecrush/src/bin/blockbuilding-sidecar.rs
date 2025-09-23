@@ -1,7 +1,9 @@
-use sidecrush::blockbuilding_healthcheck::{self, alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node};
 use clap::Parser;
-use tracing::Level;
 use metrics_exporter_dogstatsd::DogStatsDBuilder;
+use sidecrush::blockbuilding_healthcheck::{
+    self, alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
+};
+use tracing::Level;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Blockbuilding sidecar healthcheck service")]
@@ -67,12 +69,17 @@ async fn main() {
     if let Some(addr) = &args.statsd_addr {
         let builder = DogStatsDBuilder::default().with_remote_address(addr);
         match builder {
-            Ok(b) => { let _ = b.install(); }
-            Err(e) => { tracing::warn!(addr = %addr, error = %format!("{e:?}"), "Failed to init StatsD"); }
+            Ok(b) => {
+                let _ = b.install();
+            }
+            Err(e) => {
+                tracing::warn!(addr = %addr, error = %format!("{e:?}"), "Failed to init StatsD");
+            }
         }
     }
 
-    let mut checker: BlockProductionHealthChecker<_> = BlockProductionHealthChecker::new(node, client, config);
+    let mut checker: BlockProductionHealthChecker<_> =
+        BlockProductionHealthChecker::new(node, client, config);
 
     // Basic run path: poll until Ctrl+C
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -88,5 +95,3 @@ async fn main() {
         }
     }
 }
-
-
