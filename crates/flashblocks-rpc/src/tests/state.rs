@@ -194,8 +194,6 @@ mod tests {
                 .execute(&block)
                 .unwrap();
 
-            println!("block execution output: {:?}", block_execution_output);
-
             block_execution_output.state.reverts.sort();
 
             let execution_outcome = ExecutionOutcome {
@@ -204,8 +202,6 @@ mod tests {
                 first_block: block.number,
                 requests: vec![block_execution_output.requests.clone()],
             };
-
-            println!("execution outcome: {:?}", execution_outcome);
 
             // Commit the block's execution outcome to the database
             let provider_rw = self.factory.provider_rw().unwrap();
