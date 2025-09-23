@@ -3,7 +3,6 @@ use alloy_primitives::{B256, Bytes};
 use alloy_provider::network::eip2718::Decodable2718;
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_mev::{EthBundleHash, EthCancelBundle, EthSendBundle};
-use jsonrpsee::types::ErrorObject;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -11,8 +10,6 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use reth_rpc_eth_types::EthApiError;
-use tips_audit::{MempoolEvent, MempoolEventPublisher};
-use tips_datastore::BundleDatastore;
 use tracing::{info, warn};
 
 use crate::queue::QueuePublisher;
@@ -32,37 +29,25 @@ pub trait IngressApi {
     async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
 }
 
-pub struct IngressService<Store, Publisher, Queue> {
+pub struct IngressService<Queue> {
     provider: RootProvider<Optimism>,
-    datastore: Store,
     dual_write_mempool: bool,
-    publisher: Publisher,
     queue: Queue,
 }
 
-impl<Store, Publisher, Queue> IngressService<Store, Publisher, Queue> {
-    pub fn new(
-        provider: RootProvider<Optimism>,
-        datastore: Store,
-        dual_write_mempool: bool,
-        publisher: Publisher,
-        queue: Queue,
-    ) -> Self {
+impl<Queue> IngressService<Queue> {
+    pub fn new(provider: RootProvider<Optimism>, dual_write_mempool: bool, queue: Queue) -> Self {
         Self {
             provider,
-            datastore,
             dual_write_mempool,
-            publisher,
             queue,
         }
     }
 }
 
 #[async_trait]
-impl<Store, Publisher, Queue> IngressApiServer for IngressService<Store, Publisher, Queue>
+impl<Queue> IngressApiServer for IngressService<Queue>
 where
-    Store: BundleDatastore + Sync + Send + 'static,
-    Publisher: MempoolEventPublisher + Sync + Send + 'static,
     Queue: QueuePublisher + Sync + Send + 'static,
 {
     async fn send_bundle(&self, _bundle: EthSendBundle) -> RpcResult<EthBundleHash> {
@@ -111,25 +96,7 @@ where
             warn!(message = "Failed to publish Queue::enqueue_bundle", sender = %sender, error = %e);
         }
 
-        // TODO: have DB Writer consume from the queue and move the insert_bundle logic there
-        let result = self
-            .datastore
-            .insert_bundle(bundle.clone())
-            .await
-            .map_err(|_e| ErrorObject::owned(11, "todo", Some(2)))?;
-
-        info!(message="inserted singleton bundle", uuid=%result, txn_hash=%transaction.tx_hash());
-
-        if let Err(e) = self
-            .publisher
-            .publish(MempoolEvent::Created {
-                bundle_id: result,
-                bundle,
-            })
-            .await
-        {
-            warn!(message = "Failed to publish MempoolEvent::Created", error = %e);
-        }
+        info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
 
         if self.dual_write_mempool {
             let response = self

@@ -5,7 +5,6 @@ use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use std::net::IpAddr;
-use tips_audit::KafkaMempoolEventPublisher;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
@@ -14,7 +13,6 @@ mod queue;
 mod service;
 use queue::KafkaQueuePublisher;
 use service::{IngressApiServer, IngressService};
-use tips_datastore::PostgresDatastore;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -30,10 +28,6 @@ struct Config {
     /// URL of the mempool service to proxy transactions to
     #[arg(long, env = "TIPS_INGRESS_RPC_MEMPOOL")]
     mempool_url: Url,
-
-    /// URL of the Postgres DB to store bundles in
-    #[arg(long, env = "TIPS_INGRESS_DATABASE_URL")]
-    database_url: String,
 
     /// Enable dual writing raw transactions to the mempool
     #[arg(long, env = "TIPS_INGRESS_DUAL_WRITE_MEMPOOL", default_value = "false")]
@@ -55,7 +49,7 @@ struct Config {
     #[arg(
         long,
         env = "TIPS_INGRESS_KAFKA_QUEUE_TOPIC",
-        default_value = "tips-ingress"
+        default_value = "tips-ingress-rpc"
     )]
     queue_topic: String,
 
@@ -103,29 +97,14 @@ async fn main() -> anyhow::Result<()> {
         .network::<Optimism>()
         .connect_http(config.mempool_url);
 
-    let bundle_store = PostgresDatastore::connect(config.database_url).await?;
-    bundle_store.run_migrations().await?;
-
-    let kafka_producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", &config.kafka_brokers)
-        .set("message.timeout.ms", "5000")
-        .create()?;
-
     let queue_producer: FutureProducer = ClientConfig::new()
         .set("bootstrap.servers", &config.kafka_brokers)
         .set("message.timeout.ms", "5000")
         .create()?;
 
-    let publisher = KafkaMempoolEventPublisher::new(kafka_producer, config.kafka_topic);
     let queue = KafkaQueuePublisher::new(queue_producer, config.queue_topic);
 
-    let service = IngressService::new(
-        provider,
-        bundle_store,
-        config.dual_write_mempool,
-        publisher,
-        queue,
-    );
+    let service = IngressService::new(provider, config.dual_write_mempool, queue);
     let bind_addr = format!("{}:{}", config.address, config.port);
 
     let server = Server::builder().build(&bind_addr).await?;
