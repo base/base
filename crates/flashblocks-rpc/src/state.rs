@@ -290,9 +290,7 @@ where
                         warn!(
                             message = "reorg detected, clearing pending blocks",
                             latest_pending_block = pending_blocks.latest_block_number(),
-                            canonical_block = block.number,
-                            tracked_txn_hashes_len = tracked_txn_hashes.len(),
-                            block_txn_hashes_len = block_txn_hashes.len(),
+                            canonical_block = block.number
                         );
                         self.metrics.pending_clear_reorg.increment(1);
 

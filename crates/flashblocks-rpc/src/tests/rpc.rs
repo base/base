@@ -8,7 +8,7 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
-    use alloy_primitives::{address, b256, bytes, Address, Bytes, TxHash, B256, U256};
+    use alloy_primitives::{address, b256, bytes, Address, Bytes, LogData, TxHash, B256, U256};
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
@@ -226,6 +226,37 @@ mod tests {
 
     const COUNTER_ADDRESS: Address = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
 
+    // Test log topics - these represent common events
+    const TEST_LOG_TOPIC_0: B256 =
+        b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"); // Transfer event
+    const TEST_LOG_TOPIC_1: B256 =
+        b256!("0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266"); // From address
+    const TEST_LOG_TOPIC_2: B256 =
+        b256!("0x0000000000000000000000001234567890123456789012345678901234567890"); // To address
+
+    fn create_test_logs() -> Vec<alloy_primitives::Log> {
+        vec![
+            alloy_primitives::Log {
+                address: COUNTER_ADDRESS,
+                data: LogData::new(
+                    vec![TEST_LOG_TOPIC_0, TEST_LOG_TOPIC_1, TEST_LOG_TOPIC_2],
+                    bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000")
+                        .into(), // 1 ETH in wei
+                )
+                .unwrap(),
+            },
+            alloy_primitives::Log {
+                address: TEST_ADDRESS,
+                data: LogData::new(
+                    vec![TEST_LOG_TOPIC_0],
+                    bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
+                        .into(), // Value: 1
+                )
+                .unwrap(),
+            },
+        ]
+    }
+
     // NOTE:
     // To create tx use cast mktx/
     // Example: `cast mktx --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --nonce 1 --gas-limit 100000 --gas-price 1499576 --chain 84532 --value 0 --priority-gas-price 0 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x`
@@ -296,7 +327,7 @@ mod tests {
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
                             cumulative_gas_used: 172279 + 44000,
-                            logs: vec![],
+                            logs: create_test_logs(),
                         }),
                     );
                     receipts
@@ -690,8 +721,7 @@ mod tests {
         // Send payloads with transactions
         node.send_test_payloads().await?;
 
-        // Test getting pending logs - the current payloads don't have logs
-        // but this tests the API is working correctly
+        // Test getting pending logs - the INCREMENT_TX should have logs
         let logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
@@ -699,9 +729,18 @@ mod tests {
             )
             .await?;
 
-        // Since our test transactions don't emit logs, we expect 0 logs
-        // but this confirms the API works and processes pending state
-        assert_eq!(logs.len(), 0);
+        // We should now have 2 logs from the INCREMENT_TX transaction
+        assert_eq!(logs.len(), 2);
+
+        // Verify the first log is from COUNTER_ADDRESS
+        assert_eq!(logs[0].address(), COUNTER_ADDRESS);
+        assert_eq!(logs[0].topics()[0], TEST_LOG_TOPIC_0);
+        assert_eq!(logs[0].transaction_hash, Some(INCREMENT_HASH));
+
+        // Verify the second log is from TEST_ADDRESS
+        assert_eq!(logs[1].address(), TEST_ADDRESS);
+        assert_eq!(logs[1].topics()[0], TEST_LOG_TOPIC_0);
+        assert_eq!(logs[1].transaction_hash, Some(INCREMENT_HASH));
 
         Ok(())
     }
@@ -714,7 +753,7 @@ mod tests {
 
         node.send_test_payloads().await?;
 
-        // Test filtering by a specific address
+        // Test filtering by a specific address (COUNTER_ADDRESS)
         let logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
@@ -723,9 +762,24 @@ mod tests {
             )
             .await?;
 
-        // Since our test contract doesn't emit logs in our test transactions,
-        // we expect 0 logs, but this tests the address filtering works
-        assert_eq!(logs.len(), 0);
+        // Should get only 1 log from COUNTER_ADDRESS
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address(), COUNTER_ADDRESS);
+        assert_eq!(logs[0].transaction_hash, Some(INCREMENT_HASH));
+
+        // Test filtering by TEST_ADDRESS
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .address(TEST_ADDRESS)
+                    .select(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should get only 1 log from TEST_ADDRESS
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address(), TEST_ADDRESS);
+        assert_eq!(logs[0].transaction_hash, Some(INCREMENT_HASH));
 
         Ok(())
     }
@@ -758,9 +812,46 @@ mod tests {
             )
             .await?;
 
-        // Should still be 0 since our test transactions don't emit logs
-        // but confirms the pending logic is working
-        assert_eq!(pending_logs.len(), 0);
+        // Should have 2 logs from the INCREMENT_TX transaction
+        assert_eq!(pending_logs.len(), 2);
+
+        // Verify both logs have the correct transaction hash
+        assert_eq!(pending_logs[0].transaction_hash, Some(INCREMENT_HASH));
+        assert_eq!(pending_logs[1].transaction_hash, Some(INCREMENT_HASH));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_logs_topic_filtering() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_test_payloads().await?;
+
+        // Test filtering by topic - should match both logs
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .event_signature(TEST_LOG_TOPIC_0)
+                    .select(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.topics()[0] == TEST_LOG_TOPIC_0));
+
+        // Test filtering by specific topic combination - should match only the first log
+        let filter = alloy_rpc_types_eth::Filter::default()
+            .topic1(TEST_LOG_TOPIC_1)
+            .select(alloy_eips::BlockNumberOrTag::Pending);
+
+        let logs = provider.get_logs(&filter).await?;
+
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address(), COUNTER_ADDRESS);
+        assert_eq!(logs[0].topics()[1], TEST_LOG_TOPIC_1);
 
         Ok(())
     }
