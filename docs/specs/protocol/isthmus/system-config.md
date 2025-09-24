@@ -1,11 +1,10 @@
-# Configurability
+# Isthmus: System Config
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
-- [Overview](#overview)
-- [`SystemConfig`](#systemconfig)
+- [Operator Fee Parameter Configuration](#operator-fee-parameter-configuration)
   - [`ConfigUpdate`](#configupdate)
   - [Initialization](#initialization)
   - [Modifying Operator Fee Parameters](#modifying-operator-fee-parameters)
@@ -17,11 +16,10 @@
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
-## Overview
+## Operator Fee Parameter Configuration
 
-The SystemConfig is updated.
-
-## `SystemConfig`
+Isthmus adds configuration variables `operatorFeeScalar` (`uint32`)
+and `operatorFeeConstant` (`uint64`) to `SystemConfig` to control the operator fee parameters.
 
 ### `ConfigUpdate`
 

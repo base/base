@@ -31,8 +31,13 @@ The L1 block attributes transaction is updated to include the DA footprint gas s
 Note that the first input argument, in the same pattern as previous versions of the L1 attributes transaction,
 is the function selector: the first four bytes of `keccak256("setL1BlockValuesJovian()")`.
 
-In the first L2 block after the Jovian activation block, the Jovian L1 attributes are used.
+In the activation block, there are two possibilities:
+- If Jovian is active at genesis, the `setL1BlockValuesJovian()` method must be used.
+- If Jovian activates after genesis [`setL1BlockValuesIsthmus()`](../isthmus/l1-attributes.md) method must be used.
+ This is because the L1 Block contract will not yet have been upgraded.
 
-The pre-Jovian values are migrated over 1:1.
-Blocks after the Jovian activation block contain all pre-Jovian values 1:1, and also set `daFootprintGasScalar` to the
-value from the `SystemConfig`. If that value is `0`, then a default of `400` is set.
+In each subsequent L2 block, the `setL1BlockValuesJovian()` method must be used.
+
+When using this method, the pre-Jovian values are migrated over 1:1
+and the transaction also sets `daFootprintGasScalar` to the
+value from the [`SystemConfig`](./system-config.md). If that value is `0`, then a default of `400` is set.

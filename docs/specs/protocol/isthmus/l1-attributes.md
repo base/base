@@ -30,11 +30,16 @@ The L1 block attributes transaction is updated to include the operator fee param
 Note that the first input argument, in the same pattern as previous versions of the L1 attributes transaction,
 is the function selector: the first four bytes of `keccak256("setL1BlockValuesIsthmus()")`.
 
-In the first L2 block after the Isthmus activation block, the Isthmus L1 attributes are first used.
+In the activation block, there are two possibilities:
+- If Isthmus is active at genesis, the `setL1BlockValuesIsthmus()` method must be used.
+- If Isthmus activates after genesis [`setL1BlockValuesEcotone()`](../ecotone/l1-attributes.md)
+method must be used. This is because the L1 Block contract will not yet have been upgraded.
 
-The pre-Isthmus values are migrated over 1:1.
-Blocks after the Isthmus activation block contain all pre-Isthmus values 1:1,
-and also set the following new attributes:
+In each subsequent L2 block, the `setL1BlockValuesIsthmus()` method must be used.
+
+When using this method, the pre-Isthmus values are migrated over 1:1
+and the transaction also sets the following new attributes to the values
+from the [`SystemConfig`](./system-config.md):
 
 - `operatorFeeScalar`
 - `operatorFeeConstant`

@@ -31,9 +31,9 @@
 ## Consensus Layer
 
 - [Isthmus Derivation](./derivation.md)
-- [Configurability](./configurability.md)
 
 ## Smart Contracts
 
 - [Predeploys](./predeploys.md)
 - [L1 Block Attributes](./l1-attributes.md)
+- [System Config](./system-config.md)
