@@ -5,7 +5,7 @@ use alloy_primitives::{
 };
 use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{state::StateOverride, BlockTransactions};
-use alloy_rpc_types_eth::Header as RPCHeader;
+use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
@@ -224,5 +224,60 @@ impl PendingBlocks {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
+    }
+
+    pub fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        let mut logs = Vec::new();
+        let mut log_index = 0u64;
+
+        // Get latest block context for pending logs
+        let latest_header = self.latest_header();
+        let block_number = latest_header.number;
+        let block_hash = latest_header.hash();
+
+        // Iterate through all transaction receipts in pending state
+        for (tx_hash, receipt) in &self.transaction_receipts {
+            // Extract logs from OpTransactionReceipt using the inner receipt's logs
+            let receipt_logs = receipt.inner.logs();
+
+            // Apply filter to each log and add block context
+            for log in receipt_logs {
+                if self.matches_filter(log, filter) {
+                    let mut pending_log = log.clone();
+
+                    // Add block and transaction context
+                    pending_log.log_index = Some(log_index);
+                    pending_log.transaction_hash = Some(*tx_hash);
+                    pending_log.block_number = Some(block_number);
+                    pending_log.block_hash = Some(block_hash);
+                    pending_log.removed = false; // Pending logs are never removed
+
+                    logs.push(pending_log);
+                }
+                log_index += 1;
+            }
+        }
+
+        logs
+    }
+
+    fn matches_filter(&self, log: &Log, filter: &Filter) -> bool {
+        // Address filtering - check if filter has address and if log matches
+        if !filter.address.matches(&log.address()) {
+            return false;
+        }
+
+        // Topic filtering - check each topic position
+        for (i, topic_filter) in filter.topics.iter().enumerate() {
+            if let Some(log_topic) = log.topics().get(i) {
+                if !topic_filter.matches(log_topic) {
+                    return false;
+                }
+            } else if !topic_filter.matches(&Default::default()) {
+                return false;
+            }
+        }
+
+        true
     }
 }

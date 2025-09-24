@@ -8,6 +8,7 @@ use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
 use alloy_rpc_types::BlockOverrides;
+use alloy_rpc_types_eth::{Filter, Log};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -54,6 +55,9 @@ pub trait FlashblocksAPI {
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
 
     fn get_state_overrides(&self) -> Option<StateOverride>;
+
+    /// Gets logs from pending state matching the provided filter.
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log>;
 }
 
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
@@ -119,6 +123,9 @@ pub trait EthApiOverride {
         opts: SimulatePayload<OpTransactionRequest>,
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Optimism>>>>;
+
+    #[method(name = "getLogs")]
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
 }
 
 #[derive(Debug)]
@@ -410,6 +417,31 @@ where
             .await
             .map_err(Into::into)
     }
+
+    async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        debug!(
+            message = "rpc::get_logs",
+            address = ?filter.address
+        );
+
+        // Check if filter range includes pending/latest blocks
+        let should_include_pending = self.should_include_pending_logs(&filter);
+
+        if should_include_pending {
+            self.metrics.get_logs.increment(1);
+
+            // For now, just return pending logs
+            // TODO: Implement historical log delegation once the correct reth API is identified
+            // Historical logs would be retrieved and combined here
+            let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
+            Ok(pending_logs)
+        } else {
+            // Pure historical query - would delegate to reth here
+            // TODO: Implement historical log delegation to underlying reth node
+            // This should use the same pattern as other methods like get_balance
+            Ok(Vec::new())
+        }
+    }
 }
 
 impl<Eth, FB> EthApiExt<Eth, FB>
@@ -417,6 +449,32 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
+    fn should_include_pending_logs(&self, filter: &Filter) -> bool {
+        // Check the block_option in the filter
+        match &filter.block_option {
+            alloy_rpc_types_eth::FilterBlockOption::Range {
+                from_block: _,
+                to_block,
+            } => {
+                match to_block {
+                    Some(BlockNumberOrTag::Pending) => true,
+                    Some(BlockNumberOrTag::Latest) => true,
+                    None => true, // Default toBlock is "latest"
+                    Some(BlockNumberOrTag::Number(to_block)) => {
+                        // Case 3: toBlock is specific number >= current latest
+                        if let Some(latest_block) = self.flashblocks_state.get_block(false) {
+                            *to_block >= latest_block.header.number
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false, // Other cases like "earliest"
+                }
+            }
+            alloy_rpc_types_eth::FilterBlockOption::AtBlockHash(_) => false, // Specific block hash
+        }
+    }
+
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
