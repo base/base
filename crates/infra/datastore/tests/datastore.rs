@@ -5,7 +5,7 @@ use testcontainers_modules::{
     postgres,
     testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
-use tips_datastore::postgres::BundleFilter;
+use tips_datastore::postgres::{BundleFilter, BundleState};
 use tips_datastore::{BundleDatastore, PostgresDatastore};
 
 struct TestHarness {
@@ -96,6 +96,10 @@ async fn insert_and_get() -> eyre::Result<()> {
     let metadata = retrieved_bundle_with_metadata.unwrap();
     let retrieved_bundle = &metadata.bundle;
 
+    assert!(
+        matches!(metadata.state, BundleState::Ready),
+        "Bundle should default to Ready state"
+    );
     assert_eq!(retrieved_bundle.txs.len(), test_bundle.txs.len());
     assert_eq!(retrieved_bundle.block_number, test_bundle.block_number);
     assert_eq!(retrieved_bundle.min_timestamp, test_bundle.min_timestamp);

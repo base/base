@@ -11,6 +11,17 @@ use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
 
+#[derive(Debug, Clone, sqlx::Type)]
+#[sqlx(type_name = "bundle_state", rename_all = "PascalCase")]
+pub enum BundleState {
+    Ready,
+    BundleLimit,
+    AccountLimits,
+    GlobalLimits,
+    IncludedInFlashblock,
+    IncludedInBlock,
+}
+
 #[derive(sqlx::FromRow, Debug)]
 struct BundleRow {
     senders: Option<Vec<String>>,
@@ -22,6 +33,7 @@ struct BundleRow {
     block_number: Option<i64>,
     min_timestamp: Option<i64>,
     max_timestamp: Option<i64>,
+    state: BundleState,
 }
 
 /// Filter criteria for selecting bundles
@@ -60,6 +72,7 @@ pub struct BundleWithMetadata {
     pub txn_hashes: Vec<TxHash>,
     pub senders: Vec<Address>,
     pub min_base_fee: i64,
+    pub state: BundleState,
 }
 
 /// PostgreSQL implementation of the BundleDatastore trait
@@ -137,6 +150,7 @@ impl PostgresDatastore {
             txn_hashes: parsed_txn_hashes?,
             senders: parsed_senders?,
             min_base_fee: row.minimum_base_fee.unwrap_or(0),
+            state: row.state,
         })
     }
 
@@ -198,14 +212,15 @@ impl BundleDatastore for PostgresDatastore {
         sqlx::query!(
             r#"
             INSERT INTO bundles (
-                id, senders, minimum_base_fee, txn_hashes, 
+                id, "state", senders, minimum_base_fee, txn_hashes, 
                 txs, reverting_tx_hashes, dropping_tx_hashes, 
                 block_number, min_timestamp, max_timestamp,
                 created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
             "#,
             id,
+            BundleState::Ready as BundleState,
             &senders,
             minimum_base_fee,
             &txn_hashes,
@@ -226,7 +241,7 @@ impl BundleDatastore for PostgresDatastore {
         let result = sqlx::query_as::<_, BundleRow>(
             r#"
             SELECT senders, minimum_base_fee, txn_hashes, txs, reverting_tx_hashes, 
-                   dropping_tx_hashes, block_number, min_timestamp, max_timestamp
+                   dropping_tx_hashes, block_number, min_timestamp, max_timestamp, "state"
             FROM bundles 
             WHERE id = $1
             "#,
@@ -266,7 +281,7 @@ impl BundleDatastore for PostgresDatastore {
         let rows = sqlx::query_as::<_, BundleRow>(
             r#"
             SELECT senders, minimum_base_fee, txn_hashes, txs, reverting_tx_hashes, 
-                   dropping_tx_hashes, block_number, min_timestamp, max_timestamp
+                   dropping_tx_hashes, block_number, min_timestamp, max_timestamp, "state"
             FROM bundles 
             WHERE minimum_base_fee >= $1
               AND (block_number = $2 OR block_number IS NULL OR block_number = 0 OR $2 = 0)
