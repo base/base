@@ -231,7 +231,6 @@ impl PendingBlocks {
 
         // Iterate through all transaction receipts in pending state
         for (_idx, receipt) in &self.transaction_receipts {
-            // Apply filter and set proper context following reth's pattern
             for log in receipt.inner.logs() {
                 if filter.matches(&log.inner) {
                     logs.push(log.clone());

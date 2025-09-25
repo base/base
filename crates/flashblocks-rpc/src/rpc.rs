@@ -151,7 +151,7 @@ impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
 #[async_trait]
 impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: EthApiTypes + FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -429,7 +429,7 @@ where
 
         // Only handle pure pending queries: fromBlock="pending" and toBlock="pending"
         // Everything else goes to regular eth API
-        if self.is_pure_pending_query(&filter) {
+        if self.is_pending_query(&filter) {
             self.metrics.get_logs.increment(1);
             let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
             Ok(pending_logs)
@@ -442,10 +442,10 @@ where
 
 impl<Eth, FB> EthApiExt<Eth, FB>
 where
-    Eth: EthApiTypes + FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    fn is_pure_pending_query(&self, filter: &Filter) -> bool {
+    fn is_pending_query(&self, filter: &Filter) -> bool {
         // Only return true for pure pending queries: both fromBlock and toBlock must be "pending"
         match &filter.block_option {
             alloy_rpc_types_eth::FilterBlockOption::Range {
