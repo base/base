@@ -228,29 +228,14 @@ impl PendingBlocks {
 
     pub fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
         let mut logs = Vec::new();
-        let mut log_index = 0u64;
-
-        // Get latest block context for pending logs
-        let latest_header = self.latest_header();
 
         // Iterate through all transaction receipts in pending state
-        for (tx_hash, receipt) in &self.transaction_receipts {
+        for (_idx, receipt) in &self.transaction_receipts {
             // Apply filter and set proper context following reth's pattern
             for log in receipt.inner.logs() {
                 if filter.matches(&log.inner) {
-                    let mut pending_log = log.clone();
-
-                    // Set context following reth's logs_utils pattern
-                    pending_log.block_hash = Some(latest_header.hash());
-                    pending_log.block_number = Some(latest_header.number);
-                    pending_log.transaction_hash = Some(*tx_hash);
-                    pending_log.transaction_index = receipt.inner.transaction_index;
-                    pending_log.log_index = Some(log_index);
-                    pending_log.removed = false; // Pending logs are never removed
-
-                    logs.push(pending_log);
+                    logs.push(log.clone());
                 }
-                log_index += 1;
             }
         }
 
