@@ -22,10 +22,7 @@ use std::{
     io::Seek,
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
-
-const ONE_WEEK: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
 /// Run the zkVM execution process for each split range in parallel. Writes the execution stats for
 /// each block range to a CSV file after each execution completes (not guaranteed to be in order).
@@ -194,10 +191,22 @@ async fn main() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
+    // Get the host CLIs in order, in parallel.
+    let host = initialize_host(Arc::new(data_fetcher.clone()));
+
     let (l2_start_block, l2_end_block) = if args.rolling {
-        get_rolling_block_range(&data_fetcher, ONE_WEEK, args.default_range).await?
+        info!("Using rolling block range");
+        get_rolling_block_range(host.as_ref(), &data_fetcher, args.default_range).await?
     } else {
-        get_validated_block_range(&data_fetcher, args.start, args.end, args.default_range).await?
+        info!("Using validated block range");
+        get_validated_block_range(
+            host.as_ref(),
+            &data_fetcher,
+            args.start,
+            args.end,
+            args.default_range,
+        )
+        .await?
     };
 
     // Check if the safeDB is activated on the L2 node. If it is, we use the safeHead based range
@@ -211,9 +220,6 @@ async fn main() -> Result<()> {
     };
 
     info!("The span batch ranges which will be executed: {split_ranges:?}");
-
-    // Get the host CLIs in order, in parallel.
-    let host = initialize_host(Arc::new(data_fetcher));
 
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {

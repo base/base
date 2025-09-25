@@ -10,13 +10,25 @@ use op_succinct_host_utils::{
     witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::initialize_host;
-use op_succinct_prove::{execute_multi, DEFAULT_RANGE, ONE_HOUR};
+use op_succinct_prove::{execute_multi, DEFAULT_RANGE};
 
 mod common;
 
+fn elf_label() -> &'static str {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "celestia")] {
+            "celestia-range-elf-embedded"
+        } else if #[cfg(feature = "eigenda")] {
+            "eigenda-range-elf-embedded"
+        } else {
+            "range-elf-embedded"
+        }
+    }
+}
+
 fn create_diff_report(base: &ExecutionStats, current: &ExecutionStats) -> String {
     let mut report = String::new();
-    writeln!(report, "## Performance Comparison\n").unwrap();
+    writeln!(report, "## Performance Comparison (ELF: {})\n", elf_label()).unwrap();
     writeln!(report, "Range {}~{}\n", base.batch_start, base.batch_end).unwrap();
     writeln!(
         report,
@@ -117,7 +129,7 @@ async fn test_cycle_count_diff() -> Result<()> {
         .parse::<bool>()
         .unwrap_or_default()
     {
-        true => get_rolling_block_range(&data_fetcher, ONE_HOUR, DEFAULT_RANGE).await?,
+        true => get_rolling_block_range(host.as_ref(), &data_fetcher, DEFAULT_RANGE).await?,
         false => {
             let base_stats =
                 serde_json::from_reader::<_, ExecutionStats>(File::open("new_cycle_stats.json")?)?;

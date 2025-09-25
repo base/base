@@ -1,7 +1,6 @@
 use std::{
     cmp::{max, min},
     collections::HashSet,
-    time::Duration,
 };
 
 use alloy_eips::BlockId;
@@ -10,10 +9,16 @@ use futures::StreamExt;
 use kona_rpc::{OutputResponse, SafeHeadResponse};
 use serde::{Deserialize, Serialize};
 
-use crate::fetcher::{OPSuccinctDataFetcher, RPCMode};
+use crate::{
+    fetcher::{OPSuccinctDataFetcher, RPCMode},
+    host::OPSuccinctHost,
+};
+
+const TWO_HOURS_IN_BLOCKS: u64 = 3600;
 
 /// Get the start and end block numbers for a range, with validation.
-pub async fn get_validated_block_range(
+pub async fn get_validated_block_range<H: OPSuccinctHost>(
+    host: &H,
     data_fetcher: &OPSuccinctDataFetcher,
     start: Option<u64>,
     end: Option<u64>,
@@ -25,7 +30,14 @@ pub async fn get_validated_block_range(
     // Failure error.
     // L2 Block Validation Failure error might still occur. See
     // [Troubleshooting](../troubleshooting.md#l2-block-validation-failure) for more details.
-    let end_number = data_fetcher.get_l2_header(BlockId::finalized()).await?.number;
+    let l2_finalized_block_number = data_fetcher.get_l2_header(BlockId::finalized()).await?.number;
+    let end_number = host
+        .get_finalized_l2_block_number(
+            data_fetcher,
+            l2_finalized_block_number - TWO_HOURS_IN_BLOCKS,
+        )
+        .await?
+        .expect("Failed to get finalized L2 block number");
 
     // If end block not provided, use latest finalized block
     let l2_end_block = match end {
@@ -55,17 +67,22 @@ pub async fn get_validated_block_range(
     Ok((l2_start_block, l2_end_block))
 }
 
-/// Get a fixed recent (less than the provided interval) block range.
-pub async fn get_rolling_block_range(
+/// Get a rolling block range whose end aligns with the host's finalized L2 block.
+///
+/// The returned tuple represents the last `range` blocks that the host considers finalized
+/// according to its DA-specific logic, making the range safe to use for proof generation.
+pub async fn get_rolling_block_range<H: OPSuccinctHost>(
+    host: &H,
     data_fetcher: &OPSuccinctDataFetcher,
-    interval: Duration,
     range: u64,
 ) -> Result<(u64, u64)> {
     let header = data_fetcher.get_l2_header(BlockId::finalized()).await?;
-    let start_timestamp = header.timestamp - (header.timestamp % interval.as_secs());
-    let (_, l2_start_block) = data_fetcher.find_l2_block_by_timestamp(start_timestamp).await?;
+    let l2_end_block = host
+        .get_finalized_l2_block_number(data_fetcher, header.number - TWO_HOURS_IN_BLOCKS)
+        .await?
+        .expect("Failed to get finalized L2 block number");
 
-    Ok((l2_start_block, l2_start_block + range))
+    Ok((l2_end_block - range, l2_end_block))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8400,6 +8400,7 @@ dependencies = [
  "alloy-primitives 1.1.2",
  "anyhow",
  "cargo_metadata",
+ "cfg-if",
  "clap",
  "csv",
  "dotenv",

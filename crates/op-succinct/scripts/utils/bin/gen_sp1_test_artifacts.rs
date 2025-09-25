@@ -27,15 +27,22 @@ async fn main() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let l2_chain_id = data_fetcher.get_l2_chain_id().await?;
 
-    let (l2_start_block, l2_end_block) =
-        get_validated_block_range(&data_fetcher, args.start, args.end, args.default_range).await?;
+    let host = initialize_host(Arc::new(data_fetcher.clone()));
+
+    let (l2_start_block, l2_end_block) = get_validated_block_range(
+        host.as_ref(),
+        &data_fetcher,
+        args.start,
+        args.end,
+        args.default_range,
+    )
+    .await?;
 
     let split_ranges = split_range_basic(l2_start_block, l2_end_block, args.batch_size);
 
     info!("The span batch ranges which will be executed: {split_ranges:?}");
 
     // Get the host CLIs in order, in parallel.
-    let host = Arc::new(initialize_host(Arc::new(data_fetcher)));
     let host_args = futures::stream::iter(split_ranges.iter())
         .map(|range| async {
             host.fetch(range.start, range.end, None, args.safe_db_fallback)
