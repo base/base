@@ -134,8 +134,11 @@ mod tests {
                 let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
                 flashblocks_state.start();
 
-                let api_ext =
-                    EthApiExt::new(ctx.registry.eth_api().clone(), flashblocks_state.clone());
+                let api_ext = EthApiExt::new(
+                    ctx.registry.eth_api().clone(),
+                    ctx.registry.eth_handlers().filter.clone(),
+                    flashblocks_state.clone(),
+                );
 
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 

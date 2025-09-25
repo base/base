@@ -18,11 +18,12 @@ use jsonrpsee_types::ErrorObjectOwned;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
+use reth::rpc::eth::EthFilter;
 use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
-use reth_rpc_eth_api::{helpers::FullEthApi, EthFilterApiServer, RpcBlock};
+use reth_rpc_eth_api::{helpers::FullEthApi, EthApiTypes, EthFilterApiServer, RpcBlock};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -129,15 +130,15 @@ pub trait EthApiOverride {
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth, EthFilter, FB> {
+pub struct EthApiExt<Eth: EthApiTypes, FB> {
     eth_api: Eth,
-    eth_filter: EthFilter,
+    eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
     metrics: Metrics,
 }
 
-impl<Eth, EthFilter, FB> EthApiExt<Eth, EthFilter, FB> {
-    pub fn new(eth_api: Eth, eth_filter: EthFilter, flashblocks_state: Arc<FB>) -> Self {
+impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
+    pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
         Self {
             eth_api,
             eth_filter,
@@ -148,10 +149,9 @@ impl<Eth, EthFilter, FB> EthApiExt<Eth, EthFilter, FB> {
 }
 
 #[async_trait]
-impl<Eth, EthFilter, FB> EthApiOverrideServer for EthApiExt<Eth, EthFilter, FB>
+impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
-    EthFilter: EthFilterApiServer<Log>,
+    Eth: EthApiTypes + FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -444,10 +444,9 @@ where
     }
 }
 
-impl<Eth, EthFilter, FB> EthApiExt<Eth, EthFilter, FB>
+impl<Eth, FB> EthApiExt<Eth, FB>
 where
-    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
-    EthFilter: EthFilterApiServer<Log>,
+    Eth: EthApiTypes + FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
     fn should_include_pending_logs(&self, filter: &Filter) -> bool {
