@@ -127,8 +127,7 @@ sha3 = "0.10"
 hex = "0.4"
 ureq = "2.10"
 
-# TODO: change to rev from main once https://github.com/flashbots/rollup-boost/pull/401 is merged
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "0c1fb4ce7e00f0afc350f5bf7573b19da6d485ec" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "b86af43969557bee18f17ec1d6bcd3e984f910b2" }
 
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }
