@@ -454,7 +454,10 @@ where
             } => {
                 matches!(
                     (from_block, to_block),
-                    (Some(BlockNumberOrTag::Pending), Some(BlockNumberOrTag::Pending))
+                    (
+                        Some(BlockNumberOrTag::Pending),
+                        Some(BlockNumberOrTag::Pending)
+                    )
                 )
             }
             _ => false, // Block hash queries or other formats are not pure pending
