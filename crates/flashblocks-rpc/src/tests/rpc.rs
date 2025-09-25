@@ -724,11 +724,12 @@ mod tests {
         // Send payloads with transactions
         node.send_test_payloads().await?;
 
-        // Test getting pending logs - the INCREMENT_TX should have logs
+        // Test getting pending logs - must use both fromBlock and toBlock as "pending"
         let logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
-                    .select(alloy_eips::BlockNumberOrTag::Pending),
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
             )
             .await?;
 
@@ -761,7 +762,8 @@ mod tests {
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
                     .address(COUNTER_ADDRESS)
-                    .select(alloy_eips::BlockNumberOrTag::Pending),
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
             )
             .await?;
 
@@ -775,7 +777,8 @@ mod tests {
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
                     .address(TEST_ADDRESS)
-                    .select(alloy_eips::BlockNumberOrTag::Pending),
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
             )
             .await?;
 
@@ -811,7 +814,8 @@ mod tests {
         let pending_logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
-                    .select(alloy_eips::BlockNumberOrTag::Pending),
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
             )
             .await?;
 
@@ -838,7 +842,8 @@ mod tests {
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
                     .event_signature(TEST_LOG_TOPIC_0)
-                    .select(alloy_eips::BlockNumberOrTag::Pending),
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
             )
             .await?;
 
@@ -848,13 +853,50 @@ mod tests {
         // Test filtering by specific topic combination - should match only the first log
         let filter = alloy_rpc_types_eth::Filter::default()
             .topic1(TEST_LOG_TOPIC_1)
-            .select(alloy_eips::BlockNumberOrTag::Pending);
+            .from_block(alloy_eips::BlockNumberOrTag::Pending)
+            .to_block(alloy_eips::BlockNumberOrTag::Pending);
 
         let logs = provider.get_logs(&filter).await?;
 
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].address(), COUNTER_ADDRESS);
         assert_eq!(logs[0].topics()[1], TEST_LOG_TOPIC_1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_logs_non_pending_queries_go_to_eth_api() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_test_payloads().await?;
+
+        // Test that non-pure-pending queries go to the regular eth API
+        // This filter from block 0 to pending should go to eth API (not pure pending)
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(0)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should be handled by underlying eth API (empty in our test setup)
+        assert_eq!(logs.len(), 0);
+
+        // Test that latest queries also go to eth API
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(alloy_eips::BlockNumberOrTag::Latest)
+                    .to_block(alloy_eips::BlockNumberOrTag::Latest),
+            )
+            .await?;
+
+        // Should be handled by underlying eth API (empty in our test setup)
+        assert_eq!(logs.len(), 0);
 
         Ok(())
     }

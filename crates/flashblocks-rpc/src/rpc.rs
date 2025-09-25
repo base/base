@@ -427,18 +427,14 @@ where
             address = ?filter.address
         );
 
-        // Check if filter range includes pending/latest blocks
-        let should_include_pending = self.should_include_pending_logs(&filter);
-
-        if should_include_pending {
+        // Only handle pure pending queries: fromBlock="pending" and toBlock="pending"
+        // Everything else goes to regular eth API
+        if self.is_pure_pending_query(&filter) {
             self.metrics.get_logs.increment(1);
-
-            // For now, just return pending logs
-            // TODO: Implement historical log delegation once the correct reth API is identified
-            // Historical logs would be retrieved and combined here
             let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
             Ok(pending_logs)
         } else {
+            // All other queries - delegate to underlying reth node
             self.eth_filter.logs(filter).await.map_err(Into::into)
         }
     }
@@ -449,29 +445,19 @@ where
     Eth: EthApiTypes + FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    fn should_include_pending_logs(&self, filter: &Filter) -> bool {
-        // Check the block_option in the filter
+    fn is_pure_pending_query(&self, filter: &Filter) -> bool {
+        // Only return true for pure pending queries: both fromBlock and toBlock must be "pending"
         match &filter.block_option {
             alloy_rpc_types_eth::FilterBlockOption::Range {
-                from_block: _,
+                from_block,
                 to_block,
             } => {
-                match to_block {
-                    Some(BlockNumberOrTag::Pending) => true,
-                    Some(BlockNumberOrTag::Latest) => true,
-                    None => true, // Default toBlock is "latest"
-                    Some(BlockNumberOrTag::Number(to_block)) => {
-                        // Case 3: toBlock is specific number >= current latest
-                        if let Some(latest_block) = self.flashblocks_state.get_block(false) {
-                            *to_block >= latest_block.header.number
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false, // Other cases like "earliest"
-                }
+                matches!(
+                    (from_block, to_block),
+                    (Some(BlockNumberOrTag::Pending), Some(BlockNumberOrTag::Pending))
+                )
             }
-            alloy_rpc_types_eth::FilterBlockOption::AtBlockHash(_) => false, // Specific block hash
+            _ => false, // Block hash queries or other formats are not pure pending
         }
     }
 
