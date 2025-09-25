@@ -78,12 +78,17 @@ impl CliExt for Cli {
 
     /// Parses commands and overrides versions
     fn set_version() -> Self {
+        let logs_dir = dirs_next::cache_dir()
+            .map(|root| root.join("op-rbuilder/logs"))
+            .unwrap()
+            .into_os_string();
         let matches = Cli::command()
             .version(SHORT_VERSION)
             .long_version(LONG_VERSION)
             .about("Block builder designed for the Optimism stack")
             .author("Flashbots")
             .name("op-rbuilder")
+            .mut_arg("log_file_directory", |arg| arg.default_value(logs_dir))
             .get_matches();
         Cli::from_arg_matches(&matches).expect("Parsing args")
     }

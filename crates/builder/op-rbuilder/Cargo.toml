@@ -136,6 +136,7 @@ ctor = { version = "0.4.2", optional = true }
 rlimit = { version = "0.10", optional = true }
 macros = { path = "src/tests/framework/macros", optional = true }
 testcontainers = "0.24.0"
+dirs-next = "2.0.0"
 
 [target.'cfg(unix)'.dependencies]
 tikv-jemallocator = { version = "0.6", optional = true }
