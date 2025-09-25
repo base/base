@@ -47,14 +47,15 @@ impl FlashtestationsService {
 
         let attestation_provider = Arc::new(get_attestation_provider(AttestationConfig {
             debug: args.debug,
-            debug_url: args.debug_url,
+            quote_provider: args.quote_provider,
         }));
 
         let tx_manager = TxManager::new(
             tee_service_signer,
             args.funding_key
                 .expect("funding key required when flashtestations enabled"),
-            args.rpc_url,
+            args.rpc_url
+                .expect("external rpc url required when flashtestations enabled"),
             args.registry_address
                 .expect("registry address required when flashtestations enabled"),
             args.builder_policy_address

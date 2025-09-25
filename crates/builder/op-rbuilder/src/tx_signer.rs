@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use alloy_consensus::SignableTransaction;
 use alloy_primitives::{Address, B256, Signature, U256};
+use k256::sha2::Sha256;
 use op_alloy_consensus::OpTypedTransaction;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
@@ -98,6 +99,23 @@ pub fn public_key_to_address(public_key: &PublicKey) -> Address {
 
     // Take last 20 bytes as address
     Address::from_slice(&hash[12..32])
+}
+
+// Generate a key deterministically from a seed for debug and testing
+// Do not use in production
+pub fn generate_key_from_seed(seed: &str) -> (SecretKey, PublicKey, Address) {
+    // Hash the seed
+    let mut hasher = Sha256::new();
+    hasher.update(seed.as_bytes());
+    let hash = hasher.finalize();
+
+    // Create signing key
+    let secp = Secp256k1::new();
+    let private_key = SecretKey::from_slice(&hash).expect("Failed to create private key");
+    let public_key = PublicKey::from_secret_key(&secp, &private_key);
+    let address = public_key_to_address(&public_key);
+
+    (private_key, public_key, address)
 }
 
 #[cfg(test)]

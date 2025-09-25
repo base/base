@@ -23,17 +23,24 @@ pub struct FlashtestationsArgs {
     )]
     pub debug: bool,
 
-    // Debug url for attestations
-    #[arg(long = "flashtestations.debug-url", env = "FLASHTESTATIONS_DEBUG_URL")]
-    pub debug_url: Option<String>,
+    // Debug static key for the tee key. DO NOT USE IN PRODUCTION
+    #[arg(
+        long = "flashtestations.debug-tee-key-seed",
+        env = "FLASHTESTATIONS_DEBUG_TEE_KEY_SEED",
+        default_value = "debug"
+    )]
+    pub debug_tee_key_seed: String,
+
+    // Remote url for attestations
+    #[arg(
+        long = "flashtestations.quote-provider",
+        env = "FLASHTESTATIONS_QUOTE_PROVIDER"
+    )]
+    pub quote_provider: Option<String>,
 
     /// The rpc url to post the onchain attestation requests to
-    #[arg(
-        long = "flashtestations.rpc-url",
-        env = "FLASHTESTATIONS_RPC_URL",
-        default_value = "http://localhost:8545"
-    )]
-    pub rpc_url: String,
+    #[arg(long = "flashtestations.rpc-url", env = "FLASHTESTATIONS_RPC_URL")]
+    pub rpc_url: Option<String>,
 
     /// Funding key for the TEE key
     #[arg(
