@@ -435,7 +435,7 @@ where
             Ok(pending_logs)
         } else {
             // All other queries - delegate to underlying reth node
-            self.eth_filter.logs(filter).await.map_err(Into::into)
+            self.eth_filter.logs(filter).await
         }
     }
 }

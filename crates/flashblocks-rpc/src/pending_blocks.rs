@@ -230,7 +230,7 @@ impl PendingBlocks {
         let mut logs = Vec::new();
 
         // Iterate through all transaction receipts in pending state
-        for (_idx, receipt) in &self.transaction_receipts {
+        for receipt in self.transaction_receipts.values() {
             for log in receipt.inner.logs() {
                 if filter.matches(&log.inner) {
                     logs.push(log.clone());
