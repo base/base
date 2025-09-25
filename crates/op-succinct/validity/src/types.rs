@@ -5,8 +5,8 @@ use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use sp1_sdk::{
-    network::FulfillmentStrategy, ExecutionReport, NetworkProver, SP1ProofMode, SP1ProvingKey,
-    SP1VerifyingKey,
+    network::{proto::types::ProofRequest, FulfillmentStrategy},
+    ExecutionReport, NetworkProver, SP1ProofMode, SP1ProvingKey, SP1VerifyingKey,
 };
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -142,6 +142,25 @@ impl RequestExecutionStatistics {
             kzg_eval_cycles: get_cycles("precompile-kzg-eval"),
             ec_recover_cycles: get_cycles("precompile-ec-recover"),
             p256_verify_cycles: get_cycles("precompile-p256-verify"),
+        }
+    }
+}
+
+impl From<&ProofRequest> for RequestExecutionStatistics {
+    fn from(value: &ProofRequest) -> Self {
+        Self {
+            total_instruction_cycles: value.cycles(),
+            total_sp1_gas: value.gas_used(),
+            block_execution_cycles: 0,
+            oracle_verify_cycles: 0,
+            derivation_cycles: 0,
+            blob_verification_cycles: 0,
+            bn_add_cycles: 0,
+            bn_mul_cycles: 0,
+            bn_pair_cycles: 0,
+            kzg_eval_cycles: 0,
+            ec_recover_cycles: 0,
+            p256_verify_cycles: 0,
         }
     }
 }
