@@ -22,12 +22,19 @@ async fn main() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
+    let host = initialize_host(Arc::new(data_fetcher.clone()));
+
     // If the end block is provided, check that it is less than the latest finalized block. If the
     // end block is not provided, use the latest finalized block.
-    let (l2_start_block, l2_end_block) =
-        get_validated_block_range(&data_fetcher, args.start, args.end, DEFAULT_RANGE).await?;
+    let (l2_start_block, l2_end_block) = get_validated_block_range(
+        host.as_ref(),
+        &data_fetcher,
+        args.start,
+        args.end,
+        DEFAULT_RANGE,
+    )
+    .await?;
 
-    let host = initialize_host(Arc::new(data_fetcher.clone()));
     let host_args = host.fetch(l2_start_block, l2_end_block, None, args.safe_db_fallback).await?;
 
     debug!("Host args: {:?}", host_args);
