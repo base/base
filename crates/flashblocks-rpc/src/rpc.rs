@@ -22,7 +22,7 @@ use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
-use reth_rpc_eth_api::{helpers::FullEthApi, RpcBlock};
+use reth_rpc_eth_api::{helpers::FullEthApi, EthFilterApiServer, RpcBlock};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
@@ -129,16 +129,18 @@ pub trait EthApiOverride {
 }
 
 #[derive(Debug)]
-pub struct EthApiExt<Eth, FB> {
+pub struct EthApiExt<Eth, EthFilter, FB> {
     eth_api: Eth,
+    eth_filter: EthFilter,
     flashblocks_state: Arc<FB>,
     metrics: Metrics,
 }
 
-impl<Eth, FB> EthApiExt<Eth, FB> {
-    pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
+impl<Eth, EthFilter, FB> EthApiExt<Eth, EthFilter, FB> {
+    pub fn new(eth_api: Eth, eth_filter: EthFilter, flashblocks_state: Arc<FB>) -> Self {
         Self {
             eth_api,
+            eth_filter,
             flashblocks_state,
             metrics: Metrics::default(),
         }
@@ -146,9 +148,10 @@ impl<Eth, FB> EthApiExt<Eth, FB> {
 }
 
 #[async_trait]
-impl<Eth, FB> EthApiOverrideServer for EthApiExt<Eth, FB>
+impl<Eth, EthFilter, FB> EthApiOverrideServer for EthApiExt<Eth, EthFilter, FB>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    EthFilter: EthFilterApiServer<Log>,
     FB: FlashblocksAPI + Send + Sync + 'static,
     jsonrpsee_types::error::ErrorObject<'static>: From<Eth::Error>,
 {
@@ -436,17 +439,15 @@ where
             let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
             Ok(pending_logs)
         } else {
-            // Pure historical query - would delegate to reth here
-            // TODO: Implement historical log delegation to underlying reth node
-            // This should use the same pattern as other methods like get_balance
-            Ok(Vec::new())
+            self.eth_filter.logs(filter).await.map_err(Into::into)
         }
     }
 }
 
-impl<Eth, FB> EthApiExt<Eth, FB>
+impl<Eth, EthFilter, FB> EthApiExt<Eth, EthFilter, FB>
 where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    EthFilter: EthFilterApiServer<Log>,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
     fn should_include_pending_logs(&self, filter: &Filter) -> bool {
