@@ -3,8 +3,27 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info};
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 pub mod alloy_client;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthState {
+    Healthy,
+    Unhealthy,
+    Error,
+}
+
+impl HealthState {
+    fn code(&self) -> u8 {
+        match self {
+            HealthState::Healthy => 0,
+            HealthState::Unhealthy => 1,
+            HealthState::Error => 2,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HealthcheckConfig {
@@ -62,21 +81,40 @@ pub struct BlockProductionHealthChecker<C: EthClient> {
     pub config: HealthcheckConfig,
     pub cached_block_number: Option<u64>,
     pub stall_emitted_for_current: bool,
+    status_code: Arc<AtomicU8>,
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
     pub fn new(node: Node, client: C, config: HealthcheckConfig) -> Self {
+        // default to error until first successful read
+        let initial_status: u8 = HealthState::Error.code();
         Self {
             node,
             client,
             config,
             cached_block_number: None,
             stall_emitted_for_current: false,
+            status_code: Arc::new(AtomicU8::new(initial_status)),
         }
     }
-}
 
-impl<C: EthClient> BlockProductionHealthChecker<C> {
+    pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
+        let status = self.status_code.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(period_ms));
+            loop {
+                ticker.tick().await;
+                let code = status.load(Ordering::Relaxed);
+                let label = match code {
+                    0 => "healthy",
+                    1 => "unhealthy",
+                    _ => "error",
+                };
+                metrics::counter!("base.blocks.status", "status" => label).increment(1);
+            }
+        })
+    }
+
     pub async fn run_health_check(&mut self) {
         let url = &self.node.url;
 
@@ -90,18 +128,22 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             Ok(Err(e)) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, error = %e, "waiting for node to become healthy");
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
                     metrics::counter!("base.blocks.error").increment(1);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
             Err(_elapsed) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, "waiting for node to become healthy (timeout)");
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
                     metrics::counter!("base.blocks.error").increment(1);
+                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
@@ -114,22 +156,15 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             .as_secs();
         let block_age_ms = now_secs.saturating_sub(latest.timestamp_unix_seconds) * 1000;
 
-        // Publish gauges- correct metric?
+        // Keep head age gauge for observability
         metrics::gauge!("base.blocks.head_age_ms").set(block_age_ms as f64);
 
         let grace_ms = self.config.grace_period_ms;
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
 
-        // Encode state as 0/1/2
-        // ToDo: make enum for this
-        let head_state = if block_age_ms >= unhealthy_ms {
-            2.0
-        } else if block_age_ms > grace_ms {
-            1.0
-        } else {
-            0.0
-        };
-        metrics::gauge!("base.blocks.head_state").set(head_state);
+        // Classify state and update last status (no head_state gauge)
+        let state = if block_age_ms > grace_ms { HealthState::Unhealthy } else { HealthState::Healthy };
+        self.status_code.store(state.code(), Ordering::Relaxed);
 
         // If new head: emit one initial classification and reset stall flag.
         // If same head: emit a single stall event once it crosses unhealthy, then suppress further repeats.

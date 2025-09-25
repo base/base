@@ -81,6 +81,9 @@ async fn main() {
     let mut checker: BlockProductionHealthChecker<_> =
         BlockProductionHealthChecker::new(node, client, config);
 
+    // Spawn decoupled status emitter at 2s cadence
+    let _status_handle = checker.spawn_status_emitter(2000);
+
     // Basic run path: poll until Ctrl+C
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
     tokio::spawn(async move {
