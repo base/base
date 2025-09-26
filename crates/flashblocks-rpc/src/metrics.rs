@@ -13,7 +13,7 @@ pub struct Metrics {
     pub upstream_errors: Counter,
 
     #[metric(describe = "Count of messages received from the upstream source")]
-    pub upstream_messages: Gauge,
+    pub upstream_messages: Counter,
 
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
