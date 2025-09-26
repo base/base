@@ -120,6 +120,14 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
 }
 
 impl<Client> FlashblocksAPI for FlashblocksState<Client> {
+    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
+        self.pending_blocks
+            .load()
+            .as_ref()
+            .map(|pb| pb.canonical_block_number())
+            .unwrap_or(BlockNumberOrTag::Latest)
+    }
+
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
         self.pending_blocks
             .load()

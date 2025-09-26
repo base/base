@@ -35,6 +35,9 @@ pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
+    /// Retrieves the canonical block number.
+    fn get_canonical_block_number(&self) -> BlockNumberOrTag;
+
     /// Retrieves the current block. If `full` is true, includes full transaction details.
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>>;
 
@@ -219,16 +222,15 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_transaction_count.increment(1);
-            let latest_count = EthState::transaction_count(
-                &self.eth_api,
-                address,
-                Some(BlockId::Number(BlockNumberOrTag::Latest)),
-            )
-            .await
-            .map_err(Into::into)?;
-
+            let canon_block = self.flashblocks_state.get_canonical_block_number();
             let fb_count = self.flashblocks_state.get_transaction_count(address);
-            return Ok(latest_count + fb_count);
+
+            let canon_count =
+                EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
+                    .await
+                    .map_err(Into::into)?;
+
+            return Ok(canon_count + fb_count);
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number)
@@ -329,11 +331,12 @@ where
             block_overrides = ?block_overrides,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.call.increment(1);
+            block_id = self.flashblocks_state.get_canonical_block_number().into();
             pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 
@@ -348,7 +351,7 @@ where
         EthCall::call(
             &self.eth_api,
             transaction,
-            block_number,
+            Some(block_id),
             EvmOverrides::new(Some(final_overrides), block_overrides),
         )
         .await
@@ -368,11 +371,12 @@ where
             overrides = ?overrides,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.estimate_gas.increment(1);
+            block_id = self.flashblocks_state.get_canonical_block_number().into();
             pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 
@@ -396,12 +400,13 @@ where
             block_number = ?block_number,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
 
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.simulate_v1.increment(1);
+            block_id = self.flashblocks_state.get_canonical_block_number().into();
             pending_overrides.state = self.flashblocks_state.get_state_overrides();
         }
 

@@ -31,12 +31,12 @@ mod tests {
     use reth_provider::providers::BlockchainProvider;
     use reth_provider::{
         BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
+        StateProviderFactory,
     };
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::sleep;
-
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
     // so it can be processed by the state processor
     const SLEEP_TIME: u64 = 10;
@@ -157,7 +157,10 @@ mod tests {
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
 
-        async fn new_canonical_block(&mut self, mut user_transactions: Vec<OpTransactionSigned>) {
+        async fn new_canonical_block_without_processing(
+            &mut self,
+            mut user_transactions: Vec<OpTransactionSigned>,
+        ) -> RecoveredBlock<OpBlock> {
             let current_tip = self.current_canonical_block();
 
             let deposit_transaction =
@@ -214,6 +217,13 @@ mod tests {
                 .unwrap();
             provider_rw.commit().unwrap();
 
+            block
+        }
+
+        async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
+            let block = self
+                .new_canonical_block_without_processing(user_transactions)
+                .await;
             self.flashblocks.on_canonical_block_received(&block);
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
@@ -716,6 +726,83 @@ mod tests {
                 .expect("should be changed due to receiving funds"),
             U256::from(100_100_100)
         );
+    }
+
+    #[tokio::test]
+    async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
+        // Test for race condition when a canon block comes in but user
+        // requests their nonce prior to the StateProcessor processing the canon block
+        // causing it to return an n+1 nonce instead of n
+        // because underlying reth node `latest` block is already updated, but
+        // relevant pending state has not been cleared yet
+        reth_tracing::init_test_tracing();
+        let mut test = TestHarness::new();
+
+        test.send_flashblock(FlashblockBuilder::new_base(&test).build())
+            .await;
+        test.send_flashblock(
+            FlashblockBuilder::new(&test, 1)
+                .with_transactions(vec![test.build_transaction_to_send_eth(
+                    User::Alice,
+                    User::Bob,
+                    100,
+                )])
+                .build(),
+        )
+        .await;
+
+        let pending_nonce = test
+            .provider
+            .basic_account(&test.address(User::Alice))
+            .unwrap()
+            .unwrap()
+            .nonce
+            + test
+                .flashblocks
+                .get_transaction_count(test.address(User::Alice))
+                .to::<u64>();
+        assert_eq!(pending_nonce, 1);
+
+        test.new_canonical_block_without_processing(vec![
+            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0)
+        ])
+        .await;
+
+        let pending_nonce = test
+            .provider
+            .basic_account(&test.address(User::Alice))
+            .unwrap()
+            .unwrap()
+            .nonce
+            + test
+                .flashblocks
+                .get_transaction_count(test.address(User::Alice))
+                .to::<u64>();
+
+        // This is 2, because canon block has reached the underlying chain
+        // but the StateProcessor hasn't processed it
+        // so pending nonce is effectively double-counting the same transaction, leading to a nonce of 2
+        assert_eq!(pending_nonce, 2);
+
+        // On the RPC level, we correctly return 1 because we
+        // use the pending canon block instead of the latest block when fetching
+        // onchain nonce count to compute
+        // pending_nonce = onchain_nonce + pending_txn_count
+        let canon_block = test.flashblocks.get_canonical_block_number();
+        let canon_state_provider = test
+            .provider
+            .state_by_block_number_or_tag(canon_block)
+            .unwrap();
+        let canon_nonce = canon_state_provider
+            .account_nonce(&test.address(User::Alice))
+            .unwrap()
+            .unwrap();
+        let pending_nonce = canon_nonce
+            + test
+                .flashblocks
+                .get_transaction_count(test.address(User::Alice))
+                .to::<u64>();
+        assert_eq!(pending_nonce, 1);
     }
 
     #[tokio::test]
