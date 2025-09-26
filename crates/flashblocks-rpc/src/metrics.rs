@@ -1,6 +1,5 @@
 use metrics::{Counter, Gauge, Histogram};
 use metrics_derive::Metrics;
-
 /// Metrics for the `reth_flashblocks` component.
 /// Conventions:
 /// - Durations are recorded in seconds (histograms).
