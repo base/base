@@ -113,7 +113,7 @@ Returns the receipt for a transaction.
 
 **Fields:**
 - `transactionHash`: Hash of the transaction
-- `blockHash`: Always `0x0` for preconfirmed transactions
+- `blockHash`: zero hash (`0x000...000`) for preconfirmed transactions
 - `blockNumber`: Block number containing the transaction
 - `transactionIndex`: Index of transaction in block
 - `from`: Sender address
