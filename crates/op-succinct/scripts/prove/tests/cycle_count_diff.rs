@@ -121,6 +121,11 @@ fn create_diff_report(base: &ExecutionStats, current: &ExecutionStats) -> String
 async fn test_cycle_count_diff() -> Result<()> {
     dotenv::dotenv()?;
 
+    let provider = rustls::crypto::ring::default_provider();
+    provider
+        .install_default()
+        .map_err(|e| anyhow::anyhow!("Failed to install default provider: {:?}", e))?;
+
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     let host = initialize_host(Arc::new(data_fetcher.clone()));

@@ -43,6 +43,7 @@ sp1-sdk.workspace = true
 [dev-dependencies]
 reqwest = { version = "0.12.4", features = ["json"] }
 serde_json.workspace = true
+rustls = { version = "0.23", features = ["ring"] }
 
 [build-dependencies]
 op-succinct-build-utils.workspace = true

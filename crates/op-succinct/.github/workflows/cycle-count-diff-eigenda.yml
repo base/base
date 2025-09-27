@@ -1,0 +1,117 @@
+name: Cycle Count Diff (EigenDA)
+
+on:
+  pull_request:
+    paths:
+      - 'elf/eigenda-range-elf-embedded'
+
+jobs:
+  cycle-count-diff-eigenda:
+    runs-on:
+      - runs-on
+      - cpu=32
+      - ram=128
+      - family=m7a+m7i-flex
+      - image=ubuntu22-full-x64
+      - run-id=${{ github.run_id }}
+      - disk=large
+      - spot=false
+
+    steps:
+      - name: Checkout Repository (for local actions)
+        uses: actions/checkout@v4
+
+      - name: Setup CI
+        uses: ./.github/actions/setup
+        with:
+          submodules: recursive
+
+      - name: Install SP1 toolchain
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up
+          ~/.sp1/bin/cargo-prove prove --version
+          source ~/.bashrc
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly-d592b3e0f142d694c3be539702704a4a73238773
+
+      - name: Checkout PR Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          path: new_code
+          submodules: recursive
+
+      - name: Checkout Base Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: old_code
+          submodules: recursive
+
+      - name: Restore EigenDA SRS cache
+        id: cache-srs
+        uses: actions/cache@v4
+        with:
+          path: srs
+          key: eigenda-srs-2.2.1
+
+      - name: Download EigenDA SRS (from container)
+        if: steps.cache-srs.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p srs
+          docker pull ghcr.io/layr-labs/eigenda-proxy:2.2.1
+          cid=$(docker create ghcr.io/layr-labs/eigenda-proxy:2.2.1)
+          docker cp "$cid:/app/resources" ./srs
+          docker rm -f "$cid"
+
+      - name: Copy SRS into workspaces
+        run: |
+          mkdir -p ./new_code/scripts/prove
+          mkdir -p ./old_code/scripts/prove
+          cp -r ./srs/resources ./new_code/scripts/prove
+          cp -r ./srs/resources ./old_code/scripts/prove
+
+      - name: Run Test On New Branch
+        run: |
+          RUST_LOG=info NEW_BRANCH=true cargo test -p op-succinct-prove --features eigenda test_cycle_count_diff --release -- --exact --nocapture
+        working-directory: ./new_code
+        env:
+          L2_NODE_RPC: ${{ secrets.L2_EIGENDA_RPC }}
+          L1_RPC: ${{ secrets.L1_RPC }}
+          L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+          L2_RPC: ${{ secrets.L2_EIGENDA_RPC }}
+          EIGENDA_PROXY_ADDRESS: ${{ secrets.EIGENDA_PROXY_ADDRESS }}
+          OP_SUCCINCT_MOCK: true
+
+      - name: Copy Stats File For Old Branch
+        run: |
+          STATS_FILE=$(find ${{ github.workspace }}/new_code -name "new_cycle_stats.json" -type f | head -1)
+          cp "$STATS_FILE" ${{ github.workspace }}/old_code/scripts/prove/new_cycle_stats.json
+
+      - name: Run Test On Old Branch
+        run: |
+          RUST_LOG=info NEW_BRANCH=false cargo test -p op-succinct-prove --features eigenda test_cycle_count_diff --release -- --exact --nocapture
+        working-directory: ./old_code
+        env:
+          L2_NODE_RPC: ${{ secrets.L2_EIGENDA_RPC }}
+          L1_RPC: ${{ secrets.L1_RPC }}
+          L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+          L2_RPC: ${{ secrets.L2_EIGENDA_RPC }}
+          EIGENDA_PROXY_ADDRESS: ${{ secrets.EIGENDA_PROXY_ADDRESS }}
+          OP_SUCCINCT_MOCK: true
+
+      - name: Compare Results And Post To Github
+        run: |
+          RUST_LOG=info cargo test -p op-succinct-prove --features eigenda --test cycle_count_diff test_post_to_github -- --exact --nocapture
+        working-directory: ./old_code
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POST_TO_GITHUB: ${{ github.event_name == 'pull_request' }}
