@@ -1,6 +1,6 @@
 # Updating `OPSuccinctL2OutputOracle` Parameters
 
-OP Succinct supports a rolling update process when [program binaries](/advanced/verify-binaries.md) must be reproduced and only the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters change. For example, this could happen if
+OP Succinct supports a rolling update process when [program binaries](../../advanced/verify-binaries.md) must be reproduced and only the `aggregationVkey`, `rangeVkeyCommitment` or `rollupConfigHash` parameters change. For example, this could happen if
 
 -   The SP1 version changes
 -   An optimization to the range program is released
@@ -8,7 +8,7 @@ OP Succinct supports a rolling update process when [program binaries](/advanced/
 
 ## Rolling update guide
 
-1. Generate new elfs, vkeys, and a rollup config hash by following [this guide](/advanced/verify-binaries.md).
+1. Generate new elfs, vkeys, and a rollup config hash by following [this guide](../../advanced/verify-binaries.md).
 2. From the project's root, run `just add_config my_upgrade`.
     - This will automatically fetch the `aggregationVkey` and `rangeVkeyCommitment` from the [`/elf`](https://github.com/succinctlabs/op-succinct/tree/main/elf) directory, and the `rollupConfigHash` from the `L2_RPC` set in the `.env`. The output will look like the following:
 

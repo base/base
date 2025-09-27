@@ -66,4 +66,4 @@ This will log the rollup config hash, aggregation verification key, and range ve
 
 ## Update the contract
 
-After reproducing the binaries, you must either [deploy](/validity/contracts/deploy.md) a new OPSuccinctL2OutputOracle contract or perform a [rolling update](/validity/contracts/update-parameters.md) on an existing contract.
+After reproducing the binaries, you must either [deploy](../validity/contracts/deploy.md) a new OPSuccinctL2OutputOracle contract or perform a [rolling update](../validity/contracts/update-parameters.md) on an existing contract.
