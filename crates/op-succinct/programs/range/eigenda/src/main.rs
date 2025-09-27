@@ -32,11 +32,12 @@ fn main() {
             &witness_data.eigenda_data.clone().expect("eigenda witness data is not present"),
         )
         .expect("cannot deserialize eigenda witness");
-        let preloaded_blob_provider =
+        let preloaded_preimage_provider =
             eigenda_witness_to_preloaded_provider(oracle, CanoeSp1CCVerifier {}, eigenda_witness)
                 .await
                 .expect("Failed to get preloaded blob provider");
 
-        run_range_program(EigenDAWitnessExecutor::new(preloaded_blob_provider), witness_data).await;
+        run_range_program(EigenDAWitnessExecutor::new(preloaded_preimage_provider), witness_data)
+            .await;
     });
 }
