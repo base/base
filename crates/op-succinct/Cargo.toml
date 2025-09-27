@@ -103,12 +103,12 @@ hana-oracle = { git = "https://github.com/celestiaorg/hana", tag = "v1.0.1" }
 
 # hokulea
 # TODO(fakedev9999): Bump to 1.0.0 once the release is out.
-hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
-hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
-hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
-hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
-hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
-canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", rev = "2dae748" }
+hokulea-eigenda = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
+hokulea-host-bin = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
+hokulea-proof = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
+hokulea-witgen = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
+hokulea-zkvm-verification = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
+canoe-sp1-cc-host = { git = "https://github.com/Layr-Labs/hokulea", rev = "ceffe35bc996dafa49f9cb6892d722dfbfa33abf" }
 
 # op-succinct
 op-succinct-prove = { path = "scripts/prove" }

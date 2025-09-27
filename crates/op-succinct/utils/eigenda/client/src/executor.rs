@@ -21,7 +21,7 @@ where
     B: BlobProvider + Send + Sync + Debug + Clone,
     E: EigenDAPreimageProvider + Send + Sync + Debug + Clone,
 {
-    eigenda_blob_provider: E,
+    eigenda_preimage_provider: E,
     _marker: std::marker::PhantomData<(O, B)>,
 }
 
@@ -31,8 +31,8 @@ where
     B: BlobProvider + Send + Sync + Debug + Clone,
     E: EigenDAPreimageProvider + Send + Sync + Debug + Clone,
 {
-    pub fn new(eigenda_blob_provider: E) -> Self {
-        Self { eigenda_blob_provider, _marker: std::marker::PhantomData }
+    pub fn new(eigenda_preimage_provider: E) -> Self {
+        Self { eigenda_preimage_provider, _marker: std::marker::PhantomData }
     }
 }
 
@@ -60,8 +60,9 @@ where
     ) -> Result<OraclePipeline<Self::O, Self::L1, Self::L2, Self::DA>> {
         let ethereum_data_source =
             EthereumDataSource::new_from_parts(l1_provider.clone(), beacon, &rollup_config);
-        let eigenda_blob_source = EigenDAPreimageSource::new(self.eigenda_blob_provider.clone());
-        let da_provider = EigenDADataSource::new(ethereum_data_source, eigenda_blob_source);
+        let eigenda_preimage_source =
+            EigenDAPreimageSource::new(self.eigenda_preimage_provider.clone());
+        let da_provider = EigenDADataSource::new(ethereum_data_source, eigenda_preimage_source);
 
         Ok(OraclePipeline::new(
             rollup_config,
