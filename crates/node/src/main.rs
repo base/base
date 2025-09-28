@@ -29,7 +29,6 @@ struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    /// W endpoint for Flashblocks 
     #[arg(
         long = "websocket-url", 
         value_name = "WEBSOCKET_URL", 
