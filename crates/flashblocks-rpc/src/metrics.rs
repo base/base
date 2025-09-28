@@ -1,5 +1,10 @@
 use metrics::{Counter, Gauge, Histogram};
 use metrics_derive::Metrics;
+/// Metrics for the `reth_flashblocks` component.
+/// Conventions:
+/// - Durations are recorded in seconds (histograms).
+/// - Counters are monotonic event counts.
+/// - Gauges reflect the current value/state.
 #[derive(Metrics, Clone)]
 #[metrics(scope = "reth_flashblocks")]
 pub struct Metrics {
@@ -7,7 +12,7 @@ pub struct Metrics {
     pub upstream_errors: Counter,
 
     #[metric(describe = "Count of messages received from the upstream source")]
-    pub upstream_messages: Gauge,
+    pub upstream_messages: Counter,
 
     #[metric(describe = "Time taken to process a message")]
     pub block_processing_duration: Histogram,
