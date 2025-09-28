@@ -49,6 +49,7 @@ struct Args {
 }
 
 impl Args {
+    #[inline]
     fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
