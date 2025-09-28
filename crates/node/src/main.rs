@@ -29,8 +29,9 @@ struct Args {
     #[command(flatten)]
     pub rollup_args: RollupArgs,
 
-    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
-    pub websocket_url: Option<String>,
+    /// WS endpoint for Flashblocks 
+    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL", value_parser = clap::value_parser!(Url))]
+    pub websocket_url: Option<Url>,
 
     /// Enable transaction tracing ExEx for mempool-to-block timing analysis
     #[arg(
