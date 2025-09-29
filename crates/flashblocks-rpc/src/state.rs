@@ -7,14 +7,13 @@ use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::map::B256HashMap;
-use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, TxHash, B256, U256};
+use alloy_primitives::{BlockNumber, Bytes, Sealable, B256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverridesBuilder};
 use arc_swap::ArcSwapOption;
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_network::Optimism;
 use op_alloy_network::TransactionResponse;
 use op_alloy_rpc_types::Transaction;
 use reth::chainspec::{ChainSpecProvider, EthChainSpec};
@@ -30,8 +29,6 @@ use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use reth_rpc_convert::RpcTransaction;
-use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -120,59 +117,12 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
 }
 
 impl<Client> FlashblocksAPI for FlashblocksState<Client> {
-    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .map(|pb| pb.canonical_block_number())
-            .unwrap_or(BlockNumberOrTag::Latest)
-    }
-
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .map(|pb| pb.get_latest_block(full))
-    }
-
-    fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .and_then(|pb| pb.get_receipt(tx_hash))
-    }
-
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .map(|pb| pb.get_transaction_count(address))
-            .unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>> {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .and_then(|pb| pb.get_balance(address))
+    fn get_pending_blocks(&self) -> Option<Arc<PendingBlocks>> {
+        self.pending_blocks.load_full()
     }
 
     fn subscribe_to_flashblocks(&self) -> tokio::sync::broadcast::Receiver<Flashblock> {
         self.flashblock_sender.subscribe()
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.pending_blocks
-            .load()
-            .as_ref()
-            .and_then(|pb| pb.get_state_overrides())
     }
 }
 
