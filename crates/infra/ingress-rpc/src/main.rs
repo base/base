@@ -11,6 +11,7 @@ use url::Url;
 
 mod queue;
 mod service;
+mod validation;
 use queue::KafkaQueuePublisher;
 use service::{IngressApiServer, IngressService};
 
