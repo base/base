@@ -1,3 +1,6 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{io::Read, sync::Arc, time::Duration};
+
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
@@ -7,8 +10,6 @@ use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{io::Read, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
