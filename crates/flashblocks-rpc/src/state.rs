@@ -605,9 +605,9 @@ where
                             move_precompile_to: None,
                         };
                         state_cache_builder = state_cache_builder.append(*addr, acc_override);
-                        pending_blocks_builder
-                            .with_transaction_state(transaction.tx_hash(), state.clone());
                     }
+                    pending_blocks_builder
+                        .with_transaction_state(transaction.tx_hash(), state.clone());
                     evm.db_mut().commit(state);
                 }
             }
