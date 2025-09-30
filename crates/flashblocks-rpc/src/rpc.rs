@@ -484,65 +484,52 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    fn needs_pending_logs(&self, filter: &Filter) -> bool {
-        // Return true if toBlock is pending, indicating we need pending logs
-        match &filter.block_option {
-            alloy_rpc_types_eth::FilterBlockOption::Range {
-                from_block: _,
-                to_block,
-            } => {
-                matches!(to_block, Some(BlockNumberOrTag::Pending))
-            }
-            _ => false, // Block hash queries don't include pending
-        }
-    }
-
-    fn is_from_block_pending(&self, filter: &Filter) -> bool {
-        // Check if fromBlock is pending
+    fn parse_block_range(
+        &self,
+        filter: &Filter,
+    ) -> Option<(Option<BlockNumberOrTag>, Option<BlockNumberOrTag>)> {
         match &filter.block_option {
             alloy_rpc_types_eth::FilterBlockOption::Range {
                 from_block,
-                to_block: _,
-            } => {
-                matches!(from_block, Some(BlockNumberOrTag::Pending))
-            }
-            _ => false,
+                to_block,
+            } => Some((*from_block, *to_block)),
+            _ => None, // Block hash queries or other formats not supported
         }
+    }
+
+    fn needs_pending_logs(&self, filter: &Filter) -> bool {
+        self.parse_block_range(filter)
+            .map(|(_, to_block)| matches!(to_block, Some(BlockNumberOrTag::Pending)))
+            .unwrap_or(false)
     }
 
     async fn get_logs_hybrid(&self, filter: Filter) -> RpcResult<Vec<Log>> {
         let mut all_logs = Vec::new();
 
+        // Always get pending logs when toBlock is pending
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+
+        // Parse the block range once
+        let (from_block, _to_block) = self.parse_block_range(&filter).ok_or_else(|| {
+            jsonrpsee_types::ErrorObjectOwned::from(EthApiError::InvalidBlockRange)
+        })?;
+
         // Get historical logs if fromBlock is not pending
-        if !self.is_from_block_pending(&filter) {
-            // Create a filter for historical data (fromBlock to latest)
-            let historical_filter = match &filter.block_option {
-                alloy_rpc_types_eth::FilterBlockOption::Range {
-                    from_block,
-                    to_block: _,
-                } => {
-                    // Create new filter with toBlock set to Latest
-                    let mut historical_filter = filter.clone();
-                    historical_filter.block_option =
-                        alloy_rpc_types_eth::FilterBlockOption::Range {
-                            from_block: *from_block,
-                            to_block: Some(BlockNumberOrTag::Latest),
-                        };
-                    historical_filter
-                }
-                _ => {
-                    return Err(jsonrpsee_types::ErrorObjectOwned::from(
-                        EthApiError::InvalidBlockRange,
-                    ))
-                }
+        if !matches!(from_block, Some(BlockNumberOrTag::Pending)) {
+            // Use the canonical block number from pending blocks to ensure consistency
+            let canonical_block = pending_blocks.get_canonical_block_number();
+
+            // Create a filter for historical data (fromBlock to canonical block)
+            let mut historical_filter = filter.clone();
+            historical_filter.block_option = alloy_rpc_types_eth::FilterBlockOption::Range {
+                from_block,
+                to_block: Some(canonical_block),
             };
 
             let historical_logs = self.eth_filter.logs(historical_filter).await?;
             all_logs.extend(historical_logs);
         }
 
-        // Always get pending logs when toBlock is pending
-        let pending_blocks = self.flashblocks_state.get_pending_blocks();
         let pending_logs = pending_blocks.get_pending_logs(&filter);
         all_logs.extend(pending_logs);
 
