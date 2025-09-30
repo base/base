@@ -6,6 +6,8 @@ use tracing::{debug, error, info};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
+use crate::metrics::metrics;
+
 pub mod alloy_client;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,21 +81,17 @@ pub struct BlockProductionHealthChecker<C: EthClient> {
     pub node: Node,
     pub client: C,
     pub config: HealthcheckConfig,
-    pub cached_block_number: Option<u64>,
-    pub stall_emitted_for_current: bool,
     status_code: Arc<AtomicU8>,
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
     pub fn new(node: Node, client: C, config: HealthcheckConfig) -> Self {
-        // default to error until first successful read
-        let initial_status: u8 = HealthState::Error.code();
+        // default to healthy until first classification
+        let initial_status: u8 = HealthState::Healthy.code();
         Self {
             node,
             client,
             config,
-            cached_block_number: None,
-            stall_emitted_for_current: false,
             status_code: Arc::new(AtomicU8::new(initial_status)),
         }
     }
@@ -105,12 +103,11 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             loop {
                 ticker.tick().await;
                 let code = status.load(Ordering::Relaxed);
-                let label = match code {
-                    0 => "healthy",
-                    1 => "unhealthy",
-                    _ => "error",
-                };
-                metrics::counter!("base.blocks.status", "status" => label).increment(1);
+                match code {
+                    0 => metrics.status_healthy.increment(1),
+                    1 => metrics.status_unhealthy.increment(1),
+                    _ => metrics.status_error.increment(1),
+                }
             }
         })
     }
@@ -131,7 +128,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                     self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
-                    metrics::counter!("base.blocks.error").increment(1);
+                    metrics.error.increment(1);
                     self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
@@ -142,7 +139,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                     self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
-                    metrics::counter!("base.blocks.error").increment(1);
+                    metrics.error.increment(1);
                     self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
@@ -156,57 +153,38 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             .as_secs();
         let block_age_ms = now_secs.saturating_sub(latest.timestamp_unix_seconds) * 1000;
 
-        // Keep head age gauge for observability
-        metrics::gauge!("base.blocks.head_age_ms").set(block_age_ms as f64);
+        metrics.head_age_ms.set(block_age_ms as f64);
 
-        let grace_ms = self.config.grace_period_ms;
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
-
-        // Classify state and update last status (no head_state gauge)
-        let state = if block_age_ms > grace_ms { HealthState::Unhealthy } else { HealthState::Healthy };
+        let grace_ms = self.config.grace_period_ms;
+        let state = if self.node.is_new_instance {
+            HealthState::Healthy
+        } else if block_age_ms >= unhealthy_ms {
+            HealthState::Unhealthy
+        } else {
+            HealthState::Healthy
+        };
         self.status_code.store(state.code(), Ordering::Relaxed);
 
-        // If new head: emit one initial classification and reset stall flag.
-        // If same head: emit a single stall event once it crosses unhealthy, then suppress further repeats.
-        if let Some(cached) = self.cached_block_number {
-            if cached == latest.number {
-                // Same head, evaluate for stall-at-unhealthy once (unless new instance suppression)
-                if !self.node.is_new_instance
-                    && !self.stall_emitted_for_current
-                    && block_age_ms >= unhealthy_ms
-                {
-                    error!(
-                        blockNumber = latest.number,
-                        sequencer = %url,
-                        age_ms = block_age_ms,
-                        "chain stalled: crossed unhealthy threshold"
-                    );
-                    metrics::counter!("base.blocks.stalled_unhealthy").increment(1);
-                    self.stall_emitted_for_current = true;
-                }
-                return;
-            }
-        }
-
         if block_age_ms > grace_ms {
-            if !self.node.is_new_instance {
-                if block_age_ms >= unhealthy_ms {
-                    error!(
-                        blockNumber = latest.number,
-                        sequencer = %url,
-                        age_ms = block_age_ms,
-                        "block production unhealthy"
-                    );
-                    metrics::counter!("base.blocks.unhealthy").increment(1);
-                } else {
-                    info!(
-                        blockNumber = latest.number,
-                        sequencer = %url,
-                        age_ms = block_age_ms,
-                        "delayed block production detected"
-                    );
-                    metrics::counter!("base.blocks.delayed").increment(1);
-                }
+            if self.node.is_new_instance {
+                // Suppress delayed/unhealthy while new instance catches up
+            } else if block_age_ms >= unhealthy_ms {
+                error!(
+                    blockNumber = latest.number,
+                    sequencer = %url,
+                    age_ms = block_age_ms,
+                    "block production unhealthy"
+                );
+                metrics.unhealthy.increment(1);
+            } else {
+                info!(
+                    blockNumber = latest.number,
+                    sequencer = %url,
+                    age_ms = block_age_ms,
+                    "delayed block production detected"
+                );
+                metrics.delayed.increment(1);
             }
         } else {
             if self.node.is_new_instance {
@@ -222,12 +200,8 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                 sequencer = %url,
                 "block production healthy"
             );
-            metrics::counter!("base.blocks.healthy").increment(1);
+            metrics.healthy.increment(1);
         }
-
-        // Cache number after evaluation
-        self.cached_block_number = Some(latest.number);
-        self.stall_emitted_for_current = false;
     }
 
     pub async fn poll_for_health_checks(&mut self) {
@@ -281,8 +255,7 @@ mod tests {
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
 
         checker.run_health_check().await;
-        assert_eq!(checker.cached_block_number, Some(1));
-        assert!(!checker.stall_emitted_for_current);
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -302,7 +275,7 @@ mod tests {
 
         // First healthy block
         checker.run_health_check().await;
-        assert_eq!(checker.cached_block_number, Some(1));
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
         // Next block arrives but is delayed beyond grace
         let delayed_ts = start.saturating_sub((grace_ms / 1000) + 1);
@@ -311,8 +284,7 @@ mod tests {
             timestamp_unix_seconds: delayed_ts,
         };
         checker.run_health_check().await;
-        assert_eq!(checker.cached_block_number, Some(2));
-        assert!(!checker.stall_emitted_for_current);
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -332,8 +304,7 @@ mod tests {
 
         // First observation (healthy)
         checker.run_health_check().await;
-        assert_eq!(checker.cached_block_number, Some(10));
-        assert!(!checker.stall_emitted_for_current);
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
 
         // Same head, but now sufficiently old to be unhealthy -> emits stall once
         let unhealthy_ts = start.saturating_sub((unhealthy_ms / 1000) + 1);
@@ -342,10 +313,10 @@ mod tests {
             timestamp_unix_seconds: unhealthy_ts,
         };
         checker.run_health_check().await;
-        assert!(checker.stall_emitted_for_current);
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
 
         // Re-run again with same head: should not re-emit; flag remains set
         checker.run_health_check().await;
-        assert!(checker.stall_emitted_for_current);
+        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
     }
 }

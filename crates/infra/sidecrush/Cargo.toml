@@ -13,6 +13,8 @@ async-trait = "0.1"
 anyhow = "1.0"
 clap = { workspace = true }
 metrics-exporter-dogstatsd = "0.9"
+once_cell = "1"
+reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
 # Ethereum client deps (will be used for header fetching)
 alloy-provider = { workspace = true }
