@@ -1,5 +1,4 @@
 use clap::Parser;
-use metrics_exporter_dogstatsd::DogStatsDBuilder;
 use sidecrush::blockbuilding_healthcheck::{
     alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
 };
@@ -35,10 +34,6 @@ struct Args {
     /// Treat node as a new instance on startup (suppresses initial errors until healthy)
     #[arg(long, env, default_value_t = true)]
     new_instance: bool,
-
-    /// StatsD address (host:port). If set, metrics are sent to this StatsD/DogStatsD endpoint.
-    #[arg(long, env, value_name = "HOST:PORT")]
-    statsd_addr: Option<String>,
 }
 
 #[tokio::main]
@@ -64,19 +59,6 @@ async fn main() {
         args.grace_period_ms,
         args.unhealthy_node_threshold_ms,
     );
-
-    // Initialize StatsD if configured
-    if let Some(addr) = &args.statsd_addr {
-        let builder = DogStatsDBuilder::default().with_remote_address(addr);
-        match builder {
-            Ok(b) => {
-                let _ = b.install();
-            }
-            Err(e) => {
-                tracing::warn!(addr = %addr, error = %format!("{e:?}"), "Failed to init StatsD");
-            }
-        }
-    }
 
     let mut checker: BlockProductionHealthChecker<_> =
         BlockProductionHealthChecker::new(node, client, config);

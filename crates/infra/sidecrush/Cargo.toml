@@ -12,7 +12,6 @@ metrics-derive = { workspace = true }
 async-trait = "0.1"
 anyhow = "1.0"
 clap = { workspace = true }
-metrics-exporter-dogstatsd = "0.9"
 once_cell = "1"
 reth-metrics = { git = "https://github.com/paradigmxyz/reth", tag = "v1.6.0" }
 
@@ -22,3 +21,7 @@ alloy-transport-http = { workspace = true }
 alloy-rpc-types-eth = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing = { workspace = true }
