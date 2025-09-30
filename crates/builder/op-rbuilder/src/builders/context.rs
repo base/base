@@ -325,6 +325,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         let mut num_txs_simulated_success = 0;
         let mut num_txs_simulated_fail = 0;
         let mut num_bundles_reverted = 0;
+        let mut reverted_gas_used = 0;
         let base_fee = self.base_fee();
         let tx_da_limit = self.da_config.max_da_tx_size();
         let mut evm = self.evm_config.evm_with_env(&mut *db, self.evm_env.clone());
@@ -336,15 +337,6 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             tx_da_limit = ?tx_da_limit,
             block_gas_limit = ?block_gas_limit,
         );
-
-        // Remove once we merge Reth 1.4.4
-        // Fixed in https://github.com/paradigmxyz/reth/pull/16514
-        self.metrics
-            .da_block_size_limit
-            .set(block_da_limit.map_or(-1.0, |v| v as f64));
-        self.metrics
-            .da_tx_size_limit
-            .set(tx_da_limit.map_or(-1.0, |v| v as f64));
 
         let block_attr = BlockConditionalAttributes {
             number: self.block_number(),
@@ -451,7 +443,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     }
                     // this is an error that we should treat as fatal for this attempt
                     log_txn(TxnExecutionResult::EvmError);
-                    return Err(PayloadBuilderError::EvmExecutionError(Box::new(err)));
+                    return Err(PayloadBuilderError::evm(err));
                 }
             };
 
@@ -478,8 +470,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             if result.is_success() {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
+                self.metrics.successful_tx_gas_used.record(gas_used as f64);
             } else {
                 num_txs_simulated_fail += 1;
+                reverted_gas_used += gas_used as i32;
+                self.metrics.reverted_tx_gas_used.record(gas_used as f64);
                 if is_bundle_tx {
                     num_bundles_reverted += 1;
                 }
@@ -539,6 +534,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             num_txs_simulated_success,
             num_txs_simulated_fail,
             num_bundles_reverted,
+            reverted_gas_used,
         );
 
         debug!(
