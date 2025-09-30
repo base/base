@@ -468,51 +468,28 @@ where
             address = ?filter.address
         );
 
-        // Check if we need to include pending logs in the response
-        if self.needs_pending_logs(&filter) {
-            self.metrics.get_logs.increment(1);
-            self.get_logs_hybrid(filter).await
-        } else {
-            // Pure historical queries - delegate to underlying reth node
-            self.eth_filter.logs(filter).await
-        }
-    }
-}
-
-impl<Eth, FB> EthApiExt<Eth, FB>
-where
-    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
-    FB: FlashblocksAPI + Send + Sync + 'static,
-{
-    fn parse_block_range(
-        &self,
-        filter: &Filter,
-    ) -> Option<(Option<BlockNumberOrTag>, Option<BlockNumberOrTag>)> {
-        match &filter.block_option {
+        // Check if this is a mixed query (toBlock is pending)
+        let (from_block, to_block) = match &filter.block_option {
             alloy_rpc_types_eth::FilterBlockOption::Range {
                 from_block,
                 to_block,
-            } => Some((*from_block, *to_block)),
-            _ => None, // Block hash queries or other formats not supported
+            } => (*from_block, *to_block),
+            _ => {
+                // Block hash queries or other formats - delegate to eth API
+                return self.eth_filter.logs(filter).await;
+            }
+        };
+
+        // If toBlock is not pending, delegate to eth API
+        if !matches!(to_block, Some(BlockNumberOrTag::Pending)) {
+            return self.eth_filter.logs(filter).await;
         }
-    }
 
-    fn needs_pending_logs(&self, filter: &Filter) -> bool {
-        self.parse_block_range(filter)
-            .map(|(_, to_block)| matches!(to_block, Some(BlockNumberOrTag::Pending)))
-            .unwrap_or(false)
-    }
-
-    async fn get_logs_hybrid(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        // Mixed query: toBlock is pending, so we need to combine historical + pending logs
+        self.metrics.get_logs.increment(1);
         let mut all_logs = Vec::new();
 
-        // Always get pending logs when toBlock is pending
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
-
-        // Parse the block range once
-        let (from_block, _to_block) = self.parse_block_range(&filter).ok_or_else(|| {
-            jsonrpsee_types::ErrorObjectOwned::from(EthApiError::InvalidBlockRange)
-        })?;
 
         // Get historical logs if fromBlock is not pending
         if !matches!(from_block, Some(BlockNumberOrTag::Pending)) {
@@ -530,12 +507,19 @@ where
             all_logs.extend(historical_logs);
         }
 
+        // Always get pending logs when toBlock is pending
         let pending_logs = pending_blocks.get_pending_logs(&filter);
         all_logs.extend(pending_logs);
 
         Ok(all_logs)
     }
+}
 
+impl<Eth, FB> EthApiExt<Eth, FB>
+where
+    Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
+    FB: FlashblocksAPI + Send + Sync + 'static,
+{
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
         let mut receiver = self.flashblocks_state.subscribe_to_flashblocks();
 
