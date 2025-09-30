@@ -866,15 +866,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_logs_non_pending_queries_go_to_eth_api() -> eyre::Result<()> {
+    async fn test_get_logs_mixed_block_ranges() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
         node.send_test_payloads().await?;
 
-        // Test that non-pure-pending queries go to the regular eth API
-        // This filter from block 0 to pending should go to eth API (not pure pending)
+        // Test fromBlock: 0, toBlock: pending (should include both historical and pending)
         let logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
@@ -883,10 +882,48 @@ mod tests {
             )
             .await?;
 
-        // Should be handled by underlying eth API (empty in our test setup)
-        assert_eq!(logs.len(), 0);
+        // Should now include pending logs (2 logs from our test setup)
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
-        // Test that latest queries also go to eth API
+        // Test fromBlock: latest, toBlock: pending
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(alloy_eips::BlockNumberOrTag::Latest)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should include pending logs (historical part is empty in our test setup)
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+
+        // Test fromBlock: earliest, toBlock: pending
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(alloy_eips::BlockNumberOrTag::Earliest)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should include pending logs (historical part is empty in our test setup)
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_logs_pure_historical_queries_go_to_eth_api() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_test_payloads().await?;
+
+        // Test that pure historical queries still go to eth API
         let logs = provider
             .get_logs(
                 &alloy_rpc_types_eth::Filter::default()
@@ -897,6 +934,83 @@ mod tests {
 
         // Should be handled by underlying eth API (empty in our test setup)
         assert_eq!(logs.len(), 0);
+
+        // Test specific block number range
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(0)
+                    .to_block(100),
+            )
+            .await?;
+
+        // Should be handled by underlying eth API (empty in our test setup)
+        assert_eq!(logs.len(), 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_logs_mixed_range_with_filtering() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_test_payloads().await?;
+
+        // Test mixed range with address filtering
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .address(COUNTER_ADDRESS)
+                    .from_block(0)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should get only 1 log from COUNTER_ADDRESS in pending state
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address(), COUNTER_ADDRESS);
+        assert_eq!(logs[0].transaction_hash, Some(INCREMENT_HASH));
+
+        // Test mixed range with topic filtering
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .event_signature(TEST_LOG_TOPIC_0)
+                    .from_block(alloy_eips::BlockNumberOrTag::Latest)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should get both logs that match the topic
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.topics()[0] == TEST_LOG_TOPIC_0));
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_logs_pending_to_pending_still_works() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        node.send_test_payloads().await?;
+
+        // Test that pure pending to pending queries still work (legacy behavior)
+        let logs = provider
+            .get_logs(
+                &alloy_rpc_types_eth::Filter::default()
+                    .from_block(alloy_eips::BlockNumberOrTag::Pending)
+                    .to_block(alloy_eips::BlockNumberOrTag::Pending),
+            )
+            .await?;
+
+        // Should get 2 logs from pending state
+        assert_eq!(logs.len(), 2);
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         Ok(())
     }

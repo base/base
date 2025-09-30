@@ -427,14 +427,12 @@ where
             address = ?filter.address
         );
 
-        // Only handle pure pending queries: fromBlock="pending" and toBlock="pending"
-        // Everything else goes to regular eth API
-        if self.is_pending_query(&filter) {
+        // Check if we need to include pending logs in the response
+        if self.needs_pending_logs(&filter) {
             self.metrics.get_logs.increment(1);
-            let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
-            Ok(pending_logs)
+            self.get_logs_hybrid(filter).await
         } else {
-            // All other queries - delegate to underlying reth node
+            // Pure historical queries - delegate to underlying reth node
             self.eth_filter.logs(filter).await
         }
     }
@@ -445,23 +443,63 @@ where
     Eth: FullEthApi<NetworkTypes = Optimism> + Send + Sync + 'static,
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    fn is_pending_query(&self, filter: &Filter) -> bool {
-        // Only return true for pure pending queries: both fromBlock and toBlock must be "pending"
+    fn needs_pending_logs(&self, filter: &Filter) -> bool {
+        // Return true if toBlock is pending, indicating we need pending logs
+        match &filter.block_option {
+            alloy_rpc_types_eth::FilterBlockOption::Range {
+                from_block: _,
+                to_block,
+            } => {
+                matches!(to_block, Some(BlockNumberOrTag::Pending))
+            }
+            _ => false, // Block hash queries don't include pending
+        }
+    }
+
+    fn is_from_block_pending(&self, filter: &Filter) -> bool {
+        // Check if fromBlock is pending
         match &filter.block_option {
             alloy_rpc_types_eth::FilterBlockOption::Range {
                 from_block,
-                to_block,
+                to_block: _,
             } => {
-                matches!(
-                    (from_block, to_block),
-                    (
-                        Some(BlockNumberOrTag::Pending),
-                        Some(BlockNumberOrTag::Pending)
-                    )
-                )
+                matches!(from_block, Some(BlockNumberOrTag::Pending))
             }
-            _ => false, // Block hash queries or other formats are not pure pending
+            _ => false,
         }
+    }
+
+    async fn get_logs_hybrid(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        let mut all_logs = Vec::new();
+
+        // Get historical logs if fromBlock is not pending
+        if !self.is_from_block_pending(&filter) {
+            // Create a filter for historical data (fromBlock to latest)
+            let historical_filter = match &filter.block_option {
+                alloy_rpc_types_eth::FilterBlockOption::Range {
+                    from_block,
+                    to_block: _,
+                } => {
+                    // Create new filter with toBlock set to Latest
+                    let mut historical_filter = filter.clone();
+                    historical_filter.block_option = alloy_rpc_types_eth::FilterBlockOption::Range {
+                        from_block: *from_block,
+                        to_block: Some(BlockNumberOrTag::Latest),
+                    };
+                    historical_filter
+                }
+                _ => return Err(jsonrpsee_types::ErrorObjectOwned::from(EthApiError::InvalidBlockRange)),
+            };
+
+            let historical_logs = self.eth_filter.logs(historical_filter).await?;
+            all_logs.extend(historical_logs);
+        }
+
+        // Always get pending logs when toBlock is pending
+        let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
+        all_logs.extend(pending_logs);
+
+        Ok(all_logs)
     }
 
     async fn wait_for_flashblocks_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>> {
