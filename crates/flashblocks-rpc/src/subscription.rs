@@ -27,14 +27,6 @@ pub trait FlashblocksReceiver {
     fn on_flashblock_received(&self, flashblock: Flashblock);
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct FlashbotsMessage {
-    method: String,
-    params: serde_json::Value,
-    #[serde(default)]
-    id: Option<u64>,
-}
-
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Metadata {
     pub receipts: HashMap<B256, OpReceipt>,

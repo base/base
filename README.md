@@ -5,7 +5,7 @@
 > [!WARNING]
 > This repository is for development purposes. For production deployments, please use the releases referenced in [base/node](https://github.com/base/node/releases).
 
-Base Reth Node is an implementation of a Reth Ethereum node, specifically tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth `v1.7.0`. This node is designed to provide a robust and efficient solution for interacting with the Base network.
+Base Reth Node is an implementation of a Reth Ethereum node, specifically tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth `v1.8.1`. This node is designed to provide a robust and efficient solution for interacting with the Base network.
 
 <!-- Badge row 1 - status -->
 
@@ -32,7 +32,7 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 
 - **Base L2 Support:** Optimized for the Base Layer 2 network.
 - **Flashblocks RPC:** Includes a `flashblocks-rpc` crate for Flashblocks.
-- **Reth Based:** Built upon Reth `v1.7.0`, incorporating its Optimism features.
+- **Reth Based:** Built upon Reth `v1.8.1`, incorporating its Optimism features.
 - **Dockerized:** Comes with a `Dockerfile` for easy containerization and deployment.
 - **Development Toolkit:** Includes a `justfile` for streamlined build, test, and linting workflows.
 
@@ -54,6 +54,7 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 ├── README.md         # This file
 ├── crates/
 │   ├── node/         # Main node application logic
+│   ├── transaction-tracing/ # Transaction tracing utilities
 │   └── flashblocks-rpc/ # RPC server for Flashblocks integration
 ├── justfile          # Command runner for development tasks
 └── .github/

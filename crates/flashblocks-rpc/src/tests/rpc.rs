@@ -359,7 +359,7 @@ mod tests {
             .expect("latest block expected");
         assert_eq!(latest_block.number(), 0);
 
-        // Querying pending block when it does not exists yet
+        // Querying pending block when it does not exist yet
         let pending_block = provider
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
             .await?;
@@ -522,7 +522,7 @@ mod tests {
 
         node.send_test_payloads().await?;
 
-        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // We included a heavy spending transaction and now don't have enough funds for this request, so
         // this eth_call with fail
         let res = provider
             .call(send_eth_call.nonce(3))
@@ -582,7 +582,7 @@ mod tests {
 
         node.send_test_payloads().await?;
 
-        // We included heavy spending transaction and now don't have enough funds for this request, so
+        // We included a heavy spending transaction and now don't have enough funds for this request, so
         // this eth_estimate_gas with fail
         let res = provider
             .estimate_gas(send_estimate_gas.nonce(3))
@@ -693,7 +693,7 @@ mod tests {
         reth_tracing::init_test_tracing();
         let node = setup_node().await.unwrap();
 
-        // fail request immediately by passing timeout of 0 ms
+        // fail request immediately by passing a timeout of 0 ms
         let receipt_result = node
             .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
             .await;

@@ -1,51 +1,48 @@
 use alloy_primitives::TxHash;
+use chrono::Local;
 use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
 use reth::api::{BlockBody, FullNodeComponents};
-use reth::core::primitives::{AlloyBlockHeader, SignedTransaction};
+use reth::core::primitives::{transaction::TxHashRef, AlloyBlockHeader};
 use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
-use reth_tracing::tracing::debug;
+use reth_tracing::tracing::{debug, info};
 use std::num::NonZeroUsize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-/// Types of transaction events to track
-#[derive(Debug)]
-enum TxEvent {
-    Dropped,
-    Replaced,
-    BlockInclusion,
-    PendingToQueued,
-    QueuedToPending,
+use crate::types::{EventLog, Pool, TxEvent};
+
+/// Max size of the LRU cache
+const MAX_SIZE: usize = 20000;
+
+fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
+    metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
+        .record(time_in_mempool.as_millis() as f64);
 }
 
-/// Types of pools a transaction can be in
-#[derive(Debug, Clone, PartialEq)]
-enum Pool {
-    Pending,
-    Queued,
-}
-
-/// Simple ExEx that tracks transaction timing from mempool to inclusion
+/// ExEx that tracks transaction timing from mempool to inclusion
 struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool
-    txs: LruCache<TxHash, Instant>,
+    txs: LruCache<TxHash, EventLog>,
     /// Map of transaction hash to current state
     tx_states: LruCache<TxHash, Pool>,
+    /// Enable `info` logs for transaction tracing
+    enable_logs: bool,
 }
 
 impl Tracker {
     /// Create a new tracker
-    fn new() -> Self {
+    fn new(enable_logs: bool) -> Self {
         Self {
-            txs: LruCache::new(NonZeroUsize::new(20000).unwrap()),
-            tx_states: LruCache::new(NonZeroUsize::new(20000).unwrap()),
+            txs: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
+            tx_states: LruCache::new(NonZeroUsize::new(MAX_SIZE).unwrap()),
+            enable_logs,
         }
     }
 
     /// Track the first time we see a transaction in the mempool
-    fn transaction_inserted(&mut self, tx_hash: TxHash) {
+    fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
         // if we've seen the tx before, don't track it again. for example,
         // if a tx was pending then moved to queued, we don't want to update the timestamp
         // with the queued timestamp.
@@ -53,8 +50,15 @@ impl Tracker {
             return;
         }
 
-        let now = Instant::now();
-        self.txs.put(tx_hash, now);
+        // if the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
+        // before it gets evicted. this can be useful to see the full history of a transaction.
+        if self.txs.len() == MAX_SIZE {
+            if let Some((tx_hash, event_log)) = self.txs.peek_lru() {
+                self.log(tx_hash, event_log, "Transaction inserted");
+            }
+        }
+
+        self.txs.put(tx_hash, EventLog::new(Local::now(), event));
     }
 
     /// Track a transaction moving from one pool to another
@@ -67,8 +71,22 @@ impl Tracker {
                     (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
                     _ => None,
                 };
-                if let Some(tx_event) = event {
-                    self.transaction_event(tx_hash, tx_event);
+                if event.is_none() {
+                    return;
+                }
+
+                if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+                    let mempool_time = event_log.mempool_time;
+                    let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+                    if self.is_overflowed(&tx_hash, &event_log) {
+                        // the tx is already removed from the cache from `pop`
+                        return;
+                    }
+                    event_log.push(Local::now(), event.unwrap());
+                    self.txs.put(tx_hash, event_log);
+
+                    record_histogram(time_in_mempool, event.unwrap());
                 }
             }
         }
@@ -78,44 +96,77 @@ impl Tracker {
         debug!(target: "transaction-tracing", tx_hash = ?tx_hash, state = ?pool, "Transaction moved pools");
     }
 
-    /// Track a transaction event
-    fn transaction_event(&mut self, tx_hash: TxHash, event: TxEvent) {
-        if let Some(mempool_time) = self.txs.pop(&tx_hash) {
+    /// Track a transaction being included in a block or dropped.
+    fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
+        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+            let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
 
-            // Record histogram with event label
-            let event_label = match event {
-                TxEvent::Dropped => "dropped",
-                TxEvent::Replaced => "replaced",
-                TxEvent::BlockInclusion => "block_inclusion",
-                TxEvent::PendingToQueued => "pending_to_queued",
-                TxEvent::QueuedToPending => "queued_to_pending",
-            };
-            metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event_label)
-                .record(time_in_mempool.as_millis() as f64);
+            if self.is_overflowed(&tx_hash, &event_log) {
+                return;
+            }
+            // don't add it back to LRU so that we keep the LRU cache size small which will help longer-lived txs
+            // but do update the event log with the final event (i.e., included/dropped)
+            event_log.push(Local::now(), event);
 
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                event = ?event,
-                time_in_mempool = ?time_in_mempool.as_millis(),
-                "Transaction event",
-            );
-        } else {
-            debug!(
-                target: "transaction-tracing",
-                tx_hash = ?tx_hash,
-                "Transaction included in block (not tracked by ExEx)",
-            );
+            // if a tx is included/dropped, log it now.
+            self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
+            record_histogram(time_in_mempool, event);
         }
+    }
+
+    /// Track a transaction being replaced by removing it from the cache and adding the new tx.
+    fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
+        if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+            let mempool_time = event_log.mempool_time;
+            let time_in_mempool = Instant::now().duration_since(mempool_time);
+            debug!(target: "transaction-tracing", tx_hash = ?tx_hash, replaced_by = ?replaced_by, "Transaction replaced");
+
+            if self.is_overflowed(&tx_hash, &event_log) {
+                return;
+            }
+            // keep the event log and update the tx hash
+            event_log.push(Local::now(), TxEvent::Replaced);
+            self.txs.put(replaced_by, event_log);
+
+            record_histogram(time_in_mempool, TxEvent::Replaced);
+        }
+    }
+
+    fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
+        if !self.enable_logs {
+            return;
+        }
+
+        let events = event_log.to_vec();
+        if !events.is_empty() {
+            info!(target: "transaction-tracing", tx_hash = ?tx_hash, events = ?events, %msg);
+        }
+    }
+
+    // if `is_overflowed` is true then we record an overflowed metric and log the event log
+    // and don't record the other event that was supposed to be recorded
+    fn is_overflowed(&self, tx_hash: &TxHash, event_log: &EventLog) -> bool {
+        if event_log.events.len() < event_log.limit {
+            return false;
+        }
+
+        self.log(
+            tx_hash,
+            event_log,
+            "Transaction removed from cache due to limit",
+        );
+        record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
+        true
     }
 }
 
 pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
+    enable_logs: bool,
 ) -> Result<()> {
     debug!(target: "transaction-tracing", "Starting transaction tracking ExEx");
-    let mut track = Tracker::new();
+    let mut track = Tracker::new(enable_logs);
 
     // Subscribe to events from the mempool
     let pool = ctx.pool().clone();
@@ -127,19 +178,19 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
             Some(full_event) = all_events_stream.next() => {
                 match full_event {
                     FullTransactionEvent::Pending(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxEvent::Pending);
                         track.transaction_moved(tx_hash, Pool::Pending);
                     }
                     FullTransactionEvent::Queued(tx_hash) => {
-                        track.transaction_inserted(tx_hash);
+                        track.transaction_inserted(tx_hash, TxEvent::Queued);
                         track.transaction_moved(tx_hash, Pool::Queued);
                     }
                     FullTransactionEvent::Discarded(tx_hash) => {
-                        track.transaction_event(tx_hash, TxEvent::Dropped);
+                        track.transaction_completed(tx_hash, TxEvent::Dropped);
                     }
-                    FullTransactionEvent::Replaced{transaction, replaced_by: _} => {
+                    FullTransactionEvent::Replaced{transaction, replaced_by} => {
                         let tx_hash = transaction.hash();
-                        track.transaction_event(*tx_hash, TxEvent::Replaced);
+                        track.transaction_replaced(*tx_hash, TxHash::from(replaced_by));
                     }
                     _ => {
                         // Other events
@@ -154,7 +205,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         // Process all transactions in committed chain
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;
@@ -163,7 +214,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         debug!(target: "transaction-tracing", tip = ?new.tip().number(), "Chain reorg detected");
                         for block in new.blocks().values() {
                             for transaction in block.body().transactions() {
-                                track.transaction_event(*transaction.tx_hash(), TxEvent::BlockInclusion);
+                                track.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
                             }
                         }
                         ctx.events.send(ExExEvent::FinishedHeight(new.tip().num_hash()))?;

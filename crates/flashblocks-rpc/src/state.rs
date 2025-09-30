@@ -33,7 +33,6 @@ use reth_primitives::RecoveredBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -90,7 +89,7 @@ where
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         match self.queue.send(StateUpdate::Canonical(block.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added canonical block to processing queue",
                     block_number = block.number
                 )
@@ -106,7 +105,7 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
         match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
             Ok(_) => {
-                debug!(
+                info!(
                     message = "added flashblock to processing queue",
                     block_number = flashblock.metadata.block_number,
                     flashblock_index = flashblock.index
@@ -283,24 +282,28 @@ where
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
-                    // Reorg
+                    flashblocks
+                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
+
                     if tracked_txn_hashes.len() != block_txn_hashes.len()
                         || tracked_txn_hashes != block_txn_hashes
                     {
                         warn!(
-                            message = "reorg detected, clearing pending blocks",
+                            message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
                             latest_pending_block = pending_blocks.latest_block_number(),
-                            canonical_block = block.number
+                            canonical_block = block.number,
+                            tracked_txn_hashes_len = tracked_txn_hashes.len(),
+                            block_txn_hashes_len = block_txn_hashes.len(),
+                            tracked_txn_hashes = ?tracked_txn_hashes,
+                            block_txn_hashes = ?block_txn_hashes,
                         );
                         self.metrics.pending_clear_reorg.increment(1);
 
-                        return Ok(None);
+                        // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
+                        return self.build_pending_state(None, &flashblocks);
                     }
 
-                    // If no reorg, we clear everything not necessary and re-process
-                    flashblocks
-                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
-
+                    // If no reorg, we can continue building on top of the existing pending state
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
                 }
             }
@@ -348,7 +351,7 @@ where
                 if flashblock.index == 0 {
                     self.build_pending_state(None, &vec![flashblock.clone()])
                 } else {
-                    debug!(message = "waiting for first Flashblock");
+                    info!(message = "waiting for first Flashblock");
                     Ok(None)
                 }
             }
@@ -556,7 +559,7 @@ where
                 };
 
                 let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
-                    receipt: Cow::Borrowed(&receipt),
+                    receipt: receipt.clone(),
                     tx: Recovered::new_unchecked(transaction, sender),
                     gas_used: receipt.cumulative_gas_used() - gas_used,
                     next_log_index,

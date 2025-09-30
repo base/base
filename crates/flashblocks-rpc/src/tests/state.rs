@@ -3,6 +3,7 @@ mod tests {
     use crate::rpc::FlashblocksAPI;
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
+    use crate::tests::utils::create_test_provider_factory;
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;
     use alloy_consensus::{BlockHeader, Receipt};
@@ -15,6 +16,7 @@ mod tests {
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
     use reth::builder::NodeTypesWithDBAdapter;
+    use reth::chainspec::EthChainSpec;
     use reth::providers::{AccountReader, BlockNumReader, BlockReader};
     use reth::revm::database::StateProviderDatabase;
     use reth::transaction_pool::test_utils::TransactionBuilder;
@@ -27,7 +29,6 @@ mod tests {
     use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::providers::BlockchainProvider;
-    use reth_provider::test_utils::create_test_provider_factory_with_node_types;
     use reth_provider::{
         BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
     };
@@ -114,6 +115,7 @@ mod tests {
         ) -> OpTransactionSigned {
             let txn = TransactionBuilder::default()
                 .signer(self.signer(from))
+                .chain_id(self.provider.chain_spec().chain_id())
                 .to(self.address(to))
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
@@ -136,6 +138,7 @@ mod tests {
         ) -> OpTransactionSigned {
             let txn = TransactionBuilder::default()
                 .signer(self.signer(from))
+                .chain_id(self.provider.chain_spec().chain_id())
                 .to(self.address(to))
                 .nonce(nonce)
                 .value(amount)
@@ -158,7 +161,7 @@ mod tests {
             let current_tip = self.current_canonical_block();
 
             let deposit_transaction =
-                OpTransactionSigned::decode_2718_exact(BLOCK_INFO_TXN.iter().as_slice()).unwrap();
+                OpTransactionSigned::decode_2718_exact(&BLOCK_INFO_TXN.iter().as_slice()).unwrap();
 
             let mut transactions: Vec<OpTransactionSigned> = vec![deposit_transaction];
             transactions.append(&mut user_transactions);
@@ -207,7 +210,6 @@ mod tests {
                     vec![block.clone()],
                     &execution_outcome,
                     Default::default(),
-                    Default::default(),
                 )
                 .unwrap();
             provider_rw.commit().unwrap();
@@ -252,9 +254,7 @@ mod tests {
                 .isthmus_activated()
                 .build();
 
-            let factory =
-                create_test_provider_factory_with_node_types::<OpNode>(Arc::new(chain_spec));
-
+            let factory = create_test_provider_factory::<OpNode>(Arc::new(chain_spec));
             assert!(reth_db_common::init::init_genesis(&factory).is_ok());
 
             let provider =
@@ -306,7 +306,7 @@ mod tests {
         pub fn new_base(harness: &TestHarness) -> Self {
             Self {
                 canonical_block_number: None,
-                transactions: vec![BLOCK_INFO_TXN],
+                transactions: vec![BLOCK_INFO_TXN.clone()],
                 receipts: {
                     let mut receipts = alloy_primitives::map::HashMap::default();
                     receipts.insert(
@@ -601,7 +601,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_pending_state_cleared_upon_canonical_block_reorg() {
+    async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         reth_tracing::init_test_tracing();
         let mut test = TestHarness::new();
 
@@ -697,8 +697,25 @@ mod tests {
         )])
         .await;
 
-        assert!(test.flashblocks.get_block(true).is_none());
-        assert!(test.flashblocks.get_state_overrides().is_none());
+        let pending = test.flashblocks.get_block(true);
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.transactions.len(), 2);
+
+        let overrides = test
+            .flashblocks
+            .get_state_overrides()
+            .expect("should be set from txn execution");
+
+        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert_eq!(
+            overrides
+                .get(&test.address(User::Bob))
+                .expect("should be set as txn receiver")
+                .balance
+                .expect("should be changed due to receiving funds"),
+            U256::from(100_100_100)
+        );
     }
 
     #[tokio::test]
@@ -875,9 +892,9 @@ mod tests {
         ])
         .await;
 
-        let block_one = test.current_canonical_block();
-        assert_eq!(block_one.number, 2);
-        assert_eq!(block_one.transaction_count(), 3);
+        let block_two = test.current_canonical_block();
+        assert_eq!(block_two.number, 2);
+        assert_eq!(block_two.transaction_count(), 3);
         assert!(test.flashblocks.get_block(true).is_none());
     }
 }
