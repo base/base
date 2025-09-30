@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::metrics::Metrics;
+use crate::pending_blocks::PendingBlocks;
 use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, TxHash, U256};
@@ -9,6 +10,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
 use alloy_rpc_types::BlockOverrides;
 use alloy_rpc_types_eth::{Filter, Log};
+use arc_swap::Guard;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -37,14 +39,24 @@ pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
+    /// Retrieves the pending blocks.
+    fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>>;
+
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
+}
+
+pub trait PendingBlocksAPI {
+    /// Get the canonical block number on top of which all pending state is built
+    fn get_canonical_block_number(&self) -> BlockNumberOrTag;
+
+    /// Get the pending transactions count for an address
+    fn get_transaction_count(&self, address: Address) -> U256;
+
     /// Retrieves the current block. If `full` is true, includes full transaction details.
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>>;
 
     /// Gets transaction receipt by hash.
     fn get_transaction_receipt(&self, tx_hash: TxHash) -> Option<RpcReceipt<Optimism>>;
-
-    /// Gets transaction count (nonce) for an address.
-    fn get_transaction_count(&self, address: Address) -> U256;
 
     /// Gets transaction details by hash.
     fn get_transaction_by_hash(&self, tx_hash: TxHash) -> Option<RpcTransaction<Optimism>>;
@@ -52,9 +64,7 @@ pub trait FlashblocksAPI {
     /// Gets balance for an address. Returns None if address not updated in flashblocks.
     fn get_balance(&self, address: Address) -> Option<U256>;
 
-    /// Creates a subscription to receive flashblock updates.
-    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
-
+    /// Gets the state overrides for the pending blocks
     fn get_state_overrides(&self) -> Option<StateOverride>;
 
     /// Gets logs from pending state matching the provided filter.
@@ -167,7 +177,8 @@ where
 
         if number.is_pending() {
             self.metrics.get_block_by_number.increment(1);
-            Ok(self.flashblocks_state.get_block(full))
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            Ok(pending_blocks.get_block(full))
         } else {
             EthBlocks::rpc_block(&self.eth_api, number.into(), full)
                 .await
@@ -184,7 +195,8 @@ where
             tx_hash = %tx_hash
         );
 
-        if let Some(fb_receipt) = self.flashblocks_state.get_transaction_receipt(tx_hash) {
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        if let Some(fb_receipt) = pending_blocks.get_transaction_receipt(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_receipt));
         }
@@ -206,7 +218,8 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_balance.increment(1);
-            if let Some(balance) = self.flashblocks_state.get_balance(address) {
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            if let Some(balance) = pending_blocks.get_balance(address) {
                 return Ok(balance);
             }
         }
@@ -229,16 +242,16 @@ where
         let block_id = block_number.unwrap_or_default();
         if block_id.is_pending() {
             self.metrics.get_transaction_count.increment(1);
-            let latest_count = EthState::transaction_count(
-                &self.eth_api,
-                address,
-                Some(BlockId::Number(BlockNumberOrTag::Latest)),
-            )
-            .await
-            .map_err(Into::into)?;
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            let canon_block = pending_blocks.get_canonical_block_number();
+            let fb_count = pending_blocks.get_transaction_count(address);
 
-            let fb_count = self.flashblocks_state.get_transaction_count(address);
-            return Ok(latest_count + fb_count);
+            let canon_count =
+                EthState::transaction_count(&self.eth_api, address, Some(canon_block.into()))
+                    .await
+                    .map_err(Into::into)?;
+
+            return Ok(canon_count + fb_count);
         }
 
         EthState::transaction_count(&self.eth_api, address, block_number)
@@ -255,7 +268,9 @@ where
             tx_hash = %tx_hash
         );
 
-        if let Some(fb_transaction) = self.flashblocks_state.get_transaction_by_hash(tx_hash) {
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+
+        if let Some(fb_transaction) = pending_blocks.get_transaction_by_hash(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_transaction));
         }
@@ -339,12 +354,14 @@ where
             block_overrides = ?block_overrides,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.call.increment(1);
-            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            block_id = pending_blocks.get_canonical_block_number().into();
+            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         // Apply user's overrides on top
@@ -358,7 +375,7 @@ where
         EthCall::call(
             &self.eth_api,
             transaction,
-            block_number,
+            Some(block_id),
             EvmOverrides::new(Some(final_overrides), block_overrides),
         )
         .await
@@ -378,12 +395,14 @@ where
             overrides = ?overrides,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.estimate_gas.increment(1);
-            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            block_id = pending_blocks.get_canonical_block_number().into();
+            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         let mut state_overrides_builder =
@@ -406,13 +425,15 @@ where
             block_number = ?block_number,
         );
 
-        let block_id = block_number.unwrap_or_default();
+        let mut block_id = block_number.unwrap_or_default();
         let mut pending_overrides = EvmOverrides::default();
 
         // If the call is to pending block use cached override (if they exist)
         if block_id.is_pending() {
             self.metrics.simulate_v1.increment(1);
-            pending_overrides.state = self.flashblocks_state.get_state_overrides();
+            let pending_blocks = self.flashblocks_state.get_pending_blocks();
+            block_id = pending_blocks.get_canonical_block_number().into();
+            pending_overrides.state = pending_blocks.get_state_overrides();
         }
 
         // Prepend flashblocks pending overrides to the block state calls
@@ -502,13 +523,18 @@ where
                 } => {
                     // Create new filter with toBlock set to Latest
                     let mut historical_filter = filter.clone();
-                    historical_filter.block_option = alloy_rpc_types_eth::FilterBlockOption::Range {
-                        from_block: *from_block,
-                        to_block: Some(BlockNumberOrTag::Latest),
-                    };
+                    historical_filter.block_option =
+                        alloy_rpc_types_eth::FilterBlockOption::Range {
+                            from_block: *from_block,
+                            to_block: Some(BlockNumberOrTag::Latest),
+                        };
                     historical_filter
                 }
-                _ => return Err(jsonrpsee_types::ErrorObjectOwned::from(EthApiError::InvalidBlockRange)),
+                _ => {
+                    return Err(jsonrpsee_types::ErrorObjectOwned::from(
+                        EthApiError::InvalidBlockRange,
+                    ))
+                }
             };
 
             let historical_logs = self.eth_filter.logs(historical_filter).await?;
@@ -516,7 +542,8 @@ where
         }
 
         // Always get pending logs when toBlock is pending
-        let pending_logs = self.flashblocks_state.get_pending_logs(&filter);
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        let pending_logs = pending_blocks.get_pending_logs(&filter);
         all_logs.extend(pending_logs);
 
         Ok(all_logs)
@@ -529,7 +556,8 @@ where
             match receiver.recv().await {
                 Ok(flashblock) if flashblock.metadata.receipts.contains_key(&tx_hash) => {
                     debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
-                    return self.flashblocks_state.get_transaction_receipt(tx_hash);
+                    let pending_blocks = self.flashblocks_state.get_pending_blocks();
+                    return pending_blocks.get_transaction_receipt(tx_hash);
                 }
                 Ok(_) => {
                     trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);

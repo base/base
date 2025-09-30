@@ -884,7 +884,9 @@ mod tests {
 
         // Should now include pending logs (2 logs from our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(logs
+            .iter()
+            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         // Test fromBlock: latest, toBlock: pending
         let logs = provider
@@ -897,7 +899,9 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(logs
+            .iter()
+            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         // Test fromBlock: earliest, toBlock: pending
         let logs = provider
@@ -910,7 +914,9 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(logs
+            .iter()
+            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         Ok(())
     }
@@ -986,7 +992,9 @@ mod tests {
         // Should get both logs that match the topic
         assert_eq!(logs.len(), 2);
         assert!(logs.iter().all(|log| log.topics()[0] == TEST_LOG_TOPIC_0));
-        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(logs
+            .iter()
+            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         Ok(())
     }
@@ -1010,7 +1018,9 @@ mod tests {
 
         // Should get 2 logs from pending state
         assert_eq!(logs.len(), 2);
-        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(logs
+            .iter()
+            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         Ok(())
     }

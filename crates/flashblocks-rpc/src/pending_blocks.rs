@@ -1,4 +1,5 @@
 use alloy_consensus::{Header, Sealed};
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
     map::foldhash::{HashMap, HashMapExt},
     Address, BlockNumber, TxHash, B256, U256,
@@ -149,6 +150,10 @@ pub struct PendingBlocks {
 impl PendingBlocks {
     pub fn latest_block_number(&self) -> BlockNumber {
         self.headers.last().unwrap().number
+    }
+
+    pub fn canonical_block_number(&self) -> BlockNumberOrTag {
+        BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
     }
 
     pub fn latest_flashblock_index(&self) -> u64 {
