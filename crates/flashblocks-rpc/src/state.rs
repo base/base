@@ -271,7 +271,7 @@ where
                     // If we had a reorg, we need to reset all flashblocks state
                     let tracked_txns = pending_blocks.get_transactions_for_block(block.number);
                     let tracked_txn_hashes: HashSet<_> =
-                        tracked_txns.clone().iter().map(|tx| tx.tx_hash()).collect();
+                        tracked_txns.iter().map(|tx| tx.tx_hash()).collect();
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
 
