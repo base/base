@@ -12,15 +12,15 @@ struct Args {
     node_url: String,
 
     /// Poll interval in milliseconds
-    #[arg(long, env, default_value_t = 1000u64)]
+    #[arg(long, env = "BBHC_SIDECAR_POLL_INTERVAL_MS", default_value_t = 1000u64)]
     poll_interval_ms: u64,
 
     /// Grace period in milliseconds before considering delayed
-    #[arg(long, env, default_value_t = 5000u64)]
+    #[arg(long, env = "BBHC_SIDECAR_GRACE_PERIOD_MS", default_value_t = 2000u64)]
     grace_period_ms: u64,
 
     /// Threshold in milliseconds to consider unhealthy/stalled
-    #[arg(long, env, default_value_t = 15000u64)]
+    #[arg(long, env = "BBHC_SIDECAR_UNHEALTHY_NODE_THRESHOLD_MS", default_value_t = 3000u64)]
     unhealthy_node_threshold_ms: u64,
 
     /// Log level
@@ -52,8 +52,10 @@ async fn main() {
             .try_init();
     }
 
-    let node = Node::new(args.node_url.clone(), args.new_instance);
-    let client = AlloyEthClient::new_http(&args.node_url).expect("failed to create client");
+    // Allow NODE_URL (exported from BBHC_SIDECAR_GETH_RPC in ConfigMap) to override
+    let effective_url = std::env::var("NODE_URL").unwrap_or_else(|_| args.node_url.clone());
+    let node = Node::new(effective_url.clone(), args.new_instance);
+    let client = AlloyEthClient::new_http(&effective_url).expect("failed to create client");
     let config = HealthcheckConfig::new(
         args.poll_interval_ms,
         args.grace_period_ms,
