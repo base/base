@@ -124,10 +124,10 @@ where
                                                 "Received pong from upstream"
                                             );
                                             awaiting_pong_resp = false;
-                                            if let Some(rtt_ms) = rtt_from_pong(data.as_ref()) {
+                                            if let Some(rtt) = rtt_from_pong(data.as_ref()) {
                                                 debug!(
                                                     message= "Received pong from upstream flashblocks",
-                                                    rtt_ms = rtt_ms,
+                                                     rtt = ?rtt,
                                                 );
                                             }else {
                                                 debug!(
@@ -258,25 +258,21 @@ fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
 fn ping_with_timestamp() -> Message {
     let now_us: u64 = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0);
+        .unwrap_or(Duration::ZERO)
+        .as_micros() as u64;
 
     Message::Ping(now_us.to_be_bytes().to_vec().into())
 }
 
-fn rtt_from_pong(data: &[u8]) -> Option<f64> {
-    if data.len() == 8 {
-        let mut arr = [0u8; 8];
-        arr.copy_from_slice(&data[..8]);
-        let sent_us = u64::from_be_bytes(arr);
+fn rtt_from_pong(data: &[u8]) -> Option<Duration> {
+    let arr: [u8; 8] = data.try_into().ok()?;
+    let sent_us = u64::from_be_bytes(arr);
 
-        let now_us: u64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_micros() as u64)
-            .unwrap_or(0);
+    let now_us: u64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_micros() as u64;
 
-        Some(now_us.saturating_sub(sent_us) as f64 / 1000.0)
-    } else {
-        None
-    }
+    let delta_us = now_us.saturating_sub(sent_us);
+    Some(Duration::from_micros(delta_us))
 }
