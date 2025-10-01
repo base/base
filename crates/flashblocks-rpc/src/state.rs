@@ -8,9 +8,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, B256, U256};
-use alloy_rpc_types::{state::StateOverride, TransactionTrait, Withdrawal};
+use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
@@ -166,6 +167,12 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     fn get_state_overrides(&self) -> Option<StateOverride> {
         self.as_ref()
             .map(|pb| pb.get_state_overrides())
+            .unwrap_or_default()
+    }
+
+    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        self.as_ref()
+            .map(|pb| pb.get_pending_logs(filter))
             .unwrap_or_default()
     }
 }

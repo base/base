@@ -6,7 +6,7 @@ use alloy_primitives::{
 };
 use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{state::StateOverride, BlockTransactions};
-use alloy_rpc_types_eth::Header as RPCHeader;
+use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
@@ -229,5 +229,20 @@ impl PendingBlocks {
 
     pub fn get_state_overrides(&self) -> Option<StateOverride> {
         self.state_overrides.clone()
+    }
+
+    pub fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
+        let mut logs = Vec::new();
+
+        // Iterate through all transaction receipts in pending state
+        for receipt in self.transaction_receipts.values() {
+            for log in receipt.inner.logs() {
+                if filter.matches(&log.inner) {
+                    logs.push(log.clone());
+                }
+            }
+        }
+
+        logs
     }
 }

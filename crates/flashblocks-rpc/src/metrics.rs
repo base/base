@@ -47,6 +47,9 @@ pub struct Metrics {
     #[metric(describe = "Count of times flashblocks simulate_v1 is called")]
     pub simulate_v1: Counter,
 
+    #[metric(describe = "Count of times flashblocks get_logs is called")]
+    pub get_logs: Counter,
+
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"
     )]
