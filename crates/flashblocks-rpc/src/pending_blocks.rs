@@ -192,10 +192,7 @@ impl PendingBlocks {
         let transactions = if full {
             BlockTransactions::Full(block_transactions)
         } else {
-            let tx_hashes: Vec<B256> = block_transactions
-                .iter()
-                .map(|tx| tx.tx_hash())
-                .collect();
+            let tx_hashes: Vec<B256> = block_transactions.iter().map(|tx| tx.tx_hash()).collect();
             BlockTransactions::Hashes(tx_hashes)
         };
 
