@@ -86,7 +86,7 @@ op-alloy-network = { version = "0.20.0", default-features = false }
 op-alloy-consensus = { version = "0.20.0", default-features = false }
 
 # rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "98fff8e059870d192739dd42d41f5244c49f4b9c" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", tag = "rollup-boost/v0.7.5" }
 rustls = "0.23.23"
 
 # tokio
