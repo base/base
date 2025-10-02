@@ -1,10 +1,10 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use tokio::time::{interval, timeout};
-use tracing::{debug, error, info};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
+use tokio::time::{interval, timeout};
+use tracing::{debug, error, info};
 
 use crate::metrics::metrics;
 
@@ -125,22 +125,26 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             Ok(Err(e)) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, error = %e, "waiting for node to become healthy");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code
+                        .store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
                     metrics.error.increment(1);
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code
+                        .store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
             Err(_elapsed) => {
                 if self.node.is_new_instance {
                     debug!(sequencer = %url, "waiting for node to become healthy (timeout)");
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code
+                        .store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
                     metrics.error.increment(1);
-                    self.status_code.store(HealthState::Error.code(), Ordering::Relaxed);
+                    self.status_code
+                        .store(HealthState::Error.code(), Ordering::Relaxed);
                 }
                 return;
             }
@@ -255,7 +259,10 @@ mod tests {
         let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
 
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Healthy.code()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -275,7 +282,10 @@ mod tests {
 
         // First healthy block
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Healthy.code()
+        );
 
         // Next block arrives but is delayed beyond grace
         let delayed_ts = start.saturating_sub((grace_ms / 1000) + 1);
@@ -284,7 +294,10 @@ mod tests {
             timestamp_unix_seconds: delayed_ts,
         };
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Healthy.code()
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]
@@ -304,7 +317,10 @@ mod tests {
 
         // First observation (healthy)
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Healthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Healthy.code()
+        );
 
         // Same head, but now sufficiently old to be unhealthy -> emits stall once
         let unhealthy_ts = start.saturating_sub((unhealthy_ms / 1000) + 1);
@@ -313,10 +329,16 @@ mod tests {
             timestamp_unix_seconds: unhealthy_ts,
         };
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Unhealthy.code()
+        );
 
         // Re-run again with same head: should not re-emit; flag remains set
         checker.run_health_check().await;
-        assert_eq!(checker.status_code.load(Ordering::Relaxed), HealthState::Unhealthy.code());
+        assert_eq!(
+            checker.status_code.load(Ordering::Relaxed),
+            HealthState::Unhealthy.code()
+        );
     }
 }

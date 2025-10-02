@@ -20,7 +20,11 @@ struct Args {
     grace_period_ms: u64,
 
     /// Threshold in milliseconds to consider unhealthy/stalled
-    #[arg(long, env = "BBHC_SIDECAR_UNHEALTHY_NODE_THRESHOLD_MS", default_value_t = 3000u64)]
+    #[arg(
+        long,
+        env = "BBHC_SIDECAR_UNHEALTHY_NODE_THRESHOLD_MS",
+        default_value_t = 3000u64
+    )]
     unhealthy_node_threshold_ms: u64,
 
     /// Log level
