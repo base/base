@@ -1,5 +1,5 @@
 use rdkafka::producer::FutureProducer;
-use rdkafka::{consumer::StreamConsumer, ClientConfig};
+use rdkafka::{ClientConfig, consumer::StreamConsumer};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::{kafka, kafka::Kafka, minio::MinIO};
 use uuid::Uuid;

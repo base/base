@@ -56,6 +56,14 @@ struct Config {
 
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     log_level: String,
+
+    /// Default lifetime for sent transactions in seconds (default: 3 hours)
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_SEND_TRANSACTION_DEFAULT_LIFETIME_SECONDS",
+        default_value = "10800"
+    )]
+    send_transaction_default_lifetime_seconds: u64,
 }
 
 #[tokio::main]
@@ -105,7 +113,12 @@ async fn main() -> anyhow::Result<()> {
 
     let queue = KafkaQueuePublisher::new(queue_producer, config.queue_topic);
 
-    let service = IngressService::new(provider, config.dual_write_mempool, queue);
+    let service = IngressService::new(
+        provider,
+        config.dual_write_mempool,
+        queue,
+        config.send_transaction_default_lifetime_seconds,
+    );
     let bind_addr = format!("{}:{}", config.address, config.port);
 
     let server = Server::builder().build(&bind_addr).await?;

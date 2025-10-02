@@ -1,11 +1,12 @@
 use alloy_primitives::{Address, Bytes, TxHash, address, b256, bytes};
 use alloy_rpc_types_mev::EthSendBundle;
 use sqlx::PgPool;
+use sqlx::types::chrono::Utc;
 use testcontainers_modules::{
     postgres,
     testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
-use tips_datastore::postgres::{BundleFilter, BundleState};
+use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter, BundleState};
 use tips_datastore::{BundleDatastore, PostgresDatastore};
 
 struct TestHarness {
@@ -298,6 +299,256 @@ async fn cancel_bundle_workflow() -> eyre::Result<()> {
         still_exists_bundle2.is_some(),
         "Bundle2 should still exist after bundle1 cancellation"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn find_bundle_by_transaction_hash() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+    let test_bundle = create_test_bundle_with_reverting_tx()?;
+
+    let bundle_id = harness
+        .data_store
+        .insert_bundle(test_bundle)
+        .await
+        .expect("Failed to insert bundle");
+
+    let found_id = harness
+        .data_store
+        .find_bundle_by_transaction_hash(TX_HASH)
+        .await
+        .expect("Failed to find bundle by transaction hash");
+    assert_eq!(found_id, Some(bundle_id));
+
+    let nonexistent_hash =
+        b256!("0x1234567890123456789012345678901234567890123456789012345678901234");
+    let not_found = harness
+        .data_store
+        .find_bundle_by_transaction_hash(nonexistent_hash)
+        .await
+        .expect("Failed to search for nonexistent hash");
+    assert_eq!(not_found, None);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_bundles() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let bundle1 = create_test_bundle(100, None, None)?;
+    let bundle2 = create_test_bundle(200, None, None)?;
+
+    let id1 = harness.data_store.insert_bundle(bundle1).await.unwrap();
+    let id2 = harness.data_store.insert_bundle(bundle2).await.unwrap();
+
+    let removed_count = harness
+        .data_store
+        .remove_bundles(vec![id1, id2])
+        .await
+        .unwrap();
+    assert_eq!(removed_count, 2);
+
+    assert!(harness.data_store.get_bundle(id1).await.unwrap().is_none());
+    assert!(harness.data_store.get_bundle(id2).await.unwrap().is_none());
+
+    let empty_removal = harness.data_store.remove_bundles(vec![]).await.unwrap();
+    assert_eq!(empty_removal, 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn update_bundles_state() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let bundle1 = create_test_bundle(100, None, None)?;
+    let bundle2 = create_test_bundle(200, None, None)?;
+
+    let id1 = harness.data_store.insert_bundle(bundle1).await.unwrap();
+    let id2 = harness.data_store.insert_bundle(bundle2).await.unwrap();
+
+    let updated_ids = harness
+        .data_store
+        .update_bundles_state(
+            vec![id1, id2],
+            vec![BundleState::Ready],
+            BundleState::IncludedByBuilder,
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated_ids.len(), 2);
+    assert!(updated_ids.contains(&id1));
+    assert!(updated_ids.contains(&id2));
+
+    let bundle1_meta = harness.data_store.get_bundle(id1).await.unwrap().unwrap();
+    assert!(matches!(bundle1_meta.state, BundleState::IncludedByBuilder));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn block_info_operations() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let initial_info = harness.data_store.get_current_block_info().await.unwrap();
+    assert!(initial_info.is_none());
+
+    let blocks = vec![
+        BlockInfoUpdate {
+            block_number: 100,
+            block_hash: b256!("0x1111111111111111111111111111111111111111111111111111111111111111"),
+        },
+        BlockInfoUpdate {
+            block_number: 101,
+            block_hash: b256!("0x2222222222222222222222222222222222222222222222222222222222222222"),
+        },
+    ];
+
+    harness.data_store.commit_block_info(blocks).await.unwrap();
+
+    let block_info = harness
+        .data_store
+        .get_current_block_info()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(block_info.latest_block_number, 101);
+    assert!(block_info.latest_finalized_block_number.is_none());
+
+    let finalized_count = harness
+        .data_store
+        .finalize_blocks_before(101)
+        .await
+        .unwrap();
+    assert_eq!(finalized_count, 1);
+
+    let updated_info = harness
+        .data_store
+        .get_current_block_info()
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated_info.latest_finalized_block_number, Some(100));
+
+    let pruned_count = harness
+        .data_store
+        .prune_finalized_blocks(101)
+        .await
+        .unwrap();
+    assert_eq!(pruned_count, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_stats() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let stats = harness.data_store.get_stats().await.unwrap();
+    assert_eq!(stats.total_bundles, 0);
+    assert_eq!(stats.total_transactions, 0);
+
+    let bundle1 = create_test_bundle(100, None, None)?;
+    let bundle2 = create_test_bundle(200, None, None)?;
+
+    let id1 = harness.data_store.insert_bundle(bundle1).await.unwrap();
+    harness.data_store.insert_bundle(bundle2).await.unwrap();
+
+    harness
+        .data_store
+        .update_bundles_state(
+            vec![id1],
+            vec![BundleState::Ready],
+            BundleState::IncludedByBuilder,
+        )
+        .await
+        .unwrap();
+
+    let updated_stats = harness.data_store.get_stats().await.unwrap();
+    assert_eq!(updated_stats.total_bundles, 2);
+    assert_eq!(updated_stats.ready_bundles, 1);
+    assert_eq!(updated_stats.included_by_builder_bundles, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_timed_out_bundles() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let expired_bundle = create_test_bundle(100, None, Some(1000))?;
+    let valid_bundle = create_test_bundle(200, None, Some(2000))?;
+    let no_timestamp_bundle = create_test_bundle(300, None, None)?;
+
+    harness
+        .data_store
+        .insert_bundle(expired_bundle)
+        .await
+        .unwrap();
+    harness
+        .data_store
+        .insert_bundle(valid_bundle)
+        .await
+        .unwrap();
+    harness
+        .data_store
+        .insert_bundle(no_timestamp_bundle)
+        .await
+        .unwrap();
+
+    let removed_ids = harness
+        .data_store
+        .remove_timed_out_bundles(1500)
+        .await
+        .unwrap();
+    assert_eq!(removed_ids.len(), 1);
+
+    let remaining_bundles = harness
+        .data_store
+        .select_bundles(BundleFilter::new())
+        .await
+        .unwrap();
+    assert_eq!(remaining_bundles.len(), 2);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn remove_old_included_bundles() -> eyre::Result<()> {
+    let harness = setup_datastore().await?;
+
+    let bundle1 = create_test_bundle(100, None, None)?;
+    let bundle2 = create_test_bundle(200, None, None)?;
+
+    let id1 = harness.data_store.insert_bundle(bundle1).await.unwrap();
+    let id2 = harness.data_store.insert_bundle(bundle2).await.unwrap();
+
+    harness
+        .data_store
+        .update_bundles_state(
+            vec![id1, id2],
+            vec![BundleState::Ready],
+            BundleState::IncludedByBuilder,
+        )
+        .await
+        .unwrap();
+
+    let cutoff = Utc::now();
+    let removed_ids = harness
+        .data_store
+        .remove_old_included_bundles(cutoff)
+        .await
+        .unwrap();
+    assert_eq!(removed_ids.len(), 2);
+
+    let remaining_bundles = harness
+        .data_store
+        .select_bundles(BundleFilter::new())
+        .await
+        .unwrap();
+    assert_eq!(remaining_bundles.len(), 0);
 
     Ok(())
 }

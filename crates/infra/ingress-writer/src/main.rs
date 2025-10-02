@@ -8,7 +8,7 @@ use rdkafka::{
     message::Message,
     producer::FutureProducer,
 };
-use tips_audit::{KafkaMempoolEventPublisher, MempoolEvent, MempoolEventPublisher};
+use tips_audit::{BundleEvent, BundleEventPublisher, KafkaBundleEventPublisher};
 use tips_datastore::{BundleDatastore, postgres::PostgresDatastore};
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -47,7 +47,7 @@ pub struct IngressWriter<Store, Publisher> {
 impl<Store, Publisher> IngressWriter<Store, Publisher>
 where
     Store: BundleDatastore + Send + Sync + 'static,
-    Publisher: MempoolEventPublisher + Sync + Send + 'static,
+    Publisher: BundleEventPublisher + Sync + Send + 'static,
 {
     pub fn new(
         queue_consumer: StreamConsumer,
@@ -109,13 +109,13 @@ where
     async fn publish(&self, bundle_id: Uuid, bundle: &EthSendBundle) {
         if let Err(e) = self
             .publisher
-            .publish(MempoolEvent::Created {
+            .publish(BundleEvent::Created {
                 bundle_id,
                 bundle: bundle.clone(),
             })
             .await
         {
-            warn!(error = %e, bundle_id = %bundle_id, "Failed to publish MempoolEvent::Created");
+            warn!(error = %e, bundle_id = %bundle_id, "Failed to publish BundleEvent::Created");
         }
     }
 }
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
         .set("message.timeout.ms", "5000")
         .create()?;
 
-    let publisher = KafkaMempoolEventPublisher::new(kafka_producer, "tips-audit".to_string());
+    let publisher = KafkaBundleEventPublisher::new(kafka_producer, "tips-audit".to_string());
     let consumer = config.create()?;
 
     let bundle_store = PostgresDatastore::connect(args.database_url).await?;

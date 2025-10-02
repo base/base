@@ -1,5 +1,5 @@
-use crate::reader::MempoolEventReader;
-use crate::storage::MempoolEventWriter;
+use crate::reader::EventReader;
+use crate::storage::EventWriter;
 use anyhow::Result;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -7,8 +7,8 @@ use tracing::{error, info};
 
 pub struct KafkaMempoolArchiver<R, W>
 where
-    R: MempoolEventReader,
-    W: MempoolEventWriter,
+    R: EventReader,
+    W: EventWriter,
 {
     reader: R,
     writer: W,
@@ -16,15 +16,15 @@ where
 
 impl<R, W> KafkaMempoolArchiver<R, W>
 where
-    R: MempoolEventReader,
-    W: MempoolEventWriter,
+    R: EventReader,
+    W: EventWriter,
 {
     pub fn new(reader: R, writer: W) -> Self {
         Self { reader, writer }
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        info!("Starting Kafka mempool archiver");
+        info!("Starting Kafka bundle archiver");
 
         loop {
             match self.reader.read_event().await {

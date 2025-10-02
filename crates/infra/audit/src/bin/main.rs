@@ -1,11 +1,11 @@
 use anyhow::Result;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
-use aws_sdk_s3::{config::Builder as S3ConfigBuilder, Client as S3Client};
+use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use tips_audit::{
-    create_kafka_consumer, KafkaMempoolArchiver, KafkaMempoolReader, S3MempoolEventReaderWriter,
+    KafkaMempoolArchiver, KafkaMempoolReader, S3EventReaderWriter, create_kafka_consumer,
 };
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
 
     let s3_client = create_s3_client(&args).await?;
     let s3_bucket = args.s3_bucket.clone();
-    let writer = S3MempoolEventReaderWriter::new(s3_client, s3_bucket);
+    let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
 
     let mut archiver = KafkaMempoolArchiver::new(reader, writer);
 

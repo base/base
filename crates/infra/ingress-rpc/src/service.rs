@@ -10,6 +10,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use reth_rpc_eth_types::EthApiError;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 
 use crate::queue::QueuePublisher;
@@ -33,14 +34,21 @@ pub struct IngressService<Queue> {
     provider: RootProvider<Optimism>,
     dual_write_mempool: bool,
     queue: Queue,
+    send_transaction_default_lifetime_seconds: u64,
 }
 
 impl<Queue> IngressService<Queue> {
-    pub fn new(provider: RootProvider<Optimism>, dual_write_mempool: bool, queue: Queue) -> Self {
+    pub fn new(
+        provider: RootProvider<Optimism>,
+        dual_write_mempool: bool,
+        queue: Queue,
+        send_transaction_default_lifetime_seconds: u64,
+    ) -> Self {
         Self {
             provider,
             dual_write_mempool,
             queue,
+            send_transaction_default_lifetime_seconds,
         }
     }
 }
@@ -88,11 +96,17 @@ where
 
         // TODO: parallelize DB and mempool setup
 
+        let expiry_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + self.send_transaction_default_lifetime_seconds;
+
         let bundle = EthSendBundle {
             txs: vec![data.clone()],
             block_number: 0,
             min_timestamp: None,
-            max_timestamp: None,
+            max_timestamp: Some(expiry_timestamp),
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
         };

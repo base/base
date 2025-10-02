@@ -1,10 +1,10 @@
-use alloy_primitives::{b256, bytes, Bytes, TxHash};
+use alloy_primitives::{Bytes, TxHash, b256, bytes};
 use alloy_rpc_types_mev::EthSendBundle;
 use std::sync::Arc;
 use tips_audit::{
     reader::Event,
-    storage::{MempoolEventS3Reader, MempoolEventWriter, S3MempoolEventReaderWriter},
-    types::MempoolEvent,
+    storage::{BundleEventS3Reader, EventWriter, S3EventReaderWriter},
+    types::BundleEvent,
 };
 use tokio::task::JoinSet;
 use uuid::Uuid;
@@ -13,7 +13,9 @@ mod common;
 use common::TestHarness;
 
 // https://basescan.org/tx/0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e
-const TXN_DATA: Bytes = bytes!("0x02f88f8221058304b6b3018315fb3883124f80948ff2f0a8d017c79454aa28509a19ab9753c2dd1480a476d58e1a0182426068c9ea5b00000000000000000002f84f00000000083e4fda54950000c080a086fbc7bbee41f441fb0f32f7aa274d2188c460fe6ac95095fa6331fa08ec4ce7a01aee3bcc3c28f7ba4e0c24da9ae85e9e0166c73cabb42c25ff7b5ecd424f3105");
+const TXN_DATA: Bytes = bytes!(
+    "0x02f88f8221058304b6b3018315fb3883124f80948ff2f0a8d017c79454aa28509a19ab9753c2dd1480a476d58e1a0182426068c9ea5b00000000000000000002f84f00000000083e4fda54950000c080a086fbc7bbee41f441fb0f32f7aa274d2188c460fe6ac95095fa6331fa08ec4ce7a01aee3bcc3c28f7ba4e0c24da9ae85e9e0166c73cabb42c25ff7b5ecd424f3105"
+);
 const TXN_HASH: TxHash =
     b256!("0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e");
 
@@ -24,26 +26,25 @@ fn create_test_bundle() -> EthSendBundle {
     }
 }
 
-fn create_test_event(key: &str, timestamp: i64, mempool_event: MempoolEvent) -> Event {
+fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
     Event {
         key: key.to_string(),
         timestamp,
-        event: mempool_event,
+        event: bundle_event,
     }
 }
 
 #[tokio::test]
 async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
-    let writer =
-        S3MempoolEventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
+    let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
     let bundle = create_test_bundle();
     let event = create_test_event(
         "test-key-1",
         1234567890,
-        MempoolEvent::Created {
+        BundleEvent::Created {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -70,7 +71,7 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
     let event = create_test_event(
         "test-key-2",
         1234567890,
-        MempoolEvent::Created {
+        BundleEvent::Created {
             bundle_id: bundle_id_two,
             bundle: bundle.clone(),
         },
@@ -92,8 +93,7 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
 #[tokio::test]
 async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
-    let writer =
-        S3MempoolEventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
+    let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
     let bundle = create_test_bundle();
@@ -102,7 +102,7 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
         create_test_event(
             "test-key-1",
             1234567890,
-            MempoolEvent::Created {
+            BundleEvent::Created {
                 bundle_id,
                 bundle: bundle.clone(),
             },
@@ -110,7 +110,7 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
         create_test_event(
             "test-key-2",
             1234567891,
-            MempoolEvent::Updated {
+            BundleEvent::Updated {
                 bundle_id,
                 bundle: bundle.clone(),
             },
@@ -118,7 +118,7 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
         create_test_event(
             "test-key-3",
             1234567892,
-            MempoolEvent::Cancelled { bundle_id },
+            BundleEvent::Cancelled { bundle_id },
         ),
     ];
 
@@ -152,15 +152,14 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
 #[tokio::test]
 async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
-    let writer =
-        S3MempoolEventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
+    let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
     let bundle = create_test_bundle();
     let event = create_test_event(
         "duplicate-key",
         1234567890,
-        MempoolEvent::Created {
+        BundleEvent::Created {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -182,8 +181,7 @@ async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Se
 #[tokio::test]
 async fn test_nonexistent_data() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
-    let writer =
-        S3MempoolEventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
+    let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let nonexistent_bundle_id = Uuid::new_v4();
     let bundle_history = writer.get_bundle_history(nonexistent_bundle_id).await?;
@@ -201,7 +199,7 @@ async fn test_nonexistent_data() -> Result<(), Box<dyn std::error::Error + Send 
 async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
     let harness = TestHarness::new().await?;
-    let writer = Arc::new(S3MempoolEventReaderWriter::new(
+    let writer = Arc::new(S3EventReaderWriter::new(
         harness.s3_client.clone(),
         harness.bucket_name.clone(),
     ));
@@ -212,7 +210,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
     let event = create_test_event(
         "hello-dan",
         1234567889i64,
-        MempoolEvent::Created {
+        BundleEvent::Created {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -233,7 +231,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
         let event = create_test_event(
             &key,
             1234567890 + i as i64,
-            MempoolEvent::Created {
+            BundleEvent::Created {
                 bundle_id,
                 bundle: bundle.clone(),
             },

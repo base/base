@@ -1,7 +1,11 @@
 [package]
 name = "tips-audit"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
 
 [[bin]]
 name = "tips-audit"

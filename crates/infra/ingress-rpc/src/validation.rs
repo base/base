@@ -6,7 +6,6 @@ use jsonrpsee::core::RpcResult;
 use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
 use op_alloy_network::Optimism;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
-use reth_errors::RethError;
 use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError, SignError};
 use tracing::warn;
@@ -62,12 +61,12 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
             .ok_or_else(|| EthApiError::HeaderNotFound(block_number.into()).into_rpc_err())?;
 
         let txs = block.transactions.clone();
-        let first_tx = txs.first_transaction().ok_or_else(|| {
-            EthApiError::Internal(RethError::msg("No full transactions found")).into_rpc_err()
-        })?;
+        let first_tx = txs
+            .first_transaction()
+            .ok_or_else(|| EthApiError::InternalEthError.into_rpc_err())?;
 
         Ok(extract_l1_info_from_tx(&first_tx.clone())
-            .map_err(|e| EthApiError::Internal(RethError::msg(e.to_string())))?)
+            .map_err(|_| EthApiError::InternalEthError.into_rpc_err())?)
     }
 }
 

@@ -1,13 +1,13 @@
 use crate::reader::Event;
-use crate::types::{BundleId, DropReason, MempoolEvent, TransactionId};
+use crate::types::{BundleEvent, BundleId, DropReason, TransactionId};
 use alloy_primitives::TxHash;
 use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
 use async_trait::async_trait;
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client as S3Client;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Debug;
@@ -113,21 +113,21 @@ fn update_bundle_history_transform(
     }
 
     let history_event = match &event.event {
-        MempoolEvent::Created { bundle, .. } => BundleHistoryEvent::Created {
+        BundleEvent::Created { bundle, .. } => BundleHistoryEvent::Created {
             key: event.key.clone(),
             timestamp: event.timestamp,
             bundle: bundle.clone(),
         },
-        MempoolEvent::Updated { bundle, .. } => BundleHistoryEvent::Updated {
+        BundleEvent::Updated { bundle, .. } => BundleHistoryEvent::Updated {
             key: event.key.clone(),
             timestamp: event.timestamp,
             bundle: bundle.clone(),
         },
-        MempoolEvent::Cancelled { .. } => BundleHistoryEvent::Cancelled {
+        BundleEvent::Cancelled { .. } => BundleHistoryEvent::Cancelled {
             key: event.key.clone(),
             timestamp: event.timestamp,
         },
-        MempoolEvent::BuilderIncluded {
+        BundleEvent::BuilderIncluded {
             builder,
             block_number,
             flashblock_index,
@@ -139,7 +139,7 @@ fn update_bundle_history_transform(
             block_number: *block_number,
             flashblock_index: *flashblock_index,
         },
-        MempoolEvent::FlashblockIncluded {
+        BundleEvent::FlashblockIncluded {
             block_number,
             flashblock_index,
             ..
@@ -149,7 +149,7 @@ fn update_bundle_history_transform(
             block_number: *block_number,
             flashblock_index: *flashblock_index,
         },
-        MempoolEvent::BlockIncluded {
+        BundleEvent::BlockIncluded {
             block_number,
             block_hash,
             ..
@@ -159,7 +159,7 @@ fn update_bundle_history_transform(
             block_number: *block_number,
             block_hash: *block_hash,
         },
-        MempoolEvent::Dropped { reason, .. } => BundleHistoryEvent::Dropped {
+        BundleEvent::Dropped { reason, .. } => BundleHistoryEvent::Dropped {
             key: event.key.clone(),
             timestamp: event.timestamp,
             reason: reason.clone(),
@@ -193,12 +193,12 @@ fn update_transaction_metadata_transform(
 }
 
 #[async_trait]
-pub trait MempoolEventWriter {
+pub trait EventWriter {
     async fn archive_event(&self, event: Event) -> Result<()>;
 }
 
 #[async_trait]
-pub trait MempoolEventS3Reader {
+pub trait BundleEventS3Reader {
     async fn get_bundle_history(&self, bundle_id: BundleId) -> Result<Option<BundleHistory>>;
     async fn get_transaction_metadata(
         &self,
@@ -207,12 +207,12 @@ pub trait MempoolEventS3Reader {
 }
 
 #[derive(Clone)]
-pub struct S3MempoolEventReaderWriter {
+pub struct S3EventReaderWriter {
     s3_client: S3Client,
     bucket: String,
 }
 
-impl S3MempoolEventReaderWriter {
+impl S3EventReaderWriter {
     pub fn new(s3_client: S3Client, bucket: String) -> Self {
         Self { s3_client, bucket }
     }
@@ -351,7 +351,7 @@ impl S3MempoolEventReaderWriter {
 }
 
 #[async_trait]
-impl MempoolEventWriter for S3MempoolEventReaderWriter {
+impl EventWriter for S3EventReaderWriter {
     async fn archive_event(&self, event: Event) -> Result<()> {
         let bundle_id = event.event.bundle_id();
         let transaction_ids = event.event.transaction_ids();
@@ -368,7 +368,7 @@ impl MempoolEventWriter for S3MempoolEventReaderWriter {
 }
 
 #[async_trait]
-impl MempoolEventS3Reader for S3MempoolEventReaderWriter {
+impl BundleEventS3Reader for S3EventReaderWriter {
     async fn get_bundle_history(&self, bundle_id: BundleId) -> Result<Option<BundleHistory>> {
         let s3_key = S3Key::Bundle(bundle_id).to_string();
         let (bundle_history, _) = self.get_object_with_etag::<BundleHistory>(&s3_key).await?;
@@ -391,7 +391,7 @@ impl MempoolEventS3Reader for S3MempoolEventReaderWriter {
 mod tests {
     use super::*;
     use crate::reader::Event;
-    use crate::types::{DropReason, MempoolEvent};
+    use crate::types::{BundleEvent, DropReason};
     use alloy_primitives::TxHash;
     use alloy_rpc_types_mev::EthSendBundle;
     use uuid::Uuid;
@@ -400,11 +400,11 @@ mod tests {
         EthSendBundle::default()
     }
 
-    fn create_test_event(key: &str, timestamp: i64, mempool_event: MempoolEvent) -> Event {
+    fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
         Event {
             key: key.to_string(),
             timestamp,
-            event: mempool_event,
+            event: bundle_event,
         }
     }
 
@@ -413,11 +413,11 @@ mod tests {
         let bundle_history = BundleHistory { history: vec![] };
         let bundle = create_test_bundle();
         let bundle_id = Uuid::new_v4();
-        let mempool_event = MempoolEvent::Created {
+        let bundle_event = BundleEvent::Created {
             bundle_id,
             bundle: bundle.clone(),
         };
-        let event = create_test_event("test-key", 1234567890, mempool_event);
+        let event = create_test_event("test-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
 
@@ -452,8 +452,8 @@ mod tests {
 
         let bundle = create_test_bundle();
         let bundle_id = Uuid::new_v4();
-        let mempool_event = MempoolEvent::Updated { bundle_id, bundle };
-        let event = create_test_event("duplicate-key", 1234567890, mempool_event);
+        let bundle_event = BundleEvent::Updated { bundle_id, bundle };
+        let event = create_test_event("duplicate-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
 
@@ -467,66 +467,66 @@ mod tests {
 
         // Test Created
         let bundle = create_test_bundle();
-        let mempool_event = MempoolEvent::Created {
+        let bundle_event = BundleEvent::Created {
             bundle_id,
             bundle: bundle.clone(),
         };
-        let event = create_test_event("test-key", 1234567890, mempool_event);
+        let event = create_test_event("test-key", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test Updated
-        let mempool_event = MempoolEvent::Updated {
+        let bundle_event = BundleEvent::Updated {
             bundle_id,
             bundle: bundle.clone(),
         };
-        let event = create_test_event("test-key-2", 1234567890, mempool_event);
+        let event = create_test_event("test-key-2", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test Cancelled
-        let mempool_event = MempoolEvent::Cancelled { bundle_id };
-        let event = create_test_event("test-key-3", 1234567890, mempool_event);
+        let bundle_event = BundleEvent::Cancelled { bundle_id };
+        let event = create_test_event("test-key-3", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test BuilderIncluded
-        let mempool_event = MempoolEvent::BuilderIncluded {
+        let bundle_event = BundleEvent::BuilderIncluded {
             bundle_id,
             builder: "test-builder".to_string(),
             block_number: 12345,
             flashblock_index: 1,
         };
-        let event = create_test_event("test-key-4", 1234567890, mempool_event);
+        let event = create_test_event("test-key-4", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test FlashblockIncluded
-        let mempool_event = MempoolEvent::FlashblockIncluded {
+        let bundle_event = BundleEvent::FlashblockIncluded {
             bundle_id,
             block_number: 12345,
             flashblock_index: 1,
         };
-        let event = create_test_event("test-key-5", 1234567890, mempool_event);
+        let event = create_test_event("test-key-5", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test BlockIncluded
-        let mempool_event = MempoolEvent::BlockIncluded {
+        let bundle_event = BundleEvent::BlockIncluded {
             bundle_id,
             block_number: 12345,
             block_hash: TxHash::from([1u8; 32]),
         };
-        let event = create_test_event("test-key-6", 1234567890, mempool_event);
+        let event = create_test_event("test-key-6", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
         // Test Dropped
-        let mempool_event = MempoolEvent::Dropped {
+        let bundle_event = BundleEvent::Dropped {
             bundle_id,
             reason: DropReason::TimedOut,
         };
-        let event = create_test_event("test-key-7", 1234567890, mempool_event);
+        let event = create_test_event("test-key-7", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history, &event);
         assert!(result.is_some());
     }

@@ -36,7 +36,7 @@ pub struct Transaction {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
-pub enum MempoolEvent {
+pub enum BundleEvent {
     Created {
         bundle_id: BundleId,
         bundle: EthSendBundle,
@@ -70,22 +70,22 @@ pub enum MempoolEvent {
     },
 }
 
-impl MempoolEvent {
+impl BundleEvent {
     pub fn bundle_id(&self) -> BundleId {
         match self {
-            MempoolEvent::Created { bundle_id, .. } => *bundle_id,
-            MempoolEvent::Updated { bundle_id, .. } => *bundle_id,
-            MempoolEvent::Cancelled { bundle_id, .. } => *bundle_id,
-            MempoolEvent::BuilderIncluded { bundle_id, .. } => *bundle_id,
-            MempoolEvent::FlashblockIncluded { bundle_id, .. } => *bundle_id,
-            MempoolEvent::BlockIncluded { bundle_id, .. } => *bundle_id,
-            MempoolEvent::Dropped { bundle_id, .. } => *bundle_id,
+            BundleEvent::Created { bundle_id, .. } => *bundle_id,
+            BundleEvent::Updated { bundle_id, .. } => *bundle_id,
+            BundleEvent::Cancelled { bundle_id, .. } => *bundle_id,
+            BundleEvent::BuilderIncluded { bundle_id, .. } => *bundle_id,
+            BundleEvent::FlashblockIncluded { bundle_id, .. } => *bundle_id,
+            BundleEvent::BlockIncluded { bundle_id, .. } => *bundle_id,
+            BundleEvent::Dropped { bundle_id, .. } => *bundle_id,
         }
     }
 
     pub fn transaction_ids(&self) -> Vec<TransactionId> {
         match self {
-            MempoolEvent::Created { bundle, .. } | MempoolEvent::Updated { bundle, .. } => {
+            BundleEvent::Created { bundle, .. } | BundleEvent::Updated { bundle, .. } => {
                 bundle
                     .txs
                     .iter()
@@ -106,11 +106,34 @@ impl MempoolEvent {
                     })
                     .collect()
             }
-            MempoolEvent::Cancelled { .. } => vec![],
-            MempoolEvent::BuilderIncluded { .. } => vec![],
-            MempoolEvent::FlashblockIncluded { .. } => vec![],
-            MempoolEvent::BlockIncluded { .. } => vec![],
-            MempoolEvent::Dropped { .. } => vec![],
+            BundleEvent::Cancelled { .. } => vec![],
+            BundleEvent::BuilderIncluded { .. } => vec![],
+            BundleEvent::FlashblockIncluded { .. } => vec![],
+            BundleEvent::BlockIncluded { .. } => vec![],
+            BundleEvent::Dropped { .. } => vec![],
+        }
+    }
+
+    pub fn generate_event_key(&self) -> String {
+        match self {
+            BundleEvent::BlockIncluded {
+                bundle_id,
+                block_hash,
+                ..
+            } => {
+                format!("{}-{}", bundle_id, block_hash)
+            }
+            BundleEvent::FlashblockIncluded {
+                bundle_id,
+                block_number,
+                flashblock_index,
+                ..
+            } => {
+                format!("{}-{}-{}", bundle_id, block_number, flashblock_index)
+            }
+            _ => {
+                format!("{}-{}", self.bundle_id(), Uuid::new_v4())
+            }
         }
     }
 }

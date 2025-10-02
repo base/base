@@ -1,30 +1,31 @@
-use crate::types::MempoolEvent;
+use crate::types::BundleEvent;
 use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde_json;
 use tracing::{debug, error};
-use uuid::Uuid;
 
 #[async_trait]
-pub trait MempoolEventPublisher: Send + Sync {
-    async fn publish(&self, event: MempoolEvent) -> Result<()>;
+pub trait BundleEventPublisher: Send + Sync {
+    async fn publish(&self, event: BundleEvent) -> Result<()>;
+
+    async fn publish_all(&self, events: Vec<BundleEvent>) -> Result<()>;
 }
 
 #[derive(Clone)]
-pub struct KafkaMempoolEventPublisher {
+pub struct KafkaBundleEventPublisher {
     producer: FutureProducer,
     topic: String,
 }
 
-impl KafkaMempoolEventPublisher {
+impl KafkaBundleEventPublisher {
     pub fn new(producer: FutureProducer, topic: String) -> Self {
         Self { producer, topic }
     }
 
-    async fn send_event(&self, event: &MempoolEvent) -> Result<()> {
+    async fn send_event(&self, event: &BundleEvent) -> Result<()> {
         let bundle_id = event.bundle_id();
-        let key = format!("{}-{}", bundle_id, Uuid::new_v4());
+        let key = event.generate_event_key();
         let payload = serde_json::to_vec(event)?;
 
         let record = FutureRecord::to(&self.topic).key(&key).payload(&payload);
@@ -57,8 +58,15 @@ impl KafkaMempoolEventPublisher {
 }
 
 #[async_trait]
-impl MempoolEventPublisher for KafkaMempoolEventPublisher {
-    async fn publish(&self, event: MempoolEvent) -> Result<()> {
+impl BundleEventPublisher for KafkaBundleEventPublisher {
+    async fn publish(&self, event: BundleEvent) -> Result<()> {
         self.send_event(&event).await
+    }
+
+    async fn publish_all(&self, events: Vec<BundleEvent>) -> Result<()> {
+        for event in events {
+            self.send_event(&event).await?;
+        }
+        Ok(())
     }
 }

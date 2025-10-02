@@ -1,37 +1,37 @@
 use alloy_rpc_types_mev::EthSendBundle;
 use std::time::Duration;
 use tips_audit::{
-    publisher::{KafkaMempoolEventPublisher, MempoolEventPublisher},
-    storage::{MempoolEventS3Reader, S3MempoolEventReaderWriter},
-    types::{DropReason, MempoolEvent},
     KafkaMempoolArchiver, KafkaMempoolReader,
+    publisher::{BundleEventPublisher, KafkaBundleEventPublisher},
+    storage::{BundleEventS3Reader, S3EventReaderWriter},
+    types::{BundleEvent, DropReason},
 };
 use uuid::Uuid;
 mod common;
 use common::TestHarness;
 
 #[tokio::test]
-async fn test_kafka_publisher_s3_archiver_integration(
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn test_kafka_publisher_s3_archiver_integration()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
     let topic = "test-mempool-events";
 
     let s3_writer =
-        S3MempoolEventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
+        S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let test_bundle_id = Uuid::new_v4();
     let test_events = vec![
-        MempoolEvent::Created {
+        BundleEvent::Created {
             bundle_id: test_bundle_id,
             bundle: EthSendBundle::default(),
         },
-        MempoolEvent::Dropped {
+        BundleEvent::Dropped {
             bundle_id: test_bundle_id,
             reason: DropReason::TimedOut,
         },
     ];
 
-    let publisher = KafkaMempoolEventPublisher::new(harness.kafka_producer, topic.to_string());
+    let publisher = KafkaBundleEventPublisher::new(harness.kafka_producer, topic.to_string());
 
     for event in test_events.iter() {
         publisher.publish(event.clone()).await?;

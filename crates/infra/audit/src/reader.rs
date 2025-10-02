@@ -1,11 +1,11 @@
-use crate::types::MempoolEvent;
+use crate::types::BundleEvent;
 use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::{
+    Timestamp, TopicPartitionList,
     config::ClientConfig,
     consumer::{Consumer, StreamConsumer},
     message::Message,
-    Timestamp, TopicPartitionList,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -35,12 +35,12 @@ pub fn assign_topic_partition(consumer: &StreamConsumer, topic: &str) -> Result<
 #[derive(Debug, Clone)]
 pub struct Event {
     pub key: String,
-    pub event: MempoolEvent,
+    pub event: BundleEvent,
     pub timestamp: i64,
 }
 
 #[async_trait]
-pub trait MempoolEventReader {
+pub trait EventReader {
     async fn read_event(&mut self) -> Result<Event>;
     async fn commit(&mut self) -> Result<()>;
 }
@@ -65,7 +65,7 @@ impl KafkaMempoolReader {
 }
 
 #[async_trait]
-impl MempoolEventReader for KafkaMempoolReader {
+impl EventReader for KafkaMempoolReader {
     async fn read_event(&mut self) -> Result<Event> {
         match self.consumer.recv().await {
             Ok(message) => {
@@ -83,7 +83,7 @@ impl MempoolEventReader for KafkaMempoolReader {
                         .as_millis() as i64,
                 };
 
-                let event: MempoolEvent = serde_json::from_slice(payload)?;
+                let event: BundleEvent = serde_json::from_slice(payload)?;
 
                 debug!(
                     bundle_id = %event.bundle_id(),
