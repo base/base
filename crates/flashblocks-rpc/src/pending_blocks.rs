@@ -190,14 +190,10 @@ impl PendingBlocks {
         let block_transactions: Vec<Transaction> = self.get_transactions_for_block(block_number);
 
         let transactions = if full {
-            BlockTransactions::Full(block_transactions.clone())
+            BlockTransactions::Full(block_transactions)
         } else {
-            let tx_hashes: Vec<B256> = block_transactions
-                .clone()
-                .iter()
-                .map(|tx| tx.tx_hash())
-                .collect();
-            BlockTransactions::Hashes(tx_hashes.clone())
+            let tx_hashes: Vec<B256> = block_transactions.iter().map(|tx| tx.tx_hash()).collect();
+            BlockTransactions::Hashes(tx_hashes)
         };
 
         RpcBlock::<Optimism> {
