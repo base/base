@@ -32,7 +32,7 @@ pub type L2NodeProvider = RootProvider<Optimism>;
 pub const NUM_CONFIRMATIONS: u64 = 3;
 pub const TIMEOUT_SECONDS: u64 = 60;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
     Proposer,
     Challenger,
@@ -891,6 +891,14 @@ where
                         game_index = %index,
                         parent_index = %claim_data.parentIndex,
                         "Cannot resolve game - parent game is still in progress"
+                    );
+                    return Ok(Action::Skipped);
+                } else if mode == Mode::Proposer && parent_status == GameStatus::CHALLENGER_WINS {
+                    tracing::debug!(
+                        game_address = ?game.address,
+                        game_index = %index,
+                        parent_index = %claim_data.parentIndex,
+                        "Skipping resolution - parent game is challenger wins"
                     );
                     return Ok(Action::Skipped);
                 }
