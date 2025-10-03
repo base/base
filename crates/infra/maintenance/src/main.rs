@@ -9,6 +9,7 @@ use clap::Parser;
 use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
+use std::fs;
 use std::sync::Arc;
 use tips_audit::KafkaBundleEventPublisher;
 use tips_datastore::PostgresDatastore;
@@ -19,8 +20,8 @@ use url::Url;
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    #[arg(long, env = "TIPS_MAINTENANCE_KAFKA_BROKERS")]
-    pub kafka_brokers: String,
+    #[arg(long, env = "TIPS_MAINTENANCE_KAFKA_PROPERTIES_FILE")]
+    pub kafka_properties_file: String,
 
     #[arg(
         long,
@@ -100,10 +101,8 @@ async fn main() -> Result<()> {
 
     let datastore = PostgresDatastore::connect(args.database_url.clone()).await?;
 
-    let kafka_producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", &args.kafka_brokers)
-        .set("message.timeout.ms", "5000")
-        .create()?;
+    let client_config = load_kafka_config_from_file(&args.kafka_properties_file)?;
+    let kafka_producer: FutureProducer = client_config.create()?;
 
     let publisher = KafkaBundleEventPublisher::new(kafka_producer, args.kafka_topic.clone());
 
@@ -124,4 +123,23 @@ async fn main() -> Result<()> {
     job.run(fb_rx).await?;
 
     Ok(())
+}
+
+fn load_kafka_config_from_file(properties_file_path: &str) -> Result<ClientConfig> {
+    let kafka_properties = fs::read_to_string(properties_file_path)?;
+    info!("Kafka properties:\n{}", kafka_properties);
+
+    let mut client_config = ClientConfig::new();
+
+    for line in kafka_properties.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            client_config.set(key.trim(), value.trim());
+        }
+    }
+
+    Ok(client_config)
 }

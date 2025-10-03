@@ -4,6 +4,7 @@ use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
+use std::fs;
 use std::net::IpAddr;
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -35,24 +36,16 @@ struct Config {
     dual_write_mempool: bool,
 
     /// Kafka brokers for publishing mempool events
-    #[arg(long, env = "TIPS_INGRESS_KAFKA_BROKERS")]
-    kafka_brokers: String,
-
-    /// Kafka topic for publishing mempool events
-    #[arg(
-        long,
-        env = "TIPS_INGRESS_KAFKA_TOPIC",
-        default_value = "mempool-events"
-    )]
-    kafka_topic: String,
+    #[arg(long, env = "TIPS_INGRESS_KAFKA_INGRESS_PROPERTIES_FILE")]
+    ingress_kafka_properties: String,
 
     /// Kafka topic for queuing transactions before the DB Writer
     #[arg(
         long,
-        env = "TIPS_INGRESS_KAFKA_QUEUE_TOPIC",
-        default_value = "tips-ingress-rpc"
+        env = "TIPS_INGRESS_KAFKA_INGRESS_TOPIC",
+        default_value = "tips-ingress"
     )]
-    queue_topic: String,
+    ingress_topic: String,
 
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     log_level: String,
@@ -106,12 +99,11 @@ async fn main() -> anyhow::Result<()> {
         .network::<Optimism>()
         .connect_http(config.mempool_url);
 
-    let queue_producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", &config.kafka_brokers)
-        .set("message.timeout.ms", "5000")
-        .create()?;
+    let client_config = load_kafka_config_from_file(&config.ingress_kafka_properties)?;
 
-    let queue = KafkaQueuePublisher::new(queue_producer, config.queue_topic);
+    let queue_producer: FutureProducer = client_config.create()?;
+
+    let queue = KafkaQueuePublisher::new(queue_producer, config.ingress_topic);
 
     let service = IngressService::new(
         provider,
@@ -132,4 +124,23 @@ async fn main() -> anyhow::Result<()> {
 
     handle.stopped().await;
     Ok(())
+}
+
+fn load_kafka_config_from_file(properties_file_path: &str) -> anyhow::Result<ClientConfig> {
+    let kafka_properties = fs::read_to_string(properties_file_path)?;
+    info!("Kafka properties:\n{}", kafka_properties);
+
+    let mut client_config = ClientConfig::new();
+
+    for line in kafka_properties.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            client_config.set(key.trim(), value.trim());
+        }
+    }
+
+    Ok(client_config)
 }

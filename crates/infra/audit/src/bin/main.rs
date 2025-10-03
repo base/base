@@ -19,14 +19,11 @@ enum S3ConfigType {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[arg(long, env = "TIPS_AUDIT_KAFKA_BROKERS")]
-    kafka_brokers: String,
+    #[arg(long, env = "TIPS_AUDIT_KAFKA_PROPERTIES_FILE")]
+    kafka_properties_file: String,
 
     #[arg(long, env = "TIPS_AUDIT_KAFKA_TOPIC")]
     kafka_topic: String,
-
-    #[arg(long, env = "TIPS_AUDIT_KAFKA_GROUP_ID")]
-    kafka_group_id: String,
 
     #[arg(long, env = "TIPS_AUDIT_S3_BUCKET")]
     s3_bucket: String,
@@ -80,14 +77,13 @@ async fn main() -> Result<()> {
         .init();
 
     info!(
-        kafka_brokers = %args.kafka_brokers,
+        kafka_properties_file = %args.kafka_properties_file,
         kafka_topic = %args.kafka_topic,
-        kafka_group_id = %args.kafka_group_id,
         s3_bucket = %args.s3_bucket,
         "Starting audit archiver"
     );
 
-    let consumer = create_kafka_consumer(&args.kafka_brokers, &args.kafka_group_id)?;
+    let consumer = create_kafka_consumer(&args.kafka_properties_file)?;
     consumer.subscribe(&[&args.kafka_topic])?;
 
     let reader = KafkaMempoolReader::new(consumer, args.kafka_topic.clone())?;

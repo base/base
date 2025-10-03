@@ -7,22 +7,34 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::Message,
 };
+use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
-pub fn create_kafka_consumer(kafka_brokers: &str, group_id: &str) -> Result<StreamConsumer> {
-    let consumer: StreamConsumer = ClientConfig::new()
-        .set("group.id", group_id)
-        .set("bootstrap.servers", kafka_brokers)
-        .set("enable.partition.eof", "false")
-        .set("session.timeout.ms", "6000")
-        .set("enable.auto.commit", "false")
-        .set("auto.offset.reset", "earliest")
-        .set("fetch.wait.max.ms", "100")
-        .set("fetch.min.bytes", "1")
-        .create()?;
+pub fn create_kafka_consumer(kafka_properties_file: &str) -> Result<StreamConsumer> {
+    let client_config = load_kafka_config_from_file(kafka_properties_file)?;
+    let consumer: StreamConsumer = client_config.create()?;
     Ok(consumer)
+}
+
+fn load_kafka_config_from_file(properties_file_path: &str) -> Result<ClientConfig> {
+    let kafka_properties = fs::read_to_string(properties_file_path)?;
+    info!("Kafka properties:\n{}", kafka_properties);
+
+    let mut client_config = ClientConfig::new();
+
+    for line in kafka_properties.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            client_config.set(key.trim(), value.trim());
+        }
+    }
+
+    Ok(client_config)
 }
 
 pub fn assign_topic_partition(consumer: &StreamConsumer, topic: &str) -> Result<()> {

@@ -8,6 +8,7 @@ use rdkafka::{
     message::Message,
     producer::FutureProducer,
 };
+use std::fs;
 use tips_audit::{BundleEvent, BundleEventPublisher, KafkaBundleEventPublisher};
 use tips_datastore::{BundleDatastore, postgres::PostgresDatastore};
 use tokio::time::Duration;
@@ -20,18 +21,18 @@ struct Args {
     #[arg(long, env = "TIPS_INGRESS_WRITER_DATABASE_URL")]
     database_url: String,
 
-    #[arg(long, env = "TIPS_INGRESS_WRITER_KAFKA_BROKERS")]
-    kafka_brokers: String,
+    #[arg(long, env = "TIPS_INGRESS_WRITER_KAFKA_PROPERTIES_FILE")]
+    kafka_properties_file: String,
+
+    #[arg(long, env = "TIPS_INGRESS_KAFKA_TOPIC", default_value = "tips-ingress")]
+    ingress_topic: String,
 
     #[arg(
         long,
-        env = "TIPS_INGRESS_WRITER_KAFKA_TOPIC",
-        default_value = "tips-ingress-rpc"
+        env = "TIPS_INGRESS_WRITER_AUDIT_TOPIC",
+        default_value = "tips-audit"
     )]
-    kafka_topic: String,
-
-    #[arg(long, env = "TIPS_INGRESS_WRITER_KAFKA_GROUP_ID")]
-    kafka_group_id: String,
+    audit_topic: String,
 
     #[arg(long, env = "TIPS_INGRESS_WRITER_LOG_LEVEL", default_value = "info")]
     log_level: String,
@@ -129,31 +130,25 @@ async fn main() -> Result<()> {
         .with_env_filter(&args.log_level)
         .init();
 
-    let mut config = ClientConfig::new();
-    config
-        .set("group.id", &args.kafka_group_id)
-        .set("bootstrap.servers", &args.kafka_brokers)
-        .set("auto.offset.reset", "earliest")
-        .set("enable.partition.eof", "false")
-        .set("session.timeout.ms", "6000")
-        .set("enable.auto.commit", "true");
+    let config = load_kafka_config_from_file(&args.kafka_properties_file)?;
+    let kafka_producer: FutureProducer = config.create()?;
 
-    let kafka_producer: FutureProducer = ClientConfig::new()
-        .set("bootstrap.servers", &args.kafka_brokers)
-        .set("message.timeout.ms", "5000")
-        .create()?;
-
-    let publisher = KafkaBundleEventPublisher::new(kafka_producer, "tips-audit".to_string());
+    let publisher = KafkaBundleEventPublisher::new(kafka_producer, args.audit_topic.clone());
     let consumer = config.create()?;
 
     let bundle_store = PostgresDatastore::connect(args.database_url).await?;
     bundle_store.run_migrations().await?;
 
-    let writer = IngressWriter::new(consumer, args.kafka_topic.clone(), bundle_store, publisher)?;
+    let writer = IngressWriter::new(
+        consumer,
+        args.ingress_topic.clone(),
+        bundle_store,
+        publisher,
+    )?;
 
     info!(
         "Ingress Writer service started, consuming from topic: {}",
-        args.kafka_topic
+        args.ingress_topic
     );
     loop {
         match writer.insert_bundle().await {
@@ -166,4 +161,23 @@ async fn main() -> Result<()> {
             }
         }
     }
+}
+
+fn load_kafka_config_from_file(properties_file_path: &str) -> Result<ClientConfig> {
+    let kafka_properties = fs::read_to_string(properties_file_path)?;
+    info!("Kafka properties:\n{}", kafka_properties);
+
+    let mut client_config = ClientConfig::new();
+
+    for line in kafka_properties.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            client_config.set(key.trim(), value.trim());
+        }
+    }
+
+    Ok(client_config)
 }
