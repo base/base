@@ -1,10 +1,16 @@
 use crate::{
-    tests::{ONE_ETH, Protocol, framework::driver::ChainDriver},
+    tests::{
+        BUILDER_PRIVATE_KEY, Protocol, block_builder_policy::BlockBuilderPolicy,
+        flashblocks_number_contract::FlashblocksNumber,
+        flashtestation_registry::FlashtestationRegistry, framework::driver::ChainDriver,
+        mock_dcap_attestation::MockAutomataDcapAttestationFee,
+    },
     tx_signer::Signer,
 };
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, B256, BlockHash, TxHash, TxKind, U256, hex};
 use alloy_rpc_types_eth::{Block, BlockTransactionHashes};
+use alloy_sol_types::SolCall;
 use core::future::Future;
 use op_alloy_consensus::{OpTypedTransaction, TxDeposit};
 use op_alloy_rpc_types::Transaction;
@@ -17,12 +23,22 @@ use reth_node_core::{args::DatadirArgs, dirs::DataDirPath, node_config::NodeConf
 use reth_optimism_chainspec::OpChainSpec;
 use std::{net::TcpListener, sync::Arc};
 
-use super::{FUNDED_PRIVATE_KEYS, TransactionBuilder};
+use super::{FUNDED_PRIVATE_KEY, TransactionBuilder};
 
 pub trait TransactionBuilderExt {
     fn random_valid_transfer(self) -> Self;
     fn random_reverting_transaction(self) -> Self;
     fn random_big_transaction(self) -> Self;
+    // flashblocks number methods
+    fn deploy_flashblock_number_contract(self) -> Self;
+    fn init_flashblock_number_contract(self, register_builder: bool) -> Self;
+    // flashtestations methods
+    fn deploy_flashtestation_registry_contract(self) -> Self;
+    fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self;
+    fn deploy_builder_policy_contract(self) -> Self;
+    fn init_builder_policy_contract(self, registry_address: Address) -> Self;
+    fn deploy_mock_dcap_contract(self) -> Self;
+    fn add_mock_quote(self) -> Self;
 }
 
 impl TransactionBuilderExt for TransactionBuilder {
@@ -41,10 +57,87 @@ impl TransactionBuilderExt for TransactionBuilder {
         self.with_create()
             .with_input(hex!("6c63ffffffff60005260046000f36000526002600d60136000f5").into())
     }
+
+    fn deploy_flashblock_number_contract(self) -> Self {
+        self.with_create()
+            .with_input(FlashblocksNumber::BYTECODE.clone())
+            .with_gas_limit(2_000_000) // deployment costs ~1.6 million gas
+    }
+
+    fn init_flashblock_number_contract(self, register_builder: bool) -> Self {
+        let builder_signer = builder_signer();
+        let owner = funded_signer();
+
+        let init_data = FlashblocksNumber::initializeCall {
+            _owner: owner.address,
+            _initialBuilders: if register_builder {
+                vec![builder_signer.address]
+            } else {
+                vec![]
+            },
+        }
+        .abi_encode();
+
+        self.with_input(init_data.into())
+    }
+
+    fn deploy_flashtestation_registry_contract(self) -> Self {
+        self.with_create()
+            .with_input(FlashtestationRegistry::BYTECODE.clone())
+            .with_gas_limit(1_000_000)
+    }
+
+    fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self {
+        let owner = funded_signer();
+
+        let init_data = FlashtestationRegistry::initializeCall {
+            owner: owner.address,
+            _attestationContract: dcap_address,
+        }
+        .abi_encode();
+
+        self.with_input(init_data.into())
+    }
+
+    fn deploy_builder_policy_contract(self) -> Self {
+        self.with_create()
+            .with_input(BlockBuilderPolicy::BYTECODE.clone())
+            .with_gas_limit(1_000_000)
+    }
+
+    fn init_builder_policy_contract(self, registry_address: Address) -> Self {
+        let owner = funded_signer();
+
+        let init_data = BlockBuilderPolicy::initializeCall {
+            _initialOwner: owner.address,
+            _registry: registry_address,
+        }
+        .abi_encode();
+
+        self.with_input(init_data.into())
+    }
+
+    fn deploy_mock_dcap_contract(self) -> Self {
+        self.with_create()
+            .with_input(MockAutomataDcapAttestationFee::BYTECODE.clone())
+            .with_gas_limit(1_000_000)
+    }
+
+    fn add_mock_quote(self) -> Self {
+        let quote = MockAutomataDcapAttestationFee::setQuoteResultCall {
+            // quote from http://ns31695324.ip-141-94-163.eu:10080/attest for builder key
+            rawQuote: include_bytes!("./artifacts/test-quote.bin").into(),
+            _success: true,
+            // response from verifyAndAttestOnChain from the real automata dcap contract on
+            // unichain sepolia 0x95175096a9B74165BE0ac84260cc14Fc1c0EF5FF
+            _output: include_bytes!("./artifacts/quote-output.bin").into(),
+        }
+        .abi_encode();
+        self.with_input(quote.into()).with_gas_limit(500_000)
+    }
 }
 
 pub trait ChainDriverExt {
-    fn fund_default_accounts(&self) -> impl Future<Output = eyre::Result<()>>;
     fn fund_many(
         &self,
         addresses: Vec<Address>,
@@ -52,11 +145,6 @@ pub trait ChainDriverExt {
     ) -> impl Future<Output = eyre::Result<BlockHash>>;
     fn fund(&self, address: Address, amount: u128)
     -> impl Future<Output = eyre::Result<BlockHash>>;
-    fn first_funded_address(&self) -> Address {
-        FUNDED_PRIVATE_KEYS[0]
-            .parse()
-            .expect("Invalid funded private key")
-    }
 
     fn fund_accounts(
         &self,
@@ -81,14 +169,6 @@ pub trait ChainDriverExt {
 }
 
 impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
-    async fn fund_default_accounts(&self) -> eyre::Result<()> {
-        for key in FUNDED_PRIVATE_KEYS {
-            let signer: Signer = key.parse()?;
-            self.fund(signer.address, ONE_ETH).await?;
-        }
-        Ok(())
-    }
-
     async fn fund_many(&self, addresses: Vec<Address>, amount: u128) -> eyre::Result<BlockHash> {
         let mut txs = Vec::with_capacity(addresses.len());
 
@@ -238,4 +318,22 @@ pub fn get_available_port() -> u16 {
         .local_addr()
         .expect("Failed to get local address")
         .port()
+}
+
+pub fn builder_signer() -> Signer {
+    Signer::try_from_secret(
+        BUILDER_PRIVATE_KEY
+            .parse()
+            .expect("invalid hardcoded builder private key"),
+    )
+    .expect("Failed to create signer from hardcoded builder private key")
+}
+
+pub fn funded_signer() -> Signer {
+    Signer::try_from_secret(
+        FUNDED_PRIVATE_KEY
+            .parse()
+            .expect("invalid hardcoded funded private key"),
+    )
+    .expect("Failed to create signer from hardcoded funded private key")
 }

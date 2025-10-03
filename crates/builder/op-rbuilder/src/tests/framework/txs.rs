@@ -1,5 +1,6 @@
 use crate::{
     primitives::bundle::{Bundle, BundleResult},
+    tests::funded_signer,
     tx::FBPooledTransaction,
     tx_signer::Signer,
 };
@@ -20,8 +21,6 @@ use tokio::sync::watch;
 use tracing::debug;
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-
-use super::FUNDED_PRIVATE_KEYS;
 
 #[derive(Clone, Copy, Default)]
 pub struct BundleOpts {
@@ -74,7 +73,6 @@ pub struct TransactionBuilder {
     tx: TxEip1559,
     bundle_opts: Option<BundleOpts>,
     with_reverted_hash: bool,
-    key: Option<u64>,
 }
 
 impl TransactionBuilder {
@@ -91,7 +89,6 @@ impl TransactionBuilder {
             },
             bundle_opts: None,
             with_reverted_hash: false,
-            key: None,
         }
     }
 
@@ -102,11 +99,6 @@ impl TransactionBuilder {
 
     pub fn with_create(mut self) -> Self {
         self.tx.to = TxKind::Create;
-        self
-    }
-
-    pub fn with_key(mut self, key: u64) -> Self {
-        self.key = Some(key);
         self
     }
 
@@ -166,14 +158,7 @@ impl TransactionBuilder {
     }
 
     pub async fn build(mut self) -> Recovered<OpTxEnvelope> {
-        let signer = self.signer.unwrap_or_else(|| {
-            Signer::try_from_secret(
-                FUNDED_PRIVATE_KEYS[self.key.unwrap_or(0) as usize]
-                    .parse()
-                    .expect("invalid hardcoded builder private key"),
-            )
-            .expect("Failed to create signer from hardcoded private key")
-        });
+        let signer = self.signer.unwrap_or(funded_signer());
 
         let nonce = match self.nonce {
             Some(nonce) => nonce,

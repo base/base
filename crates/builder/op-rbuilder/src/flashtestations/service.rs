@@ -102,7 +102,6 @@ impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for Flashtestation
         _info: &mut ExecutionInfo<Extra>,
         _ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         _db: &mut State<impl Database>,
-        _top_of_block: bool,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         Ok(vec![])
     }

@@ -82,7 +82,7 @@ pub struct FlashblocksExtraCtx {
     /// Total gas left for the current flashblock
     target_gas_for_batch: u64,
     /// Total DA bytes left for the current flashblock
-    total_da_per_batch: Option<u64>,
+    target_da_for_batch: Option<u64>,
     /// Gas limit per flashblock
     gas_per_batch: u64,
     /// DA bytes limit per flashblock
@@ -292,7 +292,7 @@ where
                 flashblock_index: 0,
                 target_flashblock_count: self.config.flashblocks_per_block(),
                 target_gas_for_batch: 0,
-                total_da_per_batch: None,
+                target_da_for_batch: None,
                 gas_per_batch: 0,
                 da_per_batch: None,
                 calculate_state_root,
@@ -327,7 +327,7 @@ where
                 &mut info,
                 &ctx,
                 &mut state,
-                true,
+                false,
             ) {
                 Ok(builder_txs) => builder_txs,
                 Err(e) => {
@@ -431,7 +431,7 @@ where
         if let Some(da_limit) = total_da_per_batch.as_mut() {
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
-        ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+        ctx.extra_ctx.target_da_for_batch = total_da_per_batch;
         ctx.extra_ctx.gas_per_batch = gas_per_batch;
         ctx.extra_ctx.da_per_batch = da_per_batch;
 
@@ -567,7 +567,7 @@ where
 
         // Continue with flashblock building
         let mut target_gas_for_batch = ctx.extra_ctx.target_gas_for_batch;
-        let mut total_da_per_batch = ctx.extra_ctx.total_da_per_batch;
+        let mut target_da_per_batch = ctx.extra_ctx.target_da_for_batch;
 
         info!(
             target: "payload_builder",
@@ -575,8 +575,9 @@ where
             flashblock_index = ctx.flashblock_index(),
             target_gas = target_gas_for_batch,
             gas_used = info.cumulative_gas_used,
-            target_da = total_da_per_batch.unwrap_or(0),
+            target_da = target_da_per_batch,
             da_used = info.cumulative_da_bytes_used,
+            block_gas_used = ctx.block_gas_limit(),
             "Building flashblock",
         );
         let flashblock_build_start_time = Instant::now();
@@ -598,7 +599,7 @@ where
         target_gas_for_batch = target_gas_for_batch.saturating_sub(builder_tx_gas);
 
         // saturating sub just in case, we will log an error if da_limit too small for builder_tx_da_size
-        if let Some(da_limit) = total_da_per_batch.as_mut() {
+        if let Some(da_limit) = target_da_per_batch.as_mut() {
             *da_limit = da_limit.saturating_sub(builder_tx_da_size);
         }
 
@@ -624,7 +625,7 @@ where
             state,
             best_txs,
             target_gas_for_batch.min(ctx.block_gas_limit()),
-            total_da_per_batch,
+            target_da_per_batch,
         )?;
         // Extract last transactions
         let new_transactions = info.executed_transactions[info.extra.last_flashblock_index..]
@@ -726,7 +727,7 @@ where
                 self.send_payload_to_engine(new_payload);
                 // Update bundle_state for next iteration
                 if let Some(da_limit) = ctx.extra_ctx.da_per_batch {
-                    if let Some(da) = total_da_per_batch.as_mut() {
+                    if let Some(da) = target_da_per_batch.as_mut() {
                         *da += da_limit;
                     } else {
                         error!(
@@ -736,7 +737,7 @@ where
                 }
 
                 ctx.extra_ctx.target_gas_for_batch += ctx.extra_ctx.gas_per_batch;
-                ctx.extra_ctx.total_da_per_batch = total_da_per_batch;
+                ctx.extra_ctx.target_da_for_batch = target_da_per_batch;
 
                 info!(
                     target: "payload_builder",

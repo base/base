@@ -4,8 +4,8 @@ use crate::{
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
-        EngineApi, Ipc, TransactionPoolObserver, create_test_db,
-        framework::{BUILDER_PRIVATE_KEY, driver::ChainDriver},
+        EngineApi, Ipc, TransactionPoolObserver, builder_signer, create_test_db,
+        framework::driver::ChainDriver,
     },
     tx::FBPooledTransaction,
     tx_signer::Signer,
@@ -88,14 +88,7 @@ impl LocalInstance {
         let (txpool_ready_tx, txpool_ready_rx) =
             oneshot::channel::<AllTransactionsEvents<FBPooledTransaction>>();
 
-        let signer = args.builder_signer.unwrap_or_else(|| {
-            Signer::try_from_secret(
-                BUILDER_PRIVATE_KEY
-                    .parse()
-                    .expect("Invalid builder private key"),
-            )
-            .expect("Failed to create signer from private key")
-        });
+        let signer = args.builder_signer.unwrap_or(builder_signer());
         args.builder_signer = Some(signer);
         args.rollup_args.enable_tx_conditional = true;
 

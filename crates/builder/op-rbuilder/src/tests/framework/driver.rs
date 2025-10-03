@@ -14,11 +14,9 @@ use rollup_boost::OpExecutionPayloadEnvelope;
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 use crate::{
     args::OpRbuilderArgs,
-    tests::{ExternalNode, Protocol},
+    tests::{ExternalNode, Protocol, framework::DEFAULT_GAS_LIMIT},
     tx_signer::Signer,
 };
-
-const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
 /// The ChainDriver is a type that allows driving the op builder node to build new blocks manually
 /// by calling the `build_new_block` method. It uses the Engine API to interact with the node

@@ -8,8 +8,10 @@ use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 #[derive(Debug, Display)]
 pub enum TxnExecutionResult {
     TransactionDALimitExceeded,
-    BlockDALimitExceeded,
-    TransactionGasLimitExceeded,
+    #[display("BlockDALimitExceeded: total_da_used={_0} tx_da_size={_1} block_da_limit={_2}")]
+    BlockDALimitExceeded(u64, u64, u64),
+    #[display("TransactionGasLimitExceeded: total_gas_used={_0} tx_gas_limit={_1}")]
+    TransactionGasLimitExceeded(u64, u64, u64),
     SequencerTransaction,
     NonceTooLow,
     InteropFailed,
@@ -75,11 +77,19 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         if block_data_limit
             .is_some_and(|da_limit| self.cumulative_da_bytes_used + tx_da_size > da_limit)
         {
-            return Err(TxnExecutionResult::BlockDALimitExceeded);
+            return Err(TxnExecutionResult::BlockDALimitExceeded(
+                self.cumulative_da_bytes_used,
+                tx_da_size,
+                block_data_limit.unwrap_or_default(),
+            ));
         }
 
         if self.cumulative_gas_used + tx_gas_limit > block_gas_limit {
-            return Err(TxnExecutionResult::TransactionGasLimitExceeded);
+            return Err(TxnExecutionResult::TransactionGasLimitExceeded(
+                self.cumulative_gas_used,
+                tx_gas_limit,
+                block_gas_limit,
+            ));
         }
         Ok(())
     }
