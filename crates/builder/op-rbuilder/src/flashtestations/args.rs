@@ -1,10 +1,12 @@
 use alloy_primitives::{Address, U256, utils::parse_ether};
+use clap::Parser;
+use reth_optimism_cli::commands::Commands;
 
-use crate::tx_signer::Signer;
+use crate::{args::Cli, tx_signer::Signer};
 
 /// Parameters for Flashtestations configuration
 /// The names in the struct are prefixed with `flashtestations`
-#[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct FlashtestationsArgs {
     /// When set to true, the builder will initiate the flashtestations
     /// workflow within the bootstrapping and block building process.
@@ -90,4 +92,14 @@ pub struct FlashtestationsArgs {
         default_value = "1"
     )]
     pub builder_proof_version: u8,
+}
+
+impl Default for FlashtestationsArgs {
+    fn default() -> Self {
+        let args = Cli::parse_from(["dummy", "node"]);
+        let Commands::Node(node_command) = args.command else {
+            unreachable!()
+        };
+        node_command.ext.flashtestations
+    }
 }

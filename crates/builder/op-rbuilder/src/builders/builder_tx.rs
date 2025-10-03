@@ -2,7 +2,7 @@ use alloy_consensus::TxEip1559;
 use alloy_eips::{Encodable2718, eip7623::TOTAL_COST_FLOOR_PER_TOKEN};
 use alloy_evm::Database;
 use alloy_primitives::{
-    Address, B256, Log, TxKind,
+    Address, B256, Log, TxKind, U256,
     map::foldhash::{HashSet, HashSetExt},
 };
 use core::fmt::Debug;
@@ -13,9 +13,7 @@ use reth_node_api::PayloadBuilderError;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use reth_provider::{ProviderError, StateProvider};
-use reth_revm::{
-    State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
-};
+use reth_revm::{State, database::StateProviderDatabase};
 use revm::{
     DatabaseCommit,
     context::result::{EVMError, ResultAndState},
@@ -57,6 +55,9 @@ pub enum BuilderTransactionError {
     /// Signature signing fails
     #[error("failed to sign transaction: {0}")]
     SigningError(secp256k1::Error),
+    /// Invalid tx errors during evm execution.
+    #[error("invalid transaction error {0}")]
+    InvalidTransactionError(Box<dyn core::error::Error + Send + Sync>),
     /// Unrecoverable error during evm execution.
     #[error("evm execution error {0}")]
     EvmExecutionError(Box<dyn core::error::Error + Send + Sync>),
@@ -187,7 +188,6 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
                 .map_err(|err| BuilderTransactionError::EvmExecutionError(Box::new(err)))?;
 
             evm.db_mut().commit(state);
-            evm.db_mut().merge_transitions(BundleRetention::Reverts);
         }
 
         Ok(simulation_state)
@@ -283,7 +283,7 @@ impl BuilderTxBase {
     }
 }
 
-pub(crate) fn get_nonce(
+pub fn get_nonce(
     db: &mut State<impl Database>,
     address: Address,
 ) -> Result<u64, BuilderTransactionError> {
@@ -292,6 +292,15 @@ pub(crate) fn get_nonce(
         .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
 }
 
-pub(crate) fn log_exists(logs: &[Log], topic: &B256) -> bool {
+pub fn get_balance(
+    db: &mut State<impl Database>,
+    address: Address,
+) -> Result<U256, BuilderTransactionError> {
+    db.load_cache_account(address)
+        .map(|acc| acc.account_info().unwrap_or_default().balance)
+        .map_err(|_| BuilderTransactionError::AccountLoadFailed(address))
+}
+
+pub fn log_exists(logs: &[Log], topic: &B256) -> bool {
     logs.iter().any(|log| log.topics().first() == Some(topic))
 }

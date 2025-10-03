@@ -125,7 +125,7 @@ moka = "0.12"
 http = "1.0"
 sha3 = "0.10"
 hex = "0.4"
-ureq = "2.10"
+reqwest = "0.12.23"
 k256 = "0.13.4"
 
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "b86af43969557bee18f17ec1d6bcd3e984f910b2" }
@@ -136,6 +136,9 @@ tar = { version = "0.4", optional = true }
 ctor = { version = "0.4.2", optional = true }
 rlimit = { version = "0.10", optional = true }
 macros = { path = "src/tests/framework/macros", optional = true }
+hyper = { version = "1.7.0", features = ["http1"], optional = true }
+hyper-util = { version = "0.1.11", optional = true }
+http-body-util = { version = "0.1.3", optional = true }
 testcontainers = "0.24.0"
 dirs-next = "2.0.0"
 
@@ -157,6 +160,9 @@ reth-ipc = { workspace = true }
 reth-node-builder = { workspace = true, features = ["test-utils"] }
 ctor = "0.4.2"
 rlimit = { version = "0.10" }
+hyper = { version = "1.7.0", features = ["http1"] }
+hyper-util = { version = "0.1.11" }
+http-body-util = { version = "0.1.3" }
 
 [features]
 default = ["jemalloc"]

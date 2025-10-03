@@ -347,7 +347,15 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         // 4. if mem pool transactions are requested we execute them
 
         // gas reserved for builder tx
-        let builder_txs = builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, true)?;
+        let builder_txs =
+            match builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, true) {
+                Ok(builder_txs) => builder_txs,
+                Err(e) => {
+                    error!(target: "payload_builder", "Error adding builder txs to block: {}", e);
+                    vec![]
+                }
+            };
+
         let builder_tx_gas = builder_txs.iter().fold(0, |acc, tx| acc + tx.gas_used);
         let block_gas_limit = ctx.block_gas_limit().saturating_sub(builder_tx_gas);
         if block_gas_limit == 0 {
@@ -394,7 +402,9 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
 
         // Add builder tx to the block
-        builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, false)?;
+        if let Err(e) = builder_tx.add_builder_txs(&state_provider, &mut info, ctx, db, false) {
+            error!(target: "payload_builder", "Error adding builder txs to fallback block: {}", e);
+        };
 
         let state_merge_start_time = Instant::now();
 

@@ -480,7 +480,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
                 if exclude_reverting_txs {
                     log_txn(TxnExecutionResult::RevertedAndExcluded);
-                    info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), "skipping reverted transaction");
+                    info!(target: "payload_builder", tx_hash = ?tx.tx_hash(), result = ?result, "skipping reverted transaction");
                     best_txs.mark_invalid(tx.signer(), tx.nonce());
                     continue;
                 } else {
