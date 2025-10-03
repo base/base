@@ -59,14 +59,9 @@ Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for t
 | `AGG_PROOF_STRATEGY` | Proof fulfillment strategy for aggregation proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
 | `PROPOSAL_INTERVAL_IN_BLOCKS` | Number of L2 blocks between proposals | `1800` |
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
-| `ENABLE_GAME_RESOLUTION` | Whether to enable automatic game resolution | `true` |
-| `MAX_GAMES_TO_CHECK_FOR_RESOLUTION` | Maximum number of games to check for resolution | `100` |
-| `MAX_GAMES_TO_CHECK_FOR_DEFENSE` | Maximum number of recent games to check for defense | `100` |
 | `MAX_CONCURRENT_DEFENSE_TASKS` | Maximum number of concurrently running defense tasks | `8` |
-| `MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING` | Maximum number of games to check for bond claiming | `100` |
 | `L1_BEACON_RPC` | L1 Beacon RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
 | `L2_NODE_RPC` | L2 Node RPC endpoint URL | (Only used if `FAST_FINALITY_MODE` is `true`) |
-| `PROVER_ADDRESS` | Address of the account that will be posting output roots to L1. This address is committed to when generating the aggregation proof to prevent front-running attacks. It can be different from the signing address if you want to separate these roles. Default: The address derived from the `PRIVATE_KEY` environment variable. | (Only used if `FAST_FINALITY_MODE` is `true`) |
 | `SAFE_DB_FALLBACK` | Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node. When `false`, proposer will return an error if SafeDB is not available. It is by default `false` since using the fallback mechanism will result in higher proving cost. | `false` |
 | `PROPOSER_METRICS_PORT` | The port to expose metrics on. Update prometheus.yml to use this port, if using docker compose. | `9000` |
 | `FAST_FINALITY_PROVING_LIMIT` | Maximum number of concurrent proving tasks allowed in fast finality mode. | `1` |
@@ -92,10 +87,6 @@ RANGE_PROOF_STRATEGY=reserved            # Set to hosted to use hosted proof str
 AGG_PROOF_STRATEGY=reserved              # Set to hosted to use hosted proof strategy
 PROPOSAL_INTERVAL_IN_BLOCKS=1800         # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                        # Polling interval in seconds
-ENABLE_GAME_RESOLUTION=false             # Whether to enable automatic game resolution
-MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100    # Maximum number of games to check for resolution
-MAX_GAMES_TO_CHECK_FOR_DEFENSE=100       # Maximum number of recent games to check for defense
-MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING=100 # Maximum number of games to check for bond claiming
 PROPOSER_METRICS_PORT=9000               # The port to expose metrics on
 ```
 
@@ -115,6 +106,20 @@ To run the proposer, from the fault-proof directory:
 
 The proposer will run indefinitely, creating new games and optionally resolving them based on the configuration.
 
+## Runtime Loop
+
+`OPSuccinctProposer::run` wakes up every `FETCH_INTERVAL` seconds and performs four phases:
+
+1. **State sync** – Reloads dispute games from the factory, tracks the anchor, and recomputes the canonical head using the cached `ProposerState`.
+2. **Task cleanup** – Collects results from previously spawned tasks and updates metrics based on success or failure.
+3. **Scheduling** – Starts new asynchronous jobs when capacity is available:
+   - Game creation once the finalized L2 head surpasses the proposal interval
+   - Challenged-game defenses, respecting `MAX_CONCURRENT_DEFENSE_TASKS`
+   - Resolution of finished games and bond claims for finalized ones
+4. **Metrics refresh** – Publishes gauges such as canonical head block, finalized block, active proving tasks, and error counters.
+
+All long-running work executes in dedicated Tokio tasks stored in a `TaskMap`, preventing duplicate submissions while allowing creation/defense/resolution/bond claiming to progress in parallel. Fast finality mode additionally enforces `FAST_FINALITY_PROVING_LIMIT` before spawning new fast finality proving tasks.
+
 ## Features
 
 ### Game Creation
@@ -128,20 +133,18 @@ The proposer will run indefinitely, creating new games and optionally resolving 
 ### Game Defense
 - Monitors games for challenges against valid claims
 - Automatically defends valid claims by providing proofs
-- Checks games within a configurable window (set by `MAX_GAMES_TO_CHECK_FOR_DEFENSE`)
+- Checks all challenged games tracked in memory
 - Only defends games that:
   - Have been challenged
   - Are within their proof submission window
   - Have valid output root claims
 - Generates and submits proofs using the Succinct Prover Network
 - Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
+
 ### Game Resolution
-When enabled (`ENABLE_GAME_RESOLUTION=true`), the proposer:
-- **Fast Finality**: Immediately resolves proven games (UnchallengedAndValidProofProvided or ChallengedAndValidProofProvided)
-- Monitors unchallenged games
-- Resolves games after their challenge period expires
-- Respects parent-child game relationships in resolution
-- Only resolves games whose parent games are already resolved
+- Automatically resolves proven games (UnchallengedAndValidProofProvided or ChallengedAndValidProofProvided)
+- Monitors unchallenged games and resolves them once their challenge period expires
+- Respects parent-child game relationships; a child is only resolved after its parent finishes
 
 ### Bond Claiming
 - Monitors games for bond claiming opportunities

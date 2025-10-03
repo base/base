@@ -35,9 +35,7 @@ NETWORK_PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000
 FAST_FINALITY_MODE=false # Whether to use fast finality mode
 PROPOSAL_INTERVAL_IN_BLOCKS=1800    # Number of L2 blocks between proposals
 FETCH_INTERVAL=30                   # Polling interval in seconds
-ENABLE_GAME_RESOLUTION=true         # Whether to enable automatic game resolution
-MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100  # Maximum number of games to check for resolution
-MAX_GAMES_TO_CHECK_FOR_DEFENSE=100    # Maximum number of recent games to check for defense
+MAX_CONCURRENT_DEFENSE_TASKS=8      # Maximum number of concurrently running defense tasks
 ```
 
 ### Challenger Configuration (.env.challenger)
@@ -54,7 +52,6 @@ PRIVATE_KEY=             # Private key for transaction signing
 FETCH_INTERVAL=30        # Polling interval in seconds
 MAX_GAMES_TO_CHECK_FOR_CHALLENGE=100  # Maximum number of games to check for challenges
 ENABLE_GAME_RESOLUTION=true           # Whether to enable automatic game resolution
-MAX_GAMES_TO_CHECK_FOR_RESOLUTION=100 # Maximum number of games to check for resolution
 ```
 
 2. Start the services:

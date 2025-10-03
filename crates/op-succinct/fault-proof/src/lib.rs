@@ -142,16 +142,6 @@ where
     /// Fetches the game by index.
     async fn fetch_game_by_index(&self, game_index: U256) -> Result<Game>;
 
-    /// Get the latest valid proposal.
-    ///
-    /// This function checks from the latest game to the earliest game, returning the latest valid
-    /// proposal.
-    async fn get_latest_valid_proposal(
-        &self,
-        l2_provider: L2Provider,
-        expected_game_type: u32,
-    ) -> Result<Option<(U256, U256)>>;
-
     /// Get the anchor state registry address.
     async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address>;
 
@@ -215,21 +205,6 @@ where
         l2_provider: L2Provider,
         expected_game_type: u32,
     ) -> Result<Option<Address>>;
-
-    /// Get the defensible game addresses.
-    ///
-    /// Defensible games are games with valid claims that have been challenged but have not been
-    /// proven yet.
-    ///
-    /// This function checks a window of recent games, starting from
-    /// (latest_game_index - max_games_to_check_for_defense) up to latest_game_index.
-    async fn get_defensible_game_addresses(
-        &self,
-        max_games_to_check_for_defense: u64,
-        l1_provider: L1Provider,
-        l2_provider: L2Provider,
-        expected_game_type: u32,
-    ) -> Result<Vec<Address>>;
 
     /// Get the oldest game address with claimable bonds.
     ///
@@ -331,69 +306,6 @@ where
     async fn fetch_game_by_index(&self, game_index: U256) -> Result<Game> {
         let game = self.gameAtIndex(game_index).call().await?;
         Ok(Game { game_type: game.gameType, address: game.proxy })
-    }
-
-    /// Get the latest valid proposal.
-    ///
-    /// This function checks from the latest game to the earliest game, returning the latest valid
-    /// proposal.
-    async fn get_latest_valid_proposal(
-        &self,
-        l2_provider: L2Provider,
-        expected_game_type: u32,
-    ) -> Result<Option<(U256, U256)>> {
-        // Get latest game index, return None if no games exist.
-        let Some(mut game_index) = self.fetch_latest_game_index().await? else {
-            return Ok(None);
-        };
-
-        // Loop through games in reverse order (latest to earliest) to find the most recent valid
-        // game.
-        loop {
-            let game = self.fetch_game_by_index(game_index).await?;
-
-            if game.game_type != expected_game_type {
-                tracing::debug!(
-                    game_index = %game_index,
-                    game_type = game.game_type,
-                    expected_game_type,
-                    "Skipping game with unexpected type"
-                );
-            } else {
-                let game_contract = OPSuccinctFaultDisputeGame::new(game.address, self.provider());
-                let block_number = game_contract.l2BlockNumber().call().await?;
-                tracing::debug!(
-                    "Checking if game {:?} at block {:?} is valid",
-                    game.address,
-                    block_number
-                );
-
-                let game_claim = game_contract.rootClaim().call().await?;
-                let output_root = l2_provider.compute_output_root_at_block(block_number).await?;
-
-                if output_root == game_claim {
-                    tracing::info!(
-                        "Latest valid proposal at game index {:?} with l2 block number: {:?}",
-                        game_index,
-                        block_number
-                    );
-                    return Ok(Some((block_number, game_index)));
-                }
-
-                tracing::info!(
-                    "Output root {:?} is not same as game claim {:?}",
-                    output_root,
-                    game_claim
-                );
-            }
-
-            if game_index == U256::ZERO {
-                tracing::info!("No valid proposals found after checking all games");
-                return Ok(None);
-            }
-
-            game_index -= U256::from(1);
-        }
     }
 
     /// Get the anchor state registry address.
@@ -674,26 +586,6 @@ where
             |status| status == ProposalStatus::Unchallenged,
             |output_root, game_claim| output_root != game_claim,
             "Oldest challengable game",
-        )
-        .await
-    }
-
-    /// Get the oldest defensible game address.
-    async fn get_defensible_game_addresses(
-        &self,
-        max_games_to_check_for_defense: u64,
-        l1_provider: L1Provider,
-        l2_provider: L2Provider,
-        expected_game_type: u32,
-    ) -> Result<Vec<Address>> {
-        self.get_game_addresses(
-            max_games_to_check_for_defense,
-            l1_provider,
-            l2_provider,
-            expected_game_type,
-            |status| status == ProposalStatus::Challenged,
-            |output_root, game_claim| output_root == game_claim,
-            "Defensible games",
         )
         .await
     }

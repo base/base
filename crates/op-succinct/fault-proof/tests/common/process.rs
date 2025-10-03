@@ -5,7 +5,9 @@ use alloy_primitives::Address;
 use alloy_provider::ProviderBuilder;
 use anyhow::Result;
 use fault_proof::{
-    challenger::OPSuccinctChallenger, config::ChallengerConfig, contract::DisputeGameFactory,
+    challenger::OPSuccinctChallenger,
+    config::ChallengerConfig,
+    contract::{AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame},
     proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCConfig};
@@ -23,7 +25,6 @@ pub async fn start_proposer(
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
     // Create signer directly from private key
     let signer = Signer::new_local_signer(private_key)?;
-    let prover_address = signer.address();
 
     // Create proposer config with test-specific settings
     let config = fault_proof::config::ProposerConfig {
@@ -37,11 +38,7 @@ pub async fn start_proposer(
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
         fetch_interval: 2,               // Check more frequently in tests
         game_type,
-        max_games_to_check_for_defense: 100,
-        max_concurrent_defense_tasks: 8,
-        enable_game_resolution: true,
-        max_games_to_check_for_resolution: 100,
-        max_games_to_check_for_bond_claiming: 100,
+        max_concurrent_defense_tasks: 1,
         safe_db_fallback: false,
         metrics_port: 9000,
         fast_finality_proving_limit: 1,
@@ -49,6 +46,12 @@ pub async fn start_proposer(
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());
     let factory = DisputeGameFactory::new(*factory_address, l1_provider.clone());
+
+    let game_impl_address = factory.gameImpls(config.game_type).call().await?;
+    let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, l1_provider.clone());
+    let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?;
+    let anchor_state_registry =
+        AnchorStateRegistry::new(anchor_state_registry_address, l1_provider.clone());
 
     // For testing, we use mock mode, so we use a dummy network private key.
     let network_private_key =
@@ -61,9 +64,9 @@ pub async fn start_proposer(
         let proposer = OPSuccinctProposer::new(
             config,
             network_private_key,
-            prover_address,
             signer,
             factory,
+            anchor_state_registry,
             fetcher,
             host,
         )

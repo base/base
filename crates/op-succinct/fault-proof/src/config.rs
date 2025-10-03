@@ -43,23 +43,8 @@ pub struct ProposerConfig {
     /// The type of game to propose.
     pub game_type: u32,
 
-    /// The number of games to check for defense.
-    pub max_games_to_check_for_defense: u64,
-
     /// The max number of defense tasks to run concurrently.
     pub max_concurrent_defense_tasks: u64,
-
-    /// Whether to enable game resolution.
-    /// When game resolution is not enabled, the proposer will only propose new games.
-    pub enable_game_resolution: bool,
-
-    /// The number of games to check for resolution.
-    /// When game resolution is enabled, the proposer will attempt to resolve games that are
-    /// unchallenged up to `max_games_to_check_for_resolution` games behind the latest game.
-    pub max_games_to_check_for_resolution: u64,
-
-    /// The maximum number of games to check for bond claiming.
-    pub max_games_to_check_for_bond_claiming: u64,
 
     /// Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not
     /// activated for op-node.
@@ -104,20 +89,8 @@ impl ProposerConfig {
                 .parse()?,
             fetch_interval: env::var("FETCH_INTERVAL").unwrap_or("30".to_string()).parse()?,
             game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
-            max_games_to_check_for_defense: env::var("MAX_GAMES_TO_CHECK_FOR_DEFENSE")
-                .unwrap_or("100".to_string())
-                .parse()?,
             max_concurrent_defense_tasks: env::var("MAX_CONCURRENT_DEFENSE_TASKS")
                 .unwrap_or("8".to_string())
-                .parse()?,
-            enable_game_resolution: env::var("ENABLE_GAME_RESOLUTION")
-                .unwrap_or("true".to_string())
-                .parse()?,
-            max_games_to_check_for_resolution: env::var("MAX_GAMES_TO_CHECK_FOR_RESOLUTION")
-                .unwrap_or("100".to_string())
-                .parse()?,
-            max_games_to_check_for_bond_claiming: env::var("MAX_GAMES_TO_CHECK_FOR_BOND_CLAIMING")
-                .unwrap_or("100".to_string())
                 .parse()?,
             safe_db_fallback: env::var("SAFE_DB_FALLBACK")
                 .unwrap_or("false".to_string())

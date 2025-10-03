@@ -12,7 +12,6 @@ pub struct EnvironmentConfig {
     pub metrics_port: u16,
     pub l1_rpc: Url,
     pub signer: Signer,
-    pub prover_address: Address,
     pub loop_interval: u64,
     pub range_proof_strategy: FulfillmentStrategy,
     pub agg_proof_strategy: FulfillmentStrategy,
@@ -54,11 +53,6 @@ const DEFAULT_LOOP_INTERVAL: u64 = 60;
 pub fn read_proposer_env() -> Result<EnvironmentConfig> {
     let signer = Signer::from_env()?;
 
-    // The prover address takes precedence over the signer address. Note: Setting the prover address
-    // in the context of the OP Succinct proposer typically does not make sense, as the contract
-    // will verify `tx.origin` matches the `proverAddress`.
-    let prover_address = get_env_var("PROVER_ADDRESS", Some(signer.address()))?;
-
     // Parse strategy values
     let range_proof_strategy = if get_env_var("RANGE_PROOF_STRATEGY", Some("reserved".to_string()))?
         .to_lowercase() ==
@@ -93,7 +87,6 @@ pub fn read_proposer_env() -> Result<EnvironmentConfig> {
         metrics_port: get_env_var("METRICS_PORT", Some(8080))?,
         l1_rpc: get_env_var("L1_RPC", None)?,
         signer,
-        prover_address,
         db_url: get_env_var("DATABASE_URL", None)?,
         range_proof_strategy,
         agg_proof_strategy,

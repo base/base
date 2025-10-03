@@ -6,7 +6,9 @@ use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use clap::Parser;
 use fault_proof::{
-    config::ProposerConfig, contract::DisputeGameFactory, prometheus::ProposerGauge,
+    config::ProposerConfig,
+    contract::{AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame},
+    prometheus::ProposerGauge,
     proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::{
@@ -34,6 +36,7 @@ async fn main() -> Result<()> {
 
     setup_logger();
 
+    let proposer_config = ProposerConfig::from_env()?;
     let proposer_signer = Signer::from_env()?;
 
     let l1_provider =
@@ -47,12 +50,11 @@ async fn main() -> Result<()> {
         l1_provider.clone(),
     );
 
-    // Use PROVER_ADDRESS from env if available, otherwise use wallet's default signer address from
-    // the private key.
-    let prover_address = env::var("PROVER_ADDRESS")
-        .ok()
-        .and_then(|addr| addr.parse::<Address>().ok())
-        .unwrap_or_else(|| proposer_signer.address());
+    let game_impl_address = factory.gameImpls(proposer_config.game_type).call().await?;
+    let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, l1_provider.clone());
+    let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?;
+    let anchor_state_registry =
+        AnchorStateRegistry::new(anchor_state_registry_address, l1_provider.clone());
 
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
@@ -67,11 +69,11 @@ async fn main() -> Result<()> {
 
     let proposer = Arc::new(
         OPSuccinctProposer::new(
-            ProposerConfig::from_env()?,
+            proposer_config,
             network_private_key,
-            prover_address,
             proposer_signer,
             factory,
+            anchor_state_registry,
             Arc::new(fetcher),
             host,
         )
