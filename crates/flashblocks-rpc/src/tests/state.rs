@@ -936,7 +936,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_non_sequential_payload_ignored() {
+    async fn test_non_sequential_payload_clears_pending_state() {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
@@ -971,17 +971,7 @@ mod tests {
         )
         .await;
 
-        // Still the block info transaction, the txns in the third payload are ignored as it's
-        // missing a Flashblock
-        assert_eq!(
-            test.flashblocks
-                .get_pending_blocks()
-                .get_block(true)
-                .expect("should be set")
-                .transactions
-                .len(),
-            1
-        );
+        assert_eq!(test.flashblocks.get_pending_blocks().is_none(), true);
     }
 
     #[tokio::test]

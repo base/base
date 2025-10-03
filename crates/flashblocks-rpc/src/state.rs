@@ -322,6 +322,8 @@ where
         match &prev_pending_blocks {
             Some(pending_blocks) => {
                 if self.is_next_flashblock(pending_blocks, flashblock) {
+                    // We have received the next flashblock for the current block
+                    // or the first flashblock for the next block
                     let mut flashblocks = pending_blocks.get_flashblocks();
                     flashblocks.push(flashblock.clone());
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
@@ -334,17 +336,26 @@ where
                         new_block = %flashblock.metadata.block_number,
                     );
                     Ok(None)
+                } else if pending_blocks.latest_flashblock_index() == flashblock.index {
+                    // We have received a duplicate flashblock for the current block
+                    self.metrics.unexpected_block_order.increment(1);
+                    warn!(
+                        message = "Received duplicate Flashblock for current block, ignoring",
+                        curr_block = %pending_blocks.latest_block_number(),
+                        flashblock_index = %flashblock.index,
+                    );
+                    Ok(prev_pending_blocks.clone())
                 } else {
                     // We have received a non-sequential flashblock for the current block
                     self.metrics.unexpected_block_order.increment(1);
 
-                    info!(
-                        message = "Received non-sequential Flashblock, ignoring and moving on",
+                    error!(
+                        message = "Received non-sequential Flashblock for current block, zeroing Flashblocks until we receive a base Flashblock",
                         curr_block = %pending_blocks.latest_block_number(),
                         new_block = %flashblock.metadata.block_number,
                     );
 
-                    Ok(Some(pending_blocks.clone()))
+                    Ok(None)
                 }
             }
             None => {
