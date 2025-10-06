@@ -21,10 +21,10 @@ fix-clippy:
     cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 build:
-    cargo build --release
+    cargo build --release --bin base-reth-node
 
 build-maxperf:
-    cargo build --profile maxperf --features jemalloc
+    cargo build --profile maxperf --bin base-reth-node --features jemalloc
 
 clean:
     cargo clean
@@ -34,3 +34,8 @@ watch-test:
 
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+
+lint: check-format check-clippy
+
+doc:
+    cargo doc --workspace --all-features --no-deps --open

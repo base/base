@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Base Reth Binary"
+description = "Base Reth Node Binary"
 
 [lints]
 workspace = true

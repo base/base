@@ -3,6 +3,7 @@ use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
 use std::sync::Arc;
+use eyre::Result;
 
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use base_reth_flashblocks_rpc::state::FlashblocksState;
@@ -51,12 +52,22 @@ impl Args {
     fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
+
+    fn validate(&self) -> Result<()> {
+        if let Some(ref url) = self.websocket_url {
+            Url::parse(url).map_err(|e| eyre::eyre!("Invalid websocket URL '{}': {}", url, e))?;
+        }
+        Ok(())
+    }
 }
 
-fn main() {
+fn main() -> eyre::Result<()> {
     Cli::<OpChainSpecParser, Args>::parse()
         .run(|builder, args| async move {
-            info!(message = "starting custom Base node");
+            // Validate configuration first
+            args.validate()?;
+            
+            info!(message = "Starting custom Base node");
 
             let flashblocks_enabled = args.flashblocks_enabled();
             let transaction_tracing_enabled = args.enable_transaction_tracing;
@@ -104,11 +115,10 @@ fn main() {
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
 
-                        let ws_url = Url::parse(
-                            args.websocket_url
-                                .expect("WEBSOCKET_URL must be set when Flashblocks is enabled")
-                                .as_str(),
-                        )?;
+                        let ws_url = match &args.websocket_url {
+                            Some(url) => Url::parse(url)?,
+                            None => return Err(eyre::eyre!("WEBSOCKET_URL must be set when Flashblocks is enabled")),
+                        };
 
                         let fb = fb_cell
                             .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
@@ -126,7 +136,7 @@ fn main() {
 
                         ctx.modules.replace_configured(api_ext.into_rpc())?;
                     } else {
-                        info!(message = "flashblocks integration is disabled");
+                        info!(message = "Flashblocks integration is disabled");
                     }
                     Ok(())
                 })
@@ -148,6 +158,7 @@ fn main() {
                 .await?;
 
             handle.wait_for_node_exit().await
-        })
-        .unwrap();
+        })?;
+    
+    Ok(())
 }

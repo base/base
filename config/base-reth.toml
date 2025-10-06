@@ -1,0 +1,42 @@
+# Base Reth Node Configuration
+# This is an example configuration file for Base Reth Node
+
+[node]
+# Enable transaction tracing ExEx for mempool-to-block timing analysis
+enable_transaction_tracing = false
+
+# Enable info logs for transaction tracing
+enable_transaction_tracing_logs = false
+
+[flashblocks]
+# Enable Flashblocks integration
+enabled = false
+
+# WebSocket URL for Flashblocks connection
+# Example: "wss://flashblocks.example.com/ws"
+websocket_url = ""
+
+[logging]
+# Log level: trace, debug, info, warn, error
+level = "info"
+
+# Log format: json, pretty
+format = "pretty"
+
+[rpc]
+# HTTP RPC server configuration
+http_addr = "127.0.0.1"
+http_port = 8545
+
+# WebSocket RPC server configuration  
+ws_addr = "127.0.0.1"
+ws_port = 8546
+
+[p2p]
+# P2P network configuration
+port = 30303
+max_peers = 50
+
+[database]
+# Database path
+path = "./data"
