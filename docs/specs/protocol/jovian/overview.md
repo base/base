@@ -16,6 +16,7 @@ This document is not finalized and should be considered experimental.
 
 - [Minimum Base Fee](./exec-engine.md#minimum-base-fee)
 - [DA Footprint Limit](./exec-engine.md#da-footprint-limit)
+- [Operator Fee](./exec-engine.md#operator-fee)
 
 ## Consensus Layer
 

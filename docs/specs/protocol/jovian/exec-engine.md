@@ -11,6 +11,9 @@
 - [DA Footprint Block Limit](#da-footprint-block-limit)
   - [Scalar loading](#scalar-loading)
   - [Rationale](#rationale-1)
+- [Operator Fee](#operator-fee)
+  - [Fee Formula Update](#fee-formula-update)
+  - [Maximum value](#maximum-value)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -148,3 +151,28 @@ throttling: a mechanism which artificially constricts block building. This can c
 unnecessary losses for chain operators and a negative user experience (transaction inclusion delays, priority fee
 auctions). So hard-limiting a block's DA footprint in a way that also influences the base fee mitigates the
 aforementioned problems of policy-based solutions.
+
+## Operator Fee
+
+### Fee Formula Update
+
+Jovian updates the operator fee calculation so that higher fees may be charged.
+Starting at the Jovian activation, the operator fee MUST be computed as:
+
+$$
+\text{operatorFee} = (\text{gas} \times \text{operatorFeeScalar} \times 100) + \text{operatorFeeConstant}
+$$
+
+The effective per-gas scalar applied is therefore `100 * operatorFeeScalar`. Otherwise, the data types and operator fee
+semantics described in the [Isthmus spec](../isthmus/exec-engine.md#operator-fee) continue to apply.
+
+### Maximum value
+
+With the new formula, the operator fee's maximum value has 103 bits:
+
+$$
+\text{operatorFee}_{\text{max}} = (\text{uint64}_{\text{max}} \times \text{uint32}_{\text{max}} \times 100) +
+\text{uint64}_{\text{max}} \approx 7.924660923989131 \times 10^{30}
+$$
+
+Implementations that use `uint256` for intermediate arithmetic do not need additional overflow checks.

@@ -8,6 +8,9 @@
 - [Network Upgrade Transactions](#network-upgrade-transactions)
   - [L1Block Deployment](#l1block-deployment)
   - [L1Block Proxy Update](#l1block-proxy-update)
+  - [GasPriceOracle Deployment](#gaspriceoracle-deployment)
+  - [GasPriceOracle Proxy Update](#gaspriceoracle-proxy-update)
+  - [GasPriceOracle Enable Jovian](#gaspriceoracle-enable-jovian)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -124,4 +127,118 @@ Verify `sourceHash`:
 ```bash
 cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Jovian: L1Block Proxy Update"))
 # 0x08447273a4fbce97bc8c515f97ac74efc461f6a4001553712f31ebc11288bad2
+```
+
+### GasPriceOracle Deployment
+<!-- Generated with: ./scripts/run_gen_predeploy_docs.sh --optimism-repo-path ../optimism
+ --fork-name Jovian --contract-name GasPriceOracle --from-address 0x4210000000000000000000000000000000000006
+  --from-address-nonce 0 --git-commit-hash 134edb32991f408a3354caf3de8a68145437cfc9
+  --eth-rpc-url https://optimism.rpc.subquery.network/public
+  --proxy-address 0x420000000000000000000000000000000000000F --copy-contract-bytecode true -->
+
+The `GasPriceOracle` contract is deployed.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x4210000000000000000000000000000000000006`
+- `to`: `null`
+- `mint`: `0`
+- `value`: `0`
+- `nonce`: `0`
+- `gasLimit`: `1756783`
+- `data`: `0x0x608060405234801561001057600080...` ([full bytecode](../../../specs/static/bytecode/jovian-gas-price-oracle-deployment.txt))
+- `sourceHash`: `0xd939cca6eca7bd0ee0c7e89f7e5b5cf7bf6f7afe7b6966bb45dfb95344b31545`,  
+  computed with the "Upgrade-deposited" type, with `intent = "Jovian: GasPriceOracle Deployment"`
+
+This results in the Jovian GasPriceOracle contract being deployed to
+`0x3Ba4007f5C922FBb33C454B41ea7a1f11E83df2C`, to verify:
+
+```bash
+cast compute-address --nonce=0 0x4210000000000000000000000000000000000006
+Computed Address: 0x3Ba4007f5C922FBb33C454B41ea7a1f11E83df2C
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Jovian: GasPriceOracle Deployment"))
+# 0xd939cca6eca7bd0ee0c7e89f7e5b5cf7bf6f7afe7b6966bb45dfb95344b31545
+```
+
+Verify `data`:
+
+```bash
+git checkout 134edb32991f408a3354caf3de8a68145437cfc9
+make build-contracts
+jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json
+```
+
+This transaction MUST deploy a contract with the following code hash  
+`0xa7fd95526766fc3ba40ed64aa1b55ad051cb2930df64e11c4a848b81d3a8deaf`.
+
+To verify the code hash:
+
+```bash
+git checkout 134edb32991f408a3354caf3de8a68145437cfc9
+make build-contracts
+cast k $(jq -r ".deployedBytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json)
+```
+
+### GasPriceOracle Proxy Update
+
+This transaction updates the GasPriceOracle Proxy ERC-1967
+implementation slot to point to the new GasPriceOracle deployment.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0x0000000000000000000000000000000000000000`
+- `to`: `0x420000000000000000000000000000000000000F` (GasPriceOracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `50,000`
+- `data`: `0x3659cfe60000000000000000000000003ba4007f5c922fbb33c454b41ea7a1f11e83df2c`
+- `sourceHash`: `0x46b597e2d8346ed7749b46734074361e0b41a0ab9af7afda5bb4e367e072bcb8`
+  computed with the "Upgrade-deposited" type, with `intent = "Jovian: GasPriceOracle Proxy Update"`
+
+Verify data:
+
+```bash
+cast concat-hex $(cast sig "upgradeTo(address)") $(cast abi-encode "upgradeTo(address)" 0x3Ba4007f5C922FBb33C454B41ea7a1f11E83df2C)
+# 0x3659cfe60000000000000000000000003ba4007f5c922fbb33c454b41ea7a1f11e83df2c
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Jovian: GasPriceOracle Proxy Update"))
+# 0x46b597e2d8346ed7749b46734074361e0b41a0ab9af7afda5bb4e367e072bcb8
+```
+
+### GasPriceOracle Enable Jovian
+
+This transaction informs the GasPriceOracle to start using the Jovian operator fee formula.
+
+A deposit transaction is derived with the following attributes:
+
+- `from`: `0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001` (Depositer Account)
+- `to`: `0x420000000000000000000000000000000000000F` (Gas Price Oracle Proxy)
+- `mint`: `0`
+- `value`: `0`
+- `gasLimit`: `90,000`
+- `data`: `0xb3d72079`
+- `sourceHash`: `0xe836db6a959371756f8941be3e962d000f7e12a32e49e2c9ca42ba177a92716c`,  
+  computed with the "Upgrade-deposited" type, with `intent = "Jovian: Gas Price Oracle Set Jovian"`
+
+Verify data:
+
+```bash
+cast sig "setJovian()"
+# 0xb3d72079
+```
+
+Verify `sourceHash`:
+
+```bash
+cast keccak $(cast concat-hex 0x0000000000000000000000000000000000000000000000000000000000000002 $(cast keccak "Jovian: Gas Price Oracle Set Jovian"))
+# 0xe836db6a959371756f8941be3e962d000f7e12a32e49e2c9ca42ba177a92716c
 ```
