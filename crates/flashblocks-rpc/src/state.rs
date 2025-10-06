@@ -37,7 +37,7 @@ use std::time::Instant;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Buffer 4s of flashblocks for flashblock_sender
 const BUFFER_SIZE: usize = 20;
