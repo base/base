@@ -4,6 +4,7 @@ mod tests {
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use crate::web3::{Web3ApiExt, Web3ApiOverrideServer, NODE_RETH_CLIENT_VERSION};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
@@ -23,6 +24,7 @@ mod tests {
     use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
     use reth::chainspec::Chain;
     use reth::core::exit::NodeExitFuture;
+    use reth::core::primitives::constants::RETH_CLIENT_VERSION;
     use reth::tasks::TaskManager;
     use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_optimism_node::args::RollupArgs;
@@ -134,13 +136,15 @@ mod tests {
                 let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
                 flashblocks_state.start();
 
-                let api_ext = EthApiExt::new(
+                let eth_api_ext = EthApiExt::new(
                     ctx.registry.eth_api().clone(),
                     ctx.registry.eth_handlers().filter.clone(),
                     flashblocks_state.clone(),
                 );
+                ctx.modules.replace_configured(eth_api_ext.into_rpc())?;
 
-                ctx.modules.replace_configured(api_ext.into_rpc())?;
+                let web3_api_ext = Web3ApiExt::new();
+                ctx.modules.replace_configured(web3_api_ext.into_rpc())?;
 
                 tokio::spawn(async move {
                     while let Some((payload, tx)) = receiver.recv().await {
@@ -879,6 +883,20 @@ mod tests {
             .iter()
             .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_web3_client_version() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let provider = node.provider().await?;
+
+        let client_version = provider.get_client_version().await?;
+        assert_eq!(
+            client_version,
+            format!("{}/{}", RETH_CLIENT_VERSION, NODE_RETH_CLIENT_VERSION)
+        );
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
 use base_reth_flashblocks_rpc::rpc::EthApiExt;
+use base_reth_flashblocks_rpc::web3::Web3ApiExt;
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
+use base_reth_flashblocks_rpc::web3::Web3ApiOverrideServer;
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use reth::builder::Node;
@@ -128,6 +130,9 @@ fn main() {
                     } else {
                         info!(message = "flashblocks integration is disabled");
                     }
+
+                    let web3_api_ext = Web3ApiExt::new();
+                    ctx.modules.replace_configured(web3_api_ext.into_rpc())?;
                     Ok(())
                 })
                 .launch_with_fn(|builder| {
