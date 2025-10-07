@@ -56,7 +56,6 @@ impl EventLog {
 
     pub fn push(&mut self, t: DateTime<Local>, event: TxEvent) {
         self.events.push((t, event));
-        self.limit += 1;
     }
 
     pub fn to_vec(&self) -> Vec<String> {
