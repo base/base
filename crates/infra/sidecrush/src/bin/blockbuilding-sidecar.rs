@@ -32,7 +32,7 @@ struct Args {
     log_level: Level,
 
     /// Log format (text|json)
-    #[arg(long, env, default_value = "text")]
+    #[arg(long, env, default_value = "json")]
     log_format: String,
 
     /// Treat node as a new instance on startup (suppresses initial errors until healthy)
