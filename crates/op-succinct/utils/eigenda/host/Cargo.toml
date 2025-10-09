@@ -7,8 +7,8 @@ edition.workspace = true
 [dependencies]
 # sp1
 sp1-sdk.workspace = true
-sp1-core-executor = { version = "=5.1.0" }
-sp1-prover = { version = "=5.1.0" }
+sp1-core-executor.workspace = true
+sp1-prover.workspace = true
 
 # local
 op-succinct-eigenda-client-utils.workspace = true

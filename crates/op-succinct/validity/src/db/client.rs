@@ -148,7 +148,7 @@ impl DriverDBClient {
         .await
     }
 
-    /// Fetch all requests with a specific block range and status FAILED or CANCELLED.
+    /// Fetch all requests with a specific block range and status FAILED.
     ///
     /// Checks that the request has the same range vkey commitment and rollup config hash as the
     /// commitment.
@@ -161,11 +161,10 @@ impl DriverDBClient {
         commitment: &CommitmentConfig,
     ) -> Result<i64, Error> {
         let count = sqlx::query!(
-            "SELECT COUNT(*) FROM requests WHERE start_block = $1 AND end_block = $2 AND (status = $3 OR status = $4) AND range_vkey_commitment = $5 AND rollup_config_hash = $6 AND l1_chain_id = $7 AND l2_chain_id = $8",
+            "SELECT COUNT(*) FROM requests WHERE start_block = $1 AND end_block = $2 AND status = $3 AND range_vkey_commitment = $4 AND rollup_config_hash = $5 AND l1_chain_id = $6 AND l2_chain_id = $7",
             start_block as i64,
             end_block as i64,
             RequestStatus::Failed as i16,
-            RequestStatus::Cancelled as i16,
             &commitment.range_vkey_commitment[..],
             &commitment.rollup_config_hash[..],
             l1_chain_id,
@@ -175,7 +174,6 @@ impl DriverDBClient {
         .await?;
         Ok(count.count.unwrap_or(0))
     }
-
     /// Fetch the highest end block of a request with one of the given statuses and commitment.
     pub async fn fetch_highest_end_block_for_range_request(
         &self,

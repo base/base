@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) FROM requests WHERE start_block = $1 AND end_block = $2 AND status = $3 AND range_vkey_commitment = $4 AND rollup_config_hash = $5 AND l1_chain_id = $6 AND l2_chain_id = $7",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Int2",
+        "Bytea",
+        "Bytea",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "221a2c5c77974c923f40d9a47bce5c599420d015f5e3294481eb86a6223a0114"
+}

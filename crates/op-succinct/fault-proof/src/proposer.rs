@@ -15,8 +15,12 @@ use anyhow::{Context, Result};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::{
-    fetcher::OPSuccinctDataFetcher, get_agg_proof_stdin, host::OPSuccinctHost,
-    metrics::MetricsGauge, witness_generation::WitnessGenerator,
+    fetcher::OPSuccinctDataFetcher,
+    get_agg_proof_stdin,
+    host::OPSuccinctHost,
+    metrics::MetricsGauge,
+    network::{determine_network_mode, get_network_signer},
+    witness_generation::WitnessGenerator,
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::Signer;
@@ -162,15 +166,19 @@ where
     /// contract instance.
     pub async fn new(
         config: ProposerConfig,
-        network_private_key: String,
         signer: Signer,
         factory: DisputeGameFactoryInstance<P>,
         anchor_state_registry: AnchorStateRegistryInstance<P>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         host: Arc<H>,
     ) -> Result<Self> {
-        let network_prover =
-            Arc::new(ProverClient::builder().network().private_key(&network_private_key).build());
+        // Set up the network prover.
+        let network_signer = get_network_signer(config.use_kms_requester).await?;
+        let network_mode =
+            determine_network_mode(config.range_proof_strategy, config.agg_proof_strategy)?;
+        let network_prover = Arc::new(
+            ProverClient::builder().network_for(network_mode).signer(network_signer).build(),
+        );
         let (range_pk, range_vk) = network_prover.setup(get_range_elf_embedded());
         let (agg_pk, _) = network_prover.setup(AGGREGATION_ELF);
 
@@ -547,11 +555,14 @@ where
                 .network_prover
                 .prove(&self.prover.range_pk, &sp1_stdin)
                 .compressed()
-                .strategy(self.config.range_proof_strategy)
                 .skip_simulation(true)
-                .cycle_limit(1_000_000_000_000)
-                .gas_limit(1_000_000_000_000)
-                .timeout(Duration::from_secs(4 * 60 * 60))
+                .strategy(self.config.range_proof_strategy)
+                .timeout(Duration::from_secs(self.config.timeout))
+                .min_auction_period(self.config.min_auction_period)
+                .max_price_per_pgu(self.config.max_price_per_pgu)
+                .cycle_limit(self.config.range_cycle_limit)
+                .gas_limit(self.config.range_gas_limit)
+                .whitelist(self.config.whitelist.clone())
                 .run_async()
                 .await?;
 
@@ -612,7 +623,12 @@ where
                 .prove(&self.prover.agg_pk, &sp1_stdin)
                 .groth16()
                 .strategy(self.config.agg_proof_strategy)
-                .timeout(Duration::from_secs(4 * 60 * 60))
+                .timeout(Duration::from_secs(self.config.timeout))
+                .min_auction_period(self.config.min_auction_period)
+                .max_price_per_pgu(self.config.max_price_per_pgu)
+                .cycle_limit(self.config.agg_cycle_limit)
+                .gas_limit(self.config.agg_gas_limit)
+                .whitelist(self.config.whitelist.clone())
                 .run_async()
                 .await?
         };

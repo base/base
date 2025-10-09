@@ -4,7 +4,10 @@ use anyhow::Result;
 use clap::Parser;
 use op_succinct_client_utils::{boot::BootInfoStruct, AGGREGATION_OUTPUTS_SIZE};
 use sp1_sdk::{
-    network::proto::types::{ExecutionStatus, FulfillmentStatus, GetProofRequestStatusResponse},
+    network::proto::{
+        types::{ExecutionStatus, FulfillmentStatus},
+        GetProofRequestStatusResponse,
+    },
     ProverClient, SP1ProofWithPublicValues,
 };
 use std::{fs, path::Path};
@@ -40,8 +43,8 @@ async fn main() -> Result<()> {
     // Fetch the proof
     let (status, proof): (GetProofRequestStatusResponse, Option<SP1ProofWithPublicValues>) =
         prover.get_proof_status(B256::from_slice(&request_id)).await?;
-    let fulfillment_status = FulfillmentStatus::try_from(status.fulfillment_status).unwrap();
-    let _ = ExecutionStatus::try_from(status.execution_status).unwrap();
+    let fulfillment_status = FulfillmentStatus::try_from(status.fulfillment_status()).unwrap();
+    let _ = ExecutionStatus::try_from(status.execution_status()).unwrap();
 
     let mut proof = match fulfillment_status {
         FulfillmentStatus::Fulfilled => proof.unwrap(),

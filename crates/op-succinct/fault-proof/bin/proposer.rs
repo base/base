@@ -59,18 +59,9 @@ async fn main() -> Result<()> {
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
 
-    // Set a default network private key to avoid an error in mock mode.
-    let network_private_key = env::var("NETWORK_PRIVATE_KEY").unwrap_or_else(|_| {
-        tracing::warn!(
-            "Using default NETWORK_PRIVATE_KEY of 0x01. This is only valid in mock mode."
-        );
-        "0x0000000000000000000000000000000000000000000000000000000000000001".to_string()
-    });
-
     let proposer = Arc::new(
         OPSuccinctProposer::new(
-            proposer_config,
-            network_private_key,
+            ProposerConfig::from_env()?,
             proposer_signer,
             factory,
             anchor_state_registry,
