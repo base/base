@@ -51,7 +51,7 @@ enum StateUpdate {
 pub struct FlashblocksState<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     queue: mpsc::UnboundedSender<StateUpdate>,
-    flashblock_sender: Sender<Flashblock>,
+    flashblock_sender: Sender<Arc<PendingBlocks>>,
     state_processor: StateProcessor<Client>,
 }
 
@@ -66,13 +66,18 @@ where
     pub fn new(client: Client) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
-        let state_processor =
-            StateProcessor::new(client, pending_blocks.clone(), Arc::new(Mutex::new(rx)));
+        let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
+        let state_processor = StateProcessor::new(
+            client,
+            pending_blocks.clone(),
+            Arc::new(Mutex::new(rx)),
+            flashblock_sender.clone(),
+        );
 
         Self {
             pending_blocks,
             queue: tx,
-            flashblock_sender: broadcast::channel(BUFFER_SIZE).0,
+            flashblock_sender,
             state_processor,
         }
     }
@@ -113,8 +118,6 @@ impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
                 error!(message = "could not add flashblock to processing queue", block_number = flashblock.metadata.block_number, flashblock_index = flashblock.index, error = %e);
             }
         }
-
-        _ = self.flashblock_sender.send(flashblock);
     }
 }
 
@@ -123,7 +126,7 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
         self.pending_blocks.load()
     }
 
-    fn subscribe_to_flashblocks(&self) -> tokio::sync::broadcast::Receiver<Flashblock> {
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
         self.flashblock_sender.subscribe()
     }
 }
@@ -183,6 +186,7 @@ struct StateProcessor<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
     metrics: Metrics,
     client: Client,
+    sender: Sender<Arc<PendingBlocks>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -197,12 +201,14 @@ where
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+        sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
         Self {
             metrics: Metrics::default(),
             pending_blocks,
             client,
             rx,
+            sender,
         }
     }
 
@@ -233,7 +239,11 @@ where
                     );
                     match self.process_flashblock(prev_pending_blocks, &flashblock) {
                         Ok(new_pending_blocks) => {
-                            self.pending_blocks.swap(new_pending_blocks);
+                            if new_pending_blocks.is_some() {
+                                _ = self.sender.send(new_pending_blocks.clone().unwrap())
+                            }
+
+                            self.pending_blocks.swap(new_pending_blocks.clone());
                             self.metrics
                                 .block_processing_duration
                                 .record(start_time.elapsed());
