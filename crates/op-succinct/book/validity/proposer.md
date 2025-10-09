@@ -59,6 +59,16 @@ Before starting the proposer, ensure you have deployed the relevant contracts an
 | `OTLP_ENABLED` | Default: `false`. Whether to export logs to [OTLP](https://opentelemetry.io/docs/specs/otel/protocol/). |
 | `LOGGER_NAME` | Default: `op-succinct`. This will be the `service.name` exported in the OTLP logs. |
 | `OTLP_ENDPOINT` | Default: `http://localhost:4317`. The endpoint to forward OTLP logs to. |
+| `USE_KMS_REQUESTER` | Default: ``.  Whether to expect NETWORK_PRIVATE_KEY to be an AWS KMS key ARN instead of a plaintext private key. |
+| `MAX_PRICE_PER_PGU` | Default: `300,000,000`. The maximum price per pgu for proving. |
+| `TIMEOUT` | Default: `14400` (4 hours). The timeout to use for proving (in seconds). |
+| `RANGE_CYCLE_LIMIT` | Default: `1,000,000,000,000`. The cycle limit to use for range proofs. |
+| `RANGE_GAS_LIMIT` | Default: `1,000,000,000,000`. The gas limit to use for range proofs. |
+| `AGG_CYCLE_LIMIT` | Default: `1,000,000,000,000`. The cycle limit to use for aggregation proofs. |
+| `AGG_GAS_LIMIT` | Default: `1,000,000,000,000`. The gas limit to use for aggregation proofs. |
+| `WHITELIST` | Default: ``. The list of prover addresses that are allowed to bid on proof requests. |
+| `MIN_AUCTION_PERIOD` | Default: `1`. The minimum auction period (in seconds). |
+| `AUCTION_TIMEOUT` | Default: `60` (1 minute). How long to wait before canceling a proof request that hasn't been assigned (in seconds). |
 
 ## Build the Proposer Service
 

@@ -42,6 +42,15 @@ pub async fn start_proposer(
         safe_db_fallback: false,
         metrics_port: 9000,
         fast_finality_proving_limit: 1,
+        use_kms_requester: false,
+        max_price_per_pgu: 300_000_000, // 0.3 PROVE per billion PGU
+        min_auction_period: 1,
+        timeout: 14400, // 4 hours
+        range_cycle_limit: 1_000_000_000_000,
+        range_gas_limit: 1_000_000_000_000,
+        agg_cycle_limit: 1_000_000_000_000,
+        agg_gas_limit: 1_000_000_000_000,
+        whitelist: None,
     };
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());
@@ -53,24 +62,13 @@ pub async fn start_proposer(
     let anchor_state_registry =
         AnchorStateRegistry::new(anchor_state_registry_address, l1_provider.clone());
 
-    // For testing, we use mock mode, so we use a dummy network private key.
-    let network_private_key =
-        "0x0000000000000000000000000000000000000000000000000000000000000001".to_string();
-
     let fetcher = Arc::new(OPSuccinctDataFetcher::new_with_rollup_config().await?);
     let host = initialize_host(fetcher.clone());
 
     Ok(tokio::spawn(async move {
-        let proposer = OPSuccinctProposer::new(
-            config,
-            network_private_key,
-            signer,
-            factory,
-            anchor_state_registry,
-            fetcher,
-            host,
-        )
-        .await?;
+        let proposer =
+            OPSuccinctProposer::new(config, signer, factory, anchor_state_registry, fetcher, host)
+                .await?;
         Arc::new(proposer).run().instrument(tracing::info_span!("PROPOSER")).await
     }))
 }

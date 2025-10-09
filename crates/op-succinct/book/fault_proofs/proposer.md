@@ -65,6 +65,15 @@ Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for t
 | `SAFE_DB_FALLBACK` | Whether to fallback to timestamp-based L1 head estimation even though SafeDB is not activated for op-node. When `false`, proposer will return an error if SafeDB is not available. It is by default `false` since using the fallback mechanism will result in higher proving cost. | `false` |
 | `PROPOSER_METRICS_PORT` | The port to expose metrics on. Update prometheus.yml to use this port, if using docker compose. | `9000` |
 | `FAST_FINALITY_PROVING_LIMIT` | Maximum number of concurrent proving tasks allowed in fast finality mode. | `1` |
+| `USE_KMS_REQUESTER` | Whether to expect NETWORK_PRIVATE_KEY to be an AWS KMS key ARN instead of a plaintext private key. | `false` |
+| `MAX_PRICE_PER_PGU` | The maximum price per pgu for proving. | `300,000,000` |
+| `MIN_AUCTION_PERIOD` | The minimum auction period (in seconds). | `1` |
+| `TIMEOUT` | The timeout to use for proving (in seconds). | `14,400` (4 hours) |
+| `RANGE_CYCLE_LIMIT` | The cycle limit to use for range proofs. | `1,000,000,000,000` |
+| `RANGE_GAS_LIMIT` | The gas limit to use for range proofs. | `1,000,000,000,000` |
+| `AGG_CYCLE_LIMIT` | The cycle limit to use for aggregation proofs. | `1,000,000,000,000` |
+| `AGG_GAS_LIMIT` | The gas limit to use for aggregation proofs. | `1,000,000,000,000` |
+| `WHITELIST` | The list of prover addresses that are allowed to bid on proof requests. | `` |
 
 ```env
 # Required Configuration

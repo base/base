@@ -57,7 +57,7 @@ base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
 lazy_static = "1.5.0"
 tracing = { version = "0.1.40", default-features = false }
-tracing-subscriber = { version = "0.3.19", features = ["fmt"] }
+tracing-subscriber = { version = "0.3.20", features = ["fmt"] }
 tracing-opentelemetry = "^0.24"
 opentelemetry = { version = "^0.23.0", features = ["trace"] }
 opentelemetry_sdk = { version = "^0.23.0", features = [
@@ -186,10 +186,13 @@ revm = { version = "24.0.1", default-features = false, features = [
 op-revm = { version = "5.0.1", default-features = false }
 
 # SP1
-sp1-sdk = { version = "=5.1.0" }
-sp1-lib = { version = "=5.1.0", features = ["verify"] }
-sp1-zkvm = { version = "=5.1.0", features = ["verify"] }
-sp1-build = { version = "=5.1.0" }
+sp1-sdk = { version = "=5.2.2", default-features = false, features = ["network"] }
+sp1-lib = { version = "=5.2.2", features = ["verify"] }
+sp1-zkvm = { version = "=5.2.2", features = ["verify"] }
+sp1-build = { version = "=5.2.2" }
+sp1-prover = { version = "=5.2.2" }
+sp1-core-executor = { version = "=5.2.2" }
+
 
 # kzg
 kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }
