@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use crate::metrics::Metrics;
 use crate::pending_blocks::PendingBlocks;
-use crate::subscription::Flashblock;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
@@ -42,7 +41,7 @@ pub trait FlashblocksAPI {
     /// Retrieves the pending blocks.
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>>;
 
-    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Flashblock>;
+    fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>>;
 }
 
 pub trait PendingBlocksAPI {
@@ -525,10 +524,9 @@ where
 
         loop {
             match receiver.recv().await {
-                Ok(flashblock) if flashblock.metadata.receipts.contains_key(&tx_hash) => {
+                Ok(pending_state) if pending_state.get_receipt(tx_hash).is_some() => {
                     debug!(message = "found receipt in flashblock", tx_hash = %tx_hash);
-                    let pending_blocks = self.flashblocks_state.get_pending_blocks();
-                    return pending_blocks.get_transaction_receipt(tx_hash);
+                    return pending_state.get_receipt(tx_hash);
                 }
                 Ok(_) => {
                     trace!(message = "flashblock does not contain receipt", tx_hash = %tx_hash);
