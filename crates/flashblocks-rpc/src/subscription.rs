@@ -34,12 +34,24 @@ pub struct Metadata {
     pub block_number: u64,
 }
 
+/// The canonical in-memory representation of a flashblock notification
+///
+/// A flashblock describes a delta over an execution payload (and optionally the
+/// full base payload) plus structured metadata.
+///
+/// - `base` may be `None` when only deltas are supplied.
+/// - `diff` carries the incremental changes on top of the base payload.
 #[derive(Debug, Clone)]
 pub struct Flashblock {
+    /// Identifier assigned by the engine for the target payload.
     pub payload_id: PayloadId,
+    /// Monotonic index of this delta within the flashblock stream for the payload.
     pub index: u64,
+    /// Optional base payload (present when upstream chooses to include it).
     pub base: Option<ExecutionPayloadBaseV1>,
+    /// Delta that mutates state relative to `base` or previous deltas.
     pub diff: ExecutionPayloadFlashblockDeltaV1,
+    /// Parsed metadata such as receipts and balance updates.
     pub metadata: Metadata,
 }
 
