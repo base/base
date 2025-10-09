@@ -74,7 +74,7 @@ impl FromStr for Signer {
     }
 }
 
-pub fn generate_ethereum_keypair() -> (SecretKey, PublicKey, Address) {
+pub fn generate_signer() -> Signer {
     let secp = Secp256k1::new();
 
     // Generate cryptographically secure random private key
@@ -86,7 +86,11 @@ pub fn generate_ethereum_keypair() -> (SecretKey, PublicKey, Address) {
     // Derive Ethereum address
     let address = public_key_to_address(&public_key);
 
-    (private_key, public_key, address)
+    Signer {
+        address,
+        pubkey: public_key,
+        secret: private_key,
+    }
 }
 
 /// Converts a public key to an Ethereum address
@@ -103,7 +107,7 @@ pub fn public_key_to_address(public_key: &PublicKey) -> Address {
 
 // Generate a key deterministically from a seed for debug and testing
 // Do not use in production
-pub fn generate_key_from_seed(seed: &str) -> (SecretKey, PublicKey, Address) {
+pub fn generate_key_from_seed(seed: &str) -> Signer {
     // Hash the seed
     let mut hasher = Sha256::new();
     hasher.update(seed.as_bytes());
@@ -115,7 +119,11 @@ pub fn generate_key_from_seed(seed: &str) -> (SecretKey, PublicKey, Address) {
     let public_key = PublicKey::from_secret_key(&secp, &private_key);
     let address = public_key_to_address(&public_key);
 
-    (private_key, public_key, address)
+    Signer {
+        address,
+        pubkey: public_key,
+        secret: private_key,
+    }
 }
 
 #[cfg(test)]

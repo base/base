@@ -33,6 +33,14 @@ pub struct FlashtestationsArgs {
     )]
     pub debug_tee_key_seed: String,
 
+    /// Path to save ephemeral TEE key between restarts
+    #[arg(
+        long = "flashtestations.tee-key-path",
+        env = "FLASHTESTATIONS_TEE_KEY_PATH",
+        default_value = "/run/flashtestation.key"
+    )]
+    pub flashtestations_key_path: String,
+
     // Remote url for attestations
     #[arg(
         long = "flashtestations.quote-provider",

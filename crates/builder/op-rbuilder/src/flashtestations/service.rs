@@ -1,9 +1,15 @@
-use alloy_primitives::{Bytes, keccak256};
+use alloy_primitives::{B256, Bytes, keccak256};
 use reth_node_builder::BuilderContext;
 use reth_provider::StateProvider;
 use reth_revm::State;
 use revm::Database;
-use std::fmt::Debug;
+use std::{
+    fmt::Debug,
+    fs::{self, OpenOptions},
+    io::Write,
+    os::unix::fs::OpenOptionsExt,
+    path::Path,
+};
 use tracing::{info, warn};
 
 use crate::{
@@ -12,7 +18,7 @@ use crate::{
     },
     primitives::reth::ExecutionInfo,
     traits::NodeBounds,
-    tx_signer::{Signer, generate_ethereum_keypair, generate_key_from_seed},
+    tx_signer::{Signer, generate_key_from_seed, generate_signer},
 };
 
 use super::{
@@ -28,21 +34,16 @@ pub async fn bootstrap_flashtestations<Node>(
 where
     Node: NodeBounds,
 {
-    let (private_key, public_key, address) = if args.debug {
-        info!("Flashtestations debug mode enabled, generating debug key");
-        // Generate deterministic key for debugging purposes
-        generate_key_from_seed(&args.debug_tee_key_seed)
-    } else {
-        generate_ethereum_keypair()
-    };
+    let tee_service_signer = load_or_generate_tee_key(
+        &args.flashtestations_key_path,
+        args.debug,
+        &args.debug_tee_key_seed,
+    )?;
 
-    info!("Flashtestations key generated: {}", address);
-
-    let tee_service_signer = Signer {
-        address,
-        pubkey: public_key,
-        secret: private_key,
-    };
+    info!(
+        "Flashtestations TEE address: {}",
+        tee_service_signer.address
+    );
 
     let funding_key = args
         .funding_key
@@ -133,6 +134,64 @@ where
         );
 
     Ok(flashtestations_builder_tx)
+}
+
+/// Load ephemeral TEE key from file, or generate and save a new one
+fn load_or_generate_tee_key(key_path: &str, debug: bool, debug_seed: &str) -> eyre::Result<Signer> {
+    if debug {
+        info!("Flashtestations debug mode enabled, generating debug key from seed");
+        return Ok(generate_key_from_seed(debug_seed));
+    }
+
+    let path = Path::new(key_path);
+
+    if let Some(signer) = load_tee_key(path) {
+        return Ok(signer);
+    }
+
+    // Generate new key
+    info!("Generating new ephemeral TEE key");
+    let signer = generate_signer();
+
+    let key_hex = hex::encode(signer.secret.secret_bytes());
+
+    // Create file with 0600 permissions atomically
+    OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut file| file.write_all(key_hex.as_bytes()))
+        .inspect_err(|e| warn!("Failed to write key to {}: {:?}", key_path, e))
+        .ok();
+
+    Ok(signer)
+}
+
+fn load_tee_key(path: &Path) -> Option<Signer> {
+    // Try to load existing key
+    if !path.exists() {
+        return None;
+    }
+
+    info!("Loading TEE key from {:?}", path);
+    let key_hex = fs::read_to_string(path)
+        .inspect_err(|e| warn!("failed to read key file: {:?}", e))
+        .ok()?;
+
+    let secret_bytes = B256::try_from(
+        hex::decode(key_hex.trim())
+            .inspect_err(|e| warn!("failed to decode hex from file {:?}", e))
+            .ok()?
+            .as_slice(),
+    )
+    .inspect_err(|e| warn!("failed to parse key from file: {:?}", e))
+    .ok()?;
+
+    Signer::try_from_secret(secret_bytes)
+        .inspect_err(|e| warn!("failed to create signer from key: {:?}", e))
+        .ok()
 }
 
 #[derive(Debug, Clone)]
