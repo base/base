@@ -1,5 +1,5 @@
 [workspace.package]
-version = "0.1.0"
+version = "0.1.10"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -8,7 +8,11 @@ repository = "https://github.com/base/node-reth"
 
 [workspace]
 resolver = "2"
-members = ["crates/flashblocks-rpc", "crates/node", "crates/transaction-tracing"]
+members = [
+    "crates/flashblocks-rpc",
+    "crates/node",
+    "crates/transaction-tracing",
+]
 
 default-members = ["crates/node"]
 
