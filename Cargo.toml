@@ -38,26 +38,26 @@ base-reth-node = { path = "crates/node" }
 base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # reth
-reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
-reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.1" }
+reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 
 # revm
 revm = { version = "29.0.0", default-features = false }
