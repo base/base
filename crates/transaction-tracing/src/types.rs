@@ -3,7 +3,7 @@ use std::fmt::{self, Display};
 use std::time::Instant;
 
 /// Types of transaction events to track
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TxEvent {
     Dropped,
     Replaced,
@@ -32,7 +32,7 @@ impl Display for TxEvent {
 }
 
 /// Types of pools a transaction can be in
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Pool {
     Pending,
     Queued,
