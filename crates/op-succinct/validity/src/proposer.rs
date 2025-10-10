@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
+use std::{collections::HashMap, ops::Range, str::FromStr, sync::Arc, time::Duration};
 
 use alloy_eips::BlockId;
 use alloy_primitives::{Address, B256, U256};
@@ -29,9 +29,9 @@ use tracing::{debug, info, warn};
 
 use crate::{
     db::{DriverDBClient, OPSuccinctRequest, RequestMode, RequestStatus, RequestType},
-    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove, CommitmentConfig,
-    ContractConfig, OPSuccinctProofRequester, ProgramConfig, RequestExecutionStatistics,
-    RequesterConfig, ValidityGauge,
+    find_gaps, get_latest_proposed_block_number, get_ranges_to_prove_by_blocks,
+    get_ranges_to_prove_by_gas, CommitmentConfig, ContractConfig, OPSuccinctProofRequester,
+    ProgramConfig, RequestExecutionStatistics, RequesterConfig, ValidityGauge,
 };
 
 /// Configuration for the driver.
@@ -231,12 +231,40 @@ where
             &requests,
         );
 
-        let ranges_to_prove = get_ranges_to_prove(
-            &disjoint_ranges,
-            self.requester_config.range_proof_interval as i64,
-        );
+        let ranges_to_prove = if self.requester_config.evm_gas_limit > 0 {
+            // Use gas-based splitting
+            let mut all_block_infos = std::collections::HashMap::new();
+            for &Range { start, end } in &disjoint_ranges {
+                if start < end {
+                    let block_data = self
+                        .driver_config
+                        .fetcher
+                        .get_l2_block_data_range(start as u64, end as u64)
+                        .await?;
 
-        if !ranges_to_prove.is_empty() {
+                    for block_info in block_data {
+                        all_block_infos.insert(block_info.block_number as i64, block_info);
+                    }
+                }
+            }
+
+            get_ranges_to_prove_by_gas(
+                &disjoint_ranges,
+                self.requester_config.evm_gas_limit,
+                self.requester_config.range_proof_interval as i64,
+                &all_block_infos,
+            )?
+        } else {
+            // Use block-based splitting
+            get_ranges_to_prove_by_blocks(
+                &disjoint_ranges,
+                self.requester_config.range_proof_interval as i64,
+            )
+        };
+
+        if ranges_to_prove.is_empty() {
+            warn!("No range proof requests inserted into the database.")
+        } else {
             info!("Inserting {} range proof requests into the database.", ranges_to_prove.len());
 
             // Create range proof requests for the ranges to prove in parallel
@@ -249,8 +277,8 @@ where
                     };
                     OPSuccinctRequest::create_range_request(
                         mode,
-                        range.0,
-                        range.1,
+                        range.start,
+                        range.end,
                         self.program_config.commitments.range_vkey_commitment,
                         self.program_config.commitments.rollup_config_hash,
                         self.requester_config.l1_chain_id,
@@ -1013,7 +1041,7 @@ where
                     output.output_root,
                     U256::from(completed_agg_proof.end_block),
                     U256::from(completed_agg_proof.checkpointed_l1_block_number.unwrap()),
-                    completed_agg_proof.proof.as_ref().unwrap().clone().into(),
+                    completed_agg_proof.proof.clone().unwrap().into(),
                     self.driver_config.signer.address(),
                 )
                 .value(init_bond)
@@ -1025,7 +1053,8 @@ where
                     self.driver_config.fetcher.as_ref().rpc_config.l1_rpc.clone(),
                     transaction_request,
                 )
-                .await?
+                .await
+                .map_err(|e| anyhow!("Failed to relay aggregation proof onchain. end_block: {}, checkpointed_l1_block_number: {}, error: {}", completed_agg_proof.end_block, completed_agg_proof.checkpointed_l1_block_number.unwrap(), e))?
         } else {
             // Propose the L2 output to the L2OutputOracle directly.
             let transaction_request = self
