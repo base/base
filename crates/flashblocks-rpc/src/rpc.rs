@@ -270,7 +270,6 @@ where
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
 
         if let Some(fb_transaction) = pending_blocks.get_transaction_by_hash(tx_hash) {
-            self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_transaction));
         }
 
