@@ -66,4 +66,5 @@ jobs:
         run: |
           gh release create "v${{ env.NEW_VERSION }}" \
             --title "v${{ env.NEW_VERSION }}" \
-            --generate-notes
+            --generate-notes \
+            --draft
