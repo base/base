@@ -1176,18 +1176,116 @@ where
 
     /// Check if we should create a game
     ///
-    /// Compares the next L2 block number for proposal with the finalized L2 block number.
+    /// In fast finality mode, prioritizes proving existing games over creating new ones, preventing
+    /// the proposer from abandoning in-progress games after a restart.
+    ///
+    /// Then compares the next L2 block number for proposal with the finalized L2 block number.
     /// If the finalized L2 block number is greater than or equal to the next L2 block number for
     /// proposal, we should create a game.
     async fn should_create_game(&self) -> Result<(bool, U256)> {
-        // In fast finality mode, check if we're at proving capacity
+        // In fast finality mode, resume proving for existing games before creating new ones
         // TODO(fakedev9999): Consider unifying proving concurrency control for both fast finality
         // and defense proving with a priority system.
         if self.config.fast_finality_mode {
-            let active_proving = self.count_active_proving_tasks().await;
+            let mut active_proving = self.count_active_proving_tasks().await;
+
+            // Resume proving for existing unproven games before creating new ones.
+            if active_proving < self.config.fast_finality_proving_limit {
+                let signer_address = self.signer.address();
+
+                let unproven_games = {
+                    let state = self.state.lock().await;
+                    let tasks = self.tasks.lock().await;
+
+                    let candidates = state
+                        .games
+                        .values()
+                        .filter(|game| game.status == GameStatus::IN_PROGRESS)
+                        .filter(|game| game.proposal_status == ProposalStatus::Unchallenged)
+                        .map(|game| (game.index, game.address))
+                        .collect::<Vec<_>>();
+
+                    let proving_set = tasks
+                        .values()
+                        .filter_map(|(_, info)| match info {
+                            TaskInfo::GameProving { game_address, .. } => Some(*game_address),
+                            _ => None,
+                        })
+                        .collect::<HashSet<_>>();
+
+                    // Filter games being proven
+                    candidates
+                        .into_iter()
+                        .filter(|(_, address)| !proving_set.contains(address))
+                        .collect::<Vec<_>>()
+                };
+
+                let mut spawned_count = 0;
+
+                for (index, game_address) in unproven_games {
+                    if active_proving >= self.config.fast_finality_proving_limit {
+                        tracing::debug!(
+                            "Reached fast finality proving capacity ({}/{}) while resuming games",
+                            active_proving,
+                            self.config.fast_finality_proving_limit
+                        );
+                        break;
+                    }
+
+                    // Check if we own this game
+                    let contract =
+                        OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
+                    let creator = match contract.gameCreator().call().await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!(
+                                ?game_address,
+                                ?e,
+                                "Failed to check game creator, skipping"
+                            );
+                            continue;
+                        }
+                    };
+
+                    if creator != signer_address {
+                        continue;
+                    }
+
+                    // Spawn proving task
+                    match self.spawn_game_proving_task(game_address, false).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                game_address = ?game_address,
+                                game_index = %index,
+                                "Resumed fast finality proving for existing game"
+                            );
+                            spawned_count += 1;
+                            active_proving += 1;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                ?game_address,
+                                ?e,
+                                "Failed to spawn proving task, continuing"
+                            );
+                        }
+                    }
+                }
+
+                if spawned_count > 0 {
+                    tracing::info!(
+                        "Resumed proving for {} existing game(s), now at {}/{} capacity",
+                        spawned_count,
+                        active_proving,
+                        self.config.fast_finality_proving_limit
+                    );
+                }
+            }
+
+            // Check capacity after resuming existing games
             if active_proving >= self.config.fast_finality_proving_limit {
                 tracing::info!(
-                    "Skipping game creation in fast finality mode: proving at capacity ({}/{})",
+                    "Skipping game creation: at proving capacity ({}/{})",
                     active_proving,
                     self.config.fast_finality_proving_limit
                 );
