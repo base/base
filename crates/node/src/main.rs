@@ -1,6 +1,9 @@
 use base_reth_flashblocks_rpc::rpc::EthApiExt;
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
+use reth::version::{
+    default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts,
+};
 use reth_exex::ExExEvent;
 use std::sync::Arc;
 
@@ -9,7 +12,7 @@ use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
-use reth::builder::Node;
+use reth::builder::{Node, NodeHandle};
 use reth::{
     builder::{EngineNodeLauncher, TreeConfig},
     providers::providers::BlockchainProvider,
@@ -19,6 +22,8 @@ use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
 use tracing::info;
 use url::Url;
+
+pub const NODE_RETH_CLIENT_VERSION: &str = concat!("base/v", env!("CARGO_PKG_VERSION"));
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -54,6 +59,29 @@ impl Args {
 }
 
 fn main() {
+    let default_version_metadata = default_reth_version_metadata();
+    try_init_version_metadata(RethCliVersionConsts {
+        name_client: "Base Reth Node".to_string().into(),
+        cargo_pkg_version: format!(
+            "{}/{}",
+            default_version_metadata.cargo_pkg_version,
+            env!("CARGO_PKG_VERSION")
+        )
+        .into(),
+        p2p_client_version: format!(
+            "{}/{}",
+            default_version_metadata.p2p_client_version, NODE_RETH_CLIENT_VERSION
+        )
+        .into(),
+        extra_data: format!(
+            "{}/{}",
+            default_version_metadata.extra_data, NODE_RETH_CLIENT_VERSION
+        )
+        .into(),
+        ..default_version_metadata
+    })
+    .expect("Unable to init version metadata");
+
     Cli::<OpChainSpecParser, Args>::parse()
         .run(|builder, args| async move {
             info!(message = "starting custom Base node");
@@ -64,7 +92,10 @@ fn main() {
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
-            let handle = builder
+            let NodeHandle {
+                node: _node,
+                node_exit_future,
+            } = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
@@ -147,7 +178,7 @@ fn main() {
                 })
                 .await?;
 
-            handle.wait_for_node_exit().await
+            node_exit_future.await
         })
         .unwrap();
 }
