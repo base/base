@@ -16,9 +16,9 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tips_audit::{BundleEvent, BundleEventPublisher, DropReason};
 use tips_datastore::BundleDatastore;
-use tips_datastore::postgres::{BundleFilter, BundleState, BundleWithMetadata};
+use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter, BundleState, BundleWithMetadata};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 pub struct MaintenanceJob<S: BundleDatastore, P: Provider<Optimism>, K: BundleEventPublisher> {
@@ -54,6 +54,11 @@ impl<S: BundleDatastore, P: Provider<Optimism>, K: BundleEventPublisher> Mainten
             .await?
             .ok_or_else(|| anyhow::anyhow!("Failed to get latest block"))?;
 
+        debug!(
+            message = "Executing up to latest block",
+            block_number = latest_block.number()
+        );
+
         let block_info = self.store.get_current_block_info().await?;
 
         if let Some(current_block_info) = block_info {
@@ -62,6 +67,8 @@ impl<S: BundleDatastore, P: Provider<Optimism>, K: BundleEventPublisher> Mainten
                 for block_num in
                     (current_block_info.latest_block_number + 1)..=latest_block.header.number
                 {
+                    debug!(message = "Fetching block number", ?latest_block);
+
                     let block = self
                         .node
                         .get_block(BlockId::Number(alloy_rpc_types::BlockNumberOrTag::Number(
@@ -71,12 +78,19 @@ impl<S: BundleDatastore, P: Provider<Optimism>, K: BundleEventPublisher> Mainten
                         .await?
                         .ok_or_else(|| anyhow::anyhow!("Failed to get block {}", block_num))?;
 
+                    let hash = block.hash();
                     self.on_new_block(block).await?;
+                    self.store
+                        .commit_block_info(vec![BlockInfoUpdate {
+                            block_number: block_num,
+                            block_hash: hash,
+                        }])
+                        .await?;
                 }
             }
         } else {
             warn!("No block info found in database, initializing with latest block as finalized");
-            let block_update = tips_datastore::postgres::BlockInfoUpdate {
+            let block_update = BlockInfoUpdate {
                 block_number: latest_block.header.number,
                 block_hash: latest_block.header.hash,
             };
@@ -142,33 +156,36 @@ impl<S: BundleDatastore, P: Provider<Optimism>, K: BundleEventPublisher> Mainten
         loop {
             tokio::select! {
                 _ = maintenance_interval.tick() => {
+                    info!(message = "starting maintenance");
                     match self.periodic_maintenance().await {
                         Ok(_) => {
-                            info!("Periodic maintenance completed");
+                            info!(message = "Periodic maintenance completed");
                         },
                         Err(err) => {
-                            error!("Error in periodic maintenance: {:?}", err);
+                            error!(message = "Error in periodic maintenance", error = %err);
                         }
 
                     }
                 }
                 _ = execution_interval.tick() => {
+                    info!(message = "starting execution run");
                     match self.execute().await {
                         Ok(_) => {
-                            info!("Successfully executed maintenance run");
+                            info!(message = "Successfully executed maintenance run");
                         }
                         Err(e) => {
-                            error!("Error executing maintenance run: {:?}", e);
+                            error!(message = "Error executing maintenance run", error = %e);
                         }
                     }
                 }
                 Some(flashblock) = fb_rx.recv() => {
+                    info!(message = "starting flashblock processing");
                     match self.process_flashblock(flashblock).await {
                         Ok(_) => {
-                            info!("Successfully processed flashblock");
+                            info!(message = "Successfully processed flashblock");
                         }
                         Err(e) => {
-                            error!("Error processing flashblock: {:?}", e);
+                            error!(message = "Error processing flashblock", error = %e);
                         }
                     }
                 }

@@ -1,3 +1,4 @@
+use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_consensus::{Transaction, Typed2718, constants::KECCAK_EMPTY, transaction::Recovered};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
@@ -49,24 +50,29 @@ pub trait L1BlockInfoLookup: Send + Sync {
 #[async_trait]
 impl L1BlockInfoLookup for RootProvider<Optimism> {
     async fn fetch_l1_block_info(&self) -> RpcResult<L1BlockInfo> {
-        let block_number = self
-            .get_block_number()
-            .await
-            .map_err(|_| EthApiError::InternalEthError.into_rpc_err())?;
         let block = self
-            .get_block_by_number(block_number.into())
+            .get_block(BlockId::Number(BlockNumberOrTag::Latest))
             .full()
             .await
-            .map_err(|_| EthApiError::InternalEthError.into_rpc_err())?
-            .ok_or_else(|| EthApiError::HeaderNotFound(block_number.into()).into_rpc_err())?;
+            .map_err(|e| {
+                warn!(message = "failed to fetch latest block", err = %e);
+                EthApiError::InternalEthError.into_rpc_err()
+            })?
+            .ok_or_else(|| {
+                warn!(message = "empty latest block returned");
+                EthApiError::InternalEthError.into_rpc_err()
+            })?;
 
         let txs = block.transactions.clone();
-        let first_tx = txs
-            .first_transaction()
-            .ok_or_else(|| EthApiError::InternalEthError.into_rpc_err())?;
+        let first_tx = txs.first_transaction().ok_or_else(|| {
+            warn!(message = "block contains no transactions");
+            EthApiError::InternalEthError.into_rpc_err()
+        })?;
 
-        Ok(extract_l1_info_from_tx(&first_tx.clone())
-            .map_err(|_| EthApiError::InternalEthError.into_rpc_err())?)
+        Ok(extract_l1_info_from_tx(&first_tx.clone()).map_err(|e| {
+            warn!(message = "failed to extract l1_info from tx", err = %e);
+            EthApiError::InternalEthError.into_rpc_err()
+        })?)
     }
 }
 
