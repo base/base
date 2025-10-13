@@ -23,27 +23,31 @@ pub struct OpPayloadAttributes {
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub payload_attributes: PayloadAttributes,
     /// Transactions is a field for rollups: the transactions list is forced into the block
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub transactions: Option<Vec<Bytes>>,
     /// If true, the no transactions are taken out of the tx-pool, only transactions from the above
     /// Transactions list will be included.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub no_tx_pool: Option<bool>,
     /// If set, this sets the exact gas limit the block produced with.
     #[cfg_attr(
         feature = "serde",
-        serde(skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
     )]
     pub gas_limit: Option<u64>,
     /// If set, this sets the EIP-1559 parameters for the block.
     ///
     /// Prior to Holocene activation, this field should always be [None].
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub eip_1559_params: Option<B64>,
     /// If set, this sets the minimum base fee for the block.
     ///
     /// Prior to Jovian activation, this field should always be [None].
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
     pub min_base_fee: Option<u64>,
 }
 
@@ -329,5 +333,16 @@ mod test {
         // Use Holocene function for pre-Jovian decoding of extra data
         let result = attributes.get_holocene_extra_data(BaseFeeParams::new(80, 60));
         assert_eq!(result.unwrap_err(), EIP1559ParamError::MinBaseFeeMustBeNone);
+    }
+
+    // <https://github.com/alloy-rs/op-alloy/issues/601>
+    #[test]
+    fn test_serde_attributes() {
+        let json = r#"{"timestamp":"0x68e8f68b","prevRandao":"0x0c00c066d51a9cd87d962de52da13e9dfd7f08d507601f916e116aacfe370de7","suggestedFeeRecipient":"0x4200000000000000000000000000000000000011","withdrawals":[],"parentBeaconBlockRoot":"0x6d9579b008332936037f0167d74af108db1fbe22d1bd6552f2d4453419afa4e2","transactions":["0x7ef8f8a058642a460a8c2fb85bae8237221cfa2f138777697c73052afe5adbd911ec9f5194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e2000000558000c5fc500000000000000010000000068e8f688000000000000000d000000000000000000000000000000000000000000000000000000000a9dd4be0000000000000000000000000000000000000000000000000000000000000001844ea1c8f674542957f8fd73f34545ed30d24ebfa80775b869ea8848a6f38259000000000000000000000000aff0ca253b97e54440965855cec0a8a2e2399896"],"eip1559Params":"0x000000fa00000006"}"#;
+
+        let attributes: OpPayloadAttributes = serde_json::from_str(json).unwrap();
+        let val = serde_json::to_value(&attributes).unwrap();
+        let round_trip: OpPayloadAttributes = serde_json::from_value(val).unwrap();
+        assert_eq!(attributes, round_trip);
     }
 }
