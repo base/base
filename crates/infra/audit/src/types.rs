@@ -121,7 +121,7 @@ impl BundleEvent {
                 block_hash,
                 ..
             } => {
-                format!("{}-{}", bundle_id, block_hash)
+                format!("{bundle_id}-{block_hash}")
             }
             BundleEvent::FlashblockIncluded {
                 bundle_id,
@@ -129,7 +129,7 @@ impl BundleEvent {
                 flashblock_index,
                 ..
             } => {
-                format!("{}-{}-{}", bundle_id, block_number, flashblock_index)
+                format!("{bundle_id}-{block_number}-{flashblock_index}")
             }
             _ => {
                 format!("{}-{}", self.bundle_id(), Uuid::new_v4())

@@ -94,8 +94,6 @@ where
             .await?;
         validate_tx(account, &transaction, &data, &mut l1_block_info).await?;
 
-        // TODO: parallelize DB and mempool setup
-
         let expiry_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

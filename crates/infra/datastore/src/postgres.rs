@@ -446,19 +446,20 @@ impl BundleDatastore for PostgresDatastore {
             match (row.latest_block_number, row.latest_block_hash) {
                 (Some(block_number), Some(hash_str)) => {
                     let hash = B256::from_hex(&hash_str)
-                        .map_err(|e| anyhow::anyhow!("Failed to parse latest block hash: {}", e))?;
+                        .map_err(|e| anyhow::anyhow!("Failed to parse latest block hash: {e}"))?;
                     (block_number as u64, hash)
                 }
                 _ => return Ok(None),
             };
 
-        let latest_finalized_block_hash = if let Some(hash_str) = row.latest_finalized_block_hash {
-            Some(B256::from_hex(&hash_str).map_err(|e| {
-                anyhow::anyhow!("Failed to parse latest finalized block hash: {}", e)
-            })?)
-        } else {
-            None
-        };
+        let latest_finalized_block_hash =
+            if let Some(hash_str) = row.latest_finalized_block_hash {
+                Some(B256::from_hex(&hash_str).map_err(|e| {
+                    anyhow::anyhow!("Failed to parse latest finalized block hash: {e}")
+                })?)
+            } else {
+                None
+            };
 
         Ok(Some(BlockInfo {
             latest_block_number,
