@@ -177,6 +177,7 @@ pub struct L1BlockInfo {
     /// Always null prior to the Ecotone hardfork.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub l1_blob_base_fee_scalar: Option<u128>,
+    /* ---------------------------------------- Isthmus ---------------------------------------- */
     /// Operator fee scalar.
     ///
     /// Always null prior to the Isthmus hardfork.
@@ -187,6 +188,12 @@ pub struct L1BlockInfo {
     /// Always null prior to the Isthmus hardfork.
     #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
     pub operator_fee_constant: Option<u128>,
+    /* ---------------------------------------- Jovian ---------------------------------------- */
+    /// DA footprint gas scalar. Used to set the DA footprint block limit on the L2.
+    ///
+    /// Always null prior to the Jovian hardfork.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "alloy_serde::quantity::opt")]
+    pub da_footprint_gas_scalar: Option<u16>,
 }
 
 impl Eq for L1BlockInfo {}
@@ -269,7 +276,10 @@ mod tests {
         "l1Fee": "0x5bf1ab43d",
         "l1BaseFeeScalar": "0x1",
         "l1BlobBaseFee": "0x600ab8f05e64",
-        "l1BlobBaseFeeScalar": "0x1"
+        "l1BlobBaseFeeScalar": "0x1",
+        "operatorFeeScalar": "0x1",
+        "operatorFeeConstant": "0x1",
+        "daFootprintGasScalar": "0x1"
     }"#;
 
         let receipt: OpTransactionReceipt = serde_json::from_str(s).unwrap();
