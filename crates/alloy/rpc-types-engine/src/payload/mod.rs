@@ -6,9 +6,9 @@ pub mod v4;
 
 use crate::{OpExecutionPayloadSidecar, OpExecutionPayloadV4};
 use alloc::vec::Vec;
-use alloy_consensus::{Block, BlockHeader, Transaction};
+use alloy_consensus::{Block, BlockHeader, HeaderInfo, Transaction};
 use alloy_eips::{Decodable2718, Encodable2718, Typed2718, eip7685::EMPTY_REQUESTS_HASH};
-use alloy_primitives::{B256, Bytes, Sealable};
+use alloy_primitives::{Address, B256, Bytes, Sealable, U256};
 use alloy_rpc_types_engine::{
     ExecutionPayload, ExecutionPayloadInputV2, ExecutionPayloadV1, ExecutionPayloadV2,
     ExecutionPayloadV3, PayloadError,
@@ -469,6 +469,51 @@ impl OpExecutionPayload {
     /// Returns the timestamp for this payload.
     pub const fn timestamp(&self) -> u64 {
         self.as_v1().timestamp
+    }
+
+    /// Returns the fee recipient for this payload.
+    pub const fn fee_recipient(&self) -> Address {
+        self.as_v1().fee_recipient
+    }
+
+    /// Returns the gas limit for this payload.
+    pub const fn gas_limit(&self) -> u64 {
+        self.as_v1().gas_limit
+    }
+
+    /// Returns the saturated base fee per gas for this payload.
+    pub fn saturated_base_fee_per_gas(&self) -> u64 {
+        self.as_v1().base_fee_per_gas.saturating_to()
+    }
+
+    /// Returns the excess blob gas for this payload.
+    pub fn excess_blob_gas(&self) -> Option<u64> {
+        self.as_v3().map(|payload| payload.excess_blob_gas)
+    }
+
+    /// Returns the blob gas used for this payload.
+    pub fn blob_gas_used(&self) -> Option<u64> {
+        self.as_v3().map(|payload| payload.blob_gas_used)
+    }
+
+    /// Returns the prev randao for this payload.
+    pub const fn prev_randao(&self) -> B256 {
+        self.as_v1().prev_randao
+    }
+
+    /// Extracts essential information into one container type.
+    pub fn header_info(&self) -> HeaderInfo {
+        HeaderInfo {
+            number: self.block_number(),
+            beneficiary: self.fee_recipient(),
+            timestamp: self.timestamp(),
+            gas_limit: self.gas_limit(),
+            base_fee_per_gas: Some(self.saturated_base_fee_per_gas()),
+            excess_blob_gas: self.excess_blob_gas(),
+            blob_gas_used: self.blob_gas_used(),
+            difficulty: U256::ZERO,
+            mix_hash: Some(self.prev_randao()),
+        }
     }
 
     /// Converts [`OpExecutionPayload`] to [`Block`] with raw transactions.
