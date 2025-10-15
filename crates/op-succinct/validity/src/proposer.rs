@@ -658,15 +658,53 @@ where
                 .await?;
 
             // If there's an existing aggregation request with the same start block, end block, and
-            // commitment config that has a checkpointed block hash, use the existing L1 block hash
-            // and number. This is likely caused by an error generating the aggregation
-            // proof, but there's no need to checkpoint the L1 block hash again.
-            let (checkpointed_l1_block_hash, checkpointed_l1_block_number) = if let Some(
-                existing_request,
-            ) = existing_request
+            // commitment config, try to reuse its checkpoint as long as it still matches the
+            // on-chain mapping.
+            let reuse_checkpoint = if let Some(existing_request) = existing_request {
+                let existing_l1_block_hash = B256::from_slice(&existing_request.0);
+                let existing_l1_block_number = existing_request.1;
+
+                let existing_l1_block_number_u64 = u64::try_from(existing_l1_block_number)
+                    .context("Existing checkpointed L1 block number is negative")?;
+
+                let onchain_l1_block_hash = self
+                    .contract_config
+                    .l2oo_contract
+                    .historicBlockHashes(U256::from(existing_l1_block_number_u64))
+                    .call()
+                    .await?
+                    .0;
+
+                if onchain_l1_block_hash == B256::ZERO {
+                    warn!(
+                        block_number = existing_l1_block_number,
+                        "Historic block hash missing on-chain for cached checkpoint; re-checkpointing."
+                    );
+                    None
+                } else if onchain_l1_block_hash != existing_l1_block_hash {
+                    warn!(
+                        block_number = existing_l1_block_number,
+                        ?existing_l1_block_hash,
+                        ?onchain_l1_block_hash,
+                        "Historic block hash mismatch between database and contract; re-checkpointing."
+                    );
+                    None
+                } else {
+                    debug!(
+                        block_number = existing_l1_block_number,
+                        ?existing_l1_block_hash,
+                        "Reusing cached checkpointed L1 block hash."
+                    );
+                    Some((existing_l1_block_hash, existing_l1_block_number))
+                }
+            } else {
+                None
+            };
+
+            let (checkpointed_l1_block_hash, checkpointed_l1_block_number) = if let Some(reuse) =
+                reuse_checkpoint
             {
-                tracing::debug!("Found existing aggregation request with the same start block, end block, and commitment config that has a checkpointed block hash.");
-                (B256::from_slice(&existing_request.0), existing_request.1)
+                reuse
             } else {
                 // Checkpoint an L1 block hash that will be used to create the aggregation proof.
                 let latest_header =

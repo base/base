@@ -54,9 +54,10 @@ contract Utils is Test, JSONDecoder {
                 existingProxy.upgradeToAndCall(cfg.opSuccinctL2OutputOracleImpl, initializationParams);
             } else {
                 // This is used if the ProxyAdmin contract is deployed.
-                ProxyAdmin(payable(cfg.proxyAdmin)).upgradeAndCall(
-                    payable(l2OutputOracleProxy), cfg.opSuccinctL2OutputOracleImpl, initializationParams
-                );
+                ProxyAdmin(payable(cfg.proxyAdmin))
+                    .upgradeAndCall(
+                        payable(l2OutputOracleProxy), cfg.opSuccinctL2OutputOracleImpl, initializationParams
+                    );
             }
         } else {
             // Raw calldata for an upgrade call by a multisig.

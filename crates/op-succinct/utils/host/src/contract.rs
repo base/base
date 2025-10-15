@@ -18,6 +18,8 @@ sol! {
 
         function latestBlockNumber() public view returns (uint256);
 
+        function historicBlockHashes(uint256 _blockNumber) external view returns (bytes32);
+
         function updateAggregationVKey(bytes32 _aggregationVKey) external onlyOwner;
 
         function updateRangeVkeyCommitment(bytes32 _rangeVkeyCommitment) external onlyOwner;
