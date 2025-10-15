@@ -36,6 +36,12 @@ sol! {
         function status() external view returns (GameStatus status_);
     }
 
+    #[allow(missing_docs)]
+    #[sol(rpc)]
+    interface IFaultDisputeGame {
+        function l2BlockNumber() external view returns (uint256 l2BlockNumber_);
+    }
+
     #[sol(rpc)]
     contract OPSuccinctFaultDisputeGame {
         /// @notice Getter for the game type.
@@ -73,6 +79,9 @@ sol! {
         ///         `CHALLENGER_WINS` when the proposer's claim has been challenged, but the proposer has not proven
         ///         its claim within the `MAX_PROVE_DURATION`.
         function resolve() external returns (GameStatus status_);
+
+        /// @notice Determines if the game is finished.
+        function gameOver() external view returns (bool gameOver_);
 
         /// @notice Returns the max challenge duration.
         function maxChallengeDuration() external view returns (uint256 maxChallengeDuration_);

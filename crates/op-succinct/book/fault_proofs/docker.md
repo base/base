@@ -50,8 +50,6 @@ PRIVATE_KEY=             # Private key for transaction signing
 
 # Optional Configuration
 FETCH_INTERVAL=30        # Polling interval in seconds
-MAX_GAMES_TO_CHECK_FOR_CHALLENGE=100  # Maximum number of games to check for challenges
-ENABLE_GAME_RESOLUTION=true           # Whether to enable automatic game resolution
 ```
 
 2. Start the services:
