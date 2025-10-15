@@ -115,17 +115,16 @@ where `intercept`, `minTransactionSize`, `fastlzCoef` and `fastlzSize`
 are defined in the [Fjord specs](../fjord/exec-engine.md), `DEPOSIT_TX_TYPE` is `0x7E`,
 and `//` represents integer floor division.
 
-From Jovian, the `gasUsed` property of each block header is equal to the maximum over
-that block's `daFootprint` and the sum of the gas used by each transaction
-(the pre-Jovian definition of a block's `gasUsed` field).
+From Jovian, the `blobGasUsed` property of each block header is set to that block's `daFootprint`. Note that pre-Jovian,
+since Ecotone, it was set to 0, as OP Stack chains don't support blobs. It is now repurposed to store the DA footprint.
+
+During block building and header validation, it must be guaranteed and checked, respectively, that the block's
+`daFootprint` stays below the `gasLimit`, just like the `gasUsed` property.
+Note that this implies that blocks may have no more than `gasLimit/daFootprintGasScalar` total estimated DA usage bytes.
+
+Furthermore, from Jovian, the base fee update calculation now uses `gasMetered := max(gasUsed, blobGasUsed)`
+in place of the `gasUsed` value used before.
 As a result, blocks with high DA usage may cause the base fee to increase in subsequent blocks.
-
-The `gasUsed` must continue to be less than or equal to the block gas limit, meaning that
-(since the `daFootprint` must also be less than or equal to the block gas limit),
-blocks may have no more than `gasLimit/daFootprintGasScalar` total estimated DA usage.
-
-Note that, since the base fee continues to be updated according to a block's `gasUsed` field, the base fee may be
-directly influenced by DA usage.
 
 ### Scalar loading
 
@@ -136,7 +135,7 @@ The `daFootprintGasScalar` is loaded in a similar way to the `operatorFeeScalar`
 (decoded according to the [jovian schema](./l1-attributes.md))
 - read from the L1 Block Info contract (`0x4200000000000000000000000000000000000015`)
   - using the solidity getter function `daFootprintGasScalar`
-  - using a direct storage-read: big-endian `uint16` in slot `9` at offset `0`.
+  - using a direct storage-read: big-endian `uint16` in slot `8` at offset `12`.
 
 It takes on a default value as described in the section on [L1 Attributes](./l1-attributes.md).
 
