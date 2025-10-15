@@ -6,9 +6,7 @@ use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use clap::Parser;
 use fault_proof::{
-    config::ProposerConfig,
-    contract::{AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame},
-    prometheus::ProposerGauge,
+    config::ProposerConfig, contract::DisputeGameFactory, prometheus::ProposerGauge,
     proposer::OPSuccinctProposer,
 };
 use op_succinct_host_utils::{
@@ -50,26 +48,13 @@ async fn main() -> Result<()> {
         l1_provider.clone(),
     );
 
-    let game_impl_address = factory.gameImpls(proposer_config.game_type).call().await?;
-    let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, l1_provider.clone());
-    let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?;
-    let anchor_state_registry =
-        AnchorStateRegistry::new(anchor_state_registry_address, l1_provider.clone());
-
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(fetcher.clone()));
 
     let proposer = Arc::new(
-        OPSuccinctProposer::new(
-            ProposerConfig::from_env()?,
-            proposer_signer,
-            factory,
-            anchor_state_registry,
-            Arc::new(fetcher),
-            host,
-        )
-        .await
-        .unwrap(),
+        OPSuccinctProposer::new(proposer_config, proposer_signer, factory, Arc::new(fetcher), host)
+            .await
+            .unwrap(),
     );
 
     // Initialize proposer gauges.

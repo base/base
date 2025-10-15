@@ -18,10 +18,10 @@ Before running the proposer, ensure you have:
 
 The proposer performs several key functions:
 
-1. **Game Creation**: Creates new dispute games for L2 blocks at configurable intervals
-2. **Game Resolution**: Optionally resolves unchallenged games after their deadline passes
-3. **Chain Monitoring**: Continuously monitors the L2 chain's safe head and creates proposals accordingly
-4. **Fast Finality Mode**: Optionally enables fast finality by including proofs with proposals
+1. **State Synchronization**: Maintains a cached view of the dispute DAG, anchor pointer, and canonical head used to schedule new work.
+2. **Game Creation**: Proposes new games when the finalized L2 head advances past the configured interval.
+3. **Game Defense**: Spawns proof-generation tasks for challenged games, reusing the same proving pipeline as fast finality mode when enabled.
+4. **Game Resolution & Bonds**: Resolves games the proposer created or proved once eligible and claims credit from finalized wins before pruning them from the cache.
 
 ## Configuration
 
@@ -125,51 +125,55 @@ The proposer will run indefinitely, creating new games and optionally resolving 
    - Game creation once the finalized L2 head surpasses the proposal interval
    - Challenged-game defenses, respecting `MAX_CONCURRENT_DEFENSE_TASKS`
    - Resolution of finished games and bond claims for finalized ones
-4. **Metrics refresh** – Publishes gauges such as canonical head block, finalized block, active proving tasks, and error counters.
+4. **Task visibility** – Logs the number of active tasks per category so operators can see what work is in-flight.
 
 All long-running work executes in dedicated Tokio tasks stored in a `TaskMap`, preventing duplicate submissions while allowing creation/defense/resolution/bond claiming to progress in parallel. Fast finality mode additionally enforces `FAST_FINALITY_PROVING_LIMIT` before spawning new fast finality proving tasks.
 
+Metrics are published by a separate background collector that samples the canonical head, finalized head, and active proving task count.
+
 ## Features
 
+### State Synchronization
+- Incrementally loads new games from the factory using a cursor while verifying the output root and parent linkage.
+- Refreshes cached status, proposal metadata, deadlines, and credit balances to flag games for resolution or bond claiming.
+- Evicts finalized games with no remaining credit and prunes entire subtrees when a parent ends in `CHALLENGER_WINS`.
+- Tracks the anchor game and recalculates the canonical head L2 block that drives proposal scheduling.
+
 ### Game Creation
-- Creates new dispute games at configurable block intervals.
-- Computes L2 output roots for game proposals.
-- Ensures proper game sequencing with parent-child relationships.
-- Handles bond requirements for game creation.
-- Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
-- Supports fast finality mode with proofs. (Set `FAST_FINALITY_MODE=true` in `.env.proposer`)
+- Schedules proposals once the finalized L2 head surpasses `canonical_head + PROPOSAL_INTERVAL_IN_BLOCKS`.
+- Computes the expected output root locally and encodes the parent index into the factory call.
+- Stakes the factory's initial bond and records the created game's address/index from emitted events.
+- Automatically queues fast finality proving for new games when enabled, while gating concurrency via `FAST_FINALITY_PROVING_LIMIT`.
+- Supports mock mode to gather proving stats without sending proof requests to the network prover (`MOCK_MODE=true`).
 
 ### Game Defense
-- Monitors games for challenges against valid claims
-- Automatically defends valid claims by providing proofs
-- Checks all challenged games tracked in memory
-- Only defends games that:
-  - Have been challenged
-  - Are within their proof submission window
-  - Have valid output root claims
-- Generates and submits proofs using the Succinct Prover Network
-- Supports mock mode for testing without using the Succinct Prover Network. (Set `MOCK_MODE=true` in `.env.proposer`)
+- Scans cached games for `ProposalStatus::Challenged` entries that remain `IN_PROGRESS`.
+- Spawns proof-generation tasks up to `MAX_CONCURRENT_DEFENSE_TASKS`, skipping games that already have an active proving job.
+- Uses the same `prove_game` pipeline as fast finality mode, recording instruction cycles and SP1 gas when mock mode is enabled.
+- Supports mock mode for testing without using the Succinct Prover Network (`MOCK_MODE=true`).
 
 ### Game Resolution
-- Automatically resolves proven games (UnchallengedAndValidProofProvided or ChallengedAndValidProofProvided)
-- Monitors unchallenged games and resolves them once their challenge period expires
-- Respects parent-child game relationships; a child is only resolved after its parent finishes
+- Flags games for resolution when their proposal status is `Unchallenged` (deadline passed) or a valid proof has been submitted.
+- Requires the parent dispute to be resolved and the proposer to be either the creator or prover before submitting a `resolve` transaction.
+- Processes eligible games in batches via a dedicated async task and surfaces successes/failures through metrics.
 
 ### Bond Claiming
-- Monitors games for bond claiming opportunities
-- Only claims bonds from games that:
-  - Are finalized (resolved and airgapped)
-  - Has credit left to claim
+- Flags games for bond claiming once the game registry reports them finalized and there is credit to claim.
+- Submits `claimCredit` transactions for the proposer's address.
+- Drops games from the cache after bonds are claimed.
 
 ### Chain Monitoring
-- Monitors the L2 chain's finalized (safe) head
-- Creates proposals for new blocks as they become available
-- Maintains proper spacing between proposals based on configuration
-- Tracks the latest valid proposal for proper sequencing
+- Recomputes the canonical head by scanning cached games. When an anchor game is present, only its descendants are eligible for canonical head.
+- Queries the host/fetcher for the finalized L2 head to decide when creation tasks should trigger.
 
 ## Logging
 
-The proposer uses the `tracing` crate for logging with a default level of INFO. You can adjust the log level by setting the `RUST_LOG` environment variable:
+The proposer emits structured `tracing` spans for each job type:
+- `[[Proposing]]` wraps game creation attempts and logs `Game created successfully` on success.
+- `[[Defending]]` drives challenged-game proving; completed proofs log `Game proven successfully` along with cycle/gas stats in mock mode.
+- `[[Proving]]` marks the underlying proof pipeline, while `[[Proposer Resolving]]` and `[[Claiming Proposer Bonds]]` cover resolution and bond recovery.
+
+Adjust verbosity with `RUST_LOG` as needed:
 
 ```bash
 RUST_LOG=debug cargo run --bin proposer
@@ -195,28 +199,12 @@ The proposer is built around the `OPSuccinctProposer` struct which manages:
 
 Key components:
 - `ProposerConfig`: Handles environment-based configuration.
-- `handle_game_creation`: Main function for proposing new games that:
-  - Monitors the L2 chain's safe head.
-  - Determines appropriate block numbers for proposals.
-  - Creates new games with proper parent-child relationships.
-- `handle_game_defense`: Main function for defending challenged games that:
-  - Finds the oldest defensible game
-  - Generates and submits proofs for valid claims
-  - Manages proof generation through the Succinct Prover Network
-- `handle_game_resolution`: Main function for resolving games that:
-  - Checks if resolution is enabled.
-  - Manages resolution of unchallenged games.
-  - Respects parent-child relationships.
-- `run`: Main loop that:
-  - Runs at configurable intervals.
-  - Handles game creation, defense, and resolution.
-  - Provides error isolation between tasks.
-
-### Helper Functions
-- `create_game`: Creates individual games with proper bonding.
-- `try_resolve_unchallenged_game`: Attempts to resolve a single game.
-- `should_attempt_resolution`: Determines if games can be resolved based on parent status.
-- `resolve_unchallenged_games`: Manages batch resolution of games.
+- `sync_state`: Keeps the cached dispute DAG aligned with on-chain data (games, anchor, canonical head) and sets resolution/bond flags.
+- `handle_completed_tasks`: Cleans up finished asynchronous jobs.
+- `spawn_pending_operations`: Ensures there is at most one active task per category while respecting defense/proving concurrency limits.
+- `handle_game_creation`: Builds new games once the finalized head crosses the proposal interval and optionally triggers fast finality proving.
+- `resolve_games` / `claim_bonds`: Submit on-chain transactions for eligible games and trim settled entries from the cache.
+- `run`: Orchestrates the periodic loop, delegating work to the task scheduler.
 
 ## Development
 
