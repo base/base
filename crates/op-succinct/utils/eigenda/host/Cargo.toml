@@ -25,6 +25,7 @@ hokulea-host-bin.workspace = true
 hokulea-proof.workspace = true
 hokulea-witgen.workspace = true
 canoe-sp1-cc-host.workspace = true
+canoe-verifier-address-fetcher.workspace = true
 
 # alloy
 alloy-eips.workspace = true

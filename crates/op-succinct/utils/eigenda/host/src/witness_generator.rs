@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::Result;
 use async_trait::async_trait;
+use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
 use hokulea_proof::{
     eigenda_provider::OracleEigenDAPreimageProvider, eigenda_witness::EigenDAWitness,
 };
@@ -114,9 +115,11 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
         let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
         if let Some((cursor, l1_provider, l2_provider)) = input {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
+            let l1_config = Arc::new(boot_info.l1_config.clone());
             let pipeline = WitnessExecutorTrait::create_pipeline(
                 &executor,
                 rollup_config,
+                l1_config,
                 cursor.clone(),
                 oracle.clone(),
                 beacon,
@@ -147,6 +150,7 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
             &eigenda_witness_data,
             oracle.clone(),
             canoe_provider,
+            CanoeVerifierAddressFetcherDeployedByEigenLabs {},
         )
         .await?;
 

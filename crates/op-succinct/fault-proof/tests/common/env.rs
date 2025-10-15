@@ -13,7 +13,7 @@ use fault_proof::config::FaultDisputeGameConfig;
 use crate::common::constants::*;
 
 use super::{
-    anvil::{setup_anvil_fork, AnvilFork},
+    anvil::{setup_anvil_chain, AnvilFork},
     contracts::{deploy_test_contracts, DeployedContracts},
 };
 
@@ -67,8 +67,8 @@ impl TestEnvironment {
         // Get environment variables
         let mut rpc_config = get_rpcs_from_env();
 
-        // Setup Anvil fork
-        let anvil = setup_anvil_fork(rpc_config.l1_rpc.as_ref()).await?;
+        // Setup fresh Anvil chain
+        let anvil = setup_anvil_chain().await?;
 
         // Put the test config into ../contracts/opsuccinctfdgconfig.json
         let test_config: FaultDisputeGameConfig =

@@ -3,9 +3,9 @@ use std::{fmt::Debug, sync::Arc};
 use anyhow::Result;
 use async_trait::async_trait;
 use hokulea_eigenda::{EigenDADataSource, EigenDAPreimageProvider, EigenDAPreimageSource};
-use kona_derive::{sources::EthereumDataSource, traits::BlobProvider};
+use kona_derive::{BlobProvider, EthereumDataSource};
 use kona_driver::PipelineCursor;
-use kona_genesis::RollupConfig;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_preimage::CommsClient;
 use kona_proof::{
     l1::{OracleL1ChainProvider, OraclePipeline},
@@ -52,6 +52,7 @@ where
     async fn create_pipeline(
         &self,
         rollup_config: Arc<RollupConfig>,
+        l1_config: Arc<L1ChainConfig>,
         cursor: Arc<RwLock<PipelineCursor>>,
         oracle: Arc<Self::O>,
         beacon: Self::B,
@@ -66,6 +67,7 @@ where
 
         Ok(OraclePipeline::new(
             rollup_config,
+            l1_config,
             cursor,
             oracle,
             da_provider,

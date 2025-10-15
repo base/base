@@ -2,7 +2,7 @@ use alloy_consensus::Blob;
 use alloy_eips::eip4844::{env_settings::EnvKzgSettings, IndexedBlobHash};
 use anyhow::Result;
 use async_trait::async_trait;
-use kona_derive::prelude::BlobProvider;
+use kona_derive::BlobProvider;
 use kona_protocol::BlockInfo;
 use kzg_rs::{Blob as KzgRsBlob, Bytes48};
 use op_succinct_client_utils::witness::BlobData;
@@ -20,12 +20,12 @@ pub struct OnlineBlobStore<T: BlobProvider> {
 impl<T: BlobProvider + Send> BlobProvider for OnlineBlobStore<T> {
     type Error = T::Error;
 
-    async fn get_blobs(
+    async fn get_and_validate_blobs(
         &mut self,
         block_ref: &BlockInfo,
         blob_hashes: &[IndexedBlobHash],
     ) -> Result<Vec<Box<Blob>>, Self::Error> {
-        let blobs = self.provider.get_blobs(block_ref, blob_hashes).await?;
+        let blobs = self.provider.get_and_validate_blobs(block_ref, blob_hashes).await?;
         let settings = EnvKzgSettings::default();
 
         let mut store = self.store.lock().unwrap();

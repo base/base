@@ -53,6 +53,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
             inspector: NoOpInspector {},
             instruction: EthInstructions::new_mainnet(),
             precompiles: OpZkvmPrecompiles::new_with_spec(spec_id),
+            frame_stack: Default::default(),
         });
 
         OpEvm::new(revm_evm, false)
@@ -71,6 +72,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
             inspector,
             instruction: EthInstructions::new_mainnet(),
             precompiles: OpZkvmPrecompiles::new_with_spec(spec_id),
+            frame_stack: Default::default(),
         });
 
         OpEvm::new(revm_evm, true)
