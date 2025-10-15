@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     setup_logger();
 
     let challenger_config = ChallengerConfig::from_env()?;
-    let challenger_signer = Signer::from_env()?;
+    let challenger_signer = Signer::from_env().await?;
 
     let l1_provider = ProviderBuilder::default()
         .connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());

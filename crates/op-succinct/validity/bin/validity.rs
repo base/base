@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     let fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
     // Read the environment variables.
-    let env_config = read_proposer_env()?;
+    let env_config = read_proposer_env().await?;
 
     let db_client = Arc::new(DriverDBClient::new(&env_config.db_url).await?);
 
