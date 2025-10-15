@@ -3,13 +3,13 @@ use std::{fmt::Debug, sync::Arc};
 use alloy_primitives::Sealed;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use kona_derive::traits::{
+use kona_derive::{
     BlobProvider, ChainProvider, DataAvailabilityProvider, L2ChainProvider, Pipeline,
     SignalReceiver,
 };
 use kona_driver::{Driver, DriverPipeline, PipelineCursor};
 use kona_executor::TrieDBProvider;
-use kona_genesis::RollupConfig;
+use kona_genesis::{L1ChainConfig, RollupConfig};
 use kona_preimage::CommsClient;
 use kona_proof::{
     executor::KonaExecutor,
@@ -97,9 +97,11 @@ pub trait WitnessExecutor {
     type DA: DataAvailabilityProvider + Send + Sync + Debug + Clone;
 
     // Constructs the derivation pipeline.
+    #[allow(clippy::too_many_arguments)]
     async fn create_pipeline(
         &self,
         rollup_config: Arc<RollupConfig>,
+        l1_config: Arc<L1ChainConfig>,
         cursor: Arc<RwLock<PipelineCursor>>,
         oracle: Arc<Self::O>,
         beacon: Self::B,

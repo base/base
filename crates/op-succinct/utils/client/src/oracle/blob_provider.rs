@@ -4,7 +4,7 @@ use alloy_consensus::Blob;
 use alloy_eips::eip4844::{kzg_to_versioned_hash, IndexedBlobHash};
 use alloy_primitives::B256;
 use async_trait::async_trait;
-use kona_derive::{errors::BlobProviderError, traits::BlobProvider};
+use kona_derive::{BlobProvider, BlobProviderError};
 use kona_protocol::BlockInfo;
 use kzg_rs::get_kzg_settings;
 
@@ -44,7 +44,7 @@ impl From<BlobData> for BlobStore {
 impl BlobProvider for BlobStore {
     type Error = BlobProviderError;
 
-    async fn get_blobs(
+    async fn get_and_validate_blobs(
         &mut self,
         _: &BlockInfo,
         blob_hashes: &[IndexedBlobHash],

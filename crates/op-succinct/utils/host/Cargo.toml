@@ -24,6 +24,7 @@ kona-host.workspace = true
 kona-preimage.workspace = true
 kona-proof.workspace = true
 kona-protocol.workspace = true
+kona-registry.workspace = true
 kona-rpc.workspace = true
 
 # hana

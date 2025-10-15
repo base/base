@@ -32,15 +32,11 @@ pub struct AnvilFork {
     pub starting_root: String,
 }
 
-/// Setup an Anvil fork with automatic fork block calculation.
-///
-/// # Arguments
-/// * `fork_url` - The RPC URL to fork from (e.g., Sepolia)
+/// Setup a fresh Anvil chain for testing.
 ///
 /// Returns AnvilFork with provider and endpoint
-pub async fn setup_anvil_fork(fork_url: &str) -> Result<AnvilFork> {
-    // Calculate the appropriate fork block
-
+pub async fn setup_anvil_chain() -> Result<AnvilFork> {
+    info!("Starting fresh Anvil chain");
     let fetcher = OPSuccinctDataFetcher::new();
 
     let l2_finalized = fetcher
@@ -65,22 +61,12 @@ pub async fn setup_anvil_fork(fork_url: &str) -> Result<AnvilFork> {
 
     let starting_root = optimism_output_data["outputRoot"].as_str().unwrap().to_string();
 
-    let (_, l1_block_number) = fetcher
-        .get_safe_l1_block_for_l2_block(target_l2)
-        .await
-        .context("Failed to get safe L1 block")?;
-
-    info!("Starting Anvil fork from block {} on {}", l1_block_number, fork_url);
-
-    // Create Anvil instance
-    let anvil = Anvil::new()
-        .fork(fork_url)
-        .fork_block_number(l1_block_number)
-        .arg("--disable-code-size-limit");
+    // Create Anvil instance with a fresh chain (no fork)
+    let anvil = Anvil::new().block_time(1).arg("--disable-code-size-limit");
 
     let anvil_instance = anvil.spawn();
     let endpoint = anvil_instance.endpoint();
-    info!("Anvil fork started at: {}", endpoint);
+    info!("Anvil chain started at: {}", endpoint);
 
     // Store the instance to keep it alive
     *ANVIL.lock().unwrap() = Some(anvil_instance);

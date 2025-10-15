@@ -18,7 +18,7 @@ kona-proof.workspace = true
 
 # hokulea
 hokulea-eigenda.workspace = true
-hokulea-proof = { workspace = true, features = ["sp1-cc"] }
+hokulea-proof = { workspace = true }
 hokulea-witgen.workspace = true
 
 # general

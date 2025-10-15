@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, map::HashMap};
+use alloy_primitives::keccak256;
 use async_trait::async_trait;
 use kona_preimage::{
     errors::{PreimageOracleError, PreimageOracleResult},
@@ -7,6 +7,7 @@ use kona_preimage::{
 use kona_proof::FlushableCache;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Archive, rkyv::Deserialize,

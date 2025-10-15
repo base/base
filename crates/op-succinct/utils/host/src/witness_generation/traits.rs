@@ -56,10 +56,12 @@ pub trait WitnessGenerator {
         let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
         if let Some((cursor, l1_provider, l2_provider)) = input {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
+            let l1_config = Arc::new(boot_info.l1_config.clone());
             let pipeline = self
                 .get_executor()
                 .create_pipeline(
                     rollup_config,
+                    l1_config,
                     cursor.clone(),
                     oracle.clone(),
                     beacon,

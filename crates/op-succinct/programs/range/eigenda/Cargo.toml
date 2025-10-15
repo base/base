@@ -18,6 +18,8 @@ kona-proof.workspace = true
 # hokulea
 hokulea-proof.workspace = true
 hokulea-zkvm-verification.workspace = true
+canoe-sp1-cc-verifier.workspace = true
+canoe-verifier-address-fetcher.workspace = true
 
 # sp1
 sp1-zkvm.workspace = true

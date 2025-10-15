@@ -41,10 +41,12 @@ where
     let boot_info = match input {
         Some((cursor, l1_provider, l2_provider)) => {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
+            let l1_config = Arc::new(boot_info.l1_config.clone());
 
             let pipeline = executor
                 .create_pipeline(
                     rollup_config,
+                    l1_config,
                     cursor.clone(),
                     oracle,
                     beacon,
