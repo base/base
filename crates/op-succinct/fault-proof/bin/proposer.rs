@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     setup_logger();
 
     let proposer_config = ProposerConfig::from_env()?;
-    let proposer_signer = Signer::from_env()?;
+    let proposer_signer = Signer::from_env().await?;
 
     let l1_provider =
         ProviderBuilder::new().connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());

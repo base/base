@@ -13,12 +13,21 @@ alloy-network.workspace = true
 alloy-primitives.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-signer.workspace = true
 alloy-signer-local.workspace = true
+alloy-signer-gcp.workspace = true
 alloy-transport-http.workspace = true
 
 # general
 anyhow.workspace = true
 tokio.workspace = true
+rustls = { version = "0.23", default-features = false, features = [
+    "std",
+    "tls12",
+    "aws-lc-rs",
+] }
+gcloud-sdk.workspace = true
 
 [dev-dependencies]
+dotenv.workspace = true
 op-succinct-host-utils.workspace = true

@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt::Debug, str::FromStr};
 
 use alloy_consensus::TxEnvelope;
 use alloy_eips::Decodable2718;
@@ -6,9 +6,14 @@ use alloy_network::{Ethereum, EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{Provider, ProviderBuilder, Web3Signer};
 use alloy_rpc_types_eth::{TransactionReceipt, TransactionRequest};
+use alloy_signer::Signer as AlloySigner;
+use alloy_signer_gcp::{GcpKeyRingRef, GcpSigner, KeySpecifier};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_transport_http::reqwest::Url;
 use anyhow::{Context, Result};
+use gcloud_sdk::{
+    google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
+};
 use tokio::time::Duration;
 
 pub const NUM_CONFIRMATIONS: u64 = 3;
@@ -21,6 +26,8 @@ pub enum Signer {
     Web3Signer(Url, Address),
     /// The local signer.
     LocalSigner(PrivateKeySigner),
+    /// Cloud HSM signer using Google.
+    CloudHsmSigner(GcpSigner),
 }
 
 impl Signer {
@@ -28,6 +35,7 @@ impl Signer {
         match self {
             Signer::Web3Signer(_, address) => *address,
             Signer::LocalSigner(signer) => signer.address(),
+            Signer::CloudHsmSigner(signer) => signer.address(),
         }
     }
 
@@ -43,8 +51,30 @@ impl Signer {
         Ok(Signer::LocalSigner(private_key))
     }
 
-    pub fn from_env() -> Result<Self> {
-        if let (Ok(signer_url_str), Ok(signer_address_str)) =
+    pub async fn from_env() -> Result<Self> {
+        if let (Ok(project_id), Ok(location), Ok(keyring_name)) = (
+            std::env::var("GOOGLE_PROJECT_ID"),
+            std::env::var("GOOGLE_LOCATION"),
+            std::env::var("GOOGLE_KEYRING"),
+        ) {
+            let key_name = std::env::var("HSM_KEY_NAME").expect("HSM_KEY_NAME");
+            let key_version =
+                std::env::var("HSM_KEY_VERSION").unwrap_or("1".to_string()).parse()?;
+
+            let keyring = GcpKeyRingRef::new(&project_id, &location, &keyring_name);
+
+            let key_specifier = KeySpecifier::new(keyring, &key_name, key_version);
+
+            let client = GoogleApi::from_function(
+                KeyManagementServiceClient::new,
+                "https://cloudkms.googleapis.com",
+                None,
+            )
+            .await?;
+            let signer = GcpSigner::new(client, key_specifier, None).await?;
+
+            Ok(Signer::CloudHsmSigner(signer))
+        } else if let (Ok(signer_url_str), Ok(signer_address_str)) =
             (std::env::var("SIGNER_URL"), std::env::var("SIGNER_ADDRESS"))
         {
             let signer_url = Url::parse(&signer_url_str).context("Failed to parse SIGNER_URL")?;
@@ -55,7 +85,10 @@ impl Signer {
             Signer::new_local_signer(&private_key_str)
         } else {
             anyhow::bail!(
-                "Neither (SIGNER_URL and SIGNER_ADDRESS) nor PRIVATE_KEY are set in environment"
+                "None of the required signer configurations are set in environment:\n\
+                - For Cloud HSM: GOOGLE_PROJECT_ID, GOOGLE_LOCATION, GOOGLE_KEYRING\n\
+                - For Web3Signer: SIGNER_URL and SIGNER_ADDRESS\n\
+                - For Local: PRIVATE_KEY"
             )
         }
     }
@@ -124,6 +157,32 @@ impl Signer {
 
                 Ok(receipt)
             }
+            Signer::CloudHsmSigner(signer) => {
+                // Set the from address to HSM address
+                transaction_request.set_from(signer.address());
+                if transaction_request.to.is_none() {
+                    // NOTE(fakedev9999): Anvil's wallet filler insists on a `to` field even for
+                    // deployments. Mark the request as contract creation so it can be signed.
+                    transaction_request.to = Some(TxKind::Create);
+                }
+
+                let wallet = EthereumWallet::new(signer.clone());
+                let provider = ProviderBuilder::new()
+                    .network::<Ethereum>()
+                    .wallet(wallet)
+                    .connect_http(l1_rpc);
+
+                let receipt = provider
+                    .send_transaction(transaction_request)
+                    .await
+                    .context("Failed to send KMS-signed transaction")?
+                    .with_required_confirmations(NUM_CONFIRMATIONS)
+                    .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                    .get_receipt()
+                    .await?;
+
+                Ok(receipt)
+            }
         }
     }
 }
@@ -138,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_send_transaction_request() {
+    async fn test_send_transaction_request_web3() {
         let proposer_signer = Signer::Web3Signer(
             "http://localhost:9000".parse().unwrap(),
             "0x9b3F173823E944d183D532ed236Ee3B83Ef15E1d".parse().unwrap(),
@@ -164,6 +223,33 @@ mod tests {
             .await
             .unwrap();
 
+        println!("Signed transaction receipt: {receipt:?}");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    // This test is meant to be ran locally to test various signers implementations,
+    // depending of the envvars set.
+    async fn test_send_transaction_request() {
+        dotenv::dotenv().ok();
+
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install default crypto provider");
+        let signer = Signer::from_env().await.unwrap();
+
+        println!("Signer: {}", signer.address());
+
+        let transaction_request = TransactionRequest::default()
+            .to(Address::from([
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+            ]))
+            .value(U256::from(100000u64))
+            .from(signer.address());
+        let receipt = signer
+            .send_transaction_request("http://localhost:8545".parse().unwrap(), transaction_request)
+            .await
+            .unwrap();
         println!("Signed transaction receipt: {receipt:?}");
     }
 }

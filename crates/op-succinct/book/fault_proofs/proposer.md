@@ -41,13 +41,38 @@ Create a `.env` file in the `fault-proof` directory with all required variables.
 | `GAME_TYPE` | Type identifier for the dispute game |
 | `NETWORK_PRIVATE_KEY` | Private key for the Succinct Prover Network. See the [Succinct Prover Network Quickstart](https://docs.succinct.xyz/docs/sp1/prover-network/quickstart) for setup instructions. (Set to `0x0000000000000000000000000000000000000000000000000000000000000001` if not using fast finality mode) |
 
-Either `PRIVATE_KEY` or both `SIGNER_URL` and `SIGNER_ADDRESS` must be set for transaction signing:
+For transaction signing, the following methods are supported:
+
+| Method | Description |
+|----------|-------------|
+| Local wallet | Sign transactions using a private key stored locally |
+| Web3 wallet | Sign transactions using an external web3 signer service |
+| Google HSM | Sign transactions using Google Cloud Hardware Security Module |
+
+Depending on the one you choose, you must provide the corresponding environment variables:
+
+#### Local wallet
 
 | Variable | Description |
 |----------|-------------|
 | `PRIVATE_KEY` | Private key for transaction signing (if using private key signer) |
+
+#### Web3 wallet
+
+| Variable | Description |
+|----------|-------------|
 | `SIGNER_URL` | URL of the web3 signer service (if using web3 signer) |
 | `SIGNER_ADDRESS` | Address of the account managed by the web3 signer (if using web3 signer) |
+
+#### Google HSM
+
+| Variable | Description |
+|----------|-------------|
+| `GOOGLE_PROJECT_ID` | Google Cloud project ID where the HSM key is stored |
+| `GOOGLE_LOCATION` | Google Cloud location/region of the key ring (e.g., `us-east1`) |
+| `GOOGLE_KEYRING` | Name of the Google Cloud KMS key ring |
+| `HSM_KEY_NAME` | Name of the HSM key within the key ring |
+| `HSM_KEY_VERSION` | Version number of the HSM key to use |
 
 ### Optional Environment Variables
 

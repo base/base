@@ -82,8 +82,8 @@ const DEFAULT_LOOP_INTERVAL: u64 = 60;
 /// Read proposer environment variables and return a config.
 ///
 /// Signer address and signer URL take precedence over private key.
-pub fn read_proposer_env() -> Result<EnvironmentConfig> {
-    let signer = Signer::from_env()?;
+pub async fn read_proposer_env() -> Result<EnvironmentConfig> {
+    let signer = Signer::from_env().await?;
 
     // Parse strategy values
     let range_proof_strategy = parse_fulfillment_strategy(get_env_var(
