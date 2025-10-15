@@ -57,7 +57,7 @@ base64 = "0.22.1"
 tower-http = { version = "0.5.2", features = ["limit"] }
 lazy_static = "1.5.0"
 tracing = { version = "0.1.40", default-features = false }
-tracing-subscriber = { version = "0.3.20", features = ["fmt"] }
+tracing-subscriber = { version = "0.3.20", features = ["fmt", "json"] }
 tracing-opentelemetry = "^0.24"
 opentelemetry = { version = "^0.23.0", features = ["trace"] }
 opentelemetry_sdk = { version = "^0.23.0", features = [
