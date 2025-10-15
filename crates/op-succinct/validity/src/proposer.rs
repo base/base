@@ -34,6 +34,9 @@ use crate::{
     ProgramConfig, RequestExecutionStatistics, RequesterConfig, ValidityGauge,
 };
 
+/// Timeout for network prover calls to prevent indefinite hangs.
+const NETWORK_CALL_TIMEOUT_SECS: u64 = 15;
+
 /// Configuration for the driver.
 pub struct DriverConfig {
     pub network_prover: Arc<NetworkProver>,
@@ -334,11 +337,21 @@ where
     pub async fn process_proof_request_status(&self, request: OPSuccinctRequest) -> Result<()> {
         if let Some(proof_request_id) = request.proof_request_id.as_ref() {
             let proof_request_id = B256::from_slice(proof_request_id);
-            let (status, proof) =
-                self.driver_config.network_prover.get_proof_status(proof_request_id).await?;
+            let (status, proof) = self
+                .network_call_with_timeout(
+                    self.driver_config.network_prover.get_proof_status(proof_request_id),
+                    "waiting for proof status",
+                    &request,
+                )
+                .await?;
 
-            let request_details =
-                self.driver_config.network_prover.get_proof_request(proof_request_id).await?;
+            let request_details = self
+                .network_call_with_timeout(
+                    self.driver_config.network_prover.get_proof_request(proof_request_id),
+                    "waiting for proof request details",
+                    &request,
+                )
+                .await?;
 
             // Check if current time exceeds deadline. If so, the proof has timed out.
             let current_time = std::time::SystemTime::now()
@@ -355,7 +368,12 @@ where
                     current_time > auction_deadline
                 {
                     // Cancel the request in the network.
-                    self.driver_config.network_prover.cancel_request(proof_request_id).await?;
+                    self.network_call_with_timeout(
+                        self.driver_config.network_prover.cancel_request(proof_request_id),
+                        "cancelling proof request",
+                        &request,
+                    )
+                    .await?;
 
                     // Mark the request as cancelled in the database.
                     match self.proof_requester.handle_cancelled_request(request.clone()).await {
@@ -457,8 +475,13 @@ where
                 // Update the prove_duration based on the current time and the proof_request_time.
                 self.driver_config.driver_db_client.update_prove_duration(request.id).await?;
 
-                if let Some(proof_request) =
-                    self.driver_config.network_prover.get_proof_request(proof_request_id).await?
+                if let Some(proof_request) = self
+                    .network_call_with_timeout(
+                        self.driver_config.network_prover.get_proof_request(proof_request_id),
+                        "fetching execution statistics",
+                        &request,
+                    )
+                    .await?
                 {
                     let execution_statistics = RequestExecutionStatistics::from(&proof_request);
 
@@ -1512,5 +1535,63 @@ where
         }
 
         Ok(Some(current_end))
+    }
+
+    /// Helper method to wrap network prover calls with timeout and proper error handling.
+    ///
+    /// This method:
+    /// - Wraps the network call in a timeout to prevent indefinite hangs
+    /// - Preserves the original network error context when operations fail
+    /// - Logs timeout events with request context for debugging
+    /// - Increments timeout metrics for monitoring
+    async fn network_call_with_timeout<F, T>(
+        &self,
+        future: F,
+        operation_name: &str,
+        request: &OPSuccinctRequest,
+    ) -> Result<T>
+    where
+        F: std::future::Future<Output = Result<T>>,
+    {
+        match tokio::time::timeout(Duration::from_secs(NETWORK_CALL_TIMEOUT_SECS), future).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(network_error)) => {
+                warn!(
+                    request_id = request.id,
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    operation = operation_name,
+                    error = %network_error,
+                    "Network error during operation"
+                );
+                Err(anyhow!(
+                    "Network error {} for request {} (start_block={}, end_block={}): {}",
+                    operation_name,
+                    request.id,
+                    request.start_block,
+                    request.end_block,
+                    network_error
+                ))
+            }
+            Err(_) => {
+                warn!(
+                    request_id = request.id,
+                    start_block = request.start_block,
+                    end_block = request.end_block,
+                    operation = operation_name,
+                    timeout_secs = NETWORK_CALL_TIMEOUT_SECS,
+                    "Network call timeout"
+                );
+                ValidityGauge::NetworkCallTimeoutCount.increment(1.0);
+                Err(anyhow!(
+                    "Timeout after {}s {} for request {} (start_block={}, end_block={})",
+                    NETWORK_CALL_TIMEOUT_SECS,
+                    operation_name,
+                    request.id,
+                    request.start_block,
+                    request.end_block
+                ))
+            }
+        }
     }
 }

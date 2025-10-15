@@ -91,6 +91,11 @@ pub enum ValidityGauge {
         message = "Number of relay aggregation proof errors"
     )]
     RelayAggProofErrorCount,
+    #[strum(
+        serialize = "succinct_network_call_timeout_count",
+        message = "Number of network prover call timeouts"
+    )]
+    NetworkCallTimeoutCount,
 }
 
 impl MetricsGauge for ValidityGauge {}
