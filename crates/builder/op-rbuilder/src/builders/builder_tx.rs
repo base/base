@@ -89,6 +89,15 @@ impl From<BuilderTransactionError> for PayloadBuilderError {
     }
 }
 
+impl BuilderTransactionError {
+    pub fn other<E>(error: E) -> Self
+    where
+        E: core::error::Error + Send + Sync + 'static,
+    {
+        BuilderTransactionError::Other(Box::new(error))
+    }
+}
+
 pub trait BuilderTransactions<ExtraCtx: Debug + Default = ()>: Debug {
     fn simulate_builder_txs<Extra: Debug + Default>(
         &self,

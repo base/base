@@ -25,7 +25,7 @@ use crate::{
         context::OpPayloadBuilderCtx,
         flashblocks::payload::FlashblocksExtraCtx,
     },
-    flashtestations::service::FlashtestationsBuilderTx,
+    flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };
@@ -172,23 +172,21 @@ impl FlashblocksNumberBuilderTx {
                 ) {
                     Ok(gas_used)
                 } else {
-                    Err(BuilderTransactionError::Other(Box::new(
+                    Err(BuilderTransactionError::other(
                         FlashblockNumberError::LogMismatch(
                             IFlashblockNumber::FlashblockIncremented::SIGNATURE_HASH,
                         ),
-                    )))
+                    ))
                 }
             }
-            ExecutionResult::Revert { output, .. } => {
-                Err(BuilderTransactionError::Other(Box::new(
-                    IFlashblockNumber::IFlashblockNumberErrors::abi_decode(&output)
-                        .map(FlashblockNumberError::Revert)
-                        .unwrap_or_else(|e| FlashblockNumberError::Unknown(hex::encode(output), e)),
-                )))
-            }
-            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::Other(Box::new(
+            ExecutionResult::Revert { output, .. } => Err(BuilderTransactionError::other(
+                IFlashblockNumber::IFlashblockNumberErrors::abi_decode(&output)
+                    .map(FlashblockNumberError::Revert)
+                    .unwrap_or_else(|e| FlashblockNumberError::Unknown(hex::encode(output), e)),
+            )),
+            ExecutionResult::Halt { reason, .. } => Err(BuilderTransactionError::other(
                 FlashblockNumberError::Halt(reason),
-            ))),
+            )),
         }
     }
 

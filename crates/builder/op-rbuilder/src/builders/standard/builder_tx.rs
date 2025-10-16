@@ -8,7 +8,7 @@ use crate::{
         BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions,
         builder_tx::BuilderTxBase, context::OpPayloadBuilderCtx,
     },
-    flashtestations::service::FlashtestationsBuilderTx,
+    flashtestations::builder_tx::FlashtestationsBuilderTx,
     primitives::reth::ExecutionInfo,
     tx_signer::Signer,
 };

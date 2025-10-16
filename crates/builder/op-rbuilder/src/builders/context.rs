@@ -2,7 +2,7 @@ use alloy_consensus::{Eip658Value, Transaction, conditional::BlockConditionalAtt
 use alloy_eips::Typed2718;
 use alloy_evm::Database;
 use alloy_op_evm::block::receipt_builder::OpReceiptBuilder;
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::{BlockHash, Bytes, U256};
 use alloy_rpc_types_eth::Withdrawals;
 use core::fmt::Debug;
 use op_alloy_consensus::OpDepositReceipt;
@@ -75,8 +75,18 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the parent block the payload will be build on.
-    pub(super) fn parent(&self) -> &SealedHeader {
+    pub fn parent(&self) -> &SealedHeader {
         &self.config.parent_header
+    }
+
+    /// Returns the parent hash
+    pub fn parent_hash(&self) -> BlockHash {
+        self.parent().hash()
+    }
+
+    /// Returns the timestamp
+    pub fn timestamp(&self) -> u64 {
+        self.attributes().timestamp()
     }
 
     /// Returns the builder attributes.
@@ -85,31 +95,31 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Returns the withdrawals if shanghai is active.
-    pub(super) fn withdrawals(&self) -> Option<&Withdrawals> {
+    pub fn withdrawals(&self) -> Option<&Withdrawals> {
         self.chain_spec
             .is_shanghai_active_at_timestamp(self.attributes().timestamp())
             .then(|| &self.attributes().payload_attributes.withdrawals)
     }
 
     /// Returns the block gas limit to target.
-    pub(super) fn block_gas_limit(&self) -> u64 {
+    pub fn block_gas_limit(&self) -> u64 {
         self.attributes()
             .gas_limit
             .unwrap_or(self.evm_env.block_env.gas_limit)
     }
 
     /// Returns the block number for the block.
-    pub(super) fn block_number(&self) -> u64 {
+    pub fn block_number(&self) -> u64 {
         as_u64_saturated!(self.evm_env.block_env.number)
     }
 
     /// Returns the current base fee
-    pub(super) fn base_fee(&self) -> u64 {
+    pub fn base_fee(&self) -> u64 {
         self.evm_env.block_env.basefee
     }
 
     /// Returns the current blob gas price.
-    pub(super) fn get_blob_gasprice(&self) -> Option<u64> {
+    pub fn get_blob_gasprice(&self) -> Option<u64> {
         self.evm_env
             .block_env
             .blob_gasprice()
@@ -119,7 +129,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     /// Returns the blob fields for the header.
     ///
     /// This will always return `Some(0)` after ecotone.
-    pub(super) fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
+    pub fn blob_fields(&self) -> (Option<u64>, Option<u64>) {
         // OP doesn't support blobs/EIP-4844.
         // https://specs.optimism.io/protocol/exec-engine.html#ecotone-disable-blob-transactions
         // Need [Some] or [None] based on hardfork to match block hash.
@@ -132,8 +142,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the extra data for the block.
     ///
-    /// After holocene this extracts the extradata from the paylpad
-    pub(super) fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
+    /// After holocene this extracts the extradata from the payload
+    pub fn extra_data(&self) -> Result<Bytes, PayloadBuilderError> {
         if self.is_holocene_active() {
             self.attributes()
                 .get_holocene_extra_data(
@@ -148,47 +158,47 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
     }
 
     /// Returns the current fee settings for transactions from the mempool
-    pub(super) fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
+    pub fn best_transaction_attributes(&self) -> BestTransactionsAttributes {
         BestTransactionsAttributes::new(self.base_fee(), self.get_blob_gasprice())
     }
 
     /// Returns the unique id for this payload job.
-    pub(super) fn payload_id(&self) -> PayloadId {
+    pub fn payload_id(&self) -> PayloadId {
         self.attributes().payload_id()
     }
 
     /// Returns true if regolith is active for the payload.
-    pub(super) fn is_regolith_active(&self) -> bool {
+    pub fn is_regolith_active(&self) -> bool {
         self.chain_spec
             .is_regolith_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if ecotone is active for the payload.
-    pub(super) fn is_ecotone_active(&self) -> bool {
+    pub fn is_ecotone_active(&self) -> bool {
         self.chain_spec
             .is_ecotone_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if canyon is active for the payload.
-    pub(super) fn is_canyon_active(&self) -> bool {
+    pub fn is_canyon_active(&self) -> bool {
         self.chain_spec
             .is_canyon_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if holocene is active for the payload.
-    pub(super) fn is_holocene_active(&self) -> bool {
+    pub fn is_holocene_active(&self) -> bool {
         self.chain_spec
             .is_holocene_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns true if isthmus is active for the payload.
-    pub(super) fn is_isthmus_active(&self) -> bool {
+    pub fn is_isthmus_active(&self) -> bool {
         self.chain_spec
             .is_isthmus_active_at_timestamp(self.attributes().timestamp())
     }
 
     /// Returns the chain id
-    pub(super) fn chain_id(&self) -> u64 {
+    pub fn chain_id(&self) -> u64 {
         self.chain_spec.chain_id()
     }
 }

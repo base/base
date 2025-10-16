@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::{Error, sol};
 use op_revm::OpHaltReason;
 
@@ -87,6 +88,8 @@ pub enum FlashtestationRevertReason {
     FlashtestationRegistry(IFlashtestationRegistry::IFlashtestationRegistryErrors),
     #[error("block builder policy error: {0:?}")]
     BlockBuilderPolicy(IBlockBuilderPolicy::IBlockBuilderPolicyErrors),
+    #[error("contract {0:?} may be invalid, mismatch in log emitted: expected {1:?}")]
+    LogMismatch(Address, B256),
     #[error("unknown revert: {0} err: {1}")]
     Unknown(String, Error),
     #[error("halt: {0:?}")]
@@ -95,5 +98,6 @@ pub enum FlashtestationRevertReason {
 
 pub mod args;
 pub mod attestation;
+pub mod builder_tx;
 pub mod service;
 pub mod tx_manager;
