@@ -9,6 +9,7 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 metrics = { workspace = true }
 metrics-derive = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 async-trait = "0.1"
 anyhow = "1.0"
 clap = { workspace = true }

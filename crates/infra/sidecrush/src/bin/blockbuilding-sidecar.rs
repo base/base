@@ -56,6 +56,13 @@ async fn main() {
             .try_init();
     }
 
+    // Initialize Prometheus metrics exporter
+    let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
+    builder
+        .with_http_listener(([0, 0, 0, 0], 9090))
+        .install()
+        .expect("failed to install Prometheus exporter");
+
     // Allow NODE_URL (exported from BBHC_SIDECAR_GETH_RPC in ConfigMap) to override
     let effective_url = std::env::var("NODE_URL").unwrap_or_else(|_| args.node_url.clone());
     let node = Node::new(effective_url.clone(), args.new_instance);
