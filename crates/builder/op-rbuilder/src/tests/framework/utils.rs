@@ -1,6 +1,7 @@
 use crate::{
     tests::{
-        BUILDER_PRIVATE_KEY, Protocol, block_builder_policy::BlockBuilderPolicy,
+        BUILDER_PRIVATE_KEY, COMMIT_HASH, FLASHBLOCKS_DEPLOY_KEY, FLASHTESTATION_DEPLOY_KEY,
+        Protocol, SOURCE_LOCATORS, WORKLOAD_ID, block_builder_policy::BlockBuilderPolicy,
         flashblocks_number_contract::FlashblocksNumber,
         flashtestation_registry::FlashtestationRegistry, framework::driver::ChainDriver,
         mock_dcap_attestation::MockAutomataDcapAttestationFee,
@@ -37,6 +38,7 @@ pub trait TransactionBuilderExt {
     fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self;
     fn deploy_builder_policy_contract(self) -> Self;
     fn init_builder_policy_contract(self, registry_address: Address) -> Self;
+    fn add_workload_to_policy(self) -> Self;
     fn deploy_mock_dcap_contract(self) -> Self;
     fn add_mock_quote(self) -> Self;
 }
@@ -62,11 +64,12 @@ impl TransactionBuilderExt for TransactionBuilder {
         self.with_create()
             .with_input(FlashblocksNumber::BYTECODE.clone())
             .with_gas_limit(2_000_000) // deployment costs ~1.6 million gas
+            .with_signer(flashblocks_number_signer())
     }
 
     fn init_flashblock_number_contract(self, register_builder: bool) -> Self {
         let builder_signer = builder_signer();
-        let owner = funded_signer();
+        let owner = flashblocks_number_signer();
 
         let init_data = FlashblocksNumber::initializeCall {
             _owner: owner.address,
@@ -79,16 +82,18 @@ impl TransactionBuilderExt for TransactionBuilder {
         .abi_encode();
 
         self.with_input(init_data.into())
+            .with_signer(flashblocks_number_signer())
     }
 
     fn deploy_flashtestation_registry_contract(self) -> Self {
         self.with_create()
             .with_input(FlashtestationRegistry::BYTECODE.clone())
-            .with_gas_limit(1_000_000)
+            .with_gas_limit(5_000_000)
+            .with_signer(flashtestations_signer())
     }
 
     fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self {
-        let owner = funded_signer();
+        let owner = flashtestations_signer();
 
         let init_data = FlashtestationRegistry::initializeCall {
             owner: owner.address,
@@ -96,17 +101,18 @@ impl TransactionBuilderExt for TransactionBuilder {
         }
         .abi_encode();
 
-        self.with_input(init_data.into())
+        self.with_input(init_data.into()).with_signer(owner)
     }
 
     fn deploy_builder_policy_contract(self) -> Self {
         self.with_create()
             .with_input(BlockBuilderPolicy::BYTECODE.clone())
-            .with_gas_limit(1_000_000)
+            .with_gas_limit(3_000_000)
+            .with_signer(flashtestations_signer())
     }
 
     fn init_builder_policy_contract(self, registry_address: Address) -> Self {
-        let owner = funded_signer();
+        let owner = flashtestations_signer();
 
         let init_data = BlockBuilderPolicy::initializeCall {
             _initialOwner: owner.address,
@@ -115,12 +121,29 @@ impl TransactionBuilderExt for TransactionBuilder {
         .abi_encode();
 
         self.with_input(init_data.into())
+            .with_signer(flashtestations_signer())
+    }
+
+    fn add_workload_to_policy(self) -> Self {
+        let workload = BlockBuilderPolicy::addWorkloadToPolicyCall {
+            workloadId: WORKLOAD_ID,
+            commitHash: COMMIT_HASH.to_string(),
+            sourceLocators: SOURCE_LOCATORS
+                .iter()
+                .map(|source| source.to_string())
+                .collect(),
+        }
+        .abi_encode();
+
+        self.with_input(workload.into())
+            .with_signer(flashtestations_signer())
     }
 
     fn deploy_mock_dcap_contract(self) -> Self {
         self.with_create()
             .with_input(MockAutomataDcapAttestationFee::BYTECODE.clone())
             .with_gas_limit(1_000_000)
+            .with_signer(flashtestations_signer())
     }
 
     fn add_mock_quote(self) -> Self {
@@ -133,7 +156,9 @@ impl TransactionBuilderExt for TransactionBuilder {
             _output: include_bytes!("./artifacts/quote-output.bin").into(),
         }
         .abi_encode();
-        self.with_input(quote.into()).with_gas_limit(500_000)
+        self.with_input(quote.into())
+            .with_gas_limit(500_000)
+            .with_signer(flashtestations_signer())
     }
 }
 
@@ -163,7 +188,7 @@ pub trait ChainDriverExt {
         &self,
     ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
 
-    fn build_new_block_with_reverrting_transaction(
+    fn build_new_block_with_reverting_transaction(
         &self,
     ) -> impl Future<Output = eyre::Result<(TxHash, Block<Transaction>)>>;
 }
@@ -226,7 +251,7 @@ impl<P: Protocol> ChainDriverExt for ChainDriver<P> {
         Ok((*tx.tx_hash(), self.build_new_block().await?))
     }
 
-    async fn build_new_block_with_reverrting_transaction(
+    async fn build_new_block_with_reverting_transaction(
         &self,
     ) -> eyre::Result<(TxHash, Block<Transaction>)> {
         let tx = self
@@ -336,4 +361,22 @@ pub fn funded_signer() -> Signer {
             .expect("invalid hardcoded funded private key"),
     )
     .expect("Failed to create signer from hardcoded funded private key")
+}
+
+pub fn flashblocks_number_signer() -> Signer {
+    Signer::try_from_secret(
+        FLASHBLOCKS_DEPLOY_KEY
+            .parse()
+            .expect("invalid hardcoded flashblocks number deployer private key"),
+    )
+    .expect("Failed to create signer from hardcoded flashblocks number deployer private key")
+}
+
+pub fn flashtestations_signer() -> Signer {
+    Signer::try_from_secret(
+        FLASHTESTATION_DEPLOY_KEY
+            .parse()
+            .expect("invalid hardcoded flashtestations deployer private key"),
+    )
+    .expect("Failed to create signer from hardcoded flashtestations deployer private key")
 }

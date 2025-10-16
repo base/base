@@ -192,6 +192,9 @@ testing = [
     "ctor",
     "macros",
     "rlimit",
+    "hyper",
+    "hyper-util",
+    "http-body-util",
 ]
 
 interop = []

@@ -1,8 +1,7 @@
 use alloy_consensus::Transaction;
 use alloy_eips::Decodable2718;
-use alloy_primitives::{Address, TxHash, U256, address, b128, b256};
+use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::Provider;
-use alloy_sol_types::SolCall;
 use macros::rb_test;
 use op_alloy_consensus::OpTxEnvelope;
 use std::time::Duration;
@@ -10,15 +9,10 @@ use std::time::Duration;
 use crate::{
     args::{FlashblocksArgs, OpRbuilderArgs},
     tests::{
-        BUILDER_PRIVATE_KEY, BlockTransactionsExt, BundleOpts, ChainDriver, ChainDriverExt,
-        FUNDED_PRIVATE_KEY, LocalInstance, ONE_ETH, TransactionBuilderExt,
-        flashblocks_number_contract::FlashblocksNumber,
+        BlockTransactionsExt, BundleOpts, ChainDriver, FLASHBLOCKS_NUMBER_ADDRESS, LocalInstance,
+        TransactionBuilderExt, flashblocks_number_contract::FlashblocksNumber,
     },
-    tx_signer::Signer,
 };
-
-// If the order of deployment from the signer changes the address will change
-const FLASHBLOCKS_NUMBER_ADDRESS: Address = address!("5fbdb2315678afecb367f032d93f642f64180aa3");
 
 #[rb_test(flashblocks, args = OpRbuilderArgs {
     chain_block_time: 2000,

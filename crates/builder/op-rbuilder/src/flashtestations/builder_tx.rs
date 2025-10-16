@@ -17,7 +17,7 @@ use revm::{
     inspector::NoOpInspector,
     state::Account,
 };
-use std::sync::OnceLock;
+use std::sync::{Arc, atomic::AtomicBool};
 use tracing::{debug, info};
 
 use crate::{
@@ -66,7 +66,7 @@ pub struct FlashtestationsBuilderTx {
     // Builder proof version
     builder_proof_version: u8,
     // Whether the workload and address has been registered
-    registered: OnceLock<bool>,
+    registered: Arc<AtomicBool>,
     // Whether block proofs are enabled
     enable_block_proofs: bool,
 }
@@ -91,7 +91,7 @@ impl FlashtestationsBuilderTx {
             registry_address: args.registry_address,
             builder_policy_address: args.builder_policy_address,
             builder_proof_version: args.builder_proof_version,
-            registered: OnceLock::new(),
+            registered: Arc::new(AtomicBool::new(args.registered)),
             enable_block_proofs: args.enable_block_proofs,
         }
     }
@@ -178,7 +178,7 @@ impl FlashtestationsBuilderTx {
     /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
     /// https://github.com/flashbots/rollup-boost/blob/main/specs/flashtestations.md#block-building-process
     fn compute_block_content_hash(
-        transactions: Vec<OpTransactionSigned>,
+        transactions: &[OpTransactionSigned],
         parent_hash: B256,
         block_number: u64,
         timestamp: u64,
@@ -475,7 +475,7 @@ impl FlashtestationsBuilderTx {
         >,
     ) -> Result<Option<BuilderTransactionCtx>, BuilderTransactionError> {
         let block_content_hash = Self::compute_block_content_hash(
-            transactions.clone(),
+            &transactions,
             ctx.parent_hash(),
             ctx.block_number(),
             ctx.timestamp(),
@@ -545,11 +545,12 @@ impl FlashtestationsBuilderTx {
         match self.register_tee_service_tx(ctx, &mut evm) {
             Ok((_, registered)) => {
                 if registered {
-                    let _ = self.registered.set(registered);
+                    self.registered
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
                 }
                 Ok(())
             }
-            Err(e) => Err(BuilderTransactionError::other(e)),
+            Err(e) => Err(e),
         }
     }
 }
@@ -563,7 +564,7 @@ impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for Flashtestation
         db: &mut State<impl Database>,
     ) -> Result<Vec<BuilderTransactionCtx>, BuilderTransactionError> {
         // set registered simulating against the committed state
-        if !self.registered.get().unwrap_or(&false) {
+        if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
             self.set_registered(state_provider.clone(), ctx)?;
         }
 
@@ -583,7 +584,7 @@ impl<ExtraCtx: Debug + Default> BuilderTransactions<ExtraCtx> for Flashtestation
 
         let mut builder_txs = Vec::<BuilderTransactionCtx>::new();
 
-        if !self.registered.get().unwrap_or(&false) {
+        if !self.registered.load(std::sync::atomic::Ordering::SeqCst) {
             info!(target: "flashtestations", "tee service not registered yet, attempting to register");
             builder_txs.extend(self.fund_tee_service_tx(ctx, &mut evm)?);
             let (register_tx, _) = self.register_tee_service_tx(ctx, &mut evm)?;

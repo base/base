@@ -33,7 +33,7 @@ impl RemoteAttestationProvider {
         let report_data_hex = hex::encode(report_data);
         let url = format!("{}/{}", self.service_url, report_data_hex);
 
-        info!(target: "flashtestations", url = url, "fetching quote in debug mode");
+        info!(target: "flashtestations", url = url, "fetching quote from remote attestation provider");
 
         let response = self
             .client
