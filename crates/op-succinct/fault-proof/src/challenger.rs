@@ -374,7 +374,7 @@ where
                         .games
                         .values()
                         .filter(|game| !game.should_attempt_to_challenge)
-                        .max_by_key(|game| game.index)
+                        .min_by_key(|game| game.index)
                         .cloned()
                 };
 

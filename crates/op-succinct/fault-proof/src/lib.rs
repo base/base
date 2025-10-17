@@ -231,7 +231,7 @@ where
     P: Provider + Clone,
 {
     if parent_index == u32::MAX {
-        return Ok(true);
+        return Ok(false);
     }
 
     let parent_game_address = factory.gameAtIndex(U256::from(parent_index)).call().await?.proxy;
