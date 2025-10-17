@@ -205,7 +205,7 @@ pub trait BlockApi {
     ) -> RpcResult<Option<alloy_rpc_types_eth::Block>>;
 }
 
-pub async fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
+pub fn generate_genesis(output: Option<String>) -> eyre::Result<()> {
     // Read the template file
     let template = include_str!("artifacts/genesis.json.tmpl");
 

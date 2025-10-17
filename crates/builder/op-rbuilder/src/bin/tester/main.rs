@@ -50,7 +50,7 @@ async fn main() -> eyre::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Genesis { output } => generate_genesis(output).await,
+        Commands::Genesis { output } => generate_genesis(output),
         Commands::Run { validation, .. } => run_system(validation).await,
         Commands::Deposit { address, amount } => {
             let engine_api = EngineApi::with_http("http://localhost:4444");
