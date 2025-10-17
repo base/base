@@ -59,7 +59,7 @@ async fn main() {
     // Initialize Prometheus metrics exporter
     let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
     builder
-        .with_http_listener(([0, 0, 0, 0], 9090))
+        .with_http_listener(([0, 0, 0, 0], 9091))
         .install()
         .expect("failed to install Prometheus exporter");
 
