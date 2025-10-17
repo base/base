@@ -6,7 +6,6 @@ use op_succinct_client_utils::{
     witness::{
         executor::{get_inputs_for_pipeline, WitnessExecutor},
         preimage_store::PreimageStore,
-        WitnessData,
     },
     BlobStore,
 };
@@ -21,7 +20,7 @@ pub fn setup_tracing() {
     tracing::subscriber::set_global_default(subscriber).map_err(|e| anyhow!(e)).unwrap();
 }
 
-pub async fn run_range_program<E, W>(executor: E, witness_data: W)
+pub async fn run_range_program<E>(executor: E, oracle: Arc<PreimageStore>, beacon: BlobStore)
 where
     E: WitnessExecutor<
             O = PreimageStore,
@@ -30,13 +29,10 @@ where
             L2 = OracleL2ChainProvider<PreimageStore>,
         > + Send
         + Sync,
-    W: WitnessData + Send + Sync,
 {
     ////////////////////////////////////////////////////////////////
     //                          PROLOGUE                          //
     ////////////////////////////////////////////////////////////////
-    let (oracle, beacon) = witness_data.get_oracle_and_blob_provider().await.unwrap();
-
     let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
     let boot_info = match input {
         Some((cursor, l1_provider, l2_provider)) => {

@@ -29,13 +29,18 @@ fn main() {
         let witness_data = rkyv::from_bytes::<EigenDAWitnessData, Error>(&witness_rkyv_bytes)
             .expect("Failed to deserialize witness data.");
 
-        let (oracle, _beacon) = witness_data.clone().get_oracle_and_blob_provider().await.unwrap();
+        let (oracle, beacon) = witness_data
+            .clone()
+            .get_oracle_and_blob_provider()
+            .await
+            .expect("Failed to load oracle and blob provider");
+
         let eigenda_witness: EigenDAWitness = serde_cbor::from_slice(
             &witness_data.eigenda_data.clone().expect("eigenda witness data is not present"),
         )
         .expect("cannot deserialize eigenda witness");
         let preloaded_preimage_provider = eigenda_witness_to_preloaded_provider(
-            oracle,
+            oracle.clone(),
             CanoeSp1CCVerifier {},
             CanoeVerifierAddressFetcherDeployedByEigenLabs {},
             eigenda_witness,
@@ -43,7 +48,7 @@ fn main() {
         .await
         .expect("Failed to get preloaded blob provider");
 
-        run_range_program(EigenDAWitnessExecutor::new(preloaded_preimage_provider), witness_data)
+        run_range_program(EigenDAWitnessExecutor::new(preloaded_preimage_provider), oracle, beacon)
             .await;
     });
 }
