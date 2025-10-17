@@ -20,7 +20,6 @@ Before running the cost estimator, you need to set up a .env file in the project
 
 ```bash
 L1_RPC=<YOUR_L1_RPC_ENDPOINT>
-L1_BEACON_RPC=<YOUR_L1_BEACON_RPC_ENDPOINT>
 L2_RPC=<YOUR_L2_RPC_ENDPOINT>
 L2_NODE_RPC=<YOUR_L2_NODE_RPC_ENDPOINT>
 ```

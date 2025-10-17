@@ -5,9 +5,10 @@
 To run OP Succinct or OP Succinct Lite, you will need the following RPCs in your `.env`:
 
 - `L1_RPC`: L1 Execution Archive Node
-- `L1_BEACON_RPC`: L1 Consensus (Beacon) Node
 - `L2_RPC`: L2 Execution Node (`op-geth`)
 - `L2_NODE_RPC`: L2 Rollup Node (`op-node`)
+
+> Note: If your integration requires access to consensus-layer data, set the `L1_BEACON_RPC` (L1 Beacon Node). This is optional and not required by default.
 
 <div class="warning">
 When running the proposer in production, it is recommended that your L2 nodes are in the same region/network to minimize latency. Otherwise, tasks like witness generation can take significantly longer and become a bottleneck.

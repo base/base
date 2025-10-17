@@ -6,7 +6,6 @@ This guide will walk you through the steps to deploy OP Succinct for your OP Sta
 
 - Compatible RPCs. If you don't have these already, see [Node Setup](../advanced/node-setup.md) for more information.
   - L1 Archive Node (`L1_RPC`)
-  - L1 Consensus (Beacon) Node (`L1_BEACON_RPC`)
   - L2 Execution Node (`L2_RPC`)
   - L2 Rollup Node (`L2_NODE_RPC`)
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
@@ -26,11 +25,15 @@ In the root directory, create a file called `.env` and set the following environ
 | Parameter | Description |
 |-----------|-------------|
 | `L1_RPC` | L1 Archive Node. |
-| `L1_BEACON_RPC` | L1 Beacon Node. |
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
+
+```admonish info
+If your integration requires access to consensus-layer data, set the `L1_BEACON_RPC` (L1 Beacon Node).  
+This is optional and not required by default.
+```
 
 ## Step 2: Deploy an `SP1MockVerifier` for verifying mock proofs
 

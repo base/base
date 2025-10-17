@@ -30,7 +30,6 @@ Create a `.env` file in the contracts directory with the following variables:
 First, create a `.env` file in the root directory with the following variables:
 ```bash
 L1_RPC=<L1_RPC_URL>
-L1_BEACON_RPC=<L1_BEACON_RPC_URL>
 L2_RPC=<L2_RPC_URL>
 L2_NODE_RPC=<L2_NODE_RPC_URL>
 ```

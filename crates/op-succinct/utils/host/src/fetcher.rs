@@ -13,7 +13,7 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256, U64};
 use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::{stream, StreamExt};
 use kona_genesis::RollupConfig;
 use kona_host::single::SingleChainHost;
@@ -51,8 +51,7 @@ impl Default for OPSuccinctDataFetcher {
 #[derive(Debug, Clone)]
 pub struct RPCConfig {
     pub l1_rpc: Url,
-    // TODO(fakedev9999): Make optional if possible.
-    pub l1_beacon_rpc: Url,
+    pub l1_beacon_rpc: Option<Url>,
     pub l2_rpc: Url,
     // TODO(fakedev9999): Make optional if possible.
     pub l2_node_rpc: Url,
@@ -75,13 +74,21 @@ pub enum RPCMode {
 /// L2_NODE_RPC: The L2 node RPC URL.
 pub fn get_rpcs_from_env() -> RPCConfig {
     let l1_rpc = env::var("L1_RPC").expect("L1_RPC must be set");
-    let l1_beacon_rpc = env::var("L1_BEACON_RPC").expect("L1_BEACON_RPC must be set");
+    let maybe_l1_beacon_rpc = env::var("L1_BEACON_RPC").ok();
+
+    // L1_BEACON_RPC is optional. If not set or empty, set to None.
+    let l1_beacon_rpc = maybe_l1_beacon_rpc
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| Url::parse(s).expect("L1_BEACON_RPC must be a valid URL"));
+
     let l2_rpc = env::var("L2_RPC").expect("L2_RPC must be set");
     let l2_node_rpc = env::var("L2_NODE_RPC").expect("L2_NODE_RPC must be set");
 
     RPCConfig {
         l1_rpc: Url::parse(&l1_rpc).expect("L1_RPC must be a valid URL"),
-        l1_beacon_rpc: Url::parse(&l1_beacon_rpc).expect("L1_BEACON_RPC must be a valid URL"),
+        l1_beacon_rpc,
         l2_rpc: Url::parse(&l2_rpc).expect("L2_RPC must be a valid URL"),
         l2_node_rpc: Url::parse(&l2_node_rpc).expect("L2_NODE_RPC must be a valid URL"),
     }
@@ -288,12 +295,16 @@ impl OPSuccinctDataFetcher {
     }
 
     /// Get the RPC URL for the given RPC mode.
-    pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> &Url {
+    pub fn get_rpc_url(&self, rpc_mode: RPCMode) -> Result<&Url> {
         match rpc_mode {
-            RPCMode::L1 => &self.rpc_config.l1_rpc,
-            RPCMode::L2 => &self.rpc_config.l2_rpc,
-            RPCMode::L1Beacon => &self.rpc_config.l1_beacon_rpc,
-            RPCMode::L2Node => &self.rpc_config.l2_node_rpc,
+            RPCMode::L1 => Ok(&self.rpc_config.l1_rpc),
+            RPCMode::L2 => Ok(&self.rpc_config.l2_rpc),
+            RPCMode::L1Beacon => self
+                .rpc_config
+                .l1_beacon_rpc
+                .as_ref()
+                .ok_or_else(|| anyhow!("L1 beacon RPC URL is not set")),
+            RPCMode::L2Node => Ok(&self.rpc_config.l2_node_rpc),
         }
     }
 
@@ -387,7 +398,7 @@ impl OPSuccinctDataFetcher {
     where
         T: serde::de::DeserializeOwned,
     {
-        let url = self.get_rpc_url(rpc_mode);
+        let url = self.get_rpc_url(rpc_mode)?;
         Self::fetch_rpc_data(url, method, params).await
     }
 
@@ -684,6 +695,12 @@ impl OPSuccinctDataFetcher {
         };
         let claimed_l2_output_root = keccak256(l2_claim_encoded.abi_encode());
 
+        let l1_beacon_address = self
+            .rpc_config
+            .l1_beacon_rpc
+            .as_ref()
+            .map(|addr| addr.as_str().trim_end_matches('/').to_string());
+
         Ok(SingleChainHost {
             l1_head: l1_head_hash,
             agreed_l2_output_root,
@@ -698,9 +715,7 @@ impl OPSuccinctDataFetcher {
             l1_node_address: Some(
                 self.rpc_config.l1_rpc.as_str().trim_end_matches('/').to_string(),
             ),
-            l1_beacon_address: Some(
-                self.rpc_config.l1_beacon_rpc.as_str().trim_end_matches('/').to_string(),
-            ),
+            l1_beacon_address,
             data_dir: None, // Use in-memory key-value store.
             native: false,
             server: true,

@@ -23,7 +23,6 @@ The deployment script performs the following actions:
 | Parameter | Description |
 |-----------|-------------|
 | `L1_RPC` | L1 Archive Node. |
-| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
@@ -37,6 +36,7 @@ Create a `.env` file in the project root directory with the following variables:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
+| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. Could be required for integrations that access consensus-layer data. |
 | `GAME_TYPE` | Unique identifier for the game type (uint32). In almost all cases, to use the OP Succinct Fault Dispute Game, this should be set to 42. | `42` |
 | `DISPUTE_GAME_FINALITY_DELAY_SECONDS` | Delay before finalizing dispute games. | `604800` for 7 days |
 | `MAX_CHALLENGE_DURATION` | Maximum duration for challenges in seconds. | `604800` for 7 days |
