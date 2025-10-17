@@ -9,7 +9,6 @@ When deploying or upgrading the `OPSuccinctL2OutputOracle` contract, the followi
 | Parameter | Description |
 |-----------|-------------|
 | `L1_RPC` | L1 Archive Node. |
-| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. |
 | `L2_RPC` | L2 Execution Node (`op-geth`). |
 | `L2_NODE_RPC` | L2 Rollup Node (`op-node`). |
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
@@ -21,6 +20,7 @@ You can configure additional parameters when deploying or upgrading the `OPSucci
 
 | Parameter | Description |
 |-----------|-------------|
+| `L1_BEACON_RPC` | L1 Consensus (Beacon) Node. Could be required for integrations that access consensus-layer data. |
 | `VERIFIER_ADDRESS` | Default: Succinct's official Groth16 VerifierGateway. Address of the `ISP1Verifier` contract used to verify proofs. For mock proofs, this should be the address of the `SP1MockVerifier` contract. |
 | `SUBMISSION_INTERVAL` | Default: `10`. The minimum interval in L2 blocks for a proof to be submitted. An aggregation proof can be posted for any range larger than this interval. |
 | `FINALIZATION_PERIOD_SECS` | Default: `3600` (1 hour). The time period (in seconds) after which a proposed output becomes finalized and withdrawals can be processed. |

@@ -28,7 +28,6 @@ This guide provides the fastest path to try out OP Succinct fault dispute games 
     ```env
     # example .env file
     L1_RPC=<YOUR_L1_RPC_URL>
-    L1_BEACON_RPC=<L1_BEACON_RPC_URL>
     L2_RPC=<YOUR_L2_RPC_URL>
     L2_NODE_RPC=<YOUR_L2_NODE_RPC_URL>
     PRIVATE_KEY=<YOUR_PRIVATE_KEY>
@@ -40,6 +39,10 @@ This guide provides the fastest path to try out OP Succinct fault dispute games 
     MAX_PROVE_DURATION=86400
 
     # Optional
+
+    # Not needed by default, but could be required for integrations that access consensus-layer data.
+    L1_BEACON_RPC=<L1_BEACON_RPC_URL>
+
     # Warning: Setting PERMISSIONLESS_MODE=true allows anyone to propose and challenge games. Ensure this behavior is intended for your deployment.
     # For a permissioned setup, set this to false and configure PROPOSER_ADDRESSES and CHALLENGER_ADDRESSES.
     PERMISSIONLESS_MODE=true
@@ -69,13 +72,17 @@ Save the output addresses, particularly the `FACTORY_ADDRESS` output as "Factory
     ```env
     # Required Configuration
     L1_RPC=<YOUR_L1_RPC_URL>
-    L1_BEACON_RPC=<L1_BEACON_RPC_URL>
     L2_RPC=<YOUR_L2_RPC_URL>
     L2_NODE_RPC=<YOUR_L2_NODE_RPC_URL>
     FACTORY_ADDRESS=<FACTORY_ADDRESS_FROM_DEPLOYMENT>
     GAME_TYPE=42
     PRIVATE_KEY=<YOUR_PRIVATE_KEY>
     MOCK_MODE=true # Set to true for mock mode
+    ```
+
+    ```admonish info
+    If your integration requires access to consensus-layer data, set the `L1_BEACON_RPC` (L1 Beacon Node).  
+    This is optional and not required by default.
     ```
 
 2. Run the proposer:

@@ -26,7 +26,6 @@ Before running the tests, ensure you have:
 3. **Environment variables configured**
    ```bash
    export L1_RPC=<YOUR_L1_RPC>
-   export L1_BEACON_RPC=<YOUR_L1_BEACON_RPC>
    export L2_RPC=<YOUR_L2_RPC>
    export L2_NODE_RPC=<YOUR_L2_NODE_RPC>
    ```
