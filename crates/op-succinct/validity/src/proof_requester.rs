@@ -35,7 +35,7 @@ pub struct OPSuccinctProofRequester<H: OPSuccinctHost> {
     pub agg_mode: SP1ProofMode,
     pub safe_db_fallback: bool,
     pub max_price_per_pgu: u64,
-    pub timeout: u64,
+    pub proving_timeout: u64,
     pub range_cycle_limit: u64,
     pub range_gas_limit: u64,
     pub agg_cycle_limit: u64,
@@ -59,7 +59,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
         agg_mode: SP1ProofMode,
         safe_db_fallback: bool,
         max_price_per_pgu: u64,
-        timeout: u64,
+        proving_timeout: u64,
         range_cycle_limit: u64,
         range_gas_limit: u64,
         agg_cycle_limit: u64,
@@ -80,7 +80,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             agg_mode,
             safe_db_fallback,
             max_price_per_pgu,
-            timeout,
+            proving_timeout,
             range_cycle_limit,
             range_gas_limit,
             agg_cycle_limit,
@@ -181,7 +181,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             .compressed()
             .strategy(self.range_strategy)
             .skip_simulation(true)
-            .timeout(Duration::from_secs(self.timeout))
+            .timeout(Duration::from_secs(self.proving_timeout))
             .min_auction_period(self.min_auction_period)
             .max_price_per_pgu(self.max_price_per_pgu)
             .cycle_limit(self.range_cycle_limit)
@@ -207,7 +207,7 @@ impl<H: OPSuccinctHost> OPSuccinctProofRequester<H> {
             .prove(&self.program_config.agg_pk, &stdin)
             .mode(self.agg_mode)
             .strategy(self.agg_strategy)
-            .timeout(Duration::from_secs(self.timeout))
+            .timeout(Duration::from_secs(self.proving_timeout))
             .min_auction_period(self.min_auction_period)
             .max_price_per_pgu(self.max_price_per_pgu)
             .cycle_limit(self.agg_cycle_limit)
