@@ -62,7 +62,8 @@ Before starting the proposer, ensure you have deployed the relevant contracts an
 | `OTLP_ENDPOINT` | Default: `http://localhost:4317`. The endpoint to forward OTLP logs to. |
 | `USE_KMS_REQUESTER` | Default: ``.  Whether to expect NETWORK_PRIVATE_KEY to be an AWS KMS key ARN instead of a plaintext private key. |
 | `MAX_PRICE_PER_PGU` | Default: `300,000,000`. The maximum price per pgu for proving. |
-| `TIMEOUT` | Default: `14400` (4 hours). The timeout to use for proving (in seconds). |
+| `PROVING_TIMEOUT` | Default: `14400` (4 hours). The timeout to use for proving (in seconds). |
+| `NETWORK_CALLS_TIMEOUT` | Default: `15` (15 seconds). The timeout for network prover calls (in seconds). |
 | `RANGE_CYCLE_LIMIT` | Default: `1,000,000,000,000`. The cycle limit to use for range proofs. |
 | `RANGE_GAS_LIMIT` | Default: `1,000,000,000,000`. The gas limit to use for range proofs. |
 | `AGG_CYCLE_LIMIT` | Default: `1,000,000,000,000`. The cycle limit to use for aggregation proofs. |

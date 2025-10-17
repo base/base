@@ -29,7 +29,8 @@ pub struct EnvironmentConfig {
     pub op_succinct_config_name: String,
     pub use_kms_requester: bool,
     pub max_price_per_pgu: u64,
-    pub timeout: u64,
+    pub proving_timeout: u64,
+    pub network_calls_timeout: u64,
     pub range_cycle_limit: u64,
     pub range_gas_limit: u64,
     pub agg_cycle_limit: u64,
@@ -130,7 +131,8 @@ pub async fn read_proposer_env() -> Result<EnvironmentConfig> {
         )?,
         use_kms_requester: get_env_var("USE_KMS_REQUESTER", Some(false))?,
         max_price_per_pgu: get_env_var("MAX_PRICE_PER_PGU", Some(300_000_000))?, /* 0.3 PROVE per billion PGU */
-        timeout: get_env_var("TIMEOUT", Some(14400))?,                           // 4 hours
+        proving_timeout: get_env_var("PROVING_TIMEOUT", Some(14400))?,           // 4 hours
+        network_calls_timeout: get_env_var("NETWORK_CALLS_TIMEOUT", Some(15))?,  // 15 seconds
         range_cycle_limit: get_env_var("RANGE_CYCLE_LIMIT", Some(1_000_000_000_000))?, // 1 trillion
         range_gas_limit: get_env_var("RANGE_GAS_LIMIT", Some(1_000_000_000_000))?, // 1 trillion
         agg_cycle_limit: get_env_var("AGG_CYCLE_LIMIT", Some(1_000_000_000_000))?, // 1 trillion

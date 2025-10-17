@@ -34,9 +34,6 @@ use crate::{
     ProgramConfig, RequestExecutionStatistics, RequesterConfig, ValidityGauge,
 };
 
-/// Timeout for network prover calls to prevent indefinite hangs.
-const NETWORK_CALL_TIMEOUT_SECS: u64 = 15;
-
 /// Configuration for the driver.
 pub struct DriverConfig {
     pub network_prover: Arc<NetworkProver>,
@@ -138,7 +135,7 @@ where
             requester_config.agg_proof_mode,
             requester_config.safe_db_fallback,
             requester_config.max_price_per_pgu,
-            requester_config.timeout,
+            requester_config.proving_timeout,
             requester_config.range_cycle_limit,
             requester_config.range_gas_limit,
             requester_config.agg_cycle_limit,
@@ -1591,7 +1588,12 @@ where
     where
         F: std::future::Future<Output = Result<T>>,
     {
-        match tokio::time::timeout(Duration::from_secs(NETWORK_CALL_TIMEOUT_SECS), future).await {
+        match tokio::time::timeout(
+            Duration::from_secs(self.requester_config.network_calls_timeout),
+            future,
+        )
+        .await
+        {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(network_error)) => {
                 warn!(
@@ -1617,13 +1619,13 @@ where
                     start_block = request.start_block,
                     end_block = request.end_block,
                     operation = operation_name,
-                    timeout_secs = NETWORK_CALL_TIMEOUT_SECS,
+                    timeout_secs = self.requester_config.network_calls_timeout,
                     "Network call timeout"
                 );
                 ValidityGauge::NetworkCallTimeoutCount.increment(1.0);
                 Err(anyhow!(
                     "Timeout after {}s {} for request {} (start_block={}, end_block={})",
-                    NETWORK_CALL_TIMEOUT_SECS,
+                    self.requester_config.network_calls_timeout,
                     operation_name,
                     request.id,
                     request.start_block,

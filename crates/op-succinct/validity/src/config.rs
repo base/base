@@ -64,7 +64,10 @@ pub struct RequesterConfig {
     pub max_price_per_pgu: u64,
 
     /// The timeout to use for proving (in seconds).
-    pub timeout: u64,
+    pub proving_timeout: u64,
+
+    /// The timeout to use for network prover calls (in seconds).
+    pub network_calls_timeout: u64,
 
     /// The cycle limit to use for range proofs.
     pub range_cycle_limit: u64,
