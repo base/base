@@ -31,7 +31,8 @@ Note that the first input argument, in the same pattern as previous versions of 
 is the function selector: the first four bytes of `keccak256("setL1BlockValuesIsthmus()")`.
 
 In the activation block, there are two possibilities:
-- If Isthmus is active at genesis, the `setL1BlockValuesIsthmus()` method must be used.
+- If Isthmus is active at genesis, there are no transactions in the activation block
+and therefore no L1 Block Attributes transaction to consider.
 - If Isthmus activates after genesis [`setL1BlockValuesEcotone()`](../ecotone/l1-attributes.md)
 method must be used. This is because the L1 Block contract will not yet have been upgraded.
 
