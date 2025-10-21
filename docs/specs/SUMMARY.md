@@ -73,6 +73,7 @@
       - [System Config](./protocol/jovian/system-config.md)
 - [Governance]()
   - [Governance Token](./governance/gov-token.md)
+  - [MintManager](./governance/mint-manager.md)
 - [Experimental]()
   - [Standard L2 Genesis](./experimental/standard-l2-genesis.md)
   - [Alt-DA](./experimental/alt-da.md)
