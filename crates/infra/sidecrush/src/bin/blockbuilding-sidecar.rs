@@ -64,12 +64,13 @@ async fn main() {
     let statsd_host = std::env::var("DD_AGENT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let statsd_addr = format!("{}:8125", statsd_host);
     tracing::info!(address = %statsd_addr, "Connecting to StatsD agent");
-    
+
     let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
     socket
         .set_nonblocking(true)
         .expect("failed to set socket nonblocking");
-    let sink = UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
+    let sink =
+        UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
     let statsd_client = StatsdClient::from_sink("base.blocks", sink);
     let metrics = HealthcheckMetrics::new(statsd_client);
 
