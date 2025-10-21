@@ -59,12 +59,17 @@ async fn main() {
             .try_init();
     }
 
-    // Initialize StatsD client (sends to localhost:8125 - Datadog agent)
+    // Initialize StatsD client (sends to Datadog agent)
+    // Use DD_AGENT_HOST if set (Kubernetes), otherwise localhost
+    let statsd_host = std::env::var("DD_AGENT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let statsd_addr = format!("{}:8125", statsd_host);
+    tracing::info!(address = %statsd_addr, "Connecting to StatsD agent");
+    
     let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
     socket
         .set_nonblocking(true)
         .expect("failed to set socket nonblocking");
-    let sink = UdpMetricSink::from("127.0.0.1:8125", socket).expect("failed to create StatsD sink");
+    let sink = UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
     let statsd_client = StatsdClient::from_sink("base.blocks", sink);
     let metrics = HealthcheckMetrics::new(statsd_client);
 
