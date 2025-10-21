@@ -86,7 +86,12 @@ pub struct BlockProductionHealthChecker<C: EthClient> {
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
-    pub fn new(node: Node, client: C, config: HealthcheckConfig, metrics: HealthcheckMetrics) -> Self {
+    pub fn new(
+        node: Node,
+        client: C,
+        config: HealthcheckConfig,
+        metrics: HealthcheckMetrics,
+    ) -> Self {
         // default to healthy until first classification
         let initial_status: u8 = HealthState::Healthy.code();
         Self {
@@ -158,7 +163,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             .as_secs();
         let block_age_ms = now_secs.saturating_sub(latest.timestamp_unix_seconds) * 1000;
 
-        self.metrics.set_head_age_ms(block_age_ms as i64);
+        self.metrics.set_head_age_ms(block_age_ms);
 
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
         let grace_ms = self.config.grace_period_ms;
