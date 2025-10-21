@@ -1,28 +1,34 @@
-use once_cell::sync::Lazy;
-use reth_metrics::{metrics::Counter, metrics::Gauge, Metrics};
+use cadence::{Counted, Gauged, StatsdClient};
 
-#[derive(Metrics, Clone)]
-#[metrics(scope = "base.blocks")]
+/// Metrics client wrapper for block building health checks
+/// Emits metrics every 2 seconds via status heartbeat (independent of poll frequency)
+#[derive(Clone)]
 pub struct HealthcheckMetrics {
-    #[metric(describe = "Heartbeat healthy (2s)")]
-    pub status_healthy: Counter,
-    #[metric(describe = "Heartbeat unhealthy (2s)")]
-    pub status_unhealthy: Counter,
-    #[metric(describe = "Heartbeat error (2s)")]
-    pub status_error: Counter,
-
-    #[metric(describe = "Error polls (non-new-instance)")]
-    pub error: Counter,
-    #[metric(describe = "Healthy polls")]
-    pub healthy: Counter,
-    #[metric(describe = "Delayed polls")]
-    pub delayed: Counter,
-    #[metric(describe = "Unhealthy polls")]
-    pub unhealthy: Counter,
-
-    #[metric(describe = "Head age in milliseconds")]
-    pub head_age_ms: Gauge,
+    client: StatsdClient,
 }
 
-pub static METRICS: Lazy<HealthcheckMetrics> = Lazy::new(HealthcheckMetrics::default);
-pub use METRICS as metrics;
+impl HealthcheckMetrics {
+    pub fn new(client: StatsdClient) -> Self {
+        Self { client }
+    }
+
+    /// Increment status_healthy counter (2s heartbeat)
+    pub fn increment_status_healthy(&self) {
+        let _ = self.client.count("status_healthy", 1);
+    }
+
+    /// Increment status_unhealthy counter (2s heartbeat)
+    pub fn increment_status_unhealthy(&self) {
+        let _ = self.client.count("status_unhealthy", 1);
+    }
+
+    /// Increment status_error counter (2s heartbeat)
+    pub fn increment_status_error(&self) {
+        let _ = self.client.count("status_error", 1);
+    }
+
+    /// Set head_age_ms gauge
+    pub fn set_head_age_ms(&self, value: i64) {
+        let _ = self.client.gauge("head_age_ms", value);
+    }
+}

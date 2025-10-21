@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::time::{interval, timeout};
 use tracing::{debug, error, info};
 
-use crate::metrics::metrics;
+use crate::metrics::HealthcheckMetrics;
 
 pub mod alloy_client;
 
@@ -82,10 +82,11 @@ pub struct BlockProductionHealthChecker<C: EthClient> {
     pub client: C,
     pub config: HealthcheckConfig,
     status_code: Arc<AtomicU8>,
+    metrics: HealthcheckMetrics,
 }
 
 impl<C: EthClient> BlockProductionHealthChecker<C> {
-    pub fn new(node: Node, client: C, config: HealthcheckConfig) -> Self {
+    pub fn new(node: Node, client: C, config: HealthcheckConfig, metrics: HealthcheckMetrics) -> Self {
         // default to healthy until first classification
         let initial_status: u8 = HealthState::Healthy.code();
         Self {
@@ -93,20 +94,22 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             client,
             config,
             status_code: Arc::new(AtomicU8::new(initial_status)),
+            metrics,
         }
     }
 
     pub fn spawn_status_emitter(&self, period_ms: u64) -> tokio::task::JoinHandle<()> {
         let status = self.status_code.clone();
+        let metrics = self.metrics.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_millis(period_ms));
             loop {
                 ticker.tick().await;
                 let code = status.load(Ordering::Relaxed);
                 match code {
-                    0 => metrics.status_healthy.increment(1),
-                    1 => metrics.status_unhealthy.increment(1),
-                    _ => metrics.status_error.increment(1),
+                    0 => metrics.increment_status_healthy(),
+                    1 => metrics.increment_status_unhealthy(),
+                    _ => metrics.increment_status_error(),
                 }
             }
         })
@@ -129,7 +132,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                         .store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, error = %e, "failed to fetch block");
-                    metrics.error.increment(1);
                     self.status_code
                         .store(HealthState::Error.code(), Ordering::Relaxed);
                 }
@@ -142,7 +144,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                         .store(HealthState::Error.code(), Ordering::Relaxed);
                 } else {
                     error!(sequencer = %url, "failed to fetch block (timeout)");
-                    metrics.error.increment(1);
                     self.status_code
                         .store(HealthState::Error.code(), Ordering::Relaxed);
                 }
@@ -157,7 +158,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             .as_secs();
         let block_age_ms = now_secs.saturating_sub(latest.timestamp_unix_seconds) * 1000;
 
-        metrics.head_age_ms.set(block_age_ms as f64);
+        self.metrics.set_head_age_ms(block_age_ms as i64);
 
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
         let grace_ms = self.config.grace_period_ms;
@@ -180,7 +181,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                     age_ms = block_age_ms,
                     "block production unhealthy"
                 );
-                metrics.unhealthy.increment(1);
             } else {
                 info!(
                     blockNumber = latest.number,
@@ -188,7 +188,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                     age_ms = block_age_ms,
                     "delayed block production detected"
                 );
-                metrics.delayed.increment(1);
             }
         } else {
             if self.node.is_new_instance {
@@ -204,7 +203,6 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                 sequencer = %url,
                 "block production healthy"
             );
-            metrics.healthy.increment(1);
         }
     }
 
@@ -244,6 +242,16 @@ mod tests {
             .as_secs()
     }
 
+    fn mock_metrics() -> HealthcheckMetrics {
+        use cadence::{StatsdClient, UdpMetricSink};
+        use std::net::UdpSocket;
+        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let sink = UdpMetricSink::from("127.0.0.1:8125", socket).unwrap();
+        let statsd_client = StatsdClient::from_sink("test", sink);
+        HealthcheckMetrics::new(statsd_client)
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn healthy_new_block_emits_healthy() {
         let cfg = HealthcheckConfig::new(1_000, 5_000, 15_000);
@@ -256,7 +264,8 @@ mod tests {
             header: shared_header.clone(),
         };
         let node = Node::new("http://localhost:8545", false);
-        let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
+        let metrics = mock_metrics();
+        let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         checker.run_health_check().await;
         assert_eq!(
@@ -278,7 +287,8 @@ mod tests {
             header: shared_header.clone(),
         };
         let node = Node::new("http://localhost:8545", false);
-        let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
+        let metrics = mock_metrics();
+        let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         // First healthy block
         checker.run_health_check().await;
@@ -313,7 +323,8 @@ mod tests {
             header: shared_header.clone(),
         };
         let node = Node::new("http://localhost:8545", false);
-        let mut checker = BlockProductionHealthChecker::new(node, client, cfg);
+        let metrics = mock_metrics();
+        let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
 
         // First observation (healthy)
         checker.run_health_check().await;

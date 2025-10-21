@@ -1,7 +1,10 @@
+use cadence::{StatsdClient, UdpMetricSink};
 use clap::Parser;
 use sidecrush::blockbuilding_healthcheck::{
     alloy_client::AlloyEthClient, BlockProductionHealthChecker, HealthcheckConfig, Node,
 };
+use sidecrush::metrics::HealthcheckMetrics;
+use std::net::UdpSocket;
 use tracing::Level;
 
 #[derive(Parser, Debug)]
@@ -56,12 +59,14 @@ async fn main() {
             .try_init();
     }
 
-    // Initialize Prometheus metrics exporter
-    let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
-    builder
-        .with_http_listener(([0, 0, 0, 0], 7309))
-        .install()
-        .expect("failed to install Prometheus exporter");
+    // Initialize StatsD client (sends to localhost:8125 - Datadog agent)
+    let socket = UdpSocket::bind("0.0.0.0:0").expect("failed to bind UDP socket");
+    socket
+        .set_nonblocking(true)
+        .expect("failed to set socket nonblocking");
+    let sink = UdpMetricSink::from("127.0.0.1:8125", socket).expect("failed to create StatsD sink");
+    let statsd_client = StatsdClient::from_sink("base.blocks", sink);
+    let metrics = HealthcheckMetrics::new(statsd_client);
 
     // Allow NODE_URL (exported from BBHC_SIDECAR_GETH_RPC in ConfigMap) to override
     let effective_url = std::env::var("NODE_URL").unwrap_or_else(|_| args.node_url.clone());
@@ -74,7 +79,7 @@ async fn main() {
     );
 
     let mut checker: BlockProductionHealthChecker<_> =
-        BlockProductionHealthChecker::new(node, client, config);
+        BlockProductionHealthChecker::new(node, client, config, metrics);
 
     // Spawn decoupled status emitter at 2s cadence
     let _status_handle = checker.spawn_status_emitter(2000);
