@@ -1,10 +1,14 @@
-# L1FeeVault
+# FeeVault
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**
 
 - [Overview](#overview)
+- [Vault Types](#vault-types)
+  - [L1FeeVault](#l1feevault)
+  - [BaseFeeVault](#basefeevault)
+  - [SequencerFeeVault](#sequencerfeevault)
 - [Definitions](#definitions)
   - [Minimum Withdrawal Amount](#minimum-withdrawal-amount)
   - [Withdrawal Network](#withdrawal-network)
@@ -13,7 +17,7 @@
     - [Mitigations](#mitigations)
   - [a01-002: L2ToL1MessagePasser functions correctly for L1 withdrawals](#a01-002-l2tol1messagepasser-functions-correctly-for-l1-withdrawals)
     - [Mitigations](#mitigations-1)
-  - [a01-003: Protocol correctly credits L1 fees to this contract](#a01-003-protocol-correctly-credits-l1-fees-to-this-contract)
+  - [a01-003: Protocol correctly credits fees to vault contracts](#a01-003-protocol-correctly-credits-fees-to-vault-contracts)
     - [Mitigations](#mitigations-2)
 - [Invariants](#invariants)
   - [i01-001: Accumulated fees can always be withdrawn once threshold is met](#i01-001-accumulated-fees-can-always-be-withdrawn-once-threshold-is-met)
@@ -27,21 +31,55 @@
   - [recipient](#recipient)
   - [withdrawalNetwork](#withdrawalnetwork)
   - [withdraw](#withdraw)
+  - [l1FeeWallet (SequencerFeeVault only)](#l1feewallet-sequencerfeevault-only)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 ## Overview
 
-The L1FeeVault accumulates the L1 portion of transaction fees paid by users on the L2 network. These fees
-represent the cost of posting transaction data to L1 for data availability. The contract enables permissionless
-withdrawal of accumulated fees to a designated recipient address once a minimum threshold is reached.
+The FeeVault contract provides the base implementation for three specialized fee collection contracts on L2. Each
+vault accumulates a specific type of transaction fee and enables permissionless withdrawal to a designated
+recipient address once a minimum threshold is reached. The three vault types share identical core functionality
+but differ only in which fees they collect.
+
+## Vault Types
+
+### L1FeeVault
+
+**Predeploy Address:** `0x420000000000000000000000000000000000001A`
+
+**Contract:** `L1FeeVault.sol`
+
+Accumulates the L1 portion of transaction fees paid by users on the L2 network. These fees represent the cost of
+posting transaction data to L1 for data availability. The L1 fee is calculated based on the L1 gas price and the
+size of the transaction data.
+
+### BaseFeeVault
+
+**Predeploy Address:** `0x4200000000000000000000000000000000000019`
+
+**Contract:** `BaseFeeVault.sol`
+
+Accumulates the EIP-1559 base fees paid by transactions on the L2 network. Unlike Ethereum L1 where base fees are
+burned, on L2 these fees are collected in this vault. The base fee adjusts dynamically based on network congestion
+following the EIP-1559 mechanism.
+
+### SequencerFeeVault
+
+**Predeploy Address:** `0x4200000000000000000000000000000000000011`
+
+**Contract:** `SequencerFeeVault.sol`
+
+Accumulates the priority fees (tips) paid to the sequencer during transaction processing and block production.
+These fees incentivize the sequencer to include transactions in blocks. This vault includes a legacy
+`l1FeeWallet()` getter function for backwards compatibility.
 
 ## Definitions
 
 ### Minimum Withdrawal Amount
 
-The minimum balance of ETH that must accumulate in the vault before a withdrawal can be triggered. This threshold
-prevents excessive withdrawal transactions for small fee amounts.
+The minimum balance of ETH that must accumulate in the vault before a withdrawal can be triggered. This
+threshold prevents excessive withdrawal transactions for small fee amounts.
 
 ### Withdrawal Network
 
@@ -72,15 +110,17 @@ OptimismPortal must honor these commitments.
 - L2ToL1MessagePasser is a core protocol predeploy with extensive testing and auditing
 - Withdrawal proofs are validated on L1 through the fault proof system
 
-### a01-003: Protocol correctly credits L1 fees to this contract
+### a01-003: Protocol correctly credits fees to vault contracts
 
-The execution engine must correctly calculate L1 data availability fees and credit them to the L1FeeVault
-address. Incorrect fee calculation or routing would prevent the vault from accumulating the intended fees.
+The execution engine must correctly calculate transaction fees and credit them to the appropriate vault
+addresses. For L1FeeVault, this includes L1 data availability fees. For BaseFeeVault, this includes EIP-1559
+base fees. For SequencerFeeVault, this includes priority fees. Incorrect fee calculation or routing would
+prevent vaults from accumulating the intended fees.
 
 #### Mitigations
 
-- Fee calculation is part of the core protocol specification
-- Fee routing is handled by the execution engine's coinbase mechanism
+- Fee calculation and routing is part of the core protocol specification
+- Fee routing is handled by the execution engine's fee distribution mechanism
 
 ## Invariants
 
@@ -93,27 +133,27 @@ address can successfully trigger a withdrawal. The contract must never enter a s
 
 **Severity: High**
 
-If withdrawals become impossible, accumulated L1 fees would be permanently locked in the contract, preventing the
+If withdrawals become impossible, accumulated fees would be permanently locked in the contract, preventing the
 designated recipient from receiving funds that are rightfully theirs. This would break the fee distribution
 mechanism of the protocol.
 
 ### i01-002: Withdrawals can only go to the authorized recipient
 
-All withdrawn funds must be sent to the recipient address configured at deployment. No mechanism should exist to
-redirect funds to any other address.
+All withdrawn funds must be sent to the recipient address configured at deployment. No mechanism should exist
+to redirect funds to any other address.
 
 #### Impact
 
 **Severity: Critical**
 
-If funds could be redirected to unauthorized addresses, attackers could steal accumulated L1 fees that belong to
+If funds could be redirected to unauthorized addresses, attackers could steal accumulated fees that belong to
 the designated recipient. This would compromise the fundamental security of the fee distribution system.
 
 ## Function Specification
 
 ### constructor
 
-Initializes the L1FeeVault with immutable configuration parameters.
+Initializes the FeeVault with immutable configuration parameters.
 
 **Parameters:**
 
@@ -130,7 +170,7 @@ Initializes the L1FeeVault with immutable configuration parameters.
 
 ### receive
 
-Allows the contract to accept ETH transfers representing L1 fee payments.
+Allows the contract to accept ETH transfers representing fee payments.
 
 **Behavior:**
 
@@ -182,3 +222,12 @@ Triggers withdrawal of all accumulated fees to the configured recipient.
     - `_data`: empty bytes (`hex""`)
     - `value`: entire contract balance
   - MUST forward the entire balance as msg.value to the message passer
+
+### l1FeeWallet (SequencerFeeVault only)
+
+Legacy getter function that returns the recipient address. Only present in SequencerFeeVault for backwards
+compatibility.
+
+**Behavior:**
+
+- MUST return the value of `RECIPIENT`
