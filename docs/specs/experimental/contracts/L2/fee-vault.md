@@ -9,6 +9,7 @@
   - [L1FeeVault](#l1feevault)
   - [BaseFeeVault](#basefeevault)
   - [SequencerFeeVault](#sequencerfeevault)
+  - [OperatorFeeVault](#operatorfeevault)
 - [Definitions](#definitions)
   - [Minimum Withdrawal Amount](#minimum-withdrawal-amount)
   - [Withdrawal Network](#withdrawal-network)
@@ -37,10 +38,10 @@
 
 ## Overview
 
-The FeeVault contract provides the base implementation for three specialized fee collection contracts on L2. Each
+The FeeVault contract provides the base implementation for four specialized fee collection contracts on L2. Each
 vault accumulates a specific type of transaction fee and enables permissionless withdrawal to a designated
-recipient address once a minimum threshold is reached. The three vault types share identical core functionality
-but differ only in which fees they collect.
+recipient address once a minimum threshold is reached. The four vault types share identical core functionality
+but differ only in which fees they collect and their deployment configuration.
 
 ## Vault Types
 
@@ -73,6 +74,19 @@ following the EIP-1559 mechanism.
 Accumulates the priority fees (tips) paid to the sequencer during transaction processing and block production.
 These fees incentivize the sequencer to include transactions in blocks. This vault includes a legacy
 `l1FeeWallet()` getter function for backwards compatibility.
+
+### OperatorFeeVault
+
+**Predeploy Address:** `0x420000000000000000000000000000000000001B`
+
+**Contract:** `OperatorFeeVault.sol`
+
+**Introduced:** Isthmus hardfork
+
+Accumulates the operator portion of transaction fees. Unlike the other vaults, OperatorFeeVault has a hardcoded
+constructor that always withdraws to the BaseFeeVault address (`0x4200000000000000000000000000000000000019`)
+on L2 with a minimum withdrawal amount of 0. This design consolidates operator fees with base fees for
+simplified distribution.
 
 ## Definitions
 
@@ -114,8 +128,9 @@ OptimismPortal must honor these commitments.
 
 The execution engine must correctly calculate transaction fees and credit them to the appropriate vault
 addresses. For L1FeeVault, this includes L1 data availability fees. For BaseFeeVault, this includes EIP-1559
-base fees. For SequencerFeeVault, this includes priority fees. Incorrect fee calculation or routing would
-prevent vaults from accumulating the intended fees.
+base fees. For SequencerFeeVault, this includes priority fees. For OperatorFeeVault, this includes operator
+fees (introduced in Isthmus). Incorrect fee calculation or routing would prevent vaults from accumulating the
+intended fees.
 
 #### Mitigations
 
@@ -167,6 +182,13 @@ Initializes the FeeVault with immutable configuration parameters.
 - MUST set `MIN_WITHDRAWAL_AMOUNT` to `_minWithdrawalAmount`
 - MUST set `WITHDRAWAL_NETWORK` to `_withdrawalNetwork`
 - MUST initialize `totalProcessed` to 0
+
+**OperatorFeeVault Special Case:**
+
+OperatorFeeVault has a constructor with no parameters that hardcodes the configuration:
+- `RECIPIENT` is set to `Predeploys.BASE_FEE_VAULT` (`0x4200000000000000000000000000000000000019`)
+- `MIN_WITHDRAWAL_AMOUNT` is set to `0`
+- `WITHDRAWAL_NETWORK` is set to `Types.WithdrawalNetwork.L2`
 
 ### receive
 
