@@ -22,5 +22,5 @@ pub use engine::OpEngineApiClient;
 pub use engine::{OP_ENGINE_CAPABILITIES, OpEngineApi, OpEngineApiServer};
 pub use error::{OpEthApiError, OpInvalidTransactionError, SequencerClientError};
 pub use eth::{OpEthApi, OpEthApiBuilder, OpReceiptBuilder};
-pub use metrics::SequencerMetrics;
+pub use metrics::{EthApiExtMetrics, SequencerMetrics};
 pub use sequencer::SequencerClient;
