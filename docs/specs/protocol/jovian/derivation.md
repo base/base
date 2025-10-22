@@ -49,7 +49,7 @@ The upgrade transaction details below are based on the monorepo at commit hash
 --contract-name L1Block \
 --from-address 0x4210000000000000000000000000000000000006 \
 --from-address-nonce 0 \
---git-commit-hash b3299e0ddb55442e6496512084d16c439ea2da77 \
+--git-commit-hash 773798a67678ab28c3ef7ee3405f25c04616af19 \
 --eth-rpc-url https://optimism.rpc.subquery.network/public \
 --proxy-address 0x4200000000000000000000000000000000000015 \
 --copy-contract-bytecode true -->
@@ -86,7 +86,7 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 Verify `data`:
 
 ```bash
-git checkout b3299e0ddb55442e6496512084d16c439ea2da77
+git checkout 773798a67678ab28c3ef7ee3405f25c04616af19
 make build-contracts
 jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/L1Block.sol/L1Block.json
 ```
@@ -97,7 +97,7 @@ This transaction MUST deploy a contract with the following code hash
 To verify the code hash:
 
 ```bash
-git checkout b3299e0ddb55442e6496512084d16c439ea2da77
+git checkout 773798a67678ab28c3ef7ee3405f25c04616af19
 make build-contracts
 cast k $(jq -r ".deployedBytecode.object" packages/contracts-bedrock/forge-artifacts/L1Block.sol/L1Block.json)
 ```
@@ -138,7 +138,7 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 --contract-name GasPriceOracle \
 --from-address 0x4210000000000000000000000000000000000007 \
 --from-address-nonce 0 \
---git-commit-hash b3299e0ddb55442e6496512084d16c439ea2da77 \
+--git-commit-hash 773798a67678ab28c3ef7ee3405f25c04616af19 \
 --eth-rpc-url https://optimism.rpc.subquery.network/public \
 --proxy-address 0x420000000000000000000000000000000000000F \
 --copy-contract-bytecode true -->
@@ -152,7 +152,7 @@ A deposit transaction is derived with the following attributes:
 - `mint`: `0`
 - `value`: `0`
 - `nonce`: `0`
-- `gasLimit`: `1756783`
+- `gasLimit`: `1750714`
 - `data`: `0x0x608060405234801561001057600080...` ([full bytecode](../../../specs/static/bytecode/jovian-gas-price-oracle-deployment.txt))
 - `sourceHash`: `0xd939cca6eca7bd0ee0c7e89f7e5b5cf7bf6f7afe7b6966bb45dfb95344b31545`,
   computed with the "Upgrade-deposited" type, with `intent = "Jovian: GasPriceOracle Deployment"`
@@ -175,18 +175,18 @@ cast keccak $(cast concat-hex 0x000000000000000000000000000000000000000000000000
 Verify `data`:
 
 ```bash
-git checkout b3299e0ddb55442e6496512084d16c439ea2da77
+git checkout 773798a67678ab28c3ef7ee3405f25c04616af19
 make build-contracts
 jq -r ".bytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json
 ```
 
 This transaction MUST deploy a contract with the following code hash
-`0xa7fd95526766fc3ba40ed64aa1b55ad051cb2930df64e11c4a848b81d3a8deaf`.
+`0xe9fc7c96c4db0d6078e3d359d7e8c982c350a513cb2c31121adf5e1e8a446614`.
 
 To verify the code hash:
 
 ```bash
-git checkout b3299e0ddb55442e6496512084d16c439ea2da77
+git checkout 773798a67678ab28c3ef7ee3405f25c04616af19
 make build-contracts
 cast k $(jq -r ".deployedBytecode.object" packages/contracts-bedrock/forge-artifacts/GasPriceOracle.sol/GasPriceOracle.json)
 ```
