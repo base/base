@@ -68,8 +68,8 @@ type NextBestFlashblocksTxs<Pool> = BestFlashblocksTxs<
     >,
 >;
 
-#[derive(Debug, Default)]
-pub(super) struct ExtraExecutionInfo {
+#[derive(Debug, Default, Clone)]
+pub(super) struct FlashblocksExecutionInfo {
     /// Index of the last consumed flashblock
     last_flashblock_index: usize,
 }
@@ -211,7 +211,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx>
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Send + Sync,
+    BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Send + Sync,
 {
     fn get_op_payload_builder_ctx(
         &self,
@@ -526,7 +526,7 @@ where
 
             // build first flashblock immediately
             let next_flashblocks_ctx = match self.build_next_flashblock(
-                &ctx,
+                &mut ctx,
                 &mut info,
                 &mut state,
                 &state_provider,
@@ -582,8 +582,8 @@ where
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
-        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        info: &mut ExecutionInfo<ExtraExecutionInfo>,
+        ctx: &mut OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
         best_txs: &mut NextBestFlashblocksTxs<Pool>,
@@ -780,7 +780,7 @@ where
     fn record_flashblocks_metrics(
         &self,
         ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
-        info: &ExecutionInfo<ExtraExecutionInfo>,
+        info: &ExecutionInfo<FlashblocksExecutionInfo>,
         flashblocks_per_block: u64,
         span: &tracing::Span,
         message: &str,
@@ -895,7 +895,8 @@ impl<Pool, Client, BuilderTx> PayloadBuilder for OpPayloadBuilder<Pool, Client, 
 where
     Pool: PoolBounds,
     Client: ClientBounds,
-    BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Clone + Send + Sync,
+    BuilderTx:
+        BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo> + Clone + Send + Sync,
 {
     type Attributes = OpPayloadBuilderAttributes<OpTransactionSigned>;
     type BuiltPayload = OpBuiltPayload;
@@ -919,7 +920,7 @@ struct FlashblocksMetadata {
 fn execute_pre_steps<DB, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-) -> Result<ExecutionInfo<ExtraExecutionInfo>, PayloadBuilderError>
+) -> Result<ExecutionInfo<FlashblocksExecutionInfo>, PayloadBuilderError>
 where
     DB: Database<Error = ProviderError> + std::fmt::Debug,
     ExtraCtx: std::fmt::Debug + Default,
@@ -939,7 +940,7 @@ where
 pub(super) fn build_block<DB, P, ExtraCtx>(
     state: &mut State<DB>,
     ctx: &OpPayloadBuilderCtx<ExtraCtx>,
-    info: &mut ExecutionInfo<ExtraExecutionInfo>,
+    info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
     calculate_state_root: bool,
 ) -> Result<(OpBuiltPayload, FlashblocksPayloadV1), PayloadBuilderError>
 where

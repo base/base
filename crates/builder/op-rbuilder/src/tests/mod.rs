@@ -35,7 +35,7 @@ const MOCK_DCAP_ADDRESS: alloy_primitives::Address =
     alloy_primitives::address!("700b6a60ce7eaaea56f065753d8dcb9653dbad35");
 #[cfg(test)]
 const FLASHTESTATION_REGISTRY_ADDRESS: alloy_primitives::Address =
-    alloy_primitives::address!("b19b36b1456e65e3a6d514d3f715f204bd59f431");
+    alloy_primitives::address!("a15bb66138824a1c7167f5e85b957d04dd34e468");
 #[cfg(test)]
 const BLOCK_BUILDER_POLICY_ADDRESS: alloy_primitives::Address =
-    alloy_primitives::address!("e1aa25618fa0c7a1cfdab5d6b456af611873b629");
+    alloy_primitives::address!("8ce361602b935680e8dec218b820ff5056beb7af");

@@ -22,8 +22,8 @@ mod generator;
 mod standard;
 
 pub use builder_tx::{
-    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, get_balance, get_nonce,
-    log_exists,
+    BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
+    SimulationSuccessResult, get_balance, get_nonce,
 };
 pub use context::OpPayloadBuilderCtx;
 pub use flashblocks::FlashblocksBuilder;

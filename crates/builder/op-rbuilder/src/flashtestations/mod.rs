@@ -1,6 +1,4 @@
-use alloy_primitives::{Address, B256};
-use alloy_sol_types::{Error, sol};
-use op_revm::OpHaltReason;
+use alloy_sol_types::sol;
 
 // https://github.com/flashbots/flashtestations/commit/7cc7f68492fe672a823dd2dead649793aac1f216
 sol!(
@@ -8,6 +6,25 @@ sol!(
     #[derive(Debug)]
     interface IFlashtestationRegistry {
         function registerTEEService(bytes calldata rawQuote, bytes calldata extendedRegistrationData) external;
+
+        function permitRegisterTEEService(
+            bytes calldata rawQuote,
+            bytes calldata extendedRegistrationData,
+            uint256 nonce,
+            uint256 deadline,
+            bytes calldata signature
+        ) external payable;
+
+        function computeStructHash(
+            bytes calldata rawQuote,
+            bytes calldata extendedRegistrationData,
+            uint256 nonce,
+            uint256 deadline
+        ) external pure returns (bytes32);
+
+        function hashTypedDataV4(bytes32 structHash) external view returns (bytes32);
+
+        function getRegistrationStatus(address teeAddress) external view returns (bool isValid, bytes32 quoteHash);
 
         /// @notice Emitted when a TEE service is registered
         /// @param teeAddress The address of the TEE service
@@ -46,6 +63,20 @@ sol!(
     interface IBlockBuilderPolicy {
         function verifyBlockBuilderProof(uint8 version, bytes32 blockContentHash) external;
 
+        function permitVerifyBlockBuilderProof(
+            uint8 version,
+            bytes32 blockContentHash,
+            uint256 nonce,
+            bytes calldata eip712Sig
+        ) external;
+
+        function computeStructHash(uint8 version, bytes32 blockContentHash, uint256 nonce)
+            external
+            pure
+            returns (bytes32);
+
+        function getHashedTypeDataV4(bytes32 structHash) external view returns (bytes32);
+
         /// @notice Emitted when a block builder proof is successfully verified
         /// @param caller The address that called the verification function (TEE address)
         /// @param workloadId The workload identifier of the TEE
@@ -72,6 +103,10 @@ sol!(
         error EmptySourceLocators();
     }
 
+    interface IERC20Permit {
+        function nonces(address owner) external view returns (uint256);
+    }
+
     struct BlockData {
         bytes32 parentHash;
         uint256 blockNumber;
@@ -81,20 +116,6 @@ sol!(
 
     type WorkloadId is bytes32;
 );
-
-#[derive(Debug, thiserror::Error)]
-pub enum FlashtestationRevertReason {
-    #[error("flashtestation registry error: {0:?}")]
-    FlashtestationRegistry(IFlashtestationRegistry::IFlashtestationRegistryErrors),
-    #[error("block builder policy error: {0:?}")]
-    BlockBuilderPolicy(IBlockBuilderPolicy::IBlockBuilderPolicyErrors),
-    #[error("contract {0:?} may be invalid, mismatch in log emitted: expected {1:?}")]
-    LogMismatch(Address, B256),
-    #[error("unknown revert: {0} err: {1}")]
-    Unknown(String, Error),
-    #[error("halt: {0:?}")]
-    Halt(OpHaltReason),
-}
 
 pub mod args;
 pub mod attestation;

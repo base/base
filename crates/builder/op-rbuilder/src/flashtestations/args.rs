@@ -100,6 +100,14 @@ pub struct FlashtestationsArgs {
         default_value = "1"
     )]
     pub builder_proof_version: u8,
+
+    /// Use permit for the flashtestation builder tx
+    #[arg(
+        long = "flashtestations.use-permit",
+        env = "FLASHTESTATIONS_USE_PERMIT",
+        default_value = "false"
+    )]
+    pub flashtestations_use_permit: bool,
 }
 
 impl Default for FlashtestationsArgs {

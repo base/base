@@ -12,8 +12,11 @@ use crate::{
         BLOCK_BUILDER_POLICY_ADDRESS, BundleOpts, ChainDriver, ChainDriverExt,
         FLASHBLOCKS_NUMBER_ADDRESS, FLASHTESTATION_REGISTRY_ADDRESS, LocalInstance,
         MOCK_DCAP_ADDRESS, TEE_DEBUG_ADDRESS, TransactionBuilderExt,
+        block_builder_policy::{BlockBuilderPolicy, IFlashtestationRegistry::RegisteredTEE},
+        builder_signer,
         flashblocks_number_contract::FlashblocksNumber,
-        flashtestation_registry::FlashtestationRegistry, flashtestations_signer,
+        flashtestation_registry::FlashtestationRegistry,
+        flashtestations_signer,
     },
 };
 
@@ -33,53 +36,15 @@ use crate::{
 async fn test_flashtestations_registrations(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, true).await?;
-    let block: alloy_rpc_types_eth::Block<op_alloy_rpc_types::Transaction> =
-        driver.build_new_block_with_current_timestamp(None).await?;
-    // check the builder tx, funding tx and registration tx is in the block
-    let num_txs = block.transactions.len();
-    assert!(num_txs >= 3, "Expected at least 3 transactions in block");
-    println!(
-        "block transactions {:#?}",
-        &block.transactions.clone().into_transactions_vec()
-    );
-    let last_3_txs = &block.transactions.into_transactions_vec()[num_txs - 3..];
-    // Check builder tx
-    assert_eq!(
-        last_3_txs[0].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
-    // Check funding tx
-    assert_eq!(
-        last_3_txs[1].to(),
-        Some(TEE_DEBUG_ADDRESS),
-        "funding tx should send to tee address"
-    );
-    assert!(
-        last_3_txs[1]
-            .value()
-            .eq(&rbuilder.args().flashtestations.funding_amount),
-        "funding tx should have correct amount"
-    );
-    // Check registration tx
-    assert_eq!(
-        last_3_txs[2].to(),
-        Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        "registration tx should call registry"
-    );
-    let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-    let result = contract.getRegistration(TEE_DEBUG_ADDRESS).call().await?;
-    assert!(result._1.isValid, "The tee key is not registered");
-
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
     // check builder does not try to register again
     let block = driver.build_new_block_with_current_timestamp(None).await?;
     let num_txs = block.transactions.len();
     if_flashblocks!(
-        assert!(num_txs == 3, "Expected at 3 transactions in block"); // deposit + 2 builder tx
+        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + 2 builder tx
     );
     if_standard!(
-        assert!(num_txs == 2, "Expected at 2 transactions in block"); // deposit + builder tx
+        assert!(num_txs == 2, "Expected 2 transactions in block"); // deposit + builder tx
     );
 
     Ok(())
@@ -102,20 +67,12 @@ async fn test_flashtestations_registrations(rbuilder: LocalInstance) -> eyre::Re
 async fn test_flashtestations_block_proofs(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
     let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, true).await?;
-    driver.build_new_block_with_current_timestamp(None).await?;
-
-    // check registered
-    let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-    let result = contract.getRegistration(TEE_DEBUG_ADDRESS).call().await?;
-    assert!(result._1.isValid, "The tee key is not registered");
-
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
     // check that only the builder tx and block proof is in the block
     let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
     let txs = block.transactions.into_transactions_vec();
-
     if_flashblocks!(
-        assert_eq!(txs.len(), 5, "Expected at 4 transactions in block"); // deposit + valid tx + 2 builder tx + end of block proof
+        assert_eq!(txs.len(), 5, "Expected 5 transactions in block"); // deposit + valid tx + 2 builder tx + end of block proof
         // Check builder tx
         assert_eq!(
             txs[1].to(),
@@ -124,7 +81,7 @@ async fn test_flashtestations_block_proofs(rbuilder: LocalInstance) -> eyre::Res
         );
     );
     if_standard!(
-        assert_eq!(txs.len(), 4, "Expected at 4 transactions in block"); // deposit + valid tx + builder tx + end of block proof
+        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + builder tx + end of block proof
     );
     let last_3_txs = &txs[txs.len() - 3..];
     // Check valid transaction
@@ -143,6 +100,116 @@ async fn test_flashtestations_block_proofs(rbuilder: LocalInstance) -> eyre::Res
     assert_eq!(
         last_3_txs[2].to(),
         Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        "builder tx should send to zero address"
+    );
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashtestations: FlashtestationsArgs {
+        flashtestations_enabled: true,
+        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
+        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        funding_key: Some(flashtestations_signer()),
+        debug: true,
+        enable_block_proofs: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+    setup_flashtestation_contracts(&driver, &provider, false, false).await?;
+    // verify not registered
+    let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
+    let result = contract
+        .getRegistrationStatus(TEE_DEBUG_ADDRESS)
+        .call()
+        .await?;
+    assert!(
+        !result.isValid,
+        "The tee key is registered for invalid quote"
+    );
+    // check that only regular builder tx is in the block
+    let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
+    let txs = block.transactions.into_transactions_vec();
+
+    if_flashblocks!(
+        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + 2 builder tx
+        // Check builder tx
+        assert_eq!(
+            txs[1].to(),
+            Some(Address::ZERO),
+            "builder tx should send to zero address"
+        );
+    );
+    if_standard!(
+        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx
+    );
+    let last_txs = &txs[txs.len() - 2..];
+    // Check user transaction
+    assert_eq!(
+        last_txs[0].inner.tx_hash(),
+        tx_hash,
+        "tx hash for user transaction should match"
+    );
+    // Check builder tx
+    assert_eq!(
+        last_txs[1].to(),
+        Some(Address::ZERO),
+        "builder tx should send to zero address"
+    );
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashtestations: FlashtestationsArgs {
+        flashtestations_enabled: true,
+        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
+        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        funding_key: Some(flashtestations_signer()),
+        debug: true,
+        enable_block_proofs: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+    setup_flashtestation_contracts(&driver, &provider, true, false).await?;
+    // check that only the regular builder tx is in the block
+    let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
+    let txs = block.transactions.into_transactions_vec();
+
+    if_flashblocks!(
+        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + 2 builder tx
+        // Check builder tx
+        assert_eq!(
+            txs[1].to(),
+            Some(Address::ZERO),
+            "builder tx should send to zero address"
+        );
+    );
+    if_standard!(
+        assert_eq!(txs.len(), 3, "Expected 3 transactions in block"); // deposit + valid tx + builder tx
+    );
+    let last_txs = &txs[txs.len() - 2..];
+    // Check user transaction
+    assert_eq!(
+        last_txs[0].inner.tx_hash(),
+        tx_hash,
+        "tx hash for user transaction should match"
+    );
+    // Check builder tx
+    assert_eq!(
+        last_txs[1].to(),
+        Some(Address::ZERO),
         "builder tx should send to zero address"
     );
     Ok(())
@@ -170,7 +237,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
     let driver = rbuilder.driver().await?;
     let provider = rbuilder.provider().await?;
     setup_flashblock_number_contract(&driver, &provider, true).await?;
-    setup_flashtestation_contracts(&driver, &provider, true).await?;
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
     let tx = driver
         .create_transaction()
         .random_valid_transfer()
@@ -178,9 +245,9 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         .send()
         .await?;
     let block = driver.build_new_block_with_current_timestamp(None).await?;
-    // 1 deposit tx, 1 fallback builder tx, 4 flashblocks number tx, valid tx, funding tx, registration tx, block proof
+    // 1 deposit tx, 1 fallback builder tx, 4 flashblocks number tx, valid tx, block proof
     let txs = block.transactions.into_transactions_vec();
-    assert_eq!(txs.len(), 10, "Expected at 10 transactions in block");
+    assert_eq!(txs.len(), 8, "Expected 8 transactions in block");
     // Check builder tx
     assert_eq!(
         txs[1].to(),
@@ -192,7 +259,8 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         assert_eq!(
             txs[i].to(),
             Some(FLASHBLOCKS_NUMBER_ADDRESS),
-            "builder tx should send to flashblocks number contract"
+            "builder tx should send to flashblocks number contract at index {}",
+            i
         );
     }
     // check regular tx
@@ -201,64 +269,12 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         *tx.tx_hash(),
         "bundle tx was not in block"
     );
-    // check funding, registration and block proof tx
-    assert_eq!(
-        txs[7].to(),
-        Some(TEE_DEBUG_ADDRESS),
-        "funding tx should send to tee address"
-    );
-    assert_eq!(
-        txs[8].to(),
-        Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        "registration tx should call registry"
-    );
-    assert_eq!(
-        txs[9].to(),
-        Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        "block proof tx should call block policy address"
-    );
-
-    // add a user transaction to ensure the flashblock number builder tx is top of block
-    let tx = driver
-        .create_transaction()
-        .random_valid_transfer()
-        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
-        .send()
-        .await?;
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    // check the flashblocks number tx and block proof is in the block
-    let txs = block.transactions.into_transactions_vec();
-    assert_eq!(txs.len(), 8, "Expected at 5 transactions in block");
-    // Check builder tx
-    assert_eq!(
-        txs[1].to(),
-        Some(Address::ZERO),
-        "fallback builder tx should send to zero address"
-    );
-    // flashblocks number contract
-    for i in 2..6 {
-        assert_eq!(
-            txs[i].to(),
-            Some(FLASHBLOCKS_NUMBER_ADDRESS),
-            "builder tx should send to flashblocks number contract"
-        );
-    }
-    // user tx
-    assert_eq!(
-        txs[6].tx_hash(),
-        *tx.tx_hash(),
-        "bundle tx was not in block"
-    );
-    // block proof
+    // check block proof tx
     assert_eq!(
         txs[7].to(),
         Some(BLOCK_BUILDER_POLICY_ADDRESS),
         "block proof tx should call block policy address"
     );
-
-    let contract = FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
-    let result = contract.getRegistration(TEE_DEBUG_ADDRESS).call().await?;
-    assert!(result._1.isValid, "The tee key is not registered");
     // Verify flashblock number incremented correctly
     let contract = FlashblocksNumber::new(FLASHBLOCKS_NUMBER_ADDRESS, provider.clone());
     let current_number = contract.getFlashblockNumber().call().await?;
@@ -269,24 +285,185 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
     Ok(())
 }
 
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashtestations: FlashtestationsArgs {
+        flashtestations_enabled: true,
+        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
+        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        funding_key: Some(flashtestations_signer()),
+        debug: true,
+        flashtestations_use_permit: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_flashtestations_permit_registration(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
+    // check builder does not try to register again
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let num_txs = block.transactions.len();
+    if_flashblocks!(
+        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + 2 builder tx
+    );
+    if_standard!(
+        assert!(num_txs == 2, "Expected 2 transactions in block"); // deposit + builder tx
+    );
+    // check that the tee signer did not send any transactions
+    let balance = provider.get_balance(TEE_DEBUG_ADDRESS).await?;
+    assert!(balance.is_zero());
+    let nonce = provider.get_transaction_count(TEE_DEBUG_ADDRESS).await?;
+    assert_eq!(nonce, 0);
+    Ok(())
+}
+
+#[rb_test(args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashtestations: FlashtestationsArgs {
+        flashtestations_enabled: true,
+        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
+        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        funding_key: Some(flashtestations_signer()),
+        debug: true,
+        enable_block_proofs: true,
+        flashtestations_use_permit: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_flashtestations_permit_block_proof(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
+    // check builder does not try to register again
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    let num_txs = block.transactions.len();
+    if_flashblocks!(
+        assert!(num_txs == 4, "Expected 4 transactions in block"); // deposit + 2 builder tx + 1 block proof
+    );
+    if_standard!(
+        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + 2 builder tx
+    );
+    let last_2_txs = &block.transactions.into_transactions_vec()[num_txs - 2..];
+    // Check builder tx
+    assert_eq!(
+        last_2_txs[0].to(),
+        Some(Address::ZERO),
+        "builder tx should send to zero address"
+    );
+    // check builder proof
+    assert_eq!(
+        last_2_txs[1].to(),
+        Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        "builder tx should send to flashtestations builder policy address"
+    );
+    assert_eq!(
+        last_2_txs[1].from(),
+        builder_signer().address,
+        "block proof tx should come from builder address"
+    );
+    // check that the tee signer did not send any transactions
+    let balance = provider.get_balance(TEE_DEBUG_ADDRESS).await?;
+    assert!(balance.is_zero());
+    let nonce = provider.get_transaction_count(TEE_DEBUG_ADDRESS).await?;
+    assert_eq!(nonce, 0);
+
+    Ok(())
+}
+
+#[rb_test(flashblocks, args = OpRbuilderArgs {
+    chain_block_time: 1000,
+    enable_revert_protection: true,
+    flashblocks: FlashblocksArgs {
+        flashblocks_number_contract_address: Some(FLASHBLOCKS_NUMBER_ADDRESS),
+        ..Default::default()
+    },
+    flashtestations: FlashtestationsArgs {
+        flashtestations_enabled: true,
+        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
+        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        funding_key: Some(flashtestations_signer()),
+        debug: true,
+        flashtestations_use_permit: true,
+        enable_block_proofs: true,
+        ..Default::default()
+    },
+    ..Default::default()
+})]
+async fn test_flashtestations_permit_with_flashblocks_number_contract(
+    rbuilder: LocalInstance,
+) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let provider = rbuilder.provider().await?;
+    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
+    setup_flashblock_number_contract(&driver, &provider, true).await?;
+    let tx = driver
+        .create_transaction()
+        .random_valid_transfer()
+        .with_bundle(BundleOpts::default().with_flashblock_number_min(4))
+        .send()
+        .await?;
+    let block = driver.build_new_block_with_current_timestamp(None).await?;
+    // check the builder tx, funding tx and registration tx is in the block
+    let num_txs = block.transactions.len();
+    let txs = block.transactions.into_transactions_vec();
+    // // 1 deposit tx, 1 regular builder tx, 4 flashblocks number tx, 1 user tx, 1 block proof tx
+    assert_eq!(num_txs, 8, "Expected 8 transactions in block");
+    // Check builder tx
+    assert_eq!(
+        txs[1].to(),
+        Some(Address::ZERO),
+        "builder tx should send to zero address"
+    );
+    // flashblocks number contract
+    for i in 2..6 {
+        assert_eq!(
+            txs[i].to(),
+            Some(FLASHBLOCKS_NUMBER_ADDRESS),
+            "builder tx should send to flashblocks number contract at index {}",
+            i
+        );
+    }
+    // user tx
+    assert_eq!(
+        txs[6].tx_hash(),
+        *tx.tx_hash(),
+        "user tx should be in correct position in block"
+    );
+    assert_eq!(
+        txs[7].to(),
+        Some(BLOCK_BUILDER_POLICY_ADDRESS),
+        "builder tx should send verify block builder proof tx"
+    );
+    // check that the tee signer did not send any transactions
+    let balance = provider.get_balance(TEE_DEBUG_ADDRESS).await?;
+    assert!(balance.is_zero());
+    let nonce = provider.get_transaction_count(TEE_DEBUG_ADDRESS).await?;
+    assert_eq!(nonce, 0);
+    // Verify flashblock number incremented correctly
+    let contract = FlashblocksNumber::new(FLASHBLOCKS_NUMBER_ADDRESS, provider.clone());
+    let current_number = contract.getFlashblockNumber().call().await?;
+    assert!(
+        current_number.gt(&U256::from(4)), // contract deployments incremented the number but we built at least 1 full block
+        "Flashblock number not incremented"
+    );
+    Ok(())
+}
+
 async fn setup_flashtestation_contracts(
     driver: &ChainDriver,
     provider: &RootProvider<Optimism>,
+    add_quote: bool,
     authorize_workload: bool,
 ) -> eyre::Result<()> {
     // deploy the mock contract and register a mock quote
     let mock_dcap_deploy_tx = driver
         .create_transaction()
         .deploy_mock_dcap_contract()
-        .with_bundle(BundleOpts::default())
-        .send()
-        .await?;
-
-    // Add test quote
-    let mock_quote_tx = driver
-        .create_transaction()
-        .add_mock_quote()
-        .with_to(MOCK_DCAP_ADDRESS)
         .with_bundle(BundleOpts::default())
         .send()
         .await?;
@@ -328,6 +505,30 @@ async fn setup_flashtestation_contracts(
     // include the deployment and initialization in a block
     driver.build_new_block_with_current_timestamp(None).await?;
 
+    if add_quote {
+        // Add test quote
+        let mock_quote_tx = driver
+            .create_transaction()
+            .add_mock_quote()
+            .with_to(MOCK_DCAP_ADDRESS)
+            .with_bundle(BundleOpts::default())
+            .send()
+            .await?;
+        driver.build_new_block_with_current_timestamp(None).await?;
+        provider
+            .get_transaction_receipt(*mock_quote_tx.tx_hash())
+            .await?
+            .expect("add mock quote not mined");
+        // verify registered
+        let registry_contract =
+            FlashtestationRegistry::new(FLASHTESTATION_REGISTRY_ADDRESS, provider.clone());
+        let registration = registry_contract
+            .getRegistration(TEE_DEBUG_ADDRESS)
+            .call()
+            .await?;
+        assert!(registration._0, "The tee key is not registered");
+    }
+
     if authorize_workload {
         // add the workload id to the block builder policy
         let add_workload = driver
@@ -342,6 +543,14 @@ async fn setup_flashtestation_contracts(
             .get_transaction_receipt(*add_workload.tx_hash())
             .await?
             .expect("add workload to builder policy tx not mined");
+        // verify workload id added
+        let policy_contract =
+            BlockBuilderPolicy::new(BLOCK_BUILDER_POLICY_ADDRESS, provider.clone());
+        let is_allowed = policy_contract
+            .isAllowedPolicy(TEE_DEBUG_ADDRESS)
+            .call()
+            .await?;
+        assert!(is_allowed.allowed, "The policy is not allowed")
     }
 
     // Verify mock dcap contract deployment
@@ -357,11 +566,6 @@ async fn setup_flashtestation_contracts(
         mock_dcap_address, MOCK_DCAP_ADDRESS,
         "mock dcap contract address mismatch"
     );
-    // verify mock quote added
-    provider
-        .get_transaction_receipt(*mock_quote_tx.tx_hash())
-        .await?
-        .expect("add mock quote not mined");
     // verify flashtestations registry contract deployment
     let receipt = provider
         .get_transaction_receipt(*flashtestations_registry_tx.tx_hash())

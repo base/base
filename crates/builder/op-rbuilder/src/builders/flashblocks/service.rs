@@ -5,7 +5,7 @@ use crate::{
         builder_tx::BuilderTransactions,
         flashblocks::{
             builder_tx::{FlashblocksBuilderTx, FlashblocksNumberBuilderTx},
-            payload::FlashblocksExtraCtx,
+            payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
         },
         generator::BlockPayloadJobGenerator,
     },
@@ -32,7 +32,12 @@ impl FlashblocksServiceBuilder {
     where
         Node: NodeBounds,
         Pool: PoolBounds,
-        BuilderTx: BuilderTransactions<FlashblocksExtraCtx> + Unpin + Clone + Send + Sync + 'static,
+        BuilderTx: BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
+            + Unpin
+            + Clone
+            + Send
+            + Sync
+            + 'static,
     {
         let once_lock = Arc::new(std::sync::OnceLock::new());
 
@@ -84,8 +89,12 @@ where
         _: OpEvmConfig,
     ) -> eyre::Result<PayloadBuilderHandle<<Node::Types as NodeTypes>::Payload>> {
         let signer = self.0.builder_signer;
-        let flashtestations_builder_tx = if self.0.flashtestations_config.flashtestations_enabled {
-            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), ctx).await {
+        let flashtestations_builder_tx = if let Some(builder_key) = signer
+            && self.0.flashtestations_config.flashtestations_enabled
+        {
+            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key, ctx)
+                .await
+            {
                 Ok(builder_tx) => Some(builder_tx),
                 Err(e) => {
                     tracing::warn!(error = %e, "Failed to bootstrap flashtestations, builder will not include flashtestations txs");
