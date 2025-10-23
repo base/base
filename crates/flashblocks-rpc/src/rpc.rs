@@ -4,6 +4,7 @@ use std::time::Duration;
 use crate::metrics::Metrics;
 use crate::pending_blocks::PendingBlocks;
 use alloy_eips::{BlockId, BlockNumberOrTag};
+use alloy_primitives::map::foldhash::{HashSet, HashSetExt};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
@@ -490,25 +491,33 @@ where
 
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
 
+        let mut fetched_logs = HashSet::new();
         // Get historical logs if fromBlock is not pending
         if !matches!(from_block, Some(BlockNumberOrTag::Pending)) {
-            // Use the canonical block number from pending blocks to ensure consistency
-            let canonical_block = pending_blocks.get_canonical_block_number();
-
-            // Create a filter for historical data (fromBlock to canonical block)
+            // Create a filter for historical data (fromBlock to latest)
             let mut historical_filter = filter.clone();
             historical_filter.block_option = alloy_rpc_types_eth::FilterBlockOption::Range {
                 from_block,
-                to_block: Some(canonical_block),
+                to_block: Some(BlockNumberOrTag::Latest),
             };
 
-            let historical_logs = self.eth_filter.logs(historical_filter).await?;
+            let historical_logs: Vec<Log> = self.eth_filter.logs(historical_filter).await?;
+            for log in &historical_logs {
+                fetched_logs.insert((log.block_number, log.log_index));
+            }
             all_logs.extend(historical_logs);
         }
 
         // Always get pending logs when toBlock is pending
         let pending_logs = pending_blocks.get_pending_logs(&filter);
-        all_logs.extend(pending_logs);
+
+        // Dedup any logs from the pending state that may already have been covered in the historical logs
+        let deduped_pending_logs: Vec<Log> = pending_logs
+            .iter()
+            .filter(|log| !fetched_logs.contains(&(log.block_number, log.log_index)))
+            .cloned()
+            .collect();
+        all_logs.extend(deduped_pending_logs);
 
         Ok(all_logs)
     }
