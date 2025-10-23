@@ -92,7 +92,7 @@ where
         let flashtestations_builder_tx = if let Some(builder_key) = signer
             && self.0.flashtestations_config.flashtestations_enabled
         {
-            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key, ctx)
+            match bootstrap_flashtestations(self.0.flashtestations_config.clone(), builder_key)
                 .await
             {
                 Ok(builder_tx) => Some(builder_tx),

@@ -12,11 +12,9 @@ use crate::{
         BLOCK_BUILDER_POLICY_ADDRESS, BundleOpts, ChainDriver, ChainDriverExt,
         FLASHBLOCKS_NUMBER_ADDRESS, FLASHTESTATION_REGISTRY_ADDRESS, LocalInstance,
         MOCK_DCAP_ADDRESS, TEE_DEBUG_ADDRESS, TransactionBuilderExt,
-        block_builder_policy::{BlockBuilderPolicy, IFlashtestationRegistry::RegisteredTEE},
-        builder_signer,
+        block_builder_policy::BlockBuilderPolicy, builder_signer,
         flashblocks_number_contract::FlashblocksNumber,
         flashtestation_registry::FlashtestationRegistry,
-        flashtestations_signer,
     },
 };
 
@@ -27,92 +25,6 @@ use crate::{
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
-        debug: true,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn test_flashtestations_registrations(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
-    // check builder does not try to register again
-    let block = driver.build_new_block_with_current_timestamp(None).await?;
-    let num_txs = block.transactions.len();
-    if_flashblocks!(
-        assert!(num_txs == 3, "Expected 3 transactions in block"); // deposit + 2 builder tx
-    );
-    if_standard!(
-        assert!(num_txs == 2, "Expected 2 transactions in block"); // deposit + builder tx
-    );
-
-    Ok(())
-}
-
-#[rb_test(args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    enable_revert_protection: true,
-    flashtestations: FlashtestationsArgs {
-        flashtestations_enabled: true,
-        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
-        debug: true,
-        enable_block_proofs: true,
-        ..Default::default()
-    },
-    ..Default::default()
-})]
-async fn test_flashtestations_block_proofs(rbuilder: LocalInstance) -> eyre::Result<()> {
-    let driver = rbuilder.driver().await?;
-    let provider = rbuilder.provider().await?;
-    setup_flashtestation_contracts(&driver, &provider, true, true).await?;
-    // check that only the builder tx and block proof is in the block
-    let (tx_hash, block) = driver.build_new_block_with_valid_transaction().await?;
-    let txs = block.transactions.into_transactions_vec();
-    if_flashblocks!(
-        assert_eq!(txs.len(), 5, "Expected 5 transactions in block"); // deposit + valid tx + 2 builder tx + end of block proof
-        // Check builder tx
-        assert_eq!(
-            txs[1].to(),
-            Some(Address::ZERO),
-            "builder tx should send to zero address"
-        );
-    );
-    if_standard!(
-        assert_eq!(txs.len(), 4, "Expected 4 transactions in block"); // deposit + valid tx + builder tx + end of block proof
-    );
-    let last_3_txs = &txs[txs.len() - 3..];
-    // Check valid transaction
-    assert_eq!(
-        last_3_txs[0].inner.tx_hash(),
-        tx_hash,
-        "tx hash for valid transaction should match"
-    );
-    // Check builder tx
-    assert_eq!(
-        last_3_txs[1].to(),
-        Some(Address::ZERO),
-        "builder tx should send to zero address"
-    );
-    // Check builder proof
-    assert_eq!(
-        last_3_txs[2].to(),
-        Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        "builder tx should send to zero address"
-    );
-    Ok(())
-}
-
-#[rb_test(args = OpRbuilderArgs {
-    chain_block_time: 1000,
-    enable_revert_protection: true,
-    flashtestations: FlashtestationsArgs {
-        flashtestations_enabled: true,
-        registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
-        builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
         enable_block_proofs: true,
         ..Default::default()
@@ -172,7 +84,6 @@ async fn test_flashtestations_invalid_quote(rbuilder: LocalInstance) -> eyre::Re
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
         enable_block_proofs: true,
         ..Default::default()
@@ -226,7 +137,6 @@ async fn test_flashtestations_unauthorized_workload(rbuilder: LocalInstance) -> 
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
         enable_block_proofs: true,
         ..Default::default()
@@ -292,9 +202,7 @@ async fn test_flashtestations_with_number_contract(rbuilder: LocalInstance) -> e
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
-        flashtestations_use_permit: true,
         ..Default::default()
     },
     ..Default::default()
@@ -327,10 +235,8 @@ async fn test_flashtestations_permit_registration(rbuilder: LocalInstance) -> ey
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
         enable_block_proofs: true,
-        flashtestations_use_permit: true,
         ..Default::default()
     },
     ..Default::default()
@@ -386,9 +292,7 @@ async fn test_flashtestations_permit_block_proof(rbuilder: LocalInstance) -> eyr
         flashtestations_enabled: true,
         registry_address: Some(FLASHTESTATION_REGISTRY_ADDRESS),
         builder_policy_address: Some(BLOCK_BUILDER_POLICY_ADDRESS),
-        funding_key: Some(flashtestations_signer()),
         debug: true,
-        flashtestations_use_permit: true,
         enable_block_proofs: true,
         ..Default::default()
     },
