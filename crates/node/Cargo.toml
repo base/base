@@ -82,21 +82,10 @@ metrics-derive.workspace = true
 itertools.workspace = true
 eyre.workspace = true
 uuid.workspace = true
+time.workspace = true
 chrono.workspace = true
 once_cell.workspace = true
 
 [features]
-default = ["jemalloc"]
+default = []
 jemalloc = ["reth-cli-util/jemalloc", "reth-optimism-cli/jemalloc"]
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-strip = true
-panic = "abort"
-
-[profile.production]
-inherits = "release"
-lto = "fat"
-codegen-units = 1
