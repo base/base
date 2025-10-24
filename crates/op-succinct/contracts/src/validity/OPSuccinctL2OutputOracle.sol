@@ -489,10 +489,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
         require(disputeGameFactory != address(0), "L2OutputOracle: dispute game factory is not set");
 
         _enteredDGFCreate = true;
-        _game = IDisputeGameFactory(disputeGameFactory)
-        .create{
-            value: msg.value
-        }(
+        _game = IDisputeGameFactory(disputeGameFactory).create{value: msg.value}(
             GameTypes.OP_SUCCINCT,
             Claim.wrap(_outputRoot),
             abi.encodePacked(_l2BlockNumber, _l1BlockNumber, _proverAddress, _configName, _proof)

@@ -10,7 +10,7 @@ use tracing::info;
 
 use fault_proof::config::FaultDisputeGameConfig;
 
-use crate::common::constants::*;
+use crate::common::{constants::*, ANVIL};
 
 use super::{
     anvil::{setup_anvil_chain, AnvilFork},
@@ -25,6 +25,16 @@ pub struct TestEnvironment {
     pub anvil: AnvilFork,
     /// Deployed contracts
     pub deployed: DeployedContracts,
+}
+
+impl Drop for TestEnvironment {
+    fn drop(&mut self) {
+        let mut anvil_lock = ANVIL.lock().unwrap();
+        if let Some(anvil_instance) = anvil_lock.take() {
+            info!("Stopping Anvil instance");
+            drop(anvil_instance);
+        }
+    }
 }
 
 /// The test configuration, used for integration tests.

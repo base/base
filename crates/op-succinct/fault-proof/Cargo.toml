@@ -71,7 +71,6 @@ alloy.workspace = true
 op-succinct-bindings.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-lazy_static = "1.5"
 alloy-rpc-types-trace.workspace = true
 which = "4.4"
 
@@ -80,3 +79,4 @@ default = ["ethereum"]
 celestia = ["op-succinct-proof-utils/celestia"]
 eigenda = ["op-succinct-proof-utils/eigenda"]
 ethereum = ["op-succinct-proof-utils/ethereum"]
+e2e = []

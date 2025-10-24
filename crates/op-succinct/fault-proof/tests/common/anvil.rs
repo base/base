@@ -1,12 +1,14 @@
 //! Anvil fork management utilities for E2E tests.
 
-use std::{sync::Mutex, time::Duration};
+use std::{
+    sync::{LazyLock, Mutex},
+    time::Duration,
+};
 
 use alloy_node_bindings::{Anvil, AnvilInstance};
 use alloy_provider::Provider;
 use alloy_rpc_types_eth::BlockNumberOrTag;
 use anyhow::{Context, Result};
-use lazy_static::lazy_static;
 use op_succinct_host_utils::fetcher::{OPSuccinctDataFetcher, RPCMode};
 use serde_json::Value;
 use tracing::info;
@@ -16,9 +18,7 @@ use fault_proof::L1Provider;
 use super::constants::L2_BLOCK_OFFSET_FROM_FINALIZED;
 
 // An Anvil instance that is kept alive for the duration of the program.
-lazy_static! {
-    static ref ANVIL: Mutex<Option<AnvilInstance>> = Mutex::new(None);
-}
+pub static ANVIL: LazyLock<Mutex<Option<AnvilInstance>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Container for Anvil fork information
 pub struct AnvilFork {

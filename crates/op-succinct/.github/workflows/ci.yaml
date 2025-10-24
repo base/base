@@ -26,13 +26,17 @@ jobs:
     - run: rustup toolchain install stable --profile minimal
     - uses: Swatinem/rust-cache@v2  
     - name: Install SP1 toolchain
-        run: |
+      run: |
           curl -L https://sp1.succinct.xyz | bash
           ~/.sp1/bin/sp1up 
           ~/.sp1/bin/cargo-prove prove --version
           source ~/.bashrc
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
     - name: Test
-      run: cargo test --release -- --skip test_cycle_count_diff --skip test_post_to_github --skip test_honest_proposer --skip test_honest_challenger
+      run: just tests
       env:
         L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
         L1_RPC: ${{ secrets.L1_RPC }}
