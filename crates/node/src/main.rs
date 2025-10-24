@@ -10,6 +10,7 @@ use std::sync::Arc;
 use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
 use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
+use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use reth::builder::{Node, NodeHandle};
@@ -132,6 +133,11 @@ fn main() {
                     }
                 })
                 .extend_rpc_modules(move |ctx| {
+                    // Register metering RPC
+                    info!(message = "Starting Metering RPC");
+                    let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+                    ctx.modules.merge_configured(metering_api.into_rpc())?;
+
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
 

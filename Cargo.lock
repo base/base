@@ -1574,6 +1574,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-metering"
+version = "0.1.12"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "eyre",
+ "hex",
+ "jsonrpsee 0.26.0",
+ "op-alloy-consensus",
+ "reth",
+ "reth-evm 1.8.2",
+ "reth-optimism-chainspec 1.8.2",
+ "reth-optimism-evm 1.8.2",
+ "reth-primitives",
+ "reth-provider",
+ "revm",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "base-reth-node"
 version = "0.1.12"
 dependencies = [
@@ -1587,6 +1611,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-trie",
  "base-reth-flashblocks-rpc",
+ "base-reth-metering",
  "base-reth-transaction-tracing",
  "chrono",
  "clap",

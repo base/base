@@ -10,6 +10,7 @@ repository = "https://github.com/base/node-reth"
 resolver = "2"
 members = [
     "crates/flashblocks-rpc",
+    "crates/metering",
     "crates/node",
     "crates/transaction-tracing",
 ]
@@ -38,6 +39,7 @@ codegen-units = 1
 [workspace.dependencies]
 # internal
 base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
+base-reth-metering = { path = "crates/metering" }
 base-reth-node = { path = "crates/node" }
 base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
