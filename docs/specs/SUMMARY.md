@@ -96,4 +96,7 @@
     - [ETH Lockbox](./interop/eth-lockbox.md)
   - [OP Contracts Manager](./experimental/op-contracts-manager.md)
   - [Governance Token](./experimental/gov-token.md)
+  - [Contract Specifications]()
+    - [Safe]()
+      - [LivenessGuard](./experimental/contracts/safe/liveness-guard.md)
 - [Glossary](./glossary.md)
