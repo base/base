@@ -15,12 +15,6 @@ on:
       - 'fault-proof/**'
       - 'bindings/**'
       - '.github/workflows/e2e-tests.yml'
-  workflow_dispatch:
-    inputs:
-      test_filter:
-        description: 'Test name filter (optional)'
-        required: false
-        default: ''
 
 jobs:
   e2e-tests:
@@ -53,14 +47,12 @@ jobs:
         workspaces: |
           .
           bindings
+
+    - name: Install just
+      uses: extractions/setup-just@v3
         
     - name: Run E2E tests
-      run: |
-        if [ -n "${{ github.event.inputs.test_filter }}" ]; then
-          cargo test --release --test e2e ${{ github.event.inputs.test_filter }} -- --test-threads=1 --nocapture
-        else
-          cargo test --release --test e2e -- --test-threads=1 --nocapture
-        fi
+      run: just e2e-tests
       env:
         # TODO(fakedev9999): Remove L1 RPCs since we are using fresh Anvil chain
         L1_RPC: ${{ secrets.L1_RPC }}
@@ -68,7 +60,6 @@ jobs:
         L2_RPC: ${{ secrets.L2_RPC }}
         L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
 
-        
     - name: Upload test logs on failure
       if: failure()
       uses: actions/upload-artifact@v4

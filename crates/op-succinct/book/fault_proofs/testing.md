@@ -79,5 +79,5 @@ These tests focus on anchor selection, parent validation, and handling of invali
 ### Basic Test Execution
 ```bash
 # Run all end-to-end tests with single thread and no capture
-cargo test --release --test e2e -- --test-threads=1 --nocapture
+just e2e-tests
 ```

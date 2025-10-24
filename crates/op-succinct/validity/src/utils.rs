@@ -17,7 +17,7 @@ use std::{collections::HashMap, ops::Range};
 /// let ranges = [(2, 5), (7, 9)];
 ///
 /// let gaps = find_gaps(overall_start, overall_end, &ranges);
-/// assert_eq!(gaps, [(1, 2), (5, 7), (9, 10)]);
+/// assert_eq!(gaps, [1..2, 5..7, 9..10]);
 /// ```
 pub fn find_gaps(overall_start: i64, overall_end: i64, ranges: &[(i64, i64)]) -> Vec<Range<i64>> {
     let mut gaps = Vec::new();
@@ -136,14 +136,11 @@ pub fn get_ranges_to_prove_by_gas(
 /// ```
 /// use op_succinct_validity::get_ranges_to_prove_by_blocks;
 ///
-/// let disjoint_ranges = [(0, 50), (100, 200), (200, 210)];
+/// let disjoint_ranges = [0..50, 100..200, 200..210];
 /// let range_proof_interval = 25;
 ///
 /// let ranges_to_prove = get_ranges_to_prove_by_blocks(&disjoint_ranges, range_proof_interval);
-/// assert_eq!(
-///     ranges_to_prove,
-///     [(0, 25), (25, 50), (100, 125), (125, 150), (150, 175), (175, 200)]
-/// );
+/// assert_eq!(ranges_to_prove, [0..25, 25..50, 100..125, 125..150, 150..175, 175..200]);
 /// ```
 pub fn get_ranges_to_prove_by_blocks(
     disjoint_ranges: &[Range<i64>],

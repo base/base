@@ -157,9 +157,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // This parent game will be at index 0.
         parentGame = OPSuccinctFaultDisputeGame(
             address(
-                factory.create{
-                    value: 1 ether
-                }(
+                factory.create{value: 1 ether}(
                     gameType,
                     Claim.wrap(keccak256("genesis")),
                     // encode l2BlockNumber = 1000, parentIndex = uint32.max.
@@ -180,9 +178,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // The child game is at index 1.
         game = OPSuccinctFaultDisputeGame(
             address(
-                factory.create{
-                    value: 1 ether
-                }(
+                factory.create{value: 1 ether}(
                     gameType,
                     rootClaim,
                     // encode l2BlockNumber = 2000, parentIndex = 0.
@@ -477,9 +473,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
             )
         );
 
-        factory.create{
-            value: 1 ether
-        }(
+        factory.create{value: 1 ether}(
             gameType,
             rootClaim,
             abi.encodePacked(uint256(1), uint32(0)) // L2 block is smaller than parent's block.
@@ -496,9 +490,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Create a new game with parentIndex = 1.
         OPSuccinctFaultDisputeGame childGame = OPSuccinctFaultDisputeGame(
             address(
-                factory.create{
-                    value: 1 ether
-                }(
+                factory.create{value: 1 ether}(
                     gameType,
                     Claim.wrap(keccak256("new-claim")),
                     // encode l2BlockNumber = 3000, parentIndex = 1.
@@ -524,9 +516,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.startPrank(proposer);
         OPSuccinctFaultDisputeGame childGame = OPSuccinctFaultDisputeGame(
             address(
-                factory.create{
-                    value: 1 ether
-                }(gameType, Claim.wrap(keccak256("child-of-loser")), abi.encodePacked(uint256(10000), uint32(1)))
+                factory.create{value: 1 ether}(
+                    gameType, Claim.wrap(keccak256("child-of-loser")), abi.encodePacked(uint256(10000), uint32(1))
+                )
             )
         );
         vm.stopPrank();
@@ -588,9 +580,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
         vm.expectRevert(InvalidParentGame.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("blacklisted-parent-game")), abi.encodePacked(uint256(3000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("blacklisted-parent-game")), abi.encodePacked(uint256(3000), uint32(1))
+        );
         vm.stopPrank();
     }
 
@@ -601,9 +593,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Create a game that is not respected at index 2.
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("not-respected-parent-game")), abi.encodePacked(uint256(3000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("not-respected-parent-game")), abi.encodePacked(uint256(3000), uint32(1))
+        );
         vm.stopPrank();
 
         // Set the respected game type to a different game type.
@@ -613,9 +605,7 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.startPrank(proposer);
         vm.deal(proposer, 1 ether);
         vm.expectRevert(InvalidParentGame.selector);
-        factory.create{
-            value: 1 ether
-        }(
+        factory.create{value: 1 ether}(
             gameType,
             Claim.wrap(keccak256("child-with-not-respected-parent")),
             abi.encodePacked(uint256(4000), uint32(2))
@@ -667,9 +657,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.deal(maliciousProposer, 1 ether);
 
         vm.expectRevert(BadAuth.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim")), abi.encodePacked(uint256(3000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim")), abi.encodePacked(uint256(3000), uint32(1))
+        );
 
         vm.stopPrank();
     }
@@ -712,9 +702,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.deal(proposer, 1 ether);
 
         vm.expectRevert(IncorrectDisputeGameFactory.selector);
-        newFactory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim")), abi.encodePacked(uint256(3000), uint32(1)));
+        newFactory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim")), abi.encodePacked(uint256(3000), uint32(1))
+        );
 
         vm.stopPrank();
     }
@@ -727,15 +717,15 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
         vm.expectRevert(BadAuth.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-1")), abi.encodePacked(uint256(3000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-1")), abi.encodePacked(uint256(3000), uint32(1))
+        );
 
         vm.prank(proposer);
         vm.deal(proposer, 1 ether);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-2")), abi.encodePacked(l2BlockNumber, parentIndex));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-2")), abi.encodePacked(l2BlockNumber, parentIndex)
+        );
 
         // Warp time forward past the timeout
         vm.warp(block.timestamp + 2 weeks + 1);
@@ -743,17 +733,17 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Now unauthorized user should be allowed due to timeout
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-3")), abi.encodePacked(uint256(4000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-3")), abi.encodePacked(uint256(4000), uint32(1))
+        );
 
         // After the new game, timeout resets - unauthorized user should not be allowed immediately
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
         vm.expectRevert(BadAuth.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-4")), abi.encodePacked(uint256(5000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-4")), abi.encodePacked(uint256(5000), uint32(1))
+        );
     }
 
     function testAccessManager_PermissionlessFallback_NoGamesYet() public {
@@ -764,9 +754,9 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
         vm.expectRevert(BadAuth.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-1")), abi.encodePacked(uint256(3000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-1")), abi.encodePacked(uint256(3000), uint32(1))
+        );
 
         // Warp time forward past the timeout
         vm.warp(block.timestamp + 2 weeks + 1 hours);
@@ -774,16 +764,16 @@ contract OPSuccinctFaultDisputeGameTest is Test {
         // Now unauthorized user should be allowed due to timeout
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-3")), abi.encodePacked(uint256(4000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-3")), abi.encodePacked(uint256(4000), uint32(1))
+        );
 
         // After the new game, timeout resets - unauthorized user should not be allowed immediately
         vm.prank(unauthorizedUser);
         vm.deal(unauthorizedUser, 1 ether);
         vm.expectRevert(BadAuth.selector);
-        factory.create{
-            value: 1 ether
-        }(gameType, Claim.wrap(keccak256("new-claim-4")), abi.encodePacked(uint256(5000), uint32(1)));
+        factory.create{value: 1 ether}(
+            gameType, Claim.wrap(keccak256("new-claim-4")), abi.encodePacked(uint256(5000), uint32(1))
+        );
     }
 }
