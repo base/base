@@ -1,3 +1,8 @@
+//! Base Reth Node - Ethereum execution client with Flashblocks integration
+//! 
+//! Extends standard Reth Optimism node with real-time block updates via Flashblocks
+//! and optional transaction tracing for mempool analysis.
+
 use base_reth_flashblocks_rpc::rpc::EthApiExt;
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
@@ -59,6 +64,7 @@ impl Args {
 }
 
 fn main() {
+    // Initialize version metadata for Base Reth Node
     let default_version_metadata = default_reth_version_metadata();
     try_init_version_metadata(RethCliVersionConsts {
         name_client: "Base Reth Node".to_string().into(),
@@ -86,10 +92,12 @@ fn main() {
         .run(|builder, args| async move {
             info!(message = "starting custom Base node");
 
+            // Determine which optional features are enabled
             let flashblocks_enabled = args.flashblocks_enabled();
             let transaction_tracing_enabled = args.enable_transaction_tracing;
             let op_node = OpNode::new(args.rollup_args.clone());
 
+            // Create shared cell for Flashblocks state (initialized lazily)
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
             let NodeHandle {
@@ -100,6 +108,7 @@ fn main() {
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
                 .on_component_initialized(move |_ctx| Ok(()))
+                // Install transaction tracing ExEx if enabled
                 .install_exex_if(
                     transaction_tracing_enabled,
                     "transaction-tracing",
@@ -131,6 +140,7 @@ fn main() {
                         })
                     }
                 })
+                // Extend RPC modules with Flashblocks functionality if enabled
                 .extend_rpc_modules(move |ctx| {
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");

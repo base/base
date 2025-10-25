@@ -34,7 +34,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::{debug, trace, warn};
 
-/// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
+/// Max timeout for `eth_sendRawTransactionSync` in milliseconds
 pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Core API for accessing flashblock state and data.

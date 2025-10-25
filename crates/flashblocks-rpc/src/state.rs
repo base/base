@@ -39,7 +39,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-// Buffer 4s of flashblocks for flashblock_sender
+// Buffer size for Flashblocks broadcast channel (4 seconds of updates)
 const BUFFER_SIZE: usize = 20;
 
 enum StateUpdate {

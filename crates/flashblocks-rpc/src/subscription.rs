@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::metrics::Metrics;
 
-/// Interval of liveness check of upstream, in milliseconds.
+/// Ping interval for upstream liveness checks in milliseconds
 pub const PING_INTERVAL_MS: u64 = 500;
 
 /// Max duration of backoff before reconnecting to upstream.
