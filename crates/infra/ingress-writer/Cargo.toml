@@ -14,7 +14,6 @@ path = "src/main.rs"
 [dependencies]
 tips-datastore.workspace = true
 tips-audit.workspace=true
-alloy-rpc-types-mev.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -25,3 +24,4 @@ rdkafka.workspace = true
 serde_json.workspace = true
 backon.workspace = true
 uuid.workspace = true
+tips-common.workspace = true

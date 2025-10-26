@@ -1,12 +1,8 @@
 use crate::traits::BundleDatastore;
-use alloy_consensus::Transaction;
-use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::hex::{FromHex, ToHexExt};
 use alloy_primitives::{Address, B256, TxHash};
-use alloy_provider::network::eip2718::Decodable2718;
 use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
-use op_alloy_consensus::OpTxEnvelope;
 use sqlx::{
     PgPool,
     types::chrono::{DateTime, Utc},
@@ -14,12 +10,7 @@ use sqlx::{
 use tracing::info;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, sqlx::Type)]
-#[sqlx(type_name = "bundle_state", rename_all = "PascalCase")]
-pub enum BundleState {
-    Ready,
-    IncludedByBuilder,
-}
+use tips_common::{BundleState, BundleWithMetadata};
 
 #[derive(sqlx::FromRow, Debug)]
 struct BundleRow {
@@ -83,17 +74,6 @@ impl BundleFilter {
         self.max_time_before = Some(timestamp);
         self
     }
-}
-
-/// Extended bundle data that includes the original bundle plus extracted metadata
-#[derive(Debug, Clone)]
-pub struct BundleWithMetadata {
-    pub bundle: EthSendBundle,
-    pub txn_hashes: Vec<TxHash>,
-    pub senders: Vec<Address>,
-    pub min_base_fee: i64,
-    pub state: BundleState,
-    pub state_changed_at: DateTime<Utc>,
 }
 
 /// Statistics about bundles and transactions grouped by state
@@ -215,57 +195,38 @@ impl PostgresDatastore {
             state_changed_at: row.state_changed_at,
         })
     }
-
-    fn extract_bundle_metadata(
-        &self,
-        bundle: &EthSendBundle,
-    ) -> Result<(Vec<String>, i64, Vec<String>)> {
-        let mut senders = Vec::new();
-        let mut txn_hashes = Vec::new();
-
-        let mut min_base_fee = i64::MAX;
-
-        for tx_bytes in &bundle.txs {
-            let envelope = OpTxEnvelope::decode_2718_exact(tx_bytes)?;
-            txn_hashes.push(envelope.hash().encode_hex_with_prefix());
-
-            let sender = match envelope.recover_signer() {
-                Ok(signer) => signer,
-                Err(err) => return Err(err.into()),
-            };
-
-            senders.push(sender.encode_hex_with_prefix());
-            min_base_fee = min_base_fee.min(envelope.max_fee_per_gas() as i64); // todo type and todo not right
-        }
-
-        let minimum_base_fee = if min_base_fee == i64::MAX {
-            0
-        } else {
-            min_base_fee
-        };
-
-        Ok((senders, minimum_base_fee, txn_hashes))
-    }
 }
 
 #[async_trait::async_trait]
 impl BundleDatastore for PostgresDatastore {
-    async fn insert_bundle(&self, bundle: EthSendBundle) -> Result<Uuid> {
+    async fn insert_bundle(&self, bundle: BundleWithMetadata) -> Result<Uuid> {
         let id = Uuid::new_v4();
 
-        let (senders, minimum_base_fee, txn_hashes) = self.extract_bundle_metadata(&bundle)?;
+        let senders: Vec<String> = bundle
+            .senders
+            .iter()
+            .map(|s| s.encode_hex_with_prefix())
+            .collect();
+        let txn_hashes: Vec<String> = bundle
+            .txn_hashes
+            .iter()
+            .map(|h| h.encode_hex_with_prefix())
+            .collect();
 
         let txs: Vec<String> = bundle
+            .bundle
             .txs
             .iter()
             .map(|tx| tx.encode_hex_upper_with_prefix())
             .collect();
         let reverting_tx_hashes: Vec<String> = bundle
+            .bundle
             .reverting_tx_hashes
             .iter()
             .map(|h| h.encode_hex_with_prefix())
             .collect();
         let dropping_tx_hashes: Vec<String> = bundle
+            .bundle
             .dropping_tx_hashes
             .iter()
             .map(|h| h.encode_hex_with_prefix())
@@ -284,14 +245,14 @@ impl BundleDatastore for PostgresDatastore {
             id,
             BundleState::Ready as BundleState,
             &senders,
-            minimum_base_fee,
+            bundle.min_base_fee,
             &txn_hashes,
             &txs,
             &reverting_tx_hashes,
             &dropping_tx_hashes,
-            bundle.block_number as i64,
-            bundle.min_timestamp.map(|t| t as i64),
-            bundle.max_timestamp.map(|t| t as i64),
+            bundle.bundle.block_number as i64,
+            bundle.bundle.min_timestamp.map(|t| t as i64),
+            bundle.bundle.max_timestamp.map(|t| t as i64),
         )
         .execute(&self.pool)
         .await?;

@@ -35,3 +35,4 @@ op-revm.workspace = true
 revm-context-interface.workspace = true
 alloy-signer-local.workspace = true
 reth-optimism-evm.workspace = true
+tips-common.workspace = true

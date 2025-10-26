@@ -1,17 +1,16 @@
-use crate::postgres::{
-    BlockInfo, BlockInfoUpdate, BundleFilter, BundleState, BundleStats, BundleWithMetadata,
-};
+use crate::postgres::{BlockInfo, BlockInfoUpdate, BundleFilter, BundleStats};
 use alloy_primitives::TxHash;
-use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
 use sqlx::types::chrono::{DateTime, Utc};
 use uuid::Uuid;
+
+use tips_common::{BundleState, BundleWithMetadata};
 
 /// Trait defining the interface for bundle datastore operations
 #[async_trait::async_trait]
 pub trait BundleDatastore: Send + Sync {
     /// Insert a new bundle into the datastore
-    async fn insert_bundle(&self, bundle: EthSendBundle) -> Result<Uuid>;
+    async fn insert_bundle(&self, bundle: BundleWithMetadata) -> Result<Uuid>;
 
     /// Fetch a bundle with metadata by its ID
     async fn get_bundle(&self, id: Uuid) -> Result<Option<BundleWithMetadata>>;

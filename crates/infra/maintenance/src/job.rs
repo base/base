@@ -15,8 +15,9 @@ use sqlx::types::chrono::Utc;
 use std::collections::HashSet;
 use std::time::Duration;
 use tips_audit::{BundleEvent, BundleEventPublisher, DropReason};
+use tips_common::{BundleState, BundleWithMetadata};
 use tips_datastore::BundleDatastore;
-use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter, BundleState, BundleWithMetadata};
+use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -399,7 +400,7 @@ mod tests {
     use alloy_primitives::{TxHash, b256};
     use alloy_rpc_types_mev::EthSendBundle;
     use sqlx::types::chrono::Utc;
-    use tips_datastore::postgres::BundleState;
+    use tips_common::BundleState;
 
     const TX_1: TxHash = b256!("1111111111111111111111111111111111111111111111111111111111111111");
     const TX_2: TxHash = b256!("2222222222222222222222222222222222222222222222222222222222222222");

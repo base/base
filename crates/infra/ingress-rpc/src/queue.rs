@@ -1,16 +1,16 @@
 use alloy_primitives::B256;
-use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
+use tips_common::BundleWithMetadata;
 use tokio::time::Duration;
 use tracing::{error, info};
 
 /// A queue to buffer transactions
 #[async_trait]
 pub trait QueuePublisher: Send + Sync {
-    async fn publish(&self, bundle: &EthSendBundle, bundle_hash: &B256) -> Result<()>;
+    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()>;
 }
 
 /// A queue to buffer transactions
@@ -27,9 +27,9 @@ impl KafkaQueuePublisher {
 
 #[async_trait]
 impl QueuePublisher for KafkaQueuePublisher {
-    async fn publish(&self, bundle: &EthSendBundle, bundle_hash: &B256) -> Result<()> {
+    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()> {
         let key = bundle_hash.to_string();
-        let payload = serde_json::to_vec(bundle)?;
+        let payload = serde_json::to_vec(&bundle)?;
 
         let enqueue = || async {
             let record = FutureRecord::to(&self.topic).key(&key).payload(&payload);
@@ -74,11 +74,12 @@ impl QueuePublisher for KafkaQueuePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_rpc_types_mev::EthSendBundle;
     use rdkafka::config::ClientConfig;
     use tokio::time::{Duration, Instant};
 
-    fn create_test_bundle() -> EthSendBundle {
-        EthSendBundle::default()
+    fn create_test_bundle() -> BundleWithMetadata {
+        BundleWithMetadata::new(&EthSendBundle::default()).unwrap()
     }
 
     #[tokio::test]
@@ -92,7 +93,7 @@ mod tests {
 
         let publisher = KafkaQueuePublisher::new(producer, "tips-ingress-rpc".to_string());
         let bundle = create_test_bundle();
-        let bundle_hash = bundle.bundle_hash();
+        let bundle_hash = bundle.bundle.bundle_hash();
 
         let start = Instant::now();
         let result = publisher.publish(&bundle, &bundle_hash).await;

@@ -6,7 +6,8 @@ use testcontainers_modules::{
     postgres,
     testcontainers::{ContainerAsync, runners::AsyncRunner},
 };
-use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter, BundleState};
+use tips_common::{BundleState, BundleWithMetadata};
+use tips_datastore::postgres::{BlockInfoUpdate, BundleFilter};
 use tips_datastore::{BundleDatastore, PostgresDatastore};
 
 struct TestHarness {
@@ -14,7 +15,7 @@ struct TestHarness {
     data_store: PostgresDatastore,
 }
 
-async fn setup_datastore() -> eyre::Result<TestHarness> {
+async fn setup_datastore() -> anyhow::Result<TestHarness> {
     let postgres_instance = postgres::Postgres::default().start().await?;
     let connection_string = format!(
         "postgres://postgres:postgres@{}:{}/postgres",
@@ -38,8 +39,8 @@ const TX_DATA: Bytes = bytes!(
 const TX_HASH: TxHash = b256!("0x3ea7e1482485387e61150ee8e5c8cad48a14591789ac02cc2504046d96d0a5f4");
 const TX_SENDER: Address = address!("0x24ae36512421f1d9f6e074f00ff5b8393f5dd925");
 
-fn create_test_bundle_with_reverting_tx() -> eyre::Result<EthSendBundle> {
-    Ok(EthSendBundle {
+fn create_test_bundle_with_reverting_tx() -> anyhow::Result<BundleWithMetadata> {
+    let bundle = EthSendBundle {
         txs: vec![TX_DATA],
         block_number: 12345,
         min_timestamp: Some(1640995200),
@@ -51,15 +52,18 @@ fn create_test_bundle_with_reverting_tx() -> eyre::Result<EthSendBundle> {
         refund_recipient: None,
         refund_tx_hashes: vec![],
         extra_fields: Default::default(),
-    })
+    };
+
+    let bundle_with_metadata = BundleWithMetadata::new(&bundle)?;
+    Ok(bundle_with_metadata)
 }
 
 fn create_test_bundle(
     block_number: u64,
     min_timestamp: Option<u64>,
     max_timestamp: Option<u64>,
-) -> eyre::Result<EthSendBundle> {
-    Ok(EthSendBundle {
+) -> anyhow::Result<BundleWithMetadata> {
+    let bundle = EthSendBundle {
         txs: vec![TX_DATA],
         block_number,
         min_timestamp,
@@ -71,15 +75,22 @@ fn create_test_bundle(
         refund_recipient: None,
         refund_tx_hashes: vec![],
         extra_fields: Default::default(),
-    })
+    };
+
+    let bundle_with_metadata = BundleWithMetadata::new(&bundle)?;
+    Ok(bundle_with_metadata)
 }
 
 #[tokio::test]
-async fn insert_and_get() -> eyre::Result<()> {
+async fn insert_and_get() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
-    let test_bundle = create_test_bundle_with_reverting_tx()?;
+    let test_bundle_with_metadata = create_test_bundle_with_reverting_tx()?;
+    let test_bundle = test_bundle_with_metadata.bundle.clone();
 
-    let insert_result = harness.data_store.insert_bundle(test_bundle.clone()).await;
+    let insert_result = harness
+        .data_store
+        .insert_bundle(test_bundle_with_metadata)
+        .await;
     if let Err(ref err) = insert_result {
         eprintln!("Insert failed with error: {err:?}");
     }
@@ -140,7 +151,7 @@ async fn insert_and_get() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn select_bundles_comprehensive() -> eyre::Result<()> {
+async fn select_bundles_comprehensive() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let bundle1 = create_test_bundle(100, Some(1000), Some(2000))?;
@@ -237,7 +248,7 @@ async fn select_bundles_comprehensive() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn cancel_bundle_workflow() -> eyre::Result<()> {
+async fn cancel_bundle_workflow() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let bundle1 = create_test_bundle(100, Some(1000), Some(2000))?;
@@ -304,7 +315,7 @@ async fn cancel_bundle_workflow() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn find_bundle_by_transaction_hash() -> eyre::Result<()> {
+async fn find_bundle_by_transaction_hash() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
     let test_bundle = create_test_bundle_with_reverting_tx()?;
 
@@ -334,7 +345,7 @@ async fn find_bundle_by_transaction_hash() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn remove_bundles() -> eyre::Result<()> {
+async fn remove_bundles() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let bundle1 = create_test_bundle(100, None, None)?;
@@ -360,7 +371,7 @@ async fn remove_bundles() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn update_bundles_state() -> eyre::Result<()> {
+async fn update_bundles_state() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let bundle1 = create_test_bundle(100, None, None)?;
@@ -389,7 +400,7 @@ async fn update_bundles_state() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn block_info_operations() -> eyre::Result<()> {
+async fn block_info_operations() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let initial_info = harness.data_store.get_current_block_info().await.unwrap();
@@ -443,7 +454,7 @@ async fn block_info_operations() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn get_stats() -> eyre::Result<()> {
+async fn get_stats() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let stats = harness.data_store.get_stats().await.unwrap();
@@ -475,7 +486,7 @@ async fn get_stats() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn remove_timed_out_bundles() -> eyre::Result<()> {
+async fn remove_timed_out_bundles() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let expired_bundle = create_test_bundle(100, None, Some(1000))?;
@@ -516,7 +527,7 @@ async fn remove_timed_out_bundles() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn remove_old_included_bundles() -> eyre::Result<()> {
+async fn remove_old_included_bundles() -> anyhow::Result<()> {
     let harness = setup_datastore().await?;
 
     let bundle1 = create_test_bundle(100, None, None)?;

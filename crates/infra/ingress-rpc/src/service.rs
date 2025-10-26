@@ -11,6 +11,7 @@ use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use reth_rpc_eth_types::EthApiError;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tips_common::BundleWithMetadata;
 use tracing::{info, warn};
 
 use crate::queue::QueuePublisher;
@@ -60,11 +61,15 @@ where
     Queue: QueuePublisher + Sync + Send + 'static,
 {
     async fn send_bundle(&self, bundle: EthSendBundle) -> RpcResult<EthBundleHash> {
-        self.validate_bundle(&bundle).await?;
+        let bundle_with_metadata = self.validate_bundle(&bundle).await?;
 
         // Queue the bundle
         let bundle_hash = bundle.bundle_hash();
-        if let Err(e) = self.queue.publish(&bundle, &bundle_hash).await {
+        if let Err(e) = self
+            .queue
+            .publish(&bundle_with_metadata, &bundle_hash)
+            .await
+        {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
             return Err(EthApiError::InvalidParams("Failed to queue bundle".into()).into_rpc_err());
         }
@@ -107,8 +112,14 @@ where
         };
 
         // queue the bundle
+        let bundle_with_metadata = BundleWithMetadata::new(&bundle)
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
         let bundle_hash = bundle.bundle_hash();
-        if let Err(e) = self.queue.publish(&bundle, &bundle_hash).await {
+        if let Err(e) = self
+            .queue
+            .publish(&bundle_with_metadata, &bundle_hash)
+            .await
+        {
             warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
         }
 
@@ -164,7 +175,7 @@ where
         Ok(transaction)
     }
 
-    async fn validate_bundle(&self, bundle: &EthSendBundle) -> RpcResult<()> {
+    async fn validate_bundle(&self, bundle: &EthSendBundle) -> RpcResult<BundleWithMetadata> {
         if bundle.txs.is_empty() {
             return Err(
                 EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
@@ -177,7 +188,10 @@ where
             let transaction = self.validate_tx(tx_data).await?;
             total_gas = total_gas.saturating_add(transaction.gas_limit());
         }
+        validate_bundle(bundle, total_gas)?;
 
-        validate_bundle(bundle, total_gas)
+        let bundle_with_metadata = BundleWithMetadata::new(bundle)
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        Ok(bundle_with_metadata)
     }
 }

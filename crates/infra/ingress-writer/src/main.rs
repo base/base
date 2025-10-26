@@ -1,4 +1,3 @@
-use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
 use backon::{ExponentialBuilder, Retryable};
 use clap::Parser;
@@ -10,6 +9,7 @@ use rdkafka::{
 };
 use std::fs;
 use tips_audit::{BundleEvent, BundleEventPublisher, KafkaBundleEventPublisher};
+use tips_common::BundleWithMetadata;
 use tips_datastore::{BundleDatastore, postgres::PostgresDatastore};
 use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -64,13 +64,13 @@ where
         })
     }
 
-    async fn insert_bundle(&self) -> Result<(Uuid, EthSendBundle)> {
+    async fn insert_bundle(&self) -> Result<(Uuid, BundleWithMetadata)> {
         match self.queue_consumer.recv().await {
             Ok(message) => {
                 let payload = message
                     .payload()
                     .ok_or_else(|| anyhow::anyhow!("Message has no payload"))?;
-                let bundle: EthSendBundle = serde_json::from_slice(payload)?;
+                let bundle: BundleWithMetadata = serde_json::from_slice(payload)?;
                 debug!(
                     bundle = ?bundle,
                     offset = message.offset(),
@@ -107,12 +107,12 @@ where
         }
     }
 
-    async fn publish(&self, bundle_id: Uuid, bundle: &EthSendBundle) {
+    async fn publish(&self, bundle_id: Uuid, bundle: &BundleWithMetadata) {
         if let Err(e) = self
             .publisher
             .publish(BundleEvent::Created {
                 bundle_id,
-                bundle: bundle.clone(),
+                bundle: bundle.bundle.clone(),
             })
             .await
         {
