@@ -46,7 +46,7 @@ Create a `.env` file in the project root directory with the following variables:
 
 ### SP1 Verifier Configuration
 
-For testing, deploy a [Mock Verifier](../validity/contracts/deploy.md#step-2-deploy-an-sp1mockverifier-for-verifying-mock-proofs). If you do this, make sure to set the `OP_SUCCINCT_MOCK` environment variable to `true`, and set the `VERIFIER_ADDRESS` to your newly deployed mock verifier.
+For testing, deploy a [Mock Verifier](../validity/quick-start.md#step-2-deploy-an-sp1mockverifier-for-verifying-mock-proofs). If you do this, make sure to set the `OP_SUCCINCT_MOCK` environment variable to `true`, and set the `VERIFIER_ADDRESS` to your newly deployed mock verifier.
 
 ## Deployment
 
