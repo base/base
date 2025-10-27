@@ -31,4 +31,8 @@ pub trait MinerApiExt {
     /// data size of the block. 0 means no maximum.
     #[method(name = "setMaxDASize")]
     async fn set_max_da_size(&self, max_tx_size: U64, max_block_size: U64) -> RpcResult<bool>;
+
+    /// Sets the gas limit for future blocks produced by the miner.
+    #[method(name = "setGasLimit")]
+    async fn set_gas_limit(&self, gas_limit: U64) -> RpcResult<bool>;
 }
