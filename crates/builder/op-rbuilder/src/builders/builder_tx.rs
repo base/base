@@ -4,7 +4,7 @@ use alloy_evm::Database;
 use alloy_op_evm::OpEvm;
 use alloy_primitives::{
     Address, B256, Bytes, TxKind, U256,
-    map::foldhash::{HashMap, HashSet, HashSetExt},
+    map::{HashMap, HashSet},
 };
 use alloy_sol_types::{ContractError, Revert, SolCall, SolError, SolInterface};
 use core::fmt::Debug;
@@ -192,7 +192,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                 .evm_config
                 .evm_with_env(&mut *db, builder_ctx.evm_env.clone());
 
-            let mut invalid: HashSet<Address> = HashSet::new();
+            let mut invalid = HashSet::new();
 
             for builder_tx in builder_txs.iter() {
                 if builder_tx.is_top_of_block != top_of_block {

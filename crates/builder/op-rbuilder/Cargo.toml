@@ -12,6 +12,8 @@ default-run = "op-rbuilder"
 workspace = true
 
 [dependencies]
+p2p = { path = "../p2p" }
+
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
@@ -109,10 +111,11 @@ url.workspace = true
 anyhow = "1"
 opentelemetry = { workspace = true, optional = true }
 dashmap.workspace = true
+hex = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
 
 tower = "0.5"
-futures = "0.3"
-futures-util = "0.3.31"
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4"
 uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
@@ -124,7 +127,6 @@ serde_yaml = { version = "0.9" }
 moka = "0.12"
 http = "1.0"
 sha3 = "0.10"
-hex = "0.4"
 reqwest = "0.12.23"
 k256 = "0.13.4"
 

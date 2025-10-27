@@ -544,9 +544,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_transactions.push(tx.into_inner());
         }
 
-        let payload_tx_simulation_time = execute_txs_start_time.elapsed();
+        let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
         self.metrics.set_payload_builder_metrics(
-            payload_tx_simulation_time,
+            payload_transaction_simulation_time,
             num_txs_considered,
             num_txs_simulated,
             num_txs_simulated_success,

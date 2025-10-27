@@ -38,6 +38,21 @@ pub struct FlashblocksConfig {
     ///
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
     pub flashblocks_number_contract_address: Option<Address>,
+
+    /// Whether to enable the p2p node for flashblocks
+    pub p2p_enabled: bool,
+
+    /// Port for the p2p node
+    pub p2p_port: u16,
+
+    /// Optional hex-encoded private key file path for the p2p node
+    pub p2p_private_key_file: Option<String>,
+
+    /// Comma-separated list of multiaddresses of known peers to connect to
+    pub p2p_known_peers: Option<String>,
+
+    /// Maximum number of peers for the p2p node
+    pub p2p_max_peer_count: u32,
 }
 
 impl Default for FlashblocksConfig {
@@ -49,6 +64,11 @@ impl Default for FlashblocksConfig {
             fixed: false,
             calculate_state_root: true,
             flashblocks_number_contract_address: None,
+            p2p_enabled: false,
+            p2p_port: 9009,
+            p2p_private_key_file: None,
+            p2p_known_peers: None,
+            p2p_max_peer_count: 50,
         }
     }
 }
@@ -80,6 +100,11 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             fixed,
             calculate_state_root,
             flashblocks_number_contract_address,
+            p2p_enabled: args.flashblocks.p2p.p2p_enabled,
+            p2p_port: args.flashblocks.p2p.p2p_port,
+            p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,
+            p2p_known_peers: args.flashblocks.p2p.p2p_known_peers,
+            p2p_max_peer_count: args.flashblocks.p2p.p2p_max_peer_count,
         })
     }
 }

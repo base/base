@@ -219,6 +219,7 @@ async fn unichain_dynamic_with_lag(rbuilder: LocalInstance) -> eyre::Result<()> 
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 0,
+        flashblocks_fixed: false,
         ..Default::default()
     },
     ..Default::default()
@@ -255,6 +256,8 @@ async fn dynamic_with_full_block_lag(rbuilder: LocalInstance) -> eyre::Result<()
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
         ..Default::default()
     },
     ..Default::default()
@@ -313,6 +316,8 @@ async fn test_flashblock_min_filtering(rbuilder: LocalInstance) -> eyre::Result<
         flashblocks_port: 1239,
         flashblocks_addr: "127.0.0.1".into(),
         flashblocks_block_time: 200,
+        flashblocks_leeway_time: 100,
+        flashblocks_fixed: false,
         ..Default::default()
     },
     ..Default::default()

@@ -96,9 +96,9 @@ pub struct OpRBuilderMetrics {
     /// Latest state merge transitions duration
     pub state_transition_merge_gauge: Gauge,
     /// Histogram of the duration of payload simulation of all transactions
-    pub payload_tx_simulation_duration: Histogram,
+    pub payload_transaction_simulation_duration: Histogram,
     /// Latest payload simulation of all transactions duration
-    pub payload_tx_simulation_gauge: Gauge,
+    pub payload_transaction_simulation_gauge: Gauge,
     /// Number of transaction considered for inclusion in the block
     pub payload_num_tx_considered: Histogram,
     /// Latest number of transactions considered for inclusion in the block
@@ -157,7 +157,7 @@ impl OpRBuilderMetrics {
     #[expect(clippy::too_many_arguments)]
     pub fn set_payload_builder_metrics(
         &self,
-        payload_tx_simulation_time: impl IntoF64 + Copy,
+        payload_transaction_simulation_time: impl IntoF64 + Copy,
         num_txs_considered: impl IntoF64 + Copy,
         num_txs_simulated: impl IntoF64 + Copy,
         num_txs_simulated_success: impl IntoF64 + Copy,
@@ -165,10 +165,10 @@ impl OpRBuilderMetrics {
         num_bundles_reverted: impl IntoF64,
         reverted_gas_used: impl IntoF64,
     ) {
-        self.payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
-        self.payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
+        self.payload_transaction_simulation_duration
+            .record(payload_transaction_simulation_time);
+        self.payload_transaction_simulation_gauge
+            .set(payload_transaction_simulation_time);
         self.payload_num_tx_considered.record(num_txs_considered);
         self.payload_num_tx_considered_gauge.set(num_txs_considered);
         self.payload_num_tx_simulated.record(num_txs_simulated);

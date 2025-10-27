@@ -117,6 +117,7 @@ pub struct BuilderConfig<Specific: Clone> {
 
     /// Configuration values that are specific to the block builder implementation used.
     pub specific: Specific,
+
     /// Maximum gas a transaction can use before being excluded.
     pub max_gas_per_txn: Option<u64>,
 
@@ -139,6 +140,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
+            .field("sampling_ratio", &self.sampling_ratio)
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)

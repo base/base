@@ -166,6 +166,10 @@ pub struct FlashblocksArgs {
         env = "FLASHBLOCK_NUMBER_CONTRACT_ADDRESS"
     )]
     pub flashblocks_number_contract_address: Option<Address>,
+
+    /// Flashblocks p2p configuration
+    #[command(flatten)]
+    pub p2p: FlashblocksP2pArgs,
 }
 
 impl Default for FlashblocksArgs {
@@ -176,6 +180,49 @@ impl Default for FlashblocksArgs {
         };
         node_command.ext.flashblocks
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+pub struct FlashblocksP2pArgs {
+    /// Enable libp2p networking for flashblock propagation
+    #[arg(
+        long = "flashblocks.p2p_enabled",
+        env = "FLASHBLOCK_P2P_ENABLED",
+        default_value = "false"
+    )]
+    pub p2p_enabled: bool,
+
+    /// Port for the flashblocks p2p node
+    #[arg(
+        long = "flashblocks.p2p_port",
+        env = "FLASHBLOCK_P2P_PORT",
+        default_value = "9009"
+    )]
+    pub p2p_port: u16,
+
+    /// Path to the file containing a hex-encoded libp2p private key.
+    /// If the file does not exist, a new key will be generated.
+    #[arg(
+        long = "flashblocks.p2p_private_key_file",
+        env = "FLASHBLOCK_P2P_PRIVATE_KEY_FILE"
+    )]
+    pub p2p_private_key_file: Option<String>,
+
+    /// Comma-separated list of multiaddrs of known Flashblocks peers
+    /// Example: "/ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ,/ip4/104.131.131.82/udp/4001/quic-v1/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ"
+    #[arg(
+        long = "flashblocks.p2p_known_peers",
+        env = "FLASHBLOCK_P2P_KNOWN_PEERS"
+    )]
+    pub p2p_known_peers: Option<String>,
+
+    /// Maximum number of peers for the flashblocks p2p node
+    #[arg(
+        long = "flashblocks.p2p_max_peer_count",
+        env = "FLASHBLOCK_P2P_MAX_PEER_COUNT",
+        default_value = "50"
+    )]
+    pub p2p_max_peer_count: u32,
 }
 
 /// Parameters for telemetry configuration

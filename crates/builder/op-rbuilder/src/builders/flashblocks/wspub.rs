@@ -1,11 +1,9 @@
 use core::{
     fmt::{Debug, Formatter},
     net::SocketAddr,
-    pin::Pin,
     sync::atomic::{AtomicUsize, Ordering},
-    task::{Context, Poll},
 };
-use futures::{Sink, SinkExt};
+use futures::SinkExt;
 use futures_util::StreamExt;
 use rollup_boost::FlashblocksPayloadV1;
 use std::{io, net::TcpListener, sync::Arc};
@@ -236,26 +234,5 @@ impl Debug for WebSocketPublisher {
             .field("subs", &subs)
             .field("payloads_sent", &sent)
             .finish()
-    }
-}
-
-impl Sink<&FlashblocksPayloadV1> for WebSocketPublisher {
-    type Error = eyre::Report;
-
-    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: &FlashblocksPayloadV1) -> Result<(), Self::Error> {
-        self.publish(item)?;
-        Ok(())
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
     }
 }

@@ -27,9 +27,8 @@ use reth_node_api::{Block, NodePrimitives, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
-use reth_optimism_node::{OpBuiltPayload, OpEngineTypes, OpPayloadBuilderAttributes};
+use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
 use reth_optimism_primitives::{OpPrimitives, OpReceipt, OpTransactionSigned};
-use reth_payload_builder_primitives::Events;
 use reth_payload_util::BestPayloadTransactions;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{
@@ -48,7 +47,7 @@ use rollup_boost::{
 use serde::{Deserialize, Serialize};
 use std::{
     ops::{Div, Rem},
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::Instant,
 };
 use tokio::sync::mpsc;
@@ -134,6 +133,9 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub pool: Pool,
     /// Node client
     pub client: Client,
+    /// Sender for sending built payloads to [`PayloadHandler`],
+    /// which broadcasts outgoing payloads via p2p.
+    pub payload_tx: mpsc::Sender<OpBuiltPayload>,
     /// WebSocket publisher for broadcasting flashblocks
     /// to all connected subscribers.
     pub ws_pub: Arc<WebSocketPublisher>,
@@ -143,9 +145,6 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
     pub metrics: Arc<OpRBuilderMetrics>,
     /// The end of builder transaction type
     pub builder_tx: BuilderTx,
-    /// Builder events handle to send BuiltPayload events
-    pub payload_builder_handle:
-        Arc<OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
 }
@@ -158,9 +157,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         client: Client,
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
-        payload_builder_handle: Arc<
-            OnceLock<tokio::sync::broadcast::Sender<Events<OpEngineTypes>>>,
-        >,
+        payload_tx: mpsc::Sender<OpBuiltPayload>,
     ) -> eyre::Result<Self> {
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
@@ -169,11 +166,11 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             evm_config,
             pool,
             client,
+            payload_tx,
             ws_pub,
             config,
             metrics,
             builder_tx,
-            payload_builder_handle,
             address_gas_limiter,
         })
     }
@@ -360,7 +357,10 @@ where
             calculate_state_root || ctx.attributes().no_tx_pool, // need to calculate state root for CL sync
         )?;
 
-        self.send_payload_to_engine(payload.clone());
+        self.payload_tx
+            .send(payload.clone())
+            .await
+            .map_err(PayloadBuilderError::other)?;
         best_payload.set(payload);
 
         info!(
@@ -525,16 +525,19 @@ where
             }
 
             // build first flashblock immediately
-            let next_flashblocks_ctx = match self.build_next_flashblock(
-                &mut ctx,
-                &mut info,
-                &mut state,
-                &state_provider,
-                &mut best_txs,
-                &block_cancel,
-                &best_payload,
-                &fb_span,
-            ) {
+            let next_flashblocks_ctx = match self
+                .build_next_flashblock(
+                    &ctx,
+                    &mut info,
+                    &mut state,
+                    &state_provider,
+                    &mut best_txs,
+                    &block_cancel,
+                    &best_payload,
+                    &fb_span,
+                )
+                .await
+            {
                 Ok(Some(next_flashblocks_ctx)) => next_flashblocks_ctx,
                 Ok(None) => {
                     self.record_flashblocks_metrics(
@@ -577,12 +580,12 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_next_flashblock<
+    async fn build_next_flashblock<
         DB: Database<Error = ProviderError> + std::fmt::Debug + AsRef<P>,
         P: StateRootProvider + HashedPostStateProvider + StorageRootProvider,
     >(
         &self,
-        ctx: &mut OpPayloadBuilderCtx<FlashblocksExtraCtx>,
+        ctx: &OpPayloadBuilderCtx<FlashblocksExtraCtx>,
         info: &mut ExecutionInfo<FlashblocksExecutionInfo>,
         state: &mut State<DB>,
         state_provider: impl reth::providers::StateProvider + Clone,
@@ -675,13 +678,13 @@ where
             return Ok(None);
         }
 
-        let payload_tx_simulation_time = tx_execution_start_time.elapsed();
+        let payload_transaction_simulation_time = tx_execution_start_time.elapsed();
         ctx.metrics
-            .payload_tx_simulation_duration
-            .record(payload_tx_simulation_time);
+            .payload_transaction_simulation_duration
+            .record(payload_transaction_simulation_time);
         ctx.metrics
-            .payload_tx_simulation_gauge
-            .set(payload_tx_simulation_time);
+            .payload_transaction_simulation_gauge
+            .set(payload_transaction_simulation_time);
 
         if let Err(e) = self
             .builder_tx
@@ -730,7 +733,10 @@ where
                     .ws_pub
                     .publish(&fb_payload)
                     .wrap_err("failed to publish flashblock via websocket")?;
-                self.send_payload_to_engine(new_payload.clone());
+                self.payload_tx
+                    .send(new_payload.clone())
+                    .await
+                    .wrap_err("failed to send built payload to handler")?;
                 best_payload.set(new_payload);
 
                 // Record flashblock build duration
@@ -809,24 +815,6 @@ where
         span.record("flashblock_count", ctx.flashblock_index());
     }
 
-    /// Sends built payload via payload builder handle broadcast channel to the engine
-    pub(super) fn send_payload_to_engine(&self, payload: OpBuiltPayload) {
-        // Send built payload as created one
-        match self.payload_builder_handle.get() {
-            Some(handle) => {
-                let res = handle.send(Events::BuiltPayload(payload.clone()));
-                if let Err(e) = res {
-                    error!(
-                        message = "Failed to send payload via payload builder handle",
-                        error = ?e,
-                    );
-                }
-            }
-            None => {
-                error!(message = "Payload builder handle is not setup, skipping sending payload")
-            }
-        }
-    }
     /// Calculate number of flashblocks.
     /// If dynamic is enabled this function will take time drift into the account.
     pub(super) fn calculate_flashblocks(&self, timestamp: u64) -> (u64, Duration) {
