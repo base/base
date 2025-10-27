@@ -10,7 +10,6 @@ use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use serde::{Deserialize, Serialize};
-use std::time::Instant;
 use tracing::{error, info};
 
 use crate::meter_bundle;
@@ -101,8 +100,6 @@ where
         + 'static,
 {
     async fn meter_bundle(&self, request: MeterBundleRequest) -> RpcResult<MeterBundleResponse> {
-        let start_time = Instant::now();
-
         info!(
             num_transactions = request.txs.len(),
             block_number = ?request.block_number,
@@ -178,7 +175,7 @@ where
             })?;
 
         // Meter bundle using utility function
-        let (results, total_gas_used, total_gas_fees, bundle_hash) = meter_bundle(
+        let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) = meter_bundle(
             state_provider,
             self.provider.chain_spec().clone(),
             decoded_txs,
@@ -193,8 +190,6 @@ where
                 None::<()>,
             )
         })?;
-
-        let total_execution_time = start_time.elapsed().as_micros();
 
         // Calculate average gas price
         let bundle_gas_price = if total_gas_used > 0 {

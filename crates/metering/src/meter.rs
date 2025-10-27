@@ -24,13 +24,14 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 /// - Total gas used
 /// - Total gas fees paid
 /// - Bundle hash
+/// - Total execution time in microseconds
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
     timestamp: Option<u64>,
-) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256)>
+) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
 where
     SP: reth_provider::StateProvider,
 {
@@ -61,6 +62,7 @@ where
     let mut total_gas_used = 0u64;
     let mut total_gas_fees = U256::ZERO;
 
+    let execution_start = Instant::now();
     {
         let evm_config = OpEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
@@ -102,8 +104,9 @@ where
             });
         }
     }
+    let total_execution_time = execution_start.elapsed().as_micros();
 
-    Ok((results, total_gas_used, total_gas_fees, bundle_hash))
+    Ok((results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time))
 }
 
 /// Calculate bundle hash using Flashbots methodology
