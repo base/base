@@ -1,6 +1,10 @@
 # Quick Start
 
-This guide will walk you through the steps to deploy OP Succinct for your OP Stack chain. By the end of this guide, you will have a deployed smart contract on L1 that is tracking the state of your OP Stack chain with mock SP1 proofs.
+This guide will walk you through the steps to deploy OP Succinct for your OP Stack chain. By the end of this guide, you will have a deployed smart contract on L1 that is tracking the state of your OP Stack chain with mock SP1 proofs and Ethereum as the data availability layer. 
+
+```admonish note
+For OP Stack chain with alternative DA layers, please refer to the [Experimental Features](./experimental/experimental.md) section.
+```
 
 ## Prerequisites
 
@@ -30,9 +34,19 @@ In the root directory, create a file called `.env` and set the following environ
 | `PRIVATE_KEY` | Private key for the account that will be deploying the contract. |
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
 
+```admonish note
+If your integration requires access to consensus-layer data, set the
+`L1_BEACON_RPC` (L1 Beacon Node). This is optional and not required by default.
+```
+
 ```admonish info
-If your integration requires access to consensus-layer data, set the `L1_BEACON_RPC` (L1 Beacon Node).  
-This is optional and not required by default.
+Obtaining a Test Private Key
+
+- Anvil (local devnet): Run `anvil` and use one of the pre-funded accounts printed on startup. Copy the Private Key value for any account. Only use these on your local Anvil network.
+
+- Foundry (generate a fresh key): Run `cast wallet new` to generate a human-readable output. Save the private key and fund it on your test network.
+
+⚠️ **Caution:** Never use test keys on mainnet or with real assets.
 ```
 
 ## Step 2: Deploy an `SP1MockVerifier` for verifying mock proofs
@@ -49,21 +63,20 @@ Script ran successfully.
 
 == Return ==
 0: address 0x4cb20fa9e6FdFE8FDb6CE0942c5f40d49c898646
-
 ....
 ```
-
 In these deployment logs, `0x4cb20fa9e6FdFE8FDb6CE0942c5f40d49c898646` is the address of the `SP1MockVerifier` contract.
 
-## Step 3: Deploy the `OPSuccinctL2OutputOracle` contract
-
-This contract is a modification of Optimism's `L2OutputOracle` contract which verifies a proof along with the proposed state root.
-
-First, add the address of the `SP1MockVerifier` contract from the previous step to the `.env` file in the root directory.
+Add the address of the `SP1MockVerifier` contract to the `.env` file in the root directory.
 
 | Parameter | Description |
 |-----------|-------------|
 | `VERIFIER_ADDRESS` | The address of the `SP1MockVerifier` contract. |
+
+
+## Step 3: Deploy the `OPSuccinctL2OutputOracle` contract
+
+This contract is a modification of Optimism's `L2OutputOracle` contract which verifies a proof along with the proposed state root.
 
 Now, you should have the following in your `.env` file:
 
@@ -77,7 +90,10 @@ Now, you should have the following in your `.env` file:
 | `ETHERSCAN_API_KEY` | Etherscan API key for verifying the deployed contracts. |
 | `VERIFIER_ADDRESS` | The address of the `SP1MockVerifier` contract. |
 
-Then, deploy the `OPSuccinctL2OutputOracle` contract by running the following command:
+Then, deploy the `OPSuccinctL2OutputOracle` contract by running the following
+command. This command automatically fetches and stores the rollup configuration,
+loads the required environment variables, and executes the Foundry deployment
+script, optionally verifying the contract on Etherscan
 
 ```shell
 % just deploy-oracle    

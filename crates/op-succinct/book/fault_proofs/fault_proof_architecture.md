@@ -77,6 +77,11 @@ In this example, Proposal 3A would always resolve to `CHALLENGER_WINS`, as its p
 
 ### Immutable Variables
 
+Immutable variables are configuration values (typically read from environment
+variables e.g. a `.env` file) set once at contract deployment and cannot be
+changed afterward. They are embedded in the contract code, ensuring these
+parameters remain fixed for the lifetime of the dispute game.
+
 | Variable | Description |
 |----------|-------------|
 | `MAX_CHALLENGE_DURATION` | Time window during which a proposal can be challenged. |

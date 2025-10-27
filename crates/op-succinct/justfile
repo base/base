@@ -272,6 +272,32 @@ deploy-dispute-game-factory env_file=".env":
         --broadcast \
         $VERIFY
 
+# Upgrade the OPSuccinct Fault Dispute Game implementation.
+upgrade-fault-dispute-game env_file="fault-proof/.env.upgrade":
+    #!/usr/bin/env bash
+    set -aeuo pipefail
+
+    # Load environment variables
+    source {{env_file}}
+
+    # cd into contracts directory.
+    cd contracts
+
+    # Install dependencies.
+    forge install
+
+    # Run the forge upgrade script.
+    if [ "${DRY_RUN}" = "false" ]; then
+        forge script script/fp/UpgradeOPSuccinctFDG.s.sol:UpgradeOPSuccinctFDG \
+            --rpc-url $L1_RPC \
+            --private-key $PRIVATE_KEY \
+            --etherscan-api-key $ETHERSCAN_API_KEY \
+            --broadcast
+    else
+        forge script UpgradeOPSuccinctFDG --sig "getUpgradeCalldata()" \
+            --private-key $PRIVATE_KEY
+    fi
+
 # Add a new OpSuccinctConfig to the L2 Output Oracle
 add-config config_name env_file=".env" *features='':
     #!/usr/bin/env bash

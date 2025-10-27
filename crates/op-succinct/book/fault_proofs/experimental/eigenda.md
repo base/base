@@ -26,7 +26,14 @@ The EigenDA Proxy is a REST server that wraps EigenDA client functionality and c
 
 See [EigenDA Proxy](https://github.com/Layr-Labs/eigenda/tree/master/api/proxy) for more details on how to run the proxy.
 
-After running the proxy, set `EIGENDA_PROXY_ADDRESS=http://127.0.0.1:3100` in the `.env.proposer` file.
+After starting the proxy, set the `EIGENDA_PROXY_ADDRESS` variable in your `.env.proposer` file to point to the proxy’s reachable endpoint.
+For example, if the proxy runs locally, use:
+
+```env
+EIGENDA_PROXY_ADDRESS=http://127.0.0.1:3100
+```
+
+If the proxy is hosted on a remote server, replace the address with the server’s accessible address.
 
 ## EigenDA Contract Configuration
 
@@ -39,7 +46,8 @@ cargo run --bin config --release --features eigenda -- --env-file fault-proof/.e
 
 The command prints the `Range Verification Key Hash`, `Aggregation Verification Key Hash`, and `Rollup Config Hash`. Confirm these values before updating on-chain storage in `OPSuccinctFaultDisputeGame`.
 
-When you use the `just` helper below, include the `eigenda` argument so `fetch-fault-dispute-game-config` runs with the correct feature set. If you run `fetch-fault-dispute-game-config` manually, append `--features eigenda`; otherwise the script emits the default Ethereum DA values and your games will revert with `ProofInvalid()` when submitting proofs.
+When using the `just` helper below, include the `eigenda` argument to ensure the `fetch-fault-dispute-game-config` binary runs with the correct feature set. This binary outputs an updated config file (`opsuccinctfdgconfig.json`) to the `contracts` directory, which is used by the Solidity deployer script.
+If you run `fetch-fault-dispute-game-config` manually, append `--features eigenda`; otherwise the script emits the default Ethereum DA values and your games will revert with `ProofInvalid()` when submitting proofs.
 
 ## Deploying `OPSuccinctFaultDisputeGame` with EigenDA features
 
