@@ -1581,6 +1581,7 @@ dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-rpc-client",
  "eyre",
  "jsonrpsee 0.26.0",
  "op-alloy-consensus",
@@ -1599,9 +1600,12 @@ dependencies = [
  "reth-primitives-traits 1.8.2",
  "reth-provider",
  "reth-testing-utils",
+ "reth-tracing",
  "reth-transaction-pool 1.8.2",
  "revm",
  "serde",
+ "serde_json",
+ "tokio",
  "tracing",
 ]
 
