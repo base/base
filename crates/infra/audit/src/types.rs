@@ -54,11 +54,6 @@ pub enum BundleEvent {
         block_number: u64,
         flashblock_index: u64,
     },
-    FlashblockIncluded {
-        bundle_id: BundleId,
-        block_number: u64,
-        flashblock_index: u64,
-    },
     BlockIncluded {
         bundle_id: BundleId,
         block_number: u64,
@@ -77,7 +72,6 @@ impl BundleEvent {
             BundleEvent::Updated { bundle_id, .. } => *bundle_id,
             BundleEvent::Cancelled { bundle_id, .. } => *bundle_id,
             BundleEvent::BuilderIncluded { bundle_id, .. } => *bundle_id,
-            BundleEvent::FlashblockIncluded { bundle_id, .. } => *bundle_id,
             BundleEvent::BlockIncluded { bundle_id, .. } => *bundle_id,
             BundleEvent::Dropped { bundle_id, .. } => *bundle_id,
         }
@@ -108,7 +102,6 @@ impl BundleEvent {
             }
             BundleEvent::Cancelled { .. } => vec![],
             BundleEvent::BuilderIncluded { .. } => vec![],
-            BundleEvent::FlashblockIncluded { .. } => vec![],
             BundleEvent::BlockIncluded { .. } => vec![],
             BundleEvent::Dropped { .. } => vec![],
         }
@@ -122,14 +115,6 @@ impl BundleEvent {
                 ..
             } => {
                 format!("{bundle_id}-{block_hash}")
-            }
-            BundleEvent::FlashblockIncluded {
-                bundle_id,
-                block_number,
-                flashblock_index,
-                ..
-            } => {
-                format!("{bundle_id}-{block_number}-{flashblock_index}")
             }
             _ => {
                 format!("{}-{}", self.bundle_id(), Uuid::new_v4())
