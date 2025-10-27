@@ -1,7 +1,6 @@
 use crate::reader::Event;
 use crate::types::{BundleEvent, BundleId, DropReason, TransactionId};
 use alloy_primitives::TxHash;
-use alloy_rpc_types_mev::EthSendBundle;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_s3::Client as S3Client;
@@ -11,6 +10,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Debug;
+use tips_core::Bundle;
 use tracing::info;
 
 #[derive(Debug)]
@@ -39,12 +39,12 @@ pub enum BundleHistoryEvent {
     Created {
         key: String,
         timestamp: i64,
-        bundle: EthSendBundle,
+        bundle: Bundle,
     },
     Updated {
         key: String,
         timestamp: i64,
-        bundle: EthSendBundle,
+        bundle: Bundle,
     },
     Cancelled {
         key: String,
@@ -376,11 +376,11 @@ mod tests {
     use crate::reader::Event;
     use crate::types::{BundleEvent, DropReason};
     use alloy_primitives::TxHash;
-    use alloy_rpc_types_mev::EthSendBundle;
+    use tips_core::Bundle;
     use uuid::Uuid;
 
-    fn create_test_bundle() -> EthSendBundle {
-        EthSendBundle::default()
+    fn create_test_bundle() -> Bundle {
+        Bundle::default()
     }
 
     fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
@@ -485,7 +485,7 @@ mod tests {
             block_number: 12345,
             block_hash: TxHash::from([1u8; 32]),
         };
-        let event = create_test_event("test-key-6", 1234567890, bundle_event);
+        let event = create_test_event("test-key-5", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
@@ -493,7 +493,7 @@ mod tests {
             bundle_id,
             reason: DropReason::TimedOut,
         };
-        let event = create_test_event("test-key-7", 1234567890, bundle_event);
+        let event = create_test_event("test-key-6", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history, &event);
         assert!(result.is_some());
     }

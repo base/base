@@ -1,4 +1,3 @@
-use alloy_rpc_types_mev::EthSendBundle;
 use std::time::Duration;
 use tips_audit::{
     KafkaMempoolArchiver, KafkaMempoolReader,
@@ -6,6 +5,7 @@ use tips_audit::{
     storage::{BundleEventS3Reader, S3EventReaderWriter},
     types::{BundleEvent, DropReason},
 };
+use tips_core::Bundle;
 use uuid::Uuid;
 mod common;
 use common::TestHarness;
@@ -23,7 +23,7 @@ async fn test_kafka_publisher_s3_archiver_integration()
     let test_events = vec![
         BundleEvent::Created {
             bundle_id: test_bundle_id,
-            bundle: EthSendBundle::default(),
+            bundle: Bundle::default(),
         },
         BundleEvent::Dropped {
             bundle_id: test_bundle_id,

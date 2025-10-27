@@ -2,7 +2,6 @@ use alloy_consensus::transaction::Recovered;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::{B256, Bytes};
 use alloy_provider::{Provider, RootProvider, network::eip2718::Decodable2718};
-use alloy_rpc_types_mev::{EthBundleHash, EthCancelBundle, EthSendBundle};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -11,7 +10,7 @@ use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use reth_rpc_eth_types::EthApiError;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tips_common::BundleWithMetadata;
+use tips_core::{Bundle, BundleHash, BundleWithMetadata, CancelBundle};
 use tracing::{info, warn};
 
 use crate::queue::QueuePublisher;
@@ -21,11 +20,11 @@ use crate::validation::{AccountInfoLookup, L1BlockInfoLookup, validate_bundle, v
 pub trait IngressApi {
     /// `eth_sendBundle` can be used to send your bundles to the builder.
     #[method(name = "sendBundle")]
-    async fn send_bundle(&self, bundle: EthSendBundle) -> RpcResult<EthBundleHash>;
+    async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
 
     /// `eth_cancelBundle` is used to prevent a submitted bundle from being included on-chain.
     #[method(name = "cancelBundle")]
-    async fn cancel_bundle(&self, request: EthCancelBundle) -> RpcResult<()>;
+    async fn cancel_bundle(&self, request: CancelBundle) -> RpcResult<()>;
 
     /// Handler for: `eth_sendRawTransaction`
     #[method(name = "sendRawTransaction")]
@@ -60,14 +59,13 @@ impl<Queue> IngressApiServer for IngressService<Queue>
 where
     Queue: QueuePublisher + Sync + Send + 'static,
 {
-    async fn send_bundle(&self, bundle: EthSendBundle) -> RpcResult<EthBundleHash> {
-        let bundle_with_metadata = self.validate_bundle(&bundle).await?;
+    async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
+        let bundle_with_metadata = self.validate_bundle(bundle).await?;
 
-        // Queue the bundle
-        let bundle_hash = bundle.bundle_hash();
+        let bundle_hash = bundle_with_metadata.bundle_hash();
         if let Err(e) = self
             .queue
-            .publish(&bundle_with_metadata, &bundle_hash)
+            .publish(bundle_with_metadata.bundle(), &bundle_hash)
             .await
         {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
@@ -77,15 +75,13 @@ where
         info!(
             message = "queued bundle",
             bundle_hash = %bundle_hash,
-            tx_count = bundle.txs.len(),
+            tx_count = bundle_with_metadata.transactions().len(),
         );
 
-        Ok(EthBundleHash {
-            bundle_hash: bundle.bundle_hash(),
-        })
+        Ok(BundleHash { bundle_hash })
     }
 
-    async fn cancel_bundle(&self, _request: EthCancelBundle) -> RpcResult<()> {
+    async fn cancel_bundle(&self, _request: CancelBundle) -> RpcResult<()> {
         warn!(
             message = "TODO: implement cancel_bundle",
             method = "cancel_bundle"
@@ -102,22 +98,19 @@ where
             .as_secs()
             + self.send_transaction_default_lifetime_seconds;
 
-        let bundle = EthSendBundle {
+        let bundle = Bundle {
             txs: vec![data.clone()],
-            block_number: 0,
-            min_timestamp: None,
             max_timestamp: Some(expiry_timestamp),
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
         };
 
-        // queue the bundle
-        let bundle_with_metadata = BundleWithMetadata::new(&bundle)
+        let bundle_with_metadata = BundleWithMetadata::load(bundle)
             .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
-        let bundle_hash = bundle.bundle_hash();
+        let bundle_hash = bundle_with_metadata.bundle_hash();
         if let Err(e) = self
             .queue
-            .publish(&bundle_with_metadata, &bundle_hash)
+            .publish(bundle_with_metadata.bundle(), &bundle_hash)
             .await
         {
             warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);
@@ -175,7 +168,7 @@ where
         Ok(transaction)
     }
 
-    async fn validate_bundle(&self, bundle: &EthSendBundle) -> RpcResult<BundleWithMetadata> {
+    async fn validate_bundle(&self, bundle: Bundle) -> RpcResult<BundleWithMetadata> {
         if bundle.txs.is_empty() {
             return Err(
                 EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
@@ -188,10 +181,11 @@ where
             let transaction = self.validate_tx(tx_data).await?;
             total_gas = total_gas.saturating_add(transaction.gas_limit());
         }
-        validate_bundle(bundle, total_gas)?;
+        validate_bundle(&bundle, total_gas)?;
 
-        let bundle_with_metadata = BundleWithMetadata::new(bundle)
+        let bundle_with_metadata = BundleWithMetadata::load(bundle)
             .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+
         Ok(bundle_with_metadata)
     }
 }

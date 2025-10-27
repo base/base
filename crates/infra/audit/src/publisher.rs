@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use serde_json;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 #[async_trait]
 pub trait BundleEventPublisher: Send + Sync {
@@ -66,6 +66,40 @@ impl BundleEventPublisher for KafkaBundleEventPublisher {
     async fn publish_all(&self, events: Vec<BundleEvent>) -> Result<()> {
         for event in events {
             self.send_event(&event).await?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct LoggingBundleEventPublisher;
+
+impl LoggingBundleEventPublisher {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for LoggingBundleEventPublisher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl BundleEventPublisher for LoggingBundleEventPublisher {
+    async fn publish(&self, event: BundleEvent) -> Result<()> {
+        info!(
+            bundle_id = %event.bundle_id(),
+            event = ?event,
+            "Received bundle event"
+        );
+        Ok(())
+    }
+
+    async fn publish_all(&self, events: Vec<BundleEvent>) -> Result<()> {
+        for event in events {
+            self.publish(event).await?;
         }
         Ok(())
     }

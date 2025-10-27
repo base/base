@@ -9,11 +9,11 @@ edition.workspace = true
 
 [[bin]]
 name = "tips-ingress-rpc"
-path = "src/main.rs"
+path = "src/bin/main.rs"
 
 [dependencies]
+tips-core.workspace = true
 jsonrpsee.workspace = true
-alloy-rpc-types-mev.workspace = true
 alloy-primitives.workspace = true
 op-alloy-network.workspace = true
 alloy-provider.workspace = true
@@ -35,4 +35,3 @@ op-revm.workspace = true
 revm-context-interface.workspace = true
 alloy-signer-local.workspace = true
 reth-optimism-evm.workspace = true
-tips-common.workspace = true

@@ -12,6 +12,7 @@ name = "tips-audit"
 path = "src/bin/main.rs"
 
 [dependencies]
+tips-core = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -23,7 +24,6 @@ async-trait = { workspace = true }
 alloy-primitives = { workspace = true }
 alloy-consensus = { workspace = true }
 alloy-provider = { workspace = true }
-alloy-rpc-types-mev = { workspace = true }
 op-alloy-consensus = { workspace = true }
 clap = { workspace = true }
 dotenvy = { workspace = true }

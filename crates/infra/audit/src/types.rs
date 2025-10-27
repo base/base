@@ -1,10 +1,10 @@
 use alloy_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_provider::network::eip2718::Decodable2718;
-use alloy_rpc_types_mev::EthSendBundle;
 use bytes::Bytes;
 use op_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
+use tips_core::Bundle;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -19,13 +19,7 @@ pub type BundleId = Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DropReason {
     TimedOut,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Bundle {
-    pub id: BundleId,
-    pub transactions: Vec<Transaction>,
-    pub metadata: serde_json::Value,
+    Reverted,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,11 +33,11 @@ pub struct Transaction {
 pub enum BundleEvent {
     Created {
         bundle_id: BundleId,
-        bundle: EthSendBundle,
+        bundle: Bundle,
     },
     Updated {
         bundle_id: BundleId,
-        bundle: EthSendBundle,
+        bundle: Bundle,
     },
     Cancelled {
         bundle_id: BundleId,

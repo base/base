@@ -3,14 +3,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use tips_common::BundleWithMetadata;
+use tips_core::Bundle;
 use tokio::time::Duration;
 use tracing::{error, info};
 
 /// A queue to buffer transactions
 #[async_trait]
 pub trait QueuePublisher: Send + Sync {
-    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()>;
+    async fn publish(&self, bundle: &Bundle, bundle_hash: &B256) -> Result<()>;
 }
 
 /// A queue to buffer transactions
@@ -27,7 +27,7 @@ impl KafkaQueuePublisher {
 
 #[async_trait]
 impl QueuePublisher for KafkaQueuePublisher {
-    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()> {
+    async fn publish(&self, bundle: &Bundle, bundle_hash: &B256) -> Result<()> {
         let key = bundle_hash.to_string();
         let payload = serde_json::to_vec(&bundle)?;
 
@@ -74,12 +74,12 @@ impl QueuePublisher for KafkaQueuePublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_rpc_types_mev::EthSendBundle;
     use rdkafka::config::ClientConfig;
+    use tips_core::BundleWithMetadata;
     use tokio::time::{Duration, Instant};
 
-    fn create_test_bundle() -> BundleWithMetadata {
-        BundleWithMetadata::new(&EthSendBundle::default()).unwrap()
+    fn create_test_bundle() -> Bundle {
+        Bundle::default()
     }
 
     #[tokio::test]
@@ -93,7 +93,8 @@ mod tests {
 
         let publisher = KafkaQueuePublisher::new(producer, "tips-ingress-rpc".to_string());
         let bundle = create_test_bundle();
-        let bundle_hash = bundle.bundle.bundle_hash();
+        let bundle_with_metadata = BundleWithMetadata::load(bundle.clone()).unwrap();
+        let bundle_hash = bundle_with_metadata.bundle_hash();
 
         let start = Instant::now();
         let result = publisher.publish(&bundle, &bundle_hash).await;

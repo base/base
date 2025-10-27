@@ -6,15 +6,11 @@ use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use std::fs;
 use std::net::IpAddr;
+use tips_ingress_rpc::queue::KafkaQueuePublisher;
+use tips_ingress_rpc::service::{IngressApiServer, IngressService};
 use tracing::{info, warn};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use url::Url;
-
-mod queue;
-mod service;
-mod validation;
-use queue::KafkaQueuePublisher;
-use service::{IngressApiServer, IngressService};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]

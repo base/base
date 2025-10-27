@@ -1,0 +1,27 @@
+[package]
+name = "tips-core"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[features]
+test-utils = ["dep:alloy-signer-local", "dep:op-alloy-rpc-types"]
+
+[dependencies]
+uuid.workspace = true
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+alloy-provider.workspace = true
+op-alloy-consensus.workspace = true
+serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
+alloy-serde = { version = "1.0.41", default-features = false }
+alloy-signer-local = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
+tracing.workspace = true
+
+[dev-dependencies]
+alloy-signer-local.workspace = true
+op-alloy-rpc-types.workspace = true

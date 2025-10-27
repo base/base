@@ -2,7 +2,6 @@ use alloy_consensus::private::alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_consensus::{Transaction, Typed2718, constants::KECCAK_EMPTY, transaction::Recovered};
 use alloy_primitives::{Address, B256, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types_mev::EthSendBundle;
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
 use op_alloy_consensus::interop::CROSS_L2_INBOX_ADDRESS;
@@ -11,6 +10,7 @@ use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError, SignError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tips_core::Bundle;
 use tracing::warn;
 
 // TODO: make this configurable
@@ -166,7 +166,7 @@ pub async fn validate_tx<T: Transaction>(
 /// Helper function to validate propeties of a bundle. A bundle is valid if it satisfies the following criteria:
 /// - The bundle's max_timestamp is not more than 1 hour in the future
 /// - The bundle's gas limit is not greater than the maximum allowed gas limit
-pub fn validate_bundle(bundle: &EthSendBundle, bundle_gas: u64) -> RpcResult<()> {
+pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64) -> RpcResult<()> {
     // Don't allow bundles to be submitted over 1 hour into the future
     // TODO: make the window configurable
     let valid_timestamp_window = SystemTime::now()
@@ -499,7 +499,7 @@ mod tests {
             .unwrap()
             .as_secs();
         let too_far_in_the_future = current_time + 3601;
-        let bundle = EthSendBundle {
+        let bundle = Bundle {
             txs: vec![],
             max_timestamp: Some(too_far_in_the_future),
             ..Default::default()
@@ -545,7 +545,7 @@ mod tests {
             encoded_txs.push(Bytes::from(encoded));
         }
 
-        let bundle = EthSendBundle {
+        let bundle = Bundle {
             txs: encoded_txs,
             block_number: 0,
             min_timestamp: None,

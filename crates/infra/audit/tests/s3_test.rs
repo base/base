@@ -1,11 +1,11 @@
 use alloy_primitives::{Bytes, TxHash, b256, bytes};
-use alloy_rpc_types_mev::EthSendBundle;
 use std::sync::Arc;
 use tips_audit::{
     reader::Event,
     storage::{BundleEventS3Reader, EventWriter, S3EventReaderWriter},
     types::BundleEvent,
 };
+use tips_core::Bundle;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
@@ -19,8 +19,8 @@ const TXN_DATA: Bytes = bytes!(
 const TXN_HASH: TxHash =
     b256!("0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e");
 
-fn create_test_bundle() -> EthSendBundle {
-    EthSendBundle {
+fn create_test_bundle() -> Bundle {
+    Bundle {
         txs: vec![TXN_DATA.clone()],
         ..Default::default()
     }
