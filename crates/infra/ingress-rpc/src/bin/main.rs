@@ -4,12 +4,12 @@ use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
-use std::fs;
 use std::net::IpAddr;
+use tips_core::kafka::load_kafka_config_from_file;
+use tips_core::logger::init_logger;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
 use tips_ingress_rpc::service::{IngressApiServer, IngressService};
-use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing::info;
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -61,28 +61,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::parse();
 
-    let log_level = match config.log_level.to_lowercase().as_str() {
-        "trace" => tracing::Level::TRACE,
-        "debug" => tracing::Level::DEBUG,
-        "info" => tracing::Level::INFO,
-        "warn" => tracing::Level::WARN,
-        "error" => tracing::Level::ERROR,
-        _ => {
-            warn!(
-                "Invalid log level '{}', defaulting to 'info'",
-                config.log_level
-            );
-            tracing::Level::INFO
-        }
-    };
+    init_logger(&config.log_level);
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level.to_string())),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
     info!(
         message = "Starting ingress service",
         address = %config.address,
@@ -95,7 +75,9 @@ async fn main() -> anyhow::Result<()> {
         .network::<Optimism>()
         .connect_http(config.mempool_url);
 
-    let client_config = load_kafka_config_from_file(&config.ingress_kafka_properties)?;
+    let client_config = ClientConfig::from_iter(load_kafka_config_from_file(
+        &config.ingress_kafka_properties,
+    )?);
 
     let queue_producer: FutureProducer = client_config.create()?;
 
@@ -120,23 +102,4 @@ async fn main() -> anyhow::Result<()> {
 
     handle.stopped().await;
     Ok(())
-}
-
-fn load_kafka_config_from_file(properties_file_path: &str) -> anyhow::Result<ClientConfig> {
-    let kafka_properties = fs::read_to_string(properties_file_path)?;
-    info!("Kafka properties:\n{}", kafka_properties);
-
-    let mut client_config = ClientConfig::new();
-
-    for line in kafka_properties.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            client_config.set(key.trim(), value.trim());
-        }
-    }
-
-    Ok(client_config)
 }

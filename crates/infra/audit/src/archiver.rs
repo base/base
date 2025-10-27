@@ -5,7 +5,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
 
-pub struct KafkaMempoolArchiver<R, W>
+pub struct KafkaAuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter,
@@ -14,7 +14,7 @@ where
     writer: W,
 }
 
-impl<R, W> KafkaMempoolArchiver<R, W>
+impl<R, W> KafkaAuditArchiver<R, W>
 where
     R: EventReader,
     W: EventWriter,

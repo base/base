@@ -17,6 +17,8 @@ tracing.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+rdkafka.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tips-core = { workspace = true, features = ["test-utils"] }
@@ -26,3 +28,6 @@ alloy-signer = "1.0.41"
 alloy-signer-local = "1.0.41"
 op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
+testcontainers.workspace = true
+testcontainers-modules.workspace = true
+serde.workspace = true

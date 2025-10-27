@@ -7,34 +7,16 @@ use rdkafka::{
     consumer::{Consumer, StreamConsumer},
     message::Message,
 };
-use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tips_core::kafka::load_kafka_config_from_file;
 use tokio::time::sleep;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 pub fn create_kafka_consumer(kafka_properties_file: &str) -> Result<StreamConsumer> {
-    let client_config = load_kafka_config_from_file(kafka_properties_file)?;
+    let client_config =
+        ClientConfig::from_iter(load_kafka_config_from_file(kafka_properties_file)?);
     let consumer: StreamConsumer = client_config.create()?;
     Ok(consumer)
-}
-
-fn load_kafka_config_from_file(properties_file_path: &str) -> Result<ClientConfig> {
-    let kafka_properties = fs::read_to_string(properties_file_path)?;
-    info!("Kafka properties:\n{}", kafka_properties);
-
-    let mut client_config = ClientConfig::new();
-
-    for line in kafka_properties.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            client_config.set(key.trim(), value.trim());
-        }
-    }
-
-    Ok(client_config)
 }
 
 pub fn assign_topic_partition(consumer: &StreamConsumer, topic: &str) -> Result<()> {
@@ -57,14 +39,14 @@ pub trait EventReader {
     async fn commit(&mut self) -> Result<()>;
 }
 
-pub struct KafkaMempoolReader {
+pub struct KafkaAuditLogReader {
     consumer: StreamConsumer,
     topic: String,
     last_message_offset: Option<i64>,
     last_message_partition: Option<i32>,
 }
 
-impl KafkaMempoolReader {
+impl KafkaAuditLogReader {
     pub fn new(consumer: StreamConsumer, topic: String) -> Result<Self> {
         consumer.subscribe(&[&topic])?;
         Ok(Self {
@@ -77,7 +59,7 @@ impl KafkaMempoolReader {
 }
 
 #[async_trait]
-impl EventReader for KafkaMempoolReader {
+impl EventReader for KafkaAuditLogReader {
     async fn read_event(&mut self) -> Result<Event> {
         match self.consumer.recv().await {
             Ok(message) => {
@@ -143,7 +125,7 @@ impl EventReader for KafkaMempoolReader {
     }
 }
 
-impl KafkaMempoolReader {
+impl KafkaAuditLogReader {
     pub fn topic(&self) -> &str {
         &self.topic
     }

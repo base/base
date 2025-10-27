@@ -21,6 +21,7 @@ alloy-serde = { version = "1.0.41", default-features = false }
 alloy-signer-local = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [dev-dependencies]
 alloy-signer-local.workspace = true

@@ -5,10 +5,10 @@ use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
 use tips_audit::{
-    KafkaMempoolArchiver, KafkaMempoolReader, S3EventReaderWriter, create_kafka_consumer,
+    KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
-use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tips_core::logger::init_logger;
+use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum S3ConfigType {
@@ -53,28 +53,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let log_level = match args.log_level.to_lowercase().as_str() {
-        "trace" => tracing::Level::TRACE,
-        "debug" => tracing::Level::DEBUG,
-        "info" => tracing::Level::INFO,
-        "warn" => tracing::Level::WARN,
-        "error" => tracing::Level::ERROR,
-        _ => {
-            warn!(
-                "Invalid log level '{}', defaulting to 'info'",
-                args.log_level
-            );
-            tracing::Level::INFO
-        }
-    };
-
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(log_level.to_string())),
-        )
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    init_logger(&args.log_level);
 
     info!(
         kafka_properties_file = %args.kafka_properties_file,
@@ -86,13 +65,13 @@ async fn main() -> Result<()> {
     let consumer = create_kafka_consumer(&args.kafka_properties_file)?;
     consumer.subscribe(&[&args.kafka_topic])?;
 
-    let reader = KafkaMempoolReader::new(consumer, args.kafka_topic.clone())?;
+    let reader = KafkaAuditLogReader::new(consumer, args.kafka_topic.clone())?;
 
     let s3_client = create_s3_client(&args).await?;
     let s3_bucket = args.s3_bucket.clone();
     let writer = S3EventReaderWriter::new(s3_client, s3_bucket);
 
-    let mut archiver = KafkaMempoolArchiver::new(reader, writer);
+    let mut archiver = KafkaAuditArchiver::new(reader, writer);
 
     info!("Audit archiver initialized, starting main loop");
 

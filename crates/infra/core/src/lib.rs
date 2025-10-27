@@ -1,3 +1,5 @@
+pub mod kafka;
+pub mod logger;
 pub mod types;
 
 #[cfg(any(test, feature = "test-utils"))]
