@@ -164,16 +164,35 @@ where
             decoded_txs.push(tx);
         }
 
-        // Meter bundle using utility function
-        let (results, total_gas_used, total_gas_fees, bundle_hash) =
-            meter_bundle(&self.provider, decoded_txs, &header, request.timestamp).map_err(|e| {
-                error!(error = %e, "Bundle metering failed");
+        // Get state provider for the block
+        let state_provider = self
+            .provider
+            .state_by_block_hash(header.hash())
+            .map_err(|e| {
+                error!(error = %e, "Failed to get state provider");
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Bundle metering failed: {}", e),
+                    format!("Failed to get state provider: {}", e),
                     None::<()>,
                 )
             })?;
+
+        // Meter bundle using utility function
+        let (results, total_gas_used, total_gas_fees, bundle_hash) = meter_bundle(
+            state_provider,
+            self.provider.chain_spec().clone(),
+            decoded_txs,
+            &header,
+            request.timestamp,
+        )
+        .map_err(|e| {
+            error!(error = %e, "Bundle metering failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Bundle metering failed: {}", e),
+                None::<()>,
+            )
+        })?;
 
         let total_execution_time = start_time.elapsed().as_micros();
 

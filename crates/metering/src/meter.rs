@@ -1,13 +1,13 @@
-use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Header, Transaction as _};
+use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
-use reth::primitives::SealedHeader;
+use reth_primitives_traits::SealedHeader;
 use reth::revm::db::State;
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_provider::{ChainSpecProvider, StateProviderFactory};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::TransactionResult;
@@ -16,7 +16,7 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a provider, decoded transactions, block header, and optional timestamp,
+/// Takes a state provider, chain spec, decoded transactions, block header, and optional timestamp,
 /// and executes them in sequence to measure gas usage and execution time.
 ///
 /// Returns a tuple of:
@@ -24,22 +24,21 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 /// - Total gas used
 /// - Total gas fees paid
 /// - Bundle hash
-pub fn meter_bundle<Provider>(
-    provider: &Provider,
+pub fn meter_bundle<SP>(
+    state_provider: SP,
+    chain_spec: Arc<OpChainSpec>,
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
-    header: &SealedHeader<Header>,
+    header: &SealedHeader,
     timestamp: Option<u64>,
 ) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256)>
 where
-    Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec>,
+    SP: reth_provider::StateProvider,
 {
     // Calculate bundle hash
     let tx_hashes: Vec<B256> = decoded_txs.iter().map(|tx| tx.tx_hash()).collect();
     let bundle_hash = calculate_bundle_hash(&tx_hashes);
 
     // Create state database
-    let state_provider = provider.state_by_block_hash(header.hash())?;
-
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
     let mut db = State::builder()
         .with_database(state_db)
@@ -63,7 +62,7 @@ where
     let mut total_gas_fees = U256::ZERO;
 
     {
-        let evm_config = OpEvmConfig::optimism(provider.chain_spec());
+        let evm_config = OpEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
 
         builder.apply_pre_execution_changes()?;
@@ -121,4 +120,3 @@ fn calculate_bundle_hash(tx_hashes: &[B256]) -> B256 {
     }
     keccak256(&combined)
 }
-

@@ -57,6 +57,7 @@ reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "
 reth-provider = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-tracing = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
+reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }
