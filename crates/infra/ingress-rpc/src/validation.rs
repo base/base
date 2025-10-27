@@ -9,12 +9,12 @@ use op_alloy_network::Optimism;
 use op_revm::{OpSpecId, l1block::L1BlockInfo};
 use reth_optimism_evm::extract_l1_info_from_tx;
 use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError, SignError};
+use std::collections::HashSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tips_core::Bundle;
 use tracing::warn;
 
-// TODO: make this configurable
-const MAX_BUNDLE_GAS: u64 = 30_000_000;
+const MAX_BUNDLE_GAS: u64 = 25_000_000;
 
 /// Account info for a given address
 pub struct AccountInfo {
@@ -166,7 +166,10 @@ pub async fn validate_tx<T: Transaction>(
 /// Helper function to validate propeties of a bundle. A bundle is valid if it satisfies the following criteria:
 /// - The bundle's max_timestamp is not more than 1 hour in the future
 /// - The bundle's gas limit is not greater than the maximum allowed gas limit
-pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64) -> RpcResult<()> {
+/// - The bundle can only contain 3 transactions at once
+/// - Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty
+/// - revert protection is not supported, all transaction hashes must be in `reverting_tx_hashes`
+pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64, tx_hashes: Vec<B256>) -> RpcResult<()> {
     // Don't allow bundles to be submitted over 1 hour into the future
     // TODO: make the window configurable
     let valid_timestamp_window = SystemTime::now()
@@ -189,6 +192,33 @@ pub fn validate_bundle(bundle: &Bundle, bundle_gas: u64) -> RpcResult<()> {
             EthApiError::InvalidParams("Bundle gas limit exceeds maximum allowed".into())
                 .into_rpc_err(),
         );
+    }
+
+    // Can only provide 3 transactions at once
+    if bundle.txs.len() > 3 {
+        return Err(
+            EthApiError::InvalidParams("Bundle can only contain 3 transactions".into())
+                .into_rpc_err(),
+        );
+    }
+
+    // Partial transaction dropping is not supported, `dropping_tx_hashes` must be empty
+    if !bundle.dropping_tx_hashes.is_empty() {
+        return Err(EthApiError::InvalidParams(
+            "Partial transaction dropping is not supported".into(),
+        )
+        .into_rpc_err());
+    }
+
+    // revert protection: all transaction hashes must be in `reverting_tx_hashes`
+    let reverting_tx_hashes_set: HashSet<_> = bundle.reverting_tx_hashes.iter().collect();
+    let tx_hashes_set: HashSet<_> = tx_hashes.iter().collect();
+    if reverting_tx_hashes_set != tx_hashes_set {
+        return Err(EthApiError::InvalidParams(
+            "Revert protection is not supported. reverting_tx_hashes must include all hashes"
+                .into(),
+        )
+        .into_rpc_err());
     }
 
     Ok(())
@@ -505,7 +535,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            validate_bundle(&bundle, 0),
+            validate_bundle(&bundle, 0, vec![]),
             Err(EthApiError::InvalidParams(
                 "Bundle cannot be more than 1 hour in the future".into()
             )
@@ -517,9 +547,10 @@ mod tests {
     async fn test_err_bundle_max_gas_limit_too_high() {
         let signer = PrivateKeySigner::random();
         let mut encoded_txs = vec![];
+        let mut tx_hashes = vec![];
 
-        // Create transactions that collectively exceed MAX_BUNDLE_GAS (30M)
-        // Each transaction uses 4M gas, so 8 transactions = 32M gas > 30M limit
+        // Create transactions that collectively exceed MAX_BUNDLE_GAS (25M)
+        // Each transaction uses 4M gas, so 8 transactions = 32M gas > 25M limit
         let gas = 4_000_000;
         let mut total_gas = 0u64;
         for _ in 0..8 {
@@ -538,6 +569,8 @@ mod tests {
 
             let signature = signer.sign_transaction_sync(&mut tx).unwrap();
             let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
+            tx_hashes.push(tx_hash);
 
             // Encode the transaction
             let mut encoded = vec![];
@@ -555,11 +588,129 @@ mod tests {
         };
 
         // Test should fail due to exceeding gas limit
-        let result = validate_bundle(&bundle, total_gas);
+        let result = validate_bundle(&bundle, total_gas, tx_hashes);
         assert!(result.is_err());
         if let Err(e) = result {
             let error_message = format!("{e:?}");
             assert!(error_message.contains("Bundle gas limit exceeds maximum allowed"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_err_bundle_too_many_transactions() {
+        let signer = PrivateKeySigner::random();
+        let mut encoded_txs = vec![];
+        let mut tx_hashes = vec![];
+
+        let gas = 4_000_000;
+        let mut total_gas = 0u64;
+        for _ in 0..4 {
+            let mut tx = TxEip1559 {
+                chain_id: 1,
+                nonce: 0,
+                gas_limit: gas,
+                max_fee_per_gas: 200000u128,
+                max_priority_fee_per_gas: 100000u128,
+                to: Address::random().into(),
+                value: U256::from(1000000u128),
+                access_list: Default::default(),
+                input: bytes!("").clone(),
+            };
+            total_gas = total_gas.saturating_add(gas);
+
+            let signature = signer.sign_transaction_sync(&mut tx).unwrap();
+            let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
+            tx_hashes.push(tx_hash);
+
+            // Encode the transaction
+            let mut encoded = vec![];
+            envelope.encode_2718(&mut encoded);
+            encoded_txs.push(Bytes::from(encoded));
+        }
+
+        let bundle = Bundle {
+            txs: encoded_txs,
+            block_number: 0,
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: vec![],
+            ..Default::default()
+        };
+
+        // Test should fail due to exceeding gas limit
+        let result = validate_bundle(&bundle, total_gas, tx_hashes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            let error_message = format!("{e:?}");
+            assert!(error_message.contains("Bundle can only contain 3 transactions"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_err_bundle_partial_transaction_dropping_not_supported() {
+        let bundle = Bundle {
+            txs: vec![],
+            dropping_tx_hashes: vec![B256::random()],
+            ..Default::default()
+        };
+        assert_eq!(
+            validate_bundle(&bundle, 0, vec![]),
+            Err(
+                EthApiError::InvalidParams("Partial transaction dropping is not supported".into())
+                    .into_rpc_err()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_err_bundle_not_all_tx_hashes_in_reverting_tx_hashes() {
+        let signer = PrivateKeySigner::random();
+        let mut encoded_txs = vec![];
+        let mut tx_hashes = vec![];
+
+        let gas = 4_000_000;
+        let mut total_gas = 0u64;
+        for _ in 0..4 {
+            let mut tx = TxEip1559 {
+                chain_id: 1,
+                nonce: 0,
+                gas_limit: gas,
+                max_fee_per_gas: 200000u128,
+                max_priority_fee_per_gas: 100000u128,
+                to: Address::random().into(),
+                value: U256::from(1000000u128),
+                access_list: Default::default(),
+                input: bytes!("").clone(),
+            };
+            total_gas = total_gas.saturating_add(gas);
+
+            let signature = signer.sign_transaction_sync(&mut tx).unwrap();
+            let envelope = OpTxEnvelope::Eip1559(tx.into_signed(signature));
+            let tx_hash = envelope.clone().try_into_recovered().unwrap().tx_hash();
+            tx_hashes.push(tx_hash);
+
+            // Encode the transaction
+            let mut encoded = vec![];
+            envelope.encode_2718(&mut encoded);
+            encoded_txs.push(Bytes::from(encoded));
+        }
+
+        let bundle = Bundle {
+            txs: encoded_txs,
+            block_number: 0,
+            min_timestamp: None,
+            max_timestamp: None,
+            reverting_tx_hashes: tx_hashes[..2].to_vec(),
+            ..Default::default()
+        };
+
+        // Test should fail due to exceeding gas limit
+        let result = validate_bundle(&bundle, total_gas, tx_hashes);
+        assert!(result.is_err());
+        if let Err(e) = result {
+            let error_message = format!("{e:?}");
+            assert!(error_message.contains("Bundle can only contain 3 transactions"));
         }
     }
 }

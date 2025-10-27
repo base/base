@@ -19,7 +19,6 @@ op-alloy-network.workspace = true
 alloy-provider.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 url.workspace = true
