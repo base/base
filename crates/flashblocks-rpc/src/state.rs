@@ -426,7 +426,6 @@ where
             None => StateOverridesBuilder::default(),
         };
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let nested_db = db.nest();
             let base = flashblocks
                 .first()
                 .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
@@ -506,7 +505,7 @@ where
             };
 
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
-            let mut evm = evm_config.evm_with_env(nested_db, evm_env);
+            let mut evm = evm_config.evm_with_env(db, evm_env);
 
             let mut gas_used = 0;
             let mut next_log_index = 0;
@@ -644,7 +643,7 @@ where
                 pending_blocks_builder.with_account_balance(address, balance);
             }
 
-            db = evm.into_db().flatten();
+            db = evm.into_db();
             last_block_header = block.header.clone();
         }
 
