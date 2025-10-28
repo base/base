@@ -7,30 +7,44 @@ use reth::revm::db::State;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_primitives::OpPrimitives;
 use reth_primitives_traits::SealedHeader;
+use reth_provider::ExecutionOutcome;
 use tips_core::types::{BundleExtensions, BundleTxs, ParsedBundle};
 
 use crate::TransactionResult;
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
+/// Output from metering a bundle of transactions
+#[derive(Debug)]
+pub struct MeterBundleOutput {
+    /// Transaction results with individual metrics
+    pub results: Vec<TransactionResult>,
+    /// Total gas used by all transactions
+    pub total_gas_used: u64,
+    /// Total gas fees paid by all transactions
+    pub total_gas_fees: U256,
+    /// Bundle hash
+    pub bundle_hash: B256,
+    /// Total execution time in microseconds (includes state root calculation)
+    pub total_execution_time_us: u128,
+    /// State root calculation time in microseconds
+    pub state_root_time_us: u128,
+}
+
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, decoded transactions, block header, and bundle metadata,
-/// and executes transactions in sequence to measure gas usage and execution time.
+/// Takes a state provider, chain spec, parsed bundle, and block header, then executes transactions
+/// in sequence to measure gas usage and execution time.
 ///
-/// Returns a tuple of:
-/// - Vector of transaction results
-/// - Total gas used
-/// - Total gas fees paid
-/// - Bundle hash
-/// - Total execution time in microseconds
+/// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
-) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
+) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
 {
@@ -85,7 +99,7 @@ where
 
             results.push(TransactionResult {
                 coinbase_diff: gas_fees,
-                eth_sent_to_coinbase: U256::from(0),
+                eth_sent_to_coinbase: U256::ZERO,
                 from_address: from,
                 gas_fees,
                 gas_price: U256::from(gas_price),
@@ -97,7 +111,31 @@ where
             });
         }
     }
-    let total_execution_time = execution_start.elapsed().as_micros();
 
-    Ok((results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time))
+    // Calculate state root and measure its calculation time
+    let block_number = header.number() + 1;
+    let bundle_update = db.take_bundle();
+    let execution_outcome: ExecutionOutcome<OpPrimitives> = ExecutionOutcome::new(
+        bundle_update,
+        Vec::new().into(),
+        block_number,
+        Vec::new(),
+    );
+
+    let state_provider = db.database.as_ref();
+    let state_root_start = Instant::now();
+    let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+    let _ = state_provider.state_root_with_updates(hashed_state);
+    let state_root_time_us = state_root_start.elapsed().as_micros();
+
+    let total_execution_time_us = execution_start.elapsed().as_micros();
+
+    Ok(MeterBundleOutput {
+        results,
+        total_gas_used,
+        total_gas_fees,
+        bundle_hash,
+        total_execution_time_us,
+        state_root_time_us,
+    })
 }
