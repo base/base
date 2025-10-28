@@ -5,6 +5,7 @@ use base_reth_flashblocks_rpc::{
     state::FlashblocksState,
     subscription::FlashblocksSubscriber,
 };
+use base_reth_flashblocks_rpc::pubsub::{BasePubSub, BasePubSubApiServer};
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
@@ -129,9 +130,13 @@ impl BaseNodeLauncher {
                     let api_ext = EthApiExt::new(
                         ctx.registry.eth_api().clone(),
                         ctx.registry.eth_handlers().filter.clone(),
-                        fb,
+                        fb.clone(),
                     );
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                    // Register the base_subscribe subscription endpoint
+                    let base_pubsub = BasePubSub::new(fb);
+                    ctx.modules.merge_configured(base_pubsub.into_rpc())?;
                 } else {
                     info!(message = "flashblocks integration is disabled");
                 }
