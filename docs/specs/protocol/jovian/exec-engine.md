@@ -10,6 +10,7 @@
   - [Rationale](#rationale)
 - [DA Footprint Block Limit](#da-footprint-block-limit)
   - [Scalar loading](#scalar-loading)
+  - [Receipts](#receipts)
   - [Rationale](#rationale-1)
 - [Operator Fee](#operator-fee)
   - [Fee Formula Update](#fee-formula-update)
@@ -138,6 +139,12 @@ The `daFootprintGasScalar` is loaded in a similar way to the `operatorFeeScalar`
   - using a direct storage-read: big-endian `uint16` in slot `8` at offset `12`.
 
 It takes on a default value as described in the section on [L1 Attributes](./l1-attributes.md).
+
+### Receipts
+
+After Jovian activation, a new field `daFootprintGasScalar` is added to transaction receipts that is populated
+with the DA footprint gas scalar of the transaction's block.
+Furthermore, the `blobGasUsed` receipt field is set to the DA footprint of the transaction.
 
 ### Rationale
 
