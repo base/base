@@ -217,7 +217,7 @@ where
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
-                    debug!(
+                    info!(
                         message = "processing canonical block",
                         block_number = block.number
                     );
@@ -232,7 +232,7 @@ where
                 }
                 StateUpdate::Flashblock(flashblock) => {
                     let start_time = Instant::now();
-                    debug!(
+                    info!(
                         message = "processing flashblock",
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
@@ -249,7 +249,8 @@ where
                                 .record(start_time.elapsed());
                         }
                         Err(e) => {
-                            error!(message = "could not process Flashblock", error = %e);
+                            error!(message = "could not process Flashblock", error = %e, block_number = flashblock.metadata.block_number,
+                            flashblock_index = flashblock.index);
                             self.metrics.block_processing_error.increment(1);
                         }
                     }
@@ -396,8 +397,10 @@ where
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
-            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet.",
-            canonical_block
+            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet. Earliest block number {}. Flashblocks per block: {:?}",
+            canonical_block,
+            earliest_block_number,
+            flashblocks_per_block.keys(),
         ))?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
@@ -426,7 +429,6 @@ where
             None => StateOverridesBuilder::default(),
         };
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let nested_db = db.nest();
             let base = flashblocks
                 .first()
                 .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
@@ -506,7 +508,7 @@ where
             };
 
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
-            let mut evm = evm_config.evm_with_env(nested_db, evm_env);
+            let mut evm = evm_config.evm_with_env(db, evm_env);
 
             let mut gas_used = 0;
             let mut next_log_index = 0;
@@ -617,26 +619,37 @@ where
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
-                    for (addr, acc) in &state {
-                        let state_diff = B256HashMap::<B256>::from_iter(
-                            acc.storage
-                                .iter()
-                                .map(|(&key, slot)| (key.into(), slot.present_value.into())),
-                        );
-                        let acc_override = AccountOverride {
-                            balance: Some(acc.info.balance),
-                            nonce: Some(acc.info.nonce),
-                            code: acc.info.code.clone().map(|code| code.bytes()),
-                            state: None,
-                            state_diff: Some(state_diff),
-                            move_precompile_to: None,
-                        };
-                        state_cache_builder = state_cache_builder.append(*addr, acc_override);
+                    match evm.transact(recovered_transaction) {
+                        Ok(ResultAndState { state, .. }) => {
+                            for (addr, acc) in &state {
+                                let state_diff =
+                                    B256HashMap::<B256>::from_iter(acc.storage.iter().map(
+                                        |(&key, slot)| (key.into(), slot.present_value.into()),
+                                    ));
+                                let acc_override = AccountOverride {
+                                    balance: Some(acc.info.balance),
+                                    nonce: Some(acc.info.nonce),
+                                    code: acc.info.code.clone().map(|code| code.bytes()),
+                                    state: Some(state_diff),
+                                    state_diff: None,
+                                    move_precompile_to: None,
+                                };
+                                state_cache_builder =
+                                    state_cache_builder.append(*addr, acc_override);
+                            }
+                            pending_blocks_builder
+                                .with_transaction_state(transaction.tx_hash(), state.clone());
+                            evm.db_mut().commit(state);
+                        }
+                        Err(e) => {
+                            return Err(eyre!(
+                                "failed to execute transaction: {:?} tx_hash: {:?} sender: {:?}",
+                                e,
+                                transaction.tx_hash(),
+                                sender
+                            ));
+                        }
                     }
-                    pending_blocks_builder
-                        .with_transaction_state(transaction.tx_hash(), state.clone());
-                    evm.db_mut().commit(state);
                 }
             }
 
@@ -644,7 +657,7 @@ where
                 pending_blocks_builder.with_account_balance(address, balance);
             }
 
-            db = evm.into_db().flatten();
+            db = evm.into_db();
             last_block_header = block.header.clone();
         }
 
