@@ -51,6 +51,10 @@ struct Args {
         value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
     )]
     pub enable_transaction_tracing_logs: bool,
+
+    /// Enable metering RPC for transaction bundle simulation
+    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
+    pub enable_metering: bool,
 }
 
 impl Args {
@@ -89,6 +93,7 @@ fn main() {
 
             let flashblocks_enabled = args.flashblocks_enabled();
             let transaction_tracing_enabled = args.enable_transaction_tracing;
+            let metering_enabled = args.enable_metering;
             let op_node = OpNode::new(args.rollup_args.clone());
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
@@ -133,10 +138,11 @@ fn main() {
                     }
                 })
                 .extend_rpc_modules(move |ctx| {
-                    // Register metering RPC
-                    info!(message = "Starting Metering RPC");
-                    let metering_api = MeteringApiImpl::new(ctx.provider().clone());
-                    ctx.modules.merge_configured(metering_api.into_rpc())?;
+                    if metering_enabled {
+                        info!(message = "Starting Metering RPC");
+                        let metering_api = MeteringApiImpl::new(ctx.provider().clone());
+                        ctx.modules.merge_configured(metering_api.into_rpc())?;
+                    }
 
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
