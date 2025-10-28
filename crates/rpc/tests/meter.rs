@@ -299,3 +299,56 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
+    let harness = setup_harness()?;
+
+    let to = Address::random();
+    let signed_tx = TransactionBuilder::default()
+        .signer(harness.signer(User::Alice))
+        .chain_id(harness.chain_spec.chain_id())
+        .nonce(0)
+        .to(to)
+        .value(1_000)
+        .gas_limit(21_000)
+        .max_fee_per_gas(10)
+        .max_priority_fee_per_gas(1)
+        .into_eip1559();
+
+    let tx =
+        OpTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone());
+
+    let envelope = envelope_from_signed(&tx)?;
+
+    let state_provider = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let bundle_with_metadata = create_bundle_with_metadata(vec![envelope.clone()])?;
+
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        vec![envelope],
+        &harness.header,
+        &bundle_with_metadata,
+    )?;
+
+    // Verify invariant: total execution time must include state root time
+    assert!(
+        output.total_execution_time_us >= output.state_root_time_us,
+        "total_execution_time_us ({}) should be >= state_root_time_us ({})",
+        output.total_execution_time_us,
+        output.state_root_time_us
+    );
+
+    // State root time should be non-zero
+    assert!(
+        output.state_root_time_us > 0,
+        "state_root_time_us should be greater than zero"
+    );
+
+    Ok(())
+}
