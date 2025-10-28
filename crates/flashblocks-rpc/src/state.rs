@@ -217,7 +217,7 @@ where
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
-                    info!(
+                    debug!(
                         message = "processing canonical block",
                         block_number = block.number
                     );
@@ -232,7 +232,7 @@ where
                 }
                 StateUpdate::Flashblock(flashblock) => {
                     let start_time = Instant::now();
-                    info!(
+                    debug!(
                         message = "processing flashblock",
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
@@ -249,8 +249,7 @@ where
                                 .record(start_time.elapsed());
                         }
                         Err(e) => {
-                            error!(message = "could not process Flashblock", error = %e, block_number = flashblock.metadata.block_number,
-                            flashblock_index = flashblock.index);
+                            error!(message = "could not process Flashblock", error = %e);
                             self.metrics.block_processing_error.increment(1);
                         }
                     }
@@ -397,10 +396,8 @@ where
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
-            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet. Earliest block number {}. Flashblocks per block: {:?}",
-            canonical_block,
-            earliest_block_number,
-            flashblocks_per_block.keys(),
+            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet.",
+            canonical_block
         ))?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
