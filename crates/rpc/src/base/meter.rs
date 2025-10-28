@@ -7,9 +7,7 @@ use reth::revm::db::State;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_primitives::OpPrimitives;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::ExecutionOutcome;
 use tips_core::types::{BundleExtensions, BundleTxs, ParsedBundle};
 
 use crate::TransactionResult;
@@ -113,18 +111,10 @@ where
     }
 
     // Calculate state root and measure its calculation time
-    let block_number = header.number() + 1;
     let bundle_update = db.take_bundle();
-    let execution_outcome: ExecutionOutcome<OpPrimitives> = ExecutionOutcome::new(
-        bundle_update,
-        Vec::new().into(),
-        block_number,
-        Vec::new(),
-    );
-
     let state_provider = db.database.as_ref();
     let state_root_start = Instant::now();
-    let hashed_state = state_provider.hashed_post_state(execution_outcome.state());
+    let hashed_state = state_provider.hashed_post_state(&bundle_update);
     let _ = state_provider.state_root_with_updates(hashed_state);
     let state_root_time_us = state_root_start.elapsed().as_micros();
 
