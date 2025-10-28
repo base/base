@@ -616,26 +616,37 @@ where
                 }
 
                 if should_execute_transaction {
-                    let ResultAndState { state, .. } = evm.transact(recovered_transaction)?;
-                    for (addr, acc) in &state {
-                        let state_diff = B256HashMap::<B256>::from_iter(
-                            acc.storage
-                                .iter()
-                                .map(|(&key, slot)| (key.into(), slot.present_value.into())),
-                        );
-                        let acc_override = AccountOverride {
-                            balance: Some(acc.info.balance),
-                            nonce: Some(acc.info.nonce),
-                            code: acc.info.code.clone().map(|code| code.bytes()),
-                            state: None,
-                            state_diff: Some(state_diff),
-                            move_precompile_to: None,
-                        };
-                        state_cache_builder = state_cache_builder.append(*addr, acc_override);
+                    match evm.transact(recovered_transaction) {
+                        Ok(ResultAndState { state, .. }) => {
+                            for (addr, acc) in &state {
+                                let state_diff =
+                                    B256HashMap::<B256>::from_iter(acc.storage.iter().map(
+                                        |(&key, slot)| (key.into(), slot.present_value.into()),
+                                    ));
+                                let acc_override = AccountOverride {
+                                    balance: Some(acc.info.balance),
+                                    nonce: Some(acc.info.nonce),
+                                    code: acc.info.code.clone().map(|code| code.bytes()),
+                                    state: Some(state_diff),
+                                    state_diff: None,
+                                    move_precompile_to: None,
+                                };
+                                state_cache_builder =
+                                    state_cache_builder.append(*addr, acc_override);
+                            }
+                            pending_blocks_builder
+                                .with_transaction_state(transaction.tx_hash(), state.clone());
+                            evm.db_mut().commit(state);
+                        }
+                        Err(e) => {
+                            return Err(eyre!(
+                                "failed to execute transaction: {:?} tx_hash: {:?} sender: {:?}",
+                                e,
+                                transaction.tx_hash(),
+                                sender
+                            ));
+                        }
                     }
-                    pending_blocks_builder
-                        .with_transaction_state(transaction.tx_hash(), state.clone());
-                    evm.db_mut().commit(state);
                 }
             }
 
