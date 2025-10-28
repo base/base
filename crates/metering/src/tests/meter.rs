@@ -17,7 +17,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{providers::BlockchainProvider, HeaderProvider, StateProviderFactory};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tips_core::{Bundle, BundleWithMetadata};
+use tips_core::types::{Bundle, BundleWithMetadata};
 
 use crate::meter_bundle;
 use super::utils::create_provider_factory;

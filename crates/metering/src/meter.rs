@@ -30,7 +30,7 @@ pub fn meter_bundle<SP>(
     chain_spec: Arc<OpChainSpec>,
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
-    bundle_with_metadata: &tips_core::BundleWithMetadata,
+    bundle_with_metadata: &tips_core::types::BundleWithMetadata,
 ) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
 where
     SP: reth_provider::StateProvider,

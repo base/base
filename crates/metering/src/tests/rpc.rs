@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::rpc::{MeteringApiImpl, MeteringApiServer};
-    use tips_core::Bundle;
+    use tips_core::types::Bundle;
     use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
     use alloy_primitives::{address, b256, Bytes, U256};
@@ -122,7 +122,7 @@ mod tests {
 
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
@@ -168,7 +168,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx_bytes], 0, None);
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
@@ -237,7 +237,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
@@ -272,7 +272,7 @@ mod tests {
             None,
         );
 
-        let result: Result<crate::rpc::MeterBundleResponse, _> = client
+        let result: Result<crate::MeterBundleResponse, _> = client
             .request("base_meterBundle", (bundle,))
             .await;
 
@@ -290,7 +290,7 @@ mod tests {
         // Bundle.block_number is used as the state block for simulation
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
@@ -311,7 +311,7 @@ mod tests {
         let custom_timestamp = 1234567890;
         let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
@@ -330,7 +330,7 @@ mod tests {
 
         let bundle = create_bundle(vec![], 999999, None); // Non-existent block
 
-        let result: Result<crate::rpc::MeterBundleResponse, _> = client
+        let result: Result<crate::MeterBundleResponse, _> = client
             .request("base_meterBundle", (bundle,))
             .await;
 
@@ -387,7 +387,7 @@ mod tests {
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: crate::rpc::MeterBundleResponse = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 

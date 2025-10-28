@@ -12500,7 +12500,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=f04c52c16bf01f076e037d1e73afbfc5565d725f#f04c52c16bf01f076e037d1e73afbfc5565d725f"
+source = "git+https://github.com/base/tips?rev=27674ae051a86033ece61ae24434aeacdb28ce73#27674ae051a86033ece61ae24434aeacdb28ce73"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",

@@ -45,7 +45,7 @@ base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies
-tips-core = { git = "https://github.com/base/tips", rev = "f04c52c16bf01f076e037d1e73afbfc5565d725f", default-features = false }
+tips-core = { git = "https://github.com/base/tips", rev = "27674ae051a86033ece61ae24434aeacdb28ce73", default-features = false }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.8.2" }

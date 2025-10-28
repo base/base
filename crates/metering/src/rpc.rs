@@ -1,6 +1,6 @@
 use alloy_consensus::Header;
 use alloy_eips::eip2718::Decodable2718;
-use alloy_primitives::{Address, TxHash, B256, U256};
+use alloy_primitives::U256;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -8,44 +8,10 @@ use jsonrpsee::{
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
-use serde::{Deserialize, Serialize};
-use tips_core::{Bundle, BundleWithMetadata};
+use tips_core::types::{Bundle, BundleWithMetadata, MeterBundleResponse};
 use tracing::{error, info};
 
 use crate::meter_bundle;
-
-/// Per-transaction result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TransactionResult {
-    pub coinbase_diff: String,
-    pub eth_sent_to_coinbase: String,
-    pub from_address: Address,
-    pub gas_fees: String,
-    pub gas_price: String,
-    pub gas_used: u64,
-    pub to_address: Option<Address>,
-    pub tx_hash: TxHash,
-    pub value: String,
-    /// Resource metering: execution time for this tx in microseconds
-    pub execution_time_us: u128,
-}
-
-/// Response for base_meterBundle
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MeterBundleResponse {
-    pub bundle_gas_price: String,
-    pub bundle_hash: B256,
-    pub coinbase_diff: String,
-    pub eth_sent_to_coinbase: String,
-    pub gas_fees: String,
-    pub results: Vec<TransactionResult>,
-    pub state_block_number: u64,
-    pub total_gas_used: u64,
-    /// Resource metering: total execution time in microseconds
-    pub total_execution_time_us: u128,
-}
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]
