@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::{MeteringApiImpl, MeteringApiServer, MeterBundleRequest};
-    use alloy_eips::{BlockNumberOrTag, Encodable2718};
+    use crate::rpc::{MeteringApiImpl, MeteringApiServer};
+    use tips_core::Bundle;
+    use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
     use alloy_primitives::{address, b256, Bytes, U256};
     use alloy_rpc_client::RpcClient;
@@ -27,6 +28,25 @@ mod tests {
         http_api_addr: SocketAddr,
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
+    }
+
+    // Helper function to create a Bundle with default fields
+    fn create_bundle(
+        txs: Vec<Bytes>,
+        block_number: u64,
+        min_timestamp: Option<u64>,
+    ) -> Bundle {
+        Bundle {
+            txs,
+            block_number,
+            flashblock_number_min: None,
+            flashblock_number_max: None,
+            min_timestamp,
+            max_timestamp: None,
+            reverting_tx_hashes: vec![],
+            replacement_uuid: None,
+            dropping_tx_hashes: vec![],
+        }
     }
 
     impl NodeContext {
@@ -100,15 +120,10 @@ mod tests {
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        let bundle = create_bundle(vec![], 0, None);
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
         assert_eq!(response.results.len(), 0);
@@ -151,15 +166,10 @@ mod tests {
         // Encode transaction
         let tx_bytes = Bytes::from(envelope.encoded_2718());
 
-        let request = MeterBundleRequest {
-            txs: vec![tx_bytes],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        let bundle = create_bundle(vec![tx_bytes], 0, None);
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
         assert_eq!(response.results.len(), 1);
@@ -225,15 +235,10 @@ mod tests {
         let tx2_envelope: OpTxEnvelope = tx2_signed.into();
         let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
 
-        let request = MeterBundleRequest {
-            txs: vec![tx1_bytes, tx2_bytes],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
         assert_eq!(response.results.len(), 2);
@@ -261,15 +266,14 @@ mod tests {
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        let request = MeterBundleRequest {
-            txs: vec![bytes!("0xdeadbeef")], // Invalid transaction data
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        let bundle = create_bundle(
+            vec![bytes!("0xdeadbeef")], // Invalid transaction data
+            0,
+            None,
+        );
 
         let result: Result<crate::rpc::MeterBundleResponse, _> = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await;
 
         assert!(result.is_err());
@@ -278,52 +282,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_meter_bundle_state_block_number_resolution() -> eyre::Result<()> {
+    async fn test_meter_bundle_uses_block_number() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        // Test with Latest
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        // Bundle.block_number is used as the state block for simulation
+        let bundle = create_bundle(vec![], 0, None);
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
-        assert_eq!(response.state_block_number, 0); // Genesis block
-
-        // Test with Pending
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Pending,
-            timestamp: None,
-        };
-
-        let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
-            .await?;
-
-        assert_eq!(response.state_block_number, 0);
-
-        // Test with specific number
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Number(0),
-            timestamp: None,
-        };
-
-        let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
-            .await?;
-
-        assert_eq!(response.state_block_number, 0);
+        assert_eq!(response.state_block_number, 0); // Uses bundle.block_number
 
         Ok(())
     }
@@ -334,19 +305,14 @@ mod tests {
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        // Test that custom timestamp is accepted and the simulation runs successfully.
+        // Test that bundle.min_timestamp is used for simulation.
         // The timestamp affects block.timestamp in the EVM during simulation but is not
         // returned in the response.
         let custom_timestamp = 1234567890;
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: Some(custom_timestamp),
-        };
+        let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
         // Verify the request succeeded with custom timestamp
@@ -362,15 +328,10 @@ mod tests {
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        let request = MeterBundleRequest {
-            txs: vec![],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Number(999999), // Non-existent block
-            timestamp: None,
-        };
+        let bundle = create_bundle(vec![], 999999, None); // Non-existent block
 
         let result: Result<crate::rpc::MeterBundleResponse, _> = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await;
 
         assert!(result.is_err());
@@ -424,15 +385,10 @@ mod tests {
         let envelope2: OpTxEnvelope = signed_tx2.into();
         let tx2_bytes = Bytes::from(envelope2.encoded_2718());
 
-        let request = MeterBundleRequest {
-            txs: vec![tx1_bytes, tx2_bytes],
-            block_number: BlockNumberOrTag::Number(1),
-            state_block_number: BlockNumberOrTag::Latest,
-            timestamp: None,
-        };
+        let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
         let response: crate::rpc::MeterBundleResponse = client
-            .request("base_meterBundle", (request,))
+            .request("base_meterBundle", (bundle,))
             .await?;
 
         assert_eq!(response.results.len(), 2);

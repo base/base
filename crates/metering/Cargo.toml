@@ -12,6 +12,9 @@ description = "Transaction Metering RPC Support"
 workspace = true
 
 [dependencies]
+# base/tips
+tips-core.workspace = true
+
 # reth
 reth.workspace = true
 reth-provider.workspace = true

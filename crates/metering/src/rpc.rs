@@ -1,7 +1,6 @@
 use alloy_consensus::Header;
 use alloy_eips::eip2718::Decodable2718;
-use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, Bytes, TxHash, B256, U256};
+use alloy_primitives::{Address, TxHash, B256, U256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -10,24 +9,10 @@ use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use serde::{Deserialize, Serialize};
+use tips_core::{Bundle, BundleWithMetadata};
 use tracing::{error, info};
 
 use crate::meter_bundle;
-
-/// Request payload for base_meterBundle
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MeterBundleRequest {
-    /// Array of signed transactions (hex encoded)
-    pub txs: Vec<Bytes>,
-    /// Block number for which this bundle is valid
-    pub block_number: BlockNumberOrTag,
-    /// State block number or tag to base simulation on
-    pub state_block_number: BlockNumberOrTag,
-    /// Optional timestamp for simulation
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<u64>,
-}
 
 /// Per-transaction result
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +52,7 @@ pub struct MeterBundleResponse {
 pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions
     #[method(name = "meterBundle")]
-    async fn meter_bundle(&self, request: MeterBundleRequest) -> RpcResult<MeterBundleResponse>;
+    async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse>;
 }
 
 /// Implementation of the metering RPC API
@@ -99,39 +84,17 @@ where
         + Sync
         + 'static,
 {
-    async fn meter_bundle(&self, request: MeterBundleRequest) -> RpcResult<MeterBundleResponse> {
+    async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         info!(
-            num_transactions = request.txs.len(),
-            block_number = ?request.block_number,
-            state_block_number = ?request.state_block_number,
+            num_transactions = bundle.txs.len(),
+            block_number = bundle.block_number,
             "Starting bundle metering"
         );
-
-        // Resolve state block number
-        let state_block_number = match request.state_block_number {
-            BlockNumberOrTag::Number(n) => n,
-            BlockNumberOrTag::Latest | BlockNumberOrTag::Pending => {
-                self.provider.best_block_number().map_err(|e| {
-                    jsonrpsee::types::ErrorObjectOwned::owned(
-                        jsonrpsee::types::ErrorCode::InternalError.code(),
-                        format!("Failed to get latest block: {}", e),
-                        None::<()>,
-                    )
-                })?
-            }
-            _ => {
-                return Err(jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    "Unsupported block number tag".to_string(),
-                    None::<()>,
-                ));
-            }
-        };
 
         // Get the header
         let header = self
             .provider
-            .sealed_header(state_block_number)
+            .sealed_header(bundle.block_number)
             .map_err(|e| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
@@ -142,14 +105,16 @@ where
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block {} not found", state_block_number),
+                    format!("Block {} not found", bundle.block_number),
                     None::<()>,
                 )
             })?;
 
-        // Decode all transactions
+        // Manually decode transactions to OpTxEnvelope (op-alloy 0.20) instead of using
+        // BundleWithMetadata.transactions() which returns op-alloy 0.21 types incompatible with reth.
+        // TODO: Remove this workaround after reth updates to op-alloy 0.21 (already on main, awaiting release)
         let mut decoded_txs = Vec::new();
-        for tx_bytes in &request.txs {
+        for tx_bytes in &bundle.txs {
             let mut reader = tx_bytes.as_ref();
             let tx = op_alloy_consensus::OpTxEnvelope::decode_2718(&mut reader).map_err(|e| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
@@ -160,6 +125,14 @@ where
             })?;
             decoded_txs.push(tx);
         }
+
+        let bundle_with_metadata = BundleWithMetadata::load(bundle.clone()).map_err(|e| {
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                format!("Failed to load bundle metadata: {}", e),
+                None::<()>,
+            )
+        })?;
 
         // Get state provider for the block
         let state_provider = self
@@ -180,7 +153,7 @@ where
             self.provider.chain_spec().clone(),
             decoded_txs,
             &header,
-            request.timestamp,
+            &bundle_with_metadata,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");
@@ -213,7 +186,7 @@ where
             eth_sent_to_coinbase: "0".to_string(),
             gas_fees: total_gas_fees.to_string(),
             results,
-            state_block_number,
+            state_block_number: bundle.block_number,
             total_gas_used,
             total_execution_time_us: total_execution_time,
         })

@@ -16,8 +16,8 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, decoded transactions, block header, and optional timestamp,
-/// and executes them in sequence to measure gas usage and execution time.
+/// Takes a state provider, chain spec, decoded transactions, block header, and bundle metadata,
+/// and executes transactions in sequence to measure gas usage and execution time.
 ///
 /// Returns a tuple of:
 /// - Vector of transaction results
@@ -30,14 +30,13 @@ pub fn meter_bundle<SP>(
     chain_spec: Arc<OpChainSpec>,
     decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
     header: &SealedHeader,
-    timestamp: Option<u64>,
+    bundle_with_metadata: &tips_core::BundleWithMetadata,
 ) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
 where
     SP: reth_provider::StateProvider,
 {
-    // Calculate bundle hash
-    let tx_hashes: Vec<B256> = decoded_txs.iter().map(|tx| tx.tx_hash()).collect();
-    let bundle_hash = calculate_bundle_hash(&tx_hashes);
+    // Get bundle hash from BundleWithMetadata
+    let bundle_hash = bundle_with_metadata.bundle_hash();
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
@@ -47,7 +46,11 @@ where
         .build();
 
     // Set up next block attributes
-    let timestamp = timestamp.unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
+    // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
+    let timestamp = bundle_with_metadata
+        .bundle()
+        .min_timestamp
+        .unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
     let attributes = OpNextBlockEnvAttributes {
         timestamp,
         suggested_fee_recipient: header.beneficiary(),
@@ -107,19 +110,4 @@ where
     let total_execution_time = execution_start.elapsed().as_micros();
 
     Ok((results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time))
-}
-
-/// Calculate bundle hash using Flashbots methodology
-///
-/// Concatenates all transaction hashes and computes a single keccak256 hash:
-/// `keccak256(concat(tx_hashes))`
-///
-/// Reference: <https://github.com/flashbots/ethers-provider-flashbots-bundle/blob/0d404bb041b82c12789bd62b18e218304a095b6f/src/index.ts#L266-L269>
-fn calculate_bundle_hash(tx_hashes: &[B256]) -> B256 {
-    use alloy_primitives::keccak256;
-    let mut combined = Vec::with_capacity(tx_hashes.len() * 32);
-    for hash in tx_hashes {
-        combined.extend_from_slice(hash.as_slice());
-    }
-    keccak256(&combined)
 }
