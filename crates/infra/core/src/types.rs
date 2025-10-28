@@ -129,6 +129,35 @@ impl BundleWithMetadata {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionResult {
+    pub coinbase_diff: String,
+    pub eth_sent_to_coinbase: String,
+    pub from_address: Address,
+    pub gas_fees: String,
+    pub gas_price: String,
+    pub gas_used: u64,
+    pub to_address: Option<Address>,
+    pub tx_hash: TxHash,
+    pub value: String,
+    pub execution_time_us: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MeterBundleResponse {
+    pub bundle_gas_price: String,
+    pub bundle_hash: B256,
+    pub coinbase_diff: String,
+    pub eth_sent_to_coinbase: String,
+    pub gas_fees: String,
+    pub results: Vec<TransactionResult>,
+    pub state_block_number: u64,
+    pub total_gas_used: u64,
+    pub total_execution_time_us: u128,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
