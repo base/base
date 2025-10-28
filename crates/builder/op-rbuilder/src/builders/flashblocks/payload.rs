@@ -158,8 +158,8 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
+        metrics: Arc<OpRBuilderMetrics>,
     ) -> eyre::Result<Self> {
-        let metrics = Arc::new(OpRBuilderMetrics::default());
         let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
         Ok(Self {
@@ -710,7 +710,7 @@ where
 
         match build_result {
             Err(err) => {
-                ctx.metrics.invalid_blocks_count.increment(1);
+                ctx.metrics.invalid_built_blocks_count.increment(1);
                 Err(err).wrap_err("failed to build payload")
             }
             Ok((new_payload, mut fb_payload)) => {

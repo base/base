@@ -63,6 +63,8 @@ pub const VERSION: VersionInfo = VersionInfo {
 pub struct OpRBuilderMetrics {
     /// Block built success
     pub block_built_success: Counter,
+    /// Block synced success
+    pub block_synced_success: Counter,
     /// Number of flashblocks added to block (Total per block)
     pub flashblock_count: Histogram,
     /// Number of messages sent
@@ -73,12 +75,16 @@ pub struct OpRBuilderMetrics {
     pub total_block_built_gauge: Gauge,
     /// Histogram of the time taken to build a Flashblock
     pub flashblock_build_duration: Histogram,
+    /// Histogram of the time taken to sync a Flashblock
+    pub flashblock_sync_duration: Histogram,
     /// Flashblock UTF8 payload byte size histogram
     pub flashblock_byte_size_histogram: Histogram,
     /// Histogram of transactions in a Flashblock
     pub flashblock_num_tx_histogram: Histogram,
     /// Number of invalid blocks
-    pub invalid_blocks_count: Counter,
+    pub invalid_built_blocks_count: Counter,
+    /// Number of invalid synced blocks
+    pub invalid_synced_blocks_count: Counter,
     /// Histogram of fetching transactions from the pool duration
     pub transaction_pool_fetch_duration: Histogram,
     /// Latest time taken to fetch tx from the pool
