@@ -249,8 +249,8 @@ async fn main() {
     let (send, _rec) = broadcast::channel(args.message_buffer_size);
     let sender = send.clone();
 
-    let listener = move |data: Vec<u8>| {
-        trace!(message = "received data", data = ?data);
+    let listener = move |data: String| {
+        trace!(message = "received data", data = data);
         // Subtract one from receiver count, as we have to keep one receiver open at all times (see _rec)
         // to avoid the channel being closed. However this is not an active client connection.
         metrics_clone
@@ -258,7 +258,7 @@ async fn main() {
             .set((send.receiver_count() - 1) as f64);
 
         let message_data = if args.enable_compression {
-            let data_bytes = data.as_slice();
+            let data_bytes = data.as_bytes();
             let mut compressed_data_bytes = Vec::new();
             {
                 let mut compressor =
@@ -267,7 +267,7 @@ async fn main() {
             }
             compressed_data_bytes
         } else {
-            data
+            data.into_bytes()
         };
 
         match send.send(message_data.into()) {

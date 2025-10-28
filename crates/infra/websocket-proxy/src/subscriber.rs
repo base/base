@@ -63,7 +63,7 @@ impl Default for SubscriberOptions {
 
 pub struct WebsocketSubscriber<F>
 where
-    F: Fn(Vec<u8>) + Send + Sync + 'static,
+    F: Fn(String) + Send + Sync + 'static,
 {
     uri: Uri,
     handler: F,
@@ -74,7 +74,7 @@ where
 
 impl<F> WebsocketSubscriber<F>
 where
-    F: Fn(Vec<u8>) + Send + Sync + 'static,
+    F: Fn(String) + Send + Sync + 'static,
 {
     pub fn new(uri: Uri, handler: F, metrics: Arc<Metrics>, options: SubscriberOptions) -> Self {
         let backoff = ExponentialBackoff {
@@ -258,17 +258,14 @@ where
                 );
                 self.metrics
                     .message_received_from_upstream(self.uri.to_string().as_str());
-                (self.handler)(text.as_bytes().to_vec());
+                (self.handler)(text.to_string());
             }
             Message::Binary(data) => {
-                trace!(
-                    message = "received binary message",
+                warn!(
+                    message = "received binary message, unsupported",
                     uri = self.uri.to_string(),
-                    payload = ?data.as_ref()
+                    size = data.len()
                 );
-                self.metrics
-                    .message_received_from_upstream(self.uri.to_string().as_str());
-                (self.handler)(data.as_ref().to_vec());
             }
             Message::Pong(_) => {
                 trace!(
@@ -302,11 +299,11 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::broadcast;
     use tokio::time::{sleep, timeout, Duration};
-    use tokio_tungstenite::accept_async;
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
 
     struct MockServer {
         addr: SocketAddr,
-        message_sender: broadcast::Sender<Vec<u8>>,
+        message_sender: broadcast::Sender<String>,
         shutdown: CancellationToken,
     }
 
@@ -314,7 +311,7 @@ mod tests {
         async fn new() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
-            let (tx, _) = broadcast::channel::<Vec<u8>>(100);
+            let (tx, _) = broadcast::channel::<String>(100);
             let shutdown = CancellationToken::new();
             let shutdown_clone = shutdown.clone();
             let tx_clone = tx.clone();
@@ -353,7 +350,7 @@ mod tests {
 
         async fn handle_connection(
             stream: TcpStream,
-            tx: broadcast::Sender<Vec<u8>>,
+            tx: broadcast::Sender<String>,
             shutdown: CancellationToken,
         ) {
             let ws_stream = match accept_async(stream).await {
@@ -375,8 +372,8 @@ mod tests {
                     }
                     msg = rx.recv() => {
                         match msg {
-                            Ok(data) => {
-                                if let Err(e) = ws_sender.send(data.into()).await {
+                            Ok(text) => {
+                                if let Err(e) = ws_sender.send(Message::Text(text.into())).await {
                                     eprintln!("Error sending message: {}", e);
                                     break;
                                 }
@@ -392,9 +389,9 @@ mod tests {
 
         async fn send_message(
             &self,
-            msg: &[u8],
-        ) -> Result<usize, broadcast::error::SendError<Vec<u8>>> {
-            self.message_sender.send(msg.to_vec())
+            msg: &str,
+        ) -> Result<usize, broadcast::error::SendError<String>> {
+            self.message_sender.send(msg.to_string())
         }
 
         async fn shutdown(self) {
@@ -446,7 +443,7 @@ mod tests {
             }
         });
 
-        let listener_fn = move |_data: Vec<u8>| {
+        let listener_fn = move |_data: String| {
             // Handler for received messages - not needed for this test
         };
 
@@ -488,8 +485,7 @@ mod tests {
         let received_messages = Arc::new(Mutex::new(Vec::new()));
         let received_clone = received_messages.clone();
 
-        // Create a listener function that will be shared by both subscribers
-        let listener = move |data: Vec<u8>| {
+        let listener = move |data: String| {
             if let Ok(mut messages) = received_clone.lock() {
                 messages.push(data);
             }
@@ -533,23 +529,13 @@ mod tests {
 
         sleep(Duration::from_millis(500)).await;
 
-        // Send different messages from each server
-        let _ = server1
-            .send_message("Message from server 1".as_bytes())
-            .await;
-        let _ = server2
-            .send_message("Message from server 2".as_bytes())
-            .await;
+        let _ = server1.send_message("Message from server 1").await;
+        let _ = server2.send_message("Message from server 2").await;
 
         sleep(Duration::from_millis(500)).await;
 
-        // Send more messages to ensure continuous operation
-        let _ = server1
-            .send_message("Another message from server 1".as_bytes())
-            .await;
-        let _ = server2
-            .send_message("Another message from server 2".as_bytes())
-            .await;
+        let _ = server1.send_message("Another message from server 1").await;
+        let _ = server2.send_message("Another message from server 2").await;
 
         sleep(Duration::from_millis(500)).await;
 
@@ -568,11 +554,10 @@ mod tests {
 
         assert_eq!(messages.len(), 4);
 
-        // Check that we received messages from both servers
-        assert!(messages.contains(&"Message from server 1".as_bytes().to_vec()));
-        assert!(messages.contains(&"Message from server 2".as_bytes().to_vec()));
-        assert!(messages.contains(&"Another message from server 1".as_bytes().to_vec()));
-        assert!(messages.contains(&"Another message from server 2".as_bytes().to_vec()));
+        assert!(messages.contains(&"Message from server 1".to_string()));
+        assert!(messages.contains(&"Message from server 2".to_string()));
+        assert!(messages.contains(&"Another message from server 1".to_string()));
+        assert!(messages.contains(&"Another message from server 2".to_string()));
 
         assert!(!messages.is_empty());
     }
