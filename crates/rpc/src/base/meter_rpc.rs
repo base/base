@@ -127,6 +127,7 @@ where
             state_flashblock_index: None,
             total_gas_used: result.total_gas_used,
             total_execution_time_us: result.total_execution_time_us,
+            state_root_time_us: result.state_root_time_us,
         })
     }
 }
