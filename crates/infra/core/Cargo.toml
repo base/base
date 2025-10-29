@@ -22,6 +22,7 @@ alloy-signer-local = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+op-alloy-flz.workspace = true
 
 [dev-dependencies]
 alloy-signer-local.workspace = true

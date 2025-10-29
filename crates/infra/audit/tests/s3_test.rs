@@ -44,7 +44,7 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
     let event = create_test_event(
         "test-key-1",
         1234567890,
-        BundleEvent::Created {
+        BundleEvent::Received {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -71,7 +71,7 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
     let event = create_test_event(
         "test-key-2",
         1234567890,
-        BundleEvent::Created {
+        BundleEvent::Received {
             bundle_id: bundle_id_two,
             bundle: bundle.clone(),
         },
@@ -102,7 +102,7 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
         create_test_event(
             "test-key-1",
             1234567890,
-            BundleEvent::Created {
+            BundleEvent::Received {
                 bundle_id,
                 bundle: bundle.clone(),
             },
@@ -110,14 +110,6 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
         create_test_event(
             "test-key-2",
             1234567891,
-            BundleEvent::Updated {
-                bundle_id,
-                bundle: bundle.clone(),
-            },
-        ),
-        create_test_event(
-            "test-key-3",
-            1234567892,
             BundleEvent::Cancelled { bundle_id },
         ),
     ];
@@ -159,7 +151,7 @@ async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Se
     let event = create_test_event(
         "duplicate-key",
         1234567890,
-        BundleEvent::Created {
+        BundleEvent::Received {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -210,7 +202,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
     let event = create_test_event(
         "hello-dan",
         1234567889i64,
-        BundleEvent::Created {
+        BundleEvent::Received {
             bundle_id,
             bundle: bundle.clone(),
         },
@@ -231,7 +223,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
         let event = create_test_event(
             &key,
             1234567890 + i as i64,
-            BundleEvent::Created {
+            BundleEvent::Received {
                 bundle_id,
                 bundle: bundle.clone(),
             },

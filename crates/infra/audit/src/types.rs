@@ -31,11 +31,7 @@ pub struct Transaction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum BundleEvent {
-    Created {
-        bundle_id: BundleId,
-        bundle: Bundle,
-    },
-    Updated {
+    Received {
         bundle_id: BundleId,
         bundle: Bundle,
     },
@@ -62,8 +58,7 @@ pub enum BundleEvent {
 impl BundleEvent {
     pub fn bundle_id(&self) -> BundleId {
         match self {
-            BundleEvent::Created { bundle_id, .. } => *bundle_id,
-            BundleEvent::Updated { bundle_id, .. } => *bundle_id,
+            BundleEvent::Received { bundle_id, .. } => *bundle_id,
             BundleEvent::Cancelled { bundle_id, .. } => *bundle_id,
             BundleEvent::BuilderIncluded { bundle_id, .. } => *bundle_id,
             BundleEvent::BlockIncluded { bundle_id, .. } => *bundle_id,
@@ -73,7 +68,7 @@ impl BundleEvent {
 
     pub fn transaction_ids(&self) -> Vec<TransactionId> {
         match self {
-            BundleEvent::Created { bundle, .. } | BundleEvent::Updated { bundle, .. } => {
+            BundleEvent::Received { bundle, .. } => {
                 bundle
                     .txs
                     .iter()

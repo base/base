@@ -5,6 +5,7 @@ use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use std::net::IpAddr;
+use tips_audit::KafkaBundleEventPublisher;
 use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
@@ -43,6 +44,18 @@ struct Config {
     )]
     ingress_topic: String,
 
+    /// Kafka properties file for audit events
+    #[arg(long, env = "TIPS_INGRESS_KAFKA_AUDIT_PROPERTIES_FILE")]
+    audit_kafka_properties: String,
+
+    /// Kafka topic for audit events
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_KAFKA_AUDIT_TOPIC",
+        default_value = "tips-audit"
+    )]
+    audit_topic: String,
+
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     log_level: String,
 
@@ -75,18 +88,26 @@ async fn main() -> anyhow::Result<()> {
         .network::<Optimism>()
         .connect_http(config.mempool_url);
 
-    let client_config = ClientConfig::from_iter(load_kafka_config_from_file(
+    let ingress_client_config = ClientConfig::from_iter(load_kafka_config_from_file(
         &config.ingress_kafka_properties,
     )?);
 
-    let queue_producer: FutureProducer = client_config.create()?;
+    let queue_producer: FutureProducer = ingress_client_config.create()?;
 
     let queue = KafkaQueuePublisher::new(queue_producer, config.ingress_topic);
+
+    let audit_client_config =
+        ClientConfig::from_iter(load_kafka_config_from_file(&config.audit_kafka_properties)?);
+
+    let audit_producer: FutureProducer = audit_client_config.create()?;
+
+    let audit_publisher = KafkaBundleEventPublisher::new(audit_producer, config.audit_topic);
 
     let service = IngressService::new(
         provider,
         config.dual_write_mempool,
         queue,
+        audit_publisher,
         config.send_transaction_default_lifetime_seconds,
     );
     let bind_addr = format!("{}:{}", config.address, config.port);

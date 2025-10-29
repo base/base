@@ -2,9 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::{ClientConfig, Message};
+use std::fmt::Debug;
 use tips_core::{Bundle, BundleWithMetadata};
 use tokio::sync::mpsc;
-use tracing::{debug, error};
+use tracing::{error, trace};
 
 #[async_trait]
 pub trait BundleSource {
@@ -14,6 +15,12 @@ pub trait BundleSource {
 pub struct KafkaBundleSource {
     queue_consumer: StreamConsumer,
     publisher: mpsc::UnboundedSender<BundleWithMetadata>,
+}
+
+impl Debug for KafkaBundleSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "KafkaBundleSource")
+    }
 }
 
 impl KafkaBundleSource {
@@ -53,7 +60,7 @@ impl BundleSource for KafkaBundleSource {
                         }
                     };
 
-                    debug!(
+                    trace!(
                         bundle = ?bundle,
                         offset = message.offset(),
                         partition = message.partition(),

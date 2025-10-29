@@ -28,6 +28,7 @@ pub trait BundleStore {
     );
 }
 
+#[derive(Debug)]
 pub struct InMemoryBundlePool {
     bundles: HashMap<Uuid, BundleWithMetadata>,
     audit_log: mpsc::UnboundedSender<BundleEvent>,

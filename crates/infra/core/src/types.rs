@@ -1,7 +1,9 @@
+use alloy_consensus::Transaction;
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{Address, B256, Bytes, TxHash, keccak256};
-use alloy_provider::network::eip2718::Decodable2718;
+use alloy_provider::network::eip2718::{Decodable2718, Encodable2718};
 use op_alloy_consensus::OpTxEnvelope;
+use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -126,6 +128,17 @@ impl BundleWithMetadata {
             .iter()
             .map(|t| t.recover_signer().unwrap())
             .collect()
+    }
+
+    pub fn gas_limit(&self) -> u64 {
+        self.transactions.iter().map(|t| t.gas_limit()).sum()
+    }
+
+    pub fn da_size(&self) -> u64 {
+        self.transactions
+            .iter()
+            .map(|t| tx_estimated_size_fjord_bytes(&t.encoded_2718()))
+            .sum()
     }
 }
 

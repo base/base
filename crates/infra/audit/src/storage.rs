@@ -36,12 +36,7 @@ pub struct TransactionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", content = "data")]
 pub enum BundleHistoryEvent {
-    Created {
-        key: String,
-        timestamp: i64,
-        bundle: Bundle,
-    },
-    Updated {
+    Received {
         key: String,
         timestamp: i64,
         bundle: Bundle,
@@ -73,8 +68,7 @@ pub enum BundleHistoryEvent {
 impl BundleHistoryEvent {
     pub fn key(&self) -> &str {
         match self {
-            BundleHistoryEvent::Created { key, .. } => key,
-            BundleHistoryEvent::Updated { key, .. } => key,
+            BundleHistoryEvent::Received { key, .. } => key,
             BundleHistoryEvent::Cancelled { key, .. } => key,
             BundleHistoryEvent::BuilderIncluded { key, .. } => key,
             BundleHistoryEvent::BlockIncluded { key, .. } => key,
@@ -106,12 +100,7 @@ fn update_bundle_history_transform(
     }
 
     let history_event = match &event.event {
-        BundleEvent::Created { bundle, .. } => BundleHistoryEvent::Created {
-            key: event.key.clone(),
-            timestamp: event.timestamp,
-            bundle: bundle.clone(),
-        },
-        BundleEvent::Updated { bundle, .. } => BundleHistoryEvent::Updated {
+        BundleEvent::Received { bundle, .. } => BundleHistoryEvent::Received {
             key: event.key.clone(),
             timestamp: event.timestamp,
             bundle: bundle.clone(),
@@ -396,7 +385,7 @@ mod tests {
         let bundle_history = BundleHistory { history: vec![] };
         let bundle = create_test_bundle();
         let bundle_id = Uuid::new_v4();
-        let bundle_event = BundleEvent::Created {
+        let bundle_event = BundleEvent::Received {
             bundle_id,
             bundle: bundle.clone(),
         };
@@ -409,7 +398,7 @@ mod tests {
         assert_eq!(bundle_history.history.len(), 1);
 
         match &bundle_history.history[0] {
-            BundleHistoryEvent::Created {
+            BundleHistoryEvent::Received {
                 key,
                 timestamp: ts,
                 bundle: b,
@@ -424,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_update_bundle_history_transform_skips_duplicate_key() {
-        let existing_event = BundleHistoryEvent::Created {
+        let existing_event = BundleHistoryEvent::Received {
             key: "duplicate-key".to_string(),
             timestamp: 1111111111,
             bundle: create_test_bundle(),
@@ -435,7 +424,7 @@ mod tests {
 
         let bundle = create_test_bundle();
         let bundle_id = Uuid::new_v4();
-        let bundle_event = BundleEvent::Updated { bundle_id, bundle };
+        let bundle_event = BundleEvent::Received { bundle_id, bundle };
         let event = create_test_event("duplicate-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
@@ -449,7 +438,7 @@ mod tests {
         let bundle_id = Uuid::new_v4();
 
         let bundle = create_test_bundle();
-        let bundle_event = BundleEvent::Created {
+        let bundle_event = BundleEvent::Received {
             bundle_id,
             bundle: bundle.clone(),
         };
@@ -457,16 +446,8 @@ mod tests {
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
-        let bundle_event = BundleEvent::Updated {
-            bundle_id,
-            bundle: bundle.clone(),
-        };
-        let event = create_test_event("test-key-2", 1234567890, bundle_event);
-        let result = update_bundle_history_transform(bundle_history.clone(), &event);
-        assert!(result.is_some());
-
         let bundle_event = BundleEvent::Cancelled { bundle_id };
-        let event = create_test_event("test-key-3", 1234567890, bundle_event);
+        let event = create_test_event("test-key-2", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
@@ -476,7 +457,7 @@ mod tests {
             block_number: 12345,
             flashblock_index: 1,
         };
-        let event = create_test_event("test-key-4", 1234567890, bundle_event);
+        let event = create_test_event("test-key-3", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
@@ -485,7 +466,7 @@ mod tests {
             block_number: 12345,
             block_hash: TxHash::from([1u8; 32]),
         };
-        let event = create_test_event("test-key-5", 1234567890, bundle_event);
+        let event = create_test_event("test-key-4", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);
         assert!(result.is_some());
 
@@ -493,7 +474,7 @@ mod tests {
             bundle_id,
             reason: DropReason::TimedOut,
         };
-        let event = create_test_event("test-key-6", 1234567890, bundle_event);
+        let event = create_test_event("test-key-5", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history, &event);
         assert!(result.is_some());
     }

@@ -21,7 +21,7 @@ async fn test_kafka_publisher_s3_archiver_integration()
 
     let test_bundle_id = Uuid::new_v4();
     let test_events = vec![
-        BundleEvent::Created {
+        BundleEvent::Received {
             bundle_id: test_bundle_id,
             bundle: Bundle::default(),
         },
