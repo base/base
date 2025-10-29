@@ -1,5 +1,6 @@
 use alloy_consensus::Header;
 use alloy_eips::eip2718::Decodable2718;
+use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -57,21 +58,21 @@ where
             "Starting bundle metering"
         );
 
-        // Get the header
+        // Get the latest header
         let header = self
             .provider
-            .sealed_header(bundle.block_number)
+            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
             .map_err(|e| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get header: {}", e),
+                    format!("Failed to get latest header: {}", e),
                     None::<()>,
                 )
             })?
             .ok_or_else(|| {
                 jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Block {} not found", bundle.block_number),
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    "Latest block not found".to_string(),
                     None::<()>,
                 )
             })?;
@@ -152,7 +153,7 @@ where
             eth_sent_to_coinbase: "0".to_string(),
             gas_fees: total_gas_fees.to_string(),
             results,
-            state_block_number: bundle.block_number,
+            state_block_number: header.number,
             total_gas_used,
             total_execution_time_us: total_execution_time,
         })

@@ -282,19 +282,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_meter_bundle_uses_block_number() -> eyre::Result<()> {
+    async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        // Bundle.block_number is used as the state block for simulation
+        // Metering always uses the latest block state, regardless of bundle.block_number
         let bundle = create_bundle(vec![], 0, None);
 
         let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
             .await?;
 
-        assert_eq!(response.state_block_number, 0); // Uses bundle.block_number
+        // Should return the latest block number (genesis block 0)
+        assert_eq!(response.state_block_number, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
+        reth_tracing::init_test_tracing();
+        let node = setup_node().await?;
+        let client = node.rpc_client().await?;
+
+        // Even if bundle.block_number is different, it should use the latest block
+        // In this test, we specify block_number=0 in the bundle
+        let bundle1 = create_bundle(vec![], 0, None);
+        let response1: crate::MeterBundleResponse = client
+            .request("base_meterBundle", (bundle1,))
+            .await?;
+
+        // Try with a different bundle.block_number (999 - arbitrary value)
+        // Since we can't create future blocks, we use a different value to show it's ignored
+        let bundle2 = create_bundle(vec![], 999, None);
+        let response2: crate::MeterBundleResponse = client
+            .request("base_meterBundle", (bundle2,))
+            .await?;
+
+        // Both should return the same state_block_number (the latest block)
+        // because the implementation always uses Latest, not bundle.block_number
+        assert_eq!(response1.state_block_number, response2.state_block_number);
+        assert_eq!(response1.state_block_number, 0); // Genesis block
 
         Ok(())
     }
@@ -323,18 +352,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_meter_bundle_nonexistent_block() -> eyre::Result<()> {
+    async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
         reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
-        let bundle = create_bundle(vec![], 999999, None); // Non-existent block
+        // Since we now ignore bundle.block_number and always use the latest block,
+        // any block_number value should work (it's only used for bundle validity in TIPS)
+        let bundle = create_bundle(vec![], 999999, None);
 
-        let result: Result<crate::MeterBundleResponse, _> = client
+        let response: crate::MeterBundleResponse = client
             .request("base_meterBundle", (bundle,))
-            .await;
+            .await?;
 
-        assert!(result.is_err());
+        // Should succeed and use the latest block (genesis block 0)
+        assert_eq!(response.state_block_number, 0);
 
         Ok(())
     }

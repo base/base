@@ -11,7 +11,7 @@ Simulates a bundle of transactions, providing gas usage and execution time metri
 The method accepts a Bundle object with the following fields:
 
 - `txs`: Array of signed, RLP-encoded transactions (hex strings with 0x prefix)
-- `block_number`: Target block number (used both for bundle validity and as the state block for simulation)
+- `block_number`: Target block number for bundle validity (note: simulation always uses the latest available block state)
 - `min_timestamp` (optional): Minimum timestamp for bundle validity (also used as simulation timestamp if provided)
 - `max_timestamp` (optional): Maximum timestamp for bundle validity
 - `reverting_tx_hashes` (optional): Array of transaction hashes allowed to revert
@@ -26,7 +26,7 @@ The method accepts a Bundle object with the following fields:
 - `coinbaseDiff`: Total gas fees paid
 - `ethSentToCoinbase`: ETH sent directly to coinbase
 - `gasFees`: Total gas fees
-- `stateBlockNumber`: Block number used for state
+- `stateBlockNumber`: Block number used for state (always the latest available block)
 - `totalGasUsed`: Total gas consumed
 - `totalExecutionTimeUs`: Total execution time (μs)
 - `results`: Array of per-transaction results:
