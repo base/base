@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-metering"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",

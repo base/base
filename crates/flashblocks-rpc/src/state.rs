@@ -627,8 +627,8 @@ where
                                     balance: Some(acc.info.balance),
                                     nonce: Some(acc.info.nonce),
                                     code: acc.info.code.clone().map(|code| code.bytes()),
-                                    state: Some(state_diff),
-                                    state_diff: None,
+                                    state: None,
+                                    state_diff: Some(state_diff),
                                     move_precompile_to: None,
                                 };
                                 state_cache_builder =
