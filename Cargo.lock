@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-flashblocks-rpc"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-node"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-transaction-tracing"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "alloy-primitives",
  "chrono",
