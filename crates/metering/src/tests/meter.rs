@@ -19,8 +19,8 @@ use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::{Bundle, BundleWithMetadata};
 
-use crate::meter_bundle;
 use super::utils::create_provider_factory;
+use crate::meter_bundle;
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 
@@ -49,18 +49,24 @@ impl TestHarness {
     }
 }
 
-fn create_chain_spec(seed: u64) -> (Arc<OpChainSpec>, std::collections::HashMap<User, Address>, std::collections::HashMap<User, B256>) {
+fn create_chain_spec(
+    seed: u64,
+) -> (
+    Arc<OpChainSpec>,
+    std::collections::HashMap<User, Address>,
+    std::collections::HashMap<User, B256>,
+) {
     let keys = generate_keys(&mut StdRng::seed_from_u64(seed), 2);
-    
+
     let mut addresses = std::collections::HashMap::new();
     let mut private_keys = std::collections::HashMap::new();
-    
+
     let alice_key = keys[0];
     let alice_address = public_key_to_address(alice_key.public_key());
     let alice_secret = B256::from(alice_key.secret_bytes());
     addresses.insert(User::Alice, alice_address);
     private_keys.insert(User::Alice, alice_secret);
-    
+
     let bob_key = keys[1];
     let bob_address = public_key_to_address(bob_key.public_key());
     let bob_secret = B256::from(bob_key.secret_bytes());
@@ -149,13 +155,14 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
 
     let bundle_with_metadata = create_bundle_with_metadata(Vec::new())?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) = meter_bundle(
-        state_provider,
-        harness.chain_spec.clone(),
-        Vec::new(),
-        &harness.header,
-        &bundle_with_metadata,
-    )?;
+    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            Vec::new(),
+            &harness.header,
+            &bundle_with_metadata,
+        )?;
 
     assert!(results.is_empty());
     assert_eq!(total_gas_used, 0);
@@ -196,13 +203,14 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let bundle_with_metadata = create_bundle_with_metadata(vec![envelope.clone()])?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) = meter_bundle(
-        state_provider,
-        harness.chain_spec.clone(),
-        vec![envelope],
-        &harness.header,
-        &bundle_with_metadata,
-    )?;
+    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            vec![envelope],
+            &harness.header,
+            &bundle_with_metadata,
+        )?;
 
     assert_eq!(results.len(), 1);
     let result = &results[0];
@@ -225,7 +233,10 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     concatenated.extend_from_slice(tx_hash.as_slice());
     assert_eq!(bundle_hash, keccak256(concatenated));
 
-    assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
+    assert!(
+        result.execution_time_us > 0,
+        "execution_time_us should be greater than zero"
+    );
 
     Ok(())
 }
@@ -284,16 +295,18 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         .provider
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
-    
-    let bundle_with_metadata = create_bundle_with_metadata(vec![envelope_1.clone(), envelope_2.clone()])?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) = meter_bundle(
-        state_provider,
-        harness.chain_spec.clone(),
-        vec![envelope_1, envelope_2],
-        &harness.header,
-        &bundle_with_metadata,
-    )?;
+    let bundle_with_metadata =
+        create_bundle_with_metadata(vec![envelope_1.clone(), envelope_2.clone()])?;
+
+    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
+        meter_bundle(
+            state_provider,
+            harness.chain_spec.clone(),
+            vec![envelope_1, envelope_2],
+            &harness.header,
+            &bundle_with_metadata,
+        )?;
 
     assert_eq!(results.len(), 2);
     assert!(total_execution_time > 0);

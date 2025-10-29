@@ -1,12 +1,12 @@
 use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
 use alloy_primitives::{B256, U256};
 use eyre::{eyre, Result as EyreResult};
-use reth_primitives_traits::SealedHeader;
 use reth::revm::db::State;
 use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_primitives_traits::SealedHeader;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -109,5 +109,11 @@ where
     }
     let total_execution_time = execution_start.elapsed().as_micros();
 
-    Ok((results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time))
+    Ok((
+        results,
+        total_gas_used,
+        total_gas_fees,
+        bundle_hash,
+        total_execution_time,
+    ))
 }

@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
     use crate::rpc::{MeteringApiImpl, MeteringApiServer};
-    use tips_core::types::Bundle;
     use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
+    use alloy_primitives::bytes;
     use alloy_primitives::{address, b256, Bytes, U256};
     use alloy_rpc_client::RpcClient;
     use op_alloy_consensus::OpTxEnvelope;
@@ -22,7 +22,7 @@ mod tests {
     use std::any::Any;
     use std::net::SocketAddr;
     use std::sync::Arc;
-    use alloy_primitives::bytes;
+    use tips_core::types::Bundle;
 
     pub struct NodeContext {
         http_api_addr: SocketAddr,
@@ -31,11 +31,7 @@ mod tests {
     }
 
     // Helper function to create a Bundle with default fields
-    fn create_bundle(
-        txs: Vec<Bytes>,
-        block_number: u64,
-        min_timestamp: Option<u64>,
-    ) -> Bundle {
+    fn create_bundle(txs: Vec<Bytes>, block_number: u64, min_timestamp: Option<u64>) -> Bundle {
         Bundle {
             txs,
             block_number,
@@ -122,9 +118,8 @@ mod tests {
 
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 0);
         assert_eq!(response.total_gas_used, 0);
@@ -144,7 +139,8 @@ mod tests {
         // Account: 0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266
         // Private key from common test accounts (Hardhat account #0)
         let sender_address = address!("0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266");
-        let sender_secret = b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
+        let sender_secret =
+            b256!("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80");
 
         // Build a transaction
         let tx = TransactionBuilder::default()
@@ -158,9 +154,8 @@ mod tests {
             .max_priority_fee_per_gas(1_000_000_000)
             .into_eip1559();
 
-        let signed_tx = OpTransactionSigned::Eip1559(
-            tx.as_eip1559().expect("eip1559 transaction").clone()
-        );
+        let signed_tx =
+            OpTransactionSigned::Eip1559(tx.as_eip1559().expect("eip1559 transaction").clone());
         let envelope: OpTxEnvelope = signed_tx.into();
 
         // Encode transaction
@@ -168,9 +163,8 @@ mod tests {
 
         let bundle = create_bundle(vec![tx_bytes], 0, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 1);
         assert_eq!(response.total_gas_used, 21_000);
@@ -178,7 +172,10 @@ mod tests {
 
         let result = &response.results[0];
         assert_eq!(result.from_address, sender_address);
-        assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(
+            result.to_address,
+            Some(address!("0x1111111111111111111111111111111111111111"))
+        );
         assert_eq!(result.gas_used, 21_000);
         assert_eq!(result.gas_price, "1000000000");
         assert!(result.execution_time_us > 0);
@@ -209,7 +206,7 @@ mod tests {
             .into_eip1559();
 
         let tx1_signed = OpTransactionSigned::Eip1559(
-            tx1_inner.as_eip1559().expect("eip1559 transaction").clone()
+            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let tx1_envelope: OpTxEnvelope = tx1_signed.into();
         let tx1_bytes = Bytes::from(tx1_envelope.encoded_2718());
@@ -230,16 +227,15 @@ mod tests {
             .into_eip1559();
 
         let tx2_signed = OpTransactionSigned::Eip1559(
-            tx2_inner.as_eip1559().expect("eip1559 transaction").clone()
+            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let tx2_envelope: OpTxEnvelope = tx2_signed.into();
         let tx2_bytes = Bytes::from(tx2_envelope.encoded_2718());
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 2);
         assert_eq!(response.total_gas_used, 42_000);
@@ -272,9 +268,8 @@ mod tests {
             None,
         );
 
-        let result: Result<crate::MeterBundleResponse, _> = client
-            .request("base_meterBundle", (bundle,))
-            .await;
+        let result: Result<crate::MeterBundleResponse, _> =
+            client.request("base_meterBundle", (bundle,)).await;
 
         assert!(result.is_err());
 
@@ -290,9 +285,8 @@ mod tests {
         // Metering always uses the latest block state, regardless of bundle.block_number
         let bundle = create_bundle(vec![], 0, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         // Should return the latest block number (genesis block 0)
         assert_eq!(response.state_block_number, 0);
@@ -309,16 +303,14 @@ mod tests {
         // Even if bundle.block_number is different, it should use the latest block
         // In this test, we specify block_number=0 in the bundle
         let bundle1 = create_bundle(vec![], 0, None);
-        let response1: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle1,))
-            .await?;
+        let response1: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle1,)).await?;
 
         // Try with a different bundle.block_number (999 - arbitrary value)
         // Since we can't create future blocks, we use a different value to show it's ignored
         let bundle2 = create_bundle(vec![], 999, None);
-        let response2: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle2,))
-            .await?;
+        let response2: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle2,)).await?;
 
         // Both should return the same state_block_number (the latest block)
         // because the implementation always uses Latest, not bundle.block_number
@@ -340,9 +332,8 @@ mod tests {
         let custom_timestamp = 1234567890;
         let bundle = create_bundle(vec![], 0, Some(custom_timestamp));
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         // Verify the request succeeded with custom timestamp
         assert_eq!(response.results.len(), 0);
@@ -361,9 +352,8 @@ mod tests {
         // any block_number value should work (it's only used for bundle validity in TIPS)
         let bundle = create_bundle(vec![], 999999, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         // Should succeed and use the latest block (genesis block 0)
         assert_eq!(response.state_block_number, 0);
@@ -394,7 +384,7 @@ mod tests {
             .into_eip1559();
 
         let signed_tx1 = OpTransactionSigned::Eip1559(
-            tx1_inner.as_eip1559().expect("eip1559 transaction").clone()
+            tx1_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let envelope1: OpTxEnvelope = signed_tx1.into();
         let tx1_bytes = Bytes::from(envelope1.encoded_2718());
@@ -412,16 +402,15 @@ mod tests {
             .into_eip1559();
 
         let signed_tx2 = OpTransactionSigned::Eip1559(
-            tx2_inner.as_eip1559().expect("eip1559 transaction").clone()
+            tx2_inner.as_eip1559().expect("eip1559 transaction").clone(),
         );
         let envelope2: OpTxEnvelope = signed_tx2.into();
         let tx2_bytes = Bytes::from(envelope2.encoded_2718());
 
         let bundle = create_bundle(vec![tx1_bytes, tx2_bytes], 0, None);
 
-        let response: crate::MeterBundleResponse = client
-            .request("base_meterBundle", (bundle,))
-            .await?;
+        let response: crate::MeterBundleResponse =
+            client.request("base_meterBundle", (bundle,)).await?;
 
         assert_eq!(response.results.len(), 2);
 
@@ -451,4 +440,3 @@ mod tests {
         Ok(())
     }
 }
-
