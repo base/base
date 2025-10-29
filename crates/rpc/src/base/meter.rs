@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Instant};
 use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
 use alloy_primitives::{B256, U256};
 use eyre::{Result as EyreResult, eyre};
-use reth::revm::db::State;
+use reth::revm::db::{BundleState, Cache, CacheDB, State};
+use revm_database::states::bundle_state::BundleRetention;
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -11,6 +12,15 @@ use reth_primitives_traits::SealedHeader;
 use tips_core::types::{BundleExtensions, BundleTxs, ParsedBundle};
 
 use crate::TransactionResult;
+
+/// State from pending flashblocks that is used as a base for metering
+#[derive(Debug, Clone)]
+pub struct FlashblocksState {
+    /// The cache of account and storage data
+    pub cache: Cache,
+    /// The accumulated bundle of state changes
+    pub bundle_state: BundleState,
+}
 
 const BLOCK_TIME: u64 = 2; // 2 seconds per block
 
@@ -33,8 +43,8 @@ pub struct MeterBundleOutput {
 
 /// Simulates and meters a bundle of transactions
 ///
-/// Takes a state provider, chain spec, parsed bundle, and block header, then executes transactions
-/// in sequence to measure gas usage and execution time.
+/// Takes a state provider, chain spec, parsed bundle, block header, and optional flashblocks state,
+/// then executes transactions in sequence to measure gas usage and execution time.
 ///
 /// Returns [`MeterBundleOutput`] containing transaction results and aggregated metrics.
 pub fn meter_bundle<SP>(
@@ -42,6 +52,7 @@ pub fn meter_bundle<SP>(
     chain_spec: Arc<OpChainSpec>,
     bundle: ParsedBundle,
     header: &SealedHeader,
+    flashblocks_state: Option<FlashblocksState>,
 ) -> EyreResult<MeterBundleOutput>
 where
     SP: reth_provider::StateProvider,
@@ -51,7 +62,29 @@ where
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
-    let mut db = State::builder().with_database(state_db).with_bundle_update().build();
+    // If we have flashblocks state, apply both cache and bundle prestate
+    let cache_db = if let Some(ref flashblocks) = flashblocks_state {
+        CacheDB {
+            cache: flashblocks.cache.clone(),
+            db: state_db,
+        }
+    } else {
+        CacheDB::new(state_db)
+    };
+
+    // Wrap the CacheDB in a State to track bundle changes for state root calculation
+    let mut db = if let Some(flashblocks) = flashblocks_state.as_ref() {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .with_bundle_prestate(flashblocks.bundle_state.clone())
+            .build()
+    } else {
+        State::builder()
+            .with_database(cache_db)
+            .with_bundle_update()
+            .build()
+    };
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
@@ -110,9 +143,11 @@ where
         }
     }
 
-    // Calculate state root and measure its calculation time
+    // Calculate state root and measure its calculation time. The bundle already includes
+    // flashblocks state if it was provided via with_bundle_prestate.
+    db.merge_transitions(BundleRetention::Reverts);
     let bundle_update = db.take_bundle();
-    let state_provider = db.database.as_ref();
+    let state_provider = db.database.db.as_ref();
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
     let _ = state_provider.state_root_with_updates(hashed_state);

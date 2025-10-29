@@ -1577,6 +1577,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-transaction-pool",
+ "revm-database",
  "serde_json",
  "tokio",
  "tokio-tungstenite 0.28.0",
@@ -1644,6 +1645,8 @@ dependencies = [
  "reth-testing-utils",
  "reth-tracing",
  "reth-transaction-pool",
+ "revm",
+ "revm-database",
  "serde",
  "serde_json",
  "tips-core",
@@ -5800,9 +5803,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "op-alloy-consensus"
-version = "0.21.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf1fc8aa0e2f5b136d101630be009e4e6dbdd1f17bc3ce670f431511600d2930"
+checksum = "3a501241474c3118833d6195312ae7eb7cc90bbb0d5f524cbb0b06619e49ff67"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -11546,13 +11549,14 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=e59327bec565808e0505d3fb3a64749dfc61a41a#e59327bec565808e0505d3fb3a64749dfc61a41a"
+source = "git+https://github.com/base/tips?rev=86b275c0fd63226c3fb85ac5512033f99b67d0f5#86b275c0fd63226c3fb85ac5512033f99b67d0f5"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-provider",
  "alloy-serde",
- "op-alloy-consensus 0.21.0",
+ "op-alloy-consensus 0.20.0",
+ "op-alloy-flz",
  "serde",
  "tracing",
  "tracing-subscriber 0.3.22",
