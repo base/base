@@ -43,6 +43,10 @@ op-alloy-network.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 
+# revm
+revm.workspace = true
+revm-database.workspace = true
+
 # rpc
 jsonrpsee.workspace = true
 jsonrpsee-types.workspace = true

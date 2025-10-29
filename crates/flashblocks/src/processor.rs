@@ -21,14 +21,19 @@ use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use op_alloy_rpc_types::Transaction;
+<<<<<<< HEAD
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
     revm::{
-        DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
+        context::result::ResultAndState,
+        database::StateProviderDatabase,
         db::CacheDB,
+        DatabaseCommit,
+        State,
     },
 };
+use revm_database::states::bundle_state::BundleRetention;
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
@@ -293,12 +298,39 @@ where
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
+<<<<<<< HEAD
         let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         let mut db = match &prev_pending_blocks {
             Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
             None => CacheDB::new(state),
+=======
+        let mut pending_blocks_builder = PendingBlocksBuilder::new();
+
+        // Cache reads across flashblocks, accumulating caches from previous
+        // pending blocks if available
+        let cache_db = match &prev_pending_blocks {
+            Some(pending_blocks) => CacheDB {
+                cache: pending_blocks.get_db_cache(),
+                db: state_provider_db,
+            },
+            None => CacheDB::new(state_provider_db),
+        };
+
+        // Track state changes across flashblocks, accumulating bundle state
+        // from previous pending blocks if available
+        let mut db = match &prev_pending_blocks {
+            Some(pending_blocks) => State::builder()
+                .with_database(cache_db)
+                .with_bundle_update()
+                .with_bundle_prestate(pending_blocks.get_bundle_state())
+                .build(),
+            None => State::builder()
+                .with_database(cache_db)
+                .with_bundle_update()
+                .build(),
+>>>>>>> 1c80299 (Use pending flashblocks state for bundle metering)
         };
 
         let mut state_overrides =
@@ -537,7 +569,9 @@ where
             last_block_header = block.header.clone();
         }
 
-        pending_blocks_builder.with_db_cache(db.cache);
+        db.merge_transitions(BundleRetention::Reverts);
+        pending_blocks_builder.with_bundle_state(db.take_bundle());
+        pending_blocks_builder.with_db_cache(db.database.cache);
         pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }

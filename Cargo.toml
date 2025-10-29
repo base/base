@@ -62,7 +62,7 @@ base-reth-flashblocks = { path = "crates/flashblocks" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies
-tips-core = { git = "https://github.com/base/tips", rev = "e59327bec565808e0505d3fb3a64749dfc61a41a", default-features = false }
+tips-core = { git = "https://github.com/base/tips", rev = "86b275c0fd63226c3fb85ac5512033f99b67d0f5", default-features = false }
 
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
@@ -96,6 +96,7 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", feature
 # revm
 revm = { version = "31.0.2", default-features = false }
 revm-bytecode = { version = "7.1.1", default-features = false }
+revm-database = { version = "9.0.6", default-features = false }
 
 # alloy
 alloy-trie = "0.9.1"

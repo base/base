@@ -14,7 +14,7 @@ use base_flashtypes::Flashblock;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::{db::Cache, state::EvmState};
+use reth::revm::{db::{BundleState, Cache}, state::EvmState};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
@@ -36,6 +36,7 @@ pub struct PendingBlocksBuilder {
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
+    bundle_state: BundleState,
 }
 
 impl PendingBlocksBuilder {
@@ -52,6 +53,7 @@ impl PendingBlocksBuilder {
             transaction_senders: HashMap::new(),
             state_overrides: None,
             db_cache: Cache::default(),
+            bundle_state: BundleState::default(),
         }
     }
 
@@ -122,6 +124,12 @@ impl PendingBlocksBuilder {
         self
     }
 
+    #[inline]
+    pub(crate) fn with_bundle_state(&mut self, bundle_state: BundleState) -> &Self {
+        self.bundle_state = bundle_state;
+        self
+    }
+
     pub(crate) fn build(self) -> eyre::Result<PendingBlocks> {
         if self.headers.is_empty() {
             return Err(eyre!("missing headers"));
@@ -143,6 +151,7 @@ impl PendingBlocksBuilder {
             transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             db_cache: self.db_cache,
+            bundle_state: self.bundle_state,
         })
     }
 }
@@ -163,6 +172,7 @@ pub struct PendingBlocks {
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
+    bundle_state: BundleState,
 }
 
 impl PendingBlocks {
@@ -209,6 +219,11 @@ impl PendingBlocks {
     /// Returns the database cache.
     pub fn get_db_cache(&self) -> Cache {
         self.db_cache.clone()
+    }
+
+    /// Returns the bundle state.
+    pub fn get_bundle_state(&self) -> BundleState {
+        self.bundle_state.clone()
     }
 
     /// Returns all transactions for a specific block number.

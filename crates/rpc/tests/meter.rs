@@ -136,8 +136,13 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-    let output =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+    )?;
 
     assert!(output.results.is_empty());
     assert_eq!(output.total_gas_used, 0);
@@ -179,8 +184,13 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
-    let output =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+    )?;
 
     assert_eq!(output.results.len(), 1);
     let result = &output.results[0];
@@ -257,8 +267,13 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
-    let output =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+    )?;
 
     assert_eq!(output.results.len(), 2);
     assert!(output.total_execution_time_us > 0);
@@ -326,14 +341,14 @@ fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let bundle_with_metadata = create_bundle_with_metadata(vec![envelope.clone()])?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
     let output = meter_bundle(
         state_provider,
         harness.chain_spec.clone(),
-        vec![envelope],
+        parsed_bundle,
         &harness.header,
-        &bundle_with_metadata,
+        None,
     )?;
 
     // Verify invariant: total execution time must include state root time

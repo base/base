@@ -26,6 +26,9 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
 
+# revm
+revm-database.workspace = true
+
 # alloy
 alloy-eips.workspace = true
 alloy-provider.workspace = true

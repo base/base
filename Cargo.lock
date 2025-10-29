@@ -256,7 +256,7 @@ dependencies = [
  "alloy-sol-types",
  "auto_impl",
  "derive_more",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types-engine",
  "op-revm",
  "revm",
@@ -370,7 +370,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "auto_impl",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-revm",
  "revm",
  "thiserror 2.0.17",
@@ -1543,7 +1543,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "once_cell",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "rand 0.9.2",
@@ -1566,6 +1566,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-tracing",
+ "revm-database",
  "rollup-boost",
  "serde",
  "serde_json",
@@ -1586,10 +1587,11 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-client",
+ "base-reth-flashblocks-rpc",
  "base-reth-test-utils",
  "eyre",
  "jsonrpsee 0.26.0",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "rand 0.9.2",
  "reth",
  "reth-db",
@@ -1608,6 +1610,7 @@ dependencies = [
  "reth-tracing",
  "reth-transaction-pool",
  "revm",
+ "revm-database",
  "serde",
  "serde_json",
  "tips-core",
@@ -1641,7 +1644,7 @@ dependencies = [
  "metrics",
  "metrics-derive",
  "once_cell",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-network",
  "op-alloy-rpc-jsonrpsee",
  "op-alloy-rpc-types",
@@ -1697,7 +1700,7 @@ dependencies = [
  "futures-util",
  "jsonrpsee 0.26.0",
  "once_cell",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",
@@ -4341,7 +4344,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4361,7 +4364,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -5877,6 +5880,20 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "op-alloy-consensus"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a501241474c3118833d6195312ae7eb7cc90bbb0d5f524cbb0b06619e49ff67"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "derive_more",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "op-alloy-consensus"
 version = "0.22.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e82f4f768ba39e52a4efe1b8f3425c04ab0d0e6f90c003fe97e5444cd963405e"
@@ -5913,7 +5930,7 @@ dependencies = [
  "alloy-provider",
  "alloy-rpc-types-eth",
  "alloy-signer",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types",
 ]
 
@@ -5940,7 +5957,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "derive_more",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
@@ -5961,7 +5978,7 @@ dependencies = [
  "derive_more",
  "ethereum_ssz",
  "ethereum_ssz_derive",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "serde",
  "snap",
  "thiserror 2.0.17",
@@ -6761,7 +6778,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.1",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -6798,7 +6815,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -7366,7 +7383,7 @@ dependencies = [
  "arbitrary",
  "bytes",
  "modular-bitfield",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "reth-codecs-derive",
  "reth-zstd-compressors",
  "serde",
@@ -8812,7 +8829,7 @@ dependencies = [
  "alloy-primitives",
  "derive_more",
  "miniz_oxide",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types",
  "paste",
  "reth-chainspec",
@@ -8840,7 +8857,7 @@ dependencies = [
  "derive_more",
  "eyre",
  "futures-util",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "reth-chainspec",
  "reth-cli",
  "reth-cli-commands",
@@ -8912,7 +8929,7 @@ dependencies = [
  "alloy-evm",
  "alloy-op-evm",
  "alloy-primitives",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types-engine",
  "op-revm",
  "reth-chainspec",
@@ -8991,7 +9008,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "clap",
  "eyre",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types-engine",
  "op-revm",
  "reth-chainspec",
@@ -9039,7 +9056,7 @@ dependencies = [
  "alloy-rpc-types-debug",
  "alloy-rpc-types-engine",
  "derive_more",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-rpc-types-engine",
  "reth-basic-payload-builder",
  "reth-chain-state",
@@ -9078,7 +9095,7 @@ dependencies = [
  "arbitrary",
  "bytes",
  "modular-bitfield",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "reth-codecs",
  "reth-primitives-traits",
  "reth-zstd-compressors",
@@ -9109,7 +9126,7 @@ dependencies = [
  "jsonrpsee-core 0.26.0",
  "jsonrpsee-types 0.26.0",
  "metrics",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-network",
  "op-alloy-rpc-jsonrpsee",
  "op-alloy-rpc-types",
@@ -9173,7 +9190,7 @@ dependencies = [
  "derive_more",
  "futures-util",
  "metrics",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-flz",
  "op-alloy-rpc-types",
  "op-revm",
@@ -9299,7 +9316,7 @@ dependencies = [
  "derive_more",
  "modular-bitfield",
  "once_cell",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "proptest",
  "proptest-arbitrary-interop",
  "rayon",
@@ -9618,7 +9635,7 @@ dependencies = [
  "auto_impl",
  "dyn-clone",
  "jsonrpsee-types 0.26.0",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.22.3",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-revm",
@@ -11726,13 +11743,13 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=e59327bec565808e0505d3fb3a64749dfc61a41a#e59327bec565808e0505d3fb3a64749dfc61a41a"
+source = "git+https://github.com/base/tips?rev=86b275c0fd63226c3fb85ac5512033f99b67d0f5#86b275c0fd63226c3fb85ac5512033f99b67d0f5"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-provider",
  "alloy-serde",
- "op-alloy-consensus",
+ "op-alloy-consensus 0.20.0",
  "op-alloy-flz",
  "serde",
  "tracing",
