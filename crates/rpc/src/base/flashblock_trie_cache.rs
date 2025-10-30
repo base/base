@@ -71,6 +71,7 @@ impl FlashblockTrieCache {
 
         let trie_data = FlashblockTrieData { trie_updates, hashed_state };
 
+        // Store the new entry, replacing any previous flashblock's cached trie
         self.cache.store(Arc::new(Some(CachedFlashblockTrie {
             block_hash,
             flashblock_index,

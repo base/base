@@ -62,49 +62,51 @@ where
 
         // Get header and flashblock index from pending blocks
         // If no pending blocks exist, fall back to latest canonical block
-        let (header, flashblock_index, canonical_block_number) = if let Some(pb) = pending_blocks.as_ref() {
-            let latest_header: Sealed<Header> = pb.latest_header();
-            let flashblock_index = pb.latest_flashblock_index();
-            let canonical_block_number = pb.canonical_block_number();
+        let (header, flashblock_index, canonical_block_number) =
+            if let Some(pb) = pending_blocks.as_ref() {
+                let latest_header: Sealed<Header> = pb.latest_header();
+                let flashblock_index = pb.latest_flashblock_index();
+                let canonical_block_number = pb.canonical_block_number();
 
-            info!(
-                latest_block = latest_header.number,
-                canonical_block = %canonical_block_number,
-                flashblock_index = flashblock_index,
-                "Using latest flashblock state for metering"
-            );
+                info!(
+                    latest_block = latest_header.number,
+                    canonical_block = %canonical_block_number,
+                    flashblock_index = flashblock_index,
+                    "Using latest flashblock state for metering"
+                );
 
-            // Convert Sealed<Header> to SealedHeader
-            let sealed_header = SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
-            (sealed_header, flashblock_index, canonical_block_number)
-        } else {
-            // No pending blocks, use latest canonical block
-            let canonical_block_number = pending_blocks.get_canonical_block_number();
-            let header = self
-                .provider
-                .sealed_header_by_number_or_tag(canonical_block_number)
-                .map_err(|e| {
-                    jsonrpsee::types::ErrorObjectOwned::owned(
-                        jsonrpsee::types::ErrorCode::InternalError.code(),
-                        format!("Failed to get canonical block header: {}", e),
-                        None::<()>,
-                    )
-                })?
-                .ok_or_else(|| {
-                    jsonrpsee::types::ErrorObjectOwned::owned(
-                        jsonrpsee::types::ErrorCode::InternalError.code(),
-                        "Canonical block not found".to_string(),
-                        None::<()>,
-                    )
-                })?;
+                // Convert Sealed<Header> to SealedHeader
+                let sealed_header =
+                    SealedHeader::new(latest_header.inner().clone(), latest_header.hash());
+                (sealed_header, flashblock_index, canonical_block_number)
+            } else {
+                // No pending blocks, use latest canonical block
+                let canonical_block_number = pending_blocks.get_canonical_block_number();
+                let header = self
+                    .provider
+                    .sealed_header_by_number_or_tag(canonical_block_number)
+                    .map_err(|e| {
+                        jsonrpsee::types::ErrorObjectOwned::owned(
+                            jsonrpsee::types::ErrorCode::InternalError.code(),
+                            format!("Failed to get canonical block header: {}", e),
+                            None::<()>,
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        jsonrpsee::types::ErrorObjectOwned::owned(
+                            jsonrpsee::types::ErrorCode::InternalError.code(),
+                            "Canonical block not found".to_string(),
+                            None::<()>,
+                        )
+                    })?;
 
-            info!(
-                canonical_block = header.number,
-                "No flashblocks available, using canonical block state for metering"
-            );
+                info!(
+                    canonical_block = header.number,
+                    "No flashblocks available, using canonical block state for metering"
+                );
 
-            (header, 0, canonical_block_number)
-        };
+                (header, 0, canonical_block_number)
+            };
 
         let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
@@ -134,7 +136,9 @@ where
         });
 
         // Get the flashblock index if we have pending flashblocks
-        let state_flashblock_index = pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index());
+        let state_flashblock_index = pending_blocks
+            .as_ref()
+            .map(|pb| pb.latest_flashblock_index());
 
         // If we have flashblocks, ensure the trie is cached and get it
         let cached_trie = if let Some(ref fb_state) = flashblocks_state {
@@ -143,12 +147,7 @@ where
             // Ensure the flashblock trie is cached and return it
             Some(
                 self.trie_cache
-                    .ensure_cached(
-                        header.hash(),
-                        fb_index,
-                        fb_state,
-                        &*state_provider,
-                    )
+                    .ensure_cached(header.hash(), fb_index, fb_state, &*state_provider)
                     .map_err(|e| {
                         error!(error = %e, "Failed to cache flashblock trie");
                         jsonrpsee::types::ErrorObjectOwned::owned(
