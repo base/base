@@ -6,10 +6,12 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
+use hokulea_compute_proof::create_kzg_proofs_for_eigenda_preimage;
 use hokulea_proof::{
-    eigenda_provider::OracleEigenDAPreimageProvider, eigenda_witness::EigenDAWitness,
+    eigenda_provider::OracleEigenDAPreimageProvider,
+    eigenda_witness::{EigenDAPreimage, EigenDAWitness},
 };
-use hokulea_witgen::witness_provider::OracleEigenDAWitnessProvider;
+use hokulea_witgen::witness_provider::OracleEigenDAPreimageProviderWithPreimage;
 use kona_preimage::{HintWriter, NativeChannel, OracleReader};
 use kona_proof::l1::OracleBlobProvider;
 use op_succinct_client_utils::witness::{
@@ -103,14 +105,14 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
         // Create EigenDA blob provider that collects witness data
         let eigenda_preimage_provider = OracleEigenDAPreimageProvider::new(oracle.clone());
-        let eigenda_witness = Arc::new(Mutex::new(EigenDAWitness::default()));
+        let eigenda_preimage = Arc::new(Mutex::new(EigenDAPreimage::default()));
 
-        let eigenda_blob_and_witness_provider = OracleEigenDAWitnessProvider {
+        let eigenda_preimage_provider = OracleEigenDAPreimageProviderWithPreimage {
             provider: eigenda_preimage_provider,
-            witness: eigenda_witness.clone(),
+            preimage: eigenda_preimage.clone(),
         };
 
-        let executor = EigenDAWitnessExecutor::new(eigenda_blob_and_witness_provider);
+        let executor = EigenDAWitnessExecutor::new(eigenda_preimage_provider);
 
         let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
         if let Some((cursor, l1_provider, l2_provider)) = input {
@@ -133,8 +135,10 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
                 .unwrap();
         }
 
-        // Extract the EigenDA witness data
-        let mut eigenda_witness_data = std::mem::take(&mut *eigenda_witness.lock().unwrap());
+        // Extract the EigenDA preimage data
+        let eigenda_preimage_data = std::mem::take(&mut *eigenda_preimage.lock().unwrap());
+
+        let kzg_proofs = create_kzg_proofs_for_eigenda_preimage(&eigenda_preimage_data);
 
         // Generate canoe proofs using the reduced proof provider for proof aggregation
         use canoe_sp1_cc_host::CanoeSp1CCReducedProofProvider;
@@ -145,24 +149,26 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
             .parse::<bool>()
             .unwrap_or(false);
         let canoe_provider = CanoeSp1CCReducedProofProvider { eth_rpc_url, mock_mode };
-        let canoe_proofs = hokulea_witgen::from_boot_info_to_canoe_proof(
+        let maybe_canoe_proof = hokulea_witgen::from_boot_info_to_canoe_proof(
             &boot_info,
-            &eigenda_witness_data,
+            &eigenda_preimage_data,
             oracle.clone(),
             canoe_provider,
             CanoeVerifierAddressFetcherDeployedByEigenLabs {},
         )
         .await?;
 
-        if let Some(proof) = canoe_proofs {
-            // Store the canoe proof in the witness data
-            let canoe_proof_bytes =
-                serde_cbor::to_vec(&proof).expect("Failed to serialize canoe proof");
-            eigenda_witness_data.canoe_proof_bytes = Some(canoe_proof_bytes);
-        }
+        let maybe_canoe_proof_bytes =
+            maybe_canoe_proof.map(|proof| serde_cbor::to_vec(&proof).expect("serde error"));
 
-        let eigenda_witness_bytes = serde_cbor::to_vec(&eigenda_witness_data)
-            .expect("Failed to serialize EigenDA witness data");
+        let eigenda_witness = EigenDAWitness::from_preimage(
+            eigenda_preimage_data,
+            kzg_proofs,
+            maybe_canoe_proof_bytes,
+        )?;
+
+        let eigenda_witness_bytes =
+            serde_cbor::to_vec(&eigenda_witness).expect("Failed to serialize EigenDA witness data");
 
         let witness = EigenDAWitnessData {
             preimage_store: preimage_witness_store.lock().unwrap().clone(),

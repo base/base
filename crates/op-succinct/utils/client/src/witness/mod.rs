@@ -63,7 +63,7 @@ pub struct EigenDAWitnessData {
     pub preimage_store: PreimageStore,
     pub blob_data: BlobData,
     // EigenDAWitness.
-    // See https://github.com/Layr-Labs/hokulea/blob/0a6200cd0f22caa28aca040e47860dd42893ae26/crates/proof/src/eigenda_blob_witness.rs.
+    // See https://github.com/Layr-Labs/hokulea/blob/c99e17ec99574a237e10ca2ddb3110acefdb6ca6/crates/proof/src/eigenda_witness.rs#L69.
     pub eigenda_data: Option<Vec<u8>>,
 }
 
