@@ -21,7 +21,6 @@ use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
 use op_alloy_rpc_types::Transaction;
-<<<<<<< HEAD
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
@@ -298,14 +297,6 @@ where
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
-<<<<<<< HEAD
-        let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
-        let mut pending_blocks_builder = PendingBlocksBuilder::new();
-
-        let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
-            None => CacheDB::new(state),
-=======
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         // Cache reads across flashblocks, accumulating caches from previous
@@ -330,7 +321,6 @@ where
                 .with_database(cache_db)
                 .with_bundle_update()
                 .build(),
->>>>>>> 1c80299 (Use pending flashblocks state for bundle metering)
         };
 
         let mut state_overrides =

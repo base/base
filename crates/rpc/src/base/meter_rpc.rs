@@ -10,12 +10,14 @@ use std::sync::Arc;
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
-use crate::{MeteringApiServer, meter_bundle};
+use crate::{FlashblockTrieCache, MeteringApiServer, meter_bundle};
 
 /// Implementation of the metering RPC API
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_state: Arc<FB>,
+    /// Single-entry cache for the latest flashblock's trie nodes
+    trie_cache: FlashblockTrieCache,
 }
 
 impl<Provider, FB> MeteringApiImpl<Provider, FB>
@@ -31,6 +33,7 @@ where
         Self {
             provider,
             flashblocks_state,
+            trie_cache: FlashblockTrieCache::new(),
         }
     }
 }
@@ -133,6 +136,32 @@ where
         // Get the flashblock index if we have pending flashblocks
         let state_flashblock_index = pending_blocks.as_ref().map(|pb| pb.latest_flashblock_index());
 
+        // If we have flashblocks, ensure the trie is cached and get it
+        let cached_trie = if let Some(ref fb_state) = flashblocks_state {
+            let fb_index = state_flashblock_index.unwrap();
+
+            // Ensure the flashblock trie is cached and return it
+            Some(
+                self.trie_cache
+                    .ensure_cached(
+                        header.hash(),
+                        fb_index,
+                        fb_state,
+                        &*state_provider,
+                    )
+                    .map_err(|e| {
+                        error!(error = %e, "Failed to cache flashblock trie");
+                        jsonrpsee::types::ErrorObjectOwned::owned(
+                            jsonrpsee::types::ErrorCode::InternalError.code(),
+                            format!("Failed to cache flashblock trie: {}", e),
+                            None::<()>,
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+
         // Meter bundle using utility function
         let result = meter_bundle(
             state_provider,
@@ -140,6 +169,7 @@ where
             parsed_bundle,
             &header,
             flashblocks_state,
+            cached_trie,
         )
         .map_err(|e| {
             error!(error = %e, "Bundle metering failed");

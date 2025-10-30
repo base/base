@@ -92,6 +92,7 @@ reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = 
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
     "op",
 ] }
+reth-trie-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 
 # revm
 revm = { version = "31.0.2", default-features = false }
