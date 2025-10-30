@@ -419,12 +419,11 @@ where
             },
             None => CacheDB::new(state),
         };
-        let mut state_cache_builder = match &prev_pending_blocks {
-            Some(pending_blocks) => {
-                StateOverridesBuilder::new(pending_blocks.get_state_overrides().unwrap_or_default())
-            }
-            None => StateOverridesBuilder::default(),
+        let mut state_overrides = match &prev_pending_blocks {
+            Some(pending_blocks) => pending_blocks.get_state_overrides().unwrap_or_default(),
+            None => StateOverride::default(),
         };
+
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
                 .first()
@@ -619,10 +618,22 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let state_diff =
+                                let mut state_cache_builder =
+                                    StateOverridesBuilder::new(state_overrides.clone());
+                                let curr_state_diff =
                                     B256HashMap::<B256>::from_iter(acc.storage.iter().map(
                                         |(&key, slot)| (key.into(), slot.present_value.into()),
                                     ));
+
+                                let mut state_diff = state_overrides
+                                    .get(addr)
+                                    .cloned()
+                                    .unwrap_or_default()
+                                    .state_diff
+                                    .unwrap_or_default();
+
+                                state_diff.extend(curr_state_diff);
+
                                 let acc_override = AccountOverride {
                                     balance: Some(acc.info.balance),
                                     nonce: Some(acc.info.nonce),
@@ -633,6 +644,7 @@ where
                                 };
                                 state_cache_builder =
                                     state_cache_builder.append(*addr, acc_override);
+                                state_overrides = state_cache_builder.build();
                             }
                             pending_blocks_builder
                                 .with_transaction_state(transaction.tx_hash(), state.clone());
@@ -659,7 +671,7 @@ where
         }
 
         pending_blocks_builder.with_db_cache(db.cache);
-        pending_blocks_builder.with_state_overrides(state_cache_builder.build());
+        pending_blocks_builder.with_state_overrides(state_overrides);
         Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
 
