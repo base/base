@@ -10,7 +10,7 @@ use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, B256, U256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::state::{AccountOverride, StateOverride};
 use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
@@ -618,8 +618,6 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let mut state_cache_builder =
-                                    StateOverridesBuilder::new(state_overrides.clone());
                                 let curr_state_diff =
                                     B256HashMap::<B256>::from_iter(acc.storage.iter().map(
                                         |(&key, slot)| (key.into(), slot.present_value.into()),
@@ -642,9 +640,8 @@ where
                                     state_diff: Some(state_diff),
                                     move_precompile_to: None,
                                 };
-                                state_cache_builder =
-                                    state_cache_builder.append(*addr, acc_override);
-                                state_overrides = state_cache_builder.build();
+
+                                state_overrides.insert(*addr, acc_override);
                             }
                             pending_blocks_builder
                                 .with_transaction_state(transaction.tx_hash(), state.clone());
