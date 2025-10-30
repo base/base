@@ -237,13 +237,13 @@ where
                         block_number = flashblock.metadata.block_number,
                         flashblock_index = flashblock.index
                     );
-                    match self.process_flashblock(prev_pending_blocks, &flashblock) {
+                    match self.process_flashblock(prev_pending_blocks, flashblock) {
                         Ok(new_pending_blocks) => {
                             if new_pending_blocks.is_some() {
                                 _ = self.sender.send(new_pending_blocks.clone().unwrap())
                             }
 
-                            self.pending_blocks.swap(new_pending_blocks.clone());
+                            self.pending_blocks.swap(new_pending_blocks);
                             self.metrics
                                 .block_processing_duration
                                 .record(start_time.elapsed());
@@ -327,15 +327,15 @@ where
     fn process_flashblock(
         &self,
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
-        flashblock: &Flashblock,
+        flashblock: Flashblock,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         match &prev_pending_blocks {
             Some(pending_blocks) => {
-                if self.is_next_flashblock(pending_blocks, flashblock) {
+                if self.is_next_flashblock(pending_blocks, &flashblock) {
                     // We have received the next flashblock for the current block
                     // or the first flashblock for the next block
                     let mut flashblocks = pending_blocks.get_flashblocks();
-                    flashblocks.push(flashblock.clone());
+                    flashblocks.push(flashblock);
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
                 } else if pending_blocks.latest_block_number() != flashblock.metadata.block_number {
                     // We have received a non-zero flashblock for a new block
@@ -354,7 +354,7 @@ where
                         curr_block = %pending_blocks.latest_block_number(),
                         flashblock_index = %flashblock.index,
                     );
-                    Ok(prev_pending_blocks.clone())
+                    Ok(prev_pending_blocks)
                 } else {
                     // We have received a non-sequential flashblock for the current block
                     self.metrics.unexpected_block_order.increment(1);
@@ -370,7 +370,7 @@ where
             }
             None => {
                 if flashblock.index == 0 {
-                    self.build_pending_state(None, &vec![flashblock.clone()])
+                    self.build_pending_state(None, &vec![flashblock])
                 } else {
                     info!(message = "waiting for first Flashblock");
                     Ok(None)
@@ -385,12 +385,12 @@ where
         flashblocks: &Vec<Flashblock>,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
         // BTreeMap guarantees ascending order of keys while iterating
-        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<Flashblock>>::new();
+        let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
                 .entry(flashblock.metadata.block_number)
                 .or_default()
-                .push(flashblock.clone());
+                .push(flashblock);
         }
 
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
@@ -463,7 +463,12 @@ where
                     acc
                 });
 
-            pending_blocks_builder.with_flashblocks(flashblocks.clone());
+            pending_blocks_builder.with_flashblocks(
+                flashblocks
+                    .iter()
+                    .map(|&x| x.clone())
+                    .collect::<Vec<Flashblock>>(),
+            );
 
             let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
                 blob_gas_used: 0,
