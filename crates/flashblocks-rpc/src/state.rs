@@ -9,7 +9,7 @@ use alloy_primitives::map::foldhash::HashMap;
 use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, B256, U256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{StateOverride};
+use alloy_rpc_types_eth::state::StateOverride;
 use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
@@ -622,15 +622,19 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let existing_override = state_overrides.entry(*addr).or_insert(Default::default());
+                                let existing_override =
+                                    state_overrides.entry(*addr).or_insert(Default::default());
                                 existing_override.balance = Some(acc.info.balance);
                                 existing_override.nonce = Some(acc.info.nonce);
-                                existing_override.code = acc.info.code.clone().map(|code| code.bytes());
+                                existing_override.code =
+                                    acc.info.code.clone().map(|code| code.bytes());
 
-                                let existing = existing_override.state_diff.get_or_insert(Default::default());
-                                let changed_slots = acc.storage.iter().map(
-                                     |(&key, slot)| (B256::from(key), B256::from(slot.present_value)),
-                                );
+                                let existing = existing_override
+                                    .state_diff
+                                    .get_or_insert(Default::default());
+                                let changed_slots = acc.storage.iter().map(|(&key, slot)| {
+                                    (B256::from(key), B256::from(slot.present_value))
+                                });
 
                                 existing.extend(changed_slots);
                             }
