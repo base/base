@@ -14,7 +14,10 @@ use base_flashtypes::Flashblock;
 use eyre::eyre;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
-use reth::revm::{db::{BundleState, Cache}, state::EvmState};
+use reth::revm::{
+    db::{BundleState, Cache},
+    state::EvmState,
+};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 

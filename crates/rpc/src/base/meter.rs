@@ -64,11 +64,15 @@ where
 
     // If we have flashblocks but no cached trie, compute the flashblock trie first
     // (before starting any timers, since we only want to time the bundle's execution and state root)
-    let flashblock_trie = if cached_flashblock_trie.is_none() && flashblocks_state.is_some() {
-        let fb_state = flashblocks_state.as_ref().unwrap();
-        let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
-        let (_fb_state_root, fb_trie_updates) = state_provider.state_root_with_updates(fb_hashed_state.clone())?;
-        Some((fb_trie_updates, fb_hashed_state))
+    let flashblock_trie = if cached_flashblock_trie.is_none() {
+        if let Some(ref fb_state) = flashblocks_state {
+            let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
+            let (_fb_state_root, fb_trie_updates) =
+                state_provider.state_root_with_updates(fb_hashed_state.clone())?;
+            Some((fb_trie_updates, fb_hashed_state))
+        } else {
+            None
+        }
     } else {
         None
     };
