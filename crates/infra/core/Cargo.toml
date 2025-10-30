@@ -27,3 +27,4 @@ op-alloy-flz.workspace = true
 [dev-dependencies]
 alloy-signer-local.workspace = true
 op-alloy-rpc-types.workspace = true
+serde_json.workspace = true

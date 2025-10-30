@@ -167,6 +167,12 @@ pub struct MeterBundleResponse {
     pub gas_fees: String,
     pub results: Vec<TransactionResult>,
     pub state_block_number: u64,
+    #[serde(
+        default,
+        deserialize_with = "alloy_serde::quantity::opt::deserialize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub state_flashblock_index: Option<u64>,
     pub total_gas_used: u64,
     pub total_execution_time_us: u128,
     pub state_root_time_us: u128,
@@ -244,5 +250,76 @@ mod tests {
         };
 
         assert_eq!(bundle.bundle_hash(), expected_bundle_hash_double);
+    }
+
+    #[test]
+    fn test_meter_bundle_response_serialization() {
+        let response = MeterBundleResponse {
+            bundle_gas_price: "1000000000".to_string(),
+            bundle_hash: B256::default(),
+            coinbase_diff: "100".to_string(),
+            eth_sent_to_coinbase: "0".to_string(),
+            gas_fees: "100".to_string(),
+            results: vec![],
+            state_block_number: 12345,
+            state_flashblock_index: Some(42),
+            total_gas_used: 21000,
+            total_execution_time_us: 1000,
+            state_root_time_us: 500,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"stateFlashblockIndex\":42"));
+        assert!(json.contains("\"stateBlockNumber\":12345"));
+
+        let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.state_flashblock_index, Some(42));
+        assert_eq!(deserialized.state_block_number, 12345);
+    }
+
+    #[test]
+    fn test_meter_bundle_response_without_flashblock_index() {
+        let response = MeterBundleResponse {
+            bundle_gas_price: "1000000000".to_string(),
+            bundle_hash: B256::default(),
+            coinbase_diff: "100".to_string(),
+            eth_sent_to_coinbase: "0".to_string(),
+            gas_fees: "100".to_string(),
+            results: vec![],
+            state_block_number: 12345,
+            state_flashblock_index: None,
+            total_gas_used: 21000,
+            total_execution_time_us: 1000,
+            state_root_time_us: 500,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(!json.contains("stateFlashblockIndex"));
+        assert!(json.contains("\"stateBlockNumber\":12345"));
+
+        let deserialized: MeterBundleResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.state_flashblock_index, None);
+        assert_eq!(deserialized.state_block_number, 12345);
+    }
+
+    #[test]
+    fn test_meter_bundle_response_deserialization_without_flashblock() {
+        let json = r#"{
+            "bundleGasPrice": "1000000000",
+            "bundleHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "coinbaseDiff": "100",
+            "ethSentToCoinbase": "0",
+            "gasFees": "100",
+            "results": [],
+            "stateBlockNumber": 12345,
+            "totalGasUsed": 21000,
+            "totalExecutionTimeUs": 1000,
+            "stateRootTimeUs": 500
+        }"#;
+
+        let deserialized: MeterBundleResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.state_flashblock_index, None);
+        assert_eq!(deserialized.state_block_number, 12345);
+        assert_eq!(deserialized.total_gas_used, 21000);
     }
 }
