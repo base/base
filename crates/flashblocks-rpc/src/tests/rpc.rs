@@ -222,12 +222,14 @@ mod tests {
         b256!("0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a");
 
     const DEPLOYMENT_HASH: TxHash =
-        b256!("0xa9353897b4ab350ae717eefdad4c9cb613e684f5a490c82a44387d8d5a2f8197");
+        b256!("0x2b14d58c13406f25a78cfb802fb711c0d2c27bf9eccaec2d1847dc4392918f63");
 
     const INCREMENT_HASH: TxHash =
         b256!("0x993ad6a332752f6748636ce899b3791e4a33f7eece82c0db4556c7339c1b2929");
+    const INCREMENT2_HASH: TxHash =
+        b256!("0x617a3673399647d12bb82ec8eba2ca3fc468e99894bcf1c67eb50ef38ee615cb");
 
-    const COUNTER_ADDRESS: Address = address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512");
+    const COUNTER_ADDRESS: Address = address!("0xe7f1725e7734ce288f8367e1bb143e90bb3f0512");
 
     // Test log topics - these represent common events
     const TEST_LOG_TOPIC_0: B256 =
@@ -270,13 +272,16 @@ mod tests {
     const TRANSFER_ETH_TX: Bytes = bytes!("0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31");
 
     // NOTE:
-    // Following txns deploy a simple Counter contract (Compiled with solc 0.8.13)
-    // Only contains a `uin256 public number` and a function increment() { number++ };
-    // Following txn calls increment once, so number should be 1
-    // Raw Bytecode: 0x608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033
-    const DEPLOYMENT_TX: Bytes = bytes!("0x02f901db83014a3401808449504f8083030d408080b90183608060405234801561001057600080fd5b50610163806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80638381f58a1461003b578063d09de08a14610059575b600080fd5b610043610063565b604051610050919061009b565b60405180910390f35b610061610069565b005b60005481565b60008081548092919061007b906100e5565b9190505550565b6000819050919050565b61009581610082565b82525050565b60006020820190506100b0600083018461008c565b92915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b60006100f082610082565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8203610122576101216100b6565b5b60018201905091905056fea2646970667358221220a0719cefc3439563ff433fc58f8ffb66e1b639119206276d3bdac5d2e2b6f2fa64736f6c634300080d0033c080a034278436b367f7b73ab6dc7c7cc09f8880104513f8b8fb691b498257de97a5bca05cb702ebad2aadf9f225bf5f8685ea03d194bf7a2ea05b1d27a1bd33169f9fe0");
+    // Following txns deploy a double Counter contract (Compiled with solc 0.8.13)
+    // contains a `uint256 public count = 1` and a function increment() { count++ };
+    // and a `uint256 public count2 = 1` and a function increment2() { count2++ };
+    // Following txn calls increment once, so count should be 2
+    // Raw Bytecode: 0x608060405260015f55600180553480156016575f80fd5b50610218806100245f395ff3fe608060405234801561000f575f80fd5b5060043610610060575f3560e01c80631d63e24d146100645780637477f70014610082578063a87d942c146100a0578063ab57b128146100be578063d09de08a146100c8578063d631c639146100d2575b5f80fd5b61006c6100f0565b6040516100799190610155565b60405180910390f35b61008a6100f6565b6040516100979190610155565b60405180910390f35b6100a86100fb565b6040516100b59190610155565b60405180910390f35b6100c6610103565b005b6100d061011c565b005b6100da610134565b6040516100e79190610155565b60405180910390f35b60015481565b5f5481565b5f8054905090565b60015f8154809291906101159061019b565b9190505550565b5f8081548092919061012d9061019b565b9190505550565b5f600154905090565b5f819050919050565b61014f8161013d565b82525050565b5f6020820190506101685f830184610146565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6101a58261013d565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101d7576101d661016e565b5b60018201905091905056fea264697066735822122025c7e02ddf460dece9c1e52a3f9ff042055b58005168e7825d7f6c426288c27164736f6c63430008190033
+    const DEPLOYMENT_TX: Bytes = bytes!("0x02f9029483014a3401808449504f80830493e08080b9023c608060405260015f55600180553480156016575f80fd5b50610218806100245f395ff3fe608060405234801561000f575f80fd5b5060043610610060575f3560e01c80631d63e24d146100645780637477f70014610082578063a87d942c146100a0578063ab57b128146100be578063d09de08a146100c8578063d631c639146100d2575b5f80fd5b61006c6100f0565b6040516100799190610155565b60405180910390f35b61008a6100f6565b6040516100979190610155565b60405180910390f35b6100a86100fb565b6040516100b59190610155565b60405180910390f35b6100c6610103565b005b6100d061011c565b005b6100da610134565b6040516100e79190610155565b60405180910390f35b60015481565b5f5481565b5f8054905090565b60015f8154809291906101159061019b565b9190505550565b5f8081548092919061012d9061019b565b9190505550565b5f600154905090565b5f819050919050565b61014f8161013d565b82525050565b5f6020820190506101685f830184610146565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6101a58261013d565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101d7576101d661016e565b5b60018201905091905056fea264697066735822122025c7e02ddf460dece9c1e52a3f9ff042055b58005168e7825d7f6c426288c27164736f6c63430008190033c001a02f196658032e0b003bcd234349d63081f5d6c2785264c6fec6b25ad877ae326aa0290c9f96f4501439b07a7b5e8e938f15fc30a9c15db3fc5e654d44e1f522060c");
     // Increment tx: call increment()
     const INCREMENT_TX: Bytes = bytes!("0x02f86d83014a3402808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a0a9c1a565668084d4052bbd9bc3abce8555a06aed6651c82c2756ac8a83a79fa2a03427f440ce4910a5227ea0cedb60b06cf0bea2dbbac93bd37efa91a474c29d89");
+    // Increment2 tx: call increment2()
+    const INCREMENT2_TX: Bytes = bytes!("0x02f86d83014a3403808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084ab57b128c001a03a155b8c81165fc8193aa739522c2a9e432e274adea7f0b90ef2b5078737f153a0288d7fad4a3b0d1e7eaf7fab63b298393a5020bf11d91ff8df13b235410799e2");
 
     fn create_second_payload() -> Flashblock {
         let payload = Flashblock {
@@ -288,7 +293,13 @@ mod tests {
                 receipts_root: B256::default(),
                 gas_used: 0,
                 block_hash: B256::default(),
-                transactions: vec![DEPOSIT_TX, TRANSFER_ETH_TX, DEPLOYMENT_TX, INCREMENT_TX],
+                transactions: vec![
+                    DEPOSIT_TX,
+                    TRANSFER_ETH_TX,
+                    DEPLOYMENT_TX,
+                    INCREMENT_TX,
+                    INCREMENT2_TX,
+                ],
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
@@ -321,7 +332,7 @@ mod tests {
                         DEPLOYMENT_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 172279,
+                            cumulative_gas_used: 272279,
                             logs: vec![],
                         }),
                     );
@@ -329,8 +340,16 @@ mod tests {
                         INCREMENT_HASH,
                         OpReceipt::Legacy(Receipt {
                             status: true.into(),
-                            cumulative_gas_used: 172279 + 44000,
+                            cumulative_gas_used: 272279 + 44000,
                             logs: create_test_logs(),
+                        }),
+                    );
+                    receipts.insert(
+                        INCREMENT2_HASH,
+                        OpReceipt::Legacy(Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 272279 + 44000 + 44000,
+                            logs: vec![],
                         }),
                     );
                     receipts
@@ -387,7 +406,7 @@ mod tests {
             .expect("pending block expected");
 
         assert_eq!(block.number(), 1);
-        assert_eq!(block.transactions.hashes().len(), 5);
+        assert_eq!(block.transactions.hashes().len(), 6);
 
         Ok(())
     }
@@ -490,7 +509,7 @@ mod tests {
         assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
         assert_eq!(
             provider.get_transaction_count(TX_SENDER).pending().await?,
-            3
+            4
         );
 
         Ok(())
@@ -525,7 +544,7 @@ mod tests {
         // We included a heavy spending transaction and now don't have enough funds for this request, so
         // this eth_call with fail
         let res = provider
-            .call(send_eth_call.nonce(3))
+            .call(send_eth_call.nonce(4))
             .block(BlockNumberOrTag::Pending.into())
             .await;
 
@@ -537,20 +556,36 @@ mod tests {
             .message
             .contains("insufficient funds for gas"));
 
-        // read number from counter contract
-        let eth_call = OpTransactionRequest::default()
+        // read count1 from counter contract
+        let eth_call_count1 = OpTransactionRequest::default()
             .from(TX_SENDER)
             .transaction_type(0)
             .gas_limit(20000000)
-            .nonce(4)
+            .nonce(5)
             .to(COUNTER_ADDRESS)
             .value(U256::ZERO)
-            .input(TransactionInput::new(bytes!("0x8381f58a")));
-        let res = provider.call(eth_call).await;
-        assert!(res.is_ok());
+            .input(TransactionInput::new(bytes!("0xa87d942c")));
+        let res_count1 = provider.call(eth_call_count1).await;
+        assert!(res_count1.is_ok());
         assert_eq!(
-            U256::from_str(res.unwrap().to_string().as_str()).unwrap(),
-            U256::from(1)
+            U256::from_str(res_count1.unwrap().to_string().as_str()).unwrap(),
+            U256::from(2)
+        );
+
+        // read count2 from counter contract
+        let eth_call_count2 = OpTransactionRequest::default()
+            .from(TX_SENDER)
+            .transaction_type(0)
+            .gas_limit(20000000)
+            .nonce(6)
+            .to(COUNTER_ADDRESS)
+            .value(U256::ZERO)
+            .input(TransactionInput::new(bytes!("0xd631c639")));
+        let res_count2 = provider.call(eth_call_count2).await;
+        assert!(res_count2.is_ok());
+        assert_eq!(
+            U256::from_str(res_count2.unwrap().to_string().as_str()).unwrap(),
+            U256::from(2)
         );
 
         Ok(())
@@ -585,7 +620,7 @@ mod tests {
         // We included a heavy spending transaction and now don't have enough funds for this request, so
         // this eth_estimate_gas with fail
         let res = provider
-            .estimate_gas(send_estimate_gas.nonce(3))
+            .estimate_gas(send_estimate_gas.nonce(4))
             .block(BlockNumberOrTag::Pending.into())
             .await;
 
@@ -617,7 +652,7 @@ mod tests {
                         .gas_limit(200000)
                         .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
                         .value(U256::ZERO)
-                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .input(TransactionInput::new(bytes!("0xa87d942c")))
                         .into(),
                     // increment() value in contract
                     OpTransactionRequest::default()
@@ -634,7 +669,7 @@ mod tests {
                         .gas_limit(200000)
                         .to(address!("0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"))
                         .value(U256::ZERO)
-                        .input(TransactionInput::new(bytes!("0x8381f58a")))
+                        .input(TransactionInput::new(bytes!("0xa87d942c")))
                         .into(),
                 ],
                 block_overrides: None,
@@ -654,12 +689,12 @@ mod tests {
         assert_eq!(block[0].calls.len(), 3);
         assert_eq!(
             block[0].calls[0].return_data,
-            bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000002")
         );
         assert_eq!(block[0].calls[1].return_data, bytes!("0x"));
         assert_eq!(
             block[0].calls[2].return_data,
-            bytes!("0x0000000000000000000000000000000000000000000000000000000000000002")
+            bytes!("0x0000000000000000000000000000000000000000000000000000000000000003")
         );
 
         Ok(())
