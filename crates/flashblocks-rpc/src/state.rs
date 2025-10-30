@@ -6,11 +6,10 @@ use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta
 use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::map::B256HashMap;
 use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, B256, U256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::{AccountOverride, StateOverride, StateOverridesBuilder};
+use alloy_rpc_types_eth::state::{StateOverride};
 use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
@@ -618,33 +617,17 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let mut state_cache_builder =
-                                    StateOverridesBuilder::new(state_overrides.clone());
-                                let curr_state_diff =
-                                    B256HashMap::<B256>::from_iter(acc.storage.iter().map(
-                                        |(&key, slot)| (key.into(), slot.present_value.into()),
-                                    ));
+                                let existing_override = state_overrides.entry(*addr).or_insert(Default::default());
+                                existing_override.balance = Some(acc.info.balance);
+                                existing_override.nonce = Some(acc.info.nonce);
+                                existing_override.code = acc.info.code.clone().map(|code| code.bytes());
 
-                                let mut state_diff = state_overrides
-                                    .get(addr)
-                                    .cloned()
-                                    .unwrap_or_default()
-                                    .state_diff
-                                    .unwrap_or_default();
+                                let existing = existing_override.state_diff.get_or_insert(Default::default());
+                                let changed_slots = acc.storage.iter().map(
+                                     |(&key, slot)| (B256::from(key), B256::from(slot.present_value)),
+                                );
 
-                                state_diff.extend(curr_state_diff);
-
-                                let acc_override = AccountOverride {
-                                    balance: Some(acc.info.balance),
-                                    nonce: Some(acc.info.nonce),
-                                    code: acc.info.code.clone().map(|code| code.bytes()),
-                                    state: None,
-                                    state_diff: Some(state_diff),
-                                    move_precompile_to: None,
-                                };
-                                state_cache_builder =
-                                    state_cache_builder.append(*addr, acc_override);
-                                state_overrides = state_cache_builder.build();
+                                existing.extend(changed_slots);
                             }
                             pending_blocks_builder
                                 .with_transaction_state(transaction.tx_hash(), state.clone());
