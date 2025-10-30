@@ -65,7 +65,7 @@ async fn test_kafka_bundle_source_to_pool_integration() -> Result<(), Box<dyn st
     let test_bundle = create_test_bundle(vec![tx1], Some(100), None, None);
     let test_bundle_uuid = *test_bundle.uuid();
 
-    let bundle_payload = serde_json::to_string(test_bundle.bundle())?;
+    let bundle_payload = serde_json::to_string(&test_bundle)?;
 
     kafka_producer
         .send(

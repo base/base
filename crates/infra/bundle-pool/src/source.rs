@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use rdkafka::consumer::{Consumer, StreamConsumer};
 use rdkafka::{ClientConfig, Message};
 use std::fmt::Debug;
-use tips_core::{Bundle, BundleWithMetadata};
+use tips_core::BundleWithMetadata;
 use tokio::sync::mpsc;
 use tracing::{error, trace};
 
@@ -52,28 +52,21 @@ impl BundleSource for KafkaBundleSource {
                         }
                     };
 
-                    let bundle: Bundle = match serde_json::from_slice(payload) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            error!(error = %e, "Failed to deserialize bundle");
-                            continue;
-                        }
-                    };
+                    let bundle_with_metadata: BundleWithMetadata =
+                        match serde_json::from_slice(payload) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                error!(error = %e, "Failed to deserialize bundle");
+                                continue;
+                            }
+                        };
 
                     trace!(
-                        bundle = ?bundle,
+                        bundle = ?bundle_with_metadata,
                         offset = message.offset(),
                         partition = message.partition(),
                         "Received bundle from Kafka"
                     );
-
-                    let bundle_with_metadata = match BundleWithMetadata::load(bundle) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            error!(error = %e, "Failed to load bundle");
-                            continue;
-                        }
-                    };
 
                     if let Err(e) = self.publisher.send(bundle_with_metadata) {
                         error!(error = ?e, "Failed to publish bundle to queue");

@@ -70,7 +70,7 @@ where
         let bundle_hash = bundle_with_metadata.bundle_hash();
         if let Err(e) = self
             .bundle_queue
-            .publish(bundle_with_metadata.bundle(), &bundle_hash)
+            .publish(&bundle_with_metadata, &bundle_hash)
             .await
         {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
@@ -124,7 +124,7 @@ where
 
         if let Err(e) = self
             .bundle_queue
-            .publish(bundle_with_metadata.bundle(), &bundle_hash)
+            .publish(&bundle_with_metadata, &bundle_hash)
             .await
         {
             warn!(message = "Failed to publish Queue::enqueue_bundle", bundle_hash = %bundle_hash, error = %e);

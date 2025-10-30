@@ -3,14 +3,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use tips_core::Bundle;
+use tips_core::BundleWithMetadata;
 use tokio::time::Duration;
 use tracing::{error, info};
 
 /// A queue to buffer transactions
 #[async_trait]
 pub trait QueuePublisher: Send + Sync {
-    async fn publish(&self, bundle: &Bundle, bundle_hash: &B256) -> Result<()>;
+    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()>;
 }
 
 /// A queue to buffer transactions
@@ -27,7 +27,7 @@ impl KafkaQueuePublisher {
 
 #[async_trait]
 impl QueuePublisher for KafkaQueuePublisher {
-    async fn publish(&self, bundle: &Bundle, bundle_hash: &B256) -> Result<()> {
+    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()> {
         let key = bundle_hash.to_string();
         let payload = serde_json::to_vec(&bundle)?;
 
@@ -75,7 +75,7 @@ impl QueuePublisher for KafkaQueuePublisher {
 mod tests {
     use super::*;
     use rdkafka::config::ClientConfig;
-    use tips_core::BundleWithMetadata;
+    use tips_core::{Bundle, BundleWithMetadata};
     use tokio::time::{Duration, Instant};
 
     fn create_test_bundle() -> Bundle {
@@ -97,7 +97,7 @@ mod tests {
         let bundle_hash = bundle_with_metadata.bundle_hash();
 
         let start = Instant::now();
-        let result = publisher.publish(&bundle, &bundle_hash).await;
+        let result = publisher.publish(&bundle_with_metadata, &bundle_hash).await;
         let elapsed = start.elapsed();
 
         // the backoff tries at minimum 100ms, so verify we tried at least once
