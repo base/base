@@ -7,6 +7,9 @@ use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Block time in microseconds
+pub const BLOCK_TIME: u128 = 2_000_000;
+
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Bundle {
@@ -70,10 +73,14 @@ pub struct BundleWithMetadata {
     bundle: Bundle,
     uuid: Uuid,
     transactions: Vec<OpTxEnvelope>,
+    meter_bundle_response: MeterBundleResponse,
 }
 
 impl BundleWithMetadata {
-    pub fn load(mut bundle: Bundle) -> Result<Self, String> {
+    pub fn load(
+        mut bundle: Bundle,
+        meter_bundle_response: MeterBundleResponse,
+    ) -> Result<Self, String> {
         let uuid = bundle
             .replacement_uuid
             .clone()
@@ -96,6 +103,7 @@ impl BundleWithMetadata {
             bundle,
             transactions,
             uuid,
+            meter_bundle_response,
         })
     }
 
@@ -181,7 +189,7 @@ pub struct MeterBundleResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::create_transaction;
+    use crate::test_utils::{create_test_meter_bundle_response, create_transaction};
     use alloy_primitives::Keccak256;
     use alloy_provider::network::eip2718::Encodable2718;
     use alloy_signer_local::PrivateKeySigner;
@@ -197,12 +205,15 @@ mod tests {
         let tx1_bytes = tx1.encoded_2718();
         let tx2_bytes = tx2.encoded_2718();
 
-        let bundle = BundleWithMetadata::load(Bundle {
-            replacement_uuid: None,
-            txs: vec![tx1_bytes.clone().into()],
-            block_number: 1,
-            ..Default::default()
-        })
+        let bundle = BundleWithMetadata::load(
+            Bundle {
+                replacement_uuid: None,
+                txs: vec![tx1_bytes.clone().into()],
+                block_number: 1,
+                ..Default::default()
+            },
+            create_test_meter_bundle_response(),
+        )
         .unwrap();
 
         assert!(!bundle.uuid().is_nil());
@@ -225,12 +236,15 @@ mod tests {
         assert_eq!(bundle.bundle_hash(), expected_bundle_hash_single);
 
         let uuid = Uuid::new_v4();
-        let bundle = BundleWithMetadata::load(Bundle {
-            replacement_uuid: Some(uuid.to_string()),
-            txs: vec![tx1_bytes.clone().into(), tx2_bytes.clone().into()],
-            block_number: 1,
-            ..Default::default()
-        })
+        let bundle = BundleWithMetadata::load(
+            Bundle {
+                replacement_uuid: Some(uuid.to_string()),
+                txs: vec![tx1_bytes.clone().into(), tx2_bytes.clone().into()],
+                block_number: 1,
+                ..Default::default()
+            },
+            create_test_meter_bundle_response(),
+        )
         .unwrap();
 
         assert_eq!(*bundle.uuid(), uuid);

@@ -1,6 +1,6 @@
-use crate::{Bundle, BundleWithMetadata};
+use crate::{Bundle, BundleWithMetadata, MeterBundleResponse};
 use alloy_consensus::SignableTransaction;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_provider::network::TxSignerSync;
 use alloy_provider::network::eip2718::Encodable2718;
 use alloy_signer_local::PrivateKeySigner;
@@ -38,6 +38,23 @@ pub fn create_test_bundle(
         max_timestamp,
         ..Default::default()
     };
+    let meter_bundle_response = create_test_meter_bundle_response();
 
-    BundleWithMetadata::load(bundle).unwrap()
+    BundleWithMetadata::load(bundle, meter_bundle_response).unwrap()
+}
+
+pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
+    MeterBundleResponse {
+        bundle_gas_price: "0".to_string(),
+        bundle_hash: B256::default(),
+        coinbase_diff: "0".to_string(),
+        eth_sent_to_coinbase: "0".to_string(),
+        gas_fees: "0".to_string(),
+        results: vec![],
+        state_block_number: 0,
+        state_flashblock_index: None,
+        total_gas_used: 0,
+        total_execution_time_us: 0,
+        state_root_time_us: 0,
+    }
 }

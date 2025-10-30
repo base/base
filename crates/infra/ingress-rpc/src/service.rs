@@ -11,7 +11,9 @@ use op_alloy_network::Optimism;
 use reth_rpc_eth_types::EthApiError;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tips_audit::{BundleEvent, BundleEventPublisher};
-use tips_core::{Bundle, BundleHash, BundleWithMetadata, CancelBundle};
+use tips_core::{
+    BLOCK_TIME, Bundle, BundleHash, BundleWithMetadata, CancelBundle, MeterBundleResponse,
+};
 use tracing::{info, warn};
 
 use crate::queue::QueuePublisher;
@@ -65,7 +67,10 @@ where
     Audit: BundleEventPublisher + Sync + Send + 'static,
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
-        let bundle_with_metadata = self.validate_bundle(bundle).await?;
+        self.validate_bundle(&bundle).await?;
+        let meter_bundle_response = self.meter_bundle(&bundle).await?;
+        let bundle_with_metadata = BundleWithMetadata::load(bundle, meter_bundle_response)
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
 
         let bundle_hash = bundle_with_metadata.bundle_hash();
         if let Err(e) = self
@@ -117,8 +122,9 @@ where
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
         };
+        let meter_bundle_response = self.meter_bundle(&bundle).await?;
 
-        let bundle_with_metadata = BundleWithMetadata::load(bundle)
+        let bundle_with_metadata = BundleWithMetadata::load(bundle, meter_bundle_response)
             .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
         let bundle_hash = bundle_with_metadata.bundle_hash();
 
@@ -191,7 +197,7 @@ where
         Ok(transaction)
     }
 
-    async fn validate_bundle(&self, bundle: Bundle) -> RpcResult<BundleWithMetadata> {
+    async fn validate_bundle(&self, bundle: &Bundle) -> RpcResult<()> {
         if bundle.txs.is_empty() {
             return Err(
                 EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
@@ -199,17 +205,36 @@ where
             );
         }
 
-        let bundle_with_metadata = BundleWithMetadata::load(bundle.clone())
-            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
-        let tx_hashes = bundle_with_metadata.txn_hashes();
-
         let mut total_gas = 0u64;
+        let mut tx_hashes = Vec::new();
         for tx_data in &bundle.txs {
             let transaction = self.validate_tx(tx_data).await?;
             total_gas = total_gas.saturating_add(transaction.gas_limit());
+            tx_hashes.push(transaction.tx_hash());
         }
-        validate_bundle(&bundle, total_gas, tx_hashes)?;
+        validate_bundle(bundle, total_gas, tx_hashes)?;
 
-        Ok(bundle_with_metadata)
+        Ok(())
+    }
+
+    /// `meter_bundle` is used to determine how long a bundle will take to execute. A bundle that
+    /// is within `BLOCK_TIME` will return the `MeterBundleResponse` that can be passed along
+    /// to the builder.
+    async fn meter_bundle(&self, bundle: &Bundle) -> RpcResult<MeterBundleResponse> {
+        let res: MeterBundleResponse = self
+            .provider
+            .client()
+            .request("base_meterBundle", (bundle,))
+            .await
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+
+        // we can save some builder payload building computation by not including bundles
+        // that we know will take longer than the block time to execute
+        if res.total_execution_time_us > BLOCK_TIME {
+            return Err(
+                EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err(),
+            );
+        }
+        Ok(res)
     }
 }

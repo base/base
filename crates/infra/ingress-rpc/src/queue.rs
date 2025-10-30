@@ -75,7 +75,7 @@ impl QueuePublisher for KafkaQueuePublisher {
 mod tests {
     use super::*;
     use rdkafka::config::ClientConfig;
-    use tips_core::{Bundle, BundleWithMetadata};
+    use tips_core::{Bundle, BundleWithMetadata, test_utils::create_test_meter_bundle_response};
     use tokio::time::{Duration, Instant};
 
     fn create_test_bundle() -> Bundle {
@@ -93,7 +93,8 @@ mod tests {
 
         let publisher = KafkaQueuePublisher::new(producer, "tips-ingress-rpc".to_string());
         let bundle = create_test_bundle();
-        let bundle_with_metadata = BundleWithMetadata::load(bundle.clone()).unwrap();
+        let bundle_with_metadata =
+            BundleWithMetadata::load(bundle.clone(), create_test_meter_bundle_response()).unwrap();
         let bundle_hash = bundle_with_metadata.bundle_hash();
 
         let start = Instant::now();
