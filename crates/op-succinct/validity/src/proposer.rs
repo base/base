@@ -16,7 +16,7 @@ use op_succinct_host_utils::{
     OPSuccinctL2OutputOracle::OPSuccinctL2OutputOracleInstance as OPSuccinctL2OOContract,
 };
 use op_succinct_proof_utils::get_range_elf_embedded;
-use op_succinct_signer_utils::Signer;
+use op_succinct_signer_utils::SignerLock;
 use sp1_sdk::{
     network::{
         proto::types::{ExecutionStatus, FulfillmentStatus},
@@ -39,7 +39,7 @@ pub struct DriverConfig {
     pub network_prover: Arc<NetworkProver>,
     pub fetcher: Arc<OPSuccinctDataFetcher>,
     pub driver_db_client: Arc<DriverDBClient>,
-    pub signer: Signer,
+    pub signer: SignerLock,
     pub loop_interval: u64,
 }
 /// Type alias for a map of task IDs to their join handles and associated requests
@@ -66,7 +66,7 @@ where
         db_client: Arc<DriverDBClient>,
         fetcher: Arc<OPSuccinctDataFetcher>,
         requester_config: RequesterConfig,
-        signer: Signer,
+        signer: SignerLock,
         loop_interval: u64,
         host: Arc<H>,
     ) -> Result<Self> {

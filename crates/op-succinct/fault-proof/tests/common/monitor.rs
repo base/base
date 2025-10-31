@@ -16,8 +16,10 @@ use tracing::info;
 /// Represents a tracked game for monitoring
 #[derive(Debug, Clone)]
 pub struct TrackedGame {
+    pub index: U256,
     pub address: Address,
     pub l2_block_number: U256,
+    pub parent_index: u32,
 }
 
 /// Wait for N games to be created and return their info
@@ -62,8 +64,14 @@ pub async fn wait_and_track_games<P: Provider>(
 
                     // Get game details
                     let l2_block_number = game.l2BlockNumber().call().await?;
+                    let parent_index = game.claimData().call().await?.parentIndex;
 
-                    let tracked = TrackedGame { address: game_info.proxy_, l2_block_number };
+                    let tracked = TrackedGame {
+                        index: U256::from(i),
+                        address: game_info.proxy_,
+                        l2_block_number,
+                        parent_index,
+                    };
 
                     info!(
                         "Tracked game {}/{}: {} at L2 block {}",

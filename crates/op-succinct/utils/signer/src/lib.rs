@@ -1,4 +1,4 @@
-use std::{fmt::Debug, str::FromStr};
+use std::{str::FromStr, sync::Arc};
 
 use alloy_consensus::TxEnvelope;
 use alloy_eips::Decodable2718;
@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use gcloud_sdk::{
     google::cloud::kms::v1::key_management_service_client::KeyManagementServiceClient, GoogleApi,
 };
-use tokio::time::Duration;
+use tokio::{sync::Mutex, time::Duration};
 
 pub const NUM_CONFIRMATIONS: u64 = 3;
 pub const TIMEOUT_SECONDS: u64 = 60;
@@ -187,6 +187,43 @@ impl Signer {
     }
 }
 
+/// Wrapper around Signer that provides thread-safe transaction sending.
+/// Transactions are serialized via a Mutex to prevent nonce conflicts.
+#[derive(Clone, Debug)]
+pub struct SignerLock {
+    inner: Arc<Mutex<Signer>>,
+    cached_address: Address,
+}
+
+impl SignerLock {
+    /// Creates a new SignerLock wrapping the given Signer.
+    pub fn new(signer: Signer) -> Self {
+        let cached_address = signer.address();
+        SignerLock { inner: Arc::new(Mutex::new(signer)), cached_address }
+    }
+
+    /// Creates a SignerLock from environment variables.
+    pub async fn from_env() -> Result<Self> {
+        Ok(SignerLock::new(Signer::from_env().await?))
+    }
+
+    /// Returns the address of the signer without acquiring a lock.
+    pub fn address(&self) -> Address {
+        self.cached_address
+    }
+
+    /// Sends a transaction request, signed by the configured signer.
+    /// Transactions are serialized via a Mutex to prevent nonce conflicts.
+    pub async fn send_transaction_request(
+        &self,
+        l1_rpc: Url,
+        transaction_request: TransactionRequest,
+    ) -> Result<TransactionReceipt> {
+        let signer = self.inner.lock().await;
+        signer.send_transaction_request(l1_rpc, transaction_request).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloy_eips::BlockId;
@@ -198,10 +235,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_send_transaction_request_web3() {
-        let proposer_signer = Signer::Web3Signer(
+        let proposer_signer = SignerLock::new(Signer::new_web3_signer(
             "http://localhost:9000".parse().unwrap(),
             "0x9b3F173823E944d183D532ed236Ee3B83Ef15E1d".parse().unwrap(),
-        );
+        ));
 
         let provider = ProviderBuilder::new()
             .network::<Ethereum>()
@@ -236,7 +273,7 @@ mod tests {
         rustls::crypto::aws_lc_rs::default_provider()
             .install_default()
             .expect("Failed to install default crypto provider");
-        let signer = Signer::from_env().await.unwrap();
+        let signer = SignerLock::from_env().await.unwrap();
 
         println!("Signer: {}", signer.address());
 

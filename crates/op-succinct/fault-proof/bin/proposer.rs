@@ -15,7 +15,7 @@ use op_succinct_host_utils::{
     setup_logger,
 };
 use op_succinct_proof_utils::initialize_host;
-use op_succinct_signer_utils::Signer;
+use op_succinct_signer_utils::SignerLock;
 use tikv_jemallocator::Jemalloc;
 
 #[global_allocator]
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     setup_logger();
 
     let proposer_config = ProposerConfig::from_env()?;
-    let proposer_signer = Signer::from_env().await?;
+    let proposer_signer = SignerLock::from_env().await?;
 
     let l1_provider =
         ProviderBuilder::new().connect_http(env::var("L1_RPC").unwrap().parse::<Url>().unwrap());

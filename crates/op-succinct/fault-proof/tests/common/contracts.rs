@@ -5,7 +5,7 @@ use alloy_rpc_types_eth::{transaction::request::TransactionInput, TransactionReq
 use alloy_transport_http::reqwest::Url;
 use anyhow::{anyhow, Context, Result};
 use op_succinct_bindings::mock_permissioned_dispute_game::MockPermissionedDisputeGame;
-use op_succinct_signer_utils::Signer;
+use op_succinct_signer_utils::SignerLock;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -120,7 +120,7 @@ pub async fn deploy_test_contracts(rpc_url: &str, private_key: &str) -> Result<D
     Ok(deployed_contracts)
 }
 
-pub async fn deploy_mock_permissioned_game(signer: &Signer, rpc: &Url) -> Result<Address> {
+pub async fn deploy_mock_permissioned_game(signer: &SignerLock, rpc: &Url) -> Result<Address> {
     let bytecode = MockPermissionedDisputeGame::BYTECODE.clone();
 
     let request =
@@ -135,7 +135,7 @@ pub async fn deploy_mock_permissioned_game(signer: &Signer, rpc: &Url) -> Result
 }
 
 pub async fn send_contract_transaction(
-    signer: &Signer,
+    signer: &SignerLock,
     rpc: &Url,
     to: Address,
     data: Bytes,
