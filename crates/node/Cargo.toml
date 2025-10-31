@@ -17,6 +17,10 @@ base-reth-flashblocks-rpc.workspace = true
 base-reth-metering.workspace = true
 base-reth-transaction-tracing.workspace = true
 
+# proof helper exex
+reth-optimism-exex = { workspace = true }
+reth-optimism-trie = { workspace = true }
+
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
@@ -85,7 +89,6 @@ eyre.workspace = true
 uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
-once_cell.workspace = true
 
 [features]
 default = []
