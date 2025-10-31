@@ -8,7 +8,7 @@ use op_revm::{
     OpTransactionError,
 };
 use revm::{
-    context::{result::EVMError, Evm as RevmEvm, TxEnv},
+    context::{result::EVMError, BlockEnv, Evm as RevmEvm, TxEnv},
     handler::instructions::EthInstructions,
     inspector::NoOpInspector,
     Context, Inspector,
@@ -39,6 +39,7 @@ impl EvmFactory for ZkvmOpEvmFactory {
         EVMError<DBError, OpTransactionError>;
     type HaltReason = OpHaltReason;
     type Spec = OpSpecId;
+    type BlockEnv = BlockEnv;
     type Precompiles = OpZkvmPrecompiles;
 
     fn create_evm<DB: Database>(

@@ -9,4 +9,4 @@ pub mod process;
 
 pub use anvil::*;
 pub use env::TestEnvironment;
-pub use process::{start_challenger, start_proposer};
+pub use process::*;

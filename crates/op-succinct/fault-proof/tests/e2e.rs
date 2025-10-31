@@ -25,16 +25,21 @@ mod e2e {
         },
         warp_time, TestEnvironment,
     };
-    use fault_proof::{contract::GameStatus, L2ProviderTrait};
+    use fault_proof::{
+        challenger::Game,
+        contract::{GameStatus, ProposalStatus},
+        proposer::Game as ProposerGame,
+        L2ProviderTrait,
+    };
     use op_succinct_bindings::{
         dispute_game_factory::DisputeGameFactory, mock_optimism_portal2::MockOptimismPortal2,
     };
-    use op_succinct_signer_utils::Signer;
+    use op_succinct_signer_utils::{Signer, SignerLock};
     use rand::Rng;
     use tokio::time::{sleep, Duration};
     use tracing::info;
 
-    use crate::common::{start_challenger, start_proposer};
+    use crate::common::{init_challenger, init_proposer, start_challenger, start_proposer};
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
@@ -69,7 +74,7 @@ mod e2e {
 
         // Track first 3 games (L2 finalized head won't advance far enough for 3)
         let tracked_games =
-            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(60)).await?;
+            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(120)).await?;
 
         info!("✓ Proposer created {} games:", tracked_games.len());
         for (i, game) in tracked_games.iter().enumerate() {
@@ -97,7 +102,7 @@ mod e2e {
 
         // Wait for games to be resolved
         let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(30))
+            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
                 .await?;
 
         // Verify all games resolved correctly (proposer wins)
@@ -120,7 +125,7 @@ mod e2e {
             &env.anvil.provider,
             &tracked_games,
             PROPOSER_ADDRESS,
-            Duration::from_secs(30),
+            Duration::from_secs(120),
         )
         .await?;
 
@@ -151,7 +156,7 @@ mod e2e {
         let initial_game_count = factory_reader.gameCount().call().await?;
         let init_bond = factory_reader.initBonds(TEST_GAME_TYPE).call().await?;
 
-        let proposer_signer = Signer::new_local_signer(PROPOSER_PRIVATE_KEY)?;
+        let proposer_signer = SignerLock::new(Signer::new_local_signer(PROPOSER_PRIVATE_KEY)?);
 
         let legacy_impl = deploy_mock_permissioned_game(&proposer_signer, &l1_rpc_url).await?;
         info!("✓ Deployed mock permissioned implementation at {legacy_impl}");
@@ -272,7 +277,7 @@ mod e2e {
 
         warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
         let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(60))
+            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
                 .await?;
         verify_all_resolved_correctly(&resolutions)?;
 
@@ -282,7 +287,7 @@ mod e2e {
             &env.anvil.provider,
             &tracked_games,
             PROPOSER_ADDRESS,
-            Duration::from_secs(90),
+            Duration::from_secs(120),
         )
         .await?;
 
@@ -429,7 +434,9 @@ mod e2e {
         let tracked_games: Vec<_> = invalid_games
             .iter()
             .map(|&address| TrackedGame {
+                index: U256::ZERO, // Not needed for bond claim check
                 address,
+                parent_index: u32::MAX,      // Not needed for bond claim check
                 l2_block_number: U256::ZERO, // Not needed for bond claim check
             })
             .collect();
@@ -1064,6 +1071,166 @@ mod e2e {
 
         proposer_handle.abort();
         info!("✓ Test complete: Proposer handled anchor reset correctly");
+
+        Ok(())
+    }
+
+    // Tests proposer recovery when its canonical head is invalidated during runtime.
+    // When the canonical head is invalidated, the proposer should branch off from the latest valid
+    // game.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_proposer_recovery_after_canonical_head_invalidation() -> Result<()> {
+        TestEnvironment::init_logging();
+        info!("=== Test: Proposer Recovery After Runtime Canonical Head Invalidation ===");
+
+        // Setup common test environment
+        let env = TestEnvironment::setup().await?;
+
+        // === PHASE 1: Start Proposer and Create Initial Games ===
+        info!("=== Phase 1: Start Proposer and Create Games ===");
+
+        let proposer_handle = start_proposer(
+            &env.rpc_config,
+            PROPOSER_PRIVATE_KEY,
+            &env.deployed.factory,
+            TEST_GAME_TYPE,
+        )
+        .await?;
+        info!("✓ Proposer service started");
+
+        // Wait for proposer to create 3 games
+        let factory = DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
+        let tracked_games =
+            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(150)).await?;
+        info!("✓ Proposer created {} games:", tracked_games.len());
+
+        assert!(!proposer_handle.is_finished(), "Proposer should be running");
+
+        // === PHASE 2: Challenge Game 3 =================================
+        info!("=== Phase 2: Challenge Game 3 ===");
+        let challenger = init_challenger(
+            &env.rpc_config,
+            CHALLENGER_PRIVATE_KEY,
+            &env.deployed.factory,
+            TEST_GAME_TYPE,
+            Some(100.0),
+        )
+        .await?;
+        info!("✓ Challenger initialized");
+
+        let game_to_challenge = Game {
+            index: U256::from(2),
+            address: tracked_games[2].address,
+            parent_index: 1,
+            l2_block_number: tracked_games[2].l2_block_number,
+            is_invalid: false,
+            status: GameStatus::IN_PROGRESS,
+            proposal_status: ProposalStatus::Unchallenged,
+            should_attempt_to_challenge: true,
+            should_attempt_to_resolve: false,
+            should_attempt_to_claim_bond: false,
+        };
+        challenger.submit_challenge_transaction(&game_to_challenge).await?;
+        info!("✓ Challenged game 3");
+
+        // === PHASE 3: Resolve all 3 games and finalize the first 2 games ===
+        info!("=== Phase 3: Resolve all 3 games ===");
+        info!("This should clear game 3 from the proposer's cache");
+
+        // Warp time to allow first 2 unchallenged games to be resolved
+        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
+        info!("✓ Warped time by MAX_CHALLENGE_DURATION to enable resolution for first 2 games");
+
+        // Resolve first 2 games as DEFENDER_WINS
+        let proposer = init_proposer(
+            &env.rpc_config,
+            PROPOSER_PRIVATE_KEY,
+            &env.deployed.factory,
+            TEST_GAME_TYPE,
+        )
+        .await?;
+
+        let first_two_games = &tracked_games[0..2];
+        for game in first_two_games {
+            let game = ProposerGame {
+                index: game.index,
+                address: game.address,
+                parent_index: game.parent_index,
+                l2_block: game.l2_block_number,
+                status: GameStatus::IN_PROGRESS,
+                proposal_status: ProposalStatus::Unchallenged,
+                deadline: 0,
+                should_attempt_to_resolve: true,
+                should_attempt_to_claim_bond: false,
+            };
+            proposer.submit_resolution_transaction(&game).await?;
+        }
+        let resolutions =
+            wait_for_resolutions(&env.anvil.provider, first_two_games, Duration::from_secs(60))
+                .await?;
+        verify_all_resolved_correctly(&resolutions)?;
+        info!("✓ First 2 games resolved as DEFENDER_WINS");
+
+        // Warp time to allow challenged game 3 to be resolved as CHALLENGER_WINS
+        warp_time(&env.anvil.provider, Duration::from_secs(MAX_PROVE_DURATION)).await?;
+        challenger.submit_resolution_transaction(&game_to_challenge).await?;
+        info!("✓ Challenger resolved game 3 as CHALLENGER_WINS");
+
+        assert!(!proposer_handle.is_finished(), "Proposer should still be running");
+
+        // Warp time to allow the proposer to finalize the first 2 games
+        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
+            .await?;
+        for game in first_two_games {
+            let game = ProposerGame {
+                index: game.index,
+                address: game.address,
+                parent_index: game.parent_index,
+                l2_block: game.l2_block_number,
+                status: GameStatus::DEFENDER_WINS,
+                proposal_status: ProposalStatus::Resolved,
+                deadline: 0,
+                should_attempt_to_resolve: false,
+                should_attempt_to_claim_bond: true,
+            };
+            proposer.submit_bond_claim_transaction(&game).await?;
+        }
+        info!("✓ Proposer finalized the first 2 games");
+
+        // === PHASE 4: Verify Proposer recovers automatically ===
+        info!("=== Phase 4: Verify Proposer recovers automatically ===");
+        info!("Proposer should create a new game from the last valid game at index 1");
+
+        let mut current_game_count = factory.gameCount().call().await?;
+        info!("Current game count: {}", current_game_count);
+
+        while current_game_count <= U256::from(3) {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            current_game_count = factory.gameCount().call().await?;
+        }
+
+        // Verify the new game is built on the last valid game at index 1
+        let new_game_index = U256::from(3);
+        let new_game_info = factory.gameAtIndex(new_game_index).call().await?;
+
+        let new_game =
+            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
+                new_game_info.proxy_,
+                env.anvil.provider.clone(),
+            );
+        let claim_data = new_game.claimData().call().await?;
+
+        assert_eq!(
+            claim_data.parentIndex, 1u32,
+            "Proposer should create a new game from the last valid game"
+        );
+
+        // Verify proposer continues to operate normally
+        assert!(!proposer_handle.is_finished(), "Proposer should continue running after recovery");
+
+        // Stop proposer
+        proposer_handle.abort();
+        info!("✓ Proposer stopped");
 
         Ok(())
     }

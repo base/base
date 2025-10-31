@@ -18,14 +18,14 @@ use crate::{
     FactoryTrait, L1Provider, L2Provider, L2ProviderTrait,
 };
 use op_succinct_host_utils::metrics::MetricsGauge;
-use op_succinct_signer_utils::Signer;
+use op_succinct_signer_utils::SignerLock;
 
 pub struct OPSuccinctChallenger<P>
 where
     P: Provider + Clone,
 {
     pub config: ChallengerConfig,
-    signer: Signer,
+    signer: SignerLock,
     l1_provider: L1Provider,
     l2_provider: L2Provider,
     factory: DisputeGameFactoryInstance<P>,
@@ -42,7 +42,7 @@ where
         config: ChallengerConfig,
         l1_provider: L1Provider,
         factory: DisputeGameFactoryInstance<P>,
-        signer: Signer,
+        signer: SignerLock,
     ) -> Result<Self> {
         let challenger_bond = factory.fetch_challenger_bond(config.game_type).await?;
         let l2_rpc = config.l2_rpc.clone();
@@ -411,7 +411,7 @@ where
         Ok(())
     }
 
-    async fn submit_challenge_transaction(&self, game: &Game) -> Result<()> {
+    pub async fn submit_challenge_transaction(&self, game: &Game) -> Result<()> {
         let contract = OPSuccinctFaultDisputeGame::new(game.address, self.l1_provider.clone());
         let transaction_request =
             contract.challenge().value(self.challenger_bond).into_transaction_request();
@@ -462,7 +462,7 @@ where
         Ok(())
     }
 
-    async fn submit_resolution_transaction(&self, game: &Game) -> Result<()> {
+    pub async fn submit_resolution_transaction(&self, game: &Game) -> Result<()> {
         let contract = OPSuccinctFaultDisputeGame::new(game.address, self.l1_provider.clone());
         let transaction_request = contract.resolve().into_transaction_request();
         let receipt = self
@@ -535,17 +535,17 @@ where
 }
 
 #[derive(Clone)]
-struct Game {
-    index: U256,
-    address: Address,
-    parent_index: u32,
-    l2_block_number: U256,
-    is_invalid: bool,
-    status: GameStatus,
-    proposal_status: ProposalStatus,
-    should_attempt_to_challenge: bool,
-    should_attempt_to_resolve: bool,
-    should_attempt_to_claim_bond: bool,
+pub struct Game {
+    pub index: U256,
+    pub address: Address,
+    pub parent_index: u32,
+    pub l2_block_number: U256,
+    pub is_invalid: bool,
+    pub status: GameStatus,
+    pub proposal_status: ProposalStatus,
+    pub should_attempt_to_challenge: bool,
+    pub should_attempt_to_resolve: bool,
+    pub should_attempt_to_claim_bond: bool,
 }
 
 pub struct ChallengerState {
