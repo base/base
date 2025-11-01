@@ -98,10 +98,10 @@ pub async fn read_proposer_env() -> Result<EnvironmentConfig> {
 
     // Parse proof mode
     let agg_proof_mode =
-        if get_env_var("AGG_PROOF_MODE", Some("groth16".to_string()))?.to_lowercase() == "plonk" {
-            SP1ProofMode::Plonk
-        } else {
+        if get_env_var("AGG_PROOF_MODE", Some("plonk".to_string()))?.to_lowercase() == "groth16" {
             SP1ProofMode::Groth16
+        } else {
+            SP1ProofMode::Plonk
         };
 
     // Optional loop interval

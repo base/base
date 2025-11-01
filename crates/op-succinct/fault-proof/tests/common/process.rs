@@ -14,7 +14,7 @@ use op_succinct_host_utils::{
 };
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_signer_utils::SignerLock;
-use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
 use tracing::Instrument;
 
 pub async fn init_proposer(
@@ -35,6 +35,7 @@ pub async fn init_proposer(
         fast_finality_mode: false,
         range_proof_strategy: FulfillmentStrategy::Hosted,
         agg_proof_strategy: FulfillmentStrategy::Hosted,
+        agg_proof_mode: SP1ProofMode::Plonk,
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
         fetch_interval: 30,              // Check more frequently in tests
         game_type,

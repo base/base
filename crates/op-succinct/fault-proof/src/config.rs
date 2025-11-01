@@ -5,7 +5,7 @@ use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use op_succinct_host_utils::network::parse_fulfillment_strategy;
 use serde::{Deserialize, Serialize};
-use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
 
 #[derive(Debug, Clone)]
 pub struct ProposerConfig {
@@ -29,6 +29,9 @@ pub struct ProposerConfig {
 
     /// Proof fulfillment strategy for aggregation proofs.
     pub agg_proof_strategy: FulfillmentStrategy,
+
+    /// Proof mode for aggregation proofs (Groth16 or Plonk).
+    pub agg_proof_mode: SP1ProofMode,
 
     /// The interval in blocks between proposing new games.
     pub proposal_interval_in_blocks: u64,
@@ -123,6 +126,15 @@ impl ProposerConfig {
             agg_proof_strategy: parse_fulfillment_strategy(
                 env::var("AGG_PROOF_STRATEGY").unwrap_or("reserved".to_string()),
             ),
+            agg_proof_mode: if env::var("AGG_PROOF_MODE")
+                .unwrap_or("plonk".to_string())
+                .to_lowercase() ==
+                "groth16"
+            {
+                SP1ProofMode::Groth16
+            } else {
+                SP1ProofMode::Plonk
+            },
             proposal_interval_in_blocks: env::var("PROPOSAL_INTERVAL_IN_BLOCKS")
                 .unwrap_or("1800".to_string())
                 .parse()?,
