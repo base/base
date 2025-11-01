@@ -65,6 +65,7 @@ struct SP1Prover {
     range_pk: Arc<SP1ProvingKey>,
     range_vk: Arc<SP1VerifyingKey>,
     agg_pk: Arc<SP1ProvingKey>,
+    agg_mode: SP1ProofMode,
 }
 
 /// Represents a dispute game in the on-chain game DAG.
@@ -204,6 +205,7 @@ where
                 range_pk: Arc::new(range_pk),
                 range_vk: Arc::new(range_vk),
                 agg_pk: Arc::new(agg_pk),
+                agg_mode: config.agg_proof_mode,
             },
             fetcher: fetcher.clone(),
             host,
@@ -648,14 +650,14 @@ where
             SP1ProofWithPublicValues::create_mock_proof(
                 &self.prover.agg_pk,
                 public_values,
-                SP1ProofMode::Groth16,
+                self.prover.agg_mode,
                 SP1_CIRCUIT_VERSION,
             )
         } else {
             self.prover
                 .network_prover
                 .prove(&self.prover.agg_pk, &sp1_stdin)
-                .groth16()
+                .mode(self.prover.agg_mode)
                 .strategy(self.config.agg_proof_strategy)
                 .timeout(Duration::from_secs(self.config.timeout))
                 .min_auction_period(self.config.min_auction_period)

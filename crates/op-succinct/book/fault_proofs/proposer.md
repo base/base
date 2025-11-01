@@ -82,6 +82,7 @@ Depending on the one you choose, you must provide the corresponding environment 
 | `FAST_FINALITY_MODE` | Whether to use fast finality mode | `false` |
 | `RANGE_PROOF_STRATEGY` | Proof fulfillment strategy for range proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
 | `AGG_PROOF_STRATEGY` | Proof fulfillment strategy for aggregation proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
+| `AGG_PROOF_MODE` | Proof mode for aggregation proofs. Set to `groth16` to use Groth16 proof type. **Note:** Changing the proof mode requires updating the `SP1_VERIFIER` address in `contracts/src/fp/OPSuccinctFaultDisputeGame.sol` to the corresponding verifier gateway contract. See [SP1 Contract Addresses](https://docs.succinct.xyz/docs/sp1/verification/contract-addresses) for verifier addresses. | `plonk` |
 | `PROPOSAL_INTERVAL_IN_BLOCKS` | Number of L2 blocks between proposals | `1800` |
 | `FETCH_INTERVAL` | Polling interval in seconds | `30` |
 | `MAX_CONCURRENT_DEFENSE_TASKS` | Maximum number of concurrently running defense tasks | `8` |
