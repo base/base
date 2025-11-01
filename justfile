@@ -5,8 +5,9 @@ check: check-format check-clippy test
 
 fix: fix-format fix-clippy
 
+# RUST_LOG=off to disable "ERROR reth_tasks: Global executor already set"
 test:
-    cargo test --workspace --all-features
+    RUST_LOG=off cargo test --workspace --all-features
 
 check-format:
     cargo fmt --all -- --check
