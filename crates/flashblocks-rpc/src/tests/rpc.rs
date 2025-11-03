@@ -16,6 +16,7 @@ mod tests {
     use alloy_rpc_types_engine::PayloadId;
     use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_rpc_types_eth::TransactionInput;
+    use once_cell::sync::OnceCell;
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use op_alloy_rpc_types::OpTransactionRequest;
@@ -24,6 +25,7 @@ mod tests {
     use reth::chainspec::Chain;
     use reth::core::exit::NodeExitFuture;
     use reth::tasks::TaskManager;
+    use reth_exex::ExExEvent;
     use reth_optimism_chainspec::OpChainSpecBuilder;
     use reth_optimism_node::args::RollupArgs;
     use reth_optimism_node::OpNode;
@@ -37,6 +39,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
+    use tokio_stream::StreamExt;
 
     pub struct NodeContext {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
@@ -117,8 +120,10 @@ mod tests {
 
         let node = OpNode::new(RollupArgs::default());
 
-        // Start websocket server to simulate the builder and send payloads back to the node
+        // Start dummy websocket server to simulate the builder and send payloads back to the node
         let (sender, mut receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
+
+        let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
         let NodeHandle {
             node,
@@ -128,23 +133,47 @@ mod tests {
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
             .with_components(node.components_builder())
             .with_add_ons(node.add_ons())
+            .install_exex("flashblocks-canon", {
+                let fb_cell = fb_cell.clone();
+                move |mut ctx| async move {
+                    let fb = fb_cell
+                        .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                        .clone();
+                    Ok(async move {
+                        while let Some(note) = ctx.notifications.try_next().await? {
+                            if let Some(committed) = note.committed_chain() {
+                                for b in committed.blocks_iter() {
+                                    fb.on_canonical_block_received(b);
+                                }
+                                let _ = ctx
+                                    .events
+                                    .send(ExExEvent::FinishedHeight(committed.tip().num_hash()));
+                            }
+                        }
+                        Ok(())
+                    })
+                }
+            })
             .extend_rpc_modules(move |ctx| {
-                // We are not going to use the websocket connection to send payloads so we use
-                // a dummy url.
-                let flashblocks_state = Arc::new(FlashblocksState::new(ctx.provider().clone()));
-                flashblocks_state.start();
+                // We are not going to use the websocket connection to send payloads so we don't
+                // initialize a flashblocks subscriber
+                let fb = fb_cell
+                    .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                    .clone();
+
+                fb.start();
 
                 let api_ext = EthApiExt::new(
                     ctx.registry.eth_api().clone(),
                     ctx.registry.eth_handlers().filter.clone(),
-                    flashblocks_state.clone(),
+                    fb.clone(),
                 );
 
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
                 tokio::spawn(async move {
                     while let Some((payload, tx)) = receiver.recv().await {
-                        flashblocks_state.on_flashblock_received(payload);
+                        fb.on_flashblock_received(payload);
                         tx.send(()).unwrap();
                     }
                 });
