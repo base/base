@@ -1,51 +1,56 @@
 [package]
-name = "base-reth-flashblocks-rpc"
+name = "base-reth-test-utils"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Flashblocks RPC Support"
+description = "Common integration test utilities for node-reth crates"
 
 [lints]
 workspace = true
 
 [dependencies]
+# internal
+base-reth-flashblocks-rpc.workspace = true
+
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
-reth-rpc-eth-api.workspace = true
-reth-evm.workspace = true
-reth-optimism-primitives.workspace = true
-reth-rpc-convert.workspace = true
-reth-optimism-rpc.workspace = true
-reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-provider.workspace = true
-reth-tracing.workspace = true
 reth-optimism-cli.workspace = true
+reth-optimism-primitives.workspace = true
+reth-optimism-rpc.workspace = true
+reth-provider.workspace = true
 reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
+reth-db.workspace = true
+reth-db-common.workspace = true
+reth-testing-utils.workspace = true
+reth-e2e-test-utils.workspace = true
 reth-exex.workspace = true
+reth-tracing.workspace = true
+reth-rpc-layer.workspace = true
+reth-ipc.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
+alloy-genesis.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-provider.workspace = true
+alloy-rpc-client.workspace = true
+alloy-serde.workspace = true
 
 # op-alloy
 op-alloy-rpc-types.workspace = true
+op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
-
-# alloy
-alloy-genesis.workspace = true
-alloy-rpc-client.workspace = true
 
 # rollup-boost
 rollup-boost.workspace = true
@@ -53,31 +58,25 @@ rollup-boost.workspace = true
 # tokio
 tokio.workspace = true
 tokio-stream.workspace = true
-tokio-tungstenite.workspace = true
+tokio-util = { version = "0.7", features = ["compat"] }
 
 # async
+futures.workspace = true
 futures-util.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
-jsonrpsee-types.workspace = true
 
 # misc
 tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-url.workspace = true
-metrics.workspace = true
-metrics-derive.workspace = true
 eyre.workspace = true
-brotli.workspace = true
-arc-swap.workspace = true
+once_cell.workspace = true
+url.workspace = true
+chrono.workspace = true
+
+# tower for middleware
+tower = "0.5"
 
 [dev-dependencies]
-base-reth-test-utils.workspace = true
-rand.workspace = true
-reth-db.workspace = true
-reth-testing-utils.workspace = true
-reth-db-common.workspace = true
-reth-e2e-test-utils.workspace = true
-once_cell.workspace = true
