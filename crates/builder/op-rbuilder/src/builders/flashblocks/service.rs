@@ -8,6 +8,7 @@ use crate::{
             p2p::{AGENT_VERSION, FLASHBLOCKS_STREAM_PROTOCOL, Message},
             payload::{FlashblocksExecutionInfo, FlashblocksExtraCtx},
             payload_handler::PayloadHandler,
+            wspub::WebSocketPublisher,
         },
         generator::BlockPayloadJobGenerator,
     },
@@ -106,6 +107,11 @@ impl FlashblocksServiceBuilder {
 
         let metrics = Arc::new(OpRBuilderMetrics::default());
         let (built_payload_tx, built_payload_rx) = tokio::sync::mpsc::channel(16);
+
+        let ws_pub: Arc<WebSocketPublisher> =
+            WebSocketPublisher::new(self.0.specific.ws_addr, metrics.clone())
+                .wrap_err("failed to create ws publisher")?
+                .into();
         let payload_builder = OpPayloadBuilder::new(
             OpEvmConfig::optimism(ctx.chain_spec()),
             pool,
@@ -113,9 +119,9 @@ impl FlashblocksServiceBuilder {
             self.0.clone(),
             builder_tx,
             built_payload_tx,
+            ws_pub.clone(),
             metrics.clone(),
-        )
-        .wrap_err("failed to create flashblocks payload builder")?;
+        );
         let payload_job_config = BasicPayloadJobGeneratorConfig::default();
 
         let payload_generator = BlockPayloadJobGenerator::with_builder(
@@ -144,6 +150,7 @@ impl FlashblocksServiceBuilder {
             outgoing_message_tx,
             payload_service.payload_events_handle(),
             syncer_ctx,
+            ws_pub,
             ctx.provider().clone(),
             cancel,
         );

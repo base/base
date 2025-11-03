@@ -151,6 +151,7 @@ pub(super) struct OpPayloadBuilder<Pool, Client, BuilderTx> {
 
 impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
     /// `OpPayloadBuilder` constructor.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         evm_config: OpEvmConfig,
         pool: Pool,
@@ -158,11 +159,11 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
         config: BuilderConfig<FlashblocksConfig>,
         builder_tx: BuilderTx,
         payload_tx: mpsc::Sender<OpBuiltPayload>,
+        ws_pub: Arc<WebSocketPublisher>,
         metrics: Arc<OpRBuilderMetrics>,
-    ) -> eyre::Result<Self> {
-        let ws_pub = WebSocketPublisher::new(config.specific.ws_addr, Arc::clone(&metrics))?.into();
+    ) -> Self {
         let address_gas_limiter = AddressGasLimiter::new(config.gas_limiter_config.clone());
-        Ok(Self {
+        Self {
             evm_config,
             pool,
             client,
@@ -172,7 +173,7 @@ impl<Pool, Client, BuilderTx> OpPayloadBuilder<Pool, Client, BuilderTx> {
             metrics,
             builder_tx,
             address_gas_limiter,
-        })
+        }
     }
 }
 
