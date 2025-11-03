@@ -1,4 +1,4 @@
-use cadence::{Counted, Gauged, StatsdClient};
+use cadence::{Counted, StatsdClient};
 use std::sync::Arc;
 
 /// Metrics client wrapper for block building health checks
@@ -20,6 +20,11 @@ impl HealthcheckMetrics {
         let _ = self.client.count("status_healthy", 1);
     }
 
+    /// Increment status_delayed counter (2s heartbeat)
+    pub fn increment_status_delayed(&self) {
+        let _ = self.client.count("status_delayed", 1);
+    }
+
     /// Increment status_unhealthy counter (2s heartbeat)
     pub fn increment_status_unhealthy(&self) {
         let _ = self.client.count("status_unhealthy", 1);
@@ -28,10 +33,5 @@ impl HealthcheckMetrics {
     /// Increment status_error counter (2s heartbeat)
     pub fn increment_status_error(&self) {
         let _ = self.client.count("status_error", 1);
-    }
-
-    /// Set head_age_ms gauge
-    pub fn set_head_age_ms(&self, value: u64) {
-        let _ = self.client.gauge("head_age_ms", value);
     }
 }

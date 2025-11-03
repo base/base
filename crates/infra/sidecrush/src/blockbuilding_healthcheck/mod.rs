@@ -13,6 +13,7 @@ pub mod alloy_client;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HealthState {
     Healthy,
+    Delayed,
     Unhealthy,
     Error,
 }
@@ -21,8 +22,9 @@ impl HealthState {
     fn code(&self) -> u8 {
         match self {
             HealthState::Healthy => 0,
-            HealthState::Unhealthy => 1,
-            HealthState::Error => 2,
+            HealthState::Delayed => 1,
+            HealthState::Unhealthy => 2,
+            HealthState::Error => 3,
         }
     }
 }
@@ -113,7 +115,8 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
                 let code = status.load(Ordering::Relaxed);
                 match code {
                     0 => metrics.increment_status_healthy(),
-                    1 => metrics.increment_status_unhealthy(),
+                    1 => metrics.increment_status_delayed(),
+                    2 => metrics.increment_status_unhealthy(),
                     _ => metrics.increment_status_error(),
                 }
             }
@@ -156,14 +159,12 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             }
         };
 
-        // Compute age and gauges first
+        // Compute block age
         let now_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_else(|_| Duration::from_secs(0))
             .as_secs();
         let block_age_ms = now_secs.saturating_sub(latest.timestamp_unix_seconds) * 1000;
-
-        self.metrics.set_head_age_ms(block_age_ms);
 
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
         let grace_ms = self.config.grace_period_ms;
@@ -171,6 +172,8 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
             HealthState::Healthy
         } else if block_age_ms >= unhealthy_ms {
             HealthState::Unhealthy
+        } else if block_age_ms > grace_ms {
+            HealthState::Delayed
         } else {
             HealthState::Healthy
         };
@@ -311,7 +314,7 @@ mod tests {
         checker.run_health_check().await;
         assert_eq!(
             checker.status_code.load(Ordering::Relaxed),
-            HealthState::Healthy.code()
+            HealthState::Delayed.code()
         );
     }
 
