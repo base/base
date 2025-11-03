@@ -83,9 +83,7 @@ security of the L2 to L1 bridge.
 
 ### i01-002: Nonce monotonicity
 
-The message nonce strictly increases with each withdrawal initiation. The nonce counter increments by exactly one
-for each call to initiateWithdrawal, ensuring each withdrawal has a unique identifier that prevents replay attacks
-and maintains withdrawal ordering.
+Each withdrawal has a unique identifier that prevents replay attacks and maintains withdrawal ordering.
 
 #### Impact
 

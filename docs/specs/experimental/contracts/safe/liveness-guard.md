@@ -43,8 +43,7 @@ N/A
 
 ### i01-001: Liveness tracking accuracy
 
-Liveness for each owner is tracked accurately. The `lastLive` mapping correctly reflects when owners sign transactions
-or call `showLiveness`, and owner additions/removals are properly synchronized with the Safe's owner set.
+Owner activity is accurately tracked and properly synchronized with the Safe's owner set.
 
 #### Impact
 

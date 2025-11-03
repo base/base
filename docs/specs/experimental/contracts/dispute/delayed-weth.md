@@ -89,10 +89,8 @@ intended pause state of the system.
 
 ### i01-001: Withdrawal delay enforcement
 
-Once a [Withdrawal Request](#withdrawal-request) is unlocked via `unlock()`, the full
-[Withdrawal Delay](#withdrawal-delay) period must elapse before any amount from that request can be withdrawn.
-This ensures the owner has sufficient time to intervene if the Fault Dispute Game has incorrectly distributed
-bonds.
+Withdrawals cannot be executed immediately after unlocking. A time delay must elapse to ensure the owner has
+sufficient time to intervene if the Fault Dispute Game has incorrectly distributed bonds.
 
 #### Impact
 

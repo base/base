@@ -104,9 +104,8 @@ owner could gain complete control of the Safe during [Shutdown].
 
 ### i01-001: Threshold is maintained
 
-The Safe's signing threshold is correctly calculated and maintained throughout all owner removal operations. After any
-removal, the threshold equals the value computed by the [Threshold Percentage] formula for the current number of
-owners, ensuring the Safe remains operational and secure.
+The Safe's signing threshold is correctly maintained throughout all owner removal operations, ensuring the Safe
+remains operational and secure.
 
 #### Impact
 

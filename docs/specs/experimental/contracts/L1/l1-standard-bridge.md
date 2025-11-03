@@ -6,7 +6,6 @@
 
 - [Overview](#overview)
 - [Definitions](#definitions)
-  - [OptimismMintableERC20](#optimismmintableerc20)
   - [Native L1 Token](#native-l1-token)
 - [Assumptions](#assumptions)
   - [a01-001: L2StandardBridge is trusted](#a01-001-l2standardbridge-is-trusted)
@@ -55,16 +54,11 @@ mints them when finalizing withdrawals and burns them when depositing to L2.
 
 ## Definitions
 
-### OptimismMintableERC20
-
-An ERC20 token that implements the IOptimismMintableERC20 or ILegacyMintableERC20 interface, allowing the bridge to
-mint and burn tokens. These tokens are native to L2 and have a corresponding L1 representation that can be
-minted/burned by the bridge.
-
 ### Native L1 Token
 
-An ERC20 token that is native to the L1 chain and does not implement the OptimismMintableERC20 interface. These tokens
-are escrowed in the bridge contract when deposited to L2 and released when withdrawals are finalized from L2.
+An ERC20 token that is native to the L1 chain and does not implement the
+[OptimismMintableERC20](../L2/l2-standard-bridge.md#optimismmintableerc20) interface. These tokens are escrowed in
+the bridge contract when deposited to L2 and released when withdrawals are finalized from L2.
 
 ## Assumptions
 
@@ -98,8 +92,8 @@ governance.
 
 ### a01-004: OptimismMintableERC20 tokens correctly implement mint and burn
 
-OptimismMintableERC20 tokens correctly implement the mint and burn functions and accurately report their remote token
-address.
+[OptimismMintableERC20](../L2/l2-standard-bridge.md#optimismmintableerc20) tokens correctly implement the mint and burn
+functions and accurately report their remote token address.
 
 #### Mitigations
 

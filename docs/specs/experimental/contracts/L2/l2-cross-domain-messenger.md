@@ -7,8 +7,6 @@
 - [Overview](#overview)
 - [Definitions](#definitions)
   - [Cross-Domain Message](#cross-domain-message)
-  - [Message Hash](#message-hash)
-  - [Message Nonce](#message-nonce)
   - [Message Replay](#message-replay)
 - [Assumptions](#assumptions)
   - [a01-001: L1CrossDomainMessenger Authentication](#a01-001-l1crossdomainmessenger-authentication)
@@ -52,16 +50,6 @@ A message sent from one domain (L1 or L2) to another, containing a target addres
 optional ETH value. Messages are encoded with metadata including sender address and nonce for authentication and
 replay protection.
 
-### Message Hash
-
-A unique identifier for a cross-domain message computed from the message nonce, sender, target, value, minimum gas
-limit, and calldata. Version 1 messages use all these fields, while legacy version 0 messages use a subset.
-
-### Message Nonce
-
-A monotonically increasing counter that uniquely identifies each sent message. The nonce includes a 2-byte version
-prefix in the upper bits, allowing for different message formats while maintaining uniqueness.
-
 ### Message Replay
 
 The ability to re-execute a failed cross-domain message. Messages that fail during initial relay (due to
@@ -93,8 +81,8 @@ correctly implements the initiateWithdrawal function for sending messages to L1.
 
 ### i01-001: Message Replay Protection
 
-Successfully relayed messages cannot be replayed. Each message hash can only be marked as successful once, and
-attempting to relay an already-successful message will revert.
+Successfully relayed messages cannot be replayed. Each [message hash](../L1/l1-cross-domain-messenger.md#message-hash)
+can only be marked as successful once, and attempting to relay an already-successful message will revert.
 
 #### Impact
 
@@ -189,7 +177,7 @@ Sends a message from L2 to L1 by encoding it and passing it to the L2ToL1Message
 - MUST call L2ToL1MessagePasser.initiateWithdrawal with the encoded message and ETH value
 - MUST emit SentMessage event with target, sender, message, nonce, and minGasLimit
 - MUST emit SentMessageExtension1 event with sender and value
-- MUST increment the message nonce after sending
+- MUST increment the [message nonce](../L1/l1-cross-domain-messenger.md#message-nonce) after sending
 
 ### relayMessage
 
