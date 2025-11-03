@@ -6,62 +6,193 @@ A comprehensive integration test framework for node-reth crates.
 
 This crate provides reusable testing utilities for integration tests across the node-reth workspace. It includes:
 
-- **Node Setup**: Easy creation of test nodes with Base Sepolia chainspec
-- **Engine API Integration**: Control canonical block production and chain advancement
-- **Flashblocks Support**: Dummy flashblocks delivery mechanism for testing pending state
+- **LocalNode**: Isolated in-process node with Base Sepolia chainspec
+- **TestHarness**: Unified orchestration layer combining node, Engine API, and flashblocks
+- **EngineApi**: Type-safe Engine API client for CL operations
 - **Test Accounts**: Pre-funded hardcoded accounts (Alice, Bob, Charlie, Deployer)
+- **Flashblocks Support**: Testing pending state with flashblocks delivery
 
-## Features
-
-### 1. Test Node (`TestNode`)
-
-Create isolated test nodes with Base Sepolia configuration:
+## Quick Start
 
 ```rust
-use base_reth_test_utils::TestNode;
+use base_reth_test_utils::TestHarness;
 
 #[tokio::test]
 async fn test_example() -> eyre::Result<()> {
-    // Create a test node with Base Sepolia chainspec and pre-funded accounts
-    let node = TestNode::new().await?;
+    let harness = TestHarness::new().await?;
 
-    // Get an alloy provider
-    let provider = node.provider().await?;
+    // Advance the chain
+    harness.advance_chain(5).await?;
 
-    // Access test accounts
-    let alice = node.alice();
-    let balance = node.get_balance(alice.address).await?;
+    // Access accounts
+    let alice = &harness.accounts().alice;
+
+    // Get balance via provider
+    let balance = harness.provider().get_balance(alice.address).await?;
 
     Ok(())
 }
 ```
 
-**Key Features:**
-- Automatic port allocation (enables parallel test execution)
+## Architecture
+
+The framework follows a three-layer architecture:
+
+```
+┌─────────────────────────────────────┐
+│         TestHarness                 │  ← Orchestration layer (tests use this)
+│  - Coordinates node + engine        │
+│  - Builds blocks from transactions  │
+│  - Manages test accounts            │
+└─────────────────────────────────────┘
+           │            │
+    ┌──────┘            └──────┐
+    ▼                          ▼
+┌─────────┐              ┌──────────┐
+│LocalNode│              │EngineApi │  ← Raw API wrappers
+│  (EL)   │              │   (CL)   │
+└─────────┘              └──────────┘
+```
+
+### Component Responsibilities
+
+- **LocalNode** (EL wrapper): In-process Optimism node with HTTP RPC + Engine API IPC
+- **EngineApi** (CL wrapper): Raw Engine API calls (forkchoice, payloads)
+- **TestHarness**: Orchestrates block building by fetching latest block headers and calling Engine API
+
+## Components
+
+### 1. TestHarness
+
+The main entry point for integration tests. Combines node, engine, and accounts into a single interface.
+
+```rust
+use base_reth_test_utils::TestHarness;
+use alloy_primitives::Bytes;
+
+#[tokio::test]
+async fn test_harness() -> eyre::Result<()> {
+    let harness = TestHarness::new().await?;
+
+    // Access provider
+    let provider = harness.provider();
+    let chain_id = provider.get_chain_id().await?;
+
+    // Access accounts
+    let alice = &harness.accounts().alice;
+    let bob = &harness.accounts().bob;
+
+    // Build empty blocks
+    harness.advance_chain(10).await?;
+
+    // Build block with transactions
+    let txs: Vec<Bytes> = vec![/* signed transaction bytes */];
+    harness.build_block_from_transactions(txs).await?;
+
+    // Build block from flashblocks
+    harness.build_block_from_flashblocks(&flashblocks).await?;
+
+    // Send flashblocks for pending state testing
+    harness.send_flashblock(flashblock).await?;
+
+    Ok(())
+}
+```
+
+**Key Methods:**
+- `new()` - Create new harness with node, engine, and accounts
+- `provider()` - Get Alloy RootProvider for RPC calls
+- `accounts()` - Access test accounts
+- `advance_chain(n)` - Build N empty blocks
+- `build_block_from_transactions(txs)` - Build block with specific transactions
+- `build_block_from_flashblocks(&flashblocks)` - Extract txs from flashblocks and build block
+- `send_flashblock(fb)` - Send flashblock to node for pending state
+
+**Block Building Process:**
+1. Fetches latest block header from provider (no local state tracking)
+2. Calculates next timestamp (parent + 2 seconds for Base)
+3. Calls `engine.update_forkchoice()` with payload attributes
+4. Waits for block construction
+5. Calls `engine.get_payload()` to retrieve built payload
+6. Calls `engine.new_payload()` to validate and submit
+7. Calls `engine.update_forkchoice()` again to finalize
+
+### 2. LocalNode
+
+In-process Optimism node with Base Sepolia configuration.
+
+```rust
+use base_reth_test_utils::LocalNode;
+
+#[tokio::test]
+async fn test_node() -> eyre::Result<()> {
+    let node = LocalNode::new().await?;
+
+    // Get provider
+    let provider = node.provider()?;
+
+    // Get Engine API
+    let engine = node.engine_api()?;
+
+    // Send flashblocks
+    node.send_flashblock(flashblock).await?;
+
+    Ok(())
+}
+```
+
+**Features:**
+- Base Sepolia chain configuration
 - Disabled P2P discovery (isolated testing)
-- Pre-funded test accounts
-- HTTP RPC server enabled
+- Random unused ports (parallel test safety)
+- HTTP RPC server at `node.http_api_addr`
+- Engine API IPC at `node.engine_ipc_path`
+- Flashblocks-canon ExEx integration
 
-### 2. Test Accounts (`TestAccounts`)
+**Note:** Most tests should use `TestHarness` instead of `LocalNode` directly.
 
-Hardcoded test accounts with deterministic addresses and private keys:
+### 3. EngineApi
+
+Type-safe Engine API client wrapping raw CL operations.
+
+```rust
+use base_reth_test_utils::EngineApi;
+use alloy_primitives::B256;
+use op_alloy_rpc_types_engine::OpPayloadAttributes;
+
+// Usually accessed via TestHarness, but can be used directly
+let engine = node.engine_api()?;
+
+// Raw Engine API calls
+let fcu = engine.update_forkchoice(current_head, new_head, Some(attrs)).await?;
+let payload = engine.get_payload(payload_id).await?;
+let status = engine.new_payload(payload, vec![], parent_root, requests).await?;
+```
+
+**Methods:**
+- `get_payload(payload_id)` - Retrieve built payload by ID
+- `new_payload(payload, hashes, root, requests)` - Submit new payload
+- `update_forkchoice(current, new, attrs)` - Update forkchoice state
+
+**Note:** EngineApi is stateless. Block building logic lives in `TestHarness`.
+
+### 4. Test Accounts
+
+Hardcoded test accounts with deterministic addresses (Anvil-compatible).
 
 ```rust
 use base_reth_test_utils::TestAccounts;
 
 let accounts = TestAccounts::new();
 
-// Access individual accounts
 let alice = &accounts.alice;
 let bob = &accounts.bob;
 let charlie = &accounts.charlie;
 let deployer = &accounts.deployer;
 
-// Each account has:
-// - name: Account identifier
-// - address: Ethereum address
-// - private_key: Private key (hex string)
-// - initial_balance_eth: Starting balance in ETH
+// Access via harness
+let harness = TestHarness::new().await?;
+let alice = &harness.accounts().alice;
 ```
 
 **Account Details:**
@@ -70,49 +201,15 @@ let deployer = &accounts.deployer;
 - **Charlie**: `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC` - 10,000 ETH
 - **Deployer**: `0x90F79bf6EB2c4f870365E785982E1f101E93b906` - 10,000 ETH
 
-These are derived from Anvil's test mnemonic for compatibility.
+Each account includes:
+- `name` - Account identifier
+- `address` - Ethereum address
+- `private_key` - Private key (hex string)
+- `initial_balance_eth` - Starting balance in ETH
 
-### 3. Engine API Integration (`EngineContext`)
+### 5. Flashblocks Support
 
-Control canonical block production via Engine API:
-
-```rust
-use base_reth_test_utils::EngineContext;
-
-#[tokio::test]
-async fn test_engine_api() -> eyre::Result<()> {
-    let node = TestNode::new().await?;
-
-    // Create engine context
-    let mut engine = EngineContext::new(
-        node.http_url(),
-        B256::ZERO, // genesis hash
-        1710338135, // initial timestamp
-    ).await?;
-
-    // Build and finalize a single canonical block
-    let block_hash = engine.build_and_finalize_block().await?;
-
-    // Advance the chain by multiple blocks
-    let block_hashes = engine.advance_chain(5).await?;
-
-    // Check current state
-    let head = engine.head_hash();
-    let block_number = engine.block_number();
-
-    Ok(())
-}
-```
-
-**Engine Operations:**
-- `build_and_finalize_block()` - Create and finalize a single block
-- `advance_chain(n)` - Build N blocks sequentially
-- `update_forkchoice(...)` - Manual forkchoice updates
-- Track current head, block number, and timestamp
-
-### 4. Flashblocks Integration (`FlashblocksContext`)
-
-Dummy flashblocks delivery for testing pending state:
+Test flashblocks delivery without WebSocket connections.
 
 ```rust
 use base_reth_test_utils::{FlashblocksContext, FlashblockBuilder};
@@ -121,94 +218,84 @@ use base_reth_test_utils::{FlashblocksContext, FlashblockBuilder};
 async fn test_flashblocks() -> eyre::Result<()> {
     let (fb_ctx, receiver) = FlashblocksContext::new();
 
-    // Create a base flashblock (first flashblock with base payload)
+    // Create base flashblock
     let flashblock = FlashblockBuilder::new(1, 0)
         .as_base(B256::ZERO, 1000)
         .with_transaction(tx_bytes, tx_hash, 21000)
         .with_balance(address, U256::from(1000))
         .build();
 
-    // Send flashblock and wait for processing
     fb_ctx.send_flashblock(flashblock).await?;
-
-    // Create a delta flashblock (subsequent flashblock)
-    let delta = FlashblockBuilder::new(1, 1)
-        .with_transaction(tx_bytes, tx_hash, 21000)
-        .build();
-
-    fb_ctx.send_flashblock(delta).await?;
 
     Ok(())
 }
 ```
 
-**Flashblock Features:**
-- Base flashblocks with `ExecutionPayloadBaseV1`
-- Delta flashblocks with incremental changes
-- Builder pattern for easy construction
-- Channel-based delivery (non-WebSocket)
+**Via TestHarness:**
+```rust
+let harness = TestHarness::new().await?;
+harness.send_flashblock(flashblock).await?;
+```
 
-## Architecture
+## Configuration Constants
 
-The framework is organized into modules:
+Key constants defined in `harness.rs`:
+
+```rust
+const BLOCK_TIME_SECONDS: u64 = 2;          // Base L2 block time
+const GAS_LIMIT: u64 = 200_000_000;         // Default gas limit
+const NODE_STARTUP_DELAY_MS: u64 = 500;     // IPC endpoint initialization
+const BLOCK_BUILD_DELAY_MS: u64 = 100;      // Payload construction wait
+```
+
+## File Structure
 
 ```
 test-utils/
 ├── src/
 │   ├── lib.rs           # Public API and re-exports
 │   ├── accounts.rs      # Test account definitions
-│   ├── node.rs          # TestNode implementation
-│   ├── engine.rs        # Engine API integration
+│   ├── node.rs          # LocalNode (EL wrapper)
+│   ├── engine.rs        # EngineApi (CL wrapper)
+│   ├── harness.rs       # TestHarness (orchestration)
 │   └── flashblocks.rs   # Flashblocks support
 ├── assets/
-│   └── genesis.json     # Base Sepolia genesis configuration
+│   └── genesis.json     # Base Sepolia genesis
 └── Cargo.toml
 ```
 
 ## Usage in Other Crates
 
-Add `base-reth-test-utils` to your `dev-dependencies`:
+Add to `dev-dependencies`:
 
 ```toml
 [dev-dependencies]
 base-reth-test-utils.workspace = true
 ```
 
-Then use in your integration tests:
+Import in tests:
 
 ```rust
-use base_reth_test_utils::{TestNode, TestAccounts};
+use base_reth_test_utils::TestHarness;
 
 #[tokio::test]
-async fn my_integration_test() -> eyre::Result<()> {
+async fn my_test() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    let node = TestNode::new().await?;
-    let provider = node.provider().await?;
-
-    // Your test logic here
+    let harness = TestHarness::new().await?;
+    // Your test logic
 
     Ok(())
 }
 ```
 
-## Design Decisions
+## Design Principles
 
-1. **Anvil-Compatible Keys**: Uses the same deterministic mnemonic as Anvil for easy compatibility with other tools
-2. **Port Allocation**: Random unused ports enable parallel test execution without conflicts
-3. **Isolated Nodes**: Disabled P2P discovery ensures tests don't interfere with each other
-4. **Channel-Based Flashblocks**: Non-WebSocket delivery mechanism simplifies testing
-5. **Builder Patterns**: Fluent APIs for constructing complex test scenarios
-
-## Future Enhancements
-
-This framework is designed to be extended. Planned additions:
-
-- Transaction builders for common operations
-- Smart contract deployment helpers
-- Snapshot/restore functionality for test state
-- Multi-node network simulation
-- Performance benchmarking utilities
+1. **Separation of Concerns**: LocalNode (EL), EngineApi (CL), TestHarness (orchestration)
+2. **Stateless Components**: No local state tracking; always fetch from provider
+3. **Type Safety**: Use reth's `OpEngineApiClient` trait instead of raw RPC strings
+4. **Parallel Testing**: Random ports + isolated nodes enable concurrent tests
+5. **Anvil Compatibility**: Same mnemonic as Anvil for tooling compatibility
 
 ## Testing
 
@@ -218,8 +305,22 @@ Run the test suite:
 cargo test -p base-reth-test-utils
 ```
 
+Run specific test:
+
+```bash
+cargo test -p base-reth-test-utils test_harness_setup
+```
+
+## Future Enhancements
+
+- Transaction builders for common operations
+- Smart contract deployment helpers (Foundry integration planned)
+- Snapshot/restore functionality
+- Multi-node network simulation
+- Performance benchmarking utilities
+
 ## References
 
-This framework was inspired by:
+Inspired by:
 - [op-rbuilder test framework](https://github.com/flashbots/op-rbuilder/tree/main/crates/op-rbuilder/src/tests/framework)
 - [reth e2e-test-utils](https://github.com/paradigmxyz/reth/tree/main/crates/e2e-test-utils)
