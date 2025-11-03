@@ -16,6 +16,8 @@
   - [Proposer Role](#proposer-role)
   - [Challenger Role](#challenger-role)
   - [Immutable Args Pattern](#immutable-args-pattern)
+  - [Super Root](#super-root)
+  - [L2 Sequence Number](#l2-sequence-number)
 - [Assumptions](#assumptions)
   - [a01-001: Anchor State Registry Provides Valid Anchor States](#a01-001-anchor-state-registry-provides-valid-anchor-states)
     - [Mitigations](#mitigations)
@@ -55,6 +57,7 @@
   - [l2SequenceNumber](#l2sequencenumber)
   - [startingBlockNumber](#startingblocknumber)
   - [startingRootHash](#startingroothash)
+  - [startingSequenceNumber](#startingsequencenumber)
   - [gameType](#gametype)
   - [gameCreator](#gamecreator)
   - [rootClaim](#rootclaim)
@@ -82,13 +85,13 @@
 The FaultDisputeGame contract family implements a bisection-based dispute resolution mechanism for verifying L2 output
 root claims through iterative narrowing of disagreement ranges until reaching single instruction steps that can be
 verified on-chain via a fault proof virtual machine. The family includes permissionless variants (FaultDisputeGame,
-FaultDisputeGameV2) and permissioned variants (PermissionedDisputeGame, PermissionedDisputeGameV2,
-SuperPermissionedDisputeGame) that restrict participation to authorized roles.
+FaultDisputeGameV2, SuperFaultDisputeGame) and permissioned variants (PermissionedDisputeGame,
+PermissionedDisputeGameV2, SuperPermissionedDisputeGame) that restrict participation to authorized roles.
 
 ## Contract Variants
 
-The FaultDisputeGame specification covers five contract variants that share the core bisection-based dispute resolution
-mechanism but differ in access control and architectural implementation.
+The FaultDisputeGame specification covers six contract variants that share the core bisection-based dispute resolution
+mechanism but differ in access control, architectural implementation, and support for interop super roots.
 
 **FaultDisputeGame**: The base permissionless implementation where any address can participate in dispute games by
 making moves and executing steps. Uses constructor parameters for immutable configuration values.
@@ -97,8 +100,12 @@ making moves and executing steps. Uses constructor parameters for immutable conf
 authorized proposer and challenger roles. Only the proposer can initialize games. Uses constructor parameters for
 immutable configuration values.
 
+**SuperFaultDisputeGame**: A permissionless variant designed for interop that validates super root claims using L2
+sequence numbers (timestamps) instead of L2 block numbers. Uses the [Immutable Args Pattern] and requires the L2 chain
+ID to be zero. Super roots represent cross-chain state commitments for interoperability.
+
 **SuperPermissionedDisputeGame**: Similar to PermissionedDisputeGame but extends SuperFaultDisputeGame to support super
-root claims. Uses the [Immutable Args Pattern] to store proposer and challenger addresses.
+root claims with access control. Uses the [Immutable Args Pattern] to store proposer and challenger addresses.
 
 **FaultDisputeGameV2**: The V2 permissionless implementation that refactors the architecture to use the [Immutable Args
 Pattern] for storing VM, WETH, AnchorStateRegistry, and other configuration values instead of constructor parameters.
@@ -156,6 +163,18 @@ In permissioned variants, both proposer and challenger roles are required for ga
 An architectural pattern where contract parameters are stored in append-only calldata rather than contract storage,
 reducing deployment costs and enabling efficient cloning. Used in V2 variants to store addresses and configuration
 values.
+
+### Super Root
+
+A cross-chain state commitment used in interoperability scenarios that represents the aggregated state across multiple
+L2 chains. Super roots are identified by L2 sequence numbers (timestamps) rather than block numbers, enabling
+coordination of state across chains with different block production rates.
+
+### L2 Sequence Number
+
+A timestamp-based identifier used in SuperFaultDisputeGame variants instead of L2 block numbers. Sequence numbers
+provide a chain-agnostic way to order and reference state commitments in interop contexts where multiple chains need to
+coordinate.
 
 ## Assumptions
 
@@ -275,7 +294,12 @@ Initializes the dispute game with the root claim and establishes the anchor stat
 - MUST revert if the Anchor State Registry returns a zero anchor root
 - MUST revert if the calldata length does not match expected length (122 bytes for V1, varies for V2 based on immutable
   args)
-- MUST revert if the root claim's L2 block number is less than or equal to the anchor state's block number
+- MUST revert if the root claim's L2 block number is less than or equal to the anchor state's block number (standard
+  variants)
+- MUST revert if the root claim's L2 sequence number is less than or equal to the anchor state's sequence number
+  (SuperFaultDisputeGame variants)
+- MUST revert if the root claim equals the INVALID_ROOT_CLAIM constant (SuperFaultDisputeGame variants)
+- MUST revert if the L2 chain ID is not zero (SuperFaultDisputeGame variants)
 - MUST revert if tx.origin is not the proposer in permissioned variants
 - MUST create the root claim at position 1 with the game creator as claimant and msg.value as bond
 - MUST deposit the bond into the DelayedWETH contract
@@ -380,7 +404,9 @@ Posts local data to the VM's PreimageOracle for use during execution trace verif
 - MUST revert if the game status is not IN_PROGRESS
 - MUST revert if _ident is not a valid local preimage key identifier
 - MUST compute the local context UUID from the starting and disputed outputs
-- MUST load the appropriate data into the PreimageOracle based on _ident
+- MUST load the appropriate data into the PreimageOracle based on _ident (L1_HEAD_HASH, STARTING_OUTPUT_ROOT,
+  DISPUTED_OUTPUT_ROOT, DISPUTED_L2_BLOCK_NUMBER)
+- MUST load l2SequenceNumber for DISPUTED_L2_BLOCK_NUMBER identifier in SuperFaultDisputeGame variants
 
 ### challengeRootL2Block
 
@@ -522,11 +548,14 @@ Returns the L2 block number from the extraData.
 
 ### l2SequenceNumber
 
-Returns the L2 sequence number which equals the L2 block number.
+Returns the L2 sequence number which equals the L2 block number in standard variants, or represents a timestamp in
+SuperFaultDisputeGame variants.
 
 **Behavior:**
 
-- MUST return the same value as l2BlockNumber
+- MUST return the same value as l2BlockNumber in standard variants
+- MUST extract and return the L2 sequence number (timestamp) from clone-with-immutable-args data at offset 88 in
+  SuperFaultDisputeGame variants
 
 ### startingBlockNumber
 
@@ -542,7 +571,18 @@ Returns the starting output root hash from the anchor state.
 
 **Behavior:**
 
-- MUST return the root hash from startingOutputRoot
+- MUST return the root hash from startingOutputRoot in standard variants
+- MUST return the root hash from startingProposal in SuperFaultDisputeGame variants
+
+### startingSequenceNumber
+
+Returns the starting sequence number from the anchor state in SuperFaultDisputeGame variants.
+
+**Behavior:**
+
+- MUST return the l2SequenceNumber from startingProposal
+- MUST NOT exist in standard variants (FaultDisputeGame, PermissionedDisputeGame, FaultDisputeGameV2,
+  PermissionedDisputeGameV2)
 
 ### gameType
 
