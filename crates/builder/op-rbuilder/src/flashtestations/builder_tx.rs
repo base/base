@@ -89,6 +89,10 @@ where
         }
     }
 
+    pub fn tee_signer(&self) -> &Signer {
+        &self.tee_service_signer
+    }
+
     /// Computes the block content hash according to the formula:
     /// keccak256(abi.encode(parentHash, blockNumber, timestamp, transactionHashes))
     /// https://github.com/flashbots/rollup-boost/blob/main/specs/flashtestations.md#block-building-process
@@ -136,12 +140,13 @@ where
             .evm_with_env(&mut simulation_state, ctx.evm_env.clone());
         evm.modify_cfg(|cfg| {
             cfg.disable_balance_check = true;
+            cfg.disable_nonce_check = true;
         });
         let calldata = IFlashtestationRegistry::getRegistrationStatusCall {
             teeAddress: self.tee_service_signer.address,
         };
         let SimulationSuccessResult { output, .. } =
-            self.flashtestation_contract_read(self.registry_address, calldata, ctx, &mut evm)?;
+            self.flashtestations_contract_read(self.registry_address, calldata, ctx, &mut evm)?;
         if output.isValid {
             self.registered
                 .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -159,7 +164,7 @@ where
             owner: self.tee_service_signer.address,
         };
         let SimulationSuccessResult { output, .. } =
-            self.flashtestation_contract_read(contract_address, calldata, ctx, evm)?;
+            self.flashtestations_contract_read(contract_address, calldata, ctx, evm)?;
         Ok(output)
     }
 
@@ -175,7 +180,7 @@ where
             nonce: permit_nonce,
             deadline: U256::from(ctx.timestamp()),
         };
-        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
+        let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.registry_address,
             struct_hash_calldata,
             ctx,
@@ -183,7 +188,7 @@ where
         )?;
         let typed_data_hash_calldata =
             IFlashtestationRegistry::hashTypedDataV4Call { structHash: output };
-        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
+        let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.registry_address,
             typed_data_hash_calldata,
             ctx,
@@ -211,7 +216,7 @@ where
             gas_used,
             state_changes,
             ..
-        } = self.flashtestation_call(
+        } = self.flashtestations_call(
             self.registry_address,
             calldata.clone(),
             vec![TEEServiceRegistered::SIGNATURE_HASH],
@@ -250,7 +255,7 @@ where
             blockContentHash: block_content_hash,
             nonce: permit_nonce,
         };
-        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
+        let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.builder_policy_address,
             struct_hash_calldata,
             ctx,
@@ -258,7 +263,7 @@ where
         )?;
         let typed_data_hash_calldata =
             IBlockBuilderPolicy::getHashedTypeDataV4Call { structHash: output };
-        let SimulationSuccessResult { output, .. } = self.flashtestation_contract_read(
+        let SimulationSuccessResult { output, .. } = self.flashtestations_contract_read(
             self.builder_policy_address,
             typed_data_hash_calldata,
             ctx,
@@ -289,7 +294,7 @@ where
             version: self.builder_proof_version,
             eip712Sig: signature.as_bytes().into(),
         };
-        let SimulationSuccessResult { gas_used, .. } = self.flashtestation_call(
+        let SimulationSuccessResult { gas_used, .. } = self.flashtestations_call(
             self.builder_policy_address,
             calldata.clone(),
             vec![BlockBuilderProofVerified::SIGNATURE_HASH],
@@ -314,17 +319,17 @@ where
         })
     }
 
-    fn flashtestation_contract_read<T: SolCall>(
+    fn flashtestations_contract_read<T: SolCall>(
         &self,
         contract_address: Address,
         calldata: T,
         ctx: &OpPayloadBuilderCtx<ExtraCtx>,
         evm: &mut OpEvm<impl Database + DatabaseRef, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        self.flashtestation_call(contract_address, calldata, vec![], ctx, evm)
+        self.flashtestations_call(contract_address, calldata, vec![], ctx, evm)
     }
 
-    fn flashtestation_call<T: SolCall>(
+    fn flashtestations_call<T: SolCall>(
         &self,
         contract_address: Address,
         calldata: T,
@@ -336,8 +341,8 @@ where
             .gas_limit(ctx.block_gas_limit())
             .max_fee_per_gas(ctx.base_fee().into())
             .to(contract_address)
-            .from(self.tee_service_signer.address) // use tee key as signer for simulations
-            .nonce(get_nonce(evm.db(), self.tee_service_signer.address)?)
+            .from(self.builder_signer.address)
+            .nonce(get_nonce(evm.db(), self.builder_signer.address)?)
             .input(TransactionInput::new(calldata.abi_encode().into()));
         if contract_address == self.registry_address {
             self.simulate_call::<T, IFlashtestationRegistry::IFlashtestationRegistryErrors>(

@@ -52,7 +52,6 @@ use std::{
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
-use tracing::warn;
 
 /// Represents a type that emulates a local in-process instance of the OP builder node.
 /// This node uses IPC as the communication channel for the RPC server Engine API.
@@ -410,7 +409,6 @@ impl FlashblocksListener {
                     }
                     Some(Ok(Message::Text(text))) = read.next() => {
                         let fb = serde_json::from_str(&text).unwrap();
-                        warn!("GOT FB: {fb:#?}");
                         flashblocks_clone.lock().push(fb);
                     }
                 }

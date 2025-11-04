@@ -39,6 +39,9 @@ pub struct FlashblocksConfig {
     /// If set a builder tx will be added to the start of every flashblock instead of the regular builder tx.
     pub flashblocks_number_contract_address: Option<Address>,
 
+    /// whether to use permit signatures for the contract calls
+    pub flashblocks_number_contract_use_permit: bool,
+
     /// Whether to enable the p2p node for flashblocks
     pub p2p_enabled: bool,
 
@@ -64,6 +67,7 @@ impl Default for FlashblocksConfig {
             fixed: false,
             calculate_state_root: true,
             flashblocks_number_contract_address: None,
+            flashblocks_number_contract_use_permit: false,
             p2p_enabled: false,
             p2p_port: 9009,
             p2p_private_key_file: None,
@@ -93,6 +97,9 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
 
+        let flashblocks_number_contract_use_permit =
+            args.flashblocks.flashblocks_number_contract_use_permit;
+
         Ok(Self {
             ws_addr,
             interval,
@@ -100,6 +107,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             fixed,
             calculate_state_root,
             flashblocks_number_contract_address,
+            flashblocks_number_contract_use_permit,
             p2p_enabled: args.flashblocks.p2p.p2p_enabled,
             p2p_port: args.flashblocks.p2p.p2p_port,
             p2p_private_key_file: args.flashblocks.p2p.p2p_private_key_file,

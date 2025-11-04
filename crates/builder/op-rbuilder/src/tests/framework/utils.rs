@@ -33,6 +33,7 @@ pub trait TransactionBuilderExt {
     // flashblocks number methods
     fn deploy_flashblock_number_contract(self) -> Self;
     fn init_flashblock_number_contract(self, register_builder: bool) -> Self;
+    fn add_authorized_builder(self, builder: Address) -> Self;
     // flashtestations methods
     fn deploy_flashtestation_registry_contract(self) -> Self;
     fn init_flashtestation_registry_contract(self, dcap_address: Address) -> Self;
@@ -82,6 +83,13 @@ impl TransactionBuilderExt for TransactionBuilder {
         .abi_encode();
 
         self.with_input(init_data.into())
+            .with_signer(flashblocks_number_signer())
+    }
+
+    fn add_authorized_builder(self, builder: Address) -> Self {
+        let calldata = FlashblocksNumber::addBuilderCall { builder }.abi_encode();
+
+        self.with_input(calldata.into())
             .with_signer(flashblocks_number_signer())
     }
 

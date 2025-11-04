@@ -526,7 +526,7 @@ async fn test_flashblocks_number_contract_builder_tx(rbuilder: LocalInstance) ->
     let init_tx = driver
         .create_transaction()
         .init_flashblock_number_contract(true)
-        .with_to(contract_address)
+        .with_to(FLASHBLOCKS_NUMBER_ADDRESS)
         .with_bundle(BundleOpts::default())
         .send()
         .await?;
