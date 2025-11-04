@@ -9,7 +9,7 @@ pub struct Metrics {
     #[metric(describe = "Count of messages that were unable to be sent")]
     pub failed_messages: Counter,
 
-    #[metric(describe = "Duration of message send operations in seconds")]
+    #[metric(describe = "Duration of message send operations")]
     pub message_send_duration: Histogram,
 
     #[metric(describe = "Current size of the broadcast message queue")]
