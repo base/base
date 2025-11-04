@@ -1,16 +1,20 @@
 name: Docker Manual Build & Push
 
 on:
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Branch to build'
-        required: true
-        type: string
+  workflow_dispatch: {}
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        settings:
+          - arch: linux/amd64
+            runs-on: ubuntu-24.04
+          - arch: linux/arm64
+            runs-on: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.settings.runs-on }}
+
     permissions:
       contents: read
       packages: write
@@ -19,7 +23,7 @@ jobs:
       - name: Checkout specified ref
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.GITHUB_REF }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -44,4 +48,5 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
+          platforms: ${{ matrix.settings.arch }}
           cache-to: type=gha,mode=max
