@@ -10,7 +10,16 @@ on:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        settings:
+          - arch: linux/amd64
+            runs-on: ubuntu-24.04
+            features: jemalloc,asm-keccak,optimism
+          - arch: linux/arm64
+            runs-on: ubuntu-24.04-arm
+            features: jemalloc,optimism
+    runs-on: ${{ matrix.settings.runs-on }}
 
     permissions:
       contents: read
@@ -22,11 +31,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
-
-      - name: Set up QEMU (amd64/arm64)
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
-        with:
-          platforms: arm64,amd64
 
       - name: Login to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -50,7 +54,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.settings.arch }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
