@@ -174,12 +174,12 @@ Sends a message to a target address on L2 by depositing a transaction through th
 - `_minGasLimit`: Minimum gas limit for executing the message on L2
 
 **Behavior:**
-- MUST calculate base gas using the baseGas function with the message and minimum gas limit
+- MUST calculate [Base Gas](#base-gas) using the baseGas function with the message and minimum gas limit
 - MUST encode a call to relayMessage with the current nonce, sender, target, value, gas limit, and message
-- MUST call portal.depositTransaction with the encoded message, base gas, and msg.value
+- MUST call portal.depositTransaction with the encoded message, [Base Gas](#base-gas), and msg.value
 - MUST emit SentMessage event with target, sender, message, nonce, and gas limit
 - MUST emit SentMessageExtension1 event with sender and value
-- MUST increment the message nonce by one
+- MUST increment the [Message Nonce](#message-nonce) by one
 - MUST accept any value of ETH sent with the call and forward it to the portal
 
 ### relayMessage
@@ -198,7 +198,7 @@ Relays a message that was sent from L2 through the OptimismPortal or replays a p
 - MUST revert if the contract is paused
 - MUST revert if message version is not 0 or 1
 - MUST revert if version 0 message has already been successfully relayed using legacy hash
-- MUST compute version 1 message hash from all parameters
+- MUST compute version 1 [Message Hash](#message-hash) from all parameters
 - MUST revert if caller is not the portal and msg.value is not zero
 - MUST revert if caller is not the portal and message is not in failedMessages mapping
 - MUST revert if target is the messenger itself or the portal
@@ -266,4 +266,4 @@ Computes the total gas required to guarantee message delivery on the other chain
 - MUST account for EIP-150 gas forwarding by multiplying minimum gas limit by 64/63
 - MUST calculate total message size including encoding overhead
 - MUST return the maximum of execution gas plus calldata costs or the EIP-7623 floor cost
-- MUST ensure returned value covers transaction base gas plus all overhead
+- MUST ensure returned value covers transaction [Base Gas](#base-gas) plus all overhead

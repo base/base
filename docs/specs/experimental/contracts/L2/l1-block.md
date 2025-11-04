@@ -56,7 +56,7 @@ contains one or more L2 blocks that reference the same L1 block context.
 
 ## Assumptions
 
-### a01-001: Depositor Account Provides Accurate L1 Data
+### a01-001: [Depositor Account](#depositor-account) Provides Accurate L1 Data
 
 The [Depositor Account](#depositor-account) is trusted to provide accurate and timely L1 block attributes including
 block numbers, timestamps, base fees, blob base fees, and batcher authentication hashes. The protocol relies on this
@@ -64,7 +64,8 @@ data for fee calculations and system configuration.
 
 #### Mitigations
 
-- The depositor account is controlled by the protocol's derivation pipeline, which deterministically derives L1
+- The [Depositor Account](#depositor-account) is controlled by the protocol's derivation pipeline, which
+  deterministically derives L1
   attributes from verifiable L1 block data
 - L1 attributes can be independently verified by comparing against L1 block headers
 
@@ -84,19 +85,20 @@ L1 data availability costs, corrupt system configuration parameters like batcher
 context that breaks protocol assumptions. This would compromise the economic security and operational integrity of
 the entire L2 system.
 
-### i01-002: L1 Context Consistency Within Epoch
+### i01-002: L1 Context Consistency Within [Epoch](#epoch)
 
 Within a single [Epoch](#epoch), the L1 block attributes (number, timestamp, basefee, hash, blobBaseFee, batcherHash)
 remain constant while only the [Sequence Number](#sequence-number) increments. L1 context only changes when
-transitioning to a new epoch.
+transitioning to a new [Epoch](#epoch).
 
 #### Impact
 
 **Severity: High**
 
-If L1 attributes could change arbitrarily within an epoch, it would violate the protocol's derivation model where
+If L1 attributes could change arbitrarily within an [Epoch](#epoch), it would violate the protocol's derivation model
+where
 multiple L2 blocks are anchored to a single L1 block. This could cause inconsistent fee calculations across L2 blocks
-in the same epoch and break the deterministic relationship between L1 and L2 block production.
+in the same [Epoch](#epoch) and break the deterministic relationship between L1 and L2 block production.
 
 ## Function Specification
 
@@ -160,7 +162,7 @@ Updates L1 block values using the legacy pre-Ecotone format.
 - `_timestamp`: L1 block timestamp
 - `_basefee`: L1 base fee
 - `_hash`: L1 block hash
-- `_sequenceNumber`: Number of L2 blocks since epoch start
+- `_sequenceNumber`: Number of L2 blocks since [Epoch](#epoch) start
 - `_batcherHash`: Versioned hash to authenticate batcher
 - `_l1FeeOverhead`: L1 fee overhead (legacy parameter)
 - `_l1FeeScalar`: L1 fee scalar (legacy parameter)

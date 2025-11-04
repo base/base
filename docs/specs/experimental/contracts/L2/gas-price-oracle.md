@@ -118,7 +118,7 @@ L1 fee parameters including base fee, blob base fee, and fee scalars.
 - L1Block is updated each L2 block via system transaction from the depositor account
 - Values are derived from L1 block headers during derivation
 
-### a01-002: Depositor Account Controls Fork Activation
+### a01-002: Depositor Account Controls [Fork Activation](#fork-activation)
 
 The depositor account (0xDeaDDEaDDeAdDeAdDEAdDEaddeAddEAdDEAd0001) is trusted to activate forks at the correct
 time according to the network upgrade schedule.
@@ -126,7 +126,7 @@ time according to the network upgrade schedule.
 #### Mitigations
 
 - Depositor account is a system address controlled by the protocol
-- Fork activation is part of the network upgrade process coordinated across all nodes
+- [Fork Activation](#fork-activation) is part of the network upgrade process coordinated across all nodes
 
 ## Invariants
 
@@ -143,7 +143,7 @@ are set, ensuring consistency between the reported fork state and the fee comput
 If fee calculations do not match the active fork's formula, clients receive incorrect price signals, leading to
 incorrect transaction pricing, unexpected reverts, or economic harm for users and operators.
 
-### i01-002: Fork Activation Restricted to Depositor Account
+### i01-002: [Fork Activation](#fork-activation) Restricted to Depositor Account
 
 Only the depositor account can activate fork flags that change fee calculation behavior. No other account can
 trigger these state transitions that alter which fee formula is applied.

@@ -28,7 +28,8 @@
 
 ## Overview
 
-The L2ToL1MessagePasser stores commitments to withdrawal transactions initiated on L2. When users withdraw assets
+The L2ToL1MessagePasser stores commitments to [Withdrawal Transaction](#withdrawal-transaction)s initiated on L2. When
+users withdraw assets
 from L2 to L1, they call this contract to record the withdrawal commitment. The storage root of this contract is
 included in the L2 output root, allowing users to prove on L1 that a withdrawal was initiated on L2.
 
@@ -70,7 +71,8 @@ executed on L1.
 
 ### i01-001: Withdrawal commitment immutability
 
-Once a withdrawal hash is stored in the sentMessages mapping by setting it to true, it remains permanently set and
+Once a [Withdrawal Hash](#withdrawal-hash) is stored in the sentMessages mapping by setting it to true, it remains
+permanently set and
 cannot be modified or removed. This ensures withdrawal commitments cannot be altered after initiation.
 
 #### Impact
@@ -116,7 +118,7 @@ Removes all ETH held by this contract from the L2 state.
 
 ### initiateWithdrawal
 
-Initiates a withdrawal transaction from L2 to L1 by storing a commitment.
+Initiates a [Withdrawal Transaction](#withdrawal-transaction) from L2 to L1 by storing a commitment.
 
 **Parameters:**
 - `_target`: Address on L1 that will receive the withdrawal call
@@ -124,9 +126,10 @@ Initiates a withdrawal transaction from L2 to L1 by storing a commitment.
 - `_data`: Arbitrary calldata to be forwarded to the target address on L1
 
 **Behavior:**
-- MUST compute the withdrawal hash using the current message nonce, msg.sender, target parameter, msg.value,
+- MUST compute the [Withdrawal Hash](#withdrawal-hash) using the current [Message Nonce](#message-nonce), msg.sender,
+  target parameter, msg.value,
   gasLimit parameter, and data parameter
-- MUST store the withdrawal hash in sentMessages mapping by setting it to true
+- MUST store the [Withdrawal Hash](#withdrawal-hash) in sentMessages mapping by setting it to true
 - MUST emit MessagePassed event with nonce, sender, target, value, gasLimit, data, and withdrawalHash
 - MUST increment the internal nonce counter by one after emitting the event
 - MUST accept any amount of ETH sent with the transaction (msg.value)
@@ -146,10 +149,10 @@ Returns the nonce that will be used for the next withdrawal.
 Returns whether a withdrawal commitment exists for a given hash.
 
 **Parameters:**
-- `bytes32`: The withdrawal hash to query
+- `bytes32`: The [Withdrawal Hash](#withdrawal-hash) to query
 
 **Behavior:**
-- MUST return true if the withdrawal hash has been stored via initiateWithdrawal
-- MUST return false if the withdrawal hash has never been stored
+- MUST return true if the [Withdrawal Hash](#withdrawal-hash) has been stored via initiateWithdrawal
+- MUST return false if the [Withdrawal Hash](#withdrawal-hash) has never been stored
 - MUST NOT revert under any circumstances
 - MUST NOT modify any state

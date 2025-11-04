@@ -62,7 +62,7 @@ performed during system upgrades or when merging multiple lockboxes into a unifi
 ### a01-001: ProxyAdmin Owner Trusted
 
 The ProxyAdmin owner is governance-trusted and operates within governance constraints when
-authorizing portals and lockboxes, and when initiating liquidity migrations.
+authorizing portals and lockboxes, and when initiating [Liquidity Migrations](#liquidity-migration).
 
 #### Mitigations
 
@@ -94,7 +94,7 @@ across the Superchain cluster.
 
 ### i01-002: Always Accessible
 
-Authorized portals can always access funds in the lockbox immediately, subject only to pause state.
+[Authorized Portals](#authorized-portal) can always access funds in the lockbox immediately, subject only to pause state.
 
 #### Impact
 
@@ -107,8 +107,7 @@ guarantee of the unified liquidity system.
 
 ### initialize
 
-Initializes the ETHLockbox contract with a SystemConfig reference and initial set of authorized
-portals.
+Initializes the ETHLockbox contract with a SystemConfig reference and initial set of [Authorized Portals](#authorized-portal).
 
 **Parameters:**
 
@@ -127,18 +126,18 @@ portals.
 
 ### lockETH
 
-Accepts ETH deposits from authorized portals and adds them to the unified liquidity pool.
+Accepts ETH deposits from [Authorized Portals](#authorized-portal) and adds them to the unified liquidity pool.
 
 **Behavior:**
 
 - MUST accept ETH value sent with the transaction
-- MUST revert if caller is not an authorized portal
+- MUST revert if caller is not an [Authorized Portal](#authorized-portal)
 - MUST emit `ETHLocked` event with the calling portal address and ETH amount
 - MUST NOT revert when paused (locks are permitted during pause, only unlocks are blocked)
 
 ### unlockETH
 
-Transfers ETH from the lockbox to an authorized portal to fulfill withdrawal obligations.
+Transfers ETH from the lockbox to an [Authorized Portal](#authorized-portal) to fulfill withdrawal obligations.
 
 **Parameters:**
 
@@ -147,7 +146,7 @@ Transfers ETH from the lockbox to an authorized portal to fulfill withdrawal obl
 **Behavior:**
 
 - MUST revert if the lockbox is paused
-- MUST revert if caller is not an authorized portal
+- MUST revert if caller is not an [Authorized Portal](#authorized-portal)
 - MUST revert if `_value` exceeds the lockbox's ETH balance
 - MUST revert if the calling portal's `l2Sender()` is not `DEFAULT_L2_SENDER`
 - MUST transfer `_value` ETH to the calling portal using `donateETH()` function
@@ -155,7 +154,7 @@ Transfers ETH from the lockbox to an authorized portal to fulfill withdrawal obl
 
 ### authorizePortal
 
-Grants an OptimismPortal permission to lock and unlock ETH from the lockbox.
+Grants an [Authorized Portal](#authorized-portal) permission to lock and unlock ETH from the lockbox.
 
 **Parameters:**
 
@@ -171,7 +170,7 @@ Grants an OptimismPortal permission to lock and unlock ETH from the lockbox.
 
 ### authorizeLockbox
 
-Grants another ETHLockbox permission to migrate its liquidity to the current lockbox.
+Grants another [Authorized Lockbox](#authorized-lockbox) permission to migrate its liquidity to the current lockbox.
 
 **Parameters:**
 
@@ -187,7 +186,7 @@ Grants another ETHLockbox permission to migrate its liquidity to the current loc
 
 ### migrateLiquidity
 
-Transfers the entire ETH balance from the current lockbox to another authorized lockbox.
+Transfers the entire ETH balance from the current lockbox to another [Authorized Lockbox](#authorized-lockbox).
 
 **Parameters:**
 
@@ -205,12 +204,12 @@ Transfers the entire ETH balance from the current lockbox to another authorized 
 
 ### receiveLiquidity
 
-Receives ETH liquidity from another authorized lockbox during migration.
+Receives ETH liquidity from another [Authorized Lockbox](#authorized-lockbox) during migration.
 
 **Behavior:**
 
 - MUST accept ETH value sent with the transaction
-- MUST revert if caller is not an authorized lockbox
+- MUST revert if caller is not an [Authorized Lockbox](#authorized-lockbox)
 - MUST emit `LiquidityReceived` event with the calling lockbox address and ETH amount
 
 ### paused

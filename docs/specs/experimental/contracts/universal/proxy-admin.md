@@ -33,8 +33,9 @@
 
 ## Overview
 
-Manages administrative operations for multiple proxy types, including ERC1967 proxies, legacy ChugSplash proxies, and
-ResolvedDelegate proxies.
+Manages administrative operations for multiple proxy types, including [ERC1967 Proxies](#erc1967-proxy), legacy
+[ChugSplash Proxies](#chugsplash-proxy), and
+[ResolvedDelegate Proxies](#resolveddelegate-proxy).
 
 ## Definitions
 
@@ -111,7 +112,7 @@ Configures the proxy type for a given proxy address.
 
 ### setImplementationName
 
-Sets the implementation name for a ResolvedDelegate proxy.
+Sets the implementation name for a [ResolvedDelegate Proxy](#resolveddelegate-proxy).
 
 **Parameters:**
 
@@ -125,7 +126,7 @@ Sets the implementation name for a ResolvedDelegate proxy.
 
 ### setAddressManager
 
-Configures the AddressManager contract used for ResolvedDelegate proxy resolution.
+Configures the AddressManager contract used for [ResolvedDelegate Proxy](#resolveddelegate-proxy) resolution.
 
 **Parameters:**
 
@@ -152,7 +153,7 @@ Sets an address in the AddressManager contract.
 
 ### setUpgrading
 
-Controls the upgrading status flag for ChugSplash proxies.
+Controls the upgrading status flag for [ChugSplash Proxies](#chugsplash-proxy).
 
 **Parameters:**
 

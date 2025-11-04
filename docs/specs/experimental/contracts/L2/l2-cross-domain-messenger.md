@@ -79,7 +79,7 @@ correctly implements the initiateWithdrawal function for sending messages to L1.
 
 ## Invariants
 
-### i01-001: Message Replay Protection
+### i01-001: [Message Replay](#message-replay) Protection
 
 Successfully relayed messages cannot be replayed. Each [message hash](../L1/l1-cross-domain-messenger.md#message-hash)
 can only be marked as successful once, and attempting to relay an already-successful message will revert.
@@ -94,7 +94,7 @@ unauthorized state changes on the target contract.
 ### i01-002: Cross-Chain Message Integrity
 
 Messages can only be relayed if they originate from the paired L1CrossDomainMessenger or are being replayed after
-an initial failure. Unauthorized parties cannot inject or forge cross-domain messages.
+an initial failure. Unauthorized parties cannot inject or forge [Cross-Domain Message](#cross-domain-message)s.
 
 #### Impact
 
@@ -213,7 +213,7 @@ or by anyone replaying a previously failed message.
 
 ### xDomainMessageSender
 
-Returns the address of the sender of the currently executing cross-domain message.
+Returns the address of the sender of the currently executing [Cross-Domain Message](#cross-domain-message).
 
 **Behavior:**
 

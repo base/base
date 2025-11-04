@@ -79,15 +79,16 @@ The L2CrossDomainMessenger accurately validates cross-chain messages and correct
 - The messenger is a system predeploy contract maintained by the protocol
 - Message authentication uses the xDomainMessageSender mechanism
 
-### a01-003: OptimismMintableERC20 tokens correctly implement mint and burn
+### a01-003: [OptimismMintableERC20](#optimismmintableerc20) tokens correctly implement mint and burn
 
-OptimismMintableERC20 tokens correctly implement the mint and burn functions and accurately report their remote
+[OptimismMintableERC20](#optimismmintableerc20) tokens correctly implement the mint and burn functions and accurately
+report their remote
 token address.
 
 #### Mitigations
 
 - Token pair validation checks that the remote token matches the token's reported remoteToken or l1Token
-- Tokens must implement the IOptimismMintableERC20 or ILegacyMintableERC20 interface
+- Tokens must implement the I[OptimismMintableERC20](#optimismmintableerc20) or ILegacyMintableERC20 interface
 
 ## Invariants
 
@@ -239,9 +240,9 @@ Sends ERC20 tokens to the sender's address on L1.
 
 - MUST revert if caller is not an externally owned account
 - MUST revert if msg.value is not zero
-- MUST burn the tokens if _localToken is an OptimismMintableERC20
-- MUST escrow the tokens if _localToken is a Native L2 Token
-- MUST verify token pair matches for OptimismMintableERC20 tokens
+- MUST burn the tokens if _localToken is an [OptimismMintableERC20](#optimismmintableerc20)
+- MUST escrow the tokens if _localToken is a [Native L2 Token](#native-l2-token)
+- MUST verify token pair matches for [OptimismMintableERC20](#optimismmintableerc20) tokens
 - MUST send a cross-chain message to L1StandardBridge calling finalizeBridgeERC20
 - MUST emit WithdrawalInitiated and ERC20BridgeInitiated events
 
@@ -261,9 +262,9 @@ Sends ERC20 tokens to a specified recipient's address on L1.
 **Behavior:**
 
 - MUST revert if msg.value is not zero
-- MUST burn the tokens if _localToken is an OptimismMintableERC20
-- MUST escrow the tokens if _localToken is a Native L2 Token
-- MUST verify token pair matches for OptimismMintableERC20 tokens
+- MUST burn the tokens if _localToken is an [OptimismMintableERC20](#optimismmintableerc20)
+- MUST escrow the tokens if _localToken is a [Native L2 Token](#native-l2-token)
+- MUST verify token pair matches for [OptimismMintableERC20](#optimismmintableerc20) tokens
 - MUST send a cross-chain message to L1StandardBridge calling finalizeBridgeERC20
 - MUST emit WithdrawalInitiated and ERC20BridgeInitiated events
 
@@ -308,10 +309,10 @@ Completes an ERC20 bridge from L1 and mints or releases tokens to the recipient 
 - MUST revert if caller is not the L2CrossDomainMessenger
 - MUST revert if xDomainMessageSender is not the L1StandardBridge
 - MUST revert if the bridge is paused
-- MUST mint tokens to `_to` if `_localToken` is an OptimismMintableERC20
-- MUST release escrowed tokens to `_to` if `_localToken` is a Native L2 Token
-- MUST verify token pair matches for OptimismMintableERC20 tokens
-- MUST decrease the deposits mapping for Native L2 Tokens
+- MUST mint tokens to `_to` if `_localToken` is an [OptimismMintableERC20](#optimismmintableerc20)
+- MUST release escrowed tokens to `_to` if `_localToken` is a [Native L2 Token](#native-l2-token)
+- MUST verify token pair matches for [OptimismMintableERC20](#optimismmintableerc20) tokens
+- MUST decrease the deposits mapping for [Native L2 Token](#native-l2-token)s
 - MUST emit DepositFinalized and ERC20BridgeFinalized events
 
 ### l1TokenBridge

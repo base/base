@@ -67,8 +67,8 @@ Initializes the OptimismMintableERC721 contract with bridge configuration and to
 **Parameters:**
 
 - `_bridge`: Address of the ERC721 bridge contract on this network
-- `_remoteChainId`: Chain ID where the remote token is deployed
-- `_remoteToken`: Address of the corresponding token on the remote chain
+- `_remoteChainId`: Chain ID where the [Remote Token](#remote-token) is deployed
+- `_remoteToken`: Address of the corresponding token on the [Remote Chain](#remote-chain)
 - `_name`: ERC721 token name
 - `_symbol`: ERC721 token symbol
 
@@ -85,7 +85,7 @@ Initializes the OptimismMintableERC721 contract with bridge configuration and to
 
 ### remoteChainId
 
-Returns the chain ID where the remote token is deployed.
+Returns the chain ID where the [Remote Token](#remote-token) is deployed.
 
 **Behavior:**
 
@@ -93,7 +93,7 @@ Returns the chain ID where the remote token is deployed.
 
 ### remoteToken
 
-Returns the address of the token on the remote chain.
+Returns the address of the token on the [Remote Chain](#remote-chain).
 
 **Behavior:**
 

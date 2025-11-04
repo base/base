@@ -85,7 +85,8 @@ These fees incentivize the sequencer to include transactions in blocks. This vau
 
 Accumulates the operator portion of transaction fees. Unlike the other vaults, OperatorFeeVault has a hardcoded
 constructor that always withdraws to the BaseFeeVault address (`0x4200000000000000000000000000000000000019`)
-on L2 with a minimum withdrawal amount of 0. This design consolidates operator fees with base fees for
+on L2 with a [Minimum Withdrawal Amount](#minimum-withdrawal-amount) of 0. This design consolidates operator fees with
+base fees for
 simplified distribution.
 
 ## Definitions
@@ -115,7 +116,8 @@ the address must not be a contract that reverts on ETH receipt.
 
 ### a01-002: L2ToL1MessagePasser functions correctly for L1 withdrawals
 
-When the withdrawal network is L1, the contract depends on the L2ToL1MessagePasser predeploy to correctly
+When the [Withdrawal Network](#withdrawal-network) is L1, the contract depends on the L2ToL1MessagePasser predeploy to
+correctly
 initiate cross-domain withdrawals. The message passer must properly record withdrawal commitments and the L1
 OptimismPortal must honor these commitments.
 

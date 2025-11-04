@@ -219,7 +219,7 @@ Deposits ERC20 tokens into the sender's account on L2.
 
 - MUST revert if caller is not an externally owned account
 - MUST revert if msg.value is not zero
-- MUST escrow the tokens if `_l1Token` is a Native L1 Token
+- MUST escrow the tokens if `_l1Token` is a [Native L1 Token](#native-l1-token)
 - MUST burn the tokens if `_l1Token` is an OptimismMintableERC20
 - MUST verify token pair matches for OptimismMintableERC20 tokens
 - MUST send a cross-chain message to L2StandardBridge calling finalizeBridgeERC20
@@ -241,7 +241,7 @@ Deposits ERC20 tokens into a target account on L2.
 **Behavior:**
 
 - MUST revert if msg.value is not zero
-- MUST escrow the tokens if `_l1Token` is a Native L1 Token
+- MUST escrow the tokens if `_l1Token` is a [Native L1 Token](#native-l1-token)
 - MUST burn the tokens if `_l1Token` is an OptimismMintableERC20
 - MUST verify token pair matches for OptimismMintableERC20 tokens
 - MUST send a cross-chain message to L2StandardBridge calling finalizeBridgeERC20
@@ -295,7 +295,7 @@ Sends ERC20 tokens to the sender's address on L2.
 
 - MUST revert if caller is not an externally owned account
 - MUST revert if msg.value is not zero
-- MUST escrow the tokens if `_localToken` is a Native L1 Token
+- MUST escrow the tokens if `_localToken` is a [Native L1 Token](#native-l1-token)
 - MUST burn the tokens if `_localToken` is an OptimismMintableERC20
 - MUST verify token pair matches for OptimismMintableERC20 tokens
 - MUST send a cross-chain message to L2StandardBridge calling finalizeBridgeERC20
@@ -317,7 +317,7 @@ Sends ERC20 tokens to a specified recipient's address on L2.
 **Behavior:**
 
 - MUST revert if msg.value is not zero
-- MUST escrow the tokens if `_localToken` is a Native L1 Token
+- MUST escrow the tokens if `_localToken` is a [Native L1 Token](#native-l1-token)
 - MUST burn the tokens if `_localToken` is an OptimismMintableERC20
 - MUST verify token pair matches for OptimismMintableERC20 tokens
 - MUST send a cross-chain message to L2StandardBridge calling finalizeBridgeERC20
@@ -365,9 +365,9 @@ Finalizes a withdrawal of ERC20 tokens from L2.
 - MUST revert if xDomainMessageSender is not the L2StandardBridge
 - MUST revert if the bridge is paused
 - MUST mint tokens to `_to` if `_l1Token` is an OptimismMintableERC20
-- MUST release escrowed tokens to `_to` if `_l1Token` is a Native L1 Token
+- MUST release escrowed tokens to `_to` if `_l1Token` is a [Native L1 Token](#native-l1-token)
 - MUST verify token pair matches for OptimismMintableERC20 tokens
-- MUST decrease the deposits mapping for Native L1 Tokens
+- MUST decrease the deposits mapping for [Native L1 Tokens](#native-l1-token)
 - MUST emit ERC20WithdrawalFinalized and ERC20BridgeFinalized events
 
 ### finalizeBridgeETH
@@ -412,9 +412,9 @@ Completes an ERC20 bridge from L2 and mints or releases tokens to the recipient 
 - MUST revert if xDomainMessageSender is not the L2StandardBridge
 - MUST revert if the bridge is paused
 - MUST mint tokens to `_to` if `_localToken` is an OptimismMintableERC20
-- MUST release escrowed tokens to `_to` if `_localToken` is a Native L1 Token
+- MUST release escrowed tokens to `_to` if `_localToken` is a [Native L1 Token](#native-l1-token)
 - MUST verify token pair matches for OptimismMintableERC20 tokens
-- MUST decrease the deposits mapping for Native L1 Tokens
+- MUST decrease the deposits mapping for [Native L1 Tokens](#native-l1-token)
 - MUST emit ERC20WithdrawalFinalized and ERC20BridgeFinalized events
 
 ### l2TokenBridge

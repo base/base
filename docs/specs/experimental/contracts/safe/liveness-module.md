@@ -43,7 +43,7 @@
 
 The LivenessModule enables permissionless removal of inactive Safe owners based on liveness tracking data from the
 LivenessGuard. When the owner count falls below the minimum threshold, the module transfers sole ownership to a
-designated fallback owner and deactivates itself.
+designated [Fallback Owner](#fallback-owner) and deactivates itself.
 
 ## Definitions
 
@@ -96,9 +96,11 @@ owner could gain complete control of the Safe during [Shutdown].
 
 #### Mitigations
 
-- The fallback owner is set at deployment and cannot be changed without deploying a new module
-- Shutdown only occurs when the owner count falls below [Minimum Owners], which requires multiple owner removals
-- The Safe's existing owners can remove the module before shutdown occurs if they maintain sufficient liveness
+- The [Fallback Owner](#fallback-owner) is set at deployment and cannot be changed without deploying a new module
+- [Shutdown](#shutdown) only occurs when the owner count falls below [Minimum Owners], which requires multiple owner
+  removals
+- The Safe's existing owners can remove the module before [Shutdown](#shutdown) occurs if they maintain sufficient
+  liveness
 
 ## Invariants
 
@@ -153,9 +155,11 @@ never remains in an unsafe configuration with too few owners.
 
 **Severity: Critical**
 
-If shutdown fails to trigger properly, the Safe could be left with too few owners to meet the threshold, causing
-permanent loss of access to Safe assets. Alternatively, if shutdown triggers incorrectly, legitimate owners could lose
-control to the fallback owner prematurely.
+If [Shutdown](#shutdown) fails to trigger properly, the Safe could be left with too few owners to meet the threshold,
+causing
+permanent loss of access to Safe assets. Alternatively, if [Shutdown](#shutdown) triggers incorrectly, legitimate owners
+could lose
+control to the [Fallback Owner](#fallback-owner) prematurely.
 
 ## Function Specification
 
@@ -273,7 +277,7 @@ below [Minimum Owners], triggers [Shutdown].
   - If current owner count is below [Minimum Owners], MUST remove the owner regardless of liveness
   - MUST call `OwnerManager.removeOwner` with the new threshold via `execTransactionFromModuleReturnData`
   - MUST emit `RemovedOwner` event for each removed owner
-- MUST trigger [Shutdown] when removing the last non-fallback owner:
+- MUST trigger [Shutdown] when removing the last non-[Fallback Owner](#fallback-owner):
   - MUST call `OwnerManager.swapOwner` to replace the last owner with [Fallback Owner]
   - MUST set `ownershipTransferredToFallback` to true
   - MUST emit `OwnershipTransferredToFallback` event

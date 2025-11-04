@@ -15,7 +15,7 @@
   - [a01-002: SuperchainConfig provides accurate pause state](#a01-002-superchainconfig-provides-accurate-pause-state)
     - [Mitigations](#mitigations-1)
 - [Invariants](#invariants)
-  - [i01-001: Withdrawal delay enforcement](#i01-001-withdrawal-delay-enforcement)
+  - [i01-001: Withdrawal Delay enforcement](#i01-001-withdrawal-delay-enforcement)
     - [Impact](#impact)
   - [i01-002: Owner emergency intervention capability](#i01-002-owner-emergency-intervention-capability)
     - [Impact](#impact-1)
@@ -87,7 +87,7 @@ intended pause state of the system.
 
 ## Invariants
 
-### i01-001: Withdrawal delay enforcement
+### i01-001: [Withdrawal Delay](#withdrawal-delay) enforcement
 
 Withdrawals cannot be executed immediately after unlocking. A time delay must elapse to ensure the owner has
 sufficient time to intervene if the Fault Dispute Game has incorrectly distributed bonds.
@@ -105,7 +105,8 @@ loss to occur.
 ### i01-002: Owner emergency intervention capability
 
 The contract owner can always recover ETH from the contract balance via `recover()` and can always transfer
-WETH from any account to themselves via `hold()`, regardless of withdrawal request states. This provides an
+WETH from any account to themselves via `hold()`, regardless of [Withdrawal Request](#withdrawal-request) states. This
+provides an
 emergency backstop if the Fault Dispute Game distributes bonds incorrectly.
 
 #### Impact
@@ -127,7 +128,7 @@ implementation contract.
 
 **Parameters:**
 
-- `_delay`: The withdrawal delay in seconds
+- `_delay`: The [Withdrawal Delay](#withdrawal-delay) in seconds
 
 **Behavior:**
 

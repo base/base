@@ -91,18 +91,21 @@ PermissionedDisputeGameV2, SuperPermissionedDisputeGame) that restrict participa
 ## Contract Variants
 
 The FaultDisputeGame specification covers six contract variants that share the core bisection-based dispute resolution
-mechanism but differ in access control, architectural implementation, and support for interop super roots.
+mechanism but differ in access control, architectural implementation, and support for interop [Super
+Root](#super-root)s.
 
 **FaultDisputeGame**: The base permissionless implementation where any address can participate in dispute games by
 making moves and executing steps. Uses constructor parameters for immutable configuration values.
 
 **PermissionedDisputeGame**: Extends FaultDisputeGame with access control restricting step and move functions to
-authorized proposer and challenger roles. Only the proposer can initialize games. Uses constructor parameters for
+authorized proposer and [Challenger Role](#challenger-role)s. Only the proposer can initialize games. Uses constructor
+parameters for
 immutable configuration values.
 
-**SuperFaultDisputeGame**: A permissionless variant designed for interop that validates super root claims using L2
+**SuperFaultDisputeGame**: A permissionless variant designed for interop that validates [Super Root](#super-root) claims
+using L2
 sequence numbers (timestamps) instead of L2 block numbers. Uses the [Immutable Args Pattern] and requires the L2 chain
-ID to be zero. Super roots represent cross-chain state commitments for interoperability.
+ID to be zero. [Super Root](#super-root)s represent cross-chain state commitments for interoperability.
 
 **SuperPermissionedDisputeGame**: Similar to PermissionedDisputeGame but extends SuperFaultDisputeGame to support super
 root claims with access control. Uses the [Immutable Args Pattern] to store proposer and challenger addresses.
@@ -112,7 +115,8 @@ Pattern] for storing VM, WETH, AnchorStateRegistry, and other configuration valu
 This reduces deployment costs and enables efficient cloning.
 
 **PermissionedDisputeGameV2**: Extends FaultDisputeGameV2 with access control restricting step and move functions to
-authorized proposer and challenger roles. Only the proposer can initialize games. Uses the [Immutable Args Pattern] for
+authorized proposer and [Challenger Role](#challenger-role)s. Only the proposer can initialize games. Uses the
+[Immutable Args Pattern] for
 all configuration values including proposer and challenger addresses.
 
 ## Definitions
@@ -212,7 +216,7 @@ operations as specified.
 ### i01-001: Game Resolution Reflects Actual Root Claim Validity
 
 After resolution, the game status accurately reflects whether the root claim was successfully defended (DEFENDER_WINS)
-or successfully challenged (CHALLENGER_WINS) based on the subgame resolution tree.
+or successfully challenged (CHALLENGER_WINS) based on the [Subgame](#subgame) resolution tree.
 
 #### Impact
 
@@ -261,7 +265,7 @@ challenge invalid claims, compromising the integrity of the L2 state validation 
 ### i01-005: Dispute Game Resolution Is Independent Of Other Games
 
 The resolution of any dispute game is independent of the result of any other game, ensuring that each game's outcome is
-determined solely by its own subgame tree and not influenced by external game states.
+determined solely by its own [Subgame](#subgame) tree and not influenced by external game states.
 
 #### Impact
 
@@ -296,7 +300,8 @@ Initializes the dispute game with the root claim and establishes the anchor stat
   args)
 - MUST revert if the root claim's L2 block number is less than or equal to the anchor state's block number (standard
   variants)
-- MUST revert if the root claim's L2 sequence number is less than or equal to the anchor state's sequence number
+- MUST revert if the root claim's [L2 Sequence Number](#l2-sequence-number) is less than or equal to the anchor state's
+  sequence number
   (SuperFaultDisputeGame variants)
 - MUST revert if the root claim equals the INVALID_ROOT_CLAIM constant (SuperFaultDisputeGame variants)
 - MUST revert if the L2 chain ID is not zero (SuperFaultDisputeGame variants)
@@ -384,7 +389,7 @@ Generic move function handling both attack and defend moves.
 - MUST revert if a claim with the same value and position already exists at the challenge index
 - MUST apply clock extension if the next duration would leave less than the extension time remaining
 - MUST create a new claim with the provided parameters and current timestamp
-- MUST add the new claim index to the parent's subgame array
+- MUST add the new claim index to the parent's [Subgame](#subgame) array
 - MUST deposit msg.value into DelayedWETH
 - MUST record msg.value in refundModeCredit for msg.sender
 - MUST emit a Move event
@@ -396,7 +401,7 @@ Posts local data to the VM's PreimageOracle for use during execution trace verif
 **Parameters:**
 
 - `_ident`: The local identifier of the data to post
-- `_execLeafIdx`: The index of the leaf claim in an execution subgame requiring the data
+- `_execLeafIdx`: The index of the leaf claim in an execution [Subgame](#subgame) requiring the data
 - `_partOffset`: The offset of the data to post
 
 **Behavior:**
@@ -435,7 +440,7 @@ Resolves the entire game and determines the final outcome.
 **Behavior:**
 
 - MUST revert if the game status is not IN_PROGRESS
-- MUST revert if the root subgame has not been resolved
+- MUST revert if the root [Subgame](#subgame) has not been resolved
 - MUST set status to DEFENDER_WINS if the root claim is uncountered
 - MUST set status to CHALLENGER_WINS if the root claim is countered or if the L2 block number challenge succeeded
 - MUST set resolvedAt to the current block timestamp
@@ -443,23 +448,23 @@ Resolves the entire game and determines the final outcome.
 
 ### resolveClaim
 
-Resolves a subgame rooted at a specific claim by checking its children.
+Resolves a [Subgame](#subgame) rooted at a specific claim by checking its children.
 
 **Parameters:**
 
-- `_claimIndex`: The index of the subgame root claim to resolve
+- `_claimIndex`: The index of the [Subgame](#subgame) root claim to resolve
 - `_numToResolve`: The number of children to check in this call
 
 **Behavior:**
 
 - MUST revert if the game status is not IN_PROGRESS
 - MUST revert if the challenger's clock duration is less than MAX_CLOCK_DURATION
-- MUST revert if the subgame has already been resolved
-- MUST revert if any child subgame is not yet resolved
+- MUST revert if the [Subgame](#subgame) has already been resolved
+- MUST revert if any child [Subgame](#subgame) is not yet resolved
 - MUST distribute bonds to the claimant for uncontested claims with no children
 - MUST distribute bonds to the counteredBy address for claims countered via step
 - MUST track the leftmost uncountered child position across resolution iterations
-- MUST mark the subgame as resolved when all children have been checked
+- MUST mark the [Subgame](#subgame) as resolved when all children have been checked
 - MUST treat the root claim as countered if the L2 block number challenge succeeded
 - MUST distribute bonds to the L2 block number challenger if the root claim was challenged that way
 - MUST set the claim's counteredBy field based on resolution outcome
@@ -474,7 +479,7 @@ Claims accumulated credit for a recipient after game finalization.
 
 **Behavior:**
 
-- MUST call closeGame to ensure bond distribution mode is determined
+- MUST call closeGame to ensure [Bond Distribution Mode](#bond-distribution-mode) is determined
 - MUST revert if the recipient has no credit to claim after unlocking
 - MUST unlock credit in DelayedWETH if the recipient has not yet unlocked
 - MUST withdraw the credit amount from DelayedWETH
@@ -484,19 +489,19 @@ Claims accumulated credit for a recipient after game finalization.
 
 ### closeGame
 
-Determines the bond distribution mode and attempts to register the game as the anchor game.
+Determines the [Bond Distribution Mode](#bond-distribution-mode) and attempts to register the game as the anchor game.
 
 **Behavior:**
 
-- MUST return early if bond distribution mode is already REFUND or NORMAL
-- MUST revert if bond distribution mode is not UNDECIDED
+- MUST return early if [Bond Distribution Mode](#bond-distribution-mode) is already REFUND or NORMAL
+- MUST revert if [Bond Distribution Mode](#bond-distribution-mode) is not UNDECIDED
 - MUST revert if the Anchor State Registry is paused
 - MUST revert if the game has not been resolved
 - MUST revert if the game is not finalized according to the Anchor State Registry
 - MUST attempt to set the game as the anchor state in the registry
-- MUST set bond distribution mode to NORMAL if the game is proper
-- MUST set bond distribution mode to REFUND if the game is not proper
-- MUST emit a GameClosed event with the bond distribution mode
+- MUST set [Bond Distribution Mode](#bond-distribution-mode) to NORMAL if the game is proper
+- MUST set [Bond Distribution Mode](#bond-distribution-mode) to REFUND if the game is not proper
+- MUST emit a GameClosed event with the [Bond Distribution Mode](#bond-distribution-mode)
 
 ### getRequiredBond
 
@@ -514,11 +519,11 @@ Calculates the required bond amount for a move at a given position.
 
 ### getChallengerDuration
 
-Returns the time elapsed on the potential challenger's chess clock for a claim.
+Returns the time elapsed on the potential challenger's [Chess Clock](#chess-clock) for a claim.
 
 **Parameters:**
 
-- `_claimIndex`: The index of the subgame root claim
+- `_claimIndex`: The index of the [Subgame](#subgame) root claim
 
 **Behavior:**
 
@@ -528,15 +533,15 @@ Returns the time elapsed on the potential challenger's chess clock for a claim.
 
 ### getNumToResolve
 
-Returns the number of children remaining to be checked for resolving a subgame.
+Returns the number of children remaining to be checked for resolving a [Subgame](#subgame).
 
 **Parameters:**
 
-- `_claimIndex`: The subgame root claim's index
+- `_claimIndex`: The [Subgame](#subgame) root claim's index
 
 **Behavior:**
 
-- MUST return the difference between total children and the resolution checkpoint's subgame index
+- MUST return the difference between total children and the resolution checkpoint's [Subgame](#subgame) index
 
 ### l2BlockNumber
 
@@ -548,13 +553,15 @@ Returns the L2 block number from the extraData.
 
 ### l2SequenceNumber
 
-Returns the L2 sequence number which equals the L2 block number in standard variants, or represents a timestamp in
+Returns the [L2 Sequence Number](#l2-sequence-number) which equals the L2 block number in standard variants, or
+represents a timestamp in
 SuperFaultDisputeGame variants.
 
 **Behavior:**
 
 - MUST return the same value as l2BlockNumber in standard variants
-- MUST extract and return the L2 sequence number (timestamp) from clone-with-immutable-args data at offset 88 in
+- MUST extract and return the [L2 Sequence Number](#l2-sequence-number) (timestamp) from clone-with-immutable-args data
+  at offset 88 in
   SuperFaultDisputeGame variants
 
 ### startingBlockNumber
@@ -642,7 +649,7 @@ Returns the length of the claimData array.
 
 ### credit
 
-Returns the credit balance for a recipient based on current bond distribution mode.
+Returns the credit balance for a recipient based on current [Bond Distribution Mode](#bond-distribution-mode).
 
 **Parameters:**
 
@@ -650,12 +657,12 @@ Returns the credit balance for a recipient based on current bond distribution mo
 
 **Behavior:**
 
-- MUST return refundModeCredit if bond distribution mode is REFUND
+- MUST return refundModeCredit if [Bond Distribution Mode](#bond-distribution-mode) is REFUND
 - MUST return normalModeCredit otherwise
 
 ### absolutePrestate
 
-Returns the absolute prestate of the instruction trace.
+Returns the [Absolute Prestate](#absolute-prestate) of the instruction trace.
 
 **Behavior:**
 
@@ -671,7 +678,7 @@ Returns the maximum game depth.
 
 ### splitDepth
 
-Returns the split depth.
+Returns the [Split Depth](#split-depth).
 
 **Behavior:**
 

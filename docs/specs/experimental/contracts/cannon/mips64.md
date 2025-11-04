@@ -132,11 +132,11 @@ Executes a single MIPS64 instruction step and returns the resulting state hash.
 
 **Behavior:**
 
-- MUST revert if the state version is unsupported
-- MUST revert if the active thread stack is empty when the VM has not exited
+- MUST revert if the [State Version](#state-version) is unsupported
+- MUST revert if the active [Thread Stack](#thread-stack) is empty when the VM has not exited
 - MUST revert if proof data is insufficient or incorrectly formatted
 - MUST revert if memory proofs are invalid for the provided state root
-- MUST revert if thread witness does not match the current thread stack root
+- MUST revert if thread witness does not match the current [Thread Stack](#thread-stack) root
 - MUST return the post-state without modification if the VM has already exited
 - MUST increment the step counter by 1
 - MUST pop and remove exited threads from the active stack
@@ -146,8 +146,8 @@ Executes a single MIPS64 instruction step and returns the resulting state hash.
 - MUST handle syscalls by calling handleSyscall when opcode is 0 and function is 0xC
 - MUST handle Load Linked and Store Conditional instructions through handleRMWOps
 - MUST execute the instruction and update memory root, registers, and CPU scalars accordingly
-- MUST update the current thread stack root after modifying thread state
-- MUST clear memory reservations when writing to reserved addresses
+- MUST update the current [Thread Stack](#thread-stack) root after modifying thread state
+- MUST clear [Memory Reservation](#memory-reservation)s when writing to reserved addresses
 - MUST compute and return the Keccak256 hash of the post-state with VM status in the high-order byte
 
 ### oracle
@@ -160,7 +160,7 @@ Returns the PreimageOracle contract address.
 
 ### stateVersion
 
-Returns the state version identifier.
+Returns the [State Version](#state-version) identifier.
 
 **Behavior:**
 

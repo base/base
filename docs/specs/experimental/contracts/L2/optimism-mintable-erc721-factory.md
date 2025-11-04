@@ -125,6 +125,6 @@ Creates a new [OptimismMintableERC721](optimism-mintable-erc721.md) token contra
 - MUST deploy a new OptimismMintableERC721 contract using CREATE2 with the computed salt
 - MUST pass `BRIDGE`, `REMOTE_CHAIN_ID`, `_remoteToken`, `_name`, and `_symbol` to the token constructor
 - MUST set `isOptimismMintableERC721[localToken]` to `true` for the deployed token address
-- MUST emit `OptimismMintableERC721Created` event with the local token address, remote token address, and
+- MUST emit `OptimismMintableERC721Created` event with the [Local Token](#local-token) address, remote token address, and
   `msg.sender` as the deployer
 - MUST return the address of the deployed token

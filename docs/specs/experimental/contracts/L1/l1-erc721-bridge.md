@@ -53,7 +53,7 @@ across both chains.
 ### Correct Deposit
 
 A successful deposit initiation on L1 via bridgeERC721 or bridgeERC721To that meets all function preconditions and
-completes, resulting in a message to L2 for the specified Bridge Pair and token ID.
+completes, resulting in a message to L2 for the specified [Bridge Pair](#bridge-pair) and token ID.
 
 ### Eligible Withdrawal
 
@@ -99,8 +99,10 @@ The ProxyAdmin owner (governance) acts honestly when initializing or upgrading t
 
 ### i01-001: L2 delivery for Correct Deposits
 
-Any [Correct Deposit] MUST eventually result, after the corresponding message is delivered and processed on L2, in
-the designated recipient owning the same token ID of the corresponding remote token for the same [Bridge Pair].
+Any [Correct Deposit](#correct-deposit) MUST eventually result, after the corresponding message is delivered and
+processed on L2, in
+the designated recipient owning the same token ID of the corresponding remote token for the same [Bridge
+Pair](#bridge-pair).
 
 #### Impact
 
@@ -111,8 +113,9 @@ of availability. This liveness property depends on correct message delivery and 
 
 ### i01-002: L1 delivery for Eligible Withdrawals
 
-Any [Eligible Withdrawal] MUST be able to be finalized on L1 when the bridge is not paused, resulting in the
-designated recipient receiving the exact token ID of the local token for the same [Bridge Pair].
+Any [Eligible Withdrawal](#eligible-withdrawal) MUST be able to be finalized on L1 when the bridge is not paused,
+resulting in the
+designated recipient receiving the exact token ID of the local token for the same [Bridge Pair](#bridge-pair).
 
 #### Impact
 
@@ -124,7 +127,8 @@ property depends on correct message delivery and protocol withdrawal eligibility
 ### i01-003: No bypass of the Bridge Flow
 
 It MUST be impossible for any address to receive an ERC721 token via the bridge on either chain except through the
-[Bridge Flow]. Ownership changes across chains MUST only occur via deposits (L1→L2) and withdrawals (L2→L1)
+[Bridge Flow](#bridge-flow). Ownership changes across chains MUST only occur via deposits (L1→L2) and withdrawals
+(L2→L1)
 processed through the respective bridges and the CrossDomainMessenger.
 
 #### Impact
@@ -151,7 +155,8 @@ Initializes the L1ERC721Bridge contract with the CrossDomainMessenger and System
 - MUST revert if already initialized at the current initialization version
 - MUST set the systemConfig state variable to `_systemConfig`
 - MUST set the messenger state variable to `_messenger`
-- MUST set the otherBridge state variable to the L2ERC721Bridge predeploy address (0x4200000000000000000000000000000000000014)
+- MUST set the otherBridge state variable to the L2ERC721Bridge predeploy address
+  (0x4200000000000000000000000000000000000014)
 - MUST emit an Initialized event
 
 ### bridgeERC721

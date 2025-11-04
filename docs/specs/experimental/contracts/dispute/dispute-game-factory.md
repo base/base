@@ -13,7 +13,7 @@
 - [Assumptions](#assumptions)
   - [aDGF-001: Owner operates within governance constraints](#adgf-001-owner-operates-within-governance-constraints)
     - [Mitigations](#mitigations)
-  - [aDGF-002: Implementation contracts are valid IDisputeGame implementations](#adgf-002-implementation-contracts-are-valid-idisputegame-implementations)
+  - [aDGF-002: Implementation contracts are valid IDisputeGame Implementations](#adgf-002-implementation-contracts-are-valid-idisputegame-implementations)
     - [Mitigations](#mitigations-1)
 - [Invariants](#invariants)
   - [iDGF-001: Dispute game factory properly creates dispute games](#idgf-001-dispute-game-factory-properly-creates-dispute-games)
@@ -64,14 +64,16 @@ created game's initialize function and serves as the initial stake in the disput
 
 ### Game Clone
 
-A minimal proxy contract created using the CWIA pattern that delegates all calls to a [Game Implementation](#game-implementation)
+A minimal proxy contract created using the CWIA pattern that delegates all calls to a [Game
+Implementation](#game-implementation)
 while storing immutable game-specific parameters (creator address, root claim, parent hash, extra data) in its bytecode.
 
 ## Assumptions
 
 ### aDGF-001: Owner operates within governance constraints
 
-The owner of the DisputeGameFactory is trusted to set game implementations and initialization bonds according to
+The owner of the DisputeGameFactory is trusted to set [Game Implementation](#game-implementation)s and [Initialization
+Bond](#initialization-bond)s according to
 governance processes. Malicious or incorrect configuration by the owner could compromise the security of the dispute
 system.
 
@@ -81,7 +83,7 @@ system.
 - Configuration changes are subject to governance review
 - Monitoring of owner actions
 
-### aDGF-002: Implementation contracts are valid IDisputeGame implementations
+### aDGF-002: Implementation contracts are valid IDispute[Game Implementation](#game-implementation)s
 
 Implementation contracts registered via setImplementation are assumed to correctly implement the IDisputeGame interface
 and initialize properly when cloned. Invalid implementations could cause game creation to fail or games to behave
@@ -97,7 +99,8 @@ incorrectly.
 
 ### iDGF-001: Dispute game factory properly creates dispute games
 
-The factory successfully creates functional dispute game clones when provided with valid parameters. Created games are
+The factory successfully creates functional dispute [Game Clone](#game-clone)s when provided with valid parameters.
+Created games are
 properly initialized with the correct immutable arguments (creator, root claim, parent hash, extra data) and can be
 queried through the factory's lookup functions.
 
@@ -111,7 +114,8 @@ entire dispute resolution system and potentially allowing invalid withdrawals.
 ### iDGF-002: Dispute game factory allows anyone to create dispute games
 
 Any address can create a dispute game by calling the create function with valid parameters and the required
-initialization bond. There are no access restrictions on game creation beyond the bond requirement.
+[Initialization Bond](#initialization-bond). There are no access restrictions on game creation beyond the bond
+requirement.
 
 #### Impact
 
@@ -144,7 +148,7 @@ type value. The factory does not restrict which game types can be used, only req
 **Severity: Medium**
 
 If this invariant is violated, the factory could arbitrarily restrict certain game types, limiting the flexibility of
-the dispute system and potentially preventing the deployment of new game implementations.
+the dispute system and potentially preventing the deployment of new [Game Implementation](#game-implementation)s.
 
 ## Function Specification
 
@@ -225,7 +229,7 @@ Creates a new dispute game proxy contract.
 **Behavior:**
 
 - MUST revert if no implementation is registered for `_gameType`
-- MUST revert if `msg.value` does not exactly equal the initialization bond for `_gameType`
+- MUST revert if `msg.value` does not exactly equal the [Initialization Bond](#initialization-bond) for `_gameType`
 - MUST revert if a game with the same [Game UUID](#game-uuid) already exists
 - MUST clone the implementation contract using CWIA with immutable arguments: creator address, root claim, parent
   block hash, and extra data
@@ -308,7 +312,7 @@ Sets the implementation contract and configuration args for a specific game type
 
 ### setInitBond
 
-Sets the initialization bond for a specific game type.
+Sets the [Initialization Bond](#initialization-bond) for a specific game type.
 
 **Parameters:**
 
@@ -318,5 +322,5 @@ Sets the initialization bond for a specific game type.
 **Behavior:**
 
 - MUST revert if not called by the owner
-- MUST store `_initBond` as the initialization bond for `_gameType`
+- MUST store `_initBond` as the [Initialization Bond](#initialization-bond) for `_gameType`
 - MUST emit InitBondUpdated event with the game type and new bond amount
