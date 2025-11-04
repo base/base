@@ -64,7 +64,6 @@ impl Registry {
         loop {
             tokio::select! {
                 broadcast_result = receiver.recv() => {
-                    // Update gauge with current broadcast queue size
                     metrics.broadcast_queue_size.set(self.sender.len() as f64);
                     
                     match broadcast_result {
@@ -86,10 +85,9 @@ impl Registry {
                                     metrics.failed_messages.increment(1);
                                     break;
                                 }
-                                let send_duration = send_start.elapsed();
-                                metrics.message_send_duration.record(send_duration.as_secs_f64());
+                                metrics.message_send_duration.record(send_start.elapsed());
                                 
-                                trace!(message = "message sent to client", client = client_id, duration_ms = send_duration.as_millis());
+                                trace!(message = "message sent to client", client = client_id);
                                 metrics.sent_messages.increment(1);
                                 metrics.bytes_broadcasted.increment(get_message_size(&msg));
                             } else {
