@@ -2,16 +2,19 @@
 
 use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
-use crate::node::LocalNode;
-use crate::Flashblock;
+use crate::node::{LocalNode, OpAddOns, OpBuilder};
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::{Bytes, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use eyre::{eyre, Result};
+use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
+use reth::builder::NodeHandle;
+use reth_e2e_test_utils::Adapter;
+use reth_optimism_node::OpNode;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -27,8 +30,12 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    pub async fn new() -> Result<Self> {
-        let node = LocalNode::new().await?;
+    pub async fn new<L, LRet>(launcher: L) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        let node = LocalNode::new(launcher).await?;
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
 
@@ -124,22 +131,12 @@ impl TestHarness {
         }
         Ok(())
     }
-
-    pub async fn build_block_from_flashblocks(&self, flashblocks: &[Flashblock]) -> Result<()> {
-        let transactions: Vec<Bytes> = flashblocks
-            .iter()
-            .flat_map(|fb| fb.diff.transactions.iter().cloned())
-            .collect();
-        self.build_block_from_transactions(transactions).await
-    }
-
-    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.node.send_flashblock(flashblock).await
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::node::default_launcher;
+
     use super::*;
     use alloy_primitives::U256;
     use alloy_provider::Provider;
@@ -147,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
         reth_tracing::init_test_tracing();
-        let harness = TestHarness::new().await?;
+        let harness = TestHarness::new(default_launcher).await?;
 
         assert_eq!(harness.accounts().alice.name, "Alice");
         assert_eq!(harness.accounts().bob.name, "Bob");
