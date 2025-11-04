@@ -72,7 +72,12 @@ impl Registry {
                             };
                             if filter.matches(msg_bytes, compressed) {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
-                                if let Err(e) = ws_sender.send(msg.clone()).await {
+
+                                let send_start = Instant::now();
+                                let send_result = ws_sender.send(msg.clone()).await;
+                                metrics.message_send_duration.record(send_start.elapsed());
+
+                                if let Err(e) = send_result {
                                     warn!(
                                         message = "failed to send data to client",
                                         client = client_id,
@@ -81,6 +86,7 @@ impl Registry {
                                     metrics.failed_messages.increment(1);
                                     break;
                                 }
+
                                 trace!(message = "message sent to client", client = client_id);
                                 metrics.sent_messages.increment(1);
                                 metrics.bytes_broadcasted.increment(get_message_size(&msg));

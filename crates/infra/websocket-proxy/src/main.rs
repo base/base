@@ -271,7 +271,9 @@ async fn main() {
         };
 
         match send.send(message_data.into()) {
-            Ok(_) => (),
+            Ok(_) => {
+                metrics_clone.broadcast_queue_size.set(send.len() as f64);
+            }
             Err(e) => error!(message = "failed to send data", error = e.to_string()),
         }
     };
@@ -312,6 +314,7 @@ async fn main() {
         let ping_sender = sender.clone();
         let ping_token = token.clone();
         let ping_interval = args.client_ping_interval_ms;
+        let ping_metrics = metrics.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(ping_interval));
@@ -324,7 +327,10 @@ async fn main() {
                 tokio::select! {
                     _ = interval.tick() => {
                         match ping_sender.send(Message::Ping(vec![].into())) {
-                            Ok(_) => trace!(message = "sent ping to all clients"),
+                            Ok(_) => {
+                                trace!(message = "sent ping to all clients");
+                                ping_metrics.broadcast_queue_size.set(ping_sender.len() as f64);
+                            }
                             Err(e) => error!(message = "failed to send ping", error = e.to_string()),
                         }
                     }
