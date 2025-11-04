@@ -56,10 +56,6 @@ impl OpPayloadSyncerCtx {
         self.max_gas_per_txn
     }
 
-    pub(super) fn metrics(&self) -> &Arc<OpRBuilderMetrics> {
-        &self.metrics
-    }
-
     pub(super) fn into_op_payload_builder_ctx(
         self,
         payload_config: PayloadConfig<OpPayloadBuilderAttributes<OpTransactionSigned>>,

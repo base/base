@@ -1,7 +1,6 @@
 use crate::{
     builders::flashblocks::{
         ctx::OpPayloadSyncerCtx, p2p::Message, payload::FlashblocksExecutionInfo,
-        wspub::WebSocketPublisher,
     },
     primitives::reth::ExecutionInfo,
     traits::ClientBounds,
@@ -38,9 +37,6 @@ pub(crate) struct PayloadHandler<Client> {
     p2p_tx: mpsc::Sender<Message>,
     // sends a `Events::BuiltPayload` to the reth payload builder when a new payload is received.
     payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
-    /// WebSocket publisher for broadcasting flashblocks
-    /// to all connected subscribers.
-    ws_pub: Arc<WebSocketPublisher>,
     // context required for execution of blocks during syncing
     ctx: OpPayloadSyncerCtx,
     // chain client
@@ -59,7 +55,6 @@ where
         p2p_tx: mpsc::Sender<Message>,
         payload_events_handle: tokio::sync::broadcast::Sender<Events<OpEngineTypes>>,
         ctx: OpPayloadSyncerCtx,
-        ws_pub: Arc<WebSocketPublisher>,
         client: Client,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Self {
@@ -68,7 +63,6 @@ where
             p2p_rx,
             p2p_tx,
             payload_events_handle,
-            ws_pub,
             ctx,
             client,
             cancel,
@@ -82,7 +76,6 @@ where
             p2p_tx,
             payload_events_handle,
             ctx,
-            ws_pub,
             client,
             cancel,
         } = self;
@@ -105,13 +98,11 @@ where
                             let ctx = ctx.clone();
                             let client = client.clone();
                             let payload_events_handle = payload_events_handle.clone();
-                            let ws_pub = ws_pub.clone();
                             let cancel = cancel.clone();
 
                             // execute the flashblock on a thread where blocking is acceptable,
                             // as it's potentially a heavy operation
                             tokio::task::spawn_blocking(move || {
-                                let metrics = ctx.metrics().clone();
                                 let res = execute_flashblock(
                                     payload,
                                     ctx,
@@ -119,24 +110,11 @@ where
                                     cancel,
                                 );
                                 match res {
-                                    Ok((payload, fb_payload)) => {
+                                    Ok((payload, _)) => {
                                         tracing::info!(hash = payload.block().hash().to_string(), block_number = payload.block().header().number, "successfully executed received flashblock");
                                         if let Err(e) = payload_events_handle.send(Events::BuiltPayload(payload)) {
                                             warn!(e = ?e, "failed to send BuiltPayload event on synced block");
                                         }
-
-                                       match ws_pub
-                                        .publish(&fb_payload) {
-                                            Ok(flashblock_byte_size) => {
-                                                metrics
-                                                .flashblock_byte_size_histogram
-                                                .record(flashblock_byte_size as f64);
-                                            }
-                                            Err(e) => {
-                                                tracing::warn!(error = ?e, "failed to publish flashblock to websocket subscribers");
-                                            }
-                                        }
-
                                     }
                                     Err(e) => {
                                         tracing::error!(error = ?e, "failed to execute received flashblock");
