@@ -55,6 +55,5 @@ pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
         state_flashblock_index: None,
         total_gas_used: 0,
         total_execution_time_us: 0,
-        state_root_time_us: 0,
     }
 }

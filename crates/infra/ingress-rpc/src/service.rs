@@ -36,6 +36,7 @@ pub trait IngressApi {
 
 pub struct IngressService<Queue, Audit> {
     provider: RootProvider<Optimism>,
+    simulation_provider: RootProvider<Optimism>,
     dual_write_mempool: bool,
     bundle_queue: Queue,
     audit_publisher: Audit,
@@ -45,6 +46,7 @@ pub struct IngressService<Queue, Audit> {
 impl<Queue, Audit> IngressService<Queue, Audit> {
     pub fn new(
         provider: RootProvider<Optimism>,
+        simulation_provider: RootProvider<Optimism>,
         dual_write_mempool: bool,
         queue: Queue,
         audit_publisher: Audit,
@@ -52,6 +54,7 @@ impl<Queue, Audit> IngressService<Queue, Audit> {
     ) -> Self {
         Self {
             provider,
+            simulation_provider,
             dual_write_mempool,
             bundle_queue: queue,
             audit_publisher,
@@ -222,7 +225,7 @@ where
     /// to the builder.
     async fn meter_bundle(&self, bundle: &Bundle) -> RpcResult<MeterBundleResponse> {
         let res: MeterBundleResponse = self
-            .provider
+            .simulation_provider
             .client()
             .request("base_meterBundle", (bundle,))
             .await

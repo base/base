@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::error;
 
-pub use pool::{BundleStore, InMemoryBundlePool};
+pub use pool::{Action, BundleStore, InMemoryBundlePool, ProcessedBundle};
 pub use source::KafkaBundleSource;
 pub use tips_core::{Bundle, BundleHash, BundleWithMetadata, CancelBundle};
 

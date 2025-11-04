@@ -66,6 +66,10 @@ struct Config {
         default_value = "10800"
     )]
     send_transaction_default_lifetime_seconds: u64,
+
+    /// URL of the simulation RPC service for bundle metering
+    #[arg(long, env = "TIPS_INGRESS_RPC_SIMULATION")]
+    simulation_rpc: Url,
 }
 
 #[tokio::main]
@@ -80,13 +84,19 @@ async fn main() -> anyhow::Result<()> {
         message = "Starting ingress service",
         address = %config.address,
         port = config.port,
-        mempool_url = %config.mempool_url
+        mempool_url = %config.mempool_url,
+        simulation_rpc = %config.simulation_rpc
     );
 
     let provider: RootProvider<Optimism> = ProviderBuilder::new()
         .disable_recommended_fillers()
         .network::<Optimism>()
         .connect_http(config.mempool_url);
+
+    let simulation_provider: RootProvider<Optimism> = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Optimism>()
+        .connect_http(config.simulation_rpc);
 
     let ingress_client_config = ClientConfig::from_iter(load_kafka_config_from_file(
         &config.ingress_kafka_properties,
@@ -105,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
 
     let service = IngressService::new(
         provider,
+        simulation_provider,
         config.dual_write_mempool,
         queue,
         audit_publisher,

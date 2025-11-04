@@ -183,7 +183,6 @@ pub struct MeterBundleResponse {
     pub state_flashblock_index: Option<u64>,
     pub total_gas_used: u64,
     pub total_execution_time_us: u128,
-    pub state_root_time_us: u128,
 }
 
 #[cfg(test)]
@@ -279,7 +278,6 @@ mod tests {
             state_flashblock_index: Some(42),
             total_gas_used: 21000,
             total_execution_time_us: 1000,
-            state_root_time_us: 500,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -304,7 +302,6 @@ mod tests {
             state_flashblock_index: None,
             total_gas_used: 21000,
             total_execution_time_us: 1000,
-            state_root_time_us: 500,
         };
 
         let json = serde_json::to_string(&response).unwrap();

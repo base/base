@@ -1,4 +1,7 @@
+use alloy_primitives::TxHash;
 use alloy_primitives::map::HashMap;
+use std::fmt::Debug;
+use std::sync::{Arc, Mutex};
 use tips_audit::{BundleEvent, DropReason};
 use tips_core::BundleWithMetadata;
 use tokio::sync::mpsc;
@@ -8,6 +11,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub enum Action {
     Included,
+    Skipped,
     Dropped,
 }
 
@@ -15,6 +19,15 @@ pub enum Action {
 pub struct ProcessedBundle {
     pub bundle_uuid: Uuid,
     pub action: Action,
+}
+
+impl ProcessedBundle {
+    pub fn new(bundle_uuid: Uuid, action: Action) -> Self {
+        Self {
+            bundle_uuid,
+            action,
+        }
+    }
 }
 
 pub trait BundleStore {
@@ -26,19 +39,37 @@ pub trait BundleStore {
         flashblock_index: u64,
         processed: Vec<ProcessedBundle>,
     );
+    fn on_new_block(&mut self, number: u64, hash: TxHash);
 }
 
-#[derive(Debug)]
-pub struct InMemoryBundlePool {
+struct BundleData {
+    flashblocks_in_block: HashMap<u64, Vec<ProcessedBundle>>,
     bundles: HashMap<Uuid, BundleWithMetadata>,
+}
+
+#[derive(Clone)]
+pub struct InMemoryBundlePool {
+    inner: Arc<Mutex<BundleData>>,
     audit_log: mpsc::UnboundedSender<BundleEvent>,
     builder_id: String,
+}
+
+impl Debug for InMemoryBundlePool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InMemoryBundlePool")
+            .field("builder_id", &self.builder_id)
+            .field("bundle_count", &self.inner.lock().unwrap().bundles.len())
+            .finish()
+    }
 }
 
 impl InMemoryBundlePool {
     pub fn new(audit_log: mpsc::UnboundedSender<BundleEvent>, builder_id: String) -> Self {
         InMemoryBundlePool {
-            bundles: Default::default(),
+            inner: Arc::new(Mutex::new(BundleData {
+                flashblocks_in_block: Default::default(),
+                bundles: Default::default(),
+            })),
             audit_log,
             builder_id,
         }
@@ -47,11 +78,13 @@ impl InMemoryBundlePool {
 
 impl BundleStore for InMemoryBundlePool {
     fn add_bundle(&mut self, bundle: BundleWithMetadata) {
-        self.bundles.insert(*bundle.uuid(), bundle);
+        let mut inner = self.inner.lock().unwrap();
+        inner.bundles.insert(*bundle.uuid(), bundle);
     }
 
     fn get_bundles(&self) -> Vec<BundleWithMetadata> {
-        self.bundles.values().cloned().collect()
+        let inner = self.inner.lock().unwrap();
+        inner.bundles.values().cloned().collect()
     }
 
     fn built_flashblock(
@@ -60,28 +93,59 @@ impl BundleStore for InMemoryBundlePool {
         flashblock_index: u64,
         processed: Vec<ProcessedBundle>,
     ) {
+        let mut inner = self.inner.lock().unwrap();
+
         for p in &processed {
             let event = match p.action {
-                Action::Included => BundleEvent::BuilderIncluded {
+                Action::Included => Some(BundleEvent::BuilderIncluded {
                     bundle_id: p.bundle_uuid,
                     builder: self.builder_id.clone(),
                     block_number,
                     flashblock_index,
-                },
-                Action::Dropped => BundleEvent::Dropped {
+                }),
+                Action::Dropped => Some(BundleEvent::Dropped {
                     bundle_id: p.bundle_uuid,
                     reason: DropReason::Reverted,
-                },
+                }),
+                _ => None,
             };
 
-            if let Err(e) = self.audit_log.send(event) {
+            if let Some(event) = event
+                && let Err(e) = self.audit_log.send(event)
+            {
                 warn!(error = %e, "Failed to send event to audit log");
             }
         }
 
-        for p in processed {
-            self.bundles.remove(&p.bundle_uuid);
+        for p in processed.iter() {
+            inner.bundles.remove(&p.bundle_uuid);
         }
+
+        let flashblocks_for_block = inner.flashblocks_in_block.entry(block_number).or_default();
+        flashblocks_for_block.extend(processed);
+    }
+
+    fn on_new_block(&mut self, number: u64, hash: TxHash) {
+        let mut inner = self.inner.lock().unwrap();
+
+        let flashblocks_for_block = inner.flashblocks_in_block.entry(number).or_default();
+        for p in flashblocks_for_block.iter() {
+            let event = match p.action {
+                Action::Included => Some(BundleEvent::BlockIncluded {
+                    bundle_id: p.bundle_uuid,
+                    block_number: number,
+                    block_hash: hash,
+                }),
+                _ => None,
+            };
+
+            if let Some(event) = event
+                && let Err(e) = self.audit_log.send(event)
+            {
+                warn!(error = %e, "Failed to send event to audit log");
+            }
+        }
+        inner.flashblocks_in_block.remove(&number);
     }
 }
 
