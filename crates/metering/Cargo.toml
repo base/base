@@ -56,3 +56,5 @@ serde_json.workspace = true
 tokio.workspace = true
 base-reth-test-utils.workspace = true
 
+[package.metadata.cargo-machete]
+ignored = ["reth-optimism-cli"]
