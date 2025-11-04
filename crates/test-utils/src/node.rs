@@ -34,17 +34,10 @@ pub struct LocalNode {
     _task_manager: TaskManager,
 }
 
-// Full node types for OpNode over the TmpDB used in tests
 pub type OpTypes =
     FullNodeTypesAdapter<OpNode, TmpDB, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>>;
-
-// Components builder for OpNode
 pub type OpComponentsBuilder = <OpNode as Node<OpTypes>>::ComponentsBuilder;
-
-// AddOns (this includes the EthApi type etc.)
 pub type OpAddOns = <OpNode as Node<OpTypes>>::AddOns;
-
-// The builder type we’re going to pass into launch_with_fn
 pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpTypes, OpComponentsBuilder, OpAddOns>>;
 
