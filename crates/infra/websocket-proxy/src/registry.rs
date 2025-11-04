@@ -64,8 +64,6 @@ impl Registry {
         loop {
             tokio::select! {
                 broadcast_result = receiver.recv() => {
-                    metrics.broadcast_queue_size.set(self.sender.len() as f64);
-                    
                     match broadcast_result {
                         Ok(msg) => {
                             let msg_bytes = match &msg {
@@ -74,9 +72,12 @@ impl Registry {
                             };
                             if filter.matches(msg_bytes, compressed) {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
-                                
+
                                 let send_start = Instant::now();
-                                if let Err(e) = ws_sender.send(msg.clone()).await {
+                                let send_result = ws_sender.send(msg.clone()).await;
+                                metrics.message_send_duration.record(send_start.elapsed());
+
+                                if let Err(e) = send_result {
                                     warn!(
                                         message = "failed to send data to client",
                                         client = client_id,
@@ -85,8 +86,7 @@ impl Registry {
                                     metrics.failed_messages.increment(1);
                                     break;
                                 }
-                                metrics.message_send_duration.record(send_start.elapsed());
-                                
+
                                 trace!(message = "message sent to client", client = client_id);
                                 metrics.sent_messages.increment(1);
                                 metrics.bytes_broadcasted.increment(get_message_size(&msg));
