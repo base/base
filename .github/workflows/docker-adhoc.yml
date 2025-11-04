@@ -5,15 +5,7 @@ on:
 
 jobs:
   build-and-push:
-    strategy:
-      matrix:
-        settings:
-          - arch: linux/amd64
-            runs-on: ubuntu-24.04
-          - arch: linux/arm64
-            runs-on: ubuntu-24.04-arm
-
-    runs-on: ${{ matrix.settings.runs-on }}
+    runs-on: ubuntu-latest
 
     permissions:
       contents: read
@@ -24,6 +16,11 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           ref: ${{ inputs.GITHUB_REF }}
+
+      - name: Set up QEMU (amd64/arm64)
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+        with:
+          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
@@ -46,7 +43,7 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
-          platforms: ${{ matrix.settings.arch }}
           cache-to: type=gha,mode=max
