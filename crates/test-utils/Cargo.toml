@@ -12,9 +12,6 @@ description = "Common integration test utilities for node-reth crates"
 workspace = true
 
 [dependencies]
-# internal
-base-reth-flashblocks-rpc.workspace = true
-
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
