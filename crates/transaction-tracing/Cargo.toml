@@ -14,22 +14,17 @@ workspace = true
 # reth
 reth.workspace = true
 reth-exex.workspace = true
-reth-optimism-node.workspace = true
-reth-optimism-cli.workspace = true
 reth-tracing.workspace = true
-reth-primitives.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
 
 # async
 futures.workspace = true
-tokio-stream.workspace = true
 tokio.workspace = true
 
 # misc
 eyre.workspace = true
 lru = "0.16.1"
 metrics.workspace = true
-metrics-derive.workspace = true
 chrono.workspace = true
