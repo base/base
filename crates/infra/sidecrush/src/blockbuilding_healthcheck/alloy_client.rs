@@ -31,10 +31,12 @@ impl EthClient for AlloyEthClient {
 
         let number: u64 = block.header.number;
         let timestamp_unix_seconds: u64 = block.header.timestamp;
+        let transaction_count: usize = block.transactions.len();
 
         Ok(HeaderSummary {
             number,
             timestamp_unix_seconds,
+            transaction_count,
         })
     }
 }
