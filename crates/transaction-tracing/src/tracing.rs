@@ -181,7 +181,7 @@ pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
                         track.transaction_inserted(tx_hash, TxEvent::Pending);
                         track.transaction_moved(tx_hash, Pool::Pending);
                     }
-                    FullTransactionEvent::Queued(tx_hash) => {
+                    FullTransactionEvent::Queued(tx_hash, _) => {
                         track.transaction_inserted(tx_hash, TxEvent::Queued);
                         track.transaction_moved(tx_hash, Pool::Queued);
                     }
