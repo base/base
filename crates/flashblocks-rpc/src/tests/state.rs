@@ -11,7 +11,7 @@ mod tests {
     use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
     use alloy_genesis::GenesisAccount;
     use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
+    use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256};
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
@@ -20,10 +20,10 @@ mod tests {
     use reth::providers::{AccountReader, BlockNumReader, BlockReader};
     use reth::revm::database::StateProviderDatabase;
     use reth::transaction_pool::test_utils::TransactionBuilder;
-    use reth_db::{test_utils::TempDatabase, DatabaseEnv};
-    use reth_evm::execute::Executor;
+    use reth_db::{DatabaseEnv, test_utils::TempDatabase};
     use reth_evm::ConfigureEvm;
-    use reth_optimism_chainspec::{OpChainSpecBuilder, BASE_MAINNET};
+    use reth_evm::execute::Executor;
+    use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
     use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_node::OpNode;
     use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
@@ -442,17 +442,20 @@ mod tests {
             1
         );
 
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .is_some()
+        );
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -524,17 +527,20 @@ mod tests {
             1
         );
 
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .is_some()
+        );
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -594,17 +600,19 @@ mod tests {
             initial_block_number + 1
         );
 
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .is_some());
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .is_some()
+        );
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -651,17 +659,20 @@ mod tests {
                 .len(),
             1
         );
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .is_some()
+        );
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -799,7 +810,7 @@ mod tests {
         assert_eq!(pending_nonce, 1);
 
         test.new_canonical_block_without_processing(vec![
-            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0)
+            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0),
         ])
         .await;
 
@@ -940,11 +951,12 @@ mod tests {
         reth_tracing::init_test_tracing();
         let test = TestHarness::new();
 
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_block(true)
-            .is_none());
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .is_none()
+        );
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -1007,11 +1019,12 @@ mod tests {
         let genesis_block = test.current_canonical_block();
         assert_eq!(genesis_block.number, 0);
         assert_eq!(genesis_block.transaction_count(), 0);
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_block(true)
-            .is_none());
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .is_none()
+        );
 
         test.new_canonical_block(vec![test.build_transaction_to_send_eth(
             User::Alice,
@@ -1023,11 +1036,12 @@ mod tests {
         let block_one = test.current_canonical_block();
         assert_eq!(block_one.number, 1);
         assert_eq!(block_one.transaction_count(), 2);
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_block(true)
-            .is_none());
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .is_none()
+        );
 
         test.new_canonical_block(vec![
             test.build_transaction_to_send_eth(User::Bob, User::Charlie, 100),
@@ -1038,10 +1052,11 @@ mod tests {
         let block_two = test.current_canonical_block();
         assert_eq!(block_two.number, 2);
         assert_eq!(block_two.transaction_count(), 3);
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_block(true)
-            .is_none());
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_block(true)
+                .is_none()
+        );
     }
 }

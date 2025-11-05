@@ -1,11 +1,11 @@
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
+    Address, B256, BlockNumber, TxHash, U256,
     map::foldhash::{HashMap, HashMapExt},
-    Address, BlockNumber, TxHash, B256, U256,
 };
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types::{state::StateOverride, BlockTransactions};
+use alloy_rpc_types::{BlockTransactions, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
 use op_alloy_network::Optimism;

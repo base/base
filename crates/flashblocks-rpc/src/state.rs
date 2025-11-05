@@ -6,7 +6,7 @@ use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta
 use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, BlockNumber, Bytes, Sealable, B256, U256};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, Sealable, U256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::StateOverride;
@@ -28,14 +28,14 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredBlock;
-use reth_rpc_convert::{transaction::ConvertReceiptInput, RpcTransaction};
+use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Mutex;
 use tokio::sync::broadcast::{self, Sender};
 use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 // Buffer 4s of flashblocks for flashblock_sender
