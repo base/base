@@ -23,10 +23,10 @@ use std::any::Any;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-pub const BASE_CHAIN_ID: u64 = 8453;
+pub const BASE_CHAIN_ID: u64 = 84532;
 
 pub struct LocalNode {
-    http_api_addr: SocketAddr,
+    pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
     // flashblock_sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     _node_exit_future: NodeExitFuture,
@@ -68,14 +68,27 @@ impl LocalNode {
             ..NetworkArgs::default()
         };
 
+        // Generate unique IPC path for this test instance to avoid conflicts
+        // Use timestamp + thread ID + process ID for uniqueness
+        let unique_ipc_path = format!(
+            "/tmp/reth_engine_api_{}_{}_{:?}.ipc",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            std::process::id(),
+            std::thread::current().id()
+        );
+
+        let mut rpc_args = RpcServerArgs::default()
+            .with_unused_ports()
+            .with_http()
+            .with_auth_ipc();
+        rpc_args.auth_ipc_path = unique_ipc_path;
+
         let node_config = NodeConfig::new(chain_spec.clone())
             .with_network(network_config)
-            .with_rpc(
-                RpcServerArgs::default()
-                    .with_unused_ports()
-                    .with_http()
-                    .with_auth_ipc(),
-            )
+            .with_rpc(rpc_args)
             .with_unused_ports();
 
         let node = OpNode::new(RollupArgs::default());

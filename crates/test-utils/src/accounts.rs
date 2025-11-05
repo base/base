@@ -1,10 +1,15 @@
 //! Test accounts with pre-funded balances for integration testing
 
-use alloy_primitives::{address, Address};
+use alloy_consensus::{SignableTransaction, TxLegacy};
+use alloy_eips::eip2718::Encodable2718;
+use alloy_primitives::{address, hex, Address, Bytes, FixedBytes, U256};
+use alloy_signer::SignerSync;
+use alloy_signer_local::PrivateKeySigner;
+use eyre::Result;
 
 /// Hardcoded test account with a fixed private key
 #[derive(Debug, Clone)]
-pub struct TestAccount {
+pub struct Account {
     /// Account name for easy identification
     pub name: &'static str,
     /// Ethereum address
@@ -12,6 +17,38 @@ pub struct TestAccount {
     /// Private key (hex string without 0x prefix)
     pub private_key: &'static str,
 }
+
+impl Account {
+    /// Sign a simple ETH transfer transaction and return the signed bytes
+    pub fn sign_transaction_bytes(
+        &self,
+        to: Address,
+        value: U256,
+        nonce: u64,
+        chain_id: u64,
+    ) -> Result<Bytes> {
+        let key_bytes = hex::decode(self.private_key)?;
+        let key_fixed: FixedBytes<32> = FixedBytes::from_slice(&key_bytes);
+        let signer = PrivateKeySigner::from_bytes(&key_fixed)?;
+
+        let tx = TxLegacy {
+            chain_id: Some(chain_id),
+            nonce,
+            gas_price: 200,
+            gas_limit: 21_000,
+            to: alloy_primitives::TxKind::Call(to),
+            value,
+            input: Bytes::new(),
+        };
+
+        let signature = signer.sign_hash_sync(&tx.signature_hash())?;
+        let signed_tx = tx.into_signed(signature);
+
+        Ok(signed_tx.encoded_2718().into())
+    }
+}
+
+pub type TestAccount = Account;
 
 /// Collection of all test accounts
 #[derive(Debug, Clone)]
