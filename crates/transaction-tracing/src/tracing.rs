@@ -53,7 +53,8 @@ impl Tracker {
         // if the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
         // before it gets evicted. this can be useful to see the full history of a transaction.
         if self.txs.len() == MAX_SIZE
-            && let Some((tx_hash, event_log)) = self.txs.peek_lru() {
+            && let Some((tx_hash, event_log)) = self.txs.peek_lru()
+        {
             self.log(tx_hash, event_log, "Transaction inserted");
         }
 
@@ -64,7 +65,8 @@ impl Tracker {
     fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
         // if we've seen the transaction pending or queued before, track the pending <> queue transition
         if let Some(prev_pool) = self.tx_states.get(&tx_hash)
-            && prev_pool != &pool {
+            && prev_pool != &pool
+        {
             let event = match (prev_pool, &pool) {
                 (Pool::Pending, Pool::Queued) => Some(TxEvent::PendingToQueued),
                 (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
