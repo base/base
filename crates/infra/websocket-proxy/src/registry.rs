@@ -27,6 +27,7 @@ pub struct Registry {
     compressed: bool,
     ping_enabled: bool,
     pong_timeout_ms: u64,
+    send_timeout_ms: u64,
 }
 
 impl Registry {
@@ -36,6 +37,7 @@ impl Registry {
         compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
+        send_timeout_ms: u64,
     ) -> Self {
         Self {
             sender,
@@ -43,6 +45,7 @@ impl Registry {
             compressed,
             ping_enabled,
             pong_timeout_ms,
+            send_timeout_ms,
         }
     }
 
@@ -74,7 +77,7 @@ impl Registry {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
 
                                 let send_start = Instant::now();
-                                let send_timeout = Duration::from_secs(1);
+                                let send_timeout = Duration::from_millis(self.send_timeout_ms);
                                 let send_result = timeout(send_timeout, ws_sender.send(msg.clone())).await;
                                 let send_duration = send_start.elapsed();
                                 
@@ -102,7 +105,7 @@ impl Registry {
                                         warn!(
                                             message = "send timeout - disconnecting slow client",
                                             client = client_id,
-                                            timeout_secs = send_timeout.as_secs()
+                                            timeout_ms = send_timeout.as_millis()
                                         );
                                         metrics.failed_messages.increment(1);
                                         break;
