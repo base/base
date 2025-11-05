@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Sender;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tracing::{debug, info, trace, warn};
 
 fn get_message_size(msg: &Message) -> u64 {
@@ -74,22 +74,40 @@ impl Registry {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
 
                                 let send_start = Instant::now();
-                                let send_result = ws_sender.send(msg.clone()).await;
-                                metrics.message_send_duration.record(send_start.elapsed());
+                                let send_timeout = Duration::from_secs(1);
+                                let send_result = timeout(send_timeout, ws_sender.send(msg.clone())).await;
+                                let send_duration = send_start.elapsed();
+                                
+                                metrics.message_send_duration.record(send_duration);
 
-                                if let Err(e) = send_result {
-                                    warn!(
-                                        message = "failed to send data to client",
-                                        client = client_id,
-                                        error = e.to_string()
-                                    );
-                                    metrics.failed_messages.increment(1);
-                                    break;
+                                match send_result {
+                                    Ok(Ok(())) => {
+                                        // Success - message sent
+                                        trace!(message = "message sent to client", client = client_id);
+                                        metrics.sent_messages.increment(1);
+                                        metrics.bytes_broadcasted.increment(get_message_size(&msg));
+                                    }
+                                    Ok(Err(e)) => {
+                                        // Send failed (connection error)
+                                        warn!(
+                                            message = "failed to send data to client",
+                                            client = client_id,
+                                            error = e.to_string()
+                                        );
+                                        metrics.failed_messages.increment(1);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        // Timeout - client too slow
+                                        warn!(
+                                            message = "send timeout - disconnecting slow client",
+                                            client = client_id,
+                                            timeout_secs = send_timeout.as_secs()
+                                        );
+                                        metrics.failed_messages.increment(1);
+                                        break;
+                                    }
                                 }
-
-                                trace!(message = "message sent to client", client = client_id);
-                                metrics.sent_messages.increment(1);
-                                metrics.bytes_broadcasted.increment(get_message_size(&msg));
                             } else {
                                 trace!("Filter did not match for client {}", client_id);
                             }
