@@ -1,9 +1,9 @@
 use alloy_consensus::Header;
-use alloy_eips::eip2718::Decodable2718;
 use alloy_eips::BlockNumberOrTag;
+use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::U256;
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
 use reth::providers::BlockReaderIdExt;

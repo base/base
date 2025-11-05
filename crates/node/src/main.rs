@@ -2,7 +2,7 @@ use base_reth_flashblocks_rpc::rpc::EthApiExt;
 use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::version::{
-    default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts,
+    RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
 };
 use reth_exex::ExExEvent;
 use std::sync::Arc;
@@ -18,9 +18,9 @@ use reth::{
     builder::{EngineNodeLauncher, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::args::RollupArgs;
+use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
 use reth_optimism_node::OpNode;
+use reth_optimism_node::args::RollupArgs;
 use tracing::info;
 use url::Url;
 

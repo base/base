@@ -1,9 +1,9 @@
-use alloy_consensus::{transaction::SignerRecoverable, BlockHeader, Transaction as _};
+use alloy_consensus::{BlockHeader, Transaction as _, transaction::SignerRecoverable};
 use alloy_primitives::{B256, U256};
-use eyre::{eyre, Result as EyreResult};
+use eyre::{Result as EyreResult, eyre};
 use reth::revm::db::State;
-use reth_evm::execute::BlockBuilder;
 use reth_evm::ConfigureEvm;
+use reth_evm::execute::BlockBuilder;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;

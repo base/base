@@ -8,14 +8,14 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
     use alloy_primitives::map::HashMap;
-    use alloy_primitives::{address, b256, bytes, Address, Bytes, LogData, TxHash, B256, U256};
+    use alloy_primitives::{Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes};
     use alloy_provider::Provider;
     use alloy_provider::RootProvider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
-    use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use alloy_rpc_types_eth::TransactionInput;
+    use alloy_rpc_types_eth::error::EthRpcErrorCode;
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use op_alloy_rpc_types::OpTransactionRequest;
@@ -25,8 +25,8 @@ mod tests {
     use reth::core::exit::NodeExitFuture;
     use reth::tasks::TaskManager;
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::args::RollupArgs;
     use reth_optimism_node::OpNode;
+    use reth_optimism_node::args::RollupArgs;
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
     use reth_rpc_eth_api::RpcReceipt;
@@ -268,8 +268,12 @@ mod tests {
     // Create second payload (index 1) with transactions
     // tx1 hash: 0x2be2e6f8b01b03b87ae9f0ebca8bbd420f174bef0fbcc18c7802c5378b78f548 (deposit transaction)
     // tx2 hash: 0xbb079fbde7d12fd01664483cd810e91014113e405247479e5615974ebca93e4a
-    const DEPOSIT_TX: Bytes = bytes!("0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3");
-    const TRANSFER_ETH_TX: Bytes = bytes!("0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31");
+    const DEPOSIT_TX: Bytes = bytes!(
+        "0x7ef8f8a042a8ae5ec231af3d0f90f68543ec8bca1da4f7edd712d5b51b490688355a6db794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e200000044d000a118b00000000000000040000000067cb7cb0000000000077dbd4000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000014edd27304108914dd6503b19b9eeb9956982ef197febbeeed8a9eac3dbaaabdf000000000000000000000000fc56e7272eebbba5bc6c544e159483c4a38f8ba3"
+    );
+    const TRANSFER_ETH_TX: Bytes = bytes!(
+        "0x02f87383014a3480808449504f80830186a094deaddeaddeaddeaddeaddeaddeaddeaddead00018ad3c21bcb3f6efc39800080c0019f5a6fe2065583f4f3730e82e5725f651cbbaf11dc1f82c8d29ba1f3f99e5383a061e0bf5dfff4a9bc521ad426eee593d3653c5c330ae8a65fad3175d30f291d31"
+    );
 
     // NOTE:
     // Following txns deploy a double Counter contract (Compiled with solc 0.8.13)
@@ -277,11 +281,17 @@ mod tests {
     // and a `uint256 public count2 = 1` and a function increment2() { count2++ };
     // Following txn calls increment once, so count should be 2
     // Raw Bytecode: 0x608060405260015f55600180553480156016575f80fd5b50610218806100245f395ff3fe608060405234801561000f575f80fd5b5060043610610060575f3560e01c80631d63e24d146100645780637477f70014610082578063a87d942c146100a0578063ab57b128146100be578063d09de08a146100c8578063d631c639146100d2575b5f80fd5b61006c6100f0565b6040516100799190610155565b60405180910390f35b61008a6100f6565b6040516100979190610155565b60405180910390f35b6100a86100fb565b6040516100b59190610155565b60405180910390f35b6100c6610103565b005b6100d061011c565b005b6100da610134565b6040516100e79190610155565b60405180910390f35b60015481565b5f5481565b5f8054905090565b60015f8154809291906101159061019b565b9190505550565b5f8081548092919061012d9061019b565b9190505550565b5f600154905090565b5f819050919050565b61014f8161013d565b82525050565b5f6020820190506101685f830184610146565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6101a58261013d565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101d7576101d661016e565b5b60018201905091905056fea264697066735822122025c7e02ddf460dece9c1e52a3f9ff042055b58005168e7825d7f6c426288c27164736f6c63430008190033
-    const DEPLOYMENT_TX: Bytes = bytes!("0x02f9029483014a3401808449504f80830493e08080b9023c608060405260015f55600180553480156016575f80fd5b50610218806100245f395ff3fe608060405234801561000f575f80fd5b5060043610610060575f3560e01c80631d63e24d146100645780637477f70014610082578063a87d942c146100a0578063ab57b128146100be578063d09de08a146100c8578063d631c639146100d2575b5f80fd5b61006c6100f0565b6040516100799190610155565b60405180910390f35b61008a6100f6565b6040516100979190610155565b60405180910390f35b6100a86100fb565b6040516100b59190610155565b60405180910390f35b6100c6610103565b005b6100d061011c565b005b6100da610134565b6040516100e79190610155565b60405180910390f35b60015481565b5f5481565b5f8054905090565b60015f8154809291906101159061019b565b9190505550565b5f8081548092919061012d9061019b565b9190505550565b5f600154905090565b5f819050919050565b61014f8161013d565b82525050565b5f6020820190506101685f830184610146565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6101a58261013d565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101d7576101d661016e565b5b60018201905091905056fea264697066735822122025c7e02ddf460dece9c1e52a3f9ff042055b58005168e7825d7f6c426288c27164736f6c63430008190033c001a02f196658032e0b003bcd234349d63081f5d6c2785264c6fec6b25ad877ae326aa0290c9f96f4501439b07a7b5e8e938f15fc30a9c15db3fc5e654d44e1f522060c");
+    const DEPLOYMENT_TX: Bytes = bytes!(
+        "0x02f9029483014a3401808449504f80830493e08080b9023c608060405260015f55600180553480156016575f80fd5b50610218806100245f395ff3fe608060405234801561000f575f80fd5b5060043610610060575f3560e01c80631d63e24d146100645780637477f70014610082578063a87d942c146100a0578063ab57b128146100be578063d09de08a146100c8578063d631c639146100d2575b5f80fd5b61006c6100f0565b6040516100799190610155565b60405180910390f35b61008a6100f6565b6040516100979190610155565b60405180910390f35b6100a86100fb565b6040516100b59190610155565b60405180910390f35b6100c6610103565b005b6100d061011c565b005b6100da610134565b6040516100e79190610155565b60405180910390f35b60015481565b5f5481565b5f8054905090565b60015f8154809291906101159061019b565b9190505550565b5f8081548092919061012d9061019b565b9190505550565b5f600154905090565b5f819050919050565b61014f8161013d565b82525050565b5f6020820190506101685f830184610146565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f6101a58261013d565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101d7576101d661016e565b5b60018201905091905056fea264697066735822122025c7e02ddf460dece9c1e52a3f9ff042055b58005168e7825d7f6c426288c27164736f6c63430008190033c001a02f196658032e0b003bcd234349d63081f5d6c2785264c6fec6b25ad877ae326aa0290c9f96f4501439b07a7b5e8e938f15fc30a9c15db3fc5e654d44e1f522060c"
+    );
     // Increment tx: call increment()
-    const INCREMENT_TX: Bytes = bytes!("0x02f86d83014a3402808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a0a9c1a565668084d4052bbd9bc3abce8555a06aed6651c82c2756ac8a83a79fa2a03427f440ce4910a5227ea0cedb60b06cf0bea2dbbac93bd37efa91a474c29d89");
+    const INCREMENT_TX: Bytes = bytes!(
+        "0x02f86d83014a3402808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084d09de08ac080a0a9c1a565668084d4052bbd9bc3abce8555a06aed6651c82c2756ac8a83a79fa2a03427f440ce4910a5227ea0cedb60b06cf0bea2dbbac93bd37efa91a474c29d89"
+    );
     // Increment2 tx: call increment2()
-    const INCREMENT2_TX: Bytes = bytes!("0x02f86d83014a3403808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084ab57b128c001a03a155b8c81165fc8193aa739522c2a9e432e274adea7f0b90ef2b5078737f153a0288d7fad4a3b0d1e7eaf7fab63b298393a5020bf11d91ff8df13b235410799e2");
+    const INCREMENT2_TX: Bytes = bytes!(
+        "0x02f86d83014a3403808449504f8082abe094e7f1725e7734ce288f8367e1bb143e90bb3f05128084ab57b128c001a03a155b8c81165fc8193aa739522c2a9e432e274adea7f0b90ef2b5078737f153a0288d7fad4a3b0d1e7eaf7fab63b298393a5020bf11d91ff8df13b235410799e2"
+    );
 
     fn create_second_payload() -> Flashblock {
         let payload = Flashblock {
@@ -433,14 +443,18 @@ mod tests {
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
-        assert!(provider
-            .get_transaction_by_hash(DEPOSIT_TX_HASH)
-            .await?
-            .is_none());
-        assert!(provider
-            .get_transaction_by_hash(TRANSFER_ETH_HASH)
-            .await?
-            .is_none());
+        assert!(
+            provider
+                .get_transaction_by_hash(DEPOSIT_TX_HASH)
+                .await?
+                .is_none()
+        );
+        assert!(
+            provider
+                .get_transaction_by_hash(TRANSFER_ETH_HASH)
+                .await?
+                .is_none()
+        );
 
         node.send_test_payloads().await?;
 
@@ -549,12 +563,13 @@ mod tests {
             .await;
 
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas"));
+        assert!(
+            res.unwrap_err()
+                .as_error_resp()
+                .unwrap()
+                .message
+                .contains("insufficient funds for gas")
+        );
 
         // read count1 from counter contract
         let eth_call_count1 = OpTransactionRequest::default()
@@ -625,12 +640,13 @@ mod tests {
             .await;
 
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas"));
+        assert!(
+            res.unwrap_err()
+                .as_error_resp()
+                .unwrap()
+                .message
+                .contains("insufficient funds for gas")
+        );
 
         Ok(())
     }
@@ -734,11 +750,13 @@ mod tests {
             .await;
 
         let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-        assert!(receipt_result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains(format!("{}", error_code).as_str()));
+        assert!(
+            receipt_result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains(format!("{}", error_code).as_str())
+        );
     }
 
     #[tokio::test]
@@ -880,9 +898,10 @@ mod tests {
 
         // Should now include pending logs (2 logs from our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs
-            .iter()
-            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(
+            logs.iter()
+                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
+        );
 
         // Test fromBlock: latest, toBlock: pending
         let logs = provider
@@ -895,9 +914,10 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs
-            .iter()
-            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(
+            logs.iter()
+                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
+        );
 
         // Test fromBlock: earliest, toBlock: pending
         let logs = provider
@@ -910,9 +930,10 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(logs
-            .iter()
-            .all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
+        assert!(
+            logs.iter()
+                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
+        );
 
         Ok(())
     }

@@ -6,17 +6,17 @@ use crate::pending_blocks::PendingBlocks;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::map::foldhash::{HashSet, HashSetExt};
 use alloy_primitives::{Address, TxHash, U256};
+use alloy_rpc_types::BlockOverrides;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload, SimulatedBlock};
 use alloy_rpc_types::state::{EvmOverrides, StateOverride, StateOverridesBuilder};
-use alloy_rpc_types::BlockOverrides;
 use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::Guard;
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use jsonrpsee_types::error::INVALID_PARAMS_CODE;
 use jsonrpsee_types::ErrorObjectOwned;
+use jsonrpsee_types::error::INVALID_PARAMS_CODE;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::providers::CanonStateSubscriptions;
@@ -25,13 +25,13 @@ use reth::rpc::server_types::eth::EthApiError;
 use reth_rpc_eth_api::helpers::EthState;
 use reth_rpc_eth_api::helpers::EthTransactions;
 use reth_rpc_eth_api::helpers::{EthBlocks, EthCall};
-use reth_rpc_eth_api::{helpers::FullEthApi, EthApiTypes, EthFilterApiServer, RpcBlock};
+use reth_rpc_eth_api::{EthApiTypes, EthFilterApiServer, RpcBlock, helpers::FullEthApi};
 use reth_rpc_eth_api::{RpcReceipt, RpcTransaction};
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, trace, warn};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
@@ -89,7 +89,7 @@ pub trait EthApiOverride {
 
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
-        -> RpcResult<U256>;
+    -> RpcResult<U256>;
 
     #[method(name = "getTransactionCount")]
     async fn get_transaction_count(
@@ -292,10 +292,12 @@ where
             Some(ms) if ms > MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS => {
                 return Err(ErrorObjectOwned::owned(
                     INVALID_PARAMS_CODE,
-                    format!("time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"),
+                    format!(
+                        "time out too long, timeout: {ms} ms, max: {MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS} ms"
+                    ),
                     None::<()>,
-                ))
-            },
+                ));
+            }
             Some(ms) => ms,
             _ => MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS,
         };
