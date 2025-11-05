@@ -171,6 +171,14 @@ struct Args {
         help = "Timeout in milliseconds to wait for pong response from clients"
     )]
     client_pong_timeout_ms: u64,
+
+    #[arg(
+        long,
+        env,
+        default_value = "1000",
+        help = "Timeout in milliseconds for sending messages to clients"
+    )]
+    client_send_timeout_ms: u64,
 }
 
 #[tokio::main]
@@ -351,6 +359,7 @@ async fn main() {
         args.enable_compression,
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
+        Duration::from_millis(args.client_send_timeout_ms),
     );
 
     let rate_limiter = match &args.redis_url {

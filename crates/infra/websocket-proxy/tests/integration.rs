@@ -43,7 +43,14 @@ impl TestHarness {
     fn new_with_auth(addr: SocketAddr, auth: Option<Authentication>) -> TestHarness {
         let (sender, _) = broadcast::channel(5);
         let metrics = Arc::new(Metrics::default());
-        let registry = Registry::new(sender.clone(), metrics.clone(), false, false, 120000);
+        let registry = Registry::new(
+            sender.clone(),
+            metrics.clone(),
+            false,
+            false,
+            120000,
+            Duration::from_millis(1000),
+        );
         let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
         Self {
@@ -379,7 +386,14 @@ async fn test_ping_timeout_disconnects_client() {
 
     let (sender, _) = broadcast::channel(5);
     let metrics = Arc::new(Metrics::default());
-    let registry = Registry::new(sender.clone(), metrics.clone(), false, true, 1000);
+    let registry = Registry::new(
+        sender.clone(),
+        metrics.clone(),
+        false,
+        true,
+        1000,
+        Duration::from_millis(1000),
+    );
     let rate_limited = Arc::new(InMemoryRateLimit::new(3, 10));
 
     let mut harness = TestHarness {

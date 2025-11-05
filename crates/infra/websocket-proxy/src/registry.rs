@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::broadcast::Sender;
-use tokio::time::{interval, Duration};
+use tokio::time::{interval, timeout, Duration};
 use tracing::{debug, info, trace, warn};
 
 fn get_message_size(msg: &Message) -> u64 {
@@ -27,6 +27,7 @@ pub struct Registry {
     compressed: bool,
     ping_enabled: bool,
     pong_timeout_ms: u64,
+    send_timeout_ms: Duration,
 }
 
 impl Registry {
@@ -36,6 +37,7 @@ impl Registry {
         compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
+        send_timeout_ms: Duration,
     ) -> Self {
         Self {
             sender,
@@ -43,6 +45,7 @@ impl Registry {
             compressed,
             ping_enabled,
             pong_timeout_ms,
+            send_timeout_ms,
         }
     }
 
@@ -74,22 +77,40 @@ impl Registry {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
 
                                 let send_start = Instant::now();
-                                let send_result = ws_sender.send(msg.clone()).await;
-                                metrics.message_send_duration.record(send_start.elapsed());
+                                let msg_size = get_message_size(&msg);
+                                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
+                                let send_duration = send_start.elapsed();
 
-                                if let Err(e) = send_result {
-                                    warn!(
-                                        message = "failed to send data to client",
-                                        client = client_id,
-                                        error = e.to_string()
-                                    );
-                                    metrics.failed_messages.increment(1);
-                                    break;
+                                metrics.message_send_duration.record(send_duration);
+
+                                match send_result {
+                                    Ok(Ok(())) => {
+                                        // Success - message sent
+                                        trace!(message = "message sent to client", client = client_id);
+                                        metrics.sent_messages.increment(1);
+                                        metrics.bytes_broadcasted.increment(msg_size);
+                                    }
+                                    Ok(Err(e)) => {
+                                        // Send failed (connection error)
+                                        warn!(
+                                            message = "failed to send data to client",
+                                            client = client_id,
+                                            error = e.to_string()
+                                        );
+                                        metrics.failed_messages.increment(1);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        // Timeout - client too slow
+                                        warn!(
+                                            message = "send timeout - disconnecting slow client",
+                                            client = client_id,
+                                            timeout_ms = self.send_timeout_ms.as_millis()
+                                        );
+                                        metrics.failed_messages.increment(1);
+                                        break;
+                                    }
                                 }
-
-                                trace!(message = "message sent to client", client = client_id);
-                                metrics.sent_messages.increment(1);
-                                metrics.bytes_broadcasted.increment(get_message_size(&msg));
                             } else {
                                 trace!("Filter did not match for client {}", client_id);
                             }
