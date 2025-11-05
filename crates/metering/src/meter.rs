@@ -9,6 +9,7 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_primitives_traits::SealedHeader;
 use std::sync::Arc;
 use std::time::Instant;
+use tips_core::types::{BundleExtensions, BundleTxs, ParsedBundle};
 
 use crate::TransactionResult;
 
@@ -28,15 +29,14 @@ const BLOCK_TIME: u64 = 2; // 2 seconds per block
 pub fn meter_bundle<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,
-    decoded_txs: Vec<op_alloy_consensus::OpTxEnvelope>,
+    bundle: ParsedBundle,
     header: &SealedHeader,
-    bundle_with_metadata: &tips_core::types::BundleWithMetadata,
 ) -> EyreResult<(Vec<TransactionResult>, u64, U256, B256, u128)>
 where
     SP: reth_provider::StateProvider,
 {
-    // Get bundle hash from BundleWithMetadata
-    let bundle_hash = bundle_with_metadata.bundle_hash();
+    // Get bundle hash
+    let bundle_hash = bundle.bundle_hash();
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
@@ -47,8 +47,7 @@ where
 
     // Set up next block attributes
     // Use bundle.min_timestamp if provided, otherwise use header timestamp + BLOCK_TIME
-    let timestamp = bundle_with_metadata
-        .bundle()
+    let timestamp = bundle
         .min_timestamp
         .unwrap_or_else(|| header.timestamp() + BLOCK_TIME);
     let attributes = OpNextBlockEnvAttributes {
@@ -72,7 +71,7 @@ where
 
         builder.apply_pre_execution_changes()?;
 
-        for tx in decoded_txs {
+        for tx in bundle.transactions() {
             let tx_start = Instant::now();
             let tx_hash = tx.tx_hash();
             let from = tx.recover_signer()?;
@@ -80,11 +79,8 @@ where
             let value = tx.value();
             let gas_price = tx.max_fee_per_gas();
 
-            let recovered_tx =
-                alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), from);
-
             let gas_used = builder
-                .execute_transaction(recovered_tx)
+                .execute_transaction(tx.clone())
                 .map_err(|e| eyre!("Transaction {} execution failed: {}", tx_hash, e))?;
 
             let gas_fees = U256::from(gas_used) * U256::from(gas_price);

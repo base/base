@@ -17,7 +17,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
-use tips_core::types::{Bundle, BundleWithMetadata};
+use tips_core::types::{Bundle, ParsedBundle};
 
 use super::utils::create_provider_factory;
 use crate::meter_bundle;
@@ -123,7 +123,7 @@ fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> 
     Ok(tx.clone().into())
 }
 
-fn create_bundle_with_metadata(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<BundleWithMetadata> {
+fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBundle> {
     let txs: Vec<Bytes> = envelopes
         .iter()
         .map(|env| Bytes::from(env.encoded_2718()))
@@ -141,7 +141,7 @@ fn create_bundle_with_metadata(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<Bun
         dropping_tx_hashes: vec![],
     };
 
-    BundleWithMetadata::load(bundle).map_err(|e| eyre::eyre!(e))
+    ParsedBundle::try_from(bundle).map_err(|e| eyre::eyre!(e))
 }
 
 #[test]
@@ -153,15 +153,14 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let bundle_with_metadata = create_bundle_with_metadata(Vec::new())?;
+    let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
         meter_bundle(
             state_provider,
             harness.chain_spec.clone(),
-            Vec::new(),
+            parsed_bundle,
             &harness.header,
-            &bundle_with_metadata,
         )?;
 
     assert!(results.is_empty());
@@ -201,15 +200,14 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let bundle_with_metadata = create_bundle_with_metadata(vec![envelope.clone()])?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
         meter_bundle(
             state_provider,
             harness.chain_spec.clone(),
-            vec![envelope],
+            parsed_bundle,
             &harness.header,
-            &bundle_with_metadata,
         )?;
 
     assert_eq!(results.len(), 1);
@@ -296,16 +294,14 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
 
-    let bundle_with_metadata =
-        create_bundle_with_metadata(vec![envelope_1.clone(), envelope_2.clone()])?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
         meter_bundle(
             state_provider,
             harness.chain_spec.clone(),
-            vec![envelope_1, envelope_2],
+            parsed_bundle,
             &harness.header,
-            &bundle_with_metadata,
         )?;
 
     assert_eq!(results.len(), 2);
