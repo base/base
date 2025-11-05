@@ -52,10 +52,9 @@ impl Tracker {
 
         // if the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
         // before it gets evicted. this can be useful to see the full history of a transaction.
-        if self.txs.len() == MAX_SIZE {
-            if let Some((tx_hash, event_log)) = self.txs.peek_lru() {
-                self.log(tx_hash, event_log, "Transaction inserted");
-            }
+        if self.txs.len() == MAX_SIZE
+            && let Some((tx_hash, event_log)) = self.txs.peek_lru() {
+            self.log(tx_hash, event_log, "Transaction inserted");
         }
 
         self.txs.put(tx_hash, EventLog::new(Local::now(), event));
@@ -64,30 +63,29 @@ impl Tracker {
     /// Track a transaction moving from one pool to another
     fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
         // if we've seen the transaction pending or queued before, track the pending <> queue transition
-        if let Some(prev_pool) = self.tx_states.get(&tx_hash) {
-            if prev_pool != &pool {
-                let event = match (prev_pool, &pool) {
-                    (Pool::Pending, Pool::Queued) => Some(TxEvent::PendingToQueued),
-                    (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
-                    _ => None,
-                };
-                if event.is_none() {
+        if let Some(prev_pool) = self.tx_states.get(&tx_hash)
+            && prev_pool != &pool {
+            let event = match (prev_pool, &pool) {
+                (Pool::Pending, Pool::Queued) => Some(TxEvent::PendingToQueued),
+                (Pool::Queued, Pool::Pending) => Some(TxEvent::QueuedToPending),
+                _ => None,
+            };
+            if event.is_none() {
+                return;
+            }
+
+            if let Some(mut event_log) = self.txs.pop(&tx_hash) {
+                let mempool_time = event_log.mempool_time;
+                let time_in_mempool = Instant::now().duration_since(mempool_time);
+
+                if self.is_overflowed(&tx_hash, &event_log) {
+                    // the tx is already removed from the cache from `pop`
                     return;
                 }
+                event_log.push(Local::now(), event.unwrap());
+                self.txs.put(tx_hash, event_log);
 
-                if let Some(mut event_log) = self.txs.pop(&tx_hash) {
-                    let mempool_time = event_log.mempool_time;
-                    let time_in_mempool = Instant::now().duration_since(mempool_time);
-
-                    if self.is_overflowed(&tx_hash, &event_log) {
-                        // the tx is already removed from the cache from `pop`
-                        return;
-                    }
-                    event_log.push(Local::now(), event.unwrap());
-                    self.txs.put(tx_hash, event_log);
-
-                    record_histogram(time_in_mempool, event.unwrap());
-                }
+                record_histogram(time_in_mempool, event.unwrap());
             }
         }
 
