@@ -42,6 +42,8 @@ alloy-consensus.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-client.workspace = true
 alloy-serde.workspace = true
+alloy-signer = "1.0"
+alloy-signer-local = "1.1.0"
 
 # op-alloy
 op-alloy-rpc-types.workspace = true

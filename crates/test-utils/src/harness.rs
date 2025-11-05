@@ -58,7 +58,11 @@ impl TestHarness {
         &self.accounts
     }
 
-    async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+    pub fn rpc_url(&self) -> String {
+        format!("http://{}", self.node.http_api_addr)
+    }
+
+    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
