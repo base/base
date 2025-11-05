@@ -1,30 +1,16 @@
-use alloy_primitives::{Bytes, TxHash, b256, bytes};
+use alloy_primitives::TxHash;
 use std::sync::Arc;
 use tips_audit::{
     reader::Event,
     storage::{BundleEventS3Reader, EventWriter, S3EventReaderWriter},
     types::BundleEvent,
 };
-use tips_core::Bundle;
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
 mod common;
 use common::TestHarness;
-
-// https://basescan.org/tx/0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e
-const TXN_DATA: Bytes = bytes!(
-    "0x02f88f8221058304b6b3018315fb3883124f80948ff2f0a8d017c79454aa28509a19ab9753c2dd1480a476d58e1a0182426068c9ea5b00000000000000000002f84f00000000083e4fda54950000c080a086fbc7bbee41f441fb0f32f7aa274d2188c460fe6ac95095fa6331fa08ec4ce7a01aee3bcc3c28f7ba4e0c24da9ae85e9e0166c73cabb42c25ff7b5ecd424f3105"
-);
-const TXN_HASH: TxHash =
-    b256!("0x4f7ddfc911f5cf85dd15a413f4cbb2a0abe4f1ff275ed13581958c0bcf043c5e");
-
-fn create_test_bundle() -> Bundle {
-    Bundle {
-        txs: vec![TXN_DATA.clone()],
-        ..Default::default()
-    }
-}
+use tips_core::test_utils::{TXN_HASH, create_bundle_from_txn_data};
 
 fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
     Event {
@@ -40,13 +26,13 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
-    let bundle = create_test_bundle();
+    let bundle = create_bundle_from_txn_data();
     let event = create_test_event(
         "test-key-1",
         1234567890,
         BundleEvent::Received {
             bundle_id,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle.clone()),
         },
     );
 
@@ -67,13 +53,13 @@ async fn test_event_write_and_read() -> Result<(), Box<dyn std::error::Error + S
     }
 
     let bundle_id_two = Uuid::new_v4();
-    let bundle = create_test_bundle();
+    let bundle = create_bundle_from_txn_data();
     let event = create_test_event(
         "test-key-2",
         1234567890,
         BundleEvent::Received {
             bundle_id: bundle_id_two,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle.clone()),
         },
     );
 
@@ -96,15 +82,15 @@ async fn test_events_appended() -> Result<(), Box<dyn std::error::Error + Send +
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
-    let bundle = create_test_bundle();
+    let bundle = create_bundle_from_txn_data();
 
-    let events = vec![
+    let events = [
         create_test_event(
             "test-key-1",
             1234567890,
             BundleEvent::Received {
                 bundle_id,
-                bundle: bundle.clone(),
+                bundle: Box::new(bundle.clone()),
             },
         ),
         create_test_event(
@@ -147,13 +133,13 @@ async fn test_event_deduplication() -> Result<(), Box<dyn std::error::Error + Se
     let writer = S3EventReaderWriter::new(harness.s3_client.clone(), harness.bucket_name.clone());
 
     let bundle_id = Uuid::new_v4();
-    let bundle = create_test_bundle();
+    let bundle = create_bundle_from_txn_data();
     let event = create_test_event(
         "duplicate-key",
         1234567890,
         BundleEvent::Received {
             bundle_id,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle.clone()),
         },
     );
 
@@ -197,14 +183,14 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
     ));
 
     let bundle_id = Uuid::new_v4();
-    let bundle = create_test_bundle();
+    let bundle = create_bundle_from_txn_data();
 
     let event = create_test_event(
         "hello-dan",
         1234567889i64,
         BundleEvent::Received {
             bundle_id,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle.clone()),
         },
     );
 
@@ -225,7 +211,7 @@ async fn test_concurrent_writes_for_bundle() -> Result<(), Box<dyn std::error::E
             1234567890 + i as i64,
             BundleEvent::Received {
                 bundle_id,
-                bundle: bundle.clone(),
+                bundle: Box::new(bundle.clone()),
             },
         );
 

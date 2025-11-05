@@ -3,14 +3,14 @@ use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use tips_core::BundleWithMetadata;
+use tips_core::AcceptedBundle;
 use tokio::time::Duration;
 use tracing::{error, info};
 
 /// A queue to buffer transactions
 #[async_trait]
 pub trait QueuePublisher: Send + Sync {
-    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()>;
+    async fn publish(&self, bundle: &AcceptedBundle, bundle_hash: &B256) -> Result<()>;
 }
 
 /// A queue to buffer transactions
@@ -27,7 +27,7 @@ impl KafkaQueuePublisher {
 
 #[async_trait]
 impl QueuePublisher for KafkaQueuePublisher {
-    async fn publish(&self, bundle: &BundleWithMetadata, bundle_hash: &B256) -> Result<()> {
+    async fn publish(&self, bundle: &AcceptedBundle, bundle_hash: &B256) -> Result<()> {
         let key = bundle_hash.to_string();
         let payload = serde_json::to_vec(&bundle)?;
 
@@ -75,7 +75,9 @@ impl QueuePublisher for KafkaQueuePublisher {
 mod tests {
     use super::*;
     use rdkafka::config::ClientConfig;
-    use tips_core::{Bundle, BundleWithMetadata, test_utils::create_test_meter_bundle_response};
+    use tips_core::{
+        AcceptedBundle, Bundle, BundleExtensions, test_utils::create_test_meter_bundle_response,
+    };
     use tokio::time::{Duration, Instant};
 
     fn create_test_bundle() -> Bundle {
@@ -93,12 +95,14 @@ mod tests {
 
         let publisher = KafkaQueuePublisher::new(producer, "tips-ingress-rpc".to_string());
         let bundle = create_test_bundle();
-        let bundle_with_metadata =
-            BundleWithMetadata::load(bundle.clone(), create_test_meter_bundle_response()).unwrap();
-        let bundle_hash = bundle_with_metadata.bundle_hash();
+        let accepted_bundle = AcceptedBundle::new(
+            bundle.try_into().unwrap(),
+            create_test_meter_bundle_response(),
+        );
+        let bundle_hash = &accepted_bundle.bundle_hash();
 
         let start = Instant::now();
-        let result = publisher.publish(&bundle_with_metadata, &bundle_hash).await;
+        let result = publisher.publish(&accepted_bundle, bundle_hash).await;
         let elapsed = start.elapsed();
 
         // the backoff tries at minimum 100ms, so verify we tried at least once

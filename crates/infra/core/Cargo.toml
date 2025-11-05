@@ -16,13 +16,13 @@ alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-provider.workspace = true
 op-alloy-consensus.workspace = true
-serde = { version = "1.0.228", default-features = false, features = ["alloc", "derive"] }
 alloy-serde = { version = "1.0.41", default-features = false }
 alloy-signer-local = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 op-alloy-flz.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 alloy-signer-local.workspace = true

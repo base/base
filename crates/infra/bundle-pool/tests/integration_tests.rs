@@ -11,7 +11,7 @@ use tips_bundle_pool::{
     BundleStore, InMemoryBundlePool, KafkaBundleSource, connect_sources_to_pool,
 };
 use tips_core::{
-    BundleWithMetadata,
+    AcceptedBundle,
     test_utils::{create_test_bundle, create_transaction},
 };
 use tokio::sync::mpsc;
@@ -47,7 +47,7 @@ async fn test_kafka_bundle_source_to_pool_integration() -> Result<(), Box<dyn st
     let topic = "test-bundles";
     let (_kafka_container, kafka_producer, kafka_consumer_config) = setup_kafka().await?;
 
-    let (bundle_tx, bundle_rx) = mpsc::unbounded_channel::<BundleWithMetadata>();
+    let (bundle_tx, bundle_rx) = mpsc::unbounded_channel::<AcceptedBundle>();
 
     let kafka_source = KafkaBundleSource::new(kafka_consumer_config, topic.to_string(), bundle_tx)?;
 

@@ -1,10 +1,8 @@
 use alloy_consensus::transaction::{SignerRecoverable, Transaction as ConsensusTransaction};
 use alloy_primitives::{Address, TxHash, U256};
-use alloy_provider::network::eip2718::Decodable2718;
 use bytes::Bytes;
-use op_alloy_consensus::OpTxEnvelope;
 use serde::{Deserialize, Serialize};
-use tips_core::Bundle;
+use tips_core::AcceptedBundle;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -33,7 +31,7 @@ pub struct Transaction {
 pub enum BundleEvent {
     Received {
         bundle_id: BundleId,
-        bundle: Bundle,
+        bundle: Box<AcceptedBundle>,
     },
     Cancelled {
         bundle_id: BundleId,
@@ -72,19 +70,14 @@ impl BundleEvent {
                 bundle
                     .txs
                     .iter()
-                    .filter_map(|tx_bytes| {
-                        match OpTxEnvelope::decode_2718_exact(tx_bytes.iter().as_slice()) {
-                            Ok(envelope) => {
-                                match envelope.recover_signer() {
-                                    Ok(sender) => Some(TransactionId {
-                                        sender,
-                                        nonce: U256::from(envelope.nonce()),
-                                        hash: *envelope.hash(),
-                                    }),
-                                    Err(_) => None, // Skip invalid transactions
-                                }
-                            }
-                            Err(_) => None, // Skip malformed transactions
+                    .filter_map(|envelope| {
+                        match envelope.recover_signer() {
+                            Ok(sender) => Some(TransactionId {
+                                sender,
+                                nonce: U256::from(envelope.nonce()),
+                                hash: *envelope.hash(),
+                            }),
+                            Err(_) => None, // Skip invalid transactions
                         }
                     })
                     .collect()

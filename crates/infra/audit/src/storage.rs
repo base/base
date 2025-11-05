@@ -10,7 +10,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Debug;
-use tips_core::Bundle;
+use tips_core::AcceptedBundle;
 use tracing::info;
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ pub enum BundleHistoryEvent {
     Received {
         key: String,
         timestamp: i64,
-        bundle: Bundle,
+        bundle: Box<AcceptedBundle>,
     },
     Cancelled {
         key: String,
@@ -365,12 +365,8 @@ mod tests {
     use crate::reader::Event;
     use crate::types::{BundleEvent, DropReason};
     use alloy_primitives::TxHash;
-    use tips_core::Bundle;
+    use tips_core::test_utils::create_bundle_from_txn_data;
     use uuid::Uuid;
-
-    fn create_test_bundle() -> Bundle {
-        Bundle::default()
-    }
 
     fn create_test_event(key: &str, timestamp: i64, bundle_event: BundleEvent) -> Event {
         Event {
@@ -383,11 +379,11 @@ mod tests {
     #[test]
     fn test_update_bundle_history_transform_adds_new_event() {
         let bundle_history = BundleHistory { history: vec![] };
-        let bundle = create_test_bundle();
+        let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v4();
         let bundle_event = BundleEvent::Received {
             bundle_id,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle.clone()),
         };
         let event = create_test_event("test-key", 1234567890, bundle_event);
 
@@ -416,15 +412,18 @@ mod tests {
         let existing_event = BundleHistoryEvent::Received {
             key: "duplicate-key".to_string(),
             timestamp: 1111111111,
-            bundle: create_test_bundle(),
+            bundle: Box::new(create_bundle_from_txn_data()),
         };
         let bundle_history = BundleHistory {
             history: vec![existing_event],
         };
 
-        let bundle = create_test_bundle();
+        let bundle = create_bundle_from_txn_data();
         let bundle_id = Uuid::new_v4();
-        let bundle_event = BundleEvent::Received { bundle_id, bundle };
+        let bundle_event = BundleEvent::Received {
+            bundle_id,
+            bundle: Box::new(bundle),
+        };
         let event = create_test_event("duplicate-key", 1234567890, bundle_event);
 
         let result = update_bundle_history_transform(bundle_history, &event);
@@ -437,10 +436,10 @@ mod tests {
         let bundle_history = BundleHistory { history: vec![] };
         let bundle_id = Uuid::new_v4();
 
-        let bundle = create_test_bundle();
+        let bundle = create_bundle_from_txn_data();
         let bundle_event = BundleEvent::Received {
             bundle_id,
-            bundle: bundle.clone(),
+            bundle: Box::new(bundle),
         };
         let event = create_test_event("test-key", 1234567890, bundle_event);
         let result = update_bundle_history_transform(bundle_history.clone(), &event);

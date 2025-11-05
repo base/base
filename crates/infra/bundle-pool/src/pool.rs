@@ -3,7 +3,7 @@ use alloy_primitives::map::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use tips_audit::{BundleEvent, DropReason};
-use tips_core::BundleWithMetadata;
+use tips_core::AcceptedBundle;
 use tokio::sync::mpsc;
 use tracing::warn;
 use uuid::Uuid;
@@ -31,8 +31,8 @@ impl ProcessedBundle {
 }
 
 pub trait BundleStore {
-    fn add_bundle(&mut self, bundle: BundleWithMetadata);
-    fn get_bundles(&self) -> Vec<BundleWithMetadata>;
+    fn add_bundle(&mut self, bundle: AcceptedBundle);
+    fn get_bundles(&self) -> Vec<AcceptedBundle>;
     fn built_flashblock(
         &mut self,
         block_number: u64,
@@ -44,7 +44,7 @@ pub trait BundleStore {
 
 struct BundleData {
     flashblocks_in_block: HashMap<u64, Vec<ProcessedBundle>>,
-    bundles: HashMap<Uuid, BundleWithMetadata>,
+    bundles: HashMap<Uuid, AcceptedBundle>,
 }
 
 #[derive(Clone)]
@@ -77,12 +77,12 @@ impl InMemoryBundlePool {
 }
 
 impl BundleStore for InMemoryBundlePool {
-    fn add_bundle(&mut self, bundle: BundleWithMetadata) {
+    fn add_bundle(&mut self, bundle: AcceptedBundle) {
         let mut inner = self.inner.lock().unwrap();
         inner.bundles.insert(*bundle.uuid(), bundle);
     }
 
-    fn get_bundles(&self) -> Vec<BundleWithMetadata> {
+    fn get_bundles(&self) -> Vec<AcceptedBundle> {
         let inner = self.inner.lock().unwrap();
         inner.bundles.values().cloned().collect()
     }
