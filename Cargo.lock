@@ -6007,20 +6007,6 @@ dependencies = [
 
 [[package]]
 name = "op-alloy-consensus"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf1fc8aa0e2f5b136d101630be009e4e6dbdd1f17bc3ce670f431511600d2930"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "derive_more",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "op-alloy-consensus"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e42e9de945efe3c2fbd207e69720c9c1af2b8caa6872aee0e216450c25a3ca70"
@@ -13057,13 +13043,14 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=27674ae051a86033ece61ae24434aeacdb28ce73#27674ae051a86033ece61ae24434aeacdb28ce73"
+source = "git+https://github.com/base/tips?rev=98c9ab49419e62352fe29cf79873141aaa3eb956#98c9ab49419e62352fe29cf79873141aaa3eb956"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-provider",
  "alloy-serde",
- "op-alloy-consensus 0.21.0",
+ "op-alloy-consensus 0.22.0",
+ "op-alloy-flz",
  "serde",
  "tracing",
  "tracing-subscriber 0.3.20",

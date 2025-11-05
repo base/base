@@ -1,6 +1,5 @@
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
-use alloy_eips::eip2718::Decodable2718;
 use alloy_primitives::U256;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -9,7 +8,7 @@ use jsonrpsee::{
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
-use tips_core::types::{Bundle, BundleWithMetadata, MeterBundleResponse};
+use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
 use crate::meter_bundle;
@@ -53,8 +52,8 @@ where
 {
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse> {
         info!(
-            num_transactions = bundle.txs.len(),
-            block_number = bundle.block_number,
+            num_transactions = &bundle.txs.len(),
+            block_number = &bundle.block_number,
             "Starting bundle metering"
         );
 
@@ -77,26 +76,10 @@ where
                 )
             })?;
 
-        // Manually decode transactions to OpTxEnvelope (op-alloy 0.20) instead of using
-        // BundleWithMetadata.transactions() which returns op-alloy 0.21 types incompatible with reth.
-        // TODO: Remove this workaround after reth updates to op-alloy 0.21 (already on main, awaiting release)
-        let mut decoded_txs = Vec::new();
-        for tx_bytes in &bundle.txs {
-            let mut reader = tx_bytes.as_ref();
-            let tx = op_alloy_consensus::OpTxEnvelope::decode_2718(&mut reader).map_err(|e| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                    format!("Failed to decode transaction: {}", e),
-                    None::<()>,
-                )
-            })?;
-            decoded_txs.push(tx);
-        }
-
-        let bundle_with_metadata = BundleWithMetadata::load(bundle.clone()).map_err(|e| {
+        let parsed_bundle = ParsedBundle::try_from(bundle).map_err(|e| {
             jsonrpsee::types::ErrorObjectOwned::owned(
                 jsonrpsee::types::ErrorCode::InvalidParams.code(),
-                format!("Failed to load bundle metadata: {}", e),
+                format!("Failed to parse bundle: {}", e),
                 None::<()>,
             )
         })?;
@@ -119,9 +102,8 @@ where
             meter_bundle(
                 state_provider,
                 self.provider.chain_spec().clone(),
-                decoded_txs,
+                parsed_bundle,
                 &header,
-                &bundle_with_metadata,
             )
             .map_err(|e| {
                 error!(error = %e, "Bundle metering failed");
@@ -155,6 +137,7 @@ where
             gas_fees: total_gas_fees.to_string(),
             results,
             state_block_number: header.number,
+            state_flashblock_index: None,
             total_gas_used,
             total_execution_time_us: total_execution_time,
         })
