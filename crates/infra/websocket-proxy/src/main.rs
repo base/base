@@ -359,7 +359,7 @@ async fn main() {
         args.enable_compression,
         args.client_ping_enabled,
         args.client_pong_timeout_ms,
-        args.client_send_timeout_ms,
+        Duration::from_millis(args.client_send_timeout_ms),
     );
 
     let rate_limiter = match &args.redis_url {

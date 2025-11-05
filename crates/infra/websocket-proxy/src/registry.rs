@@ -27,7 +27,7 @@ pub struct Registry {
     compressed: bool,
     ping_enabled: bool,
     pong_timeout_ms: u64,
-    send_timeout_ms: u64,
+    send_timeout_ms: Duration,
 }
 
 impl Registry {
@@ -37,7 +37,7 @@ impl Registry {
         compressed: bool,
         ping_enabled: bool,
         pong_timeout_ms: u64,
-        send_timeout_ms: u64,
+        send_timeout_ms: Duration,
     ) -> Self {
         Self {
             sender,
@@ -77,10 +77,10 @@ impl Registry {
                                 trace!(message = "filter matched for client", client = client_id, filter = ?filter);
 
                                 let send_start = Instant::now();
-                                let send_timeout = Duration::from_millis(self.send_timeout_ms);
-                                let send_result = timeout(send_timeout, ws_sender.send(msg.clone())).await;
+                                let msg_size = get_message_size(&msg);
+                                let send_result = timeout(self.send_timeout_ms, ws_sender.send(msg)).await;
                                 let send_duration = send_start.elapsed();
-                                
+
                                 metrics.message_send_duration.record(send_duration);
 
                                 match send_result {
@@ -88,7 +88,7 @@ impl Registry {
                                         // Success - message sent
                                         trace!(message = "message sent to client", client = client_id);
                                         metrics.sent_messages.increment(1);
-                                        metrics.bytes_broadcasted.increment(get_message_size(&msg));
+                                        metrics.bytes_broadcasted.increment(msg_size);
                                     }
                                     Ok(Err(e)) => {
                                         // Send failed (connection error)
@@ -105,7 +105,7 @@ impl Registry {
                                         warn!(
                                             message = "send timeout - disconnecting slow client",
                                             client = client_id,
-                                            timeout_ms = send_timeout.as_millis()
+                                            timeout_ms = self.send_timeout_ms.as_millis()
                                         );
                                         metrics.failed_messages.increment(1);
                                         break;
