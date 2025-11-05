@@ -91,10 +91,9 @@ impl TryFrom<Bundle> for ParsedBundle {
 
         let uuid = bundle
             .replacement_uuid
-            .clone()
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-        let uuid = Uuid::parse_str(uuid.as_str()).map_err(|_| format!("Invalid UUID: {uuid}"))?;
+            .map(|x| Uuid::parse_str(x.as_ref()))
+            .transpose()
+            .map_err(|e| format!("Invalid UUID: {e:?}"))?;
 
         Ok(ParsedBundle {
             txs,
@@ -104,7 +103,7 @@ impl TryFrom<Bundle> for ParsedBundle {
             min_timestamp: bundle.min_timestamp,
             max_timestamp: bundle.max_timestamp,
             reverting_tx_hashes: bundle.reverting_tx_hashes,
-            replacement_uuid: Some(uuid),
+            replacement_uuid: uuid,
             dropping_tx_hashes: bundle.dropping_tx_hashes,
         })
     }
