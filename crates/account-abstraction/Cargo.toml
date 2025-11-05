@@ -1,0 +1,43 @@
+[package]
+name = "base-reth-account-abstraction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Account Abstraction (EIP-4337) RPC Support"
+
+[lints]
+workspace = true
+
+[dependencies]
+# reth
+reth.workspace = true
+reth-provider.workspace = true
+reth-primitives.workspace = true
+reth-primitives-traits.workspace = true
+reth-evm.workspace = true
+reth-optimism-evm.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-transaction-pool.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+alloy-consensus.workspace = true
+
+# rpc
+jsonrpsee.workspace = true
+
+# misc
+tracing.workspace = true
+serde.workspace = true
+eyre.workspace = true
+
+[dev-dependencies]
+alloy-genesis.workspace = true
+rand.workspace = true
+reth-db = { workspace = true, features = ["test-utils"] }
+reth-testing-utils.workspace = true
+tokio.workspace = true
+
