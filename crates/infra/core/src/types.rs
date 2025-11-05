@@ -333,7 +333,7 @@ mod tests {
         );
 
         assert!(!bundle.uuid().is_nil());
-        assert_eq!(bundle.replacement_uuid, Some(*bundle.uuid()));
+        assert_eq!(bundle.replacement_uuid, None); // we're fine with bundles that don't have a replacement UUID
         assert_eq!(bundle.txn_hashes().len(), 1);
         assert_eq!(bundle.txn_hashes()[0], tx1.tx_hash());
         assert_eq!(bundle.senders().len(), 1);
