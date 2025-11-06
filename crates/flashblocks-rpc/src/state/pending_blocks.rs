@@ -13,7 +13,7 @@ use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_eth_api::RpcBlock;
 
-use crate::subscription::Flashblock;
+use crate::types::Flashblock;
 
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,

@@ -2,9 +2,9 @@
 mod tests {
     use crate::rpc::{FlashblocksAPI, PendingBlocksAPI};
     use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::utils::create_test_provider_factory;
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use crate::types::{Flashblock, FlashblocksReceiver, Metadata};
     use alloy_consensus::crypto::secp256k1::public_key_to_address;
     use alloy_consensus::{BlockHeader, Receipt};
     use alloy_consensus::{Header, Transaction};
@@ -166,7 +166,7 @@ mod tests {
             let current_tip = self.current_canonical_block();
 
             let deposit_transaction =
-                OpTransactionSigned::decode_2718_exact(&BLOCK_INFO_TXN.iter().as_slice()).unwrap();
+                OpTransactionSigned::decode_2718_exact(BLOCK_INFO_TXN.iter().as_slice()).unwrap();
 
             let mut transactions: Vec<OpTransactionSigned> = vec![deposit_transaction];
             transactions.append(&mut user_transactions);
@@ -360,10 +360,10 @@ mod tests {
 
             let mut cumulative_gas_used = 0;
             for txn in transactions.iter() {
-                cumulative_gas_used = cumulative_gas_used + txn.gas_limit();
+                cumulative_gas_used += txn.gas_limit();
                 self.transactions.push(txn.encoded_2718().into());
                 self.receipts.insert(
-                    txn.hash().clone(),
+                    *txn.hash(),
                     OpReceipt::Eip1559(Receipt {
                         status: true.into(),
                         cumulative_gas_used,
@@ -479,7 +479,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -498,7 +498,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution in flashblock index 1");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -564,7 +564,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -632,7 +632,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -695,7 +695,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -733,7 +733,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -762,7 +762,7 @@ mod tests {
             .get_state_overrides()
             .expect("should be set from txn execution");
 
-        assert!(overrides.get(&test.address(User::Alice)).is_some());
+        assert!(overrides.contains_key(&test.address(User::Alice)));
         assert_eq!(
             overrides
                 .get(&test.address(User::Bob))
@@ -983,7 +983,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(test.flashblocks.get_pending_blocks().is_none(), true);
+        assert!(test.flashblocks.get_pending_blocks().is_none());
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::metrics::Metrics;
-use crate::pending_blocks::PendingBlocks;
+use crate::state::PendingBlocks;
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::map::foldhash::{HashSet, HashSetExt};
 use alloy_primitives::{Address, TxHash, U256};

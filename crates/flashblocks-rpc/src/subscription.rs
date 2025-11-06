@@ -1,14 +1,7 @@
-use std::{io::Read, sync::Arc, time::Duration};
-
-use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, B256, U256};
-use alloy_rpc_types_engine::PayloadId;
+use eyre::Context;
 use futures_util::{SinkExt as _, StreamExt};
-use reth_optimism_primitives::OpReceipt;
-use rollup_boost::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
-};
-use serde::{Deserialize, Serialize};
+use rollup_boost::FlashblocksPayloadV1;
+use std::{io::Read, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
@@ -16,32 +9,13 @@ use tracing::{error, info, trace, warn};
 use url::Url;
 
 use crate::metrics::Metrics;
+use crate::types::{Flashblock, FlashblocksReceiver};
 
 /// Interval of liveness check of upstream, in milliseconds.
 pub const PING_INTERVAL_MS: u64 = 500;
 
 /// Max duration of backoff before reconnecting to upstream.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
-
-pub trait FlashblocksReceiver {
-    fn on_flashblock_received(&self, flashblock: Flashblock);
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Metadata {
-    pub receipts: HashMap<B256, OpReceipt>,
-    pub new_account_balances: HashMap<Address, U256>,
-    pub block_number: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct Flashblock {
-    pub payload_id: PayloadId,
-    pub index: u64,
-    pub base: Option<ExecutionPayloadBaseV1>,
-    pub diff: ExecutionPayloadFlashblockDeltaV1,
-    pub metadata: Metadata,
-}
 
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
@@ -97,9 +71,9 @@ where
                                     metrics.upstream_messages.increment(1);
 
                                     match msg {
-                                        Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
-                                            Ok(payload) => {
-                                                let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
+                                        Ok(Message::Binary(bytes)) => match decode_flashblock(&bytes) {
+                                            Ok(flashblock) => {
+                                                let _ = sender.send(ActorMessage::BestPayload { payload: flashblock }).await.map_err(|e| {
                                                     error!(message = "Failed to publish message to channel", error = %e);
                                                 });
                                             }
@@ -144,7 +118,7 @@ where
                                             "No pong response from upstream, reconnecting",
                                         );
 
-                                        backoff = sleep(&metrics, backoff).await;
+                                        backoff = sleep_with_backoff(&metrics, backoff).await;
                                         break 'conn;
                                     }
 
@@ -160,7 +134,7 @@ where
                                             "WebSocket connection lost, reconnecting",
                                         );
 
-                                        backoff = sleep(&metrics, backoff).await;
+                                        backoff = sleep_with_backoff(&metrics, backoff).await;
                                         break 'conn;
                                     }
                                     awaiting_pong_resp = true
@@ -175,7 +149,7 @@ where
                             error = %e
                         );
 
-                        backoff = sleep(&metrics, backoff).await;
+                        backoff = sleep_with_backoff(&metrics, backoff).await;
                         continue;
                     }
                 }
@@ -196,49 +170,25 @@ where
 }
 
 /// Sleeps for given backoff duration. Returns incremented backoff duration, capped at [`MAX_BACKOFF`].
-async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
+async fn sleep_with_backoff(metrics: &Metrics, backoff: Duration) -> Duration {
     metrics.reconnect_attempts.increment(1);
     tokio::time::sleep(backoff).await;
     std::cmp::min(backoff * 2, MAX_BACKOFF)
 }
 
-fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {
-    let text = try_parse_message(bytes)?;
-
-    let payload: FlashblocksPayloadV1 = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(eyre::eyre!("failed to parse message: {}", e));
-        }
-    };
-
-    let metadata: Metadata = match serde_json::from_value(payload.metadata.clone()) {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(eyre::eyre!("failed to parse message metadata: {}", e));
-        }
-    };
-
-    Ok(Flashblock {
-        payload_id: payload.payload_id,
-        index: payload.index,
-        base: payload.base,
-        diff: payload.diff,
-        metadata,
-    })
-}
-
-fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
-    if let Ok(text) = String::from_utf8(bytes.to_vec())
+fn decode_flashblock(bytes: &[u8]) -> eyre::Result<Flashblock> {
+    let payload: FlashblocksPayloadV1 = if let Ok(text) = std::str::from_utf8(bytes)
         && text.trim_start().starts_with("{")
     {
-        return Ok(text);
-    }
+        serde_json::from_str(text).context("failed to parse message")?
+    } else {
+        let mut decompressor = brotli::Decompressor::new(bytes, 4096);
+        let mut decompressed = Vec::new();
+        decompressor.read_to_end(&mut decompressed)?;
+        let text = String::from_utf8(decompressed)?;
 
-    let mut decompressor = brotli::Decompressor::new(bytes, 4096);
-    let mut decompressed = Vec::new();
-    decompressor.read_to_end(&mut decompressed)?;
+        serde_json::from_str(&text).context("failed to parse message")?
+    };
 
-    let text = String::from_utf8(decompressed)?;
-    Ok(text)
+    Flashblock::try_from(payload)
 }

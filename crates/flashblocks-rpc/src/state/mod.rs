@@ -1,7 +1,10 @@
+mod pending_blocks;
+
+pub(crate) use pending_blocks::{PendingBlocks, PendingBlocksBuilder};
+
 use crate::metrics::Metrics;
-use crate::pending_blocks::{PendingBlocks, PendingBlocksBuilder};
 use crate::rpc::{FlashblocksAPI, PendingBlocksAPI};
-use crate::subscription::{Flashblock, FlashblocksReceiver};
+use crate::types::{Flashblock, FlashblocksReceiver};
 use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
 use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;

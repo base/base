@@ -2,8 +2,8 @@
 mod tests {
     use crate::rpc::{EthApiExt, EthApiOverrideServer};
     use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use crate::types::{Flashblock, FlashblocksReceiver, Metadata};
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
@@ -31,7 +31,7 @@ mod tests {
     use reth_provider::providers::BlockchainProvider;
     use reth_rpc_eth_api::RpcReceipt;
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-    use serde_json;
+
     use std::any::Any;
     use std::net::SocketAddr;
     use std::str::FromStr;
@@ -245,8 +245,7 @@ mod tests {
                 address: COUNTER_ADDRESS,
                 data: LogData::new(
                     vec![TEST_LOG_TOPIC_0, TEST_LOG_TOPIC_1, TEST_LOG_TOPIC_2],
-                    bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000")
-                        .into(), // 1 ETH in wei
+                    bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000"), // 1 ETH in wei
                 )
                 .unwrap(),
             },
@@ -254,8 +253,7 @@ mod tests {
                 address: TEST_ADDRESS,
                 data: LogData::new(
                     vec![TEST_LOG_TOPIC_0],
-                    bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
-                        .into(), // Value: 1
+                    bytes!("0x0000000000000000000000000000000000000000000000000000000000000001"), // Value: 1
                 )
                 .unwrap(),
             },
@@ -294,7 +292,7 @@ mod tests {
     );
 
     fn create_second_payload() -> Flashblock {
-        let payload = Flashblock {
+        Flashblock {
             payload_id: PayloadId::new([0; 8]),
             index: 1,
             base: None,
@@ -371,9 +369,7 @@ mod tests {
                     map
                 },
             },
-        };
-
-        payload
+        }
     }
 
     #[tokio::test]
@@ -392,7 +388,7 @@ mod tests {
         let pending_block = provider
             .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
             .await?;
-        assert_eq!(pending_block.is_none(), true);
+        assert!(pending_block.is_none());
 
         let base_payload = create_first_payload();
         node.send_payload(base_payload).await?;
@@ -484,7 +480,7 @@ mod tests {
         let provider = node.provider().await?;
 
         let receipt = provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?;
-        assert_eq!(receipt.is_none(), true);
+        assert!(receipt.is_none());
 
         node.send_test_payloads().await?;
 
