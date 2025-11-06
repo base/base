@@ -1,29 +1,6 @@
 //! EIP-4337 Account Abstraction RPC API
-//!
-//! This module provides unified RPC endpoints that support both v0.6 and v0.7+ specifications.
-//! Version detection is automatic based on the fields present in the JSON request.
-//!
-//! ## Version Detection:
-//!
-//! The `UserOperation` enum uses `#[serde(untagged)]` to automatically parse either version:
-//! - If `initCode` and `paymasterAndData` fields are present → v0.6
-//! - If `factory`, `factoryData`, and separate paymaster fields are present → v0.7+
-//!
-//! ## Key Differences:
-//!
-//! ### v0.6 (UserOperationV06)
-//! - Single `initCode` field (20-byte factory address + calldata)
-//! - Single `paymasterAndData` field (20-byte paymaster address + calldata)
-//! - Used with v0.6 EntryPoint contracts
-//!
-//! ### v0.7+ (UserOperationV07)
-//! - Separate `factory` and `factoryData` fields (replacing `initCode`)
-//! - Separate `paymaster`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit`, and `paymasterData` fields
-//! - Supports EIP-7702 delegated accounts via special `0x7702` factory flag
-//! - RPC APIs accept unpacked UserOperation format
-//! - PackedUserOperation is used internally for on-chain EntryPoint calls (gas-optimized encoding)
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{address, Address, Bytes, B256, U256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -32,6 +9,15 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use serde::{Deserialize, Serialize};
 use tracing::info;
+
+/// EntryPoint v0.6 address
+const ENTRYPOINT_V06: Address = address!("5ff137d4b0fdcd49dca30c7cf57e578a026d2789");
+
+/// EntryPoint v0.7 address
+const ENTRYPOINT_V07: Address = address!("0000000071727de22e5e9d8baf0edac6f37da032");
+
+/// EntryPoint v0.8 address
+const ENTRYPOINT_V08: Address = address!("4337084d9e255ff0702461cf8895ce9e3b5ff108");
 
 /// User Operation as defined by EIP-4337 v0.6
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,9 +295,7 @@ where
     async fn supported_entry_points(&self) -> RpcResult<Vec<Address>> {
         info!("Received supportedEntryPoints request");
 
-        // TODO: Return configured entry points (both v0.6 and v0.7)
-
-        Ok(Vec::new())
+        Ok(vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08])
     }
 }
 
