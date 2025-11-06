@@ -15,6 +15,8 @@
 - [Operator Fee](#operator-fee)
   - [Fee Formula Update](#fee-formula-update)
   - [Maximum value](#maximum-value)
+- [EVM Changes](#evm-changes)
+  - [Precompile Input Size Restrictions](#precompile-input-size-restrictions)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -182,3 +184,13 @@ $$
 $$
 
 Implementations that use `uint256` for intermediate arithmetic do not need additional overflow checks.
+
+## EVM Changes
+
+### Precompile Input Size Restrictions
+
+Some precompiles have changes to the input size restrictions. The new input size restrictions are:
+- `bn256Pairing`: 81,984 bytes (427 pairs)
+- `BLS12-381 G1 MSM`: 288,960 bytes (1,806 pairs)
+- `BLS12-381 G2 MSM`: 278,784 bytes (968 pairs)
+- `BLS12-381 Pairing`: 156,672 bytes (408 pairs)
