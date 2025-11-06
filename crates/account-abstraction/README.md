@@ -2,6 +2,48 @@
 
 RPC endpoints for EIP-4337 account abstraction bundler operations.
 
+## Quick Start
+
+### Run a Local Dev Node
+
+The easiest way to test the Account Abstraction endpoints:
+
+```bash
+# Start a fresh local dev node with account abstraction enabled
+./crates/account-abstraction/start_dev_node.sh
+
+# In another terminal, test all the RPC endpoints
+./crates/account-abstraction/test_rpc.sh
+```
+
+See [DEV_NODE.md](./DEV_NODE.md) for detailed instructions.
+
+### Manual Integration
+
+To enable account abstraction on any node:
+
+```bash
+cargo run -p base-reth-node -- \
+  --enable-account-abstraction \
+  --http \
+  --http.api all
+```
+
+## Version Support
+
+This implementation supports **both EIP-4337 v0.6 and v0.7+** specifications. Version detection is automatic based on the fields present in the JSON request:
+
+- **v0.6**: Uses `initCode` and `paymasterAndData` fields
+- **v0.7+**: Uses `factory`, `factoryData`, and separate paymaster fields
+
+No version tagging is required - the API automatically detects and processes the correct version.
+
+---
+
+## RPC Endpoints
+
+RPC endpoints for EIP-4337 account abstraction bundler operations. These are defined in (ERC-7769)[https://eips.ethereum.org/EIPS/eip-7769]
+
 ## `eth_sendUserOperation`
 
 Submits a User Operation object to the bundler pool to be included in a future block.

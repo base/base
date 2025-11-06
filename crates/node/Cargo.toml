@@ -16,6 +16,7 @@ workspace = true
 base-reth-flashblocks-rpc.workspace = true
 base-reth-metering.workspace = true
 base-reth-transaction-tracing.workspace = true
+base-reth-account-abstraction.workspace = true
 
 # reth
 reth.workspace = true

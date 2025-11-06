@@ -1497,6 +1497,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-account-abstraction"
+version = "0.1.13"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "eyre",
+ "jsonrpsee 0.26.0",
+ "reth",
+ "reth-evm 1.8.2",
+ "reth-optimism-chainspec 1.8.2",
+ "reth-optimism-cli",
+ "reth-optimism-evm 1.8.2",
+ "reth-optimism-primitives 1.8.2",
+ "reth-primitives",
+ "reth-primitives-traits 1.8.2",
+ "reth-provider",
+ "reth-transaction-pool 1.8.2",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "base-reth-flashblocks-rpc"
 version = "0.1.13"
 dependencies = [
@@ -1600,6 +1623,7 @@ dependencies = [
  "alloy-rpc-types-engine",
  "alloy-rpc-types-eth",
  "alloy-trie",
+ "base-reth-account-abstraction",
  "base-reth-flashblocks-rpc",
  "base-reth-metering",
  "base-reth-transaction-tracing",

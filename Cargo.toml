@@ -9,6 +9,7 @@ repository = "https://github.com/base/node-reth"
 [workspace]
 resolver = "2"
 members = [
+    "crates/account-abstraction",
     "crates/flashblocks-rpc",
     "crates/metering",
     "crates/node",
@@ -38,6 +39,7 @@ codegen-units = 1
 
 [workspace.dependencies]
 # internal
+base-reth-account-abstraction = { path = "crates/account-abstraction" }
 base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-metering = { path = "crates/metering" }
 base-reth-node = { path = "crates/node" }

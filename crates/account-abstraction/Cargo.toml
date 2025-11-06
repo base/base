@@ -20,7 +20,9 @@ reth-primitives-traits.workspace = true
 reth-evm.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
+reth-optimism-primitives.workspace = true
 reth-transaction-pool.workspace = true
+reth-optimism-cli.workspace = true  # Enables serde & codec traits for OpReceipt/OpTxEnvelope
 
 # alloy
 alloy-primitives.workspace = true
@@ -35,9 +37,5 @@ serde.workspace = true
 eyre.workspace = true
 
 [dev-dependencies]
-alloy-genesis.workspace = true
-rand.workspace = true
-reth-db = { workspace = true, features = ["test-utils"] }
-reth-testing-utils.workspace = true
-tokio.workspace = true
+serde_json.workspace = true
 

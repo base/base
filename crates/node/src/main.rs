@@ -12,6 +12,10 @@ use base_reth_flashblocks_rpc::state::FlashblocksState;
 use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
+use base_reth_account_abstraction::{
+    AccountAbstractionApiImpl, AccountAbstractionApiServer, BaseAccountAbstractionApiImpl,
+    BaseAccountAbstractionApiServer,
+};
 use clap::Parser;
 use reth::builder::{Node, NodeHandle};
 use reth::{
@@ -55,6 +59,10 @@ struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Enable account abstraction (EIP-4337) RPC endpoints
+    #[arg(long = "enable-account-abstraction", value_name = "ENABLE_ACCOUNT_ABSTRACTION")]
+    pub enable_account_abstraction: bool,
 }
 
 impl Args {
@@ -94,6 +102,7 @@ fn main() {
             let flashblocks_enabled = args.flashblocks_enabled();
             let transaction_tracing_enabled = args.enable_transaction_tracing;
             let metering_enabled = args.enable_metering;
+            let account_abstraction_enabled = args.enable_account_abstraction;
             let op_node = OpNode::new(args.rollup_args.clone());
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
@@ -142,6 +151,17 @@ fn main() {
                         info!(message = "Starting Metering RPC");
                         let metering_api = MeteringApiImpl::new(ctx.provider().clone());
                         ctx.modules.merge_configured(metering_api.into_rpc())?;
+                    }
+
+                    if account_abstraction_enabled {
+                        info!(message = "Starting Account Abstraction RPC (EIP-4337)");
+                        let aa_api = AccountAbstractionApiImpl::new(ctx.provider().clone());
+                        ctx.modules.merge_configured(aa_api.into_rpc())?;
+
+                        let base_aa_api = BaseAccountAbstractionApiImpl::new(ctx.provider().clone());
+                        ctx.modules.merge_configured(base_aa_api.into_rpc())?;
+
+                        info!(message = "Account Abstraction RPC endpoints registered");
                     }
 
                     if flashblocks_enabled {

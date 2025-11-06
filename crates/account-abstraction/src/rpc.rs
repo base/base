@@ -1,3 +1,28 @@
+//! EIP-4337 Account Abstraction RPC API
+//!
+//! This module provides unified RPC endpoints that support both v0.6 and v0.7+ specifications.
+//! Version detection is automatic based on the fields present in the JSON request.
+//!
+//! ## Version Detection:
+//!
+//! The `UserOperation` enum uses `#[serde(untagged)]` to automatically parse either version:
+//! - If `initCode` and `paymasterAndData` fields are present → v0.6
+//! - If `factory`, `factoryData`, and separate paymaster fields are present → v0.7+
+//!
+//! ## Key Differences:
+//!
+//! ### v0.6 (UserOperationV06)
+//! - Single `initCode` field (20-byte factory address + calldata)
+//! - Single `paymasterAndData` field (20-byte paymaster address + calldata)
+//! - Used with v0.6 EntryPoint contracts
+//!
+//! ### v0.7+ (UserOperationV07)
+//! - Separate `factory` and `factoryData` fields (replacing `initCode`)
+//! - Separate `paymaster`, `paymasterVerificationGasLimit`, `paymasterPostOpGasLimit`, and `paymasterData` fields
+//! - Supports EIP-7702 delegated accounts via special `0x7702` factory flag
+//! - RPC APIs accept unpacked UserOperation format
+//! - PackedUserOperation is used internally for on-chain EntryPoint calls (gas-optimized encoding)
+
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
@@ -8,10 +33,10 @@ use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-/// User Operation as defined by EIP-4337
+/// User Operation as defined by EIP-4337 v0.6
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UserOperation {
+pub struct UserOperationV06 {
     pub sender: Address,
     pub nonce: U256,
     pub init_code: Bytes,
@@ -21,6 +46,51 @@ pub struct UserOperation {
     pub pre_verification_gas: U256,
     pub max_fee_per_gas: U256,
     pub max_priority_fee_per_gas: U256,
+    pub paymaster_and_data: Bytes,
+    pub signature: Bytes,
+}
+
+/// User Operation as defined by EIP-4337 v0.7+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserOperationV07 {
+    pub sender: Address,
+    pub nonce: U256,
+    pub factory: Address,
+    pub factory_data: Bytes,
+    pub call_data: Bytes,
+    pub call_gas_limit: U256,
+    pub verification_gas_limit: U256,
+    pub pre_verification_gas: U256,
+    pub max_fee_per_gas: U256,
+    pub max_priority_fee_per_gas: U256,
+    pub paymaster: Address,
+    pub paymaster_verification_gas_limit: U256,
+    pub paymaster_post_op_gas_limit: U256,
+    pub paymaster_data: Bytes,
+    pub signature: Bytes,
+}
+
+/// User Operation that can be either v0.6 or v0.7+
+/// Automatically deserializes based on fields present
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UserOperation {
+    V06(UserOperationV06),
+    V07(UserOperationV07),
+}
+
+/// Packed User Operation (on-chain format for v0.7+ EntryPoint)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackedUserOperation {
+    pub sender: Address,
+    pub nonce: U256,
+    pub init_code: Bytes,
+    pub call_data: Bytes,
+    pub account_gas_limits: Bytes,
+    pub pre_verification_gas: U256,
+    pub gas_fees: Bytes,
     pub paymaster_and_data: Bytes,
     pub signature: Bytes,
 }
@@ -69,7 +139,7 @@ pub struct ValidationResult {
     pub reason: Option<String>,
 }
 
-/// RPC API for EIP-4337 account abstraction
+/// RPC API for EIP-4337 account abstraction (supports v0.6 and v0.7+)
 #[rpc(server, namespace = "eth")]
 pub trait AccountAbstractionApi {
     /// Submits a User Operation to the bundler pool
@@ -107,7 +177,7 @@ pub trait AccountAbstractionApi {
     async fn supported_entry_points(&self) -> RpcResult<Vec<Address>>;
 }
 
-/// Base namespace RPC API for account abstraction
+/// Base namespace RPC API for account abstraction (supports v0.6 and v0.7+)
 #[rpc(server, namespace = "base")]
 pub trait BaseAccountAbstractionApi {
     /// Validates a User Operation without submitting it
@@ -149,16 +219,29 @@ where
         user_operation: UserOperation,
         entry_point: Address,
     ) -> RpcResult<B256> {
-        info!(
-            sender = %user_operation.sender,
-            entry_point = %entry_point,
-            "Received sendUserOperation request"
-        );
+        match &user_operation {
+            UserOperation::V06(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received sendUserOperation request (v0.6)"
+                );
+                // TODO: Validate v0.6 user operation
+                // TODO: Submit to bundler pool
+            }
+            UserOperation::V07(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received sendUserOperation request (v0.7+)"
+                );
+                // TODO: Validate v0.7 user operation
+                // TODO: Convert to PackedUserOperation for on-chain submission
+                // TODO: Submit to bundler pool
+            }
+        }
 
-        // TODO: Validate user operation
-        // TODO: Submit to bundler pool
         // TODO: Return user operation hash
-
         Ok(B256::default())
     }
 
@@ -167,15 +250,27 @@ where
         user_operation: UserOperation,
         entry_point: Address,
     ) -> RpcResult<UserOperationGasEstimate> {
-        info!(
-            sender = %user_operation.sender,
-            entry_point = %entry_point,
-            "Received estimateUserOperationGas request"
-        );
+        match &user_operation {
+            UserOperation::V06(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received estimateUserOperationGas request (v0.6)"
+                );
+                // TODO: Simulate v0.6 user operation
+            }
+            UserOperation::V07(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received estimateUserOperationGas request (v0.7+)"
+                );
+                // TODO: Convert to PackedUserOperation for simulation
+                // TODO: Simulate v0.7 user operation
+            }
+        }
 
-        // TODO: Simulate user operation
         // TODO: Estimate gas requirements
-
         Ok(UserOperationGasEstimate {
             pre_verification_gas: U256::from(21000),
             verification_gas_limit: U256::from(100000),
@@ -192,7 +287,7 @@ where
             "Received getUserOperationByHash request"
         );
 
-        // TODO: Lookup user operation from storage
+        // TODO: Lookup user operation from storage (will be either v0.6 or v0.7)
 
         Ok(None)
     }
@@ -214,7 +309,7 @@ where
     async fn supported_entry_points(&self) -> RpcResult<Vec<Address>> {
         info!("Received supportedEntryPoints request");
 
-        // TODO: Return configured entry points
+        // TODO: Return configured entry points (both v0.6 and v0.7)
 
         Ok(Vec::new())
     }
@@ -250,15 +345,29 @@ where
         user_operation: UserOperation,
         entry_point: Address,
     ) -> RpcResult<ValidationResult> {
-        info!(
-            sender = %user_operation.sender,
-            entry_point = %entry_point,
-            "Received validateUserOperation request"
-        );
-
-        // TODO: Validate user operation per EIP-4337
-        // TODO: Check signature, nonce, gas limits
-        // TODO: Simulate validation on entry point
+        match &user_operation {
+            UserOperation::V06(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received validateUserOperation request (v0.6)"
+                );
+                // TODO: Validate user operation per EIP-4337 v0.6
+                // TODO: Check signature, nonce, gas limits
+                // TODO: Simulate validation on entry point
+            }
+            UserOperation::V07(op) => {
+                info!(
+                    sender = %op.sender,
+                    entry_point = %entry_point,
+                    "Received validateUserOperation request (v0.7+)"
+                );
+                // TODO: Convert to PackedUserOperation for validation
+                // TODO: Validate user operation per EIP-4337 v0.7+
+                // TODO: Check signature, nonce, gas limits
+                // TODO: Simulate validation on entry point
+            }
+        }
 
         Ok(ValidationResult {
             valid: true,
