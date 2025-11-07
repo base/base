@@ -14,6 +14,7 @@ Create a `.env.upgrade` file in the `fault-proof` directory with the following v
 
 | Variable | Description | Example |
 |----------|-------------|---------|
+| `L1_RPC` | L1 RPC endpoint URL | `http://127.0.0.1:32935` |
 | `FACTORY_ADDRESS` | Address of the existing DisputeGameFactory | `0x...` |
 | `GAME_TYPE` | Unique identifier for the game type (uint32) | `42` |
 | `MAX_CHALLENGE_DURATION` | Maximum duration for challenges in seconds | `604800` for 7 days |
@@ -57,12 +58,12 @@ Use `cast --to-wei <value> eth` to convert the value to wei to avoid mistakes.
 
 ## Upgrade Command
 
-Dry run the upgrade command in the root directory of the project:
+Dry run the upgrade command and print the calldata for upgrade call:
 ```bash
 DRY_RUN=true just upgrade-fault-dispute-game
 ```
 
-Run the upgrade command in the root directory of the project:
+Run the upgrade command (requires `PRIVATE_KEY` in `.env.upgrade`):
 ```bash
 DRY_RUN=false just upgrade-fault-dispute-game
 ```
