@@ -16,9 +16,10 @@ use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
 };
 use tokio::sync::mpsc;
-use tokio::time::Instant;
+use tokio::time::{Duration, Instant, timeout};
 use tracing::{info, warn};
 
+use crate::Config;
 use crate::metrics::{Metrics, record_histogram};
 use crate::queue::QueuePublisher;
 use crate::validation::{AccountInfoLookup, L1BlockInfoLookup, validate_bundle, validate_tx};
@@ -47,27 +48,28 @@ pub struct IngressService<Queue> {
     send_transaction_default_lifetime_seconds: u64,
     metrics: Metrics,
     block_time_milliseconds: u64,
+    meter_bundle_timeout_ms: u64,
 }
 
 impl<Queue> IngressService<Queue> {
     pub fn new(
         provider: RootProvider<Optimism>,
         simulation_provider: RootProvider<Optimism>,
-        dual_write_mempool: bool,
         queue: Queue,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
-        send_transaction_default_lifetime_seconds: u64,
-        block_time_milliseconds: u64,
+        config: Config,
     ) -> Self {
         Self {
             provider,
             simulation_provider,
-            dual_write_mempool,
+            dual_write_mempool: config.dual_write_mempool,
             bundle_queue: queue,
             audit_channel,
-            send_transaction_default_lifetime_seconds,
+            send_transaction_default_lifetime_seconds: config
+                .send_transaction_default_lifetime_seconds,
             metrics: Metrics::default(),
-            block_time_milliseconds,
+            block_time_milliseconds: config.block_time_milliseconds,
+            meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
         }
     }
 }
@@ -79,13 +81,14 @@ where
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
         self.validate_bundle(&bundle).await?;
-        let meter_bundle_response = self.meter_bundle(&bundle).await?;
         let parsed_bundle: ParsedBundle = bundle
+            .clone()
             .try_into()
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
+        let bundle_hash = &parsed_bundle.bundle_hash();
+        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
         let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
 
-        let bundle_hash = &accepted_bundle.bundle_hash();
         if let Err(e) = self
             .bundle_queue
             .publish(&accepted_bundle, bundle_hash)
@@ -140,13 +143,15 @@ where
             reverting_tx_hashes: vec![transaction.tx_hash()],
             ..Default::default()
         };
-        let meter_bundle_response = self.meter_bundle(&bundle).await?;
-
         let parsed_bundle: ParsedBundle = bundle
+            .clone()
             .try_into()
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
+
+        let bundle_hash = &parsed_bundle.bundle_hash();
+        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
+
         let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
-        let bundle_hash = &accepted_bundle.bundle_hash();
 
         if let Err(e) = self
             .bundle_queue
@@ -253,14 +258,32 @@ where
     /// `meter_bundle` is used to determine how long a bundle will take to execute. A bundle that
     /// is within `block_time_milliseconds` will return the `MeterBundleResponse` that can be passed along
     /// to the builder.
-    async fn meter_bundle(&self, bundle: &Bundle) -> RpcResult<MeterBundleResponse> {
+    async fn meter_bundle(
+        &self,
+        bundle: &Bundle,
+        bundle_hash: &B256,
+    ) -> RpcResult<MeterBundleResponse> {
         let start = Instant::now();
-        let res: MeterBundleResponse = self
-            .simulation_provider
-            .client()
-            .request("base_meterBundle", (bundle,))
-            .await
-            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        let timeout_duration = Duration::from_millis(self.meter_bundle_timeout_ms);
+
+        // The future we await has the nested type:
+        // Result<
+        //   RpcResult<MeterBundleResponse>, // 1. The inner operation's result
+        //   tokio::time::error::Elapsed     // 2. The outer timeout's result
+        // >
+        let res: MeterBundleResponse = timeout(
+            timeout_duration,
+            self.simulation_provider
+                .client()
+                .request("base_meterBundle", (bundle,)),
+        )
+        .await
+        .map_err(|_| {
+            warn!(message = "Timed out on requesting metering", bundle_hash = %bundle_hash);
+            EthApiError::InvalidParams("Timeout on requesting metering".into()).into_rpc_err()
+        })?
+        .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+
         record_histogram(start.elapsed(), "base_meterBundle".to_string());
 
         // we can save some builder payload building computation by not including bundles
@@ -272,5 +295,56 @@ where
             );
         }
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tips_core::test_utils::create_test_meter_bundle_response;
+
+    #[tokio::test]
+    async fn test_timeout_logic() {
+        let timeout_duration = Duration::from_millis(100);
+
+        // Test a future that takes longer than the timeout
+        let slow_future = async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            Ok::<MeterBundleResponse, anyhow::Error>(create_test_meter_bundle_response())
+        };
+
+        let result = timeout(timeout_duration, slow_future)
+            .await
+            .map_err(|_| {
+                EthApiError::InvalidParams("Timeout on requesting metering".into()).into_rpc_err()
+            })
+            .map_err(|e| e.to_string());
+
+        assert!(result.is_err());
+        let error_string = format!("{:?}", result.unwrap_err());
+        assert!(error_string.contains("Timeout on requesting metering"));
+    }
+
+    #[tokio::test]
+    async fn test_timeout_logic_success() {
+        let timeout_duration = Duration::from_millis(200);
+
+        // Test a future that completes within the timeout
+        let fast_future = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok::<MeterBundleResponse, anyhow::Error>(create_test_meter_bundle_response())
+        };
+
+        let result = timeout(timeout_duration, fast_future)
+            .await
+            .map_err(|_| {
+                EthApiError::InvalidParams("Timeout on requesting metering".into()).into_rpc_err()
+            })
+            .map_err(|e| e.to_string());
+
+        assert!(result.is_ok());
+        // we're assumging that `base_meterBundle` will not error hence the second unwrap
+        let res = result.unwrap().unwrap();
+        assert_eq!(res, create_test_meter_bundle_response());
     }
 }
