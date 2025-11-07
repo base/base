@@ -13,8 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tips_audit::{BundleEvent, BundleEventPublisher};
 use tips_core::types::ParsedBundle;
 use tips_core::{
-    AcceptedBundle, BLOCK_TIME, Bundle, BundleExtensions, BundleHash, CancelBundle,
-    MeterBundleResponse,
+    AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
 };
 use tokio::time::Instant;
 use tracing::{info, warn};
@@ -46,6 +45,7 @@ pub struct IngressService<Queue, Audit> {
     audit_publisher: Audit,
     send_transaction_default_lifetime_seconds: u64,
     metrics: Metrics,
+    block_time_milliseconds: u64,
 }
 
 impl<Queue, Audit> IngressService<Queue, Audit> {
@@ -56,6 +56,7 @@ impl<Queue, Audit> IngressService<Queue, Audit> {
         queue: Queue,
         audit_publisher: Audit,
         send_transaction_default_lifetime_seconds: u64,
+        block_time_milliseconds: u64,
     ) -> Self {
         Self {
             provider,
@@ -65,6 +66,7 @@ impl<Queue, Audit> IngressService<Queue, Audit> {
             audit_publisher,
             send_transaction_default_lifetime_seconds,
             metrics: Metrics::default(),
+            block_time_milliseconds,
         }
     }
 }
@@ -244,7 +246,7 @@ where
     }
 
     /// `meter_bundle` is used to determine how long a bundle will take to execute. A bundle that
-    /// is within `BLOCK_TIME` will return the `MeterBundleResponse` that can be passed along
+    /// is within `block_time_milliseconds` will return the `MeterBundleResponse` that can be passed along
     /// to the builder.
     async fn meter_bundle(&self, bundle: &Bundle) -> RpcResult<MeterBundleResponse> {
         let start = Instant::now();
@@ -258,7 +260,8 @@ where
 
         // we can save some builder payload building computation by not including bundles
         // that we know will take longer than the block time to execute
-        if res.total_execution_time_us > BLOCK_TIME {
+        let total_execution_time = (res.total_execution_time_us / 1_000) as u64;
+        if total_execution_time > self.block_time_milliseconds {
             return Err(
                 EthApiError::InvalidParams("Bundle simulation took too long".into()).into_rpc_err(),
             );

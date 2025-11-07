@@ -8,9 +8,6 @@ use op_alloy_flz::tx_estimated_size_fjord_bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Block time in microseconds
-pub const BLOCK_TIME: u128 = 2_000_000;
-
 /// `Bundle` is the type that mirrors `EthSendBundle` and is used for the API.
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
