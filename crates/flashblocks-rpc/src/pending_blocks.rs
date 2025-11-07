@@ -153,6 +153,10 @@ impl PendingBlocks {
         BlockNumberOrTag::Number(self.headers.first().unwrap().number - 1)
     }
 
+    pub fn earliest_block_number(&self) -> BlockNumber {
+        self.headers.first().unwrap().number
+    }
+
     pub fn latest_flashblock_index(&self) -> u64 {
         self.flashblocks.last().unwrap().index
     }

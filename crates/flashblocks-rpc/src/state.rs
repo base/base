@@ -72,13 +72,14 @@ where
         + Clone
         + 'static,
 {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, max_pending_blocks_depth: u64) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
         let (flashblock_sender, _) = broadcast::channel(BUFFER_SIZE);
         let state_processor = StateProcessor::new(
             client,
             pending_blocks.clone(),
+            max_pending_blocks_depth,
             Arc::new(Mutex::new(rx)),
             flashblock_sender.clone(),
         );
@@ -179,6 +180,7 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
 struct StateProcessor<Client> {
     rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+    max_depth: u64,
     metrics: Metrics,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
@@ -195,10 +197,11 @@ where
     fn new(
         client: Client,
         pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+        max_depth: u64,
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
-        Self { metrics: Metrics::default(), pending_blocks, client, rx, sender }
+        Self { metrics: Metrics::default(), pending_blocks, client, max_depth, rx, sender }
     }
 
     async fn start(&self) {
@@ -292,6 +295,18 @@ where
                         self.metrics.pending_clear_reorg.increment(1);
 
                         // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
+                        return self.build_pending_state(None, &flashblocks);
+                    }
+
+                    let pending_blocks_depth =
+                        block.number - pending_blocks.earliest_block_number() - 1;
+                    if pending_blocks_depth > self.max_depth {
+                        debug!(
+                            message =
+                                "pending blocks depth exceeds max depth, resetting pending blocks",
+                            pending_blocks_depth = pending_blocks_depth,
+                            max_depth = self.max_depth,
+                        );
                         return self.build_pending_state(None, &flashblocks);
                     }
 

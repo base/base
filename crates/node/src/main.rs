@@ -35,6 +35,13 @@ struct Args {
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
 
+    #[arg(
+        long = "max-pending-blocks-depth",
+        value_name = "MAX_PENDING_BLOCKS_DEPTH",
+        default_value = "5"
+    )]
+    pub max_pending_blocks_depth: u64,
+
     /// Enable transaction tracing ExEx for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
@@ -105,7 +112,12 @@ fn main() {
                     let fb_cell = fb_cell.clone();
                     move |mut ctx| async move {
                         let fb = fb_cell
-                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(
+                                    ctx.provider().clone(),
+                                    args.max_pending_blocks_depth,
+                                ))
+                            })
                             .clone();
                         Ok(async move {
                             while let Some(note) = ctx.notifications.try_next().await? {
@@ -139,7 +151,12 @@ fn main() {
                         )?;
 
                         let fb = fb_cell
-                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(
+                                    ctx.provider().clone(),
+                                    args.max_pending_blocks_depth,
+                                ))
+                            })
                             .clone();
                         fb.start();
 
