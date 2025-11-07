@@ -361,7 +361,7 @@ tests:
    cargo t --release \
     -- \
     --skip test_cycle_count_diff \
-    --skip test_post_to_github \
+    --skip test_post_to_github
 
 # Run end-to-end tests.
 e2e-tests:

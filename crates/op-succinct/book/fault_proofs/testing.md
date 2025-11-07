@@ -56,6 +56,9 @@ the dispute game factory, and warps Anvil time to exercise full lifecycles. Each
   - **Phase 3: Resolution** – The clock is warped past both challenge and prove windows, ensuring
     `ChallengerWins`.
   - **Phase 4: Bond Claims** – Challenger recovers bonds once the finality delay elapses.
+- `test_proposer_retains_anchor_after_bond_claim()`: Verifies proposer internal state consistency.
+  Drives the proposer through game creation, resolution, and bond claims, then asserts that the
+  cached anchor game remains in the cache after the bond claim.
 
 #### Game Type Transition
 
