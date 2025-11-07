@@ -36,9 +36,9 @@ patterns.
 
 ### AddressManager
 
-A legacy contract that maintains a registry mapping string names to addresses. Used in the pre-Bedrock Optimism system
-for contract address resolution. The ResolvedDelegateProxy queries the AddressManager to dynamically resolve its
-implementation address using a configured implementation name.
+A legacy contract that maintains an [Address Registry](./address-manager.md#address-registry) mapping string names to
+addresses. The ResolvedDelegateProxy queries the AddressManager to dynamically resolve its implementation address using
+a configured implementation name. See the [AddressManager specification](./address-manager.md) for details.
 
 ## Assumptions
 

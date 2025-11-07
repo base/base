@@ -6,6 +6,7 @@
 
 - [Overview](#overview)
 - [Definitions](#definitions)
+  - [Address Registry](#address-registry)
 - [Assumptions](#assumptions)
   - [a01-001: Owner governance constraints](#a01-001-owner-governance-constraints)
     - [Mitigations](#mitigations)
@@ -27,7 +28,10 @@ pattern, but this contract remains deployed for backwards compatibility with old
 
 ## Definitions
 
-N/A
+### Address Registry
+
+A mapping from string names to contract addresses, used in the pre-Bedrock Optimism system for contract address
+resolution. Names are hashed using `keccak256(abi.encodePacked(name))` before storage lookup.
 
 ## Assumptions
 

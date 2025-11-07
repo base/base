@@ -53,8 +53,7 @@ value, gas limit, and message data. Version 1 messages use a hash that commits t
 
 ### Message Nonce
 
-A monotonically increasing counter that uniquely identifies each sent message. The upper two bytes encode the message
-version while the lower bytes contain the sequential nonce value.
+See [Message Nonce](../L2/l2-to-l1-message-passer.md#message-nonce) in the L2ToL1MessagePasser specification.
 
 ### Base Gas
 
