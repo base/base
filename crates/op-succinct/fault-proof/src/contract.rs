@@ -59,6 +59,9 @@ sol! {
         /// @notice The L2 block number for which this game is proposing an output root.
         function l2BlockNumber() public pure returns (uint256 l2BlockNumber_);
 
+        /// @notice Only the starting block number of the game.
+        function startingBlockNumber() external view returns (uint256 startingBlockNumber_);
+
         /// @notice Getter for the root claim.
         function rootClaim() public pure returns (Claim rootClaim_);
 
