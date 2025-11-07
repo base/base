@@ -5,12 +5,13 @@ use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use std::net::{IpAddr, SocketAddr};
-use tips_audit::KafkaBundleEventPublisher;
+use tips_audit::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
 use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger;
 use tips_ingress_rpc::metrics::init_prometheus_exporter;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
 use tips_ingress_rpc::service::{IngressApiServer, IngressService};
+use tokio::sync::mpsc;
 use tracing::info;
 use url::Url;
 
@@ -132,13 +133,15 @@ async fn main() -> anyhow::Result<()> {
     let audit_producer: FutureProducer = audit_client_config.create()?;
 
     let audit_publisher = KafkaBundleEventPublisher::new(audit_producer, config.audit_topic);
+    let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
+    connect_audit_to_publisher(audit_rx, audit_publisher);
 
     let service = IngressService::new(
         provider,
         simulation_provider,
         config.dual_write_mempool,
         queue,
-        audit_publisher,
+        audit_tx,
         config.send_transaction_default_lifetime_seconds,
         config.block_time_milliseconds,
     );
