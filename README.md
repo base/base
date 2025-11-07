@@ -32,6 +32,7 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 
 - **Base L2 Support:** Optimized for the Base Layer 2 network.
 - **Flashblocks RPC:** Includes a `flashblocks-rpc` crate for Flashblocks.
+- **Metering RPC:** Transaction bundle simulation and metering via `base_meterBundle` for MEV and cost estimation.
 - **Reth Based:** Built upon Reth, see version pinned in [Cargo.toml](Cargo.toml).
 - **Dockerized:** Comes with a `Dockerfile` for easy containerization and deployment.
 - **Development Toolkit:** Includes a `justfile` for streamlined build, test, and linting workflows.
@@ -55,7 +56,8 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 ├── crates/
 │   ├── node/         # Main node application logic
 │   ├── transaction-tracing/ # Transaction tracing utilities
-│   └── flashblocks-rpc/ # RPC server for Flashblocks integration
+│   ├── flashblocks-rpc/ # RPC server for Flashblocks integration
+│   └── metering/     # Transaction bundle simulation and metering RPC
 ├── justfile          # Command runner for development tasks
 └── .github/
     └── workflows/
