@@ -12,7 +12,10 @@ use reth_rpc_eth_types::{EthApiError, RpcInvalidTransactionError, SignError};
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tips_core::Bundle;
+use tokio::time::Instant;
 use tracing::warn;
+
+use crate::metrics::record_histogram;
 
 const MAX_BUNDLE_GAS: u64 = 25_000_000;
 
@@ -33,10 +36,13 @@ pub trait AccountInfoLookup: Send + Sync {
 #[async_trait]
 impl AccountInfoLookup for RootProvider<Optimism> {
     async fn fetch_account_info(&self, address: Address) -> RpcResult<AccountInfo> {
+        let start = Instant::now();
         let account = self
             .get_account(address)
             .await
             .map_err(|_| EthApiError::Signing(SignError::NoAccount))?;
+        record_histogram(start.elapsed(), "eth_getAccount".to_string());
+
         Ok(AccountInfo {
             balance: account.balance,
             nonce: account.nonce,
@@ -55,6 +61,7 @@ pub trait L1BlockInfoLookup: Send + Sync {
 #[async_trait]
 impl L1BlockInfoLookup for RootProvider<Optimism> {
     async fn fetch_l1_block_info(&self) -> RpcResult<L1BlockInfo> {
+        let start = Instant::now();
         let block = self
             .get_block(BlockId::Number(BlockNumberOrTag::Latest))
             .full()
@@ -67,6 +74,7 @@ impl L1BlockInfoLookup for RootProvider<Optimism> {
                 warn!(message = "empty latest block returned");
                 EthApiError::InternalEthError.into_rpc_err()
             })?;
+        record_histogram(start.elapsed(), "eth_getBlockByNumber".to_string());
 
         let txs = block.transactions.clone();
         let first_tx = txs.first_transaction().ok_or_else(|| {

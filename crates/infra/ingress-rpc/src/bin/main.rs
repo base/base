@@ -4,10 +4,11 @@ use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use tips_audit::KafkaBundleEventPublisher;
 use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger;
+use tips_ingress_rpc::metrics::init_prometheus_exporter;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
 use tips_ingress_rpc::service::{IngressApiServer, IngressService};
 use tracing::info;
@@ -70,6 +71,14 @@ struct Config {
     /// URL of the simulation RPC service for bundle metering
     #[arg(long, env = "TIPS_INGRESS_RPC_SIMULATION")]
     simulation_rpc: Url,
+
+    /// Port to bind the Prometheus metrics server to
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_METRICS_ADDR",
+        default_value = "0.0.0.0:9002"
+    )]
+    metrics_addr: SocketAddr,
 }
 
 #[tokio::main]
@@ -80,12 +89,15 @@ async fn main() -> anyhow::Result<()> {
 
     init_logger(&config.log_level);
 
+    init_prometheus_exporter(config.metrics_addr).expect("Failed to install Prometheus exporter");
+
     info!(
         message = "Starting ingress service",
         address = %config.address,
         port = config.port,
         mempool_url = %config.mempool_url,
-        simulation_rpc = %config.simulation_rpc
+        simulation_rpc = %config.simulation_rpc,
+        metrics_address = %config.metrics_addr,
     );
 
     let provider: RootProvider<Optimism> = ProviderBuilder::new()

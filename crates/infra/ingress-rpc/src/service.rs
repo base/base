@@ -16,8 +16,10 @@ use tips_core::{
     AcceptedBundle, BLOCK_TIME, Bundle, BundleExtensions, BundleHash, CancelBundle,
     MeterBundleResponse,
 };
+use tokio::time::Instant;
 use tracing::{info, warn};
 
+use crate::metrics::{Metrics, record_histogram};
 use crate::queue::QueuePublisher;
 use crate::validation::{AccountInfoLookup, L1BlockInfoLookup, validate_bundle, validate_tx};
 
@@ -43,6 +45,7 @@ pub struct IngressService<Queue, Audit> {
     bundle_queue: Queue,
     audit_publisher: Audit,
     send_transaction_default_lifetime_seconds: u64,
+    metrics: Metrics,
 }
 
 impl<Queue, Audit> IngressService<Queue, Audit> {
@@ -61,6 +64,7 @@ impl<Queue, Audit> IngressService<Queue, Audit> {
             bundle_queue: queue,
             audit_publisher,
             send_transaction_default_lifetime_seconds,
+            metrics: Metrics::default(),
         }
     }
 }
@@ -116,6 +120,7 @@ where
     }
 
     async fn send_raw_transaction(&self, data: Bytes) -> RpcResult<B256> {
+        let start = Instant::now();
         let transaction = self.validate_tx(&data).await?;
 
         let expiry_timestamp = SystemTime::now()
@@ -175,6 +180,9 @@ where
             warn!(message = "Failed to publish audit event", bundle_id = %accepted_bundle.uuid(), error = %e);
         }
 
+        self.metrics
+            .send_raw_transaction_duration
+            .record(start.elapsed().as_secs_f64());
         Ok(transaction.tx_hash())
     }
 }
@@ -185,6 +193,7 @@ where
     Audit: BundleEventPublisher + Sync + Send + 'static,
 {
     async fn validate_tx(&self, data: &Bytes) -> RpcResult<Recovered<OpTxEnvelope>> {
+        let start = Instant::now();
         if data.is_empty() {
             return Err(EthApiError::EmptyRawTransactionData.into_rpc_err());
         }
@@ -204,10 +213,14 @@ where
             .await?;
         validate_tx(account, &transaction, data, &mut l1_block_info).await?;
 
+        self.metrics
+            .validate_tx_duration
+            .record(start.elapsed().as_secs_f64());
         Ok(transaction)
     }
 
     async fn validate_bundle(&self, bundle: &Bundle) -> RpcResult<()> {
+        let start = Instant::now();
         if bundle.txs.is_empty() {
             return Err(
                 EthApiError::InvalidParams("Bundle cannot have empty transactions".into())
@@ -224,6 +237,9 @@ where
         }
         validate_bundle(bundle, total_gas, tx_hashes)?;
 
+        self.metrics
+            .validate_bundle_duration
+            .record(start.elapsed().as_secs_f64());
         Ok(())
     }
 
@@ -231,12 +247,14 @@ where
     /// is within `BLOCK_TIME` will return the `MeterBundleResponse` that can be passed along
     /// to the builder.
     async fn meter_bundle(&self, bundle: &Bundle) -> RpcResult<MeterBundleResponse> {
+        let start = Instant::now();
         let res: MeterBundleResponse = self
             .simulation_provider
             .client()
             .request("base_meterBundle", (bundle,))
             .await
             .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        record_histogram(start.elapsed(), "base_meterBundle".to_string());
 
         // we can save some builder payload building computation by not including bundles
         // that we know will take longer than the block time to execute

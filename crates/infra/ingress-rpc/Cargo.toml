@@ -35,3 +35,6 @@ op-revm.workspace = true
 revm-context-interface.workspace = true
 alloy-signer-local.workspace = true
 reth-optimism-evm.workspace = true
+metrics.workspace = true
+metrics-derive.workspace = true
+metrics-exporter-prometheus.workspace = true
