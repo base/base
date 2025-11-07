@@ -1,7 +1,7 @@
 //! Contract deployment utilities for E2E tests.
-
 use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_rpc_types_eth::{transaction::request::TransactionInput, TransactionRequest};
+use alloy_sol_types::SolConstructor;
 use alloy_transport_http::reqwest::Url;
 use anyhow::{anyhow, Context, Result};
 use op_succinct_bindings::mock_permissioned_dispute_game::MockPermissionedDisputeGame;
@@ -120,11 +120,21 @@ pub async fn deploy_test_contracts(rpc_url: &str, private_key: &str) -> Result<D
     Ok(deployed_contracts)
 }
 
-pub async fn deploy_mock_permissioned_game(signer: &SignerLock, rpc: &Url) -> Result<Address> {
-    let bytecode = MockPermissionedDisputeGame::BYTECODE.clone();
+pub async fn deploy_mock_permissioned_game(
+    signer: &SignerLock,
+    rpc: &Url,
+    factory: Address,
+) -> Result<Address> {
+    let ctor_args =
+        MockPermissionedDisputeGame::constructorCall { _disputeGameFactory: factory }.abi_encode();
 
-    let request =
-        TransactionRequest { input: TransactionInput::new(bytecode), ..Default::default() };
+    let mut creation_code = MockPermissionedDisputeGame::BYTECODE.to_vec();
+    creation_code.extend_from_slice(&ctor_args);
+
+    let request = TransactionRequest {
+        input: TransactionInput::new(Bytes::from(creation_code)),
+        ..Default::default()
+    };
 
     let receipt = signer
         .send_transaction_request(rpc.clone(), request)
