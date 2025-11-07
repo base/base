@@ -6,6 +6,7 @@
 
 - [Overview](#overview)
 - [Definitions](#definitions)
+  - [AddressManager](#addressmanager)
 - [Assumptions](#assumptions)
   - [a01-001: AddressManager provides valid implementation addresses](#a01-001-addressmanager-provides-valid-implementation-addresses)
     - [Mitigations](#mitigations)
@@ -33,20 +34,24 @@ patterns.
 
 ## Definitions
 
-N/A
+### AddressManager
+
+A legacy contract that maintains a registry mapping string names to addresses. Used in the pre-Bedrock Optimism system
+for contract address resolution. The ResolvedDelegateProxy queries the AddressManager to dynamically resolve its
+implementation address using a configured implementation name.
 
 ## Assumptions
 
 ### a01-001: AddressManager provides valid implementation addresses
 
 The [AddressManager](./address-manager.md) contract returns valid, non-zero implementation addresses when queried with
-the configured implementation name. If the AddressManager returns the zero address or an invalid address, the proxy will
-fail to function.
+the configured implementation name. If the [AddressManager](#addressmanager) returns the zero address or an invalid
+address, the proxy will fail to function.
 
 #### Mitigations
 
 - The fallback function explicitly checks for zero address and reverts with a clear error message
-- AddressManager is controlled by governance with established processes for address updates
+- [AddressManager](#addressmanager) is controlled by governance with established processes for address updates
 - Legacy contracts using this proxy pattern are being phased out in favor of standard proxy patterns
 
 ### a01-002: Implementation storage layout compatibility
@@ -79,7 +84,7 @@ ETH transfers would fail or be misdirected, potentially leading to fund loss.
 ### i01-002: Implementation address resolution requirement
 
 All calls to the proxy MUST resolve to a non-zero implementation address before delegatecall execution. The proxy MUST
-revert if the AddressManager returns the zero address for the configured implementation name.
+revert if the [AddressManager](#addressmanager) returns the zero address for the configured implementation name.
 
 #### Impact
 
@@ -97,19 +102,19 @@ values are set once in the constructor and have no update mechanism.
 
 **Severity: High**
 
-If this invariant were violated, the proxy could resolve to unintended implementations or query the wrong AddressManager,
-breaking the contract's intended behavior. However, the contract has no functions to modify these values, making
-violation impossible without storage manipulation.
+If this invariant were violated, the proxy could resolve to unintended implementations or query the wrong
+[AddressManager](#addressmanager), breaking the contract's intended behavior. However, the contract has no functions to
+modify these values, making violation impossible without storage manipulation.
 
 ## Function Specification
 
 ### constructor
 
-Initializes the proxy with the AddressManager reference and implementation name.
+Initializes the proxy with the [AddressManager](#addressmanager) reference and implementation name.
 
 **Parameters:**
-- `_addressManager`: Address of the AddressManager contract that will resolve implementation addresses
-- `_implementationName`: String name used to query the implementation address from the AddressManager
+- `_addressManager`: Address of the [AddressManager](#addressmanager) contract that will resolve implementation addresses
+- `_implementationName`: String name used to query the implementation address from the [AddressManager](#addressmanager)
 
 **Behavior:**
 - MUST store `_addressManager` in `addressManager[address(this)]`

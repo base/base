@@ -6,6 +6,7 @@
 
 - [Overview](#overview)
 - [Definitions](#definitions)
+  - [MintManager](#mintmanager)
 - [Assumptions](#assumptions)
   - [aGT-001: Owner operates within governance constraints](#agt-001-owner-operates-within-governance-constraints)
     - [Mitigations](#mitigations)
@@ -43,19 +44,22 @@ owner-managed minting.
 
 ## Definitions
 
-N/A
+### MintManager
+
+The contract that owns the GovernanceToken and has exclusive authority to mint new tokens. The MintManager enforces
+on-chain rate limits and caps on minting operations according to governance-approved token inflation schedules.
 
 ## Assumptions
 
 ### aGT-001: Owner operates within governance constraints
 
-The contract owner (MintManager) is trusted to mint tokens only in accordance with governance decisions and established
-protocol rules.
+The contract owner ([MintManager](#mintmanager)) is trusted to mint tokens only in accordance with governance decisions
+and established protocol rules.
 
 #### Mitigations
 
-- Owner is expected to be a governance-controlled MintManager contract
-- MintManager enforces on-chain rate limits and caps on minting operations
+- Owner is expected to be a governance-controlled [MintManager](#mintmanager) contract
+- [MintManager](#mintmanager) enforces on-chain rate limits and caps on minting operations
 - Ownership transfers are transparent and subject to community oversight
 
 ## Invariants
