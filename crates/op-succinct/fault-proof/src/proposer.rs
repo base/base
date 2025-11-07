@@ -138,6 +138,14 @@ impl ProposerState {
     }
 }
 
+/// Snapshot of the proposer's cached state for testing and monitoring.
+#[derive(Clone, Debug)]
+pub struct ProposerStateSnapshot {
+    pub anchor_index: Option<U256>,
+    pub canonical_head_index: Option<U256>,
+    pub games: Vec<(U256, Address)>,
+}
+
 #[derive(Clone)]
 pub struct OPSuccinctProposer<P, H: OPSuccinctHost>
 where
@@ -213,6 +221,16 @@ where
             next_task_id: Arc::new(AtomicU64::new(1)),
             state: Arc::new(Mutex::new(initial_state)),
         })
+    }
+
+    /// Returns a lightweight snapshot of the proposer's cached state.
+    pub async fn state_snapshot(&self) -> ProposerStateSnapshot {
+        let state = self.state.lock().await;
+        ProposerStateSnapshot {
+            anchor_index: state.anchor_game.as_ref().map(|game| game.index),
+            canonical_head_index: state.canonical_head_index,
+            games: state.games.values().map(|game| (game.index, game.address)).collect(),
+        }
     }
 
     /// Runs the proposer indefinitely.
@@ -376,7 +394,50 @@ where
                         let credit = contract.credit(signer_address).call().await?;
 
                         if is_finalized && credit == U256::ZERO {
-                            actions.push(GameSyncAction::Remove(index));
+                            // Game removal policy:
+                            // - Canonical head games are retained even with zero credit to maintain
+                            //   chain consistency.
+                            // - Anchor games are retained as they serve as the root of the dispute
+                            //   game tree.
+                            // - All other games with bonds already claimed are removed to free
+                            //   cache memory.
+
+                            let canonical_head_index = {
+                                let state = self.state.lock().await;
+                                state.canonical_head_index
+                            };
+
+                            let should_remove = if canonical_head_index == Some(index) {
+                                tracing::debug!(game_index = %index, "Retaining game: canonical head");
+                                false
+                            } else {
+                                let anchor_game = self
+                                    .factory
+                                    .get_anchor_game(self.config.game_type)
+                                    .await
+                                    .context("Failed to fetch anchor game for removal check")?;
+                                let anchor_game_address = *anchor_game.address();
+
+                                if anchor_game_address == game_address {
+                                    tracing::debug!(game_index = %index, "Retaining game: anchor game");
+                                    false
+                                } else {
+                                    true
+                                }
+                            };
+
+                            if should_remove {
+                                actions.push(GameSyncAction::Remove(index));
+                            } else {
+                                actions.push(GameSyncAction::Update {
+                                    index,
+                                    status,
+                                    proposal_status: claim_data.status,
+                                    deadline,
+                                    should_attempt_to_resolve: false,
+                                    should_attempt_to_claim_bond: false,
+                                });
+                            }
                         } else {
                             actions.push(GameSyncAction::Update {
                                 index,
@@ -415,16 +476,8 @@ where
                         }
                     }
                     GameSyncAction::Remove(index) => {
-                        let is_canonical_head = state.canonical_head_index == Some(index);
-
-                        if is_canonical_head {
-                            tracing::debug!(
-                                game_index = %index,
-                                "Retaining canonical head game in cache despite zero credit"
-                            );
-                        } else {
-                            state.games.remove(&index);
-                        }
+                        state.games.remove(&index);
+                        tracing::debug!(game_index = %index, "Removed game from cache");
                     }
                     GameSyncAction::RemoveSubtree(index) => {
                         state.remove_subtree(index);
