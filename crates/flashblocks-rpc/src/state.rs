@@ -258,12 +258,12 @@ where
                     .filter(|fb| fb.metadata.block_number == block.number)
                     .count();
                 self.metrics.flashblocks_in_block.record(num_flashblocks_for_canon as f64);
+                self.metrics
+                    .pending_snapshot_height
+                    .set(pending_blocks.latest_block_number() as f64);
 
                 if pending_blocks.latest_block_number() <= block.number {
                     self.metrics.pending_clear_catchup.increment(1);
-                    self.metrics
-                        .pending_snapshot_height
-                        .set(pending_blocks.latest_block_number() as f64);
                     self.metrics
                         .pending_snapshot_fb_index
                         .set(pending_blocks.latest_flashblock_index() as f64);
