@@ -835,48 +835,98 @@ where
 
     /// Fetch game from the factory.
     ///
-    /// Drop game if the game type is invalid or the output root is not valid.
-    /// Drop game if the parent game does not exist.
+    /// Drop game if:
+    /// - The game type is not supported.
+    /// - The game type does not respect the expected type when created.
+    /// - The output root claim is invalid.
+    /// - The parent game does not exist in cache if it should have one.
     async fn fetch_game(&self, index: U256) -> Result<()> {
+        let mut state = self.state.lock().await;
+
         let game = self.factory.gameAtIndex(index).call().await?;
         let game_address = game.proxy;
+        let game_type = game.gameType;
+
+        // Drop unsupported game types.
+        if game_type != self.config.game_type {
+            tracing::warn!(
+                game_index = %index,
+                ?game_address,
+                game_type,
+                expected_game_type = self.config.game_type,
+                "Dropping game: unsupported game type"
+            );
+            state.cursor = Some(index);
+            return Ok(());
+        }
+
         let contract = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
 
         let l2_block = contract.l2BlockNumber().call().await?;
         let output_root = self.l2_provider.compute_output_root_at_block(l2_block).await?;
         let claim = contract.rootClaim().call().await?;
-        let (parent_index, proposal_status, deadline) = match contract.claimData().call().await {
-            Ok(data) => (data.parentIndex, data.status, U256::from(data.deadline).to::<u64>()),
-            Err(error) => {
-                tracing::debug!(game_index = %index, ?game_address, ?error,
-                    "Falling back to legacy game with dummy claim data");
-                (u32::MAX, ProposalStatus::Unchallenged, 0)
-            }
-        };
-
         let was_respected = contract.wasRespectedGameTypeWhenCreated().call().await?;
         let status = contract.status().call().await?;
+        let claim_data = contract.claimData().call().await?;
 
-        let mut state = self.state.lock().await;
+        let (parent_index, proposal_status, deadline) = (
+            claim_data.parentIndex,
+            claim_data.status,
+            U256::from(claim_data.deadline).to::<u64>(),
+        );
 
-        if !was_respected || output_root != claim {
-            tracing::debug!(game_index = %index, ?game_address,
-                "Dropping game due to invalid game type or output root");
+        // Drop games whose type does not respect the expected type.
+        if !was_respected {
+            tracing::warn!(
+                game_index = %index,
+                ?game_address, game_type,
+                expected_game_type = self.config.game_type,
+                "Dropping game: game type mismatch during creation"
+            );
             state.cursor = Some(index);
             return Ok(());
         }
 
+        // Validate output root. If invalid, drop the game, setting the cursor to this index.
+        if output_root != claim {
+            tracing::warn!(
+                game_index = %index,
+                ?game_address,
+                ?claim,
+                expected_output_root = ?output_root,
+                "Dropping game: invalid output root claim"
+            );
+            state.cursor = Some(index);
+            return Ok(());
+        }
+
+        // Ensure parent exists in cache if applicable.
         if parent_index != u32::MAX {
             let parent_idx = U256::from(parent_index);
             if !state.games.contains_key(&parent_idx) {
-                tracing::debug!(game_index = %index, ?game_address,
-                    parent_index = %parent_idx, "Dropping game due to missing parent");
+                tracing::debug!(
+                    game_index = %index,
+                    ?game_address,
+                    parent_index = %parent_idx,
+                    "Dropping game: parent not found in cache"
+                );
                 state.cursor = Some(index);
                 return Ok(());
             }
         }
 
-        tracing::info!(game_index = %index, ?game_address, parent_index = %parent_index, l2_block = %l2_block, ?status, ?proposal_status, deadline = %deadline, "Adding game to cache");
+        tracing::info!(
+            game_index = %index,
+            ?game_type,
+            ?game_address,
+            parent_index = %parent_index,
+            l2_block = %l2_block,
+            ?status,
+            ?proposal_status,
+            deadline = %deadline,
+            "Adding game to cache"
+        );
+
         state.games.insert(
             index,
             Game {

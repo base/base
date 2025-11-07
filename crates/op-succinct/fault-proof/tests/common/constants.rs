@@ -43,5 +43,4 @@ pub const RANGE_VKEY_COMMITMENT: B256 = B256::ZERO; // Mock value for testing
 pub const L2_BLOCK_OFFSET_FROM_FINALIZED: u64 = 100;
 
 // Test configuration for mock permissioned games
-pub const MOCK_PERMISSIONED_GAMES_TO_SEED: usize = 3;
 pub const MOCK_PERMISSIONED_GAME_TYPE: u32 = 1;

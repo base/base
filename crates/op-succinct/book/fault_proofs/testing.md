@@ -59,10 +59,15 @@ the dispute game factory, and warps Anvil time to exercise full lifecycles. Each
 
 #### Game Type Transition
 
-- `test_game_type_transition_skips_legacy_games()`: Seeds the factory with legacy permissioned
-  games, ensures the respected game type is restored, and verifies the proposer starts producing
-  fresh `TEST_GAME_TYPE` games without touching legacy ones. The test also asserts that historical
+- `test_game_type_transition_skips_legacy_game()`: Seeds the factory with a single legacy permissioned
+  game, ensures the respected game type is restored, and verifies the proposer starts producing
+  fresh `TEST_GAME_TYPE` games without touching legacy one. The test also asserts that historical
   mock games remain `IN_PROGRESS`.
+
+- `test_game_type_transition_while_proposer_running()`: Starts the proposer service with the current
+  game type set to legacy. It seeds a legacy game, then updates the respected game type to `TEST_GAME_TYPE`
+  while the proposer remains active. Verifies that the proposer correctly ignores the existing legacy game
+  and begins producing new games of type `TEST_GAME_TYPE`.
 
 #### Game Chain Validation Scenarios
 
