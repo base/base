@@ -641,6 +641,11 @@ contract OPSuccinctFaultDisputeGame is Clone, ISemver, IDisputeGame {
         disputeGameFactory_ = DISPUTE_GAME_FACTORY;
     }
 
+    /// @notice Returns the SP1 verifier contract.
+    function sp1Verifier() external view returns (ISP1Verifier verifier_) {
+        verifier_ = SP1_VERIFIER;
+    }
+
     /// @notice Returns the rollup config hash.
     function rollupConfigHash() external view returns (bytes32 rollupConfigHash_) {
         rollupConfigHash_ = ROLLUP_CONFIG_HASH;
