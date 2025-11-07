@@ -566,7 +566,12 @@ where
     /// - `u64`: Total instruction cycles used in the proof generation
     /// - `u64`: Total SP1 gas consumed in the proof generation
     #[tracing::instrument(name = "[[Proving]]", skip(self), fields(game_address = ?game_address))]
-    pub async fn prove_game(&self, game_address: Address) -> Result<(TxHash, u64, u64)> {
+    pub async fn prove_game(
+        &self,
+        game_address: Address,
+        start_block: u64,
+        end_block: u64,
+    ) -> Result<(TxHash, u64, u64)> {
         tracing::info!("Attempting to prove game {:?}", game_address);
 
         let fetcher = match OPSuccinctDataFetcher::new_with_rollup_config().await {
@@ -580,16 +585,10 @@ where
         let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
         let l1_head_hash = game.l1Head().call().await?.0;
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
-        let l2_block_number = game.l2BlockNumber().call().await?;
 
         let host_args = self
             .host
-            .fetch(
-                l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks,
-                l2_block_number.to::<u64>(),
-                Some(l1_head_hash.into()),
-                self.config.safe_db_fallback,
-            )
+            .fetch(start_block, end_block, Some(l1_head_hash.into()), self.config.safe_db_fallback)
             .await
             .context("Failed to get host CLI args")?;
 
@@ -1520,8 +1519,9 @@ where
 
         // Get the game block number to include in logs
         let game = OPSuccinctFaultDisputeGame::new(game_address, self.l1_provider.clone());
+        let starting_l2_block_number = game.startingBlockNumber().call().await?;
         let l2_block_number = game.l2BlockNumber().call().await?;
-        let start_block = l2_block_number.to::<u64>() - self.config.proposal_interval_in_blocks;
+        let start_block = starting_l2_block_number.to::<u64>();
         let end_block = l2_block_number.to::<u64>();
 
         tracing::info!(
@@ -1541,7 +1541,7 @@ where
                 rt.block_on(async move {
                     let start_time = std::time::Instant::now();
                     let (tx_hash, total_instruction_cycles, total_sp1_gas) =
-                        proposer.prove_game(game_address).await?;
+                        proposer.prove_game(game_address, start_block, end_block).await?;
 
                     // Record successful proving
                     ProposerGauge::GamesProven.increment(1.0);
@@ -1564,7 +1564,7 @@ where
             tokio::spawn(async move {
                 let start_time = std::time::Instant::now();
                 let (tx_hash, total_instruction_cycles, total_sp1_gas) =
-                    proposer.prove_game(game_address).await?;
+                    proposer.prove_game(game_address, start_block, end_block).await?;
 
                 // Record successful proving
                 ProposerGauge::GamesProven.increment(1.0);
