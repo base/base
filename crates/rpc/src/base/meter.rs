@@ -36,8 +36,8 @@ pub struct MeterBundleOutput {
     pub total_gas_fees: U256,
     /// Bundle hash
     pub bundle_hash: B256,
-    /// Total execution time in microseconds (includes state root calculation)
-    pub total_execution_time_us: u128,
+    /// Total time in microseconds (includes transaction execution and state root calculation)
+    pub total_time_us: u128,
     /// State root calculation time in microseconds
     pub state_root_time_us: u128,
 }
@@ -120,7 +120,7 @@ where
     let mut total_gas_used = 0u64;
     let mut total_gas_fees = U256::ZERO;
 
-    let execution_start = Instant::now();
+    let total_start = Instant::now();
     {
         let evm_config = OpEvmConfig::optimism(chain_spec);
         let mut builder = evm_config.builder_for_next_block(&mut db, header, attributes)?;
@@ -185,14 +185,14 @@ where
     }
 
     let state_root_time_us = state_root_start.elapsed().as_micros();
-    let total_execution_time_us = execution_start.elapsed().as_micros();
+    let total_time_us = total_start.elapsed().as_micros();
 
     Ok(MeterBundleOutput {
         results,
         total_gas_used,
         total_gas_fees,
         bundle_hash,
-        total_execution_time_us,
+        total_time_us,
         state_root_time_us,
     })
 }

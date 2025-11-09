@@ -197,7 +197,7 @@ where
             bundle_hash = %result.bundle_hash,
             num_transactions = result.results.len(),
             total_gas_used = result.total_gas_used,
-            total_execution_time_us = result.total_execution_time_us,
+            total_time_us = result.total_time_us,
             state_root_time_us = result.state_root_time_us,
             state_block_number = header.number,
             flashblock_index = flashblock_index,
@@ -214,7 +214,8 @@ where
             state_block_number: header.number,
             state_flashblock_index,
             total_gas_used: result.total_gas_used,
-            total_execution_time_us: result.total_execution_time_us,
+            // TODO: Rename to total_time_us in tips-core.
+            total_execution_time_us: result.total_time_us,
             state_root_time_us: result.state_root_time_us,
         })
     }

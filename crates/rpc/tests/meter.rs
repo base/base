@@ -151,7 +151,7 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
     assert_eq!(output.total_gas_used, 0);
     assert_eq!(output.total_gas_fees, U256::ZERO);
     // Even empty bundles have some EVM setup overhead
-    assert!(output.total_execution_time_us > 0);
+    assert!(output.total_time_us > 0);
     assert!(output.state_root_time_us > 0);
     assert_eq!(output.bundle_hash, keccak256([]));
 
@@ -200,7 +200,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
     assert_eq!(output.results.len(), 1);
     let result = &output.results[0];
-    assert!(output.total_execution_time_us > 0);
+    assert!(output.total_time_us > 0);
     assert!(output.state_root_time_us > 0);
 
     assert_eq!(result.from_address, harness.address(User::Alice));
@@ -283,7 +283,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     )?;
 
     assert_eq!(output.results.len(), 2);
-    assert!(output.total_execution_time_us > 0);
+    assert!(output.total_time_us > 0);
     assert!(output.state_root_time_us > 0);
 
     // Check first transaction
@@ -359,11 +359,11 @@ fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
         None,
     )?;
 
-    // Verify invariant: total execution time must include state root time
+    // Verify invariant: total time must include state root time
     assert!(
-        output.total_execution_time_us >= output.state_root_time_us,
-        "total_execution_time_us ({}) should be >= state_root_time_us ({})",
-        output.total_execution_time_us,
+        output.total_time_us >= output.state_root_time_us,
+        "total_time_us ({}) should be >= state_root_time_us ({})",
+        output.total_time_us,
         output.state_root_time_us
     );
 
