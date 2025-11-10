@@ -263,6 +263,11 @@ where
                     .set(pending_blocks.latest_block_number() as f64);
 
                 if pending_blocks.latest_block_number() <= block.number {
+                    debug!(
+                        message = "pending snapshot cleared because canonical caught up",
+                        latest_pending_block = pending_blocks.latest_block_number(),
+                        canonical_block = block.number,
+                    );
                     self.metrics.pending_clear_catchup.increment(1);
                     self.metrics
                         .pending_snapshot_fb_index
@@ -276,6 +281,18 @@ where
                         tracked_txns.iter().map(|tx| tx.tx_hash()).collect();
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
+                    let pending_blocks_depth =
+                        block.number - pending_blocks.earliest_block_number() - 1;
+
+                    debug!(
+                        message = "canonical block behind latest pending block, checking for reorg and max depth",
+                        latest_pending_block = pending_blocks.latest_block_number(),
+                        canonical_block = block.number,
+                        pending_txns_for_block = ?tracked_txn_hashes.len(),
+                        canonical_txns_for_block = ?block_txn_hashes.len(),
+                        pending_blocks_depth = pending_blocks_depth,
+                        max_depth = self.max_depth,
+                    );
 
                     flashblocks
                         .retain(|flashblock| flashblock.metadata.block_number > block.number);
@@ -298,8 +315,6 @@ where
                         return self.build_pending_state(None, &flashblocks);
                     }
 
-                    let pending_blocks_depth =
-                        block.number - pending_blocks.earliest_block_number() - 1;
                     if pending_blocks_depth > self.max_depth {
                         debug!(
                             message =
