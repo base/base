@@ -287,6 +287,7 @@ where
                     debug!(
                         message = "canonical block behind latest pending block, checking for reorg and max depth",
                         latest_pending_block = pending_blocks.latest_block_number(),
+                        earliest_pending_block = pending_blocks.earliest_block_number(),
                         canonical_block = block.number,
                         pending_txns_for_block = ?tracked_txn_hashes.len(),
                         canonical_txns_for_block = ?block_txn_hashes.len(),
