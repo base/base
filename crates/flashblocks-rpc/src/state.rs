@@ -295,9 +295,6 @@ where
                         max_depth = self.max_depth,
                     );
 
-                    flashblocks
-                        .retain(|flashblock| flashblock.metadata.block_number > block.number);
-
                     if tracked_txn_hashes.len() != block_txn_hashes.len()
                         || tracked_txn_hashes != block_txn_hashes
                     {
@@ -309,6 +306,8 @@ where
                         self.metrics.pending_clear_reorg.increment(1);
 
                         // If there is a reorg, we re-process all future flashblocks without reusing the existing pending state
+                        flashblocks
+                            .retain(|flashblock| flashblock.metadata.block_number > block.number);
                         return self.build_pending_state(None, &flashblocks);
                     }
 
@@ -319,10 +318,14 @@ where
                             pending_blocks_depth = pending_blocks_depth,
                             max_depth = self.max_depth,
                         );
+
+                        flashblocks
+                            .retain(|flashblock| flashblock.metadata.block_number > block.number);
                         return self.build_pending_state(None, &flashblocks);
                     }
 
                     // If no reorg, we can continue building on top of the existing pending state
+                    // NOTE: We do not retain specific flashblocks here to avoid losing track of our "earliest" pending block number
                     self.build_pending_state(prev_pending_blocks, &flashblocks)
                 }
             }
