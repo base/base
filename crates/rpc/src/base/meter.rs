@@ -62,20 +62,23 @@ where
     // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
 
-    // If we have flashblocks but no cached trie, compute the flashblock trie first
+    // Consolidate flashblock trie data: use cached if available, otherwise compute it
     // (before starting any timers, since we only want to time the bundle's execution and state root)
-    let flashblock_trie = if cached_flashblock_trie.is_none() {
-        if let Some(ref fb_state) = flashblocks_state {
-            let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
-            let (_fb_state_root, fb_trie_updates) =
-                state_provider.state_root_with_updates(fb_hashed_state.clone())?;
-            Some((fb_trie_updates, fb_hashed_state))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let flashblock_trie_data = cached_flashblock_trie
+        .map(Ok::<_, eyre::Report>)
+        .or_else(|| {
+            flashblocks_state.as_ref().map(|fb_state| {
+                // Compute the flashblock trie
+                let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
+                let (_fb_state_root, fb_trie_updates) =
+                    state_provider.state_root_with_updates(fb_hashed_state.clone())?;
+                Ok(crate::FlashblockTrieData {
+                    trie_updates: fb_trie_updates,
+                    hashed_state: fb_hashed_state,
+                })
+            })
+        })
+        .transpose()?;
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
@@ -169,15 +172,10 @@ where
     let state_root_start = Instant::now();
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
 
-    if let Some(cached) = cached_flashblock_trie {
-        // We have cached flashblock trie nodes, use them
+    if let Some(fb_trie_data) = flashblock_trie_data {
+        // We have flashblock trie data (either cached or computed), use it
         let mut trie_input = TrieInput::from_state(hashed_state);
-        trie_input.prepend_cached(cached.trie_updates, cached.hashed_state);
-        let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
-    } else if let Some((fb_trie_updates, fb_hashed_state)) = flashblock_trie {
-        // We computed the flashblock trie above, now use it
-        let mut trie_input = TrieInput::from_state(hashed_state);
-        trie_input.prepend_cached(fb_trie_updates, fb_hashed_state);
+        trie_input.prepend_cached(fb_trie_data.trie_updates, fb_trie_data.hashed_state);
         let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;
     } else {
         // No flashblocks, just calculate bundle state root
