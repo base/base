@@ -1,3 +1,5 @@
+use crate::subscription::Flashblock;
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
@@ -8,12 +10,11 @@ use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{state::StateOverride, BlockTransactions};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
+use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_eth_api::RpcBlock;
-
-use crate::subscription::Flashblock;
 
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,
@@ -25,6 +26,7 @@ pub struct PendingBlocksBuilder {
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -41,6 +43,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: HashMap::new(),
             transactions_by_hash: HashMap::new(),
             transaction_state: HashMap::new(),
+            transaction_senders: HashMap::new(),
             state_overrides: None,
             db_cache: Cache::default(),
         }
@@ -74,6 +77,12 @@ impl PendingBlocksBuilder {
     #[inline]
     pub(crate) fn with_transaction_state(&mut self, hash: B256, state: EvmState) -> &Self {
         self.transaction_state.insert(hash, state);
+        self
+    }
+
+    #[inline]
+    pub(crate) fn with_transaction_sender(&mut self, hash: B256, sender: Address) -> &Self {
+        self.transaction_senders.insert(hash, sender);
         self
     }
 
@@ -122,6 +131,7 @@ impl PendingBlocksBuilder {
             transaction_receipts: self.transaction_receipts,
             transactions_by_hash: self.transactions_by_hash,
             transaction_state: self.transaction_state,
+            transaction_senders: self.transaction_senders,
             state_overrides: self.state_overrides,
             db_cache: self.db_cache,
         })
@@ -139,6 +149,7 @@ pub struct PendingBlocks {
     transaction_receipts: HashMap<B256, OpTransactionReceipt>,
     transactions_by_hash: HashMap<B256, Transaction>,
     transaction_state: HashMap<B256, EvmState>,
+    transaction_senders: HashMap<B256, Address>,
     state_overrides: Option<StateOverride>,
 
     db_cache: Cache,
@@ -171,6 +182,16 @@ impl PendingBlocks {
 
     pub fn get_transaction_state(&self, hash: B256) -> Option<EvmState> {
         self.transaction_state.get(&hash).cloned()
+    }
+
+    pub fn get_transaction_sender(&self, tx: &OpTxEnvelope) -> eyre::Result<Address> {
+        let hash = tx.tx_hash();
+
+        Ok(self
+            .transaction_senders
+            .get(&hash)
+            .cloned()
+            .unwrap_or(tx.recover_signer()?))
     }
 
     pub fn get_db_cache(&self) -> Cache {

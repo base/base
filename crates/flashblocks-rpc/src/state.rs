@@ -575,10 +575,11 @@ where
                 total_transactions += 1;
 
                 let step_start = Instant::now();
-                let sender = match transaction.recover_signer() {
-                    Ok(signer) => signer,
-                    Err(err) => return Err(err.into()),
+                let sender = match &prev_pending_blocks {
+                    Some(pending_blocks) => pending_blocks.get_transaction_sender(transaction)?,
+                    None => transaction.recover_signer()?,
                 };
+                pending_blocks_builder.with_transaction_sender(transaction.tx_hash(), sender);
                 pending_blocks_builder.increment_nonce(sender);
                 time_tx_sender_recovery += step_start.elapsed();
 
