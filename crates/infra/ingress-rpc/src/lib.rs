@@ -5,7 +5,30 @@ pub mod validation;
 
 use clap::Parser;
 use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use url::Url;
+
+#[derive(Debug, Clone, Copy)]
+pub enum TxSubmissionMethod {
+    Mempool,
+    Kafka,
+    MempoolAndKafka,
+}
+
+impl FromStr for TxSubmissionMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mempool" => Ok(TxSubmissionMethod::Mempool),
+            "kafka" => Ok(TxSubmissionMethod::Kafka),
+            "mempool,kafka" | "kafka,mempool" => Ok(TxSubmissionMethod::MempoolAndKafka),
+            _ => Err(format!(
+                "Invalid submission method: '{s}'. Valid options: mempool, kafka, mempool,kafka, kafka,mempool"
+            )),
+        }
+    }
+}
 
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -22,9 +45,13 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_RPC_MEMPOOL")]
     pub mempool_url: Url,
 
-    /// Enable dual writing raw transactions to the mempool
-    #[arg(long, env = "TIPS_INGRESS_DUAL_WRITE_MEMPOOL", default_value = "false")]
-    pub dual_write_mempool: bool,
+    /// Method to submit transactions to the mempool
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_TX_SUBMISSION_METHOD",
+        default_value = "mempool"
+    )]
+    pub tx_submission_method: TxSubmissionMethod,
 
     /// Kafka brokers for publishing mempool events
     #[arg(long, env = "TIPS_INGRESS_KAFKA_INGRESS_PROPERTIES_FILE")]
