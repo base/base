@@ -1,4 +1,6 @@
 //! Common test environment setup utilities.
+use std::sync::OnceLock;
+
 use alloy_primitives::Address;
 use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
@@ -6,9 +8,10 @@ use op_succinct_host_utils::{
     fetcher::{get_rpcs_from_env, RPCConfig},
     OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
 };
-use tracing::info;
+use tracing::{info, Level};
 
 use fault_proof::config::FaultDisputeGameConfig;
+use tracing_subscriber::{filter::Targets, fmt, prelude::*, util::SubscriberInitExt};
 
 use crate::common::{constants::*, ANVIL};
 
@@ -62,18 +65,10 @@ pub fn test_config(starting_l2_block_number: u64, starting_root: String) -> Faul
 }
 
 impl TestEnvironment {
-    /// Initialize logging for tests
-    pub fn init_logging() {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-            )
-            .try_init();
-    }
-
     /// Create a new test environment with common setup
     pub async fn setup() -> Result<Self> {
+        init_logging();
+
         // Get environment variables
         let mut rpc_config = get_rpcs_from_env();
 
@@ -95,4 +90,27 @@ impl TestEnvironment {
 
         Ok(Self { rpc_config, anvil, deployed })
     }
+}
+
+/// Initialize logging for tests
+pub fn init_logging() {
+    static INIT: OnceLock<()> = OnceLock::new();
+
+    INIT.get_or_init(|| {
+        let level =
+            std::env::var("RUST_LOG").unwrap_or("info".to_string()).parse().unwrap_or(Level::INFO);
+
+        let filter = Targets::new().with_targets([
+            ("e2e", level),
+            ("fault_proof", level),
+            ("op_succinct_fp", level),
+            ("op_succinct_client_utils", level),
+            ("op_succinct_ethereum_host_utils", level),
+            ("op_succinct_host_utils", level),
+            ("op_succinct_proof_utils", level),
+            ("op_succinct_signer_utils", level),
+        ]);
+
+        tracing_subscriber::registry().with(fmt::layer().compact()).with(filter).init()
+    });
 }

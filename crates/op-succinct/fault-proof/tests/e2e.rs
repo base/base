@@ -55,7 +55,6 @@ mod e2e {
     // Ensures the proposer keeps running and completes every stage cleanly.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_honest_proposer_native() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Honest Proposer Full Lifecycle (Create → Resolve → Claim) ===");
 
         // Setup common test environment
@@ -147,7 +146,6 @@ mod e2e {
     // Confirms new games are created, resolved, and bonds claimed despite history.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_game_type_transition_skips_legacy_game() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Game Type Transition With Legacy Game In History ===");
 
         let env = TestEnvironment::setup().await?;
@@ -305,7 +303,6 @@ mod e2e {
     // Ensures the proposer can handle a game type transition while running.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_game_type_transition_while_proposer_running() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Game Type Transition While Proposer Running ===");
 
         let env = TestEnvironment::setup().await?;
@@ -466,7 +463,6 @@ mod e2e {
     // Validates the challenger lifecycle handles creation, challenge, resolution, and payouts.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_honest_challenger_native() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Honest Challenger Full Lifecycle (Challenge → Resolve → Claim) ===");
 
         const NUM_INVALID_GAMES: usize = 3;
@@ -616,7 +612,6 @@ mod e2e {
     // Demonstrates new games anchor on valid history instead of corrupted branches.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_game_chain_validation_invalid_parent() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Game Chain Validation - Invalid Parent Chain ===");
 
         // Setup common test environment
@@ -770,7 +765,6 @@ mod e2e {
     // Confirms the chain with a challenged ancestor is abandoned for a fresh anchor.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_game_chain_validation_challenged_parent() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Game Chain Validation - Challenged Parent ===");
 
         // Setup common test environment
@@ -1004,7 +998,6 @@ mod e2e {
     // Verifies new games follow the updated anchor branch after reset events.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_game_chain_validation_anchor_reset() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Game Chain Validation - Anchor Reset ===");
 
         // Setup common test environment
@@ -1232,7 +1225,6 @@ mod e2e {
     // game.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proposer_recovery_after_canonical_head_invalidation() -> Result<()> {
-        TestEnvironment::init_logging();
         info!("=== Test: Proposer Recovery After Runtime Canonical Head Invalidation ===");
 
         // Setup common test environment
@@ -1392,7 +1384,6 @@ mod e2e {
     // the anchor game in its cache even after claiming bonds for finalized games.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_proposer_retains_anchor_after_bond_claim() -> Result<()> {
-        TestEnvironment::init_logging();
         let env = TestEnvironment::setup().await?;
 
         let proposer = Arc::new(
