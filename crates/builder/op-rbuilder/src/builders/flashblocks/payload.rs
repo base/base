@@ -273,6 +273,7 @@ where
             extra_ctx,
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
+            resource_metering: self.config.resource_metering.clone(),
         })
     }
 
