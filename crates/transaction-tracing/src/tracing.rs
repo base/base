@@ -1,15 +1,20 @@
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
+
 use alloy_primitives::TxHash;
 use chrono::Local;
 use eyre::Result;
 use futures::StreamExt;
 use lru::LruCache;
-use reth::api::{BlockBody, FullNodeComponents};
-use reth::core::primitives::{AlloyBlockHeader, transaction::TxHashRef};
-use reth::transaction_pool::{FullTransactionEvent, TransactionPool};
+use reth::{
+    api::{BlockBody, FullNodeComponents},
+    core::primitives::{transaction::TxHashRef, AlloyBlockHeader},
+    transaction_pool::{FullTransactionEvent, TransactionPool},
+};
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};
 use reth_tracing::tracing::{debug, info};
-use std::num::NonZeroUsize;
-use std::time::{Duration, Instant};
 
 use crate::types::{EventLog, Pool, TxEvent};
 
@@ -151,11 +156,7 @@ impl Tracker {
             return false;
         }
 
-        self.log(
-            tx_hash,
-            event_log,
-            "Transaction removed from cache due to limit",
-        );
+        self.log(tx_hash, event_log, "Transaction removed from cache due to limit");
         record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
         true
     }

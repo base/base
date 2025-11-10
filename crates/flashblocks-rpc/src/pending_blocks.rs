@@ -1,11 +1,11 @@
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
-    Address, B256, BlockNumber, TxHash, U256,
     map::foldhash::{HashMap, HashMapExt},
+    Address, BlockNumber, TxHash, B256, U256,
 };
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types::{BlockTransactions, state::StateOverride};
+use alloy_rpc_types::{state::StateOverride, BlockTransactions};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
 use op_alloy_network::Optimism;
@@ -60,8 +60,7 @@ impl PendingBlocksBuilder {
 
     #[inline]
     pub(crate) fn with_transaction(&mut self, transaction: Transaction) -> &Self {
-        self.transactions_by_hash
-            .insert(transaction.tx_hash(), transaction.clone());
+        self.transactions_by_hash.insert(transaction.tx_hash(), transaction.clone());
         self.transactions.push(transaction);
         self
     }
@@ -83,9 +82,7 @@ impl PendingBlocksBuilder {
         let zero = U256::from(0);
         let current_count = self.transaction_count.get(&sender).unwrap_or(&zero);
 
-        _ = self
-            .transaction_count
-            .insert(sender, *current_count + U256::from(1));
+        _ = self.transaction_count.insert(sender, *current_count + U256::from(1));
         self
     }
 
@@ -213,10 +210,7 @@ impl PendingBlocks {
     }
 
     pub fn get_transaction_count(&self, address: Address) -> U256 {
-        self.transaction_count
-            .get(&address)
-            .cloned()
-            .unwrap_or(U256::from(0))
+        self.transaction_count.get(&address).cloned().unwrap_or(U256::from(0))
     }
 
     pub fn get_balance(&self, address: Address) -> Option<U256> {

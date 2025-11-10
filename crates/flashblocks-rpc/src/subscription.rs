@@ -1,7 +1,6 @@
 use std::{io::Read, sync::Arc, time::Duration};
 
-use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{map::foldhash::HashMap, Address, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
 use futures_util::{SinkExt as _, StreamExt};
 use reth_optimism_primitives::OpReceipt;
@@ -9,8 +8,7 @@ use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tokio::time::interval;
+use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, trace, warn};
 use url::Url;
@@ -60,11 +58,7 @@ where
     Receiver: FlashblocksReceiver + Send + Sync + 'static,
 {
     pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
-        Self {
-            ws_url,
-            flashblocks_state,
-            metrics: Metrics::default(),
-        }
+        Self { ws_url, flashblocks_state, metrics: Metrics::default() }
     }
 
     pub fn start(&mut self) {
