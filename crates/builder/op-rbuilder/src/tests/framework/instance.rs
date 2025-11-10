@@ -111,6 +111,7 @@ impl LocalInstance {
         let builder_config = BuilderConfig::<P::Config>::try_from(args.clone())
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
+        let gas_limit_config = builder_config.gas_limit_config.clone();
 
         let addons: OpAddOns<
             _,
@@ -121,6 +122,7 @@ impl LocalInstance {
             .with_sequencer(args.rollup_args.sequencer.clone())
             .with_enable_tx_conditional(args.rollup_args.enable_tx_conditional)
             .with_da_config(da_config)
+            .with_gas_limit_config(gas_limit_config)
             .build();
 
         let node_builder = NodeBuilder::<_, OpChainSpec>::new(config.clone())
@@ -440,10 +442,10 @@ impl FlashblocksListener {
     pub fn contains_transaction(&self, tx_hash: &B256) -> bool {
         let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().any(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts") {
-                if let Some(receipts_obj) = receipts.as_object() {
-                    return receipts_obj.contains_key(&tx_hash_str);
-                }
+            if let Some(receipts) = fb.metadata.get("receipts")
+                && let Some(receipts_obj) = receipts.as_object()
+            {
+                return receipts_obj.contains_key(&tx_hash_str);
             }
             false
         })
@@ -453,12 +455,11 @@ impl FlashblocksListener {
     pub fn find_transaction_flashblock(&self, tx_hash: &B256) -> Option<u64> {
         let tx_hash_str = format!("{tx_hash:#x}");
         self.flashblocks.lock().iter().find_map(|fb| {
-            if let Some(receipts) = fb.metadata.get("receipts") {
-                if let Some(receipts_obj) = receipts.as_object() {
-                    if receipts_obj.contains_key(&tx_hash_str) {
-                        return Some(fb.index);
-                    }
-                }
+            if let Some(receipts) = fb.metadata.get("receipts")
+                && let Some(receipts_obj) = receipts.as_object()
+                && receipts_obj.contains_key(&tx_hash_str)
+            {
+                return Some(fb.index);
             }
             None
         })

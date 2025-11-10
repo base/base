@@ -5,7 +5,7 @@ use core::{
 };
 use reth_node_builder::components::PayloadServiceBuilder;
 use reth_optimism_evm::OpEvmConfig;
-use reth_optimism_payload_builder::config::OpDAConfig;
+use reth_optimism_payload_builder::config::{OpDAConfig, OpGasLimitConfig};
 
 use crate::{
     args::OpRbuilderArgs,
@@ -94,6 +94,9 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Defines constraints for the maximum size of data availability transactions.
     pub da_config: OpDAConfig,
 
+    /// Gas limit configuration for the payload builder
+    pub gas_limit_config: OpGasLimitConfig,
+
     // The deadline is critical for payload availability. If we reach the deadline,
     // the payload job stops and cannot be queried again. With tight deadlines close
     // to the block number, we risk reaching the deadline before the node queries the payload.
@@ -140,6 +143,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("block_time", &self.block_time)
             .field("block_time_leeway", &self.block_time_leeway)
             .field("da_config", &self.da_config)
+            .field("gas_limit_config", &self.gas_limit_config)
             .field("sampling_ratio", &self.sampling_ratio)
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
@@ -157,6 +161,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             block_time: Duration::from_secs(2),
             block_time_leeway: Duration::from_millis(500),
             da_config: OpDAConfig::default(),
+            gas_limit_config: OpGasLimitConfig::default(),
             specific: S::default(),
             sampling_ratio: 100,
             max_gas_per_txn: None,
@@ -179,6 +184,7 @@ where
             block_time: Duration::from_millis(args.chain_block_time),
             block_time_leeway: Duration::from_secs(args.extra_block_deadline_secs),
             da_config: Default::default(),
+            gas_limit_config: Default::default(),
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),

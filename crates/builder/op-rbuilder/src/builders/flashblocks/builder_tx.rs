@@ -310,30 +310,28 @@ impl BuilderTransactions<FlashblocksExtraCtx, FlashblocksExecutionInfo>
             builder_txs.extend(tx);
         }
 
-        if ctx.is_last_flashblock() {
-            if let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx {
-                // Commit state that should be included to compute the correct nonce
-                let flashblocks_builder_txs = builder_txs
-                    .iter()
-                    .filter(|tx| tx.is_top_of_block == top_of_block)
-                    .map(|tx| tx.signed_tx.clone())
-                    .collect();
-                self.commit_txs(flashblocks_builder_txs, ctx, &mut *db)?;
+        if ctx.is_last_flashblock()
+            && let Some(flashtestations_builder_tx) = &self.flashtestations_builder_tx
+        {
+            // Commit state that should be included to compute the correct nonce
+            let flashblocks_builder_txs = builder_txs
+                .iter()
+                .filter(|tx| tx.is_top_of_block == top_of_block)
+                .map(|tx| tx.signed_tx.clone())
+                .collect();
+            self.commit_txs(flashblocks_builder_txs, ctx, &mut *db)?;
 
-                // We only include flashtestations txs in the last flashblock
-                match flashtestations_builder_tx.simulate_builder_txs(
-                    state_provider,
-                    info,
-                    ctx,
-                    db,
-                    top_of_block,
-                ) {
-                    Ok(flashtestations_builder_txs) => {
-                        builder_txs.extend(flashtestations_builder_txs)
-                    }
-                    Err(e) => {
-                        warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
-                    }
+            // We only include flashtestations txs in the last flashblock
+            match flashtestations_builder_tx.simulate_builder_txs(
+                state_provider,
+                info,
+                ctx,
+                db,
+                top_of_block,
+            ) {
+                Ok(flashtestations_builder_txs) => builder_txs.extend(flashtestations_builder_txs),
+                Err(e) => {
+                    warn!(target: "flashtestations", error = ?e, "failed to add flashtestations builder tx")
                 }
             }
         }

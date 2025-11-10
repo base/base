@@ -102,6 +102,7 @@ async-trait = { workspace = true }
 clap_builder = { workspace = true }
 clap.workspace = true
 derive_more.workspace = true
+either.workspace = true
 metrics.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
@@ -130,7 +131,7 @@ sha3 = "0.10"
 reqwest = "0.12.23"
 k256 = "0.13.4"
 
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "dd12e8e8366004b4758bfa0cfa98efa6929b7e9f" }
+rollup-boost = { git = "http://github.com/flashbots/rollup-boost", tag = "v0.7.8" }
 
 nanoid = { version = "0.4", optional = true }
 reth-ipc = { workspace = true, optional = true }

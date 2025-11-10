@@ -9,7 +9,10 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_evm::EvmEnv;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
-use reth_optimism_payload_builder::{OpPayloadBuilderAttributes, config::OpDAConfig};
+use reth_optimism_payload_builder::{
+    OpPayloadBuilderAttributes,
+    config::{OpDAConfig, OpGasLimitConfig},
+};
 use reth_optimism_primitives::OpTransactionSigned;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -66,6 +69,7 @@ impl OpPayloadSyncerCtx {
         OpPayloadBuilderCtx {
             evm_config: self.evm_config,
             da_config: self.da_config,
+            gas_limit_config: OpGasLimitConfig::default(),
             chain_spec: self.chain_spec,
             config: payload_config,
             evm_env,

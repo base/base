@@ -67,27 +67,27 @@ where
             let flashblock_number_max = tx.flashblock_number_max();
 
             // Check min flashblock requirement
-            if let Some(min) = flashblock_number_min {
-                if self.current_flashblock_number < min {
-                    continue;
-                }
+            if let Some(min) = flashblock_number_min
+                && self.current_flashblock_number < min
+            {
+                continue;
             }
 
             // Check max flashblock requirement
-            if let Some(max) = flashblock_number_max {
-                if self.current_flashblock_number > max {
-                    debug!(
-                        target: "payload_builder",
-                        tx_hash = ?tx.hash(),
-                        sender = ?tx.sender(),
-                        nonce = tx.nonce(),
-                        current_flashblock = self.current_flashblock_number,
-                        max_flashblock = max,
-                        "Bundle flashblock max exceeded"
-                    );
-                    self.inner.mark_invalid(tx.sender(), tx.nonce());
-                    continue;
-                }
+            if let Some(max) = flashblock_number_max
+                && self.current_flashblock_number > max
+            {
+                debug!(
+                    target: "payload_builder",
+                    tx_hash = ?tx.hash(),
+                    sender = ?tx.sender(),
+                    nonce = tx.nonce(),
+                    current_flashblock = self.current_flashblock_number,
+                    max_flashblock = max,
+                    "Bundle flashblock max exceeded"
+                );
+                self.inner.mark_invalid(tx.sender(), tx.nonce());
+                continue;
             }
 
             return Some(tx);

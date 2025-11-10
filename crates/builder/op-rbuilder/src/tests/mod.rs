@@ -12,6 +12,9 @@ mod flashtestations;
 mod data_availability;
 
 #[cfg(test)]
+mod miner_gas_limit;
+
+#[cfg(test)]
 mod gas_limiter;
 
 #[cfg(test)]

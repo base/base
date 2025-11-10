@@ -12,13 +12,17 @@ use reth_basic_payload_builder::PayloadConfig;
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_evm::{
     ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    op_revm::L1BlockInfo,
 };
 use reth_node_api::PayloadBuilderError;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::OpPayloadBuilderAttributes;
-use reth_optimism_payload_builder::{config::OpDAConfig, error::OpPayloadBuilderError};
+use reth_optimism_payload_builder::{
+    config::{OpDAConfig, OpGasLimitConfig},
+    error::OpPayloadBuilderError,
+};
 use reth_optimism_primitives::{OpReceipt, OpTransactionSigned};
 use reth_optimism_txpool::{
     conditional::MaybeConditionalTransaction,
@@ -51,6 +55,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub evm_config: OpEvmConfig,
     /// The DA config for the payload builder
     pub da_config: OpDAConfig,
+    // Gas limit configuration for the payload builder
+    pub gas_limit_config: OpGasLimitConfig,
     /// The chainspec
     pub chain_spec: Arc<OpChainSpec>,
     /// How to build the payload.
@@ -111,9 +117,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
     /// Returns the block gas limit to target.
     pub fn block_gas_limit(&self) -> u64 {
-        self.attributes()
-            .gas_limit
-            .unwrap_or(self.evm_env.block_env.gas_limit)
+        match self.gas_limit_config.gas_limit() {
+            Some(gas_limit) => gas_limit,
+            None => self
+                .attributes()
+                .gas_limit
+                .unwrap_or(self.evm_env.block_env.gas_limit),
+        }
     }
 
     /// Returns the block number for the block.
@@ -412,6 +422,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 }
             }
 
+            let da_footprint_gas_scalar = self
+                .chain_spec
+                .is_jovian_active_at_timestamp(self.attributes().timestamp())
+                .then_some(
+                    L1BlockInfo::fetch_da_footprint_gas_scalar(evm.db_mut()).expect(
+                        "DA footprint should always be available from the database post jovian",
+                    ),
+                );
+
             // ensure we still have capacity for this transaction
             if let Err(result) = info.is_tx_over_limits(
                 tx_da_size,
@@ -419,6 +438,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 tx_da_limit,
                 block_da_limit,
                 tx.gas_limit(),
+                da_footprint_gas_scalar,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
@@ -508,12 +528,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             // add gas used by the transaction to cumulative gas used, before creating the
             // receipt
-            if let Some(max_gas_per_txn) = self.max_gas_per_txn {
-                if gas_used > max_gas_per_txn {
-                    log_txn(TxnExecutionResult::MaxGasUsageExceeded);
-                    best_txs.mark_invalid(tx.signer(), tx.nonce());
-                    continue;
-                }
+            if let Some(max_gas_per_txn) = self.max_gas_per_txn
+                && gas_used > max_gas_per_txn
+            {
+                log_txn(TxnExecutionResult::MaxGasUsageExceeded);
+                best_txs.mark_invalid(tx.signer(), tx.nonce());
+                continue;
             }
 
             info.cumulative_gas_used += gas_used;

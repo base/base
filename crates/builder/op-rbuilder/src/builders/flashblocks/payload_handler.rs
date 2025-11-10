@@ -346,12 +346,12 @@ fn execute_transactions(
             }
         };
 
-        if let Some(max_gas_per_txn) = max_gas_per_txn {
-            if result.gas_used() > max_gas_per_txn {
-                return Err(eyre::eyre!(
-                    "transaction exceeded max gas per txn limit in flashblock"
-                ));
-            }
+        if let Some(max_gas_per_txn) = max_gas_per_txn
+            && result.gas_used() > max_gas_per_txn
+        {
+            return Err(eyre::eyre!(
+                "transaction exceeded max gas per txn limit in flashblock"
+            ));
         }
 
         let tx_gas_used = result.gas_used();

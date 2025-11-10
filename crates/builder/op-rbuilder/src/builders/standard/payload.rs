@@ -14,16 +14,16 @@ use alloy_evm::Database;
 use alloy_primitives::U256;
 use reth::payload::PayloadBuilderAttributes;
 use reth_basic_payload_builder::{BuildOutcome, BuildOutcomeKind, MissingPayloadBehaviour};
-use reth_chain_state::{ExecutedBlock, ExecutedBlockWithTrieUpdates, ExecutedTrieUpdates};
 use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_node_api::{Block, PayloadBuilderError};
 use reth_optimism_consensus::{calculate_receipt_root_no_memo_optimism, isthmus};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_forks::OpHardforks;
 use reth_optimism_node::{OpBuiltPayload, OpPayloadBuilderAttributes};
-use reth_optimism_primitives::{OpPrimitives, OpTransactionSigned};
+use reth_optimism_primitives::OpTransactionSigned;
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
 use reth_primitives::RecoveredBlock;
+use reth_primitives_traits::InMemorySize;
 use reth_provider::{ExecutionOutcome, StateProvider};
 use reth_revm::{
     State, database::StateProviderDatabase, db::states::bundle_state::BundleRetention,
@@ -231,6 +231,7 @@ where
         let ctx = OpPayloadBuilderCtx {
             evm_config: self.evm_config.clone(),
             da_config: self.config.da_config.clone(),
+            gas_limit_config: self.config.gas_limit_config.clone(),
             chain_spec,
             config,
             evm_env,
@@ -564,17 +565,18 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         info!(target: "payload_builder", id=%ctx.attributes().payload_id(), "sealed built block");
 
         // create the executed block data
-        let executed: ExecutedBlockWithTrieUpdates<OpPrimitives> = ExecutedBlockWithTrieUpdates {
-            block: ExecutedBlock {
-                recovered_block: Arc::new(RecoveredBlock::<
-                    alloy_consensus::Block<OpTransactionSigned>,
-                >::new_sealed(
-                    sealed_block.as_ref().clone(), info.executed_senders
-                )),
-                execution_output: Arc::new(execution_outcome),
-                hashed_state: Arc::new(hashed_state),
-            },
-            trie: ExecutedTrieUpdates::Present(Arc::new(trie_output)),
+        use either::Either;
+        use reth_payload_primitives::BuiltPayloadExecutedBlock;
+        let executed = BuiltPayloadExecutedBlock {
+            recovered_block: Arc::new(
+                RecoveredBlock::<alloy_consensus::Block<OpTransactionSigned>>::new_sealed(
+                    sealed_block.as_ref().clone(),
+                    info.executed_senders,
+                ),
+            ),
+            execution_output: Arc::new(execution_outcome),
+            hashed_state: Either::Left(Arc::new(hashed_state)),
+            trie_updates: Either::Left(Arc::new(trie_output)),
         };
 
         let no_tx_pool = ctx.attributes().no_tx_pool;
@@ -588,10 +590,10 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
 
         ctx.metrics
             .payload_byte_size
-            .record(payload.block().size() as f64);
+            .record(InMemorySize::size(payload.block()) as f64);
         ctx.metrics
             .payload_byte_size_gauge
-            .set(payload.block().size() as f64);
+            .set(InMemorySize::size(payload.block()) as f64);
 
         if no_tx_pool {
             // if `no_tx_pool` is set only transactions from the payload attributes will be included

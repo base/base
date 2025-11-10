@@ -36,8 +36,11 @@ pub fn launch() -> Result<()> {
         _ => Default::default(),
     };
 
-    let mut cli_app = cli.configure();
+    #[cfg(not(feature = "telemetry"))]
+    let cli_app = cli.configure();
 
+    #[cfg(feature = "telemetry")]
+    let mut cli_app = cli.configure();
     #[cfg(feature = "telemetry")]
     {
         use crate::primitives::telemetry::setup_telemetry_layer;
@@ -45,7 +48,6 @@ pub fn launch() -> Result<()> {
         cli_app.access_tracing_layers()?.add_layer(telemetry_layer);
     }
 
-    cli_app.init_tracing()?;
     match mode {
         BuilderMode::Standard => {
             tracing::info!("Starting OP builder in standard mode");
@@ -102,6 +104,7 @@ where
         record_flag_gauge_metrics(&builder_args);
 
         let da_config = builder_config.da_config.clone();
+        let gas_limit_config = builder_config.gas_limit_config.clone();
         let rollup_args = builder_args.rollup_args;
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
@@ -116,6 +119,7 @@ where
             .with_sequencer(rollup_args.sequencer.clone())
             .with_enable_tx_conditional(rollup_args.enable_tx_conditional)
             .with_da_config(da_config)
+            .with_gas_limit_config(gas_limit_config)
             .build();
         if cfg!(feature = "custom-engine-api") {
             let engine_builder: OpEngineApiBuilder<OpEngineValidatorBuilder> =

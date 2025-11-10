@@ -27,7 +27,7 @@ async fn transaction_event_log(
                 "Transaction event received"
             )
         }
-        FullTransactionEvent::Queued(hash) => {
+        FullTransactionEvent::Queued(hash, _) => {
             info!(
                 target = "monitoring",
                 tx_hash = hash.to_string(),

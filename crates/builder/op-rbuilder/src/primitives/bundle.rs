@@ -175,10 +175,10 @@ impl Bundle {
         // Validate block number ranges
         if let Some(max) = block_number_max {
             // Check if min > max
-            if let Some(min) = block_number_min {
-                if min > max {
-                    return Err(BundleConditionalError::MinGreaterThanMax { min, max });
-                }
+            if let Some(min) = block_number_min
+                && min > max
+            {
+                return Err(BundleConditionalError::MinGreaterThanMax { min, max });
             }
 
             // The max block cannot be a past block
@@ -204,23 +204,22 @@ impl Bundle {
             block_number_max = Some(default_max);
 
             // Ensure that the new max is not smaller than the min
-            if let Some(min) = block_number_min {
-                if min > default_max {
-                    return Err(BundleConditionalError::MinTooHighForDefaultRange {
-                        min,
-                        max_allowed: default_max,
-                    });
-                }
+            if let Some(min) = block_number_min
+                && min > default_max
+            {
+                return Err(BundleConditionalError::MinTooHighForDefaultRange {
+                    min,
+                    max_allowed: default_max,
+                });
             }
         }
 
         // Validate flashblock number range
-        if let Some(min) = self.flashblock_number_min {
-            if let Some(max) = self.flashblock_number_max {
-                if min > max {
-                    return Err(BundleConditionalError::FlashblockMinGreaterThanMax { min, max });
-                }
-            }
+        if let Some(min) = self.flashblock_number_min
+            && let Some(max) = self.flashblock_number_max
+            && min > max
+        {
+            return Err(BundleConditionalError::FlashblockMinGreaterThanMax { min, max });
         }
 
         Ok(BundleConditional {
