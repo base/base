@@ -282,7 +282,7 @@ where
                     let block_txn_hashes: HashSet<_> =
                         block.body().transactions().map(|tx| tx.tx_hash()).collect();
                     let pending_blocks_depth =
-                        block.number - pending_blocks.earliest_block_number() - 1;
+                        block.number - pending_blocks.earliest_block_number();
 
                     debug!(
                         message = "canonical block behind latest pending block, checking for reorg and max depth",
@@ -303,10 +303,6 @@ where
                     {
                         debug!(
                             message = "reorg detected, recomputing pending flashblocks going ahead of reorg",
-                            latest_pending_block = pending_blocks.latest_block_number(),
-                            canonical_block = block.number,
-                            tracked_txn_hashes_len = tracked_txn_hashes.len(),
-                            block_txn_hashes_len = block_txn_hashes.len(),
                             tracked_txn_hashes = ?tracked_txn_hashes,
                             block_txn_hashes = ?block_txn_hashes,
                         );
