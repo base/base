@@ -419,7 +419,7 @@ async fn test_flashblock_min_max_filtering(rbuilder: LocalInstance) -> eyre::Res
         flashblocks_block_time: 200,
         flashblocks_leeway_time: 100,
         flashblocks_fixed: false,
-        flashblocks_calculate_state_root: false,
+        flashblocks_disable_state_root: true,
         ..Default::default()
     },
     ..Default::default()
@@ -436,7 +436,7 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
         .send()
         .await?;
 
-    // Build a block with current timestamp (not historical) and calculate_state_root: false
+    // Build a block with current timestamp (not historical) and disable_state_root: true
     let block = driver.build_new_block_with_current_timestamp(None).await?;
 
     // Verify that flashblocks are still produced (block should have transactions)
@@ -449,7 +449,7 @@ async fn test_flashblocks_no_state_root_calculation(rbuilder: LocalInstance) -> 
     assert_eq!(
         block.header.state_root,
         B256::ZERO,
-        "State root should be zero when calculate_state_root is false"
+        "State root should be zero when disable_state_root is true"
     );
 
     Ok(())

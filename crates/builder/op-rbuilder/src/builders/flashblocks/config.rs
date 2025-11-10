@@ -31,8 +31,8 @@ pub struct FlashblocksConfig {
     /// Disables dynamic flashblocks number adjustment based on FCU arrival time
     pub fixed: bool,
 
-    /// Should we calculate state root for each flashblock
-    pub calculate_state_root: bool,
+    /// Should we disable state root calculation for each flashblock
+    pub disable_state_root: bool,
 
     /// The address of the flashblocks number contract.
     ///
@@ -65,7 +65,7 @@ impl Default for FlashblocksConfig {
             interval: Duration::from_millis(250),
             leeway_time: Duration::from_millis(50),
             fixed: false,
-            calculate_state_root: true,
+            disable_state_root: false,
             flashblocks_number_contract_address: None,
             flashblocks_number_contract_use_permit: false,
             p2p_enabled: false,
@@ -92,7 +92,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
 
         let fixed = args.flashblocks.flashblocks_fixed;
 
-        let calculate_state_root = args.flashblocks.flashblocks_calculate_state_root;
+        let disable_state_root = args.flashblocks.flashblocks_disable_state_root;
 
         let flashblocks_number_contract_address =
             args.flashblocks.flashblocks_number_contract_address;
@@ -105,7 +105,7 @@ impl TryFrom<OpRbuilderArgs> for FlashblocksConfig {
             interval,
             leeway_time,
             fixed,
-            calculate_state_root,
+            disable_state_root,
             flashblocks_number_contract_address,
             flashblocks_number_contract_use_permit,
             p2p_enabled: args.flashblocks.p2p.p2p_enabled,
