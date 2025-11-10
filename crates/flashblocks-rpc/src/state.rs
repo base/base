@@ -573,19 +573,21 @@ where
             let tx_loop_start = Instant::now();
             for (idx, transaction) in block.body.transactions.iter().enumerate() {
                 total_transactions += 1;
+                let tx_hash = transaction.tx_hash();
 
                 let step_start = Instant::now();
-                let sender = match &prev_pending_blocks {
-                    Some(pending_blocks) => pending_blocks.get_transaction_sender(transaction)?,
-                    None => transaction.recover_signer()?,
-                };
+                let sender = prev_pending_blocks
+                    .as_ref()
+                    .and_then(|pb| pb.get_transaction_sender(&tx_hash))
+                    .unwrap_or(transaction.recover_signer()?);
+
                 pending_blocks_builder.with_transaction_sender(transaction.tx_hash(), sender);
                 pending_blocks_builder.increment_nonce(sender);
                 time_tx_sender_recovery += step_start.elapsed();
 
                 let step_start = Instant::now();
                 let receipt = receipt_by_hash
-                    .get(&transaction.tx_hash())
+                    .get(&tx_hash)
                     .cloned()
                     .ok_or(eyre!("missing receipt for {:?}", transaction.tx_hash()))?;
                 time_tx_receipt_lookup += step_start.elapsed();
@@ -634,8 +636,8 @@ where
 
                 let step_start = Instant::now();
                 // Receipt Generation
-                let meta = TransactionMeta {
-                    tx_hash: transaction.tx_hash(),
+                let meta: TransactionMeta = TransactionMeta {
+                    tx_hash,
                     index: idx as u64,
                     block_hash: header.hash(),
                     block_number: block.number,
@@ -659,7 +661,7 @@ where
                 )?
                 .build();
 
-                pending_blocks_builder.with_receipt(transaction.tx_hash(), op_receipt);
+                pending_blocks_builder.with_receipt(tx_hash, op_receipt);
                 gas_used = receipt.cumulative_gas_used();
                 next_log_index += receipt.logs().len();
                 time_tx_receipt_build += step_start.elapsed();
@@ -667,17 +669,14 @@ where
                 let step_start = Instant::now();
                 let mut should_execute_transaction = false;
                 match &prev_pending_blocks {
-                    Some(pending_blocks) => {
-                        match pending_blocks.get_transaction_state(transaction.tx_hash()) {
-                            Some(state) => {
-                                pending_blocks_builder
-                                    .with_transaction_state(transaction.tx_hash(), state);
-                            }
-                            None => {
-                                should_execute_transaction = true;
-                            }
+                    Some(pending_blocks) => match pending_blocks.get_transaction_state(&tx_hash) {
+                        Some(state) => {
+                            pending_blocks_builder.with_transaction_state(tx_hash, state);
                         }
-                    }
+                        None => {
+                            should_execute_transaction = true;
+                        }
+                    },
                     None => {
                         should_execute_transaction = true;
                     }
@@ -709,8 +708,7 @@ where
 
                                 existing.extend(changed_slots);
                             }
-                            pending_blocks_builder
-                                .with_transaction_state(transaction.tx_hash(), state.clone());
+                            pending_blocks_builder.with_transaction_state(tx_hash, state.clone());
                             evm.db_mut().commit(state);
                             time_tx_state_commit += step_start.elapsed();
                         }
@@ -718,7 +716,7 @@ where
                             return Err(eyre!(
                                 "failed to execute transaction: {:?} tx_hash: {:?} sender: {:?}",
                                 e,
-                                transaction.tx_hash(),
+                                tx_hash,
                                 sender
                             ));
                         }

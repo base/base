@@ -1,5 +1,4 @@
 use crate::subscription::Flashblock;
-use alloy_consensus::transaction::SignerRecoverable;
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
@@ -10,7 +9,6 @@ use alloy_provider::network::TransactionResponse;
 use alloy_rpc_types::{state::StateOverride, BlockTransactions};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use eyre::eyre;
-use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{db::Cache, state::EvmState};
@@ -180,18 +178,12 @@ impl PendingBlocks {
         self.flashblocks.clone()
     }
 
-    pub fn get_transaction_state(&self, hash: B256) -> Option<EvmState> {
-        self.transaction_state.get(&hash).cloned()
+    pub fn get_transaction_state(&self, hash: &B256) -> Option<EvmState> {
+        self.transaction_state.get(hash).cloned()
     }
 
-    pub fn get_transaction_sender(&self, tx: &OpTxEnvelope) -> eyre::Result<Address> {
-        let hash = tx.tx_hash();
-
-        Ok(self
-            .transaction_senders
-            .get(&hash)
-            .cloned()
-            .unwrap_or(tx.recover_signer()?))
+    pub fn get_transaction_sender(&self, tx_hash: &B256) -> Option<Address> {
+        self.transaction_senders.get(tx_hash).cloned()
     }
 
     pub fn get_db_cache(&self) -> Cache {

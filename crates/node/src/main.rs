@@ -38,7 +38,7 @@ struct Args {
     #[arg(
         long = "max-pending-blocks-depth",
         value_name = "MAX_PENDING_BLOCKS_DEPTH",
-        default_value = "5"
+        default_value = "3"
     )]
     pub max_pending_blocks_depth: u64,
 
