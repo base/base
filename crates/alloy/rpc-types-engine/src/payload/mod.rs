@@ -543,18 +543,18 @@ impl OpExecutionPayload {
         self,
         sidecar: &OpExecutionPayloadSidecar,
     ) -> Result<Block<alloy_primitives::Bytes>, OpPayloadError> {
-        if let Some(payload) = self.as_v2() {
-            if !payload.withdrawals.is_empty() {
-                return Err(OpPayloadError::NonEmptyL1Withdrawals);
-            }
+        if let Some(payload) = self.as_v2()
+            && !payload.withdrawals.is_empty()
+        {
+            return Err(OpPayloadError::NonEmptyL1Withdrawals);
         }
 
         let mut block = self.into_block_raw()?;
 
-        if let Some(blobs_hashes) = sidecar.versioned_hashes() {
-            if !blobs_hashes.is_empty() {
-                return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
-            }
+        if let Some(blobs_hashes) = sidecar.versioned_hashes()
+            && !blobs_hashes.is_empty()
+        {
+            return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
         }
         if let Some(reqs_hash) = sidecar.requests_hash() {
             if reqs_hash != EMPTY_REQUESTS_HASH {
@@ -605,10 +605,10 @@ impl OpExecutionPayload {
         F: FnMut(alloy_primitives::Bytes) -> Result<T, E>,
         E: Into<PayloadError>,
     {
-        if let Some(payload) = self.as_v2() {
-            if !payload.withdrawals.is_empty() {
-                return Err(OpPayloadError::NonEmptyL1Withdrawals);
-            }
+        if let Some(payload) = self.as_v2()
+            && !payload.withdrawals.is_empty()
+        {
+            return Err(OpPayloadError::NonEmptyL1Withdrawals);
         }
         let block = match self {
             Self::V1(payload) => return Ok(payload.try_into_block_with(f)?),
@@ -664,10 +664,10 @@ impl OpExecutionPayload {
         E: Into<PayloadError>,
     {
         let mut base_payload = self.try_into_block_with(f)?;
-        if let Some(blobs_hashes) = sidecar.versioned_hashes() {
-            if !blobs_hashes.is_empty() {
-                return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
-            }
+        if let Some(blobs_hashes) = sidecar.versioned_hashes()
+            && !blobs_hashes.is_empty()
+        {
+            return Err(OpPayloadError::NonEmptyBlobVersionedHashes);
         }
         if let Some(reqs_hash) = sidecar.requests_hash() {
             if reqs_hash != EMPTY_REQUESTS_HASH {

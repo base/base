@@ -6,6 +6,7 @@ use core::fmt::Display;
 /// Identifier for an Optimism deposit transaction
 pub const DEPOSIT_TX_TYPE_ID: u8 = 126; // 0x7E
 
+#[allow(clippy::derivable_impls)]
 impl Default for OpTxType {
     fn default() -> Self {
         Self::Legacy
