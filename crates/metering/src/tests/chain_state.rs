@@ -21,7 +21,7 @@ use crate::rpc::{MeteringApiImpl, MeteringApiServer};
 use op_alloy_rpc_types::OpTransactionRequest;
 
 #[tokio::test]
-async fn metering_succeeds_after_storage_change() -> Result<()> {
+async fn meter_bundle_simulation_reflects_pending_state() -> Result<()> {
     reth_tracing::init_test_tracing();
     let harness = TestHarness::new(default_launcher).await?;
 
@@ -144,7 +144,7 @@ async fn metering_succeeds_after_storage_change() -> Result<()> {
 }
 
 #[tokio::test]
-async fn pending_flashblock_updates_state() -> Result<()> {
+async fn meter_bundle_errors_when_beacon_root_missing() -> Result<()> {
     reth_tracing::init_test_tracing();
     let harness = TestHarness::new(default_launcher).await?;
 
@@ -286,7 +286,7 @@ fn envelope_from_signed(tx: TransactionSigned) -> (OpTxEnvelope, Bytes) {
 }
 
 #[tokio::test]
-async fn counter_storage_changes_persist_across_blocks() -> Result<()> {
+async fn meter_bundle_reads_canonical_storage_without_mutation() -> Result<()> {
     reth_tracing::init_test_tracing();
     let harness = TestHarness::new(default_launcher).await?;
     let alice = &harness.accounts().alice;
