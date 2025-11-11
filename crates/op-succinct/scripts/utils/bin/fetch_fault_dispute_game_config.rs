@@ -214,7 +214,10 @@ async fn main() -> Result<()> {
     if let Some(root) = find_project_root() {
         dotenv::from_path(root.join(args.env_file)).ok();
     } else {
-        eprintln!("Warning: Could not find project root. {} file not loaded.", args.env_file);
+        // Try to load the env file in case it's present
+        if dotenv::from_path(args.env_file.clone()).is_err() {
+            eprintln!("Warning: Could not find project root. {} file not loaded.", args.env_file);
+        }
     }
 
     update_fdg_config().await?;
