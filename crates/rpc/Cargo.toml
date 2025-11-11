@@ -35,8 +35,10 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
+alloy-sol-types.workspace = true
 
 # op-alloy
+op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
 
@@ -86,6 +88,7 @@ alloy-provider.workspace = true
 alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 alloy-contract.workspace = true
+hex-literal = "0.4"
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["reth-optimism-cli"]

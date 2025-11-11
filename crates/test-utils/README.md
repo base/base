@@ -104,7 +104,7 @@ async fn test_harness() -> eyre::Result<()> {
 - `provider()` - Get Alloy RootProvider for RPC calls
 - `accounts()` - Access test accounts
 - `advance_chain(n)` - Build N empty blocks
-- `build_block_from_transactions(txs)` - Build block with specific transactions
+- `build_block_from_transactions(txs)` - Build block with specific transactions (auto-prepends the L1 block info deposit)
 - `send_flashblock(fb)` - Send a single flashblock to the node for pending state processing
 - `send_flashblocks(iter)` - Convenience helper that sends multiple flashblocks sequentially
 
