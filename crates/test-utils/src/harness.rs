@@ -90,12 +90,16 @@ impl TestHarness {
             .ok_or_else(|| eyre!("No genesis block found"))?;
 
         let parent_hash = latest_block.header.hash;
+        let parent_beacon_block_root = latest_block
+            .header
+            .parent_beacon_block_root
+            .unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
 
         let payload_attributes = OpPayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp,
-                parent_beacon_block_root: Some(B256::ZERO),
+                parent_beacon_block_root: Some(parent_beacon_block_root),
                 withdrawals: Some(vec![]),
                 ..Default::default()
             },
