@@ -13,6 +13,74 @@ use op_succinct_bindings::{
 use tokio::time::{sleep, Instant};
 use tracing::info;
 
+use crate::common::TestEnvironment;
+
+impl TestEnvironment {
+    pub async fn wait_and_track_games(
+        &self,
+        count: usize,
+        timeout_secs: u64,
+    ) -> Result<Vec<TrackedGame>> {
+        wait_and_track_games(
+            &self.factory()?,
+            self.game_type,
+            count,
+            Duration::from_secs(timeout_secs),
+        )
+        .await
+    }
+
+    pub async fn wait_for_resolutions(
+        &self,
+        tracked_games: &[TrackedGame],
+        timeout_secs: u64,
+    ) -> Result<Vec<GameStatus>> {
+        wait_for_resolutions(&self.anvil.provider, tracked_games, Duration::from_secs(timeout_secs))
+            .await
+    }
+
+    pub async fn wait_for_challenges(
+        &self,
+        game_addresses: &[Address],
+        timeout_secs: u64,
+    ) -> Result<Vec<bool>> {
+        wait_for_challenges(&self.anvil.provider, game_addresses, Duration::from_secs(timeout_secs))
+            .await
+    }
+
+    pub async fn wait_for_bond_claims(
+        &self,
+        tracked_games: &[TrackedGame],
+        recipient_address: Address,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        wait_for_bond_claims(
+            &self.anvil.provider,
+            tracked_games,
+            recipient_address,
+            Duration::from_secs(timeout_secs),
+        )
+        .await
+    }
+
+    pub async fn wait_and_verify_game_resolutions(
+        &self,
+        game_addresses: &[Address],
+        expected_status: GameStatus,
+        winner_name: &str,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        wait_and_verify_game_resolutions(
+            &self.anvil.provider,
+            game_addresses,
+            expected_status,
+            winner_name,
+            Duration::from_secs(timeout_secs),
+        )
+        .await
+    }
+}
+
 /// Represents a tracked game for monitoring
 #[derive(Debug, Clone)]
 pub struct TrackedGame {

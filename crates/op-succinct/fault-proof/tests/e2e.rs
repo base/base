@@ -3,46 +3,32 @@ pub mod common;
 #[cfg(feature = "e2e")]
 mod e2e {
     use super::*;
-    use std::{str::FromStr, sync::Arc};
+    use std::sync::Arc;
 
-    use alloy_network::EthereumWallet;
     use alloy_primitives::{Bytes, FixedBytes, U256};
-    use alloy_provider::ProviderBuilder;
-    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::{SolCall, SolValue};
-    use alloy_transport_http::reqwest::Url;
     use anyhow::{Context, Result};
     use common::{
         constants::{
-            CHALLENGER_ADDRESS, CHALLENGER_PRIVATE_KEY, DISPUTE_GAME_FINALITY_DELAY_SECONDS,
-            MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION, MOCK_PERMISSIONED_GAME_TYPE,
-            PROPOSER_ADDRESS, PROPOSER_PRIVATE_KEY, TEST_GAME_TYPE,
+            CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS, MAX_CHALLENGE_DURATION,
+            MAX_PROVE_DURATION, MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
         },
-        contracts::send_contract_transaction,
-        monitor::{
-            verify_all_resolved_correctly, wait_and_track_games, wait_and_verify_game_resolutions,
-            wait_for_bond_claims, wait_for_challenges, wait_for_resolutions, TrackedGame,
-        },
-        warp_time, TestEnvironment,
+        monitor::{verify_all_resolved_correctly, TrackedGame},
+        TestEnvironment,
     };
     use fault_proof::{
         challenger::Game,
         contract::{GameStatus, ProposalStatus},
         proposer::Game as ProposerGame,
-        L2ProviderTrait,
     };
     use op_succinct_bindings::{
         dispute_game_factory::DisputeGameFactory, mock_optimism_portal2::MockOptimismPortal2,
     };
-    use op_succinct_signer_utils::{Signer, SignerLock};
     use rand::Rng;
     use tokio::time::{sleep, Duration};
     use tracing::info;
 
-    use crate::common::{
-        contracts::deploy_mock_permissioned_game, init_challenger, init_proposer, start_challenger,
-        start_proposer,
-    };
+    use crate::common::{init_challenger, init_proposer};
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
@@ -57,27 +43,15 @@ mod e2e {
     async fn test_honest_proposer_native() -> Result<()> {
         info!("=== Test: Honest Proposer Full Lifecycle (Create → Resolve → Claim) ===");
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
 
-        // Start proposer
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
-        info!("✓ Proposer service started");
+        let proposer_handle = env.start_proposer().await?;
 
         // Wait for proposer to create games
         info!("=== Waiting for Game Creation ===");
-        let factory = DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
 
         // Track first 3 games (L2 finalized head won't advance far enough for 3)
-        let tracked_games =
-            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(120)).await?;
-
+        let tracked_games = env.wait_and_track_games(3, 120).await?;
         info!("✓ Proposer created {} games:", tracked_games.len());
         for (i, game) in tracked_games.iter().enumerate() {
             info!("  Game {}: {} at L2 block {}", i + 1, game.address, game.l2_block_number);
@@ -89,10 +63,9 @@ mod e2e {
 
         // === PHASE 2: Challenge Period ===
         info!("=== Phase 2: Challenge Period ===");
-        info!("Warping time to near end of max challenge duration...");
 
         // Warp by max challenge duration
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
+        env.warp_time(MAX_CHALLENGE_DURATION).await?;
         info!("✓ Warped time by max challenge duration ({MAX_CHALLENGE_DURATION} seconds) to trigger resolution");
 
         // Verify proposer is still running
@@ -103,16 +76,13 @@ mod e2e {
         info!("=== Phase 3: Resolution ===");
 
         // Wait for games to be resolved
-        let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
-                .await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, 120).await?;
 
         // Verify all games resolved correctly (proposer wins)
         verify_all_resolved_correctly(&resolutions)?;
 
         // Warp past DISPUTE_GAME_FINALITY_DELAY_SECONDS
-        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
-            .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
         info!("✓ Warped time by DISPUTE_GAME_FINALITY_DELAY_SECONDS ({DISPUTE_GAME_FINALITY_DELAY_SECONDS} seconds) to trigger bond claims");
 
         // Verify proposer is still running
@@ -123,18 +93,9 @@ mod e2e {
         info!("=== Phase 4: Bond Claims ===");
 
         // Wait for proposer to claim bonds
-        wait_for_bond_claims(
-            &env.anvil.provider,
-            &tracked_games,
-            PROPOSER_ADDRESS,
-            Duration::from_secs(120),
-        )
-        .await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 120).await?;
 
-        // Stop proposer
-        info!("=== Stopping Proposer ===");
-        proposer_handle.abort();
-        info!("✓ Proposer stopped gracefully");
+        env.stop_proposer(proposer_handle);
 
         info!("=== Full Lifecycle Test Complete ===");
         info!("✓ Games created, resolved, and bonds claimed successfully");
@@ -150,84 +111,48 @@ mod e2e {
 
         let env = TestEnvironment::setup().await?;
 
-        let l1_rpc_url = env.rpc_config.l1_rpc.clone();
-        let factory_reader =
-            DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
-        let initial_game_count = factory_reader.gameCount().call().await?;
-        let init_bond = factory_reader.initBonds(TEST_GAME_TYPE).call().await?;
+        let factory = env.factory()?;
+        let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
-        let proposer_signer = SignerLock::new(Signer::new_local_signer(PROPOSER_PRIVATE_KEY)?);
-
-        let legacy_impl =
-            deploy_mock_permissioned_game(&proposer_signer, &l1_rpc_url, *factory_reader.address())
-                .await?;
-        info!("✓ Deployed mock permissioned implementation at {legacy_impl}");
+        let legacy_impl = env.deploy_mock_permissioned_game().await?;
 
         let set_init_call = DisputeGameFactory::setInitBondCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _initBond: init_bond,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(set_init_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_factory_tx(set_init_call.abi_encode(), None).await?;
 
         let set_impl_call = DisputeGameFactory::setImplementationCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _impl: legacy_impl,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(set_impl_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_factory_tx(set_impl_call.abi_encode(), None).await?;
 
         let legacy_game_type_call = MockOptimismPortal2::setRespectedGameTypeCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.portal,
-            Bytes::from(legacy_game_type_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_portal_tx(legacy_game_type_call.abi_encode(), None).await?;
+        info!("✓ Set respected game type to {MOCK_PERMISSIONED_GAME_TYPE}");
 
+        let initial_game_count = factory.gameCount().call().await?;
         let mut expected_index = initial_game_count;
         info!("Seeding legacy game (type {MOCK_PERMISSIONED_GAME_TYPE})");
 
-        let l2_provider = ProviderBuilder::default().connect_http(env.rpc_config.l2_rpc.clone());
         let interval = 10;
-        let l2_block = U256::from(env.anvil.starting_l2_block_number + interval);
-        let root_claim = l2_provider.compute_output_root_at_block(l2_block).await?;
-        let extra_data = <(U256, u32)>::abi_encode_packed(&(l2_block, u32::MAX));
+        let l2_block = env.anvil.starting_l2_block_number + interval;
+        let root_claim = env.compute_output_root_at_block(l2_block).await?;
+        let extra_data = <(U256, u32)>::abi_encode_packed(&(U256::from(l2_block), u32::MAX));
 
         let create_call = DisputeGameFactory::createCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _rootClaim: root_claim,
             _extraData: Bytes::from(extra_data.clone()),
         };
-
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(create_call.abi_encode()),
-            Some(init_bond),
-        )
-        .await?;
+        env.send_factory_tx(create_call.abi_encode(), Some(init_bond)).await?;
 
         // Wait for the game to be indexed by the factory
         loop {
-            let current = factory_reader.gameCount().call().await?;
+            let current = factory.gameCount().call().await?;
             if current > expected_index {
                 expected_index = current;
                 break;
@@ -235,55 +160,34 @@ mod e2e {
             sleep(Duration::from_millis(200)).await;
         }
 
-        let game_info = factory_reader.gameAtIndex(expected_index - U256::from(1)).call().await?;
+        let game_info = factory.gameAtIndex(expected_index - U256::from(1)).call().await?;
         let mock_game_address = game_info.proxy_;
         assert_eq!(game_info.gameType_, MOCK_PERMISSIONED_GAME_TYPE);
         info!(" • Mock permissioned game at {mock_game_address}");
 
         let restore_type_call =
             MockOptimismPortal2::setRespectedGameTypeCall { _gameType: TEST_GAME_TYPE };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.portal,
-            Bytes::from(restore_type_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_portal_tx(restore_type_call.abi_encode(), None).await?;
         info!("✓ Respected game type restored to {TEST_GAME_TYPE}");
 
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
+        let proposer_handle = env.start_proposer().await?;
         info!("✓ Proposer started after legacy games seeded");
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
-        let tracked_games =
-            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(120)).await?;
+        let tracked_games = env.wait_and_track_games(3, 120).await?;
         assert_eq!(tracked_games.len(), 3);
-        info!("✓ Proposer created 3 type {} games despite legacy history", TEST_GAME_TYPE);
+        info!("✓ Proposer created 3 type {} games despite legacy history", env.game_type);
 
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
-        let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
-                .await?;
+        env.warp_time(MAX_CHALLENGE_DURATION).await?;
+
+        let resolutions = env.wait_for_resolutions(&tracked_games, 120).await?;
+
         verify_all_resolved_correctly(&resolutions)?;
 
-        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
-            .await?;
-        wait_for_bond_claims(
-            &env.anvil.provider,
-            &tracked_games,
-            PROPOSER_ADDRESS,
-            Duration::from_secs(120),
-        )
-        .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        proposer_handle.abort();
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 120).await?;
+
+        env.stop_proposer(proposer_handle);
 
         let legacy_game =
             MockPermissionedDisputeGameView::new(mock_game_address, env.anvil.provider.clone());
@@ -307,91 +211,47 @@ mod e2e {
 
         let env = TestEnvironment::setup().await?;
 
-        let proposer_signer = SignerLock::new(Signer::new_local_signer(PROPOSER_PRIVATE_KEY)?);
+        let factory_reader = env.factory()?;
 
-        let l1_rpc_url = env.rpc_config.l1_rpc.clone();
-
-        let factory_reader =
-            DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
         let init_bond = factory_reader.initBonds(TEST_GAME_TYPE).call().await?;
 
         let initial_game_count = factory_reader.gameCount().call().await?;
 
-        let legacy_impl =
-            deploy_mock_permissioned_game(&proposer_signer, &l1_rpc_url, *factory_reader.address())
-                .await?;
-        info!("✓ Deployed mock permissioned implementation at {legacy_impl}");
+        let legacy_impl = env.deploy_mock_permissioned_game().await?;
 
         let set_init_call = DisputeGameFactory::setInitBondCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _initBond: init_bond,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(set_init_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_factory_tx(set_init_call.abi_encode(), None).await?;
 
         let set_impl_call = DisputeGameFactory::setImplementationCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _impl: legacy_impl,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(set_impl_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_factory_tx(set_impl_call.abi_encode(), None).await?;
 
         let legacy_game_type_call = MockOptimismPortal2::setRespectedGameTypeCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
         };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.portal,
-            Bytes::from(legacy_game_type_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_portal_tx(legacy_game_type_call.abi_encode(), None).await?;
 
         let mut expected_index = initial_game_count;
         info!("Seeding legacy game (type {MOCK_PERMISSIONED_GAME_TYPE})");
 
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
-        info!("✓ Proposer started after legacy games seeded");
+        let proposer_handle = env.start_proposer().await?;
 
-        let l2_provider = ProviderBuilder::default().connect_http(env.rpc_config.l2_rpc.clone());
         let interval = 10;
-        let l2_block = U256::from(env.anvil.starting_l2_block_number + interval);
-        let root_claim = l2_provider.compute_output_root_at_block(l2_block).await?;
-        let extra_data = <(U256, u32)>::abi_encode_packed(&(l2_block, u32::MAX));
+        let l2_block = env.anvil.starting_l2_block_number + interval;
+        let root_claim = env.compute_output_root_at_block(l2_block).await?;
+        let extra_data = <(U256, u32)>::abi_encode_packed(&(U256::from(l2_block), u32::MAX));
 
         let create_call = DisputeGameFactory::createCall {
             _gameType: MOCK_PERMISSIONED_GAME_TYPE,
             _rootClaim: root_claim,
             _extraData: Bytes::from(extra_data.clone()),
         };
-
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.factory,
-            Bytes::from(create_call.abi_encode()),
-            Some(init_bond),
-        )
-        .await?;
+        env.send_factory_tx(create_call.abi_encode(), Some(init_bond)).await?;
 
         // Wait for the game to be indexed by the factory
         loop {
@@ -410,39 +270,24 @@ mod e2e {
 
         let restore_type_call =
             MockOptimismPortal2::setRespectedGameTypeCall { _gameType: TEST_GAME_TYPE };
-        send_contract_transaction(
-            &proposer_signer,
-            &l1_rpc_url,
-            env.deployed.portal,
-            Bytes::from(restore_type_call.abi_encode()),
-            None,
-        )
-        .await?;
+        env.send_portal_tx(restore_type_call.abi_encode(), None).await?;
         info!("✓ Respected game type restored to {TEST_GAME_TYPE}");
 
-        let tracked_games =
-            wait_and_track_games(&factory_reader, TEST_GAME_TYPE, 3, Duration::from_secs(120))
-                .await?;
+        let tracked_games = env.wait_and_track_games(3, 120).await?;
         assert_eq!(tracked_games.len(), 3);
-        info!("✓ Proposer created 3 type {} games despite legacy history", TEST_GAME_TYPE);
+        info!("✓ Proposer created 3 type {} games despite legacy history", env.game_type);
 
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
-        let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
-                .await?;
+        env.warp_time(MAX_CHALLENGE_DURATION).await?;
+
+        let resolutions = env.wait_for_resolutions(&tracked_games, 120).await?;
+
         verify_all_resolved_correctly(&resolutions)?;
 
-        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
-            .await?;
-        wait_for_bond_claims(
-            &env.anvil.provider,
-            &tracked_games,
-            PROPOSER_ADDRESS,
-            Duration::from_secs(120),
-        )
-        .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        proposer_handle.abort();
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 120).await?;
+
+        env.stop_proposer(proposer_handle);
 
         let legacy_game =
             MockPermissionedDisputeGameView::new(mock_game_address, env.anvil.provider.clone());
@@ -467,37 +312,23 @@ mod e2e {
 
         const NUM_INVALID_GAMES: usize = 3;
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
-        let mut l2_block_number = env.anvil.starting_l2_block_number;
 
-        // Start challenger service
         info!("=== Starting Challenger Service ===");
-        let challenger_handle = start_challenger(
-            &env.rpc_config,
-            CHALLENGER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-            None,
-        )
-        .await?;
-        info!("✓ Challenger service started");
+        let challenger_handle = env.start_challenger(None).await?;
 
         // === PHASE 1: Create Invalid Games ===
         info!("=== Phase 1: Create Invalid Games ===");
 
         // Create a signer for permissioned account 0
-        let wallet = PrivateKeySigner::from_str(PROPOSER_PRIVATE_KEY)?;
-        let provider_with_signer = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(wallet))
-            .connect_http(env.anvil.endpoint.parse::<Url>()?);
+        let factory = env.factory()?;
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, provider_with_signer.clone());
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
         let mut invalid_games = Vec::new();
         let mut rng = rand::rng();
 
+        let mut l2_block_number = env.anvil.starting_l2_block_number;
         for _ in 0..NUM_INVALID_GAMES {
             l2_block_number += 10;
             // Create game with random invalid output root
@@ -505,20 +336,10 @@ mod e2e {
             rng.fill(&mut invalid_root_bytes);
             let invalid_root = FixedBytes::<32>::from(invalid_root_bytes);
 
-            let parent_index = u32::MAX;
-            let extra_data = (U256::from(l2_block_number), parent_index).abi_encode_packed();
+            let _receipt =
+                env.create_game(invalid_root, l2_block_number, u32::MAX, init_bond).await?;
 
-            let tx = factory
-                .create(TEST_GAME_TYPE, invalid_root, extra_data.into())
-                .value(init_bond)
-                .send()
-                .await?;
-
-            let _receipt = tx.get_receipt().await?;
-            let new_game_count = factory.gameCount().call().await?;
-            let game_index = new_game_count - U256::from(1);
-            let game_info = factory.gameAtIndex(game_index).call().await?;
-            let game_address = game_info.proxy_;
+            let (_, game_address) = env.last_game_info().await?;
 
             invalid_games.push(game_address);
         }
@@ -534,38 +355,29 @@ mod e2e {
 
         // === PHASE 2: Challenge Period ===
         info!("=== Phase 2: Challenge Period ===");
-        wait_for_challenges(&env.anvil.provider, &invalid_games, Duration::from_secs(60)).await?;
+        env.wait_for_challenges(&invalid_games, 60).await?;
         info!("✓ All games challenged successfully");
 
         // === PHASE 3: Resolution ===
         info!("=== Phase 3: Resolution ===");
-        info!("Warping time past prove deadline to trigger challenger wins...");
-        warp_time(
-            &env.anvil.provider,
-            Duration::from_secs(MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION),
-        )
-        .await?;
+        env.warp_time(MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION).await?;
         info!(
-            "✓ Warped time by {} seconds (max challenge duration + max prove duration)",
-            MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION
+            "✓ Warped time past prove deadline (challenge {}s + prove {}s) to trigger challenger wins",
+            MAX_CHALLENGE_DURATION,
+            MAX_PROVE_DURATION
         );
 
         // Wait for and verify challenger wins
-        wait_and_verify_game_resolutions(
-            &env.anvil.provider,
+        env.wait_and_verify_game_resolutions(
             &invalid_games,
             GameStatus::CHALLENGER_WINS,
             "ChallengerWins",
-            Duration::from_secs(30),
+            30,
         )
         .await?;
 
         // Warp DISPUTE_GAME_FINALITY_DELAY_SECONDS + 1 for bond claims
-        warp_time(
-            &env.anvil.provider,
-            Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS + 1),
-        )
-        .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS + 1).await?;
         info!(
             "✓ Warped time to enable bond claims ({} seconds)",
             DISPUTE_GAME_FINALITY_DELAY_SECONDS + 1
@@ -589,18 +401,11 @@ mod e2e {
             })
             .collect();
 
-        wait_for_bond_claims(
-            &env.anvil.provider,
-            &tracked_games,
-            CHALLENGER_ADDRESS,
-            Duration::from_secs(60),
-        )
-        .await?;
+        env.wait_for_bond_claims(&tracked_games, CHALLENGER_ADDRESS, 60).await?;
 
         // Stop challenger
         info!("=== Stopping Challenger ===");
-        challenger_handle.abort();
-        info!("✓ Challenger stopped gracefully");
+        env.stop_challenger(challenger_handle);
 
         info!("=== Full Lifecycle Test Complete ===");
         info!("✓ Invalid games challenged, won by challenger, and bonds claimed successfully");
@@ -614,20 +419,14 @@ mod e2e {
     async fn test_game_chain_validation_invalid_parent() -> Result<()> {
         info!("=== Test: Game Chain Validation - Invalid Parent Chain ===");
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
 
-        // Create a signer for creating games
-        let wallet = PrivateKeySigner::from_str(PROPOSER_PRIVATE_KEY)?;
-        let provider_with_signer = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(wallet))
-            .connect_http(env.anvil.endpoint.parse::<Url>()?);
+        let factory = env.factory()?;
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, provider_with_signer.clone());
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
         info!("Advancing time to ensure games won't be retired...");
-        warp_time(&env.anvil.provider, Duration::from_secs(10)).await?;
+        env.warp_time(10).await?;
 
         // === PHASE 1: Create Invalid Parent Chain ===
         info!("=== Phase 1: Creating Invalid Parent Chain ===");
@@ -636,24 +435,15 @@ mod e2e {
         let anchor_block = env.anvil.starting_l2_block_number + 1;
 
         // Create L2 provider to compute output roots
-        let fetcher = op_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new();
-        let anchor_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(anchor_block)).await?;
-        let anchor_extra_data = (U256::from(anchor_block), u32::MAX).abi_encode_packed();
+        let anchor_root = env.compute_output_root_at_block(anchor_block).await?;
 
-        let tx = factory
-            .create(TEST_GAME_TYPE, anchor_root, anchor_extra_data.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        let _receipt = tx.get_receipt().await?;
+        env.create_game(anchor_root, anchor_block, u32::MAX, init_bond).await?;
 
-        let anchor_game_count = factory.gameCount().call().await?;
-        let anchor_game_index = anchor_game_count - U256::from(1);
-        let anchor_game_info = factory.gameAtIndex(anchor_game_index).call().await?;
+        let (anchor_game_index, anchor_game_address) = env.last_game_info().await?;
+
         info!(
             "✓ Created valid anchor game at index {} (address: {})",
-            anchor_game_index, anchor_game_info.proxy_
+            anchor_game_index, anchor_game_address
         );
 
         // Step 2: Create an invalid middle game with wrong output root
@@ -662,61 +452,34 @@ mod e2e {
         let mut invalid_root_bytes = [0u8; 32];
         rng.fill(&mut invalid_root_bytes);
         let invalid_root = FixedBytes::<32>::from(invalid_root_bytes);
-        let middle_extra_data =
-            (U256::from(middle_block), anchor_game_index.to::<u32>()).abi_encode_packed();
 
-        let tx = factory
-            .create(TEST_GAME_TYPE, invalid_root, middle_extra_data.into())
-            .value(init_bond)
-            .send()
+        env.create_game(invalid_root, middle_block, anchor_game_index.to::<u32>(), init_bond)
             .await?;
-        tx.get_receipt().await?;
 
-        let middle_game_count = factory.gameCount().call().await?;
-        let middle_game_index = middle_game_count - U256::from(1);
-        let middle_game_info = factory.gameAtIndex(middle_game_index).call().await?;
+        let (middle_game_index, middle_game_address) = env.last_game_info().await?;
         info!(
             "✓ Created invalid middle game at index {} (address: {})",
-            middle_game_index, middle_game_info.proxy_
+            middle_game_index, middle_game_address
         );
 
         // Step 3: Create a valid child game pointing to invalid parent
         let child_block = middle_block + 10;
-        let child_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(child_block)).await?;
-        let child_extra_data =
-            (U256::from(child_block), middle_game_index.to::<u32>()).abi_encode_packed();
+        let child_root = env.compute_output_root_at_block(child_block).await?;
+        env.create_game(child_root, child_block, middle_game_index.to::<u32>(), init_bond).await?;
 
-        let tx = factory
-            .create(TEST_GAME_TYPE, child_root, child_extra_data.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        tx.get_receipt().await?;
-
-        let child_game_count = factory.gameCount().call().await?;
-        let child_game_index = child_game_count - U256::from(1);
-        let child_game_info = factory.gameAtIndex(child_game_index).call().await?;
+        let (child_game_index, child_game_address) = env.last_game_info().await?;
         info!(
             "✓ Created valid child game at index {} (address: {})",
-            child_game_index, child_game_info.proxy_
+            child_game_index, child_game_address
         );
 
         // === PHASE 2: Start Proposer and Verify Chain Rejection ===
         info!("=== Phase 2: Starting Proposer to Validate Chain ===");
 
-        // Start proposer
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
-        info!("✓ Proposer service started");
+        let proposer_handle = env.start_proposer().await?;
 
         // Wait for proposer to create a new game (it should skip the invalid chain)
-        let initial_game_count = child_game_count;
+        let initial_game_count = child_game_index + U256::from(1);
         let mut new_game_created = false;
 
         for _ in 0..30 {
@@ -730,10 +493,8 @@ mod e2e {
                 let new_game_info = factory.gameAtIndex(new_game_index).call().await?;
 
                 // Check that the new game doesn't build on the invalid chain
-                let new_game = op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                new_game_info.proxy_,
-                env.anvil.provider.clone(),
-            );
+                let new_game = env.fault_dispute_game(new_game_info.proxy_).await?;
+
                 let claim_data = new_game.claimData().call().await?;
 
                 // The new game should either be an anchor game or build on the valid anchor game
@@ -754,8 +515,7 @@ mod e2e {
 
         assert!(new_game_created, "Proposer should have created a new game");
 
-        // Stop proposer
-        proposer_handle.abort();
+        env.stop_proposer(proposer_handle);
         info!("✓ Test complete: Proposer correctly rejected invalid parent chain");
 
         Ok(())
@@ -767,48 +527,30 @@ mod e2e {
     async fn test_game_chain_validation_challenged_parent() -> Result<()> {
         info!("=== Test: Game Chain Validation - Challenged Parent ===");
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
 
-        // Create a signer for creating games
-        let wallet = PrivateKeySigner::from_str(PROPOSER_PRIVATE_KEY)?;
-        let provider_with_signer = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(wallet))
-            .connect_http(env.anvil.endpoint.parse::<Url>()?);
+        let factory = env.factory()?;
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, provider_with_signer.clone());
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
         // CRITICAL FIX: Advance time after contract deployment
         // This ensures games created won't be considered "retired" (createdAt >
         // respectedGameTypeUpdatedAt)
         info!("Advancing time to ensure games won't be retired...");
-        warp_time(&env.anvil.provider, Duration::from_secs(10)).await?;
+        env.warp_time(10).await?;
 
         // === PHASE 1: Create Valid Parent Game ===
         info!("=== Phase 1: Creating Valid Parent Game ===");
 
         // Create a valid parent game that will be challenged
         let parent_block = env.anvil.starting_l2_block_number + 1;
-        let fetcher = op_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new();
-        let parent_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(parent_block)).await?;
-        let parent_extra_data = (U256::from(parent_block), u32::MAX).abi_encode_packed();
 
-        let tx = factory
-            .create(TEST_GAME_TYPE, parent_root, parent_extra_data.into())
-            .value(init_bond)
-            .send()
-            .await?;
+        let parent_root = env.compute_output_root_at_block(parent_block).await?;
 
-        // Wait for transaction receipt with confirmations
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
+        let receipt = env.create_game(parent_root, parent_block, u32::MAX, init_bond).await?;
         info!("Parent game creation tx confirmed in block {:?}", receipt.block_number);
 
-        let parent_game_count = factory.gameCount().call().await?;
-        let parent_game_index = parent_game_count - U256::from(1);
-        let parent_game_info = factory.gameAtIndex(parent_game_index).call().await?;
-        let parent_game_address = parent_game_info.proxy_;
+        let (parent_game_index, parent_game_address) = env.last_game_info().await?;
         info!(
             "✓ Created valid parent game at index {} (address: {})",
             parent_game_index, parent_game_address
@@ -818,11 +560,8 @@ mod e2e {
         info!("=== Phase 2: Creating Child Game with Valid Parent ===");
 
         // Double-check parent game status right before creating child
-        let parent_game =
-            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                parent_game_address,
-                provider_with_signer.clone(),
-            );
+        let parent_game = env.fault_dispute_game(parent_game_address).await?;
+
         let parent_status = parent_game.status().call().await?;
         info!("Parent game status right before child creation: {:?}", parent_status);
 
@@ -830,15 +569,7 @@ mod e2e {
         info!("Parent game wasRespectedGameTypeWhenCreated: {}", was_respected);
 
         // Check if parent game is blacklisted or retired via AnchorStateRegistry
-        // We need to get the anchor state registry address from the parent game
-        let anchor_registry_addr = parent_game.anchorStateRegistry().call().await?;
-        info!("AnchorStateRegistry address: {:?}", anchor_registry_addr);
-
-        // Check if the parent game passes the validation checks
-        let anchor_registry = op_succinct_bindings::anchor_state_registry::AnchorStateRegistry::new(
-            anchor_registry_addr,
-            provider_with_signer.clone(),
-        );
+        let anchor_registry = env.anchor_registry(parent_game_address).await?;
 
         let is_respected = anchor_registry.isGameRespected(parent_game_address).call().await?;
         let is_blacklisted = anchor_registry.isGameBlacklisted(parent_game_address).call().await?;
@@ -853,12 +584,8 @@ mod e2e {
         if is_retired {
             let parent_created_at = parent_game.createdAt().call().await?;
 
-            // Get the portal address to check respectedGameTypeUpdatedAt
-            let portal_addr = anchor_registry.portal().call().await?;
-            let portal = op_succinct_bindings::mock_optimism_portal2::MockOptimismPortal2::new(
-                portal_addr,
-                provider_with_signer.clone(),
-            );
+            let portal = env.mock_optimism_portal2(anchor_registry).await?;
+
             let respected_game_type_updated_at = portal.respectedGameTypeUpdatedAt().call().await?;
 
             info!("DEBUG: Game retirement issue:");
@@ -871,88 +598,55 @@ mod e2e {
         }
 
         let child_block = parent_block + 10;
-        let child_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(child_block)).await?;
-        let child_extra_data =
-            (U256::from(child_block), parent_game_index.to::<u32>()).abi_encode_packed();
+        let child_root = env.compute_output_root_at_block(child_block).await?;
 
         info!(
             "Attempting to create child game with parent index: {}",
             parent_game_index.to::<u32>()
         );
-        let tx = factory
-            .create(TEST_GAME_TYPE, child_root, child_extra_data.into())
-            .value(init_bond)
-            .send()
+        let receipt = env
+            .create_game(child_root, child_block, parent_game_index.to::<u32>(), init_bond)
             .await?;
-
-        // Wait for transaction receipt with confirmations
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
         info!("Child game creation tx confirmed in block {:?}", receipt.block_number);
 
-        let child_game_count = factory.gameCount().call().await?;
-        let child_game_index = child_game_count - U256::from(1);
-        let child_game_info = factory.gameAtIndex(child_game_index).call().await?;
+        let (child_game_index, child_game_address) = env.last_game_info().await?;
         info!(
             "✓ Created child game at index {} (address: {})",
-            child_game_index, child_game_info.proxy_
+            child_game_index, child_game_address
         );
 
         // === PHASE 3: Challenge and Resolve Parent as CHALLENGER_WINS ===
         info!("=== Phase 3: Challenging Parent Game (after child was created) ===");
 
         // Start challenger to challenge the game (using malicious mode to challenge valid game)
-        let challenger_handle = start_challenger(
-            &env.rpc_config,
-            CHALLENGER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-            Some(100.0), // Challenge all games maliciously for testing
-        )
-        .await?;
-        info!("✓ Challenger service started in malicious mode");
+        let challenger_handle = env.start_challenger(Some(100.0)).await?;
 
         // Wait for challenge
-        wait_for_challenges(&env.anvil.provider, &[parent_game_address], Duration::from_secs(30))
-            .await?;
+        env.wait_for_challenges(&[parent_game_address], 30).await?;
         info!("✓ Parent game challenged");
 
         // Warp time to resolve as CHALLENGER_WINS (no proof submitted)
-        warp_time(
-            &env.anvil.provider,
-            Duration::from_secs(MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION),
-        )
-        .await?;
+        env.warp_time(MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION).await?;
 
         // Wait for resolution
-        wait_and_verify_game_resolutions(
-            &env.anvil.provider,
+        env.wait_and_verify_game_resolutions(
             &[parent_game_address],
             GameStatus::CHALLENGER_WINS,
             "ChallengerWins",
-            Duration::from_secs(30),
+            30,
         )
         .await?;
         info!("✓ Parent game resolved as CHALLENGER_WINS");
 
-        // Stop challenger
-        challenger_handle.abort();
-
+        env.stop_challenger(challenger_handle);
         // === PHASE 4: Start Proposer and Verify Chain Rejection ===
         info!("=== Phase 4: Starting Proposer to Validate Chain ===");
 
         // Start proposer
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
-        info!("✓ Proposer service started");
+        let proposer_handle = env.start_proposer().await?;
 
         // Wait for proposer to create a new game (it should skip the chain with challenged parent)
-        let initial_game_count = child_game_count;
+        let initial_game_count = child_game_index + U256::from(1);
         let mut new_game_created = false;
 
         for _ in 0..30 {
@@ -965,10 +659,7 @@ mod e2e {
                 let new_game_info = factory.gameAtIndex(new_game_index).call().await?;
 
                 // Check that the new game doesn't build on the challenged parent chain
-                let new_game = op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                new_game_info.proxy_,
-                env.anvil.provider.clone(),
-            );
+                let new_game = env.fault_dispute_game(new_game_info.proxy_).await?;
                 let claim_data = new_game.claimData().call().await?;
 
                 // The new game should be a new anchor game (parentIndex = u32::MAX)
@@ -987,8 +678,7 @@ mod e2e {
 
         assert!(new_game_created, "Proposer should have created a new game");
 
-        // Stop proposer
-        proposer_handle.abort();
+        env.stop_proposer(proposer_handle);
         info!("✓ Test complete: Proposer correctly rejected chain with challenged parent");
 
         Ok(())
@@ -1000,142 +690,69 @@ mod e2e {
     async fn test_game_chain_validation_anchor_reset() -> Result<()> {
         info!("=== Test: Game Chain Validation - Anchor Reset ===");
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
 
-        // Create a signer for creating games
-        let wallet = PrivateKeySigner::from_str(PROPOSER_PRIVATE_KEY)?;
-        let provider_with_signer = ProviderBuilder::new()
-            .wallet(EthereumWallet::from(wallet))
-            .connect_http(env.anvil.endpoint.parse::<Url>()?);
+        let factory = env.factory()?;
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, provider_with_signer.clone());
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
         // Prevent games from being retired immediately after deployment
         info!("Advancing time to ensure games won't be retired...");
-        warp_time(&env.anvil.provider, Duration::from_secs(10)).await?;
+        env.warp_time(10).await?;
 
         // === PHASE 1: Create initial canonical chain (A0 -> A1) ===
         info!("=== Phase 1: Creating Initial Canonical Chain ===");
-        let fetcher = op_succinct_host_utils::fetcher::OPSuccinctDataFetcher::new();
 
         let a0_block = env.anvil.starting_l2_block_number + 1;
-        let a0_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(a0_block)).await?;
-        let a0_extra = (U256::from(a0_block), u32::MAX).abi_encode_packed();
-
-        let tx = factory
-            .create(TEST_GAME_TYPE, a0_root, a0_extra.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
+        let a0_root = env.compute_output_root_at_block(a0_block).await?;
+        let receipt = env.create_game(a0_root, a0_block, u32::MAX, init_bond).await?;
         info!("Game A0 creation tx confirmed in block {:?}", receipt.block_number);
 
-        let game_count = factory.gameCount().call().await?;
-        let a0_index = game_count - U256::from(1);
-        let a0_info = factory.gameAtIndex(a0_index).call().await?;
-        let a0_address = a0_info.proxy_;
+        let (a0_index, a0_address) = env.last_game_info().await?;
         info!("✓ Created game A0 at index {} (address: {})", a0_index, a0_address);
 
         let a1_block = a0_block + 10;
-        let a1_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(a1_block)).await?;
-        let a1_extra = (U256::from(a1_block), a0_index.to::<u32>()).abi_encode_packed();
-
-        let tx = factory
-            .create(TEST_GAME_TYPE, a1_root, a1_extra.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
+        let a1_root = env.compute_output_root_at_block(a1_block).await?;
+        let receipt = env.create_game(a1_root, a1_block, u32::MAX, init_bond).await?;
         info!("Game A1 creation tx confirmed in block {:?}", receipt.block_number);
 
-        let game_count = factory.gameCount().call().await?;
-        let a1_index = game_count - U256::from(1);
-        let a1_info = factory.gameAtIndex(a1_index).call().await?;
-        let a1_address = a1_info.proxy_;
+        let (a1_index, a1_address) = env.last_game_info().await?;
         info!("✓ Created game A1 at index {} (address: {})", a1_index, a1_address);
 
         // Record current anchor game
-        let anchor_registry_addr =
-            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                a0_address,
-                provider_with_signer.clone(),
-            )
-            .anchorStateRegistry()
-            .call()
-            .await?;
-        let anchor_registry = op_succinct_bindings::anchor_state_registry::AnchorStateRegistry::new(
-            anchor_registry_addr,
-            provider_with_signer.clone(),
-        );
+        let anchor_registry = env.anchor_registry(a0_address).await?;
         let initial_anchor = anchor_registry.anchorGame().call().await?;
         info!("Initial anchor game: {}", initial_anchor);
 
         // === PHASE 2: Create new anchor chain (B0 -> B1) ===
         info!("=== Phase 2: Creating Alternate Anchor Chain ===");
-        let b0_block = a1_block + 10;
-        let b0_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(b0_block)).await?;
-        let b0_extra = (U256::from(b0_block), u32::MAX).abi_encode_packed();
 
-        let tx = factory
-            .create(TEST_GAME_TYPE, b0_root, b0_extra.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
+        let b0_block = a1_block + 10;
+        let b0_root = env.compute_output_root_at_block(b0_block).await?;
+        let receipt = env.create_game(b0_root, b0_block, u32::MAX, init_bond).await?;
         info!("Game B0 creation tx confirmed in block {:?}", receipt.block_number);
 
-        let game_count = factory.gameCount().call().await?;
-        let b0_index = game_count - U256::from(1);
-        let b0_info = factory.gameAtIndex(b0_index).call().await?;
-        let b0_address = b0_info.proxy_;
+        let (b0_index, b0_address) = env.last_game_info().await?;
         info!("✓ Created game B0 at index {} (address: {})", b0_index, b0_address);
 
         let b1_block = b0_block + 10;
-        let b1_root =
-            fetcher.l2_provider.compute_output_root_at_block(U256::from(b1_block)).await?;
-        let b1_extra = (U256::from(b1_block), b0_index.to::<u32>()).abi_encode_packed();
-
-        let tx = factory
-            .create(TEST_GAME_TYPE, b1_root, b1_extra.into())
-            .value(init_bond)
-            .send()
-            .await?;
-        let receipt = tx.with_required_confirmations(3).get_receipt().await?;
+        let b1_root = env.compute_output_root_at_block(b1_block).await?;
+        let receipt = env.create_game(b1_root, b1_block, b0_index.to::<u32>(), init_bond).await?;
         info!("Game B1 creation tx confirmed in block {:?}", receipt.block_number);
 
-        let game_count = factory.gameCount().call().await?;
-        let b1_index = game_count - U256::from(1);
-        let b1_info = factory.gameAtIndex(b1_index).call().await?;
-        let b1_address = b1_info.proxy_;
+        let (b1_index, b1_address) = env.last_game_info().await?;
         info!("✓ Created game B1 at index {} (address: {})", b1_index, b1_address);
 
         // Resolve the new chain so it becomes eligible as the anchor
         let finality_wait =
             DISPUTE_GAME_FINALITY_DELAY_SECONDS + MAX_CHALLENGE_DURATION + MAX_PROVE_DURATION + 60;
         info!("Warping time by {} seconds to finalize new chain", finality_wait);
-        warp_time(&env.anvil.provider, Duration::from_secs(finality_wait)).await?;
+        env.warp_time(finality_wait).await?;
 
-        let b0_game =
-            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                b0_address,
-                provider_with_signer.clone(),
-            );
-        let tx = b0_game.resolve().send().await?;
-        let receipt = tx.with_required_confirmations(1).get_receipt().await?;
+        let receipt = env.resolve_game(b0_address).await?;
         info!("Game B0 resolved in tx {:?}", receipt.transaction_hash);
 
-        let b1_game =
-            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                b1_address,
-                provider_with_signer.clone(),
-            );
-        let tx = b1_game.resolve().send().await?;
-        let receipt = tx.with_required_confirmations(1).get_receipt().await?;
+        let receipt = env.resolve_game(b1_address).await?;
         info!("Game B1 resolved in tx {:?}", receipt.transaction_hash);
 
         // Advance beyond finality delay so the new chain is finalized
@@ -1143,21 +760,11 @@ mod e2e {
             "Warping time by {} seconds to finalize resolved games",
             DISPUTE_GAME_FINALITY_DELAY_SECONDS + 60
         );
-        warp_time(
-            &env.anvil.provider,
-            Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS + 60),
-        )
-        .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS + 60).await?;
 
         // Force anchor to update to the new chain rooted at B0
-        let tx = anchor_registry
-            .setAnchorState(b0_address)
-            .send()
-            .await?
-            .with_required_confirmations(1)
-            .get_receipt()
-            .await?;
-        info!("Anchor reset tx confirmed in block {:?}", tx.block_number);
+        let receipt = env.set_anchor_state(b0_address).await?;
+        info!("Anchor reset tx confirmed in block {:?}", receipt.block_number);
 
         // Ensure anchor switched to new chain
         let updated_anchor = anchor_registry.anchorGame().call().await?;
@@ -1169,29 +776,19 @@ mod e2e {
 
         // === PHASE 3: Start proposer and verify it follows new anchor chain ===
         info!("=== Phase 3: Starting Proposer to Observe Anchor Reset ===");
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
+
+        let proposer_handle = env.start_proposer().await?;
         info!("✓ Proposer service started");
 
-        let initial_game_count = game_count;
         let mut new_game_parent_verified = false;
-
         for _ in 0..30 {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let current_count = factory.gameCount().call().await?;
 
-            if current_count > initial_game_count {
+            if current_count > b1_index + U256::from(1) {
                 let new_game_index = current_count - U256::from(1);
                 let new_game_info = factory.gameAtIndex(new_game_index).call().await?;
-                let new_game = op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                new_game_info.proxy_,
-                env.anvil.provider.clone(),
-            );
+                let new_game = env.fault_dispute_game(new_game_info.proxy_).await?;
                 let claim_data = new_game.claimData().call().await?;
 
                 assert_eq!(
@@ -1227,25 +824,17 @@ mod e2e {
     async fn test_proposer_recovery_after_canonical_head_invalidation() -> Result<()> {
         info!("=== Test: Proposer Recovery After Runtime Canonical Head Invalidation ===");
 
-        // Setup common test environment
         let env = TestEnvironment::setup().await?;
 
         // === PHASE 1: Start Proposer and Create Initial Games ===
         info!("=== Phase 1: Start Proposer and Create Games ===");
 
-        let proposer_handle = start_proposer(
-            &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
-            &env.deployed.factory,
-            TEST_GAME_TYPE,
-        )
-        .await?;
-        info!("✓ Proposer service started");
+        let proposer_handle = env.start_proposer().await?;
 
         // Wait for proposer to create 3 games
-        let factory = DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
-        let tracked_games =
-            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(150)).await?;
+        let factory = env.factory()?;
+
+        let tracked_games = env.wait_and_track_games(3, 150).await?;
         info!("✓ Proposer created {} games:", tracked_games.len());
 
         assert!(!proposer_handle.is_finished(), "Proposer should be running");
@@ -1254,9 +843,9 @@ mod e2e {
         info!("=== Phase 2: Challenge Game 3 ===");
         let challenger = init_challenger(
             &env.rpc_config,
-            CHALLENGER_PRIVATE_KEY,
+            env.private_keys.challenger,
             &env.deployed.factory,
-            TEST_GAME_TYPE,
+            env.game_type,
             Some(100.0),
         )
         .await?;
@@ -1282,15 +871,15 @@ mod e2e {
         info!("This should clear game 3 from the proposer's cache");
 
         // Warp time to allow first 2 unchallenged games to be resolved
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
+        env.warp_time(MAX_CHALLENGE_DURATION).await?;
         info!("✓ Warped time by MAX_CHALLENGE_DURATION to enable resolution for first 2 games");
 
         // Resolve first 2 games as DEFENDER_WINS
         let proposer = init_proposer(
             &env.rpc_config,
-            PROPOSER_PRIVATE_KEY,
+            env.private_keys.proposer,
             &env.deployed.factory,
-            TEST_GAME_TYPE,
+            env.game_type,
         )
         .await?;
 
@@ -1309,22 +898,21 @@ mod e2e {
             };
             proposer.submit_resolution_transaction(&game).await?;
         }
-        let resolutions =
-            wait_for_resolutions(&env.anvil.provider, first_two_games, Duration::from_secs(60))
-                .await?;
+
+        let resolutions = env.wait_for_resolutions(first_two_games, 60).await?;
         verify_all_resolved_correctly(&resolutions)?;
         info!("✓ First 2 games resolved as DEFENDER_WINS");
 
         // Warp time to allow challenged game 3 to be resolved as CHALLENGER_WINS
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_PROVE_DURATION)).await?;
+        env.warp_time(MAX_PROVE_DURATION).await?;
         challenger.submit_resolution_transaction(&game_to_challenge).await?;
         info!("✓ Challenger resolved game 3 as CHALLENGER_WINS");
 
         assert!(!proposer_handle.is_finished(), "Proposer should still be running");
 
         // Warp time to allow the proposer to finalize the first 2 games
-        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
-            .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
+
         for game in first_two_games {
             let game = ProposerGame {
                 index: game.index,
@@ -1357,11 +945,7 @@ mod e2e {
         let new_game_index = U256::from(3);
         let new_game_info = factory.gameAtIndex(new_game_index).call().await?;
 
-        let new_game =
-            op_succinct_bindings::op_succinct_fault_dispute_game::OPSuccinctFaultDisputeGame::new(
-                new_game_info.proxy_,
-                env.anvil.provider.clone(),
-            );
+        let new_game = env.fault_dispute_game(new_game_info.proxy_).await?;
         let claim_data = new_game.claimData().call().await?;
 
         assert_eq!(
@@ -1389,9 +973,9 @@ mod e2e {
         let proposer = Arc::new(
             init_proposer(
                 &env.rpc_config,
-                PROPOSER_PRIVATE_KEY,
+                env.private_keys.proposer,
                 &env.deployed.factory,
-                TEST_GAME_TYPE,
+                env.game_type,
             )
             .await?,
         );
@@ -1401,28 +985,16 @@ mod e2e {
             tokio::spawn(async move { proposer_clone.run().await })
         };
 
-        let factory = DisputeGameFactory::new(env.deployed.factory, env.anvil.provider.clone());
+        let tracked_games = env.wait_and_track_games(3, 120).await?;
 
-        let tracked_games =
-            wait_and_track_games(&factory, TEST_GAME_TYPE, 3, Duration::from_secs(120)).await?;
+        env.warp_time(MAX_CHALLENGE_DURATION).await?;
 
-        warp_time(&env.anvil.provider, Duration::from_secs(MAX_CHALLENGE_DURATION)).await?;
-
-        let resolutions =
-            wait_for_resolutions(&env.anvil.provider, &tracked_games, Duration::from_secs(120))
-                .await?;
+        let resolutions = env.wait_for_resolutions(&tracked_games, 120).await?;
         verify_all_resolved_correctly(&resolutions)?;
 
-        warp_time(&env.anvil.provider, Duration::from_secs(DISPUTE_GAME_FINALITY_DELAY_SECONDS))
-            .await?;
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS).await?;
 
-        wait_for_bond_claims(
-            &env.anvil.provider,
-            &tracked_games,
-            PROPOSER_ADDRESS,
-            Duration::from_secs(120),
-        )
-        .await?;
+        env.wait_for_bond_claims(&tracked_games, PROPOSER_ADDRESS, 120).await?;
 
         // Allow the proposer loop to observe the finalized games and update its cache.
         let settle_delay = Duration::from_secs(proposer.config.fetch_interval + 5);
