@@ -12,8 +12,10 @@ extern crate alloc;
 #[cfg(feature = "alloy-compat")]
 mod alloy_compat;
 
-mod receipt;
-pub use receipt::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope, OpTxReceipt};
+mod receipts;
+pub use receipts::{
+    OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope, OpTxReceipt,
+};
 
 pub mod transaction;
 pub use transaction::{
@@ -48,7 +50,7 @@ pub use transaction::serde_deposit_tx_rpc;
 #[cfg(all(feature = "serde", feature = "serde-bincode-compat"))]
 pub mod serde_bincode_compat {
     pub use super::{
-        receipt::receipts::serde_bincode_compat::OpDepositReceipt,
+        receipts::deposit::serde_bincode_compat::OpDepositReceipt,
         transaction::{serde_bincode_compat as transaction, serde_bincode_compat::TxDeposit},
     };
 }

@@ -2,11 +2,9 @@
 
 use alloc::vec::Vec;
 use alloy_consensus::Block;
-use alloy_eips::{Decodable2718, eip4895::Withdrawal};
-use alloy_primitives::{Address, B256, Bloom, Bytes, U256};
-use alloy_rpc_types_engine::{
-    BlobsBundleV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, PayloadError,
-};
+use alloy_eips::Decodable2718;
+use alloy_primitives::{B256, Bytes, U256};
+use alloy_rpc_types_engine::{BlobsBundleV1, ExecutionPayloadV3, PayloadError};
 
 /// The Opstack execution payload for `newPayloadV4` of the engine API introduced with isthmus.
 /// See also <https://specs.optimism.io/protocol/isthmus/exec-engine.html#engine_newpayloadv4-api>
@@ -89,10 +87,10 @@ impl ssz::Decode for OpExecutionPayloadV4 {
         let mut builder = ssz::SszDecoderBuilder::new(bytes);
 
         builder.register_type::<B256>()?;
-        builder.register_type::<Address>()?;
+        builder.register_type::<alloy_primitives::Address>()?;
         builder.register_type::<B256>()?;
         builder.register_type::<B256>()?;
-        builder.register_type::<Bloom>()?;
+        builder.register_type::<alloy_primitives::Bloom>()?;
         builder.register_type::<B256>()?;
         builder.register_type::<u64>()?;
         builder.register_type::<u64>()?;
@@ -102,7 +100,7 @@ impl ssz::Decode for OpExecutionPayloadV4 {
         builder.register_type::<U256>()?;
         builder.register_type::<B256>()?;
         builder.register_type::<Vec<Bytes>>()?;
-        builder.register_type::<Vec<Withdrawal>>()?;
+        builder.register_type::<Vec<alloy_eips::eip4895::Withdrawal>>()?;
         builder.register_type::<u64>()?;
         builder.register_type::<u64>()?;
         builder.register_type::<B256>()?;
@@ -111,8 +109,8 @@ impl ssz::Decode for OpExecutionPayloadV4 {
 
         Ok(Self {
             payload_inner: ExecutionPayloadV3 {
-                payload_inner: ExecutionPayloadV2 {
-                    payload_inner: ExecutionPayloadV1 {
+                payload_inner: alloy_rpc_types_engine::ExecutionPayloadV2 {
+                    payload_inner: alloy_rpc_types_engine::ExecutionPayloadV1 {
                         parent_hash: decoder.decode_next()?,
                         fee_recipient: decoder.decode_next()?,
                         state_root: decoder.decode_next()?,
@@ -146,8 +144,8 @@ impl ssz::Encode for OpExecutionPayloadV4 {
 
     fn ssz_append(&self, buf: &mut Vec<u8>) {
         let offset = <B256 as ssz::Encode>::ssz_fixed_len() * 6
-            + <Address as ssz::Encode>::ssz_fixed_len()
-            + <Bloom as ssz::Encode>::ssz_fixed_len()
+            + <alloy_primitives::Address as ssz::Encode>::ssz_fixed_len()
+            + <alloy_primitives::Bloom as ssz::Encode>::ssz_fixed_len()
             + <u64 as ssz::Encode>::ssz_fixed_len() * 6
             + <U256 as ssz::Encode>::ssz_fixed_len()
             + ssz::BYTES_PER_LENGTH_OFFSET * 3;
