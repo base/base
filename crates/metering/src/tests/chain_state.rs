@@ -354,6 +354,8 @@ async fn counter_storage_changes_persist_across_blocks() -> Result<()> {
         .build_block_from_transactions(vec![increment_bytes])
         .await?;
 
+    nonce += 1;
+
     let storage_value = provider
         .get_storage_at(contract_address, U256::ZERO)
         .await?;
@@ -370,6 +372,57 @@ async fn counter_storage_changes_persist_across_blocks() -> Result<()> {
         .await?;
     let decoded: U256 = Counter::numberCall::abi_decode_returns(raw_number.as_ref())?;
     assert_eq!(decoded, U256::from(43u64));
+
+    // Meter another increment (nonce 3) to ensure meter_bundle sees the persisted state.
+    let meter_increment_call = Counter::incrementCall {};
+    let meter_increment_signed = TransactionBuilder::default()
+        .signer(alice_secret)
+        .chain_id(BASE_CHAIN_ID)
+        .nonce(nonce)
+        .gas_limit(CALL_GAS_LIMIT)
+        .max_fee_per_gas(GWEI)
+        .max_priority_fee_per_gas(GWEI)
+        .to(contract_address)
+        .input(Bytes::from(meter_increment_call.abi_encode()))
+        .into_eip1559();
+    let (_meter_increment_envelope, meter_increment_bytes) =
+        envelope_from_signed(meter_increment_signed.clone());
+
+    let bundle = Bundle {
+        txs: vec![meter_increment_bytes.clone()],
+        block_number: provider.get_block_number().await?,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+    };
+    let metering_api =
+        MeteringApiImpl::new(harness.blockchain_provider(), harness.flashblocks_state());
+    let response = MeteringApiServer::meter_bundle(&metering_api, bundle)
+        .await
+        .map_err(|err| eyre!("meter_bundle rpc failed: {}", err))?;
+
+    assert_eq!(response.results.len(), 1);
+    let metering_result = &response.results[0];
+    assert_eq!(metering_result.to_address, Some(contract_address));
+    assert!(metering_result.gas_used > 0);
+
+    // Canonical state remains unchanged by the simulation.
+    let raw_number_after_sim = provider
+        .call(
+            OpTransactionRequest::default()
+                .from(alice.address)
+                .to(contract_address)
+                .input(TransactionInput::new(Bytes::from(number_call.abi_encode()))),
+        )
+        .block(BlockNumberOrTag::Latest.into())
+        .await?;
+    let decoded_after_sim: U256 =
+        Counter::numberCall::abi_decode_returns(raw_number_after_sim.as_ref())?;
+    assert_eq!(decoded_after_sim, U256::from(43u64));
 
     Ok(())
 }
