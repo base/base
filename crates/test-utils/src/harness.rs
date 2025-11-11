@@ -4,7 +4,7 @@ use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
 use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
 use alloy_eips::eip7685::Requests;
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{bytes, Bytes, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -24,6 +24,8 @@ const BLOCK_TIME_SECONDS: u64 = 2;
 const GAS_LIMIT: u64 = 200_000_000;
 const NODE_STARTUP_DELAY_MS: u64 = 500;
 const BLOCK_BUILD_DELAY_MS: u64 = 100;
+// Pre-captured L1 block info deposit transaction required by the Optimism EVM.
+const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!("0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000");
 
 pub struct TestHarness {
     node: LocalNode,
@@ -72,7 +74,15 @@ impl TestHarness {
         format!("http://{}", self.node.http_api_addr)
     }
 
-    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
+        // Ensure the block always starts with the required L1 block info deposit.
+        if !transactions
+            .first()
+            .is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX)
+        {
+            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
+        }
+
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
