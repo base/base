@@ -583,7 +583,7 @@ mod tests {
         let res_count1 = provider.call(eth_call_count1).await;
         assert!(res_count1.is_ok());
         assert_eq!(
-            U256::from_str(res_count1.unwrap().to_string().as_str()).unwrap(),
+            U256::from_be_slice(res_count1.unwrap().as_ref()),
             U256::from(2)
         );
 
@@ -599,7 +599,7 @@ mod tests {
         let res_count2 = provider.call(eth_call_count2).await;
         assert!(res_count2.is_ok());
         assert_eq!(
-            U256::from_str(res_count2.unwrap().to_string().as_str()).unwrap(),
+            U256::from_be_slice(res_count2.unwrap().as_ref()),
             U256::from(2)
         );
 
