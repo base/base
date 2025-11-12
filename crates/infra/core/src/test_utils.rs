@@ -65,11 +65,11 @@ pub fn create_test_bundle(
 
 pub fn create_test_meter_bundle_response() -> MeterBundleResponse {
     MeterBundleResponse {
-        bundle_gas_price: "0".to_string(),
+        bundle_gas_price: U256::from(0),
         bundle_hash: B256::default(),
-        coinbase_diff: "0".to_string(),
-        eth_sent_to_coinbase: "0".to_string(),
-        gas_fees: "0".to_string(),
+        coinbase_diff: U256::from(0),
+        eth_sent_to_coinbase: U256::from(0),
+        gas_fees: U256::from(0),
         results: vec![],
         state_block_number: 0,
         state_flashblock_index: None,
