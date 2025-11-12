@@ -1,22 +1,19 @@
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-    time::Instant,
-};
-
-use alloy_consensus::{
-    transaction::{Recovered, SignerRecoverable, TransactionMeta},
-    Header, TxReceipt,
-};
+use crate::metrics::Metrics;
+use crate::pending_blocks::{PendingBlocks, PendingBlocksBuilder};
+use crate::rpc::FlashblocksAPI;
+use crate::subscription::{Flashblock, FlashblocksReceiver};
+use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
+use alloy_consensus::{Header, TxReceipt};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{map::foldhash::HashMap, Address, BlockNumber, Bytes, Sealable, B256, U256};
+use alloy_primitives::map::foldhash::HashMap;
+use alloy_primitives::{BlockNumber, Bytes, Sealable, B256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::{state::StateOverride, Filter, Log};
+use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
-use op_alloy_network::{Optimism, TransactionResponse};
+use op_alloy_network::TransactionResponse;
 use op_alloy_rpc_types::Transaction;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
@@ -32,13 +29,13 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredBlock;
-use reth_rpc_convert::{transaction::ConvertReceiptInput, RpcTransaction};
-use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use tokio::sync::{
-    broadcast::{self, Sender},
-    mpsc::{self, UnboundedReceiver},
-    Mutex,
-};
+use reth_rpc_convert::transaction::ConvertReceiptInput;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::broadcast::{self, Sender};
+use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -133,46 +130,6 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
 
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>> {
         self.flashblock_sender.subscribe()
-    }
-}
-
-impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
-    fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
-    }
-
-    fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
-    }
-
-    fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
-        self.as_ref().map(|pb| pb.get_latest_block(full))
-    }
-
-    fn get_transaction_receipt(
-        &self,
-        tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcReceipt<Optimism>> {
-        self.as_ref().and_then(|pb| pb.get_receipt(tx_hash))
-    }
-
-    fn get_transaction_by_hash(
-        &self,
-        tx_hash: alloy_primitives::TxHash,
-    ) -> Option<RpcTransaction<Optimism>> {
-        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
-    }
-
-    fn get_balance(&self, address: Address) -> Option<U256> {
-        self.as_ref().and_then(|pb| pb.get_balance(address))
-    }
-
-    fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
-    }
-
-    fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
-        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
 
@@ -413,7 +370,6 @@ where
         ))?;
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
-
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
@@ -612,19 +568,12 @@ where
                 gas_used = receipt.cumulative_gas_used();
                 next_log_index += receipt.logs().len();
 
-                let mut should_execute_transaction = false;
-                match &prev_pending_blocks {
-                    Some(pending_blocks) => match pending_blocks.get_transaction_state(&tx_hash) {
-                        Some(state) => {
-                            pending_blocks_builder.with_transaction_state(tx_hash, state);
-                        }
-                        None => {
-                            should_execute_transaction = true;
-                        }
-                    },
-                    None => {
-                        should_execute_transaction = true;
-                    }
+                let mut should_execute_transaction = true;
+                if let Some(state) =
+                    prev_pending_blocks.as_ref().and_then(|p| p.get_transaction_state(&tx_hash))
+                {
+                    pending_blocks_builder.with_transaction_state(tx_hash, state);
+                    should_execute_transaction = false;
                 }
 
                 if should_execute_transaction {
