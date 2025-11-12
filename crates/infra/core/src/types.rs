@@ -266,15 +266,15 @@ impl AcceptedBundle {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionResult {
-    pub coinbase_diff: String,
-    pub eth_sent_to_coinbase: String,
+    pub coinbase_diff: U256,
+    pub eth_sent_to_coinbase: U256,
     pub from_address: Address,
-    pub gas_fees: String,
-    pub gas_price: String,
+    pub gas_fees: U256,
+    pub gas_price: U256,
     pub gas_used: u64,
     pub to_address: Option<Address>,
     pub tx_hash: TxHash,
-    pub value: String,
+    pub value: U256,
     pub execution_time_us: u128,
 }
 
