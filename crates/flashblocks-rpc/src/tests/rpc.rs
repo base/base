@@ -392,7 +392,6 @@ mod tests {
         assert_eq!(pending_block.number(), latest_block.number());
         assert_eq!(pending_block.hash(), latest_block.hash());
 
-
         let base_payload = create_first_payload();
         node.send_payload(base_payload).await?;
 
