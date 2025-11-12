@@ -113,9 +113,9 @@ where
 
         // Calculate average gas price
         let bundle_gas_price = if total_gas_used > 0 {
-            (total_gas_fees / U256::from(total_gas_used)).to_string()
+            total_gas_fees / U256::from(total_gas_used)
         } else {
-            "0".to_string()
+            U256::from(0)
         };
 
         info!(
@@ -129,9 +129,9 @@ where
         Ok(MeterBundleResponse {
             bundle_gas_price,
             bundle_hash,
-            coinbase_diff: total_gas_fees.to_string(),
-            eth_sent_to_coinbase: "0".to_string(),
-            gas_fees: total_gas_fees.to_string(),
+            coinbase_diff: total_gas_fees,
+            eth_sent_to_coinbase: U256::from(0),
+            gas_fees: total_gas_fees,
             results,
             state_block_number: header.number,
             state_flashblock_index: None,

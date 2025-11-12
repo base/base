@@ -187,9 +187,9 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     assert_eq!(result.from_address, harness.address(User::Alice));
     assert_eq!(result.to_address, Some(to));
     assert_eq!(result.tx_hash, tx_hash);
-    assert_eq!(result.gas_price, U256::from(10).to_string());
+    assert_eq!(result.gas_price, U256::from(10));
     assert_eq!(result.gas_used, 21_000);
-    assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)).to_string(),);
+    assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
     assert_eq!(total_gas_used, 21_000);
     assert_eq!(total_gas_fees, U256::from(21_000) * U256::from(10));
@@ -265,18 +265,18 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     assert_eq!(result_1.from_address, harness.address(User::Alice));
     assert_eq!(result_1.to_address, Some(to_1));
     assert_eq!(result_1.tx_hash, tx_hash_1);
-    assert_eq!(result_1.gas_price, U256::from(10).to_string());
+    assert_eq!(result_1.gas_price, U256::from(10));
     assert_eq!(result_1.gas_used, 21_000);
-    assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)).to_string(),);
+    assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
     // Check second transaction
     let result_2 = &results[1];
     assert_eq!(result_2.from_address, harness.address(User::Bob));
     assert_eq!(result_2.to_address, Some(to_2));
     assert_eq!(result_2.tx_hash, tx_hash_2);
-    assert_eq!(result_2.gas_price, U256::from(15).to_string());
+    assert_eq!(result_2.gas_price, U256::from(15));
     assert_eq!(result_2.gas_used, 21_000);
-    assert_eq!(result_2.coinbase_diff, (U256::from(21_000) * U256::from(15)).to_string(),);
+    assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(15),);
 
     // Check aggregated values
     assert_eq!(total_gas_used, 42_000);
