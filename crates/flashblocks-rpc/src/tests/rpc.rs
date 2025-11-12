@@ -384,9 +384,13 @@ mod tests {
         assert_eq!(latest_block.number(), 0);
 
         // Querying pending block when it does not exist yet
-        let pending_block =
-            provider.get_block_by_number(alloy_eips::BlockNumberOrTag::Pending).await?;
-        assert_eq!(pending_block.is_none(), true);
+        let pending_block = provider
+            .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
+            .await?
+            .expect("latest block expected");
+
+        assert_eq!(pending_block.number(), latest_block.number());
+        assert_eq!(pending_block.hash(), latest_block.hash());
 
         let base_payload = create_first_payload();
         node.send_payload(base_payload).await?;
