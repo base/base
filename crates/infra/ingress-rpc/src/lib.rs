@@ -3,9 +3,15 @@ pub mod queue;
 pub mod service;
 pub mod validation;
 
+use alloy_primitives::TxHash;
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use clap::Parser;
+use op_alloy_network::Optimism;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use tips_core::MeterBundleResponse;
+use tokio::sync::broadcast;
+use tracing::error;
 use url::Url;
 
 #[derive(Debug, Clone, Copy)]
@@ -115,4 +121,44 @@ pub struct Config {
         default_value = "2000"
     )]
     pub meter_bundle_timeout_ms: u64,
+
+    /// URL of the builder RPC service for setting metering information
+    #[arg(long, env = "TIPS_INGRESS_BUILDER_RPC")]
+    pub builder_rpc: Url,
+
+    /// Maximum number of `MeterBundleResponse`s to buffer in memory
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_MAX_BUFFERED_METER_BUNDLE_RESPONSES",
+        default_value = "100"
+    )]
+    pub max_buffered_meter_bundle_responses: usize,
+}
+
+pub fn connect_ingress_to_builder(
+    event_rx: broadcast::Receiver<MeterBundleResponse>,
+    builder_rpc: Url,
+) {
+    tokio::spawn(async move {
+        let builder: RootProvider<Optimism> = ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Optimism>()
+            .connect_http(builder_rpc);
+
+        let mut event_rx = event_rx;
+        while let Ok(event) = event_rx.recv().await {
+            // we only support one transaction per bundle for now
+            let tx_hash = event.results[0].tx_hash;
+            if let Err(e) = builder
+                .client()
+                .request::<(TxHash, MeterBundleResponse), ()>(
+                    "base_setMeteringInformation",
+                    (tx_hash, event),
+                )
+                .await
+            {
+                error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+            }
+        }
+    });
 }

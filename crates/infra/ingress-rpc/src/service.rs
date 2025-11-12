@@ -15,7 +15,7 @@ use tips_core::types::ParsedBundle;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Duration, Instant, timeout};
 use tracing::{info, warn};
 
@@ -49,6 +49,7 @@ pub struct IngressService<Queue> {
     metrics: Metrics,
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
+    builder_tx: broadcast::Sender<MeterBundleResponse>,
 }
 
 impl<Queue> IngressService<Queue> {
@@ -57,6 +58,7 @@ impl<Queue> IngressService<Queue> {
         simulation_provider: RootProvider<Optimism>,
         queue: Queue,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
+        builder_tx: broadcast::Sender<MeterBundleResponse>,
         config: Config,
     ) -> Self {
         Self {
@@ -70,6 +72,7 @@ impl<Queue> IngressService<Queue> {
             metrics: Metrics::default(),
             block_time_milliseconds: config.block_time_milliseconds,
             meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
+            builder_tx,
         }
     }
 }
@@ -80,6 +83,7 @@ where
     Queue: QueuePublisher + Sync + Send + 'static,
 {
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
+        // validate the bundle and consume the `bundle` to get an `AcceptedBundle`
         self.validate_bundle(&bundle).await?;
         let parsed_bundle: ParsedBundle = bundle
             .clone()
@@ -87,8 +91,14 @@ where
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
         let bundle_hash = &parsed_bundle.bundle_hash();
         let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
-        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
+        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
 
+        // asynchronously send the meter bundle response to the builder
+        self.builder_tx
+            .send(meter_bundle_response)
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+
+        // publish the bundle to the queue
         if let Err(e) = self
             .bundle_queue
             .publish(&accepted_bundle, bundle_hash)
@@ -103,6 +113,7 @@ where
             bundle_hash = %bundle_hash,
         );
 
+        // asynchronously send the audit event to the audit channel
         let audit_event = BundleEvent::Received {
             bundle_id: *accepted_bundle.uuid(),
             bundle: Box::new(accepted_bundle.clone()),
@@ -140,29 +151,33 @@ where
             TxSubmissionMethod::Mempool | TxSubmissionMethod::MempoolAndKafka
         );
 
+        let expiry_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + self.send_transaction_default_lifetime_seconds;
+
+        let bundle = Bundle {
+            txs: vec![data.clone()],
+            max_timestamp: Some(expiry_timestamp),
+            reverting_tx_hashes: vec![transaction.tx_hash()],
+            ..Default::default()
+        };
+        let parsed_bundle: ParsedBundle = bundle
+            .clone()
+            .try_into()
+            .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
+
+        let bundle_hash = &parsed_bundle.bundle_hash();
+        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
+
+        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
+
+        self.builder_tx
+            .send(meter_bundle_response)
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+
         if send_to_kafka {
-            let expiry_timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + self.send_transaction_default_lifetime_seconds;
-
-            let bundle = Bundle {
-                txs: vec![data.clone()],
-                max_timestamp: Some(expiry_timestamp),
-                reverting_tx_hashes: vec![transaction.tx_hash()],
-                ..Default::default()
-            };
-            let parsed_bundle: ParsedBundle = bundle
-                .clone()
-                .try_into()
-                .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
-
-            let bundle_hash = &parsed_bundle.bundle_hash();
-            let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
-
-            let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response);
-
             if let Err(e) = self
                 .bundle_queue
                 .publish(&accepted_bundle, bundle_hash)
@@ -172,14 +187,6 @@ where
             }
 
             info!(message="queued singleton bundle", txn_hash=%transaction.tx_hash());
-
-            let audit_event = BundleEvent::Received {
-                bundle_id: *accepted_bundle.uuid(),
-                bundle: accepted_bundle.clone().into(),
-            };
-            if let Err(e) = self.audit_channel.send(audit_event) {
-                warn!(message = "Failed to send audit event", error = %e);
-            }
         }
 
         if send_to_mempool {
@@ -197,9 +204,18 @@ where
             }
         }
 
+        let audit_event = BundleEvent::Received {
+            bundle_id: *accepted_bundle.uuid(),
+            bundle: accepted_bundle.clone().into(),
+        };
+        if let Err(e) = self.audit_channel.send(audit_event) {
+            warn!(message = "Failed to send audit event", error = %e);
+        }
+
         self.metrics
             .send_raw_transaction_duration
             .record(start.elapsed().as_secs_f64());
+
         Ok(transaction.tx_hash())
     }
 }

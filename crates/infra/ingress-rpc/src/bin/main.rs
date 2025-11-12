@@ -5,13 +5,15 @@ use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use tips_audit::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
+use tips_core::MeterBundleResponse;
 use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger;
 use tips_ingress_rpc::Config;
+use tips_ingress_rpc::connect_ingress_to_builder;
 use tips_ingress_rpc::metrics::init_prometheus_exporter;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
 use tips_ingress_rpc::service::{IngressApiServer, IngressService};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
 #[tokio::main]
@@ -62,7 +64,20 @@ async fn main() -> anyhow::Result<()> {
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
     connect_audit_to_publisher(audit_rx, audit_publisher);
 
-    let service = IngressService::new(provider, simulation_provider, queue, audit_tx, cfg);
+    // TODO: when we have multiple builders we can make `builder_rx` mutable and do `.subscribe()` to have multiple consumers
+    // of this channel.
+    let (builder_tx, builder_rx) =
+        broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
+    connect_ingress_to_builder(builder_rx, config.builder_rpc);
+
+    let service = IngressService::new(
+        provider,
+        simulation_provider,
+        queue,
+        audit_tx,
+        builder_tx,
+        cfg,
+    );
     let bind_addr = format!("{}:{}", config.address, config.port);
 
     let server = Server::builder().build(&bind_addr).await?;
