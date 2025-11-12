@@ -396,33 +396,7 @@ where
         prev_pending_blocks: Option<Arc<PendingBlocks>>,
         flashblocks: &Vec<Flashblock>,
     ) -> eyre::Result<Option<Arc<PendingBlocks>>> {
-        let fn_start = Instant::now();
-
-        // Timing tracking
-        let mut time_per_block_loop = std::time::Duration::ZERO;
-        let mut time_base_collection = std::time::Duration::ZERO;
-        let mut time_transactions_collection = std::time::Duration::ZERO;
-        let mut time_receipts_collection = std::time::Duration::ZERO;
-        let mut time_balances_collection = std::time::Duration::ZERO;
-        let mut time_execution_payload_build = std::time::Duration::ZERO;
-        let mut time_block_conversion = std::time::Duration::ZERO;
-        let mut time_evm_env_setup = std::time::Duration::ZERO;
-        let mut time_transaction_loop = std::time::Duration::ZERO;
-        let mut time_tx_sender_recovery = std::time::Duration::ZERO;
-        let mut time_tx_receipt_lookup = std::time::Duration::ZERO;
-        let mut time_tx_rpc_build = std::time::Duration::ZERO;
-        let mut time_tx_receipt_build = std::time::Duration::ZERO;
-        let mut time_tx_state_check = std::time::Duration::ZERO;
-        let mut time_tx_execution = std::time::Duration::ZERO;
-        let mut time_tx_state_commit = std::time::Duration::ZERO;
-        let mut time_balance_updates = std::time::Duration::ZERO;
-
-        let mut total_transactions = 0;
-        let mut executed_transactions = 0;
-        let mut skipped_transactions = 0;
-
         // BTreeMap guarantees ascending order of keys while iterating
-        let step_start = Instant::now();
         let mut flashblocks_per_block = BTreeMap::<BlockNumber, Vec<&Flashblock>>::new();
         for flashblock in flashblocks {
             flashblocks_per_block
@@ -430,47 +404,33 @@ where
                 .or_default()
                 .push(flashblock);
         }
-        let time_btree_construction = step_start.elapsed();
 
-        let step_start = Instant::now();
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
             "Failed to extract header for canonical block number {}. Allow 10 to 15 minutes after a restart/redeploy or after your node has synced to tip.",
             canonical_block
         ))?;
-        let time_header_fetch = step_start.elapsed();
 
-        let step_start = Instant::now();
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
-        let time_evm_config = step_start.elapsed();
 
-        let step_start = Instant::now();
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
         let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
-        let time_state_provider_setup = step_start.elapsed();
 
-        let step_start = Instant::now();
         let mut db = match &prev_pending_blocks {
             Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
             None => CacheDB::new(state),
         };
-        let time_db_cache_setup = step_start.elapsed();
 
-        let step_start = Instant::now();
         let mut state_overrides = match &prev_pending_blocks {
             Some(pending_blocks) => pending_blocks.get_state_overrides().unwrap_or_default(),
             None => StateOverride::default(),
         };
-        let time_state_overrides_setup = step_start.elapsed();
 
         for (_block_number, flashblocks) in flashblocks_per_block {
-            let block_start = Instant::now();
-
-            let step_start = Instant::now();
             let base = flashblocks
                 .first()
                 .ok_or(eyre!("cannot build a pending block from no flashblocks"))?
@@ -482,9 +442,7 @@ where
                 .last()
                 .cloned()
                 .ok_or(eyre!("cannot build a pending block from no flashblocks"))?;
-            time_base_collection += step_start.elapsed();
 
-            let step_start = Instant::now();
             let transactions: Vec<Bytes> = flashblocks
                 .iter()
                 .flat_map(|flashblock| flashblock.diff.transactions.clone())
@@ -494,9 +452,7 @@ where
                 .iter()
                 .flat_map(|flashblock| flashblock.diff.withdrawals.clone())
                 .collect();
-            time_transactions_collection += step_start.elapsed();
 
-            let step_start = Instant::now();
             let receipt_by_hash = flashblocks
                 .iter()
                 .map(|flashblock| flashblock.metadata.receipts.clone())
@@ -504,9 +460,7 @@ where
                     acc.extend(receipts);
                     acc
                 });
-            time_receipts_collection += step_start.elapsed();
 
-            let step_start = Instant::now();
             let updated_balances = flashblocks
                 .iter()
                 .map(|flashblock| flashblock.metadata.new_account_balances.clone())
@@ -514,9 +468,7 @@ where
                     acc.extend(balances);
                     acc
                 });
-            time_balances_collection += step_start.elapsed();
 
-            let step_start = Instant::now();
             pending_blocks_builder.with_flashblocks(
                 flashblocks.iter().map(|&x| x.clone()).collect::<Vec<Flashblock>>(),
             );
@@ -544,9 +496,7 @@ where
                     },
                 },
             };
-            time_execution_payload_build += step_start.elapsed();
 
-            let step_start = Instant::now();
             let block: OpBlock = execution_payload.try_into_block()?;
             let mut l1_block_info = reth_optimism_evm::extract_l1_info(&block.body)?;
             let header = block.header.clone().seal_slow();
@@ -560,42 +510,32 @@ where
                 parent_beacon_block_root: Some(base.parent_beacon_block_root),
                 extra_data: base.extra_data.clone(),
             };
-            time_block_conversion += step_start.elapsed();
 
-            let step_start = Instant::now();
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
             let mut evm = evm_config.evm_with_env(db, evm_env);
-            time_evm_env_setup += step_start.elapsed();
 
             let mut gas_used = 0;
             let mut next_log_index = 0;
 
-            let tx_loop_start = Instant::now();
             for (idx, transaction) in block.body.transactions.iter().enumerate() {
-                total_transactions += 1;
                 let tx_hash = transaction.tx_hash();
 
-                let step_start = Instant::now();
-                let sender = match &prev_pending_blocks {
-                    Some(pending_blocks) => match pending_blocks.get_transaction_sender(&tx_hash) {
-                        Some(sender) => sender,
-                        None => transaction.recover_signer()?,
-                    },
+                let sender = match prev_pending_blocks
+                    .as_ref()
+                    .and_then(|p| p.get_transaction_sender(&tx_hash))
+                {
+                    Some(sender) => sender,
                     None => transaction.recover_signer()?,
                 };
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);
-                time_tx_sender_recovery += step_start.elapsed();
 
-                let step_start = Instant::now();
                 let receipt = receipt_by_hash
                     .get(&tx_hash)
                     .cloned()
                     .ok_or(eyre!("missing receipt for {:?}", tx_hash))?;
-                time_tx_receipt_lookup += step_start.elapsed();
 
-                let step_start = Instant::now();
                 let recovered_transaction = Recovered::new_unchecked(transaction.clone(), sender);
                 let envelope = recovered_transaction.clone().convert::<OpTxEnvelope>();
 
@@ -635,46 +575,13 @@ where
                 };
 
                 pending_blocks_builder.with_transaction(rpc_txn);
-                time_tx_rpc_build += step_start.elapsed();
-
-                let step_start = Instant::now();
 
                 // Receipt Generation
-                let op_receipt = match &prev_pending_blocks {
-                    Some(pending_blocks) => match pending_blocks.get_receipt(tx_hash) {
-                        Some(receipt) => receipt,
-                        None => {
-                            let meta: TransactionMeta = TransactionMeta {
-                                tx_hash,
-                                index: idx as u64,
-                                block_hash: header.hash(),
-                                block_number: block.number,
-                                base_fee: block.base_fee_per_gas,
-                                excess_blob_gas: block.excess_blob_gas,
-                                timestamp: block.timestamp,
-                            };
-
-                            let input: ConvertReceiptInput<'_, OpPrimitives> =
-                                ConvertReceiptInput {
-                                    receipt: receipt.clone(),
-                                    tx: Recovered::new_unchecked(transaction, sender),
-                                    gas_used: receipt.cumulative_gas_used() - gas_used,
-                                    next_log_index,
-                                    meta,
-                                };
-
-                            let op_receipt = OpReceiptBuilder::new(
-                                self.client.chain_spec().as_ref(),
-                                input,
-                                &mut l1_block_info,
-                            )?
-                            .build();
-
-                            op_receipt
-                        }
-                    },
-                    None => {
-                        let meta: TransactionMeta = TransactionMeta {
+                let op_receipt = prev_pending_blocks
+                    .as_ref()
+                    .and_then(|pending_blocks| pending_blocks.get_receipt(tx_hash))
+                    .unwrap_or_else(|| {
+                        let meta = TransactionMeta {
                             tx_hash,
                             index: idx as u64,
                             block_hash: header.hash(),
@@ -692,23 +599,19 @@ where
                             meta,
                         };
 
-                        let op_receipt = OpReceiptBuilder::new(
+                        OpReceiptBuilder::new(
                             self.client.chain_spec().as_ref(),
                             input,
                             &mut l1_block_info,
-                        )?
-                        .build();
-
-                        op_receipt
-                    }
-                };
+                        )
+                        .unwrap()
+                        .build()
+                    });
 
                 pending_blocks_builder.with_receipt(tx_hash, op_receipt);
                 gas_used = receipt.cumulative_gas_used();
                 next_log_index += receipt.logs().len();
-                time_tx_receipt_build += step_start.elapsed();
 
-                let step_start = Instant::now();
                 let mut should_execute_transaction = false;
                 match &prev_pending_blocks {
                     Some(pending_blocks) => match pending_blocks.get_transaction_state(&tx_hash) {
@@ -723,17 +626,10 @@ where
                         should_execute_transaction = true;
                     }
                 }
-                time_tx_state_check += step_start.elapsed();
 
                 if should_execute_transaction {
-                    executed_transactions += 1;
-
-                    let step_start = Instant::now();
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
-                            time_tx_execution += step_start.elapsed();
-
-                            let step_start = Instant::now();
                             for (addr, acc) in &state {
                                 let existing_override =
                                     state_overrides.entry(*addr).or_insert(Default::default());
@@ -752,7 +648,6 @@ where
                             }
                             pending_blocks_builder.with_transaction_state(tx_hash, state.clone());
                             evm.db_mut().commit(state);
-                            time_tx_state_commit += step_start.elapsed();
                         }
                         Err(e) => {
                             return Err(eyre!(
@@ -763,151 +658,20 @@ where
                             ));
                         }
                     }
-                } else {
-                    skipped_transactions += 1;
                 }
             }
-            time_transaction_loop += tx_loop_start.elapsed();
 
-            let step_start = Instant::now();
             for (address, balance) in updated_balances {
                 pending_blocks_builder.with_account_balance(address, balance);
             }
-            time_balance_updates += step_start.elapsed();
 
             db = evm.into_db();
             last_block_header = block.header.clone();
-
-            time_per_block_loop += block_start.elapsed();
         }
 
-        let step_start = Instant::now();
         pending_blocks_builder.with_db_cache(db.cache);
         pending_blocks_builder.with_state_overrides(state_overrides);
-        let result = Some(Arc::new(pending_blocks_builder.build()?));
-        let time_final_builder = step_start.elapsed();
-
-        let total_time = fn_start.elapsed();
-
-        // Pretty print timing breakdown
-        debug!(
-            "\n╔══════════════════════════════════════════════════════════════════════════════════════════════╗\n\
-             ║                           BUILD_PENDING_STATE TIMING BREAKDOWN                               ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ TOTAL TIME: {:>8.2?} ({:>6.2}%)                                                           ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ INITIALIZATION                                                                               ║\n\
-             ║   • BTree Construction          : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Header Fetch                : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • EVM Config                  : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • State Provider Setup        : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • DB Cache Setup              : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • State Overrides Setup       : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ PER-BLOCK PROCESSING (Total)    : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Base Collection             : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Transactions Collection     : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Receipts Collection         : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Balances Collection         : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Execution Payload Build     : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Block Conversion            : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • EVM Environment Setup       : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Balance Updates             : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ TRANSACTION PROCESSING (Total)  : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Sender Recovery             : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Receipt Lookup              : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • RPC Transaction Build       : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Receipt Build               : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • State Check                 : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ║   • Transaction Execution       : {:>8.2?} ({:>6.2}%)  ⭐ HOT PATH                         ║\n\
-             ║   • State Commit                : {:>8.2?} ({:>6.2}%)  ⭐ HOT PATH                         ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ FINALIZATION                                                                                 ║\n\
-             ║   • Final Builder Operations    : {:>8.2?} ({:>6.2}%)                                      ║\n\
-             ╠══════════════════════════════════════════════════════════════════════════════════════════════╣\n\
-             ║ TRANSACTION STATS                                                                            ║\n\
-             ║   • Total Transactions          : {:>6}                                                     ║\n\
-             ║   • Executed Transactions       : {:>6} ({:>6.2}%)                                         ║\n\
-             ║   • Skipped Transactions        : {:>6} ({:>6.2}%)                                         ║\n\
-             ║   • Avg Time per TX (executed)  : {:>8.2?}                                                 ║\n\
-             ╚══════════════════════════════════════════════════════════════════════════════════════════════╝",
-            total_time,
-            100.0,
-            // Initialization
-            time_btree_construction,
-            percentage(time_btree_construction, total_time),
-            time_header_fetch,
-            percentage(time_header_fetch, total_time),
-            time_evm_config,
-            percentage(time_evm_config, total_time),
-            time_state_provider_setup,
-            percentage(time_state_provider_setup, total_time),
-            time_db_cache_setup,
-            percentage(time_db_cache_setup, total_time),
-            time_state_overrides_setup,
-            percentage(time_state_overrides_setup, total_time),
-            // Per-block processing
-            time_per_block_loop,
-            percentage(time_per_block_loop, total_time),
-            time_base_collection,
-            percentage(time_base_collection, total_time),
-            time_transactions_collection,
-            percentage(time_transactions_collection, total_time),
-            time_receipts_collection,
-            percentage(time_receipts_collection, total_time),
-            time_balances_collection,
-            percentage(time_balances_collection, total_time),
-            time_execution_payload_build,
-            percentage(time_execution_payload_build, total_time),
-            time_block_conversion,
-            percentage(time_block_conversion, total_time),
-            time_evm_env_setup,
-            percentage(time_evm_env_setup, total_time),
-            time_balance_updates,
-            percentage(time_balance_updates, total_time),
-            // Transaction processing
-            time_transaction_loop,
-            percentage(time_transaction_loop, total_time),
-            time_tx_sender_recovery,
-            percentage(time_tx_sender_recovery, total_time),
-            time_tx_receipt_lookup,
-            percentage(time_tx_receipt_lookup, total_time),
-            time_tx_rpc_build,
-            percentage(time_tx_rpc_build, total_time),
-            time_tx_receipt_build,
-            percentage(time_tx_receipt_build, total_time),
-            time_tx_state_check,
-            percentage(time_tx_state_check, total_time),
-            time_tx_execution,
-            percentage(time_tx_execution, total_time),
-            time_tx_state_commit,
-            percentage(time_tx_state_commit, total_time),
-            // Finalization
-            time_final_builder,
-            percentage(time_final_builder, total_time),
-            // Transaction stats
-            total_transactions,
-            executed_transactions,
-            if total_transactions > 0 {
-                (executed_transactions as f64 / total_transactions as f64) * 100.0
-            } else {
-                0.0
-            },
-            skipped_transactions,
-            if total_transactions > 0 {
-                (skipped_transactions as f64 / total_transactions as f64) * 100.0
-            } else {
-                0.0
-            },
-            if executed_transactions > 0 {
-                time_tx_execution / executed_transactions as u32
-            } else {
-                std::time::Duration::ZERO
-            },
-        );
-
-        Ok(result)
+        Ok(Some(Arc::new(pending_blocks_builder.build()?)))
     }
 
     fn is_next_flashblock(
@@ -923,13 +687,5 @@ where
             && flashblock.index == 0;
 
         is_next_of_block || is_first_of_next_block
-    }
-}
-
-fn percentage(duration: std::time::Duration, total: std::time::Duration) -> f64 {
-    if total.as_nanos() > 0 {
-        (duration.as_nanos() as f64 / total.as_nanos() as f64) * 100.0
-    } else {
-        0.0
     }
 }
