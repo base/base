@@ -576,10 +576,13 @@ where
                 let tx_hash = transaction.tx_hash();
 
                 let step_start = Instant::now();
-                let sender = prev_pending_blocks
-                    .as_ref()
-                    .and_then(|pb| pb.get_transaction_sender(&tx_hash))
-                    .unwrap_or(transaction.recover_signer()?);
+                let sender = match &prev_pending_blocks {
+                    Some(pending_blocks) => match pending_blocks.get_transaction_sender(&tx_hash) {
+                        Some(sender) => sender,
+                        None => transaction.recover_signer()?,
+                    },
+                    None => transaction.recover_signer()?,
+                };
 
                 pending_blocks_builder.with_transaction_sender(tx_hash, sender);
                 pending_blocks_builder.increment_nonce(sender);
@@ -635,31 +638,70 @@ where
                 time_tx_rpc_build += step_start.elapsed();
 
                 let step_start = Instant::now();
+
                 // Receipt Generation
-                let meta: TransactionMeta = TransactionMeta {
-                    tx_hash,
-                    index: idx as u64,
-                    block_hash: header.hash(),
-                    block_number: block.number,
-                    base_fee: block.base_fee_per_gas,
-                    excess_blob_gas: block.excess_blob_gas,
-                    timestamp: block.timestamp,
-                };
+                let op_receipt = match &prev_pending_blocks {
+                    Some(pending_blocks) => match pending_blocks.get_receipt(tx_hash) {
+                        Some(receipt) => receipt,
+                        None => {
+                            let meta: TransactionMeta = TransactionMeta {
+                                tx_hash,
+                                index: idx as u64,
+                                block_hash: header.hash(),
+                                block_number: block.number,
+                                base_fee: block.base_fee_per_gas,
+                                excess_blob_gas: block.excess_blob_gas,
+                                timestamp: block.timestamp,
+                            };
 
-                let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
-                    receipt: receipt.clone(),
-                    tx: Recovered::new_unchecked(transaction, sender),
-                    gas_used: receipt.cumulative_gas_used() - gas_used,
-                    next_log_index,
-                    meta,
-                };
+                            let input: ConvertReceiptInput<'_, OpPrimitives> =
+                                ConvertReceiptInput {
+                                    receipt: receipt.clone(),
+                                    tx: Recovered::new_unchecked(transaction, sender),
+                                    gas_used: receipt.cumulative_gas_used() - gas_used,
+                                    next_log_index,
+                                    meta,
+                                };
 
-                let op_receipt = OpReceiptBuilder::new(
-                    self.client.chain_spec().as_ref(),
-                    input,
-                    &mut l1_block_info,
-                )?
-                .build();
+                            let op_receipt = OpReceiptBuilder::new(
+                                self.client.chain_spec().as_ref(),
+                                input,
+                                &mut l1_block_info,
+                            )?
+                            .build();
+
+                            op_receipt
+                        }
+                    },
+                    None => {
+                        let meta: TransactionMeta = TransactionMeta {
+                            tx_hash,
+                            index: idx as u64,
+                            block_hash: header.hash(),
+                            block_number: block.number,
+                            base_fee: block.base_fee_per_gas,
+                            excess_blob_gas: block.excess_blob_gas,
+                            timestamp: block.timestamp,
+                        };
+
+                        let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
+                            receipt: receipt.clone(),
+                            tx: Recovered::new_unchecked(transaction, sender),
+                            gas_used: receipt.cumulative_gas_used() - gas_used,
+                            next_log_index,
+                            meta,
+                        };
+
+                        let op_receipt = OpReceiptBuilder::new(
+                            self.client.chain_spec().as_ref(),
+                            input,
+                            &mut l1_block_info,
+                        )?
+                        .build();
+
+                        op_receipt
+                    }
+                };
 
                 pending_blocks_builder.with_receipt(tx_hash, op_receipt);
                 gas_used = receipt.cumulative_gas_used();
