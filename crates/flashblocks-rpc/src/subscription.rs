@@ -1,6 +1,6 @@
 use std::{io::Read, sync::Arc, time::Duration};
 
-use alloy_primitives::{map::foldhash::HashMap, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use futures_util::{SinkExt as _, StreamExt};
 use reth_optimism_primitives::OpReceipt;

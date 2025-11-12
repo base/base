@@ -6,13 +6,13 @@ mod tests {
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
     use alloy_primitives::{
-        address, b256, bytes, map::HashMap, Address, Bytes, LogData, TxHash, B256, U256,
+        Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes, map::HashMap,
     };
     use alloy_provider::{Provider, RootProvider};
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
-    use alloy_rpc_types_eth::{error::EthRpcErrorCode, TransactionInput};
+    use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use op_alloy_rpc_types::OpTransactionRequest;
@@ -24,7 +24,7 @@ mod tests {
         tasks::TaskManager,
     };
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::{args::RollupArgs, OpNode};
+    use reth_optimism_node::{OpNode, args::RollupArgs};
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
     use reth_rpc_eth_api::RpcReceipt;
@@ -527,12 +527,13 @@ mod tests {
             provider.call(send_eth_call.nonce(4)).block(BlockNumberOrTag::Pending.into()).await;
 
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas"));
+        assert!(
+            res.unwrap_err()
+                .as_error_resp()
+                .unwrap()
+                .message
+                .contains("insufficient funds for gas")
+        );
 
         // read count1 from counter contract
         let eth_call_count1 = OpTransactionRequest::default()
@@ -603,12 +604,13 @@ mod tests {
             .await;
 
         assert!(res.is_err());
-        assert!(res
-            .unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas"));
+        assert!(
+            res.unwrap_err()
+                .as_error_resp()
+                .unwrap()
+                .message
+                .contains("insufficient funds for gas")
+        );
 
         Ok(())
     }
@@ -706,11 +708,9 @@ mod tests {
         let receipt_result = node.send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0)).await;
 
         let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-        assert!(receipt_result
-            .err()
-            .unwrap()
-            .to_string()
-            .contains(format!("{}", error_code).as_str()));
+        assert!(
+            receipt_result.err().unwrap().to_string().contains(format!("{}", error_code).as_str())
+        );
     }
 
     #[tokio::test]

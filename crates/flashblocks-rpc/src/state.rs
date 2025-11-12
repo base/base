@@ -1,12 +1,15 @@
-use crate::metrics::Metrics;
-use crate::pending_blocks::{PendingBlocks, PendingBlocksBuilder};
-use crate::rpc::FlashblocksAPI;
-use crate::subscription::{Flashblock, FlashblocksReceiver};
-use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
-use alloy_consensus::{Header, TxReceipt};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
+
+use alloy_consensus::{
+    Header, TxReceipt,
+    transaction::{Recovered, SignerRecoverable, TransactionMeta},
+};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{BlockNumber, Bytes, Sealable, B256};
+use alloy_primitives::{B256, BlockNumber, Bytes, Sealable, map::foldhash::HashMap};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::StateOverride;
@@ -19,8 +22,8 @@ use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
     revm::{
-        context::result::ResultAndState, database::StateProviderDatabase, db::CacheDB,
-        DatabaseCommit, State,
+        DatabaseCommit, State, context::result::ResultAndState, database::StateProviderDatabase,
+        db::CacheDB,
     },
 };
 use reth_evm::{ConfigureEvm, Evm};
@@ -30,18 +33,17 @@ use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredBlock;
 use reth_rpc_convert::transaction::ConvertReceiptInput;
-use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::broadcast::{self, Sender};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    broadcast::{self, Sender},
+    mpsc::{self, UnboundedReceiver},
+};
 use tracing::{debug, error, info, warn};
 
 use crate::{
     metrics::Metrics,
     pending_blocks::{PendingBlocks, PendingBlocksBuilder},
-    rpc::{FlashblocksAPI, PendingBlocksAPI},
+    rpc::FlashblocksAPI,
     subscription::{Flashblock, FlashblocksReceiver},
 };
 

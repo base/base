@@ -3,11 +3,11 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use alloy_consensus::{
-        crypto::secp256k1::public_key_to_address, BlockHeader, Header, Receipt, Transaction,
+        BlockHeader, Header, Receipt, Transaction, crypto::secp256k1::public_key_to_address,
     };
     use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
     use alloy_genesis::GenesisAccount;
-    use alloy_primitives::{map::foldhash::HashMap, Address, BlockNumber, Bytes, B256, U256};
+    use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, map::foldhash::HashMap};
     use alloy_provider::network::BlockResponse;
     use alloy_rpc_types_engine::PayloadId;
     use op_alloy_consensus::OpDepositReceipt;
@@ -18,16 +18,16 @@ mod tests {
         revm::database::StateProviderDatabase,
         transaction_pool::test_utils::TransactionBuilder,
     };
-    use reth_db::{test_utils::TempDatabase, DatabaseEnv};
-    use reth_evm::{execute::Executor, ConfigureEvm};
-    use reth_optimism_chainspec::{OpChainSpecBuilder, BASE_MAINNET};
+    use reth_db::{DatabaseEnv, test_utils::TempDatabase};
+    use reth_evm::{ConfigureEvm, execute::Executor};
+    use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpecBuilder};
     use reth_optimism_evm::OpEvmConfig;
     use reth_optimism_node::OpNode;
     use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
     use reth_provider::{
-        providers::BlockchainProvider, BlockWriter, ChainSpecProvider, ExecutionOutcome,
-        LatestStateProviderRef, ProviderFactory, StateProviderFactory,
+        BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
+        StateProviderFactory, providers::BlockchainProvider,
     };
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use tokio::time::sleep;
@@ -36,7 +36,7 @@ mod tests {
         rpc::{FlashblocksAPI, PendingBlocksAPI},
         state::FlashblocksState,
         subscription::{Flashblock, FlashblocksReceiver, Metadata},
-        tests::{utils::create_test_provider_factory, BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
+        tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH, utils::create_test_provider_factory},
     };
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
     // so it can be processed by the state processor
@@ -417,12 +417,14 @@ mod tests {
         );
 
         assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -494,12 +496,14 @@ mod tests {
         );
 
         assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -560,12 +564,13 @@ mod tests {
         );
 
         assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            test.flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -612,12 +617,14 @@ mod tests {
             1
         );
         assert!(test.flashblocks.get_pending_blocks().get_state_overrides().is_some());
-        assert!(!test
-            .flashblocks
-            .get_pending_blocks()
-            .get_state_overrides()
-            .unwrap()
-            .contains_key(&test.address(User::Alice)));
+        assert!(
+            !test
+                .flashblocks
+                .get_pending_blocks()
+                .get_state_overrides()
+                .unwrap()
+                .contains_key(&test.address(User::Alice))
+        );
 
         test.send_flashblock(
             FlashblockBuilder::new(&test, 1)
@@ -748,7 +755,7 @@ mod tests {
         assert_eq!(pending_nonce, 1);
 
         test.new_canonical_block_without_processing(vec![
-            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0)
+            test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 100, 0),
         ])
         .await;
 

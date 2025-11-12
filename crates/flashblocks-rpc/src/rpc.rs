@@ -2,21 +2,21 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{
-    map::foldhash::{HashSet, HashSetExt},
     Address, TxHash, U256,
+    map::foldhash::{HashSet, HashSetExt},
 };
 use alloy_rpc_types::{
+    BlockOverrides,
     simulate::{SimBlock, SimulatePayload, SimulatedBlock},
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
-    BlockOverrides,
 };
 use alloy_rpc_types_eth::{Filter, Log};
 use arc_swap::Guard;
 use jsonrpsee::{
-    core::{async_trait, RpcResult},
+    core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use jsonrpsee_types::{error::INVALID_PARAMS_CODE, ErrorObjectOwned};
+use jsonrpsee_types::{ErrorObjectOwned, error::INVALID_PARAMS_CODE};
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::{
@@ -24,14 +24,14 @@ use reth::{
     rpc::{eth::EthFilter, server_types::eth::EthApiError},
 };
 use reth_rpc_eth_api::{
-    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
     EthApiTypes, EthFilterApiServer, RpcBlock, RpcReceipt, RpcTransaction,
+    helpers::{EthBlocks, EthCall, EthState, EthTransactions, FullEthApi},
 };
 use tokio::{
     sync::{broadcast, broadcast::error::RecvError},
     time,
 };
-use tokio_stream::{wrappers::BroadcastStream, StreamExt};
+use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
 use crate::{metrics::Metrics, pending_blocks::PendingBlocks};
@@ -91,7 +91,7 @@ pub trait EthApiOverride {
 
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
-        -> RpcResult<U256>;
+    -> RpcResult<U256>;
 
     #[method(name = "getTransactionCount")]
     async fn get_transaction_count(

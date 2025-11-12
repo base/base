@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
-use crate::{rpc::PendingBlocksAPI, subscription::Flashblock};
 use alloy_consensus::{Header, Sealed};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
+    Address, B256, BlockNumber, TxHash, U256,
     map::foldhash::{HashMap, HashMapExt},
-    Address, BlockNumber, TxHash, B256, U256,
 };
 use alloy_provider::network::TransactionResponse;
-use alloy_rpc_types::{state::StateOverride, BlockTransactions};
+use alloy_rpc_types::{BlockTransactions, state::StateOverride};
 use alloy_rpc_types_eth::{Filter, Header as RPCHeader, Log};
 use arc_swap::Guard;
 use eyre::eyre;
@@ -17,6 +16,8 @@ use op_alloy_rpc_types::{OpTransactionReceipt, Transaction};
 use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
+
+use crate::{rpc::PendingBlocksAPI, subscription::Flashblock};
 
 pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,
@@ -260,15 +261,11 @@ impl PendingBlocks {
 
 impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref()
-            .map(|pb| pb.canonical_block_number())
-            .unwrap_or(BlockNumberOrTag::Latest)
+        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref()
-            .map(|pb| pb.get_transaction_count(address))
-            .unwrap_or_else(|| U256::from(0))
+        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
     }
 
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
@@ -286,8 +283,7 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         &self,
         tx_hash: alloy_primitives::TxHash,
     ) -> Option<RpcTransaction<Optimism>> {
-        self.as_ref()
-            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
@@ -295,14 +291,10 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     }
 
     fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref()
-            .map(|pb| pb.get_state_overrides())
-            .unwrap_or_default()
+        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
     }
 
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
-        self.as_ref()
-            .map(|pb| pb.get_pending_logs(filter))
-            .unwrap_or_default()
+        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }

@@ -13,11 +13,11 @@ use once_cell::sync::OnceCell;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
     providers::providers::BlockchainProvider,
-    version::{default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts},
+    version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
 };
 use reth_exex::ExExEvent;
-use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::{args::RollupArgs, OpNode};
+use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
+use reth_optimism_node::{OpNode, args::RollupArgs};
 use tracing::info;
 use url::Url;
 
