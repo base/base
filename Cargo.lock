@@ -1519,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-flashblocks-rpc"
-version = "0.1.16"
+version = "0.2.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-metering"
-version = "0.1.16"
+version = "0.2.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-node"
-version = "0.1.16"
+version = "0.2.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "base-reth-transaction-tracing"
-version = "0.1.16"
+version = "0.2.0"
 dependencies = [
  "alloy-primitives",
  "chrono",
@@ -11662,7 +11662,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=98c9ab49419e62352fe29cf79873141aaa3eb956#98c9ab49419e62352fe29cf79873141aaa3eb956"
+source = "git+https://github.com/base/tips?rev=a21ee492dede17f31eea108c12c669a8190f31aa#a21ee492dede17f31eea108c12c669a8190f31aa"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",

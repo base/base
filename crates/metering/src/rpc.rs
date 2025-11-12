@@ -2,7 +2,7 @@ use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use jsonrpsee::{
-    core::{RpcResult, async_trait},
+    core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use reth::providers::BlockReaderIdExt;
@@ -85,17 +85,14 @@ where
         })?;
 
         // Get state provider for the block
-        let state_provider = self
-            .provider
-            .state_by_block_hash(header.hash())
-            .map_err(|e| {
-                error!(error = %e, "Failed to get state provider");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get state provider: {}", e),
-                    None::<()>,
-                )
-            })?;
+        let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
+            error!(error = %e, "Failed to get state provider");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Failed to get state provider: {}", e),
+                None::<()>,
+            )
+        })?;
 
         // Meter bundle using utility function
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
@@ -116,9 +113,9 @@ where
 
         // Calculate average gas price
         let bundle_gas_price = if total_gas_used > 0 {
-            (total_gas_fees / U256::from(total_gas_used)).to_string()
+            total_gas_fees / U256::from(total_gas_used)
         } else {
-            "0".to_string()
+            U256::from(0)
         };
 
         info!(
@@ -132,9 +129,9 @@ where
         Ok(MeterBundleResponse {
             bundle_gas_price,
             bundle_hash,
-            coinbase_diff: total_gas_fees.to_string(),
-            eth_sent_to_coinbase: "0".to_string(),
-            gas_fees: total_gas_fees.to_string(),
+            coinbase_diff: total_gas_fees,
+            eth_sent_to_coinbase: U256::from(0),
+            gas_fees: total_gas_fees,
             results,
             state_block_number: header.number,
             state_flashblock_index: None,

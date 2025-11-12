@@ -1,42 +1,52 @@
-use crate::metrics::Metrics;
-use crate::pending_blocks::{PendingBlocks, PendingBlocksBuilder};
-use crate::rpc::{FlashblocksAPI, PendingBlocksAPI};
-use crate::subscription::{Flashblock, FlashblocksReceiver};
-use alloy_consensus::transaction::{Recovered, SignerRecoverable, TransactionMeta};
-use alloy_consensus::{Header, TxReceipt};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
+
+use alloy_consensus::{
+    transaction::{Recovered, SignerRecoverable, TransactionMeta},
+    Header, TxReceipt,
+};
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::map::foldhash::HashMap;
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, Sealable, U256};
+use alloy_primitives::{map::foldhash::HashMap, Address, BlockNumber, Bytes, Sealable, B256, U256};
 use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
-use alloy_rpc_types_eth::state::StateOverride;
-use alloy_rpc_types_eth::{Filter, Log};
+use alloy_rpc_types_eth::{state::StateOverride, Filter, Log};
 use arc_swap::{ArcSwapOption, Guard};
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::{Optimism, TransactionResponse};
 use op_alloy_rpc_types::Transaction;
-use reth::chainspec::{ChainSpecProvider, EthChainSpec};
-use reth::providers::{BlockReaderIdExt, StateProviderFactory};
-use reth::revm::context::result::ResultAndState;
-use reth::revm::database::StateProviderDatabase;
-use reth::revm::db::CacheDB;
-use reth::revm::{DatabaseCommit, State};
+use reth::{
+    chainspec::{ChainSpecProvider, EthChainSpec},
+    providers::{BlockReaderIdExt, StateProviderFactory},
+    revm::{
+        context::result::ResultAndState, database::StateProviderDatabase, db::CacheDB,
+        DatabaseCommit, State,
+    },
+};
 use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::OpHardforks;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::{DepositReceipt, OpBlock, OpPrimitives};
 use reth_optimism_rpc::OpReceiptBuilder;
 use reth_primitives::RecoveredBlock;
-use reth_rpc_convert::{RpcTransaction, transaction::ConvertReceiptInput};
+use reth_rpc_convert::{transaction::ConvertReceiptInput, RpcTransaction};
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
-use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::sync::Mutex;
-use tokio::sync::broadcast::{self, Sender};
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::{
+    broadcast::{self, Sender},
+    mpsc::{self, UnboundedReceiver},
+    Mutex,
+};
 use tracing::{debug, error, info, warn};
+
+use crate::{
+    metrics::Metrics,
+    pending_blocks::{PendingBlocks, PendingBlocksBuilder},
+    rpc::{FlashblocksAPI, PendingBlocksAPI},
+    subscription::{Flashblock, FlashblocksReceiver},
+};
 
 // Buffer 4s of flashblocks for flashblock_sender
 const BUFFER_SIZE: usize = 20;
@@ -73,12 +83,7 @@ where
             flashblock_sender.clone(),
         );
 
-        Self {
-            pending_blocks,
-            queue: tx,
-            flashblock_sender,
-            state_processor,
-        }
+        Self { pending_blocks, queue: tx, flashblock_sender, state_processor }
     }
 
     pub fn start(&self) {
@@ -132,15 +137,11 @@ impl<Client> FlashblocksAPI for FlashblocksState<Client> {
 
 impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     fn get_canonical_block_number(&self) -> BlockNumberOrTag {
-        self.as_ref()
-            .map(|pb| pb.canonical_block_number())
-            .unwrap_or(BlockNumberOrTag::Latest)
+        self.as_ref().map(|pb| pb.canonical_block_number()).unwrap_or(BlockNumberOrTag::Latest)
     }
 
     fn get_transaction_count(&self, address: Address) -> U256 {
-        self.as_ref()
-            .map(|pb| pb.get_transaction_count(address))
-            .unwrap_or_else(|| U256::from(0))
+        self.as_ref().map(|pb| pb.get_transaction_count(address)).unwrap_or_else(|| U256::from(0))
     }
 
     fn get_block(&self, full: bool) -> Option<RpcBlock<Optimism>> {
@@ -158,8 +159,7 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
         &self,
         tx_hash: alloy_primitives::TxHash,
     ) -> Option<RpcTransaction<Optimism>> {
-        self.as_ref()
-            .and_then(|pb| pb.get_transaction_by_hash(tx_hash))
+        self.as_ref().and_then(|pb| pb.get_transaction_by_hash(tx_hash))
     }
 
     fn get_balance(&self, address: Address) -> Option<U256> {
@@ -167,15 +167,11 @@ impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
     }
 
     fn get_state_overrides(&self) -> Option<StateOverride> {
-        self.as_ref()
-            .map(|pb| pb.get_state_overrides())
-            .unwrap_or_default()
+        self.as_ref().map(|pb| pb.get_state_overrides()).unwrap_or_default()
     }
 
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log> {
-        self.as_ref()
-            .map(|pb| pb.get_pending_logs(filter))
-            .unwrap_or_default()
+        self.as_ref().map(|pb| pb.get_pending_logs(filter)).unwrap_or_default()
     }
 }
 
@@ -202,13 +198,7 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
-        Self {
-            metrics: Metrics::default(),
-            pending_blocks,
-            client,
-            rx,
-            sender,
-        }
+        Self { metrics: Metrics::default(), pending_blocks, client, rx, sender }
     }
 
     async fn start(&self) {
@@ -216,10 +206,7 @@ where
             let prev_pending_blocks = self.pending_blocks.load_full();
             match update {
                 StateUpdate::Canonical(block) => {
-                    debug!(
-                        message = "processing canonical block",
-                        block_number = block.number
-                    );
+                    debug!(message = "processing canonical block", block_number = block.number);
                     match self.process_canonical_block(prev_pending_blocks, &block) {
                         Ok(new_pending_blocks) => {
                             self.pending_blocks.swap(new_pending_blocks);
@@ -243,9 +230,7 @@ where
                             }
 
                             self.pending_blocks.swap(new_pending_blocks);
-                            self.metrics
-                                .block_processing_duration
-                                .record(start_time.elapsed());
+                            self.metrics.block_processing_duration.record(start_time.elapsed());
                         }
                         Err(e) => {
                             error!(message = "could not process Flashblock", error = %e);
@@ -269,9 +254,7 @@ where
                     .iter()
                     .filter(|fb| fb.metadata.block_number == block.number)
                     .count();
-                self.metrics
-                    .flashblocks_in_block
-                    .record(num_flashblocks_for_canon as f64);
+                self.metrics.flashblocks_in_block.record(num_flashblocks_for_canon as f64);
 
                 if pending_blocks.latest_block_number() <= block.number {
                     self.metrics.pending_clear_catchup.increment(1);
@@ -401,21 +384,14 @@ where
 
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
 
-        let state_provider = self
-            .client
-            .state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
+        let state_provider =
+            self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
         let state_provider_db = StateProviderDatabase::new(state_provider);
-        let state = State::builder()
-            .with_database(state_provider_db)
-            .with_bundle_update()
-            .build();
+        let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         let mut db = match &prev_pending_blocks {
-            Some(pending_blocks) => CacheDB {
-                cache: pending_blocks.get_db_cache(),
-                db: state,
-            },
+            Some(pending_blocks) => CacheDB { cache: pending_blocks.get_db_cache(), db: state },
             None => CacheDB::new(state),
         };
         let mut state_overrides = match &prev_pending_blocks {
@@ -463,10 +439,7 @@ where
                 });
 
             pending_blocks_builder.with_flashblocks(
-                flashblocks
-                    .iter()
-                    .map(|&x| x.clone())
-                    .collect::<Vec<Flashblock>>(),
+                flashblocks.iter().map(|&x| x.clone()).collect::<Vec<Flashblock>>(),
             );
 
             let execution_payload: ExecutionPayloadV3 = ExecutionPayloadV3 {
@@ -534,10 +507,7 @@ where
                         .as_deposit_receipt()
                         .ok_or(eyre!("deposit transaction, non deposit receipt"))?;
 
-                    (
-                        deposit_receipt.deposit_receipt_version,
-                        deposit_receipt.deposit_nonce,
-                    )
+                    (deposit_receipt.deposit_receipt_version, deposit_receipt.deposit_nonce)
                 } else {
                     (None, None)
                 };
@@ -548,9 +518,7 @@ where
                     block
                         .base_fee_per_gas
                         .map(|base_fee| {
-                            transaction
-                                .effective_tip_per_gas(base_fee)
-                                .unwrap_or_default()
+                            transaction.effective_tip_per_gas(base_fee).unwrap_or_default()
                                 + base_fee as u128
                         })
                         .unwrap_or_else(|| transaction.max_fee_per_gas())
@@ -629,9 +597,8 @@ where
                                 existing_override.code =
                                     acc.info.code.clone().map(|code| code.bytes());
 
-                                let existing = existing_override
-                                    .state_diff
-                                    .get_or_insert(Default::default());
+                                let existing =
+                                    existing_override.state_diff.get_or_insert(Default::default());
                                 let changed_slots = acc.storage.iter().map(|(&key, slot)| {
                                     (B256::from(key), B256::from(slot.present_value))
                                 });

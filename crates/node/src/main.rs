@@ -1,26 +1,23 @@
-use base_reth_flashblocks_rpc::rpc::EthApiExt;
-use futures_util::TryStreamExt;
-use once_cell::sync::OnceCell;
-use reth::version::{
-    RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
-};
-use reth_exex::ExExEvent;
 use std::sync::Arc;
 
-use base_reth_flashblocks_rpc::rpc::EthApiOverrideServer;
-use base_reth_flashblocks_rpc::state::FlashblocksState;
-use base_reth_flashblocks_rpc::subscription::FlashblocksSubscriber;
+use base_reth_flashblocks_rpc::{
+    rpc::{EthApiExt, EthApiOverrideServer},
+    state::FlashblocksState,
+    subscription::FlashblocksSubscriber,
+};
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
-use reth::builder::{Node, NodeHandle};
+use futures_util::TryStreamExt;
+use once_cell::sync::OnceCell;
 use reth::{
-    builder::{EngineNodeLauncher, TreeConfig},
+    builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
     providers::providers::BlockchainProvider,
+    version::{default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts},
 };
-use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
-use reth_optimism_node::OpNode;
-use reth_optimism_node::args::RollupArgs;
+use reth_exex::ExExEvent;
+use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
+use reth_optimism_node::{args::RollupArgs, OpNode};
 use tracing::info;
 use url::Url;
 
@@ -39,10 +36,7 @@ struct Args {
     pub websocket_url: Option<String>,
 
     /// Enable transaction tracing ExEx for mempool-to-block timing analysis
-    #[arg(
-        long = "enable-transaction-tracing",
-        value_name = "ENABLE_TRANSACTION_TRACING"
-    )]
+    #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
     pub enable_transaction_tracing: bool,
 
     /// Enable `info` logs for transaction tracing
@@ -78,11 +72,8 @@ fn main() {
             default_version_metadata.p2p_client_version, NODE_RETH_CLIENT_VERSION
         )
         .into(),
-        extra_data: format!(
-            "{}/{}",
-            default_version_metadata.extra_data, NODE_RETH_CLIENT_VERSION
-        )
-        .into(),
+        extra_data: format!("{}/{}", default_version_metadata.extra_data, NODE_RETH_CLIENT_VERSION)
+            .into(),
         ..default_version_metadata
     })
     .expect("Unable to init version metadata");
@@ -98,10 +89,7 @@ fn main() {
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
-            let NodeHandle {
-                node: _node,
-                node_exit_future,
-            } = builder
+            let NodeHandle { node: _node, node_exit_future } = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
                 .with_components(op_node.components())
                 .with_add_ons(op_node.add_ons())
@@ -110,10 +98,7 @@ fn main() {
                     transaction_tracing_enabled,
                     "transaction-tracing",
                     move |ctx| async move {
-                        Ok(transaction_tracing_exex(
-                            ctx,
-                            args.enable_transaction_tracing_logs,
-                        ))
+                        Ok(transaction_tracing_exex(ctx, args.enable_transaction_tracing_logs))
                     },
                 )
                 .install_exex_if(flashblocks_enabled, "flashblocks-canon", {

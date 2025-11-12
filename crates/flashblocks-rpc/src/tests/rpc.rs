@@ -1,42 +1,43 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::{EthApiExt, EthApiOverrideServer};
-    use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
-    use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use std::{any::Any, net::SocketAddr, str::FromStr, sync::Arc};
+
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
     use alloy_genesis::Genesis;
-    use alloy_primitives::map::HashMap;
-    use alloy_primitives::{Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes};
-    use alloy_provider::Provider;
-    use alloy_provider::RootProvider;
+    use alloy_primitives::{
+        address, b256, bytes, map::HashMap, Address, Bytes, LogData, TxHash, B256, U256,
+    };
+    use alloy_provider::{Provider, RootProvider};
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
-    use alloy_rpc_types_eth::TransactionInput;
-    use alloy_rpc_types_eth::error::EthRpcErrorCode;
+    use alloy_rpc_types_eth::{error::EthRpcErrorCode, TransactionInput};
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
     use op_alloy_rpc_types::OpTransactionRequest;
-    use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
-    use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
-    use reth::chainspec::Chain;
-    use reth::core::exit::NodeExitFuture;
-    use reth::tasks::TaskManager;
+    use reth::{
+        args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
+        builder::{Node, NodeBuilder, NodeConfig, NodeHandle},
+        chainspec::Chain,
+        core::exit::NodeExitFuture,
+        tasks::TaskManager,
+    };
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::OpNode;
-    use reth_optimism_node::args::RollupArgs;
+    use reth_optimism_node::{args::RollupArgs, OpNode};
     use reth_optimism_primitives::OpReceipt;
     use reth_provider::providers::BlockchainProvider;
     use reth_rpc_eth_api::RpcReceipt;
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
     use serde_json;
-    use std::any::Any;
-    use std::net::SocketAddr;
-    use std::str::FromStr;
-    use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
+
+    use crate::{
+        rpc::{EthApiExt, EthApiOverrideServer},
+        state::FlashblocksState,
+        subscription::{Flashblock, FlashblocksReceiver, Metadata},
+        tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
+    };
 
     pub struct NodeContext {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
@@ -102,10 +103,7 @@ mod tests {
         );
 
         let network_config = NetworkArgs {
-            discovery: DiscoveryArgs {
-                disable_discovery: true,
-                ..DiscoveryArgs::default()
-            },
+            discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
             ..NetworkArgs::default()
         };
 
@@ -120,10 +118,7 @@ mod tests {
         // Start websocket server to simulate the builder and send payloads back to the node
         let (sender, mut receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
 
-        let NodeHandle {
-            node,
-            node_exit_future,
-        } = NodeBuilder::new(node_config.clone())
+        let NodeHandle { node, node_exit_future } = NodeBuilder::new(node_config.clone())
             .testing_node(exec.clone())
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
             .with_components(node.components_builder())
@@ -397,6 +392,7 @@ mod tests {
         assert_eq!(pending_block.number(), latest_block.number());
         assert_eq!(pending_block.hash(), latest_block.hash());
 
+
         let base_payload = create_first_payload();
         node.send_payload(base_payload).await?;
 
@@ -446,32 +442,16 @@ mod tests {
         let node = setup_node().await?;
         let provider = node.provider().await?;
 
-        assert!(
-            provider
-                .get_transaction_by_hash(DEPOSIT_TX_HASH)
-                .await?
-                .is_none()
-        );
-        assert!(
-            provider
-                .get_transaction_by_hash(TRANSFER_ETH_HASH)
-                .await?
-                .is_none()
-        );
+        assert!(provider.get_transaction_by_hash(DEPOSIT_TX_HASH).await?.is_none());
+        assert!(provider.get_transaction_by_hash(TRANSFER_ETH_HASH).await?.is_none());
 
         node.send_test_payloads().await?;
 
-        let tx1 = provider
-            .get_transaction_by_hash(DEPOSIT_TX_HASH)
-            .await?
-            .expect("tx1 expected");
+        let tx1 = provider.get_transaction_by_hash(DEPOSIT_TX_HASH).await?.expect("tx1 expected");
         assert_eq!(tx1.tx_hash(), DEPOSIT_TX_HASH);
         assert_eq!(tx1.from(), DEPOSIT_SENDER);
 
-        let tx2 = provider
-            .get_transaction_by_hash(TRANSFER_ETH_HASH)
-            .await?
-            .expect("tx2 expected");
+        let tx2 = provider.get_transaction_by_hash(TRANSFER_ETH_HASH).await?.expect("tx2 expected");
         assert_eq!(tx2.tx_hash(), TRANSFER_ETH_HASH);
         assert_eq!(tx2.from(), TX_SENDER);
 
@@ -491,16 +471,12 @@ mod tests {
 
         node.send_test_payloads().await?;
 
-        let receipt = provider
-            .get_transaction_receipt(DEPOSIT_TX_HASH)
-            .await?
-            .expect("receipt expected");
+        let receipt =
+            provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?.expect("receipt expected");
         assert_eq!(receipt.gas_used(), 21000);
 
-        let receipt = provider
-            .get_transaction_receipt(TRANSFER_ETH_HASH)
-            .await?
-            .expect("receipt expected");
+        let receipt =
+            provider.get_transaction_receipt(TRANSFER_ETH_HASH).await?.expect("receipt expected");
         assert_eq!(receipt.gas_used(), 24000); // 45000 - 21000
 
         // TODO: Add a new payload and validate that the receipts from the previous payload
@@ -516,18 +492,12 @@ mod tests {
         let provider = node.provider().await?;
 
         assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
-        assert_eq!(
-            provider.get_transaction_count(TX_SENDER).pending().await?,
-            0
-        );
+        assert_eq!(provider.get_transaction_count(TX_SENDER).pending().await?, 0);
 
         node.send_test_payloads().await?;
 
         assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
-        assert_eq!(
-            provider.get_transaction_count(TX_SENDER).pending().await?,
-            4
-        );
+        assert_eq!(provider.get_transaction_count(TX_SENDER).pending().await?, 4);
 
         Ok(())
     }
@@ -549,10 +519,8 @@ mod tests {
             .value(U256::from(9999999999849942300000u128))
             .input(TransactionInput::new(bytes!("0x")));
 
-        let res = provider
-            .call(send_eth_call.clone())
-            .block(BlockNumberOrTag::Pending.into())
-            .await;
+        let res =
+            provider.call(send_eth_call.clone()).block(BlockNumberOrTag::Pending.into()).await;
 
         assert!(res.is_ok());
 
@@ -560,19 +528,16 @@ mod tests {
 
         // We included a heavy spending transaction and now don't have enough funds for this request, so
         // this eth_call with fail
-        let res = provider
-            .call(send_eth_call.nonce(4))
-            .block(BlockNumberOrTag::Pending.into())
-            .await;
+        let res =
+            provider.call(send_eth_call.nonce(4)).block(BlockNumberOrTag::Pending.into()).await;
 
         assert!(res.is_err());
-        assert!(
-            res.unwrap_err()
-                .as_error_resp()
-                .unwrap()
-                .message
-                .contains("insufficient funds for gas")
-        );
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
 
         // read count1 from counter contract
         let eth_call_count1 = OpTransactionRequest::default()
@@ -643,13 +608,12 @@ mod tests {
             .await;
 
         assert!(res.is_err());
-        assert!(
-            res.unwrap_err()
-                .as_error_resp()
-                .unwrap()
-                .message
-                .contains("insufficient funds for gas")
-        );
+        assert!(res
+            .unwrap_err()
+            .as_error_resp()
+            .unwrap()
+            .message
+            .contains("insufficient funds for gas"));
 
         Ok(())
     }
@@ -698,10 +662,8 @@ mod tests {
             validation: true,
             return_full_transactions: true,
         };
-        let simulate_res = provider
-            .simulate(&simulate_call)
-            .block_id(BlockNumberOrTag::Pending.into())
-            .await;
+        let simulate_res =
+            provider.simulate(&simulate_call).block_id(BlockNumberOrTag::Pending.into()).await;
         assert!(simulate_res.is_ok());
         let block = simulate_res.unwrap();
         assert_eq!(block.len(), 1);
@@ -727,13 +689,11 @@ mod tests {
         node.send_payload(create_first_payload()).await?;
 
         // run the Tx sync and, in parallel, deliver the payload that contains the Tx
-        let (receipt_result, payload_result) = tokio::join!(
-            node.send_raw_transaction_sync(TRANSFER_ETH_TX, None),
-            async {
+        let (receipt_result, payload_result) =
+            tokio::join!(node.send_raw_transaction_sync(TRANSFER_ETH_TX, None), async {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 node.send_payload(create_second_payload()).await
-            }
-        );
+            });
 
         payload_result?;
         let receipt = receipt_result?;
@@ -748,18 +708,14 @@ mod tests {
         let node = setup_node().await.unwrap();
 
         // fail request immediately by passing a timeout of 0 ms
-        let receipt_result = node
-            .send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0))
-            .await;
+        let receipt_result = node.send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0)).await;
 
         let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-        assert!(
-            receipt_result
-                .err()
-                .unwrap()
-                .to_string()
-                .contains(format!("{}", error_code).as_str())
-        );
+        assert!(receipt_result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains(format!("{}", error_code).as_str()));
     }
 
     #[tokio::test]
@@ -901,10 +857,7 @@ mod tests {
 
         // Should now include pending logs (2 logs from our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(
-            logs.iter()
-                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
-        );
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         // Test fromBlock: latest, toBlock: pending
         let logs = provider
@@ -917,10 +870,7 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(
-            logs.iter()
-                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
-        );
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         // Test fromBlock: earliest, toBlock: pending
         let logs = provider
@@ -933,10 +883,7 @@ mod tests {
 
         // Should include pending logs (historical part is empty in our test setup)
         assert_eq!(logs.len(), 2);
-        assert!(
-            logs.iter()
-                .all(|log| log.transaction_hash == Some(INCREMENT_HASH))
-        );
+        assert!(logs.iter().all(|log| log.transaction_hash == Some(INCREMENT_HASH)));
 
         Ok(())
     }
