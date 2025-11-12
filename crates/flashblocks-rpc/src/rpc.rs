@@ -178,7 +178,14 @@ where
         if number.is_pending() {
             self.metrics.get_block_by_number.increment(1);
             let pending_blocks = self.flashblocks_state.get_pending_blocks();
-            Ok(pending_blocks.get_block(full))
+            if pending_blocks.as_ref().is_some() {
+                Ok(pending_blocks.get_block(full))
+            } else {
+                // No pending state available — treat `pending` as `latest`
+                return EthBlocks::rpc_block(&self.eth_api, BlockNumberOrTag::Latest.into(), full)
+                    .await
+                    .map_err(Into::into);
+            }
         } else {
             EthBlocks::rpc_block(&self.eth_api, number.into(), full)
                 .await
