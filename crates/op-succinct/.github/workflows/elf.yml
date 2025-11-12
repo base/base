@@ -6,10 +6,20 @@ on:
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - '**/*.pdf'
+      - '**/*.md'
   push:
+    tags:
+      - v[0-9]+.*
     branches:
+      - "release/*"
       - main
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
 
 jobs:
   elf:

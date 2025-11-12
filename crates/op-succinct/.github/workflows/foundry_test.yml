@@ -2,12 +2,21 @@ name: Foundry Test
 
 on:
   pull_request:
-    branches:
-      - "**"
+    paths:
+      - '.github/workflows/foundry_test.yml'
+      - 'justfile'
+      - 'contracts/**'
   push:
+    tags:
+      - v[0-9]+.*
     branches:
+      - "release/*"
       - main
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
 
 env:
   FOUNDRY_PROFILE: ci
@@ -16,6 +25,8 @@ jobs:
   check:
     strategy:
       fail-fast: true
+      matrix:
+        os: [ubuntu-latest]
 
     name: Foundry project
     runs-on: ubuntu-latest

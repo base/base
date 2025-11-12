@@ -2,23 +2,28 @@ name: PR
 
 on:
   push:
-    branches: [main]
-  pull_request:
+    tags:
+      - v[0-9]+.*
     branches:
-      - "**"
+      - "release/*"
+      - main
+  pull_request:
     paths:
+      - ".github/workflows/pr.yaml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "justfile"
       - "crates/**"
       - "programs/**"
       - "scripts/**"
       - "utils/**"
       - "fault-proof/**"
       - "validity/**"
-      - "Cargo.toml"
   merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:

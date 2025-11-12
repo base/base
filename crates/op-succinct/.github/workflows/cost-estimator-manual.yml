@@ -6,6 +6,10 @@ on:
   schedule:
     - cron: '0 0 * * *' # Run the workflow every day at midnight UTC.
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
+
 jobs:
   daily-cost-estimator:
     runs-on:
