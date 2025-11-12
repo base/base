@@ -2,7 +2,7 @@ use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
 use jsonrpsee::{
-    core::{RpcResult, async_trait},
+    core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
 use reth::providers::BlockReaderIdExt;
@@ -85,17 +85,14 @@ where
         })?;
 
         // Get state provider for the block
-        let state_provider = self
-            .provider
-            .state_by_block_hash(header.hash())
-            .map_err(|e| {
-                error!(error = %e, "Failed to get state provider");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get state provider: {}", e),
-                    None::<()>,
-                )
-            })?;
+        let state_provider = self.provider.state_by_block_hash(header.hash()).map_err(|e| {
+            error!(error = %e, "Failed to get state provider");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Failed to get state provider: {}", e),
+                None::<()>,
+            )
+        })?;
 
         // Meter bundle using utility function
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =

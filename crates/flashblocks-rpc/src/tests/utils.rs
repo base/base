@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
-    ClientVersion, DatabaseEnv, init_db,
-    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
-    test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
+    init_db,
+    mdbx::{DatabaseArguments, MaxReadTransactionDuration, KILOBYTE, MEGABYTE},
+    test_utils::{create_test_static_files_dir, tempdir_path, TempDatabase, ERROR_DB_CREATION},
+    ClientVersion, DatabaseEnv,
 };
-
-use reth_provider::{ProviderFactory, providers::StaticFileProvider};
+use reth_provider::{providers::StaticFileProvider, ProviderFactory};
 
 pub fn create_test_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,

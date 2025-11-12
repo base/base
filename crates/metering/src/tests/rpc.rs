@@ -1,28 +1,28 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::{MeteringApiImpl, MeteringApiServer};
+    use std::{any::Any, net::SocketAddr, sync::Arc};
+
     use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
-    use alloy_primitives::bytes;
-    use alloy_primitives::{Bytes, U256, address, b256};
+    use alloy_primitives::{address, b256, bytes, Bytes, U256};
     use alloy_rpc_client::RpcClient;
     use op_alloy_consensus::OpTxEnvelope;
-    use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
-    use reth::builder::{Node, NodeBuilder, NodeConfig, NodeHandle};
-    use reth::chainspec::Chain;
-    use reth::core::exit::NodeExitFuture;
-    use reth::tasks::TaskManager;
+    use reth::{
+        args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
+        builder::{Node, NodeBuilder, NodeConfig, NodeHandle},
+        chainspec::Chain,
+        core::exit::NodeExitFuture,
+        tasks::TaskManager,
+    };
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::OpNode;
-    use reth_optimism_node::args::RollupArgs;
+    use reth_optimism_node::{args::RollupArgs, OpNode};
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::providers::BlockchainProvider;
     use reth_transaction_pool::test_utils::TransactionBuilder;
     use serde_json;
-    use std::any::Any;
-    use std::net::SocketAddr;
-    use std::sync::Arc;
     use tips_core::types::Bundle;
+
+    use crate::rpc::{MeteringApiImpl, MeteringApiServer};
 
     pub struct NodeContext {
         http_api_addr: SocketAddr,
@@ -68,10 +68,7 @@ mod tests {
         );
 
         let network_config = NetworkArgs {
-            discovery: DiscoveryArgs {
-                disable_discovery: true,
-                ..DiscoveryArgs::default()
-            },
+            discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
             ..NetworkArgs::default()
         };
 
@@ -82,10 +79,7 @@ mod tests {
 
         let node = OpNode::new(RollupArgs::default());
 
-        let NodeHandle {
-            node,
-            node_exit_future,
-        } = NodeBuilder::new(node_config.clone())
+        let NodeHandle { node, node_exit_future } = NodeBuilder::new(node_config.clone())
             .testing_node(exec.clone())
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
             .with_components(node.components_builder())
@@ -172,10 +166,7 @@ mod tests {
 
         let result = &response.results[0];
         assert_eq!(result.from_address, sender_address);
-        assert_eq!(
-            result.to_address,
-            Some(address!("0x1111111111111111111111111111111111111111"))
-        );
+        assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
         assert_eq!(result.gas_used, 21_000);
         assert_eq!(result.gas_price, "1000000000");
         assert!(result.execution_time_us > 0);

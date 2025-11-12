@@ -3,18 +3,17 @@ use std::sync::Arc;
 use alloy_consensus::crypto::secp256k1::public_key_to_address;
 use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
-use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
-use rand::{SeedableRng, rngs::StdRng};
-use reth::api::NodeTypesWithDBAdapter;
-use reth::chainspec::EthChainSpec;
-use reth_db::{DatabaseEnv, test_utils::TempDatabase};
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
+use rand::{rngs::StdRng, SeedableRng};
+use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
+use reth_db::{test_utils::TempDatabase, DatabaseEnv};
+use reth_optimism_chainspec::{OpChainSpec, OpChainSpecBuilder, BASE_MAINNET};
 use reth_optimism_node::OpNode;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives_traits::SealedHeader;
-use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
+use reth_provider::{providers::BlockchainProvider, HeaderProvider, StateProviderFactory};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::{Bundle, ParsedBundle};
@@ -77,23 +76,13 @@ fn create_chain_spec(
         .genesis
         .clone()
         .extend_accounts(vec![
-            (
-                alice_address,
-                GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
-            ),
-            (
-                bob_address,
-                GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64)),
-            ),
+            (alice_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
+            (bob_address, GenesisAccount::default().with_balance(U256::from(1_000_000_000_u64))),
         ])
         .with_gas_limit(100_000_000);
 
-    let spec = Arc::new(
-        OpChainSpecBuilder::base_mainnet()
-            .genesis(genesis)
-            .isthmus_activated()
-            .build(),
-    );
+    let spec =
+        Arc::new(OpChainSpecBuilder::base_mainnet().genesis(genesis).isthmus_activated().build());
 
     (spec, addresses, private_keys)
 }
@@ -110,13 +99,7 @@ fn setup_harness() -> eyre::Result<TestHarness> {
         .context("fetching genesis header")?
         .expect("genesis header exists");
 
-    Ok(TestHarness {
-        provider,
-        header,
-        chain_spec,
-        user_to_address,
-        user_to_private_key,
-    })
+    Ok(TestHarness { provider, header, chain_spec, user_to_address, user_to_private_key })
 }
 
 fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> {
@@ -124,10 +107,7 @@ fn envelope_from_signed(tx: &OpTransactionSigned) -> eyre::Result<OpTxEnvelope> 
 }
 
 fn create_parsed_bundle(envelopes: Vec<OpTxEnvelope>) -> eyre::Result<ParsedBundle> {
-    let txs: Vec<Bytes> = envelopes
-        .iter()
-        .map(|env| Bytes::from(env.encoded_2718()))
-        .collect();
+    let txs: Vec<Bytes> = envelopes.iter().map(|env| Bytes::from(env.encoded_2718())).collect();
 
     let bundle = Bundle {
         txs,
@@ -156,12 +136,7 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(
-            state_provider,
-            harness.chain_spec.clone(),
-            parsed_bundle,
-            &harness.header,
-        )?;
+        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
 
     assert!(results.is_empty());
     assert_eq!(total_gas_used, 0);
@@ -203,12 +178,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(
-            state_provider,
-            harness.chain_spec.clone(),
-            parsed_bundle,
-            &harness.header,
-        )?;
+        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
 
     assert_eq!(results.len(), 1);
     let result = &results[0];
@@ -219,10 +189,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     assert_eq!(result.tx_hash, tx_hash);
     assert_eq!(result.gas_price, U256::from(10).to_string());
     assert_eq!(result.gas_used, 21_000);
-    assert_eq!(
-        result.coinbase_diff,
-        (U256::from(21_000) * U256::from(10)).to_string(),
-    );
+    assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)).to_string(),);
 
     assert_eq!(total_gas_used, 21_000);
     assert_eq!(total_gas_fees, U256::from(21_000) * U256::from(10));
@@ -231,10 +198,7 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     concatenated.extend_from_slice(tx_hash.as_slice());
     assert_eq!(bundle_hash, keccak256(concatenated));
 
-    assert!(
-        result.execution_time_us > 0,
-        "execution_time_us should be greater than zero"
-    );
+    assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
 
     Ok(())
 }
@@ -259,10 +223,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         .into_eip1559();
 
     let tx_1 = OpTransactionSigned::Eip1559(
-        signed_tx_1
-            .as_eip1559()
-            .expect("eip1559 transaction")
-            .clone(),
+        signed_tx_1.as_eip1559().expect("eip1559 transaction").clone(),
     );
 
     // Create second transaction
@@ -278,10 +239,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
         .into_eip1559();
 
     let tx_2 = OpTransactionSigned::Eip1559(
-        signed_tx_2
-            .as_eip1559()
-            .expect("eip1559 transaction")
-            .clone(),
+        signed_tx_2.as_eip1559().expect("eip1559 transaction").clone(),
     );
 
     let envelope_1 = envelope_from_signed(&tx_1)?;
@@ -297,12 +255,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
     let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(
-            state_provider,
-            harness.chain_spec.clone(),
-            parsed_bundle,
-            &harness.header,
-        )?;
+        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
 
     assert_eq!(results.len(), 2);
     assert!(total_execution_time > 0);
@@ -314,10 +267,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     assert_eq!(result_1.tx_hash, tx_hash_1);
     assert_eq!(result_1.gas_price, U256::from(10).to_string());
     assert_eq!(result_1.gas_used, 21_000);
-    assert_eq!(
-        result_1.coinbase_diff,
-        (U256::from(21_000) * U256::from(10)).to_string(),
-    );
+    assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)).to_string(),);
 
     // Check second transaction
     let result_2 = &results[1];
@@ -326,10 +276,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     assert_eq!(result_2.tx_hash, tx_hash_2);
     assert_eq!(result_2.gas_price, U256::from(15).to_string());
     assert_eq!(result_2.gas_used, 21_000);
-    assert_eq!(
-        result_2.coinbase_diff,
-        (U256::from(21_000) * U256::from(15)).to_string(),
-    );
+    assert_eq!(result_2.coinbase_diff, (U256::from(21_000) * U256::from(15)).to_string(),);
 
     // Check aggregated values
     assert_eq!(total_gas_used, 42_000);
@@ -343,14 +290,8 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     concatenated.extend_from_slice(tx_hash_2.as_slice());
     assert_eq!(bundle_hash, keccak256(concatenated));
 
-    assert!(
-        result_1.execution_time_us > 0,
-        "execution_time_us should be greater than zero"
-    );
-    assert!(
-        result_2.execution_time_us > 0,
-        "execution_time_us should be greater than zero"
-    );
+    assert!(result_1.execution_time_us > 0, "execution_time_us should be greater than zero");
+    assert!(result_2.execution_time_us > 0, "execution_time_us should be greater than zero");
 
     Ok(())
 }

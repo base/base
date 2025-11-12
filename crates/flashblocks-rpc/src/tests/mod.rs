@@ -1,4 +1,4 @@
-use alloy_primitives::{B256, Bytes, b256, bytes};
+use alloy_primitives::{b256, bytes, Bytes, B256};
 
 mod rpc;
 mod state;

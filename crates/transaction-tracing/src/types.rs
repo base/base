@@ -1,6 +1,9 @@
+use std::{
+    fmt::{self, Display},
+    time::Instant,
+};
+
 use chrono::{DateTime, Local};
-use std::fmt::{self, Display};
-use std::time::Instant;
 
 /// Types of transaction events to track
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,11 +50,7 @@ pub struct EventLog {
 
 impl EventLog {
     pub fn new(t: DateTime<Local>, event: TxEvent) -> Self {
-        Self {
-            mempool_time: Instant::now(),
-            events: vec![(t, event)],
-            limit: 10,
-        }
+        Self { mempool_time: Instant::now(), events: vec![(t, event)], limit: 10 }
     }
 
     pub fn push(&mut self, t: DateTime<Local>, event: TxEvent) {
