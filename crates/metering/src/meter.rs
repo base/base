@@ -84,15 +84,15 @@ where
             let execution_time = tx_start.elapsed().as_micros();
 
             results.push(TransactionResult {
-                coinbase_diff: gas_fees.to_string(),
-                eth_sent_to_coinbase: "0".to_string(),
+                coinbase_diff: gas_fees,
+                eth_sent_to_coinbase: U256::from(0),
                 from_address: from,
-                gas_fees: gas_fees.to_string(),
-                gas_price: gas_price.to_string(),
+                gas_fees,
+                gas_price: U256::from(gas_price),
                 gas_used,
                 to_address: to,
                 tx_hash,
-                value: value.to_string(),
+                value,
                 execution_time_us: execution_time,
             });
         }

@@ -117,7 +117,7 @@ mod tests {
 
         assert_eq!(response.results.len(), 0);
         assert_eq!(response.total_gas_used, 0);
-        assert_eq!(response.gas_fees, "0");
+        assert_eq!(response.gas_fees, U256::from(0));
         assert_eq!(response.state_block_number, 0);
 
         Ok(())
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(result.from_address, sender_address);
         assert_eq!(result.to_address, Some(address!("0x1111111111111111111111111111111111111111")));
         assert_eq!(result.gas_used, 21_000);
-        assert_eq!(result.gas_price, "1000000000");
+        assert_eq!(result.gas_price, 1_000_000_000);
         assert!(result.execution_time_us > 0);
 
         Ok(())
@@ -236,13 +236,13 @@ mod tests {
         let result1 = &response.results[0];
         assert_eq!(result1.from_address, address1);
         assert_eq!(result1.gas_used, 21_000);
-        assert_eq!(result1.gas_price, "1000000000");
+        assert_eq!(result1.gas_price, 1_000_000_000);
 
         // Check second transaction
         let result2 = &response.results[1];
         assert_eq!(result2.from_address, address2);
         assert_eq!(result2.gas_used, 21_000);
-        assert_eq!(result2.gas_price, "2000000000");
+        assert_eq!(result2.gas_price, 2_000_000_000);
 
         Ok(())
     }
@@ -408,25 +408,25 @@ mod tests {
         // Check first transaction (3 gwei)
         let result1 = &response.results[0];
         let expected_gas_fees_1 = U256::from(21_000) * U256::from(3_000_000_000u64);
-        assert_eq!(result1.gas_fees, expected_gas_fees_1.to_string());
-        assert_eq!(result1.gas_price, "3000000000");
-        assert_eq!(result1.coinbase_diff, expected_gas_fees_1.to_string());
+        assert_eq!(result1.gas_fees, expected_gas_fees_1);
+        assert_eq!(result1.gas_price, U256::from(3000000000u64));
+        assert_eq!(result1.coinbase_diff, expected_gas_fees_1);
 
         // Check second transaction (7 gwei)
         let result2 = &response.results[1];
         let expected_gas_fees_2 = U256::from(21_000) * U256::from(7_000_000_000u64);
-        assert_eq!(result2.gas_fees, expected_gas_fees_2.to_string());
-        assert_eq!(result2.gas_price, "7000000000");
-        assert_eq!(result2.coinbase_diff, expected_gas_fees_2.to_string());
+        assert_eq!(result2.gas_fees, expected_gas_fees_2);
+        assert_eq!(result2.gas_price, U256::from(7000000000u64));
+        assert_eq!(result2.coinbase_diff, expected_gas_fees_2);
 
         // Check bundle totals
         let total_gas_fees = expected_gas_fees_1 + expected_gas_fees_2;
-        assert_eq!(response.gas_fees, total_gas_fees.to_string());
-        assert_eq!(response.coinbase_diff, total_gas_fees.to_string());
+        assert_eq!(response.gas_fees, total_gas_fees);
+        assert_eq!(response.coinbase_diff, total_gas_fees);
         assert_eq!(response.total_gas_used, 42_000);
 
         // Bundle gas price should be weighted average: (3*21000 + 7*21000) / (21000 + 21000) = 5 gwei
-        assert_eq!(response.bundle_gas_price, "5000000000");
+        assert_eq!(response.bundle_gas_price, U256::from(5000000000u64));
 
         Ok(())
     }
