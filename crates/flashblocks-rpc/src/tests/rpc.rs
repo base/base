@@ -472,7 +472,25 @@ mod tests {
         assert_eq!(tx2.tx_hash(), TRANSFER_ETH_HASH);
         assert_eq!(tx2.from(), TX_SENDER);
 
-        // TODO: Verify more properties of the txns here.
+        // Verify additional transaction properties
+        assert_eq!(tx1.nonce(), 0, "deposit transaction should have nonce 0");
+        assert_eq!(
+            tx1.to(),
+            Some(address!("0x4200000000000000000000000000000000000015")),
+            "deposit transaction recipient mismatch"
+        );
+
+        assert_eq!(tx2.nonce(), 0, "transfer transaction should have nonce 0");
+        assert_eq!(
+            tx2.to(),
+            Some(DEPOSIT_SENDER),
+            "transfer transaction recipient mismatch"
+        );
+        assert_eq!(
+            tx2.gas_limit(),
+            100000,
+            "transfer transaction gas limit mismatch"
+        );
 
         Ok(())
     }
@@ -500,8 +518,67 @@ mod tests {
             .expect("receipt expected");
         assert_eq!(receipt.gas_used(), 24000); // 45000 - 21000
 
-        // TODO: Add a new payload and validate that the receipts from the previous payload
-        // are not returned.
+        // Verify that when a new payload is sent, receipts from the previous payload
+        // are replaced and old transaction receipts are no longer available
+        let third_payload = Flashblock {
+            payload_id: PayloadId::new([0; 8]),
+            index: 2,
+            base: None,
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::default(),
+                receipts_root: B256::default(),
+                gas_used: 0,
+                block_hash: B256::default(),
+                transactions: vec![DEPLOYMENT_TX],
+                withdrawals: Vec::new(),
+                logs_bloom: Default::default(),
+                withdrawals_root: Default::default(),
+            },
+            metadata: Metadata {
+                block_number: 1,
+                receipts: {
+                    let mut receipts = HashMap::default();
+                    receipts.insert(
+                        DEPLOYMENT_HASH,
+                        OpReceipt::Legacy(Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 217279,
+                            logs: vec![],
+                        }),
+                    );
+                    receipts
+                },
+                new_account_balances: HashMap::default(),
+            },
+        };
+        node.send_payload(third_payload).await?;
+
+        // Previous payload's receipts should no longer be available
+        assert!(
+            provider
+                .get_transaction_receipt(DEPOSIT_TX_HASH)
+                .await?
+                .is_none(),
+            "deposit receipt from previous payload should not be returned"
+        );
+        assert!(
+            provider
+                .get_transaction_receipt(TRANSFER_ETH_HASH)
+                .await?
+                .is_none(),
+            "transfer receipt from previous payload should not be returned"
+        );
+
+        // New payload's receipt should be available
+        let new_receipt = provider
+            .get_transaction_receipt(DEPLOYMENT_HASH)
+            .await?
+            .expect("new deployment receipt should be available");
+        assert_eq!(
+            new_receipt.gas_used(),
+            217279,
+            "new deployment receipt gas_used mismatch"
+        );
 
         Ok(())
     }
