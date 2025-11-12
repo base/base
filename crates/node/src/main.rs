@@ -155,7 +155,10 @@ fn main() {
 
                     if account_abstraction_enabled {
                         info!(message = "Starting Account Abstraction RPC (EIP-4337)");
-                        let aa_api = AccountAbstractionApiImpl::new(ctx.provider().clone());
+                        let aa_api = AccountAbstractionApiImpl::new(
+                            ctx.provider().clone(),
+                            ctx.registry.eth_handlers().filter.clone(),
+                        );
                         ctx.modules.merge_configured(aa_api.into_rpc())?;
 
                         let base_aa_api = BaseAccountAbstractionApiImpl::new(ctx.provider().clone());

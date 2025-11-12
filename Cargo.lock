@@ -1502,6 +1502,8 @@ version = "0.1.13"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-sol-types",
  "eyre",
  "jsonrpsee 0.26.0",
  "reth",
@@ -1513,6 +1515,7 @@ dependencies = [
  "reth-primitives",
  "reth-primitives-traits 1.8.2",
  "reth-provider",
+ "reth-rpc-eth-api",
  "reth-transaction-pool 1.8.2",
  "serde",
  "serde_json",

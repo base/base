@@ -1,14 +1,19 @@
 //! EIP-4337 Account Abstraction RPC API
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolEvent};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
 };
+use reth::rpc::eth::EthFilter;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_provider::{ChainSpecProvider, StateProviderFactory};
+use reth_provider::{BlockReaderIdExt, ChainSpecProvider, StateProviderFactory};
+use reth_rpc_eth_api::{
+    helpers::EthApiSpec, types::FullEthApiTypes, EthApiTypes, EthFilterApiServer, RpcNodeCoreExt,
+};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{debug, info, warn};
 
 /// EntryPoint v0.6 address
 const ENTRYPOINT_V06: Address = address!("5ff137d4b0fdcd49dca30c7cf57e578a026d2789");
@@ -18,6 +23,37 @@ const ENTRYPOINT_V07: Address = address!("0000000071727de22e5e9d8baf0edac6f37da0
 
 /// EntryPoint v0.8 address
 const ENTRYPOINT_V08: Address = address!("4337084d9e255ff0702461cf8895ce9e3b5ff108");
+
+
+// Define UserOperationEvent for v0.6
+sol! {
+    /// UserOperationEvent emitted by EntryPoint v0.6
+    #[derive(Debug)]
+    event UserOperationEvent(
+        bytes32 indexed userOpHash,
+        address indexed sender,
+        address indexed paymaster,
+        uint256 nonce,
+        bool success,
+        uint256 actualGasCost,
+        uint256 actualGasUsed
+    );
+}
+
+// Define UserOperationEvent for v0.7
+sol! {
+    /// UserOperationEvent emitted by EntryPoint v0.7
+    #[derive(Debug)]
+    event UserOperationEventV07(
+        bytes32 indexed userOpHash,
+        address indexed sender,
+        address indexed paymaster,
+        uint256 nonce,
+        bool success,
+        uint256 actualGasCost,
+        uint256 actualGasUsed
+    );
+}
 
 /// User Operation as defined by EIP-4337 v0.6
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,29 +212,36 @@ pub trait BaseAccountAbstractionApi {
 }
 
 /// Implementation of the account abstraction RPC API
-pub struct AccountAbstractionApiImpl<Provider> {
+pub struct AccountAbstractionApiImpl<Provider, Eth>
+where
+    Eth: EthApiTypes,
+{
     provider: Provider,
+    eth_filter: EthFilter<Eth>,
 }
 
-impl<Provider> AccountAbstractionApiImpl<Provider>
+impl<Provider, Eth> AccountAbstractionApiImpl<Provider, Eth>
 where
     Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec> + Clone,
+    Eth: EthApiTypes,
 {
     /// Creates a new instance of AccountAbstractionApi
-    pub fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub fn new(provider: Provider, eth_filter: EthFilter<Eth>) -> Self {
+        Self { provider, eth_filter }
     }
 }
 
 #[async_trait]
-impl<Provider> AccountAbstractionApiServer for AccountAbstractionApiImpl<Provider>
+impl<Provider, Eth> AccountAbstractionApiServer for AccountAbstractionApiImpl<Provider, Eth>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt
         + Clone
         + Send
         + Sync
         + 'static,
+    Eth: FullEthApiTypes + EthApiSpec + RpcNodeCoreExt + Send + Sync + 'static,
 {
     async fn send_user_operation(
         &self,
@@ -287,8 +330,26 @@ where
             "Received getUserOperationReceipt request"
         );
 
-        // TODO: Lookup receipt from storage
+        // Validate hash
+        if user_operation_hash == B256::ZERO {
+            return Ok(None);
+        }
 
+        // Try each entry point (v0.6, v0.7, v0.8)
+        for entry_point in [ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08] {
+            debug!(
+                hash = %user_operation_hash,
+                entry_point = %entry_point,
+                "Searching for UserOperation in EntryPoint"
+            );
+
+            // Try to find the receipt for this entry point
+            if let Some(receipt) = self.get_receipt_from_entry_point(entry_point, user_operation_hash).await? {
+                return Ok(Some(receipt));
+            }
+        }
+
+        // Not found in any entry point
         Ok(None)
     }
 
@@ -296,6 +357,119 @@ where
         info!("Received supportedEntryPoints request");
 
         Ok(vec![ENTRYPOINT_V06, ENTRYPOINT_V07, ENTRYPOINT_V08])
+    }
+}
+
+impl<Provider, Eth> AccountAbstractionApiImpl<Provider, Eth>
+where
+    Provider: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    Eth: FullEthApiTypes + EthApiSpec + RpcNodeCoreExt + Send + Sync + 'static,
+{
+    /// Helper method to get receipt from a specific entry point
+    async fn get_receipt_from_entry_point(
+        &self,
+        entry_point: Address,
+        user_operation_hash: B256,
+    ) -> RpcResult<Option<UserOperationReceipt>> {
+        // For MVP, we'll scan recent blocks for the UserOperationEvent
+        // In production, you'd want to index these events or use a more efficient lookup
+        
+        // Get the latest block number
+        let latest_block = match self.provider.last_block_number() {
+            Ok(num) => num,
+            Err(e) => {
+                debug!(error = ?e, "Failed to get latest block number");
+                return Ok(None);
+            }
+        };
+
+        // For MVP, search the last 1000 blocks
+        // TODO: In production, use an event index or database
+        let from_block = latest_block.saturating_sub(1000);
+        
+        debug!(
+            from_block = from_block,
+            to_block = latest_block,
+            entry_point = %entry_point,
+            "Searching blocks for UserOperationEvent"
+        );
+
+        // Create a filter for UserOperationEvent logs
+        // The event signature is the same for v0.6 and v0.7
+        let event_signature = UserOperationEvent::SIGNATURE_HASH;
+        
+        let filter = alloy_rpc_types_eth::Filter::default()
+            .address(entry_point)
+            .event_signature(event_signature)
+            .topic1(user_operation_hash) // userOpHash is the first indexed parameter
+            .from_block(from_block)
+            .to_block(latest_block);
+
+        // Query logs from the filter
+        let logs = match self.eth_filter.logs(filter).await {
+            Ok(logs) => logs,
+            Err(e) => {
+                warn!(error = ?e, "Failed to query logs");
+                return Ok(None);
+            }
+        };
+
+        debug!(log_count = logs.len(), "Found matching logs");
+
+        // Find the log matching our user operation hash
+        let log = match logs.into_iter().find(|log| {
+            // The userOpHash is topic1 (first indexed parameter after event signature)
+            log.topics().get(1).map(|t| *t == user_operation_hash).unwrap_or(false)
+        }) {
+            Some(log) => log,
+            None => {
+                debug!("No matching UserOperationEvent found");
+                return Ok(None);
+            }
+        };
+
+        // Parse the event data
+        let event = match UserOperationEvent::decode_log(&log.inner) {
+            Ok(event) => event.data,
+            Err(e) => {
+                warn!(error = ?e, "Failed to decode UserOperationEvent");
+                return Ok(None);
+            }
+        };
+
+        debug!(
+            sender = %event.sender,
+            nonce = %event.nonce,
+            success = event.success,
+            actual_gas_cost = %event.actualGasCost,
+            actual_gas_used = %event.actualGasUsed,
+            "Decoded UserOperationEvent"
+        );
+
+        // Build the UserOperationReceipt
+        // For MVP, we return a minimal receipt with the event data
+        let receipt = UserOperationReceipt {
+            user_op_hash: user_operation_hash,
+            entry_point,
+            sender: event.sender,
+            nonce: event.nonce,
+            paymaster: event.paymaster,
+            actual_gas_cost: event.actualGasCost,
+            actual_gas_used: event.actualGasUsed,
+            success: event.success,
+            // TODO: Get actual receipt data from the transaction
+            // For now, serialize the log data as bytes
+            receipt: Bytes::default(),
+            logs: vec![],  // TODO: Serialize logs properly
+        };
+
+        Ok(Some(receipt))
     }
 }
 

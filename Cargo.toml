@@ -86,6 +86,7 @@ alloy-rpc-types = { version = "1.0.41", default-features = false }
 alloy-rpc-types-engine = { version = "1.0.41", default-features = false }
 alloy-rpc-types-eth = { version = "1.0.41" }
 alloy-consensus = { version = "1.0.41" }
+alloy-sol-types = { version = "1.4.1" }
 alloy-trie = { version = "0.9.1", default-features = false }
 alloy-provider = { version = "1.0.41" }
 alloy-hardforks = "0.3.5"
