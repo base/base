@@ -408,7 +408,7 @@ where
         let earliest_block_number = flashblocks_per_block.keys().min().unwrap();
         let canonical_block = earliest_block_number - 1;
         let mut last_block_header = self.client.header_by_number(canonical_block)?.ok_or(eyre!(
-            "Failed to extract header for canonical block number {}. This is okay if your node is not fully synced to tip yet or was recently restarted.",
+            "Failed to extract header for canonical block number {}. Allow 10 to 15 minutes after a restart/redeploy or after your node has synced to tip.",
             canonical_block
         ))?;
 
