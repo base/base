@@ -32,6 +32,9 @@ use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use serde::{Deserialize, Serialize};
 use tracing::info;
+use url::Url;
+
+use crate::tips_client::TipsClient;
 
 /// User Operation as defined by EIP-4337 v0.6
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +195,7 @@ pub trait BaseAccountAbstractionApi {
 /// Implementation of the account abstraction RPC API
 pub struct AccountAbstractionApiImpl<Provider> {
     provider: Provider,
+    tips_client: TipsClient,
 }
 
 impl<Provider> AccountAbstractionApiImpl<Provider>
@@ -199,8 +203,15 @@ where
     Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec> + Clone,
 {
     /// Creates a new instance of AccountAbstractionApi
-    pub fn new(provider: Provider) -> Self {
-        Self { provider }
+    ///
+    /// # Arguments
+    /// * `provider` - The state provider for blockchain access
+    /// * `tips_url` - URL of the Tips ingress service
+    pub fn new(provider: Provider, tips_url: Url) -> Self {
+        Self {
+            provider,
+            tips_client: TipsClient::new(tips_url),
+        }
     }
 }
 
@@ -226,8 +237,6 @@ where
                     entry_point = %entry_point,
                     "Received sendUserOperation request (v0.6)"
                 );
-                // TODO: Validate v0.6 user operation
-                // TODO: Submit to bundler pool
             }
             UserOperation::V07(op) => {
                 info!(
@@ -235,14 +244,23 @@ where
                     entry_point = %entry_point,
                     "Received sendUserOperation request (v0.7+)"
                 );
-                // TODO: Validate v0.7 user operation
-                // TODO: Convert to PackedUserOperation for on-chain submission
-                // TODO: Submit to bundler pool
             }
         }
 
-        // TODO: Return user operation hash
-        Ok(B256::default())
+        // Send to Tips ingress service
+        let user_op_hash = self
+            .tips_client
+            .send_user_operation(user_operation, entry_point)
+            .await
+            .map_err(|e| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                    format!("Failed to send user operation to Tips service: {}", e),
+                    None::<String>,
+                )
+            })?;
+
+        Ok(user_op_hash)
     }
 
     async fn estimate_user_operation_gas(

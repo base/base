@@ -1,4 +1,5 @@
 mod rpc;
+mod tips_client;
 
 pub use rpc::{
     AccountAbstractionApiImpl, AccountAbstractionApiServer, BaseAccountAbstractionApiImpl,

@@ -27,6 +27,8 @@ reth-optimism-cli.workspace = true  # Enables serde & codec traits for OpReceipt
 # alloy
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
+alloy-provider.workspace = true
+op-alloy-network.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
@@ -35,6 +37,7 @@ jsonrpsee.workspace = true
 tracing.workspace = true
 serde.workspace = true
 eyre.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
