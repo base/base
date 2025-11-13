@@ -28,7 +28,7 @@ mod e2e {
     use tokio::time::{sleep, Duration};
     use tracing::info;
 
-    use crate::common::{init_challenger, init_proposer};
+    use crate::common::init_challenger;
 
     alloy_sol_types::sol! {
         #[sol(rpc)]
@@ -875,13 +875,7 @@ mod e2e {
         info!("✓ Warped time by MAX_CHALLENGE_DURATION to enable resolution for first 2 games");
 
         // Resolve first 2 games as DEFENDER_WINS
-        let proposer = init_proposer(
-            &env.rpc_config,
-            env.private_keys.proposer,
-            &env.deployed.factory,
-            env.game_type,
-        )
-        .await?;
+        let proposer = env.init_proposer().await?;
 
         let first_two_games = &tracked_games[0..2];
         for game in first_two_games {
@@ -970,15 +964,7 @@ mod e2e {
     async fn test_proposer_retains_anchor_after_bond_claim() -> Result<()> {
         let env = TestEnvironment::setup().await?;
 
-        let proposer = Arc::new(
-            init_proposer(
-                &env.rpc_config,
-                env.private_keys.proposer,
-                &env.deployed.factory,
-                env.game_type,
-            )
-            .await?,
-        );
+        let proposer = Arc::new(env.init_proposer().await?);
 
         let proposer_handle = {
             let proposer_clone = proposer.clone();
