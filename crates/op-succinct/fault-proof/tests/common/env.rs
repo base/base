@@ -23,19 +23,20 @@ use op_succinct_bindings::{
 };
 use op_succinct_host_utils::{
     fetcher::{get_rpcs_from_env, OPSuccinctDataFetcher, RPCConfig},
+    host::OPSuccinctHost,
     OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH,
 };
 use op_succinct_signer_utils::{Signer, SignerLock};
 use tokio::task::JoinHandle;
 use tracing::{info, Level};
 
-use fault_proof::{config::FaultDisputeGameConfig, L2ProviderTrait};
+use fault_proof::{config::FaultDisputeGameConfig, proposer::OPSuccinctProposer, L2ProviderTrait};
 use tracing_subscriber::{filter::Targets, fmt, prelude::*, util::SubscriberInitExt};
 
 use crate::common::{
     constants::*,
     contracts::{deploy_mock_permissioned_game, send_contract_transaction},
-    start_challenger, start_proposer, warp_time, ANVIL,
+    init_proposer, start_challenger, start_proposer, warp_time, ANVIL,
 };
 
 use super::{
@@ -124,6 +125,20 @@ impl TestEnvironment {
         let deployed = deploy_test_contracts(&anvil.endpoint, private_keys.deployer).await?;
 
         Ok(Self { game_type, private_keys, rpc_config, fetcher, anvil, deployed })
+    }
+
+    pub async fn init_proposer(
+        &self,
+    ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {
+        let proposer = init_proposer(
+            &self.rpc_config,
+            self.private_keys.proposer,
+            &self.deployed.factory,
+            self.game_type,
+        )
+        .await?;
+        info!("✓ Proposer initialized");
+        Ok(proposer)
     }
 
     pub async fn start_proposer(&self) -> Result<JoinHandle<Result<()>>> {
@@ -343,6 +358,7 @@ pub fn init_logging() {
 
         let filter = Targets::new().with_targets([
             ("e2e", level),
+            ("sync", level),
             ("fault_proof", level),
             ("op_succinct_fp", level),
             ("op_succinct_client_utils", level),

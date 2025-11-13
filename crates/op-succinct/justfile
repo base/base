@@ -369,6 +369,14 @@ tests:
     --skip test_post_to_github
 
 # Run end-to-end tests.
-e2e-tests:
-   cd fault-proof && \
-   cargo t --release --features e2e -- --test-threads=1 --nocapture
+e2e-tests target="":
+  #!/usr/bin/env bash
+
+   test_target=""
+   if [ -n "{{target}}" ]; then
+       test_target="--test {{target}}"
+   fi
+
+   cd fault-proof
+
+   cargo t $test_target --release --features e2e -- --test-threads=1 --nocapture
