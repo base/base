@@ -11,14 +11,14 @@ Simulates a bundle of transactions, providing gas usage and execution time metri
 The method accepts a Bundle object with the following fields:
 
 - `txs`: Array of signed, RLP-encoded transactions (hex strings with 0x prefix)
-- `block_number`: Target block number for bundle validity (note: simulation always uses the latest available block state)
-- `min_timestamp` (optional): Minimum timestamp for bundle validity (also used as simulation timestamp if provided)
-- `max_timestamp` (optional): Maximum timestamp for bundle validity
-- `reverting_tx_hashes` (optional): Array of transaction hashes allowed to revert
-- `replacement_uuid` (optional): UUID for bundle replacement
-- `flashblock_number_min` (optional): Minimum flashblock number constraint
-- `flashblock_number_max` (optional): Maximum flashblock number constraint
-- `dropping_tx_hashes` (optional): Transaction hashes to exclude from bundle
+- `blockNumber`: Block number for simulation state (falls back to 'latest' if invalid or not provided)
+- `minTimestamp` (optional): Minimum timestamp for bundle validity (also used as simulation timestamp if provided)
+- `maxTimestamp` (optional): Maximum timestamp for bundle validity
+- `revertingTxHashes` (optional): Array of transaction hashes allowed to revert
+- `replacementUuid` (optional): UUID for bundle replacement
+- `flashblockNumberMin` (optional): Minimum flashblock number constraint
+- `flashblockNumberMax` (optional): Maximum flashblock number constraint
+- `droppingTxHashes` (optional): Transaction hashes to exclude from bundle
 
 **Returns:**
 - `bundleGasPrice`: Average gas price
@@ -26,7 +26,8 @@ The method accepts a Bundle object with the following fields:
 - `coinbaseDiff`: Total gas fees paid
 - `ethSentToCoinbase`: ETH sent directly to coinbase
 - `gasFees`: Total gas fees
-- `stateBlockNumber`: Block number used for state (always the latest available block)
+- `stateBlockNumber`: Actual block used for simulation (may differ from requested blockNumber if fallback applied)
+- `requestedBlockNumber`: The blockNumber from request (for logging/debugging)
 - `totalGasUsed`: Total gas consumed
 - `totalExecutionTimeUs`: Total execution time (μs)
 - `results`: Array of per-transaction results:
