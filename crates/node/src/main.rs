@@ -12,16 +12,10 @@ use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use futures_util::{FutureExt, TryStreamExt};
-use jsonrpsee::{
-    core::{async_trait, RpcResult},
-    proc_macros::rpc,
-};
-use once_cell::sync::OnceCell;
 use reth::{
     api::FullNodeComponents,
     builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
     providers::providers::BlockchainProvider,
-    rpc::result::internal_rpc_err,
     version::{default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts},
 };
 use reth_exex::ExExEvent;
@@ -32,7 +26,7 @@ use reth_optimism_rpc::{
     debug::{DebugApiExt, DebugApiOverrideServer},
     eth::proofs::{EthApiExt as OpEthApiExt, EthApiOverrideServer as OpEthApiOverrideServer},
 };
-use reth_optimism_trie::{db::MdbxProofsStorage, OpProofsStorage, OpProofsStore};
+use reth_optimism_trie::{db::MdbxProofsStorage, OpProofsStorage};
 use tracing::info;
 use url::Url;
 
@@ -119,21 +113,6 @@ fn main() {
 
             let fb_cell: Arc<OnceLock<Arc<FlashblocksState<_>>>> = Arc::new(OnceLock::new());
 
-            let proofs_storage_cell =
-                Arc::new(LazyLock::new(|| -> Arc<OpProofsStorage<MdbxProofsStorage>> {
-                    let path = args
-                        .proofs_history_storage_path
-                        .expect("path must be set when proofs history is enabled");
-                    let result: Arc<OpProofsStorage<MdbxProofsStorage>> = Arc::new(
-                        MdbxProofsStorage::new(&path).expect("Failed to create MdbxProofsStorage"),
-                    )
-                    .into();
-
-                    result
-                }));
-
-            let proofs_storage_cell_exex = proofs_storage_cell.clone();
-            let proofs_storage_cell_rpc = proofs_storage_cell.clone();
             let proofs_storage_cell =
                 Arc::new(LazyLock::new(|| -> Arc<OpProofsStorage<MdbxProofsStorage>> {
                     let path = args
