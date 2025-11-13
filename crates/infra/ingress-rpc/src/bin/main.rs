@@ -64,11 +64,12 @@ async fn main() -> anyhow::Result<()> {
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
     connect_audit_to_publisher(audit_rx, audit_publisher);
 
-    // TODO: when we have multiple builders we can make `builder_rx` mutable and do `.subscribe()` to have multiple consumers
-    // of this channel.
-    let (builder_tx, builder_rx) =
+    let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
-    connect_ingress_to_builder(builder_rx, config.builder_rpc);
+    config.builder_rpcs.iter().for_each(|builder_rpc| {
+        let builder_rx = builder_tx.subscribe();
+        connect_ingress_to_builder(builder_rx, builder_rpc.clone());
+    });
 
     let service = IngressService::new(
         provider,
