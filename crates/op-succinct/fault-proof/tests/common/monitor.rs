@@ -196,7 +196,7 @@ pub async fn wait_for_resolutions<P: Provider>(
             return Ok(statuses);
         }
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -292,7 +292,7 @@ pub async fn wait_for_bond_claims<P: Provider>(
             return Ok(());
         }
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -331,8 +331,8 @@ pub async fn wait_and_verify_game_resolutions<P: Provider>(
 ) -> Result<()> {
     info!("Waiting for {} games to resolve as {}...", game_addresses.len(), winner_name);
 
-    // Wait for 10 seconds for the games to be resolved
-    sleep(Duration::from_secs(10)).await;
+    // Wait for 5 seconds for the games to be resolved
+    sleep(Duration::from_secs(5)).await;
 
     let deadline = Instant::now() + timeout_duration;
 
@@ -355,6 +355,6 @@ pub async fn wait_and_verify_game_resolutions<P: Provider>(
             return Ok(());
         }
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(1)).await;
     }
 }
