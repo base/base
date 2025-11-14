@@ -1688,6 +1688,7 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
+ "base-reth-flashblocks-rpc",
  "chrono",
  "eyre",
  "futures",
