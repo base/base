@@ -123,7 +123,7 @@ pub struct Config {
     pub meter_bundle_timeout_ms: u64,
 
     /// URLs of the builder RPC service for setting metering information
-    #[arg(long, env = "TIPS_INGRESS_BUILDER_RPCS")]
+    #[arg(long, env = "TIPS_INGRESS_BUILDER_RPCS", value_delimiter = ',')]
     pub builder_rpcs: Vec<Url>,
 
     /// Maximum number of `MeterBundleResponse`s to buffer in memory
