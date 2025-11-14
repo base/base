@@ -28,7 +28,10 @@ use sp1_sdk::{
     NetworkProver, Prover, ProverClient, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey,
     SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
-use tokio::{sync::Mutex, time};
+use tokio::{
+    sync::{Mutex, RwLock},
+    time,
+};
 
 use crate::{
     config::ProposerConfig,
@@ -175,7 +178,7 @@ where
     host: Arc<H>,
     tasks: Arc<Mutex<TaskMap>>,
     next_task_id: Arc<AtomicU64>,
-    state: Arc<Mutex<ProposerState>>,
+    state: Arc<RwLock<ProposerState>>,
 }
 
 impl<P, H> OPSuccinctProposer<P, H>
@@ -230,13 +233,13 @@ where
             host,
             tasks: Arc::new(Mutex::new(HashMap::new())),
             next_task_id: Arc::new(AtomicU64::new(1)),
-            state: Arc::new(Mutex::new(initial_state)),
+            state: Arc::new(RwLock::new(initial_state)),
         })
     }
 
     /// Returns a lightweight snapshot of the proposer's cached state.
     pub async fn state_snapshot(&self) -> ProposerStateSnapshot {
-        let state = self.state.lock().await;
+        let state = self.state.read().await;
         ProposerStateSnapshot {
             anchor_index: state.anchor_game.as_ref().map(|game| game.index),
             canonical_head_index: state.canonical_head_index,
@@ -323,7 +326,7 @@ where
         let anchor_address = anchor_game.address();
 
         let cursor = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             let current_cursor = state.cursor.clone();
 
             // This should never/rarely happen but in a case where the factory is redeployed/reset
@@ -390,19 +393,24 @@ where
         }
 
         {
-            let mut state = self.state.lock().await;
+            let mut state = self.state.write().await;
             state.cursor = latest_index;
         }
 
-        for idx in invalid_game_ids {
-            tracing::warn!(game_index = %idx, "Removing invalid game and its subtree from cache");
-            let mut state = self.state.lock().await;
-            state.remove_subtree(idx);
+        if !invalid_game_ids.is_empty() {
+            let mut state = self.state.write().await;
+            for idx in invalid_game_ids {
+                tracing::warn!(
+                    game_index = %idx,
+                    "Removing invalid game and its subtree from cache"
+                );
+                state.remove_subtree(idx);
+            }
         }
 
         // 2. Synchronize the status of all cached games.
         let games = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             state.games.values().map(|game| (game.index, game.address)).collect::<Vec<_>>()
         };
 
@@ -490,7 +498,7 @@ where
                             //   cache memory.
 
                             let canonical_head_index = {
-                                let state = self.state.lock().await;
+                                let state = self.state.read().await;
                                 state.canonical_head_index
                             };
 
@@ -543,7 +551,7 @@ where
                 }
             }
 
-            let mut state = self.state.lock().await;
+            let mut state = self.state.write().await;
             for action in actions {
                 match action {
                     GameSyncAction::Update {
@@ -582,7 +590,7 @@ where
         let anchor_address = anchor_game.address();
 
         if *anchor_address != Address::ZERO {
-            let mut state = self.state.lock().await;
+            let mut state = self.state.write().await;
 
             // Fetch the anchor game from the cache.
             if let Some((_, anchor_game)) =
@@ -602,7 +610,7 @@ where
     /// Canonical head is the game with the highest L2 block number. When an anchor game is present,
     /// only its descendants are eligible for canonical head.
     async fn compute_canonical_head(&self) {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.write().await;
 
         let canonical_head = if let Some(anchor_game) = state.anchor_game.as_ref() {
             let reachable = state.descendants_of(anchor_game.index);
@@ -872,7 +880,7 @@ where
 
     async fn resolve_games(&self) -> Result<()> {
         let candidates = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             state
                 .games
                 .values()
@@ -903,7 +911,7 @@ where
     /// Attempt to claim proposer bonds for any games flagged for claiming
     async fn claim_bonds(&self) -> Result<()> {
         let candidates = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             state
                 .games
                 .values()
@@ -979,7 +987,7 @@ where
     /// - The game type does not respect the expected type when created.
     /// - The output root claim is invalid.
     pub async fn fetch_game(&self, index: U256) -> Result<GameFetchResult> {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.write().await;
 
         if state.games.contains_key(&index) {
             return Ok(GameFetchResult::AlreadyExists);
@@ -1121,7 +1129,7 @@ where
     /// Fetch the proposer metrics.
     async fn fetch_proposer_metrics(&self) -> Result<()> {
         let (canonical_head_l2_block, anchor_game) = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             (state.canonical_head_l2_block, state.anchor_game.clone())
         };
 
@@ -1391,7 +1399,7 @@ where
                 let signer_address = self.signer.address();
 
                 let unproven_games = {
-                    let state = self.state.lock().await;
+                    let state = self.state.read().await;
                     let tasks = self.tasks.lock().await;
 
                     let candidates = state
@@ -1491,7 +1499,7 @@ where
         }
 
         let (canonical_head_l2_block, parent_game_index) = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
 
             let Some(canonical_head_l2_block) = state.canonical_head_l2_block else {
                 tracing::info!("No canonical head; skipping game creation");
@@ -1533,7 +1541,7 @@ where
     async fn spawn_game_defense_tasks(&self) -> Result<bool> {
         // Check if there are games needing defense
         let candidates = {
-            let state = self.state.lock().await;
+            let state = self.state.read().await;
             state
                 .games
                 .values()

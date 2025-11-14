@@ -37,7 +37,7 @@ pub async fn init_proposer(
         agg_proof_strategy: FulfillmentStrategy::Hosted,
         agg_proof_mode: SP1ProofMode::Plonk,
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
-        fetch_interval: 30,              // Check more frequently in tests
+        fetch_interval: 5,               // Check more frequently in tests
         game_type,
         max_concurrent_defense_tasks: 0,
         safe_db_fallback: false,
