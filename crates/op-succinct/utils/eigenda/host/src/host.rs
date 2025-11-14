@@ -42,7 +42,12 @@ impl OPSuccinctHost for EigenDAOPSuccinctHost {
         let host = self.fetcher.get_host_args(l2_start_block, l2_end_block, l1_head).await?;
 
         let eigenda_proxy_address = std::env::var("EIGENDA_PROXY_ADDRESS").ok();
-        Ok(SingleChainHostWithEigenDA { kona_cfg: host, eigenda_proxy_address, verbose: 1 })
+        Ok(SingleChainHostWithEigenDA {
+            kona_cfg: host,
+            eigenda_proxy_address,
+            recency_window: 0,
+            verbose: 1,
+        })
     }
 
     fn get_l1_head_hash(&self, args: &Self::Args) -> Option<B256> {

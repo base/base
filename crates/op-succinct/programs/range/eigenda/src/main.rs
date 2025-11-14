@@ -11,7 +11,7 @@ sp1_zkvm::entrypoint!(main);
 
 use canoe_sp1_cc_verifier::CanoeSp1CCVerifier;
 use canoe_verifier_address_fetcher::CanoeVerifierAddressFetcherDeployedByEigenLabs;
-use hokulea_proof::eigenda_witness::EigenDAWitness;
+use hokulea_proof::{eigenda_witness::EigenDAWitness, recency::DisabledZeroRecencyWindowProvider};
 use hokulea_zkvm_verification::eigenda_witness_to_preloaded_provider;
 use op_succinct_client_utils::witness::{EigenDAWitnessData, WitnessData};
 use op_succinct_eigenda_client_utils::executor::EigenDAWitnessExecutor;
@@ -43,6 +43,7 @@ fn main() {
             oracle.clone(),
             CanoeSp1CCVerifier {},
             CanoeVerifierAddressFetcherDeployedByEigenLabs {},
+            DisabledZeroRecencyWindowProvider {},
             eigenda_witness,
         )
         .await
