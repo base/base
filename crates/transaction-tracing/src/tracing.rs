@@ -10,7 +10,7 @@ use futures::StreamExt;
 use lru::LruCache;
 use reth::{
     api::{BlockBody, FullNodeComponents},
-    core::primitives::{transaction::TxHashRef, AlloyBlockHeader},
+    core::primitives::{AlloyBlockHeader, transaction::TxHashRef},
     transaction_pool::{FullTransactionEvent, TransactionPool},
 };
 use reth_exex::{ExExContext, ExExEvent, ExExNotification};

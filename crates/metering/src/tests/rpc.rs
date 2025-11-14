@@ -4,7 +4,7 @@ mod tests {
 
     use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
-    use alloy_primitives::{address, b256, bytes, Bytes, U256};
+    use alloy_primitives::{Bytes, U256, address, b256, bytes};
     use alloy_rpc_client::RpcClient;
     use op_alloy_consensus::OpTxEnvelope;
     use reth::{
@@ -15,7 +15,7 @@ mod tests {
         tasks::TaskManager,
     };
     use reth_optimism_chainspec::OpChainSpecBuilder;
-    use reth_optimism_node::{args::RollupArgs, OpNode};
+    use reth_optimism_node::{OpNode, args::RollupArgs};
     use reth_optimism_primitives::OpTransactionSigned;
     use reth_provider::providers::BlockchainProvider;
     use reth_transaction_pool::test_utils::TransactionBuilder;

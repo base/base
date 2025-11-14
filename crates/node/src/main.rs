@@ -13,11 +13,11 @@ use once_cell::sync::OnceCell;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
     providers::providers::BlockchainProvider,
-    version::{default_reth_version_metadata, try_init_version_metadata, RethCliVersionConsts},
+    version::{RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata},
 };
 use reth_exex::ExExEvent;
-use reth_optimism_cli::{chainspec::OpChainSpecParser, Cli};
-use reth_optimism_node::{args::RollupArgs, OpNode};
+use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
+use reth_optimism_node::{OpNode, args::RollupArgs};
 use tracing::info;
 use url::Url;
 
@@ -34,6 +34,13 @@ struct Args {
 
     #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
     pub websocket_url: Option<String>,
+
+    #[arg(
+        long = "max-pending-blocks-depth",
+        value_name = "MAX_PENDING_BLOCKS_DEPTH",
+        default_value = "3"
+    )]
+    pub max_pending_blocks_depth: u64,
 
     /// Enable transaction tracing ExEx for mempool-to-block timing analysis
     #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
@@ -105,7 +112,12 @@ fn main() {
                     let fb_cell = fb_cell.clone();
                     move |mut ctx| async move {
                         let fb = fb_cell
-                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(
+                                    ctx.provider().clone(),
+                                    args.max_pending_blocks_depth,
+                                ))
+                            })
                             .clone();
                         Ok(async move {
                             while let Some(note) = ctx.notifications.try_next().await? {
@@ -139,7 +151,12 @@ fn main() {
                         )?;
 
                         let fb = fb_cell
-                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .get_or_init(|| {
+                                Arc::new(FlashblocksState::new(
+                                    ctx.provider().clone(),
+                                    args.max_pending_blocks_depth,
+                                ))
+                            })
                             .clone();
                         fb.start();
 
