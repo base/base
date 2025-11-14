@@ -987,10 +987,12 @@ where
     /// - The game type does not respect the expected type when created.
     /// - The output root claim is invalid.
     pub async fn fetch_game(&self, index: U256) -> Result<GameFetchResult> {
-        let mut state = self.state.write().await;
+        {
+            let state = self.state.read().await;
 
-        if state.games.contains_key(&index) {
-            return Ok(GameFetchResult::AlreadyExists);
+            if state.games.contains_key(&index) {
+                return Ok(GameFetchResult::AlreadyExists);
+            }
         }
 
         let game = self.factory.gameAtIndex(index).call().await?;
@@ -1059,6 +1061,7 @@ where
             "Valid game: adding to cache"
         );
 
+        let mut state = self.state.write().await;
         state.games.insert(
             index,
             Game {
