@@ -23,7 +23,7 @@ use tracing::info;
 
 use crate::{
     client::{advance_to_target, fetch_safe_head_hash},
-    precompiles::ZkvmOpEvmFactory,
+    precompiles::{CustomCrypto, ZkvmOpEvmFactory},
 };
 
 // Gets the inputs for constructing the derivation pipeline.
@@ -123,6 +123,9 @@ pub trait WitnessExecutor {
         DP: DriverPipeline<P> + Send + Sync + Debug,
         P: Pipeline + SignalReceiver + Send + Sync + Debug,
     {
+        // Install custom crypto provider for KZG point evaluation precompile
+        revm::precompile::install_crypto(CustomCrypto::default());
+
         let boot_clone = boot.clone();
 
         let rollup_config = Arc::new(boot.rollup_config);
