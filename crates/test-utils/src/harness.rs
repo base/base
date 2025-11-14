@@ -2,12 +2,13 @@
 
 use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
-use crate::node::{LocalNode, OpAddOns, OpBuilder};
+use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
 use alloy_eips::eip7685::Requests;
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{bytes, Bytes, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
+use base_reth_flashblocks_rpc::subscription::Flashblock;
 use eyre::{eyre, Result};
 use futures_util::Future;
 use op_alloy_network::Optimism;
@@ -15,6 +16,7 @@ use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::builder::NodeHandle;
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -22,6 +24,8 @@ const BLOCK_TIME_SECONDS: u64 = 2;
 const GAS_LIMIT: u64 = 200_000_000;
 const NODE_STARTUP_DELAY_MS: u64 = 500;
 const BLOCK_BUILD_DELAY_MS: u64 = 100;
+// Pre-captured L1 block info deposit transaction required by OP Stack.
+const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!("0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000");
 
 pub struct TestHarness {
     node: LocalNode,
@@ -58,11 +62,27 @@ impl TestHarness {
         &self.accounts
     }
 
+    pub fn blockchain_provider(&self) -> LocalNodeProvider {
+        self.node.blockchain_provider()
+    }
+
+    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+        self.node.flashblocks_state()
+    }
+
     pub fn rpc_url(&self) -> String {
         format!("http://{}", self.node.http_api_addr)
     }
 
-    pub async fn build_block_from_transactions(&self, transactions: Vec<Bytes>) -> Result<()> {
+    pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
+        // Ensure the block always starts with the required L1 block info deposit.
+        if !transactions
+            .first()
+            .is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX)
+        {
+            transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
+        }
+
         let latest_block = self
             .provider()
             .get_block_by_number(BlockNumberOrTag::Latest)
@@ -70,12 +90,16 @@ impl TestHarness {
             .ok_or_else(|| eyre!("No genesis block found"))?;
 
         let parent_hash = latest_block.header.hash;
+        let parent_beacon_block_root = latest_block
+            .header
+            .parent_beacon_block_root
+            .unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
 
         let payload_attributes = OpPayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp,
-                parent_beacon_block_root: Some(B256::ZERO),
+                parent_beacon_block_root: Some(parent_beacon_block_root),
                 withdrawals: Some(vec![]),
                 ..Default::default()
             },
@@ -126,6 +150,20 @@ impl TestHarness {
             .update_forkchoice(parent_hash, new_block_hash, None)
             .await?;
 
+        Ok(())
+    }
+
+    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
+        self.node.send_flashblock(flashblock).await
+    }
+
+    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
+    where
+        I: IntoIterator<Item = Flashblock>,
+    {
+        for flashblock in flashblocks {
+            self.send_flashblock(flashblock).await?;
+        }
         Ok(())
     }
 
