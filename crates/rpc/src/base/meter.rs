@@ -81,7 +81,8 @@ where
 
     // Create state database
     let state_db = reth::revm::database::StateProviderDatabase::new(state_provider);
-    // If we have flashblocks state, apply both cache and bundle prestate
+
+    // Apply flashblocks read cache if available
     let cache_db = if let Some(ref flashblocks) = flashblocks_state {
         CacheDB {
             cache: flashblocks.cache.clone(),
@@ -91,7 +92,7 @@ where
         CacheDB::new(state_db)
     };
 
-    // Wrap the CacheDB in a State to track bundle changes for state root calculation
+    // Track bundle state changes. If metering using flashblocks state, include its bundle prestate.
     let mut db = if let Some(flashblocks) = flashblocks_state.as_ref() {
         State::builder()
             .with_database(cache_db)
