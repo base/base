@@ -341,6 +341,18 @@ mod tests {
         assert_eq!(pending_block.number(), 1);
         assert_eq!(pending_block.transactions.hashes().len(), 1); // L1Info transaction
 
+        let second_payload = create_second_payload();
+        setup.send_flashblock(second_payload).await?;
+
+        // Query pending block after sending the second payload with two transactions
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Pending)
+            .await?
+            .expect("pending block expected");
+
+        assert_eq!(block.number(), 1);
+        assert_eq!(block.transactions.hashes().len(), 6);
+
         Ok(())
     }
 
