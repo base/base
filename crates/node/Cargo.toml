@@ -16,6 +16,7 @@ workspace = true
 base-reth-flashblocks-rpc.workspace = true
 base-reth-metering.workspace = true
 base-reth-transaction-tracing.workspace = true
+base-reth-transaction-status.workspace = true
 
 # reth
 reth.workspace = true
@@ -86,6 +87,8 @@ uuid.workspace = true
 time.workspace = true
 chrono.workspace = true
 once_cell.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
 
 [features]
 default = []

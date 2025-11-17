@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::Client as S3Client;
 use base_reth_flashblocks_rpc::{
     rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,
     subscription::FlashblocksSubscriber,
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
+use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use futures_util::TryStreamExt;
@@ -56,6 +59,14 @@ struct Args {
     /// Enable metering RPC for transaction bundle simulation
     #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
     pub enable_metering: bool,
+
+    /// Enable transaction status RPC for transaction status lookup
+    #[arg(long = "enable-transaction-status", value_name = "ENABLE_TRANSACTION_STATUS")]
+    pub enable_transaction_status: bool,
+
+    /// S3 bucket for transaction status lookup
+    #[arg(long = "transaction-status-bucket", value_name = "TRANSACTION_STATUS_BUCKET")]
+    pub transaction_status_bucket: String,
 }
 
 impl Args {
@@ -95,6 +106,10 @@ fn main() {
             let op_node = OpNode::new(args.rollup_args.clone());
 
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
+
+            let transaction_status_enabled = args.enable_transaction_status;
+            let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let s3_client = S3Client::new(&config);
 
             let NodeHandle { node: _node, node_exit_future } = builder
                 .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -139,6 +154,15 @@ fn main() {
                         info!(message = "Starting Metering RPC");
                         let metering_api = MeteringApiImpl::new(ctx.provider().clone());
                         ctx.modules.merge_configured(metering_api.into_rpc())?;
+                    }
+
+                    if transaction_status_enabled {
+                        info!(message = "Starting Transaction Status RPC");
+                        let transaction_status_api = TransactionStatusApiImpl::new(
+                            s3_client,
+                            args.transaction_status_bucket.clone(),
+                        );
+                        ctx.modules.merge_configured(transaction_status_api.into_rpc())?;
                     }
 
                     if flashblocks_enabled {
