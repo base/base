@@ -42,19 +42,13 @@ jobs:
           source ~/.bashrc
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Verify the OP Succinct binaries
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Build and verify ELF files
         run: |
-          # Build the binaries
-          cd programs/range/ethereum
-          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-bump --docker --tag v5.2.2 --output-directory ../../../elf
-          ~/.sp1/bin/cargo-prove prove build --elf-name range-elf-embedded --docker --tag v5.2.2 --output-directory ../../../elf --features embedded
-          cd ../celestia
-          ~/.sp1/bin/cargo-prove prove build --elf-name celestia-range-elf-embedded --docker --tag v5.2.2 --output-directory ../../../elf --features embedded
-          cd ../eigenda
-          ~/.sp1/bin/cargo-prove prove build --elf-name eigenda-range-elf-embedded --docker --tag v5.2.2 --output-directory ../../../elf --features embedded
-          cd ../../aggregation
-          ~/.sp1/bin/cargo-prove prove build --elf-name aggregation-elf --docker --tag v5.2.2 --output-directory ../../elf
-          cd ../../
+          just build-elfs
 
           # Check for any changes in the elf directory
           if [ -n "$(git status --porcelain elf/)" ]; then
