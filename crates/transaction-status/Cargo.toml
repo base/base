@@ -13,7 +13,7 @@ jsonrpsee = { workspace = true, features = ["macros", "server", "http-client", "
 tracing.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
-uuid.workspace = true
+alloy-primitives.workspace = true
 
 
 [lints]

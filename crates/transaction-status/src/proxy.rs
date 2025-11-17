@@ -1,3 +1,4 @@
+use alloy_primitives::TxHash;
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
@@ -6,7 +7,6 @@ use jsonrpsee::{
 };
 use tips_audit::BundleHistory;
 use tracing::{error, info};
-use uuid::Uuid;
 
 use crate::rpc::TransactionStatusApiServer;
 
@@ -27,20 +27,20 @@ impl TransactionStatusProxyImpl {
 
 #[async_trait]
 impl TransactionStatusApiServer for TransactionStatusProxyImpl {
-    async fn transaction_status(&self, id: Uuid) -> RpcResult<Option<BundleHistory>> {
-        info!(message = "forwarding transaction status request to proxy", id = %id, proxy_url = %self.proxy_url);
+    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Option<BundleHistory>> {
+        info!(message = "forwarding transaction status request to proxy", tx_hash = %tx_hash, proxy_url = %self.proxy_url);
 
         match self
             .proxy_client
-            .request::<Option<BundleHistory>, _>("base_transactionStatus", rpc_params![id])
+            .request::<Option<BundleHistory>, _>("base_transactionStatus", rpc_params![tx_hash])
             .await
         {
             Ok(result) => {
-                info!(message = "successfully received response from proxy", id = %id);
+                info!(message = "successfully received response from proxy", tx_hash = %tx_hash);
                 return Ok(result);
             }
             Err(e) => {
-                error!(message = "proxy request failed", id = %id, error = %e);
+                error!(message = "proxy request failed", tx_hash = %tx_hash, error = %e);
                 return Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("Proxy request failed: {e}"),

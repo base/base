@@ -2145,12 +2145,12 @@ dependencies = [
 name = "base-reth-transaction-status"
 version = "0.2.1"
 dependencies = [
+ "alloy-primitives",
  "aws-config",
  "aws-sdk-s3",
  "jsonrpsee 0.26.0",
  "tips-audit",
  "tracing",
- "uuid",
 ]
 
 [[package]]
