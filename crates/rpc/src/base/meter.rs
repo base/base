@@ -62,13 +62,12 @@ where
     // Get bundle hash
     let bundle_hash = bundle.bundle_hash();
 
-    // Consolidate flashblock trie data: use cached if available, otherwise compute it
-    // (before starting any timers, since we only want to time the bundle's execution and state root)
+    // Get flashblock trie data before starting timers. This ensures we only measure
+    // the bundle's incremental I/O cost, not I/O from previous flashblocks.
     let flashblock_trie_data = cached_flashblock_trie
         .map(Ok::<_, eyre::Report>)
         .or_else(|| {
             flashblocks_state.as_ref().map(|fb_state| {
-                // Compute the flashblock trie
                 let fb_hashed_state = state_provider.hashed_post_state(&fb_state.bundle_state);
                 let (_fb_state_root, fb_trie_updates) =
                     state_provider.state_root_with_updates(fb_hashed_state.clone())?;
@@ -173,7 +172,8 @@ where
     let hashed_state = state_provider.hashed_post_state(&bundle_update);
 
     if let Some(fb_trie_data) = flashblock_trie_data {
-        // We have flashblock trie data (either cached or computed), use it
+        // Prepend cached flashblock trie so state root calculation only performs I/O
+        // for this bundle's changes, not for previous flashblocks.
         let mut trie_input = TrieInput::from_state(hashed_state);
         trie_input.prepend_cached(fb_trie_data.trie_updates, fb_trie_data.hashed_state);
         let _ = state_provider.state_root_from_nodes_with_updates(trie_input)?;

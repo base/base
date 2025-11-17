@@ -19,7 +19,8 @@ use super::{block::meter_block, types::MeterBlockResponse};
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_state: Arc<FB>,
-    /// Single-entry cache for the latest flashblock's trie nodes
+    /// Cache for the latest flashblock's trie, ensuring each bundle's state root
+    /// calculation only measures the bundle's incremental I/O.
     trie_cache: FlashblockTrieCache,
 }
 
@@ -147,11 +148,9 @@ where
             .as_ref()
             .map(|pb| pb.latest_flashblock_index());
 
-        // If we have flashblocks, ensure the trie is cached and get it
+        // Ensure the flashblock trie is cached for reuse across bundle simulations
         let cached_trie = if let Some(ref fb_state) = flashblocks_state {
             let fb_index = state_flashblock_index.unwrap();
-
-            // Ensure the flashblock trie is cached and return it
             Some(
                 self.trie_cache
                     .ensure_cached(header.hash(), fb_index, fb_state, &*state_provider)

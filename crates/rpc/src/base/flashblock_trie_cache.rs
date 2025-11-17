@@ -10,8 +10,10 @@ use crate::FlashblocksState;
 
 /// Trie nodes and hashed state from computing a flashblock state root.
 ///
-/// These cached nodes can be reused when computing a bundle's state root
-/// to avoid recalculating the flashblock portion of the trie.
+/// When metering bundles, we want each state root calculation to measure only
+/// the bundle's incremental I/O, not I/O from previous flashblocks. By caching
+/// the flashblock trie once and reusing it for all bundle simulations, we ensure
+/// each bundle's state root time reflects only its own I/O cost.
 #[derive(Debug, Clone)]
 pub struct FlashblockTrieData {
     pub trie_updates: TrieUpdates,
