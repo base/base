@@ -1,7 +1,6 @@
 use alloy_primitives::{b256, bytes, Bytes, B256};
 
 mod framework_test;
-mod rpc;
 mod state;
 mod utils;
 
