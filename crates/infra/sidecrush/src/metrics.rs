@@ -17,21 +17,21 @@ impl HealthcheckMetrics {
 
     /// Increment status_healthy counter (2s heartbeat)
     pub fn increment_status_healthy(&self) {
-        let _ = self.client.count("status_healthy", 1);
+        let _ = self.client.count("healthy", 1);
     }
 
     /// Increment status_delayed counter (2s heartbeat)
     pub fn increment_status_delayed(&self) {
-        let _ = self.client.count("status_delayed", 1);
+        let _ = self.client.count("delayed", 1);
     }
 
     /// Increment status_unhealthy counter (2s heartbeat)
     pub fn increment_status_unhealthy(&self) {
-        let _ = self.client.count("status_unhealthy", 1);
+        let _ = self.client.count("unhealthy", 1);
     }
 
     /// Increment status_error counter (2s heartbeat)
     pub fn increment_status_error(&self) {
-        let _ = self.client.count("status_error", 1);
+        let _ = self.client.count("error", 1);
     }
 }
