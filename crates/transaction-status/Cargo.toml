@@ -1,0 +1,24 @@
+[package]
+name = "base-reth-transaction-status"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+tips-audit.workspace = true
+jsonrpsee = { workspace = true, features = ["macros", "server", "http-client", "client"] }
+tracing.workspace = true
+aws-config.workspace = true
+aws-sdk-s3.workspace = true
+alloy-primitives.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+uuid.workspace = true
+
+[lints]
+workspace = true
