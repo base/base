@@ -70,14 +70,7 @@ struct Args {
     #[arg(long = "transaction-status-bucket", value_name = "TRANSACTION_STATUS_BUCKET")]
     pub transaction_status_bucket: String,
 
-    /// Enable transaction status proxying to external endpoint
-    #[arg(
-        long = "enable-transaction-status-proxy",
-        value_name = "ENABLE_TRANSACTION_STATUS_PROXY"
-    )]
-    pub enable_transaction_status_proxy: bool,
-
-    /// External endpoint URL for transaction status proxying
+    /// Enable transaction status proxying to an external endpoint
     /// Mainnet: https://mainnet.base.org
     /// Sepolia: https://sepolia.base.org
     #[arg(long = "transaction-status-proxy-url", value_name = "TRANSACTION_STATUS_PROXY_URL")]
@@ -123,7 +116,6 @@ fn main() {
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
             let transaction_status_enabled = args.enable_transaction_status;
-            let transaction_status_proxy_enabled = args.enable_transaction_status_proxy;
             let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
             let s3_client = S3Client::new(&config);
 
@@ -177,9 +169,7 @@ fn main() {
 
                         // this is for external node users who will need to proxy requests to Base managed
                         // rpc nodes to get transaction status
-                        if transaction_status_proxy_enabled
-                            && args.transaction_status_proxy_url.is_some()
-                        {
+                        if args.transaction_status_proxy_url.is_some() {
                             info!(message = "Transaction status proxying enabled");
 
                             let proxy_api = TransactionStatusProxyImpl::new(
