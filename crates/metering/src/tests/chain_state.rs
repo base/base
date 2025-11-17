@@ -16,7 +16,9 @@ use reth_primitives::TransactionSigned;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::Bundle;
 
-use super::utils::{build_single_flashblock, secret_from_hex};
+use base_reth_test_utils::flashblocks::build_single_flashblock;
+
+use super::utils::secret_from_hex;
 use crate::rpc::{MeteringApiImpl, MeteringApiServer};
 use op_alloy_rpc_types::OpTransactionRequest;
 
