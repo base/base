@@ -177,11 +177,13 @@ fn main() {
 
                         // this is for external node users who will need to proxy requests to Base managed
                         // rpc nodes to get transaction status
-                        if transaction_status_proxy_enabled {
+                        if transaction_status_proxy_enabled
+                            && args.transaction_status_proxy_url.is_some()
+                        {
                             info!(message = "Transaction status proxying enabled");
 
                             let proxy_api = TransactionStatusProxyImpl::new(
-                                args.transaction_status_proxy_url.clone(),
+                                args.transaction_status_proxy_url.clone().unwrap(),
                             )
                             .expect("Failed to create transaction status proxy");
 
