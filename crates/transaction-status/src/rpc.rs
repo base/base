@@ -2,6 +2,7 @@ use aws_sdk_s3::Client as S3Client;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
+    types::{ErrorCode, ErrorObjectOwned},
 };
 use tips_audit::{BundleEventS3Reader, BundleHistory, S3EventReaderWriter};
 use tracing::info;
@@ -35,8 +36,8 @@ impl TransactionStatusApiServer for TransactionStatusApiImpl {
         info!(message = "getting bundle history", id = %id);
 
         let history = self.s3.get_bundle_history(id).await.map_err(|e| {
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
+            ErrorObjectOwned::owned(
+                ErrorCode::InternalError.code(),
                 format!("Failed to get bundle history: {}", e),
                 None::<()>,
             )

@@ -8,7 +8,9 @@ use base_reth_flashblocks_rpc::{
     subscription::FlashblocksSubscriber,
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
+use base_reth_transaction_status::{
+    TransactionStatusApiImpl, TransactionStatusApiServer, TransactionStatusProxyImpl,
+};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use futures_util::TryStreamExt;
@@ -67,6 +69,19 @@ struct Args {
     /// S3 bucket for transaction status lookup
     #[arg(long = "transaction-status-bucket", value_name = "TRANSACTION_STATUS_BUCKET")]
     pub transaction_status_bucket: String,
+
+    /// Enable transaction status proxying to external endpoint
+    #[arg(
+        long = "enable-transaction-status-proxy",
+        value_name = "ENABLE_TRANSACTION_STATUS_PROXY"
+    )]
+    pub enable_transaction_status_proxy: bool,
+
+    /// External endpoint URL for transaction status proxying
+    /// Mainnet: https://mainnet.base.org
+    /// Sepolia: https://sepolia.base.org
+    #[arg(long = "transaction-status-proxy-url", value_name = "TRANSACTION_STATUS_PROXY_URL")]
+    pub transaction_status_proxy_url: Option<String>,
 }
 
 impl Args {
@@ -108,6 +123,7 @@ fn main() {
             let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
             let transaction_status_enabled = args.enable_transaction_status;
+            let transaction_status_proxy_enabled = args.enable_transaction_status_proxy;
             let config = aws_config::load_defaults(BehaviorVersion::latest()).await;
             let s3_client = S3Client::new(&config);
 
@@ -158,11 +174,25 @@ fn main() {
 
                     if transaction_status_enabled {
                         info!(message = "Starting Transaction Status RPC");
-                        let transaction_status_api = TransactionStatusApiImpl::new(
-                            s3_client,
-                            args.transaction_status_bucket.clone(),
-                        );
-                        ctx.modules.merge_configured(transaction_status_api.into_rpc())?;
+
+                        // this is for external node users who will need to proxy requests to Base managed
+                        // rpc nodes to get transaction status
+                        if transaction_status_proxy_enabled {
+                            info!(message = "Transaction status proxying enabled");
+
+                            let proxy_api = TransactionStatusProxyImpl::new(
+                                args.transaction_status_proxy_url.clone(),
+                            )
+                            .expect("Failed to create transaction status proxy");
+
+                            ctx.modules.merge_configured(proxy_api.into_rpc())?;
+                        } else {
+                            let transaction_status_api = TransactionStatusApiImpl::new(
+                                s3_client,
+                                args.transaction_status_bucket.clone(),
+                            );
+                            ctx.modules.merge_configured(transaction_status_api.into_rpc())?;
+                        }
                     }
 
                     if flashblocks_enabled {
