@@ -32,7 +32,7 @@ just deploy-dispute-game-factory
 
 If successful, you should see the following output:
 
-```
+```text
 [⠊] Compiling...
 [⠊] Compiling 1 files with Solc 0.8.15
 [⠒] Solc 0.8.15 finished in 1.93s

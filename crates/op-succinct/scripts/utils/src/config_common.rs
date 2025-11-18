@@ -63,9 +63,9 @@ pub fn parse_addresses(env_var: &str) -> Vec<String> {
 }
 
 /// Get shared configuration data that both L2OO and FDG configs need.
-pub async fn get_shared_config_data() -> Result<SharedConfigData> {
-    let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
-
+pub async fn get_shared_config_data(
+    data_fetcher: OPSuccinctDataFetcher,
+) -> Result<SharedConfigData> {
     // Determine if we're using mock verifier.
     let use_sp1_mock_verifier = env::var("OP_SUCCINCT_MOCK")
         .unwrap_or("false".to_string())
@@ -112,7 +112,7 @@ pub fn write_config_file<T: serde::Serialize>(
     // Write the config to the file.
     fs::write(file_path, serde_json::to_string_pretty(config)?)?;
 
-    println!("{} configuration written to: {}", description, file_path.display());
+    log::info!("Wrote {} configuration to: {}", description, file_path.display());
 
     Ok(())
 }

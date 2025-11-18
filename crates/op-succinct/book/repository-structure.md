@@ -2,7 +2,7 @@
 
 The OP Succinct repository structure is as follows:
 
-```
+```text
 op-succinct
 ├── contracts      # Smart contracts for OP Succinct
 │   ├── validity   # Validity contracts

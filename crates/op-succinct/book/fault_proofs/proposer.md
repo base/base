@@ -78,6 +78,8 @@ Depending on the one you choose, you must provide the corresponding environment 
 
 | Variable | Description | Default Value |
 |----------|-------------|---------------|
+| `L1_CONFIG_DIR` | The directory containing the L1 chain configuration files. | `<project-root>/configs/L1` |
+| `L2_CONFIG_DIR` | Directory containing L2 chain configuration files | `<project-root>/configs/L2` |
 | `MOCK_MODE` | Whether to use mock mode | `false` |
 | `FAST_FINALITY_MODE` | Whether to use fast finality mode | `false` |
 | `RANGE_PROOF_STRATEGY` | Proof fulfillment strategy for range proofs. Set to `hosted` to use the hosted proof strategy. | `reserved` |
