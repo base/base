@@ -5,10 +5,9 @@ use jsonrpsee::{
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use tips_audit::BundleHistory;
 use tracing::{error, info};
 
-use crate::rpc::TransactionStatusApiServer;
+use crate::{Status, rpc::TransactionStatusApiServer};
 
 /// Proxy that forwards transaction status requests to an external endpoint
 pub struct TransactionStatusProxyImpl {
@@ -27,25 +26,25 @@ impl TransactionStatusProxyImpl {
 
 #[async_trait]
 impl TransactionStatusApiServer for TransactionStatusProxyImpl {
-    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Option<BundleHistory>> {
+    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Status> {
         info!(message = "forwarding transaction status request to proxy", tx_hash = %tx_hash, proxy_url = %self.proxy_url);
 
         match self
             .proxy_client
-            .request::<Option<BundleHistory>, _>("base_transactionStatus", rpc_params![tx_hash])
+            .request::<Status, _>("base_transactionStatus", rpc_params![tx_hash])
             .await
         {
             Ok(result) => {
                 info!(message = "successfully received response from proxy", tx_hash = %tx_hash);
-                return Ok(result);
+                Ok(result)
             }
             Err(e) => {
                 error!(message = "proxy request failed", tx_hash = %tx_hash, error = %e);
-                return Err(ErrorObjectOwned::owned(
+                Err(ErrorObjectOwned::owned(
                     ErrorCode::InternalError.code(),
                     format!("Proxy request failed: {e}"),
                     None::<()>,
-                ));
+                ))
             }
         }
     }

@@ -14,6 +14,7 @@ tracing.workspace = true
 aws-config.workspace = true
 aws-sdk-s3.workspace = true
 alloy-primitives.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

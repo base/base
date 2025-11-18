@@ -5,15 +5,20 @@ use jsonrpsee::{
     proc_macros::rpc,
     types::{ErrorCode, ErrorObjectOwned},
 };
-use tips_audit::{BundleEventS3Reader, BundleHistory, S3EventReaderWriter, TransactionMetadata};
+use tips_audit::{
+    BundleEventS3Reader, BundleHistory, BundleHistoryEvent, S3EventReaderWriter,
+    TransactionMetadata,
+};
 use tracing::info;
+
+use crate::Status;
 
 /// RPC API for transaction status
 #[rpc(server, namespace = "base")]
 pub trait TransactionStatusApi {
     /// Gets the status of a transaction
     #[method(name = "transactionStatus")]
-    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Option<BundleHistory>>;
+    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Status>;
 }
 
 /// Implementation of the metering RPC API
@@ -32,7 +37,7 @@ impl TransactionStatusApiImpl {
 
 #[async_trait]
 impl TransactionStatusApiServer for TransactionStatusApiImpl {
-    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Option<BundleHistory>> {
+    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<Status> {
         info!(message = "getting bundle history", tx_hash = %tx_hash);
 
         let metadata: Option<TransactionMetadata> =
@@ -48,16 +53,38 @@ impl TransactionStatusApiServer for TransactionStatusApiImpl {
             Some(metadata) => {
                 // TODO: a transaction can be in multiple bundles, but for now we'll only get the latest one
                 let bundle_id = metadata.bundle_ids[metadata.bundle_ids.len() - 1];
-                let history = self.s3.get_bundle_history(bundle_id).await.map_err(|e| {
-                    ErrorObjectOwned::owned(
-                        ErrorCode::InternalError.code(),
-                        format!("Failed to get bundle history: {}", e),
-                        None::<()>,
-                    )
-                })?;
-                Ok(history)
+                let history: Option<BundleHistory> =
+                    self.s3.get_bundle_history(bundle_id).await.map_err(|e| {
+                        ErrorObjectOwned::owned(
+                            ErrorCode::InternalError.code(),
+                            format!("Failed to get bundle history: {}", e),
+                            None::<()>,
+                        )
+                    })?;
+
+                match history {
+                    Some(history) => {
+                        if history.history.is_empty() {
+                            Ok(Status::Unknown)
+                        } else {
+                            let last_event = history.history.last().unwrap();
+                            match last_event {
+                                BundleHistoryEvent::Received { .. } => Ok(Status::Pending),
+                                BundleHistoryEvent::Cancelled { .. } => Ok(Status::Cancelled),
+                                BundleHistoryEvent::BuilderIncluded { .. } => {
+                                    Ok(Status::BuilderIncluded)
+                                }
+                                BundleHistoryEvent::BlockIncluded { .. } => {
+                                    Ok(Status::BlockIncluded)
+                                }
+                                BundleHistoryEvent::Dropped { .. } => Ok(Status::Dropped),
+                            }
+                        }
+                    }
+                    None => Ok(Status::Unknown),
+                }
             }
-            None => Ok(None),
+            None => Ok(Status::Unknown),
         }
     }
 }

@@ -2149,6 +2149,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "jsonrpsee 0.26.0",
+ "serde",
  "tips-audit",
  "tokio",
  "tracing",
