@@ -5,7 +5,8 @@
 ### Missing Trie Node Error
 
 **Error Message:**
-```
+
+```text
 Error: server returned an error response: error code -32000: missing trie node <hash> (path) state <hash> is not available, not found
 ```
 
@@ -23,7 +24,8 @@ This error occurs when your L1 archive node has not fully synced all historical 
 ### L2 Block Validation Failure
 
 **Error Message:**
-```
+
+```text
 Failed to validate L2 block #<block_number> with output root <hash>
 ```
 
@@ -33,7 +35,7 @@ This error occurs when the L1 head block selected for ETH DA is too close to the
 **Solution:**
 1. Increase the L1 head offset buffer in the derivation process. The code currently adds a buffer of 20 blocks after the batch posting block, but you can increase this to for example 100 blocks:
 
-```rust
+```rust,ignore
 let l1_head_number = l1_head_number + 100;
 ```
 

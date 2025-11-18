@@ -96,7 +96,7 @@ docker compose down
 
 For fast finality mode, add these to your `.env.proposer`:
 
-```
+```bash
 FAST_FINALITY_MODE=true
 NETWORK_PRIVATE_KEY=     # Private key for the Succinct Prover Network
 L1_BEACON_RPC=           # L1 Beacon RPC endpoint URL

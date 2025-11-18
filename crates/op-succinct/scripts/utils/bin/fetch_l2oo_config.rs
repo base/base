@@ -3,7 +3,7 @@ use anyhow::Result;
 use op_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
     host::OPSuccinctHost,
-    OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
+    setup_logger, OP_SUCCINCT_L2_OUTPUT_ORACLE_CONFIG_PATH,
 };
 use op_succinct_proof_utils::initialize_host;
 use op_succinct_scripts::config_common::{
@@ -52,7 +52,7 @@ struct L2OOConfig {
 async fn update_l2oo_config() -> Result<()> {
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
     let host = initialize_host(Arc::new(data_fetcher.clone()));
-    let shared_config = get_shared_config_data().await?;
+    let shared_config = get_shared_config_data(data_fetcher.clone()).await?;
 
     let rollup_config = data_fetcher.rollup_config.as_ref().unwrap();
     let l2_block_time = rollup_config.block_time;
@@ -150,16 +150,21 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    setup_logger();
+
     let args = Args::parse();
 
     // This fetches the .env file from the project root. If the command is invoked in the contracts/
     // directory, the .env file in the root of the repo is used.
     if let Some(root) = find_project_root() {
-        dotenv::from_path(root.join(args.env_file)).ok();
+        dotenv::from_path(root.join(&args.env_file)).ok();
+        log::info!("Loaded {} from project root", args.env_file);
     } else {
         // Try to load the env file in case it's present
-        if dotenv::from_path(args.env_file.clone()).is_err() {
-            eprintln!("Warning: Could not find project root. {} file not loaded.", args.env_file);
+        if dotenv::from_path(args.env_file.clone()).is_ok() {
+            log::info!("Loaded {} from current directory", args.env_file);
+        } else {
+            log::error!("Could not find env file. {} file not loaded", args.env_file);
         }
     }
 
