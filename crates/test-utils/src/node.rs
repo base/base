@@ -18,6 +18,7 @@ use reth::builder::{
 };
 use reth::core::exit::NodeExitFuture;
 use reth::tasks::TaskManager;
+use reth_provider::CanonStateSubscriptions;
 use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
 use reth_optimism_chainspec::OpChainSpec;
@@ -108,6 +109,7 @@ impl LocalNode {
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
         let provider_cell: Arc<OnceCell<LocalNodeProvider>> = Arc::new(OnceCell::new());
+        let canon_sync_cell: Arc<OnceCell<()>> = Arc::new(OnceCell::new());
 
         let NodeHandle {
             node: node_handle,
@@ -143,6 +145,7 @@ impl LocalNode {
             .extend_rpc_modules({
                 let fb_cell = fb_cell.clone();
                 let provider_cell = provider_cell.clone();
+                let canon_sync_cell = canon_sync_cell.clone();
                 let mut receiver = Some(receiver);
                 move |ctx| {
                     let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
@@ -150,6 +153,23 @@ impl LocalNode {
                         .get_or_init(|| Arc::new(FlashblocksState::new(provider.clone())))
                         .clone();
                     fb.start();
+
+                    if canon_sync_cell.get().is_none() {
+                        let provider_for_task = provider.clone();
+                        let mut canon_stream =
+                            tokio_stream::wrappers::BroadcastStream::new(
+                                ctx.provider().subscribe_to_canonical_state(),
+                            );
+                        let _ = canon_sync_cell.set(());
+                        tokio::spawn(async move {
+                            use tokio_stream::StreamExt;
+                            while let Some(Ok(notification)) = canon_stream.next().await {
+                                provider_for_task
+                                    .canonical_in_memory_state()
+                                    .notify_canon_state(notification);
+                            }
+                        });
+                    }
                     let api_ext = EthApiExt::new(
                         ctx.registry.eth_api().clone(),
                         ctx.registry.eth_handlers().filter.clone(),
