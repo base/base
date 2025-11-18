@@ -188,7 +188,10 @@ impl TransactionBuilder {
         };
 
         self.tx.nonce = nonce;
-        self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
+
+        if self.tx.max_fee_per_gas == 0 {
+            self.tx.max_fee_per_gas = base_fee + self.tx.max_priority_fee_per_gas;
+        }
 
         signer
             .sign_tx(OpTypedTransaction::Eip1559(self.tx))

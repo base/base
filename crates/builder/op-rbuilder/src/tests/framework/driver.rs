@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use alloy_eips::{BlockNumberOrTag, Encodable2718, eip7685::Requests};
-use alloy_primitives::{B256, Bytes, TxKind, U256, address, hex};
+use alloy_primitives::{B64, B256, Bytes, TxKind, U256, address, hex};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadAttributes, PayloadStatusEnum};
 use alloy_rpc_types_eth::Block;
@@ -14,7 +14,10 @@ use rollup_boost::OpExecutionPayloadEnvelope;
 use super::{EngineApi, Ipc, LocalInstance, TransactionBuilder};
 use crate::{
     args::OpRbuilderArgs,
-    tests::{ExternalNode, Protocol, framework::DEFAULT_GAS_LIMIT},
+    tests::{
+        DEFAULT_DENOMINATOR, DEFAULT_ELASTICITY, ExternalNode, Protocol,
+        framework::DEFAULT_GAS_LIMIT,
+    },
     tx_signer::Signer,
 };
 
@@ -93,7 +96,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 // public test api
 impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
     pub async fn build_new_block_with_no_tx_pool(&self) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None)
+        self.build_new_block_with_txs_timestamp(vec![], Some(true), None, None, Some(0))
             .await
     }
 
@@ -107,7 +110,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         &self,
         timestamp_jitter: Option<Duration>,
     ) -> eyre::Result<Block<Transaction>> {
-        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter)
+        self.build_new_block_with_txs_timestamp(vec![], None, None, timestamp_jitter, Some(0))
             .await
     }
 
@@ -119,6 +122,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         block_timestamp: Option<Duration>,
         // Amount of time to lag before sending FCU. This tests late FCU scenarios
         timestamp_jitter: Option<Duration>,
+        min_base_fee: Option<u64>,
     ) -> eyre::Result<Block<Transaction>> {
         let latest = self.latest().await?;
 
@@ -138,7 +142,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 value: U256::default(),
                 gas_limit: 210000,
                 is_system_transaction: false,
-                input: FJORD_DATA.into(),
+                input: JOVIAN_DATA.into(),
             };
 
             // Create a temporary signer for the deposit
@@ -172,6 +176,10 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 tokio::time::sleep(sleep_time).await;
             }
         }
+
+        let eip_1559_params: u64 =
+            ((DEFAULT_DENOMINATOR as u64) << 32) | (DEFAULT_ELASTICITY as u64);
+
         let fcu_result = self
             .fcu(OpPayloadAttributes {
                 payload_attributes: PayloadAttributes {
@@ -183,7 +191,8 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
                 transactions: Some(vec![block_info_tx].into_iter().chain(txs).collect()),
                 gas_limit: Some(self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)),
                 no_tx_pool,
-                ..Default::default()
+                min_base_fee,
+                eip_1559_params: Some(B64::from(eip_1559_params)),
             })
             .await?;
 
@@ -212,9 +221,11 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 
         let payload =
             OpExecutionPayloadEnvelope::V4(self.engine_api.get_payload(payload_id).await?);
+
         let OpExecutionPayloadEnvelope::V4(payload) = payload else {
             return Err(eyre::eyre!("Expected V4 payload, got something else"));
         };
+
         let payload = payload.execution_payload;
 
         if self
@@ -228,13 +239,14 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         }
 
         let new_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
+
         self.engine_api
             .update_forkchoice(latest.header.hash, new_block_hash, None)
             .await?;
 
         let block = self
             .provider
-            .get_block_by_number(alloy_eips::BlockNumberOrTag::Latest)
+            .get_block_by_number(BlockNumberOrTag::Latest)
             .full()
             .await?
             .ok_or_else(|| eyre::eyre!("Failed to get latest block after building new block"))?;
@@ -264,7 +276,7 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
         let latest_timestamp = Duration::from_secs(latest.header.timestamp);
         let block_timestamp = latest_timestamp + Self::MIN_BLOCK_TIME;
 
-        self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None)
+        self.build_new_block_with_txs_timestamp(txs, None, Some(block_timestamp), None, Some(0))
             .await
     }
 
@@ -331,12 +343,20 @@ impl<RpcProtocol: Protocol> ChainDriver<RpcProtocol> {
 }
 
 // L1 block info for OP mainnet block 124665056 (stored in input of tx at index 0)
-//
 // https://optimistic.etherscan.io/tx/0x312e290cf36df704a2217b015d6455396830b0ce678b860ebfcc30f41403d7b1
-const FJORD_DATA: &[u8] = &hex!(
-    "440a5e200000146b000f79c500000000000000040000000066d052e700000000013ad8a
+// It has the following modifications:
+// 1. Function signature  support Jovian: cast sig "setL1BlockValuesJovian()" => 0x3db6be2b
+// 2. Zero operator fee scalar
+// 3. Zero operator fee constant
+// 4. DA footprint of 400 applied
+// See: // https://specs.optimism.io/protocol/jovian/l1-attributes.html for Jovian specs.
+const JOVIAN_DATA: &[u8] = &hex!(
+    "3db6be2b0000146b000f79c500000000000000040000000066d052e700000000013ad8a
     3000000000000000000000000000000000000000000000000000000003ef12787000000
     00000000000000000000000000000000000000000000000000000000012fdf87b89884a
     61e74b322bbcf60386f543bfae7827725efaaf0ab1de2294a5900000000000000000000
-    00006887246668a3b87f54deb3b94ba47a6f63f32985"
+    00006887246668a3b87f54deb3b94ba47a6f63f32985
+    00000000
+    0000000000000000
+    0190"
 );

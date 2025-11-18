@@ -64,9 +64,10 @@ async fn block_fill(rbuilder: LocalInstance) -> eyre::Result<()> {
     let driver = rbuilder.driver().await?;
 
     // Set block big enough so it could fit 3 transactions without tx size limit
+    // Deposit transactions also count towards DA and there is one deposit txn in this block too
     let call = driver
         .provider()
-        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 3))
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 100 * 4))
         .await?;
     assert!(call, "miner_setMaxDASize should be executed successfully");
 

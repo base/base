@@ -30,6 +30,9 @@ pub const FLASHTESTATION_DEPLOY_KEY: &str =
 
 pub const DEFAULT_GAS_LIMIT: u64 = 10_000_000;
 
+pub const DEFAULT_DENOMINATOR: u32 = 50;
+
+pub const DEFAULT_ELASTICITY: u32 = 2;
 pub const DEFAULT_JWT_TOKEN: &str =
     "688f5d737bad920bdfb2fc2f488d6b6209eebda1dae949a8de91398d932c517a";
 

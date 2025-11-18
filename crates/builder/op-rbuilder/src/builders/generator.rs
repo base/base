@@ -134,7 +134,7 @@ where
     type Job = BlockPayloadJob<Tasks, Builder>;
 
     /// This is invoked when the node receives payload attributes from the beacon node via
-    /// `engine_forkchoiceUpdatedV1`
+    /// `engine_forkchoiceUpdatedVX`
     fn new_payload_job(
         &self,
         attributes: <Builder as PayloadBuilder>::Attributes,
@@ -470,7 +470,6 @@ mod tests {
     use alloy_primitives::U256;
     use rand::rng;
     use reth::tasks::TokioTaskExecutor;
-    use reth_chain_state::ExecutedBlock;
     use reth_node_api::{BuiltPayloadExecutedBlock, NodePrimitives};
     use reth_optimism_payload_builder::{OpPayloadPrimitives, payload::OpPayloadBuilderAttributes};
     use reth_optimism_primitives::OpPrimitives;

@@ -40,6 +40,8 @@ pub struct ExecutionInfo<Extra: Debug + Default = ()> {
     pub total_fees: U256,
     /// Extra execution information that can be attached by individual builders.
     pub extra: Extra,
+    /// DA Footprint Scalar for Jovian
+    pub da_footprint_scalar: Option<u16>,
 }
 
 impl<T: Debug + Default> ExecutionInfo<T> {
@@ -53,6 +55,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
             cumulative_da_bytes_used: 0,
             total_fees: U256::ZERO,
             extra: Default::default(),
+            da_footprint_scalar: None,
         }
     }
 
