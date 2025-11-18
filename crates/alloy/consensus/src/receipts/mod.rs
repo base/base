@@ -8,7 +8,7 @@ pub use envelope::OpReceiptEnvelope;
 pub(crate) mod deposit;
 pub use deposit::{OpDepositReceipt, OpDepositReceiptWithBloom};
 
-mod receipt;
+pub(crate) mod receipt;
 pub use receipt::OpReceipt;
 
 /// Receipt is the result of a transaction execution.
