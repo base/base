@@ -3,38 +3,24 @@ mod tests {
     use crate::rpc::{FlashblocksAPI, PendingBlocksAPI};
     use crate::state::FlashblocksState;
     use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
-    use crate::tests::utils::create_test_provider_factory;
     use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
-    use alloy_consensus::crypto::secp256k1::public_key_to_address;
-    use alloy_consensus::{BlockHeader, Receipt};
-    use alloy_consensus::{Header, Transaction};
-    use alloy_eips::{BlockHashOrNumber, Decodable2718, Encodable2718};
-    use alloy_genesis::GenesisAccount;
+    use alloy_consensus::{Receipt, Transaction};
+    use alloy_eips::{BlockHashOrNumber, Encodable2718};
     use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{Address, BlockNumber, Bytes, B256, U256};
-    use alloy_provider::network::BlockResponse;
+    use alloy_primitives::{hex, Address, BlockNumber, Bytes, B256, U256};
     use alloy_rpc_types_engine::PayloadId;
+    use base_reth_test_utils::accounts::TestAccounts;
+    use base_reth_test_utils::harness::TestHarness as BaseHarness;
+    use base_reth_test_utils::node::{default_launcher, LocalNodeProvider};
     use op_alloy_consensus::OpDepositReceipt;
-    use reth::builder::NodeTypesWithDBAdapter;
+    use op_alloy_network::BlockResponse;
     use reth::chainspec::EthChainSpec;
-    use reth::providers::{AccountReader, BlockNumReader, BlockReader};
-    use reth::revm::database::StateProviderDatabase;
+    use reth::providers::{AccountReader, BlockReader};
     use reth::transaction_pool::test_utils::TransactionBuilder;
-    use reth_db::{test_utils::TempDatabase, DatabaseEnv};
-    use reth_evm::execute::Executor;
-    use reth_evm::ConfigureEvm;
-    use reth_optimism_chainspec::{OpChainSpecBuilder, BASE_MAINNET};
-    use reth_optimism_evm::OpEvmConfig;
-    use reth_optimism_node::OpNode;
-    use reth_optimism_primitives::{OpBlock, OpBlockBody, OpReceipt, OpTransactionSigned};
-    use reth_primitives_traits::{Account, Block, RecoveredBlock, SealedHeader};
-    use reth_provider::providers::BlockchainProvider;
-    use reth_provider::{
-        BlockWriter, ChainSpecProvider, ExecutionOutcome, LatestStateProviderRef, ProviderFactory,
-        StateProviderFactory,
-    };
+    use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
+    use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
+    use reth_provider::{ChainSpecProvider, StateProviderFactory};
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::sleep;
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
@@ -48,18 +34,68 @@ mod tests {
         Charlie,
     }
 
-    type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
-
-    #[derive(Debug, Clone)]
     struct TestHarness {
-        flashblocks: FlashblocksState<BlockchainProvider<NodeTypes>>,
-        provider: BlockchainProvider<NodeTypes>,
-        factory: ProviderFactory<NodeTypes>,
+        node: BaseHarness,
+        flashblocks: FlashblocksState<LocalNodeProvider>,
+        provider: LocalNodeProvider,
+        canonical_block: RecoveredBlock<OpBlock>,
         user_to_address: HashMap<User, Address>,
         user_to_private_key: HashMap<User, B256>,
     }
 
     impl TestHarness {
+        async fn new() -> Self {
+            let node = BaseHarness::new(default_launcher)
+                .await
+                .expect("able to launch base harness");
+            let provider = node.blockchain_provider();
+            let flashblocks = FlashblocksState::new(provider.clone());
+            flashblocks.start();
+
+            let genesis_block = provider
+                .block(BlockHashOrNumber::Number(0))
+                .expect("able to load block")
+                .expect("block exists")
+                .try_into_recovered()
+                .expect("able to recover block");
+            flashblocks.on_canonical_block_received(&genesis_block);
+
+            let accounts: TestAccounts = node.accounts().clone();
+
+            let mut user_to_address = HashMap::default();
+            user_to_address.insert(User::Alice, accounts.alice.address);
+            user_to_address.insert(User::Bob, accounts.bob.address);
+            user_to_address.insert(User::Charlie, accounts.charlie.address);
+
+            let mut user_to_private_key = HashMap::default();
+            user_to_private_key.insert(
+                User::Alice,
+                Self::decode_private_key(accounts.alice.private_key),
+            );
+            user_to_private_key.insert(
+                User::Bob,
+                Self::decode_private_key(accounts.bob.private_key),
+            );
+            user_to_private_key.insert(
+                User::Charlie,
+                Self::decode_private_key(accounts.charlie.private_key),
+            );
+
+            Self {
+                node,
+                flashblocks,
+                provider,
+                canonical_block: genesis_block,
+                user_to_address,
+                user_to_private_key,
+            }
+        }
+
+        fn decode_private_key(key: &str) -> B256 {
+            let bytes = hex::decode(key).expect("valid hex-encoded key");
+            B256::from_slice(&bytes)
+        }
+
         fn address(&self, u: User) -> Address {
             assert!(self.user_to_address.contains_key(&u));
             self.user_to_address[&u]
@@ -71,25 +107,26 @@ mod tests {
         }
 
         fn current_canonical_block(&self) -> RecoveredBlock<OpBlock> {
-            let latest_block_num = self
-                .provider
-                .last_block_number()
-                .expect("should be a latest block");
+            self.canonical_block.clone()
+        }
 
+        fn canonical_account(&self, u: User) -> Account {
             self.provider
-                .block(BlockHashOrNumber::Number(latest_block_num))
-                .expect("able to load block")
-                .expect("block exists")
-                .try_into_recovered()
-                .expect("able to recover block")
+                .basic_account(&self.address(u))
+                .expect("can lookup account state")
+                .expect("should be existing account state")
+        }
+
+        fn canonical_balance(&self, u: User) -> U256 {
+            self.canonical_account(u).balance
+        }
+
+        fn expected_pending_balance(&self, u: User, delta: u128) -> U256 {
+            self.canonical_balance(u) + U256::from(delta)
         }
 
         fn account_state(&self, u: User) -> Account {
-            let basic_account = self
-                .provider
-                .basic_account(&self.address(u))
-                .expect("can lookup account state")
-                .expect("should be existing account state");
+            let basic_account = self.canonical_account(u);
 
             let nonce = self
                 .flashblocks
@@ -122,7 +159,8 @@ mod tests {
                 .nonce(self.account_state(from).nonce)
                 .value(amount)
                 .gas_limit(21_000)
-                .max_fee_per_gas(200)
+                .max_fee_per_gas(1_000_000_000)
+                .max_priority_fee_per_gas(1_000_000_000)
                 .into_eip1559()
                 .as_eip1559()
                 .unwrap()
@@ -145,7 +183,8 @@ mod tests {
                 .nonce(nonce)
                 .value(amount)
                 .gas_limit(21_000)
-                .max_fee_per_gas(200)
+                .max_fee_per_gas(1_000_000_000)
+                .max_priority_fee_per_gas(1_000_000_000)
                 .into_eip1559()
                 .as_eip1559()
                 .unwrap()
@@ -161,65 +200,33 @@ mod tests {
 
         async fn new_canonical_block_without_processing(
             &mut self,
-            mut user_transactions: Vec<OpTransactionSigned>,
+            user_transactions: Vec<OpTransactionSigned>,
         ) -> RecoveredBlock<OpBlock> {
-            let current_tip = self.current_canonical_block();
-
-            let deposit_transaction =
-                OpTransactionSigned::decode_2718_exact(&BLOCK_INFO_TXN.iter().as_slice()).unwrap();
-
-            let mut transactions: Vec<OpTransactionSigned> = vec![deposit_transaction];
-            transactions.append(&mut user_transactions);
-
-            let block = OpBlock::new_sealed(
-                SealedHeader::new_unhashed(Header {
-                    parent_beacon_block_root: Some(current_tip.hash()),
-                    parent_hash: current_tip.hash(),
-                    number: current_tip.number() + 1,
-                    timestamp: current_tip.header().timestamp() + 2,
-                    gas_limit: current_tip.header().gas_limit(),
-                    ..Header::default()
-                }),
-                OpBlockBody {
-                    transactions,
-                    ommers: vec![],
-                    withdrawals: None,
-                },
-            )
-            .try_recover()
-            .expect("able to recover block");
-
-            let provider = self.factory.provider().unwrap();
-
-            // Execute the block to produce a block execution output
-            let mut block_execution_output = OpEvmConfig::optimism(self.provider.chain_spec())
-                .batch_executor(StateProviderDatabase::new(LatestStateProviderRef::new(
-                    &provider,
-                )))
-                .execute(&block)
-                .unwrap();
-
-            block_execution_output.state.reverts.sort();
-
-            let execution_outcome = ExecutionOutcome {
-                bundle: block_execution_output.state.clone(),
-                receipts: vec![block_execution_output.receipts.clone()],
-                first_block: block.number,
-                requests: vec![block_execution_output.requests.clone()],
-            };
-
-            // Commit the block's execution outcome to the database
-            let provider_rw = self.factory.provider_rw().unwrap();
-            provider_rw
-                .append_blocks_with_state(
-                    vec![block.clone()],
-                    &execution_outcome,
-                    Default::default(),
-                )
-                .unwrap();
-            provider_rw.commit().unwrap();
-
-            block
+            let previous_tip = self.current_canonical_block().number;
+            let txs: Vec<Bytes> = user_transactions
+                .into_iter()
+                .map(|tx| tx.encoded_2718().into())
+                .collect();
+            self.node
+                .build_block_from_transactions(txs)
+                .await
+                .expect("able to build block");
+            let target_block_number = previous_tip + 1;
+            for _ in 0..10 {
+                if let Some(block) = self
+                    .provider
+                    .block(BlockHashOrNumber::Number(target_block_number))
+                    .expect("able to load block")
+                {
+                    let recovered = block
+                        .try_into_recovered()
+                        .expect("able to recover newly built block");
+                    self.canonical_block = recovered.clone();
+                    return recovered;
+                }
+                sleep(Duration::from_millis(SLEEP_TIME)).await;
+            }
+            panic!("new canonical block not found after building payload");
         }
 
         async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
@@ -229,93 +236,18 @@ mod tests {
             self.flashblocks.on_canonical_block_received(&block);
             sleep(Duration::from_millis(SLEEP_TIME)).await;
         }
-
-        fn new() -> Self {
-            let keys = reth_testing_utils::generators::generate_keys(&mut rand::rng(), 3);
-            let alice_signer = keys[0];
-            let bob_signer = keys[1];
-            let charli_signer = keys[2];
-
-            let alice = public_key_to_address(alice_signer.public_key());
-            let bob = public_key_to_address(bob_signer.public_key());
-            let charlie = public_key_to_address(charli_signer.public_key());
-
-            let items = vec![
-                (
-                    alice,
-                    GenesisAccount::default().with_balance(U256::from(100_000_000)),
-                ),
-                (
-                    bob,
-                    GenesisAccount::default().with_balance(U256::from(100_000_000)),
-                ),
-                (
-                    charlie,
-                    GenesisAccount::default().with_balance(U256::from(100_000_000)),
-                ),
-            ];
-
-            let genesis = BASE_MAINNET
-                .genesis
-                .clone()
-                .extend_accounts(items)
-                .with_gas_limit(100_000_000);
-
-            let chain_spec = OpChainSpecBuilder::base_mainnet()
-                .genesis(genesis)
-                .isthmus_activated()
-                .build();
-
-            let factory = create_test_provider_factory::<OpNode>(Arc::new(chain_spec));
-            assert!(reth_db_common::init::init_genesis(&factory).is_ok());
-
-            let provider =
-                BlockchainProvider::new(factory.clone()).expect("able to setup provider");
-
-            let block = provider
-                .block(BlockHashOrNumber::Number(0))
-                .expect("able to load block")
-                .expect("block exists")
-                .try_into_recovered()
-                .expect("able to recover block");
-
-            let flashblocks = FlashblocksState::new(provider.clone());
-            flashblocks.start();
-
-            flashblocks.on_canonical_block_received(&block);
-
-            Self {
-                factory,
-                flashblocks,
-                provider,
-                user_to_address: {
-                    let mut res = HashMap::default();
-                    res.insert(User::Alice, alice);
-                    res.insert(User::Bob, bob);
-                    res.insert(User::Charlie, charlie);
-                    res
-                },
-                user_to_private_key: {
-                    let mut res = HashMap::default();
-                    res.insert(User::Alice, alice_signer.secret_bytes().into());
-                    res.insert(User::Bob, bob_signer.secret_bytes().into());
-                    res.insert(User::Charlie, charli_signer.secret_bytes().into());
-                    res
-                },
-            }
-        }
     }
 
-    struct FlashblockBuilder {
+    struct FlashblockBuilder<'a> {
         transactions: Vec<Bytes>,
         receipts: HashMap<B256, OpReceipt>,
-        harness: TestHarness,
+        harness: &'a TestHarness,
         canonical_block_number: Option<BlockNumber>,
         index: u64,
     }
 
-    impl FlashblockBuilder {
-        pub fn new_base(harness: &TestHarness) -> Self {
+    impl<'a> FlashblockBuilder<'a> {
+        pub fn new_base(harness: &'a TestHarness) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: vec![BLOCK_INFO_TXN.clone()],
@@ -336,15 +268,15 @@ mod tests {
                     receipts
                 },
                 index: 0,
-                harness: harness.clone(),
+                harness,
             }
         }
-        pub fn new(harness: &TestHarness, index: u64) -> Self {
+        pub fn new(harness: &'a TestHarness, index: u64) -> Self {
             Self {
                 canonical_block_number: None,
                 transactions: Vec::new(),
                 receipts: HashMap::default(),
-                harness: harness.clone(),
+                harness,
                 index,
             }
         }
@@ -428,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn test_state_overrides_persisted_across_flashblocks() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -483,7 +415,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            test.expected_pending_balance(User::Bob, 100_000)
         );
 
         test.send_flashblock(FlashblockBuilder::new(&test, 2).build())
@@ -502,14 +434,14 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            test.expected_pending_balance(User::Bob, 100_000)
         );
     }
 
     #[tokio::test]
     async fn test_state_overrides_persisted_across_blocks() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         let initial_base = FlashblockBuilder::new_base(&test).build();
         let initial_block_number = initial_base.metadata.block_number;
@@ -565,7 +497,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            test.expected_pending_balance(User::Bob, 100_000)
         );
 
         test.send_flashblock(
@@ -631,14 +563,14 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_200_000)
+            test.expected_pending_balance(User::Bob, 200_000)
         );
     }
 
     #[tokio::test]
     async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         reth_tracing::init_test_tracing();
-        let mut test = TestHarness::new();
+        let mut test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -691,7 +623,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_000)
+            test.expected_pending_balance(User::Bob, 100_000)
         );
 
         test.send_flashblock(
@@ -729,7 +661,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_200_000)
+            test.expected_pending_balance(User::Bob, 200_000)
         );
 
         test.new_canonical_block(vec![test.build_transaction_to_send_eth_with_nonce(
@@ -758,7 +690,7 @@ mod tests {
                 .expect("should be set as txn receiver")
                 .balance
                 .expect("should be changed due to receiving funds"),
-            U256::from(100_100_100)
+            test.expected_pending_balance(User::Bob, 100_000)
         );
     }
 
@@ -770,7 +702,7 @@ mod tests {
         // because underlying reth node `latest` block is already updated, but
         // relevant pending state has not been cleared yet
         reth_tracing::init_test_tracing();
-        let mut test = TestHarness::new();
+        let mut test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -848,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn test_missing_receipts_will_not_process() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -876,7 +808,7 @@ mod tests {
     #[tokio::test]
     async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -904,7 +836,7 @@ mod tests {
     #[tokio::test]
     async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -938,7 +870,7 @@ mod tests {
     #[tokio::test]
     async fn test_non_sequential_payload_clears_pending_state() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         assert!(test
             .flashblocks
@@ -977,7 +909,7 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_flashblock_ignored() {
         reth_tracing::init_test_tracing();
-        let test = TestHarness::new();
+        let test = TestHarness::new().await;
 
         test.send_flashblock(FlashblockBuilder::new_base(&test).build())
             .await;
@@ -1002,7 +934,7 @@ mod tests {
     #[tokio::test]
     async fn test_progress_canonical_blocks_without_flashblocks() {
         reth_tracing::init_test_tracing();
-        let mut test = TestHarness::new();
+        let mut test = TestHarness::new().await;
 
         let genesis_block = test.current_canonical_block();
         assert_eq!(genesis_block.number, 0);
