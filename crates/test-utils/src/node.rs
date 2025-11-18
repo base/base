@@ -18,13 +18,13 @@ use reth::builder::{
 };
 use reth::core::exit::NodeExitFuture;
 use reth::tasks::TaskManager;
-use reth_provider::CanonStateSubscriptions;
 use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
 use reth_provider::providers::BlockchainProvider;
+use reth_provider::CanonStateSubscriptions;
 use std::any::Any;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -109,7 +109,6 @@ impl LocalNode {
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
         let provider_cell: Arc<OnceCell<LocalNodeProvider>> = Arc::new(OnceCell::new());
-        let canon_sync_cell: Arc<OnceCell<()>> = Arc::new(OnceCell::new());
 
         let NodeHandle {
             node: node_handle,
@@ -124,9 +123,7 @@ impl LocalNode {
                 let provider_cell = provider_cell.clone();
                 move |mut ctx| async move {
                     let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
-                    let fb = fb_cell
-                        .get_or_init(|| Arc::new(FlashblocksState::new(provider.clone())))
-                        .clone();
+                    let fb = init_flashblocks_state(&fb_cell, &provider);
                     Ok(async move {
                         while let Some(note) = ctx.notifications.try_next().await? {
                             if let Some(committed) = note.committed_chain() {
@@ -145,31 +142,23 @@ impl LocalNode {
             .extend_rpc_modules({
                 let fb_cell = fb_cell.clone();
                 let provider_cell = provider_cell.clone();
-                let canon_sync_cell = canon_sync_cell.clone();
                 let mut receiver = Some(receiver);
                 move |ctx| {
                     let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
-                    let fb = fb_cell
-                        .get_or_init(|| Arc::new(FlashblocksState::new(provider.clone())))
-                        .clone();
-                    fb.start();
+                    let fb = init_flashblocks_state(&fb_cell, &provider);
 
-                    if canon_sync_cell.get().is_none() {
-                        let provider_for_task = provider.clone();
-                        let mut canon_stream =
-                            tokio_stream::wrappers::BroadcastStream::new(
-                                ctx.provider().subscribe_to_canonical_state(),
-                            );
-                        let _ = canon_sync_cell.set(());
-                        tokio::spawn(async move {
-                            use tokio_stream::StreamExt;
-                            while let Some(Ok(notification)) = canon_stream.next().await {
-                                provider_for_task
-                                    .canonical_in_memory_state()
-                                    .notify_canon_state(notification);
-                            }
-                        });
-                    }
+                    let provider_for_task = provider.clone();
+                    let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
+                        ctx.provider().subscribe_to_canonical_state(),
+                    );
+                    tokio::spawn(async move {
+                        use tokio_stream::StreamExt;
+                        while let Some(Ok(notification)) = canon_stream.next().await {
+                            provider_for_task
+                                .canonical_in_memory_state()
+                                .notify_canon_state(notification);
+                        }
+                    });
                     let api_ext = EthApiExt::new(
                         ctx.registry.eth_api().clone(),
                         ctx.registry.eth_handlers().filter.clone(),
@@ -247,4 +236,16 @@ impl LocalNode {
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
     }
+}
+
+fn init_flashblocks_state(
+    cell: &Arc<OnceCell<Arc<LocalFlashblocksState>>>,
+    provider: &LocalNodeProvider,
+) -> Arc<LocalFlashblocksState> {
+    cell.get_or_init(|| {
+        let fb = Arc::new(FlashblocksState::new(provider.clone()));
+        fb.start();
+        fb
+    })
+    .clone()
 }
