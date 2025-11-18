@@ -15,6 +15,9 @@ aws-config.workspace = true
 aws-sdk-s3.workspace = true
 alloy-primitives.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+uuid.workspace = true
 
 [lints]
 workspace = true

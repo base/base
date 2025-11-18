@@ -50,3 +50,52 @@ impl TransactionStatusApiServer for TransactionStatusProxyImpl {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use alloy_primitives::TxHash;
+    use tokio::time::timeout;
+
+    use crate::{proxy::TransactionStatusProxyImpl, rpc::TransactionStatusApiServer};
+
+    #[tokio::test]
+    async fn test_proxy_creation_valid_url() {
+        let result = TransactionStatusProxyImpl::new("https://mainnet.base.org".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_creation_invalid_url() {
+        let result = TransactionStatusProxyImpl::new("invalid-url".to_string());
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_connection_failure() {
+        // Use a non-existent URL that's valid format but unreachable
+        let proxy = TransactionStatusProxyImpl::new("http://127.0.0.1:9999".to_string())
+            .expect("Failed to create proxy");
+
+        let tx_hash = TxHash::from([1u8; 32]);
+
+        // This should fail due to connection error
+        let result = proxy.transaction_status(tx_hash).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_timeout() {
+        let proxy = TransactionStatusProxyImpl::new("http://127.0.0.1:9999".to_string())
+            .expect("Failed to create proxy");
+
+        let tx_hash = TxHash::from([1u8; 32]);
+
+        // Test with timeout - should fail quickly
+        let result = timeout(Duration::from_millis(100), proxy.transaction_status(tx_hash)).await;
+
+        // Should timeout or return connection error
+        assert!(result.is_err() || result.unwrap().is_err());
+    }
+}
