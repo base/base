@@ -57,7 +57,7 @@ the file containing the jwt secret should be provided to the supervisor instance
 ## Node `->` Supervisor
 
 Events that a supervisor should subscribe to, originating from the node, handled by the supervisor. For the used types,
-refer [this](#Types) section.
+refer [this](#types) section.
 
 Every event sent from the node is of type `ManagedEvent` whose fields are populated with the events that occurred. All
 non-null events are sent at once. The other fields are omitted.
