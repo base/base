@@ -298,7 +298,10 @@ where
 
         // We log only every 100th block to reduce usage
         let span = if cfg!(feature = "telemetry")
-            && config.parent_header.number % self.config.sampling_ratio == 0
+            && config
+                .parent_header
+                .number
+                .is_multiple_of(self.config.sampling_ratio)
         {
             span!(Level::INFO, "build_payload")
         } else {
@@ -1127,6 +1130,8 @@ where
         block_number: ctx.parent().number + 1,
     };
 
+    let (_, blob_gas_used) = ctx.blob_fields(info);
+
     // Prepare the flashblocks message
     let fb_payload = FlashblocksPayloadV1 {
         payload_id: ctx.payload_id(),
@@ -1155,6 +1160,7 @@ where
             transactions: new_transactions_encoded,
             withdrawals: ctx.withdrawals().cloned().unwrap_or_default().to_vec(),
             withdrawals_root: withdrawals_root.unwrap_or_default(),
+            blob_gas_used,
         },
         metadata: serde_json::to_value(&metadata).unwrap_or_default(),
     };
