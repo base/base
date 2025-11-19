@@ -3,7 +3,7 @@
 use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
 use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
-use alloy_eips::eip7685::Requests;
+use alloy_eips::{eip7685::Requests, BlockHashOrNumber};
 use alloy_primitives::{bytes, Bytes, B256};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
@@ -14,8 +14,11 @@ use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::builder::NodeHandle;
+use reth::providers::{BlockNumReader, BlockReader};
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
+use reth_optimism_primitives::OpBlock;
+use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -172,6 +175,19 @@ impl TestHarness {
             self.build_block_from_transactions(vec![]).await?;
         }
         Ok(())
+    }
+
+    pub fn latest_block(&self) -> RecoveredBlock<OpBlock> {
+        let provider = self.blockchain_provider();
+        let best_number = provider
+            .best_block_number()
+            .expect("able to read best block number");
+        let block = provider
+            .block(BlockHashOrNumber::Number(best_number))
+            .expect("able to load canonical block")
+            .expect("canonical block exists");
+        BlockT::try_into_recovered(block)
+            .expect("able to recover canonical block")
     }
 }
 

@@ -15,7 +15,7 @@ mod tests {
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::BlockResponse;
     use reth::chainspec::EthChainSpec;
-    use reth::providers::{AccountReader, BlockReader};
+    use reth::providers::{AccountReader, BlockNumReader, BlockReader};
     use reth::transaction_pool::test_utils::TransactionBuilder;
     use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
@@ -38,7 +38,6 @@ mod tests {
         node: BaseHarness,
         flashblocks: FlashblocksState<LocalNodeProvider>,
         provider: LocalNodeProvider,
-        canonical_block: RecoveredBlock<OpBlock>,
         user_to_address: HashMap<User, Address>,
         user_to_private_key: HashMap<User, B256>,
     }
@@ -81,14 +80,7 @@ mod tests {
                 Self::decode_private_key(accounts.charlie.private_key),
             );
 
-            Self {
-                node,
-                flashblocks,
-                provider,
-                canonical_block: genesis_block,
-                user_to_address,
-                user_to_private_key,
-            }
+            Self { node, flashblocks, provider, user_to_address, user_to_private_key }
         }
 
         fn decode_private_key(key: &str) -> B256 {
@@ -104,10 +96,6 @@ mod tests {
         fn signer(&self, u: User) -> B256 {
             assert!(self.user_to_private_key.contains_key(&u));
             self.user_to_private_key[&u]
-        }
-
-        fn current_canonical_block(&self) -> RecoveredBlock<OpBlock> {
-            self.canonical_block.clone()
         }
 
         fn canonical_account(&self, u: User) -> Account {
@@ -202,7 +190,10 @@ mod tests {
             &mut self,
             user_transactions: Vec<OpTransactionSigned>,
         ) -> RecoveredBlock<OpBlock> {
-            let previous_tip = self.current_canonical_block().number;
+            let previous_tip = self
+                .provider
+                .best_block_number()
+                .expect("able to read best block number");
             let txs: Vec<Bytes> = user_transactions
                 .into_iter()
                 .map(|tx| tx.encoded_2718().into())
@@ -218,11 +209,9 @@ mod tests {
                     .block(BlockHashOrNumber::Number(target_block_number))
                     .expect("able to load block")
                 {
-                    let recovered = block
+                    return block
                         .try_into_recovered()
                         .expect("able to recover newly built block");
-                    self.canonical_block = recovered.clone();
-                    return recovered;
                 }
                 sleep(Duration::from_millis(SLEEP_TIME)).await;
             }
@@ -310,9 +299,11 @@ mod tests {
         }
 
         pub fn build(&self) -> Flashblock {
-            let current_block = self.harness.current_canonical_block();
-            let canonical_block_num =
-                self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
+            let current_block = self.harness.node.latest_block();
+            let canonical_block_num = self
+                .canonical_block_number
+                .unwrap_or_else(|| current_block.number)
+                + 1;
 
             let base = if self.index == 0 {
                 Some(ExecutionPayloadBaseV1 {
@@ -880,7 +871,7 @@ mod tests {
         reth_tracing::init_test_tracing();
         let mut test = TestHarness::new().await;
 
-        let genesis_block = test.current_canonical_block();
+        let genesis_block = test.node.latest_block();
         assert_eq!(genesis_block.number, 0);
         assert_eq!(genesis_block.transaction_count(), 0);
         assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
@@ -892,7 +883,7 @@ mod tests {
         )])
         .await;
 
-        let block_one = test.current_canonical_block();
+        let block_one = test.node.latest_block();
         assert_eq!(block_one.number, 1);
         assert_eq!(block_one.transaction_count(), 2);
         assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
@@ -903,7 +894,7 @@ mod tests {
         ])
         .await;
 
-        let block_two = test.current_canonical_block();
+        let block_two = test.node.latest_block();
         assert_eq!(block_two.number, 2);
         assert_eq!(block_two.transaction_count(), 3);
         assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
