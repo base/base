@@ -32,7 +32,14 @@ pub struct OpFlashblockPayloadDelta {
     /// The estimated cumulative blob gas used for the block. Introduced in Jovian.
     /// spec: <https://docs.optimism.io/notices/upgrade-17#block-header-changes>
     /// Defaults to 0 if not present (for pre-Jovian blocks).
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "alloy_serde::quantity::opt"
+        )
+    )]
     pub blob_gas_used: Option<u64>,
 }
 
@@ -158,7 +165,7 @@ mod tests {
         let json = serde_json::to_string(&delta).unwrap();
         // Should contain blob_gas_used when Some
         assert!(json.contains("blob_gas_used"));
-        assert!(json.contains("12345"));
+        assert!(json.contains("0x3039"));
     }
 
     #[test]
