@@ -2,11 +2,15 @@
 
 RPC endpoints for EIP-4337 account abstraction bundler operations.
 
-## Quick Start
+## 🚀 Quick Start
 
-### Run a Local Dev Node
+Want to create and send a real UserOperation right away? 
 
-The easiest way to test the Account Abstraction endpoints:
+**See [QUICKSTART.md](./QUICKSTART.md)** for a complete step-by-step guide!
+
+### Testing the RPC Endpoints
+
+The easiest way to test the Account Abstraction RPC interface:
 
 ```bash
 # Start a fresh local dev node with account abstraction enabled

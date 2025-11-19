@@ -1504,8 +1504,10 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types-eth",
  "alloy-sol-types",
+ "clap",
  "eyre",
  "jsonrpsee 0.26.0",
+ "k256",
  "reth",
  "reth-evm 1.8.2",
  "reth-optimism-chainspec 1.8.2",
@@ -1519,6 +1521,7 @@ dependencies = [
  "reth-transaction-pool 1.8.2",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
 ]
 

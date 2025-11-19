@@ -1,7 +1,7 @@
 //! EIP-4337 Account Abstraction RPC API
 
-use alloy_primitives::{address, Address, Bytes, B256, U256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_primitives::{address, keccak256, Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolEvent, SolValue};
 use jsonrpsee::{
     core::{async_trait, RpcResult},
     proc_macros::rpc,
@@ -13,6 +13,8 @@ use reth_rpc_eth_api::{
     helpers::EthApiSpec, types::FullEthApiTypes, EthApiTypes, EthFilterApiServer, RpcNodeCoreExt,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 /// EntryPoint v0.6 address
@@ -24,6 +26,24 @@ const ENTRYPOINT_V07: Address = address!("0000000071727de22e5e9d8baf0edac6f37da0
 /// EntryPoint v0.8 address
 const ENTRYPOINT_V08: Address = address!("4337084d9e255ff0702461cf8895ce9e3b5ff108");
 
+// Define EntryPoint UserOperation struct for ABI encoding
+sol! {
+    /// UserOperation struct for v0.6 (matches EntryPoint ABI)
+    #[derive(Debug)]
+    struct UserOperationStruct {
+        address sender;
+        uint256 nonce;
+        bytes initCode;
+        bytes callData;
+        uint256 callGasLimit;
+        uint256 verificationGasLimit;
+        uint256 preVerificationGas;
+        uint256 maxFeePerGas;
+        uint256 maxPriorityFeePerGas;
+        bytes paymasterAndData;
+        bytes signature;
+    }
+}
 
 // Define UserOperationEvent for v0.6
 sol! {
@@ -100,6 +120,16 @@ pub struct UserOperationV07 {
 pub enum UserOperation {
     V06(UserOperationV06),
     V07(UserOperationV07),
+}
+
+impl UserOperation {
+    /// Get the sender address
+    pub fn sender(&self) -> Address {
+        match self {
+            UserOperation::V06(op) => op.sender,
+            UserOperation::V07(op) => op.sender,
+        }
+    }
 }
 
 /// Packed User Operation (on-chain format for v0.7+ EntryPoint)
@@ -209,6 +239,11 @@ pub trait BaseAccountAbstractionApi {
         user_operation: UserOperation,
         entry_point: Address,
     ) -> RpcResult<ValidationResult>;
+
+    /// Bundle and submit pending UserOperations to the EntryPoint
+    /// This is a convenience method for testing - in production, bundling happens automatically
+    #[method(name = "bundleNow")]
+    async fn bundle_now(&self) -> RpcResult<B256>;
 }
 
 /// Implementation of the account abstraction RPC API
@@ -218,6 +253,8 @@ where
 {
     provider: Provider,
     eth_filter: EthFilter<Eth>,
+    /// Pending UserOperations waiting to be bundled
+    pending_ops: Arc<RwLock<Vec<(UserOperation, Address)>>>,
 }
 
 impl<Provider, Eth> AccountAbstractionApiImpl<Provider, Eth>
@@ -227,7 +264,49 @@ where
 {
     /// Creates a new instance of AccountAbstractionApi
     pub fn new(provider: Provider, eth_filter: EthFilter<Eth>) -> Self {
-        Self { provider, eth_filter }
+        Self { 
+            provider, 
+            eth_filter,
+            pending_ops: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Get a clone of the pending operations Arc (for sharing with base API)
+    pub fn get_pending_ops(&self) -> Arc<RwLock<Vec<(UserOperation, Address)>>> {
+        self.pending_ops.clone()
+    }
+
+    /// Calculate the hash of a UserOperation v0.6
+    fn calculate_user_op_hash_v06(
+        user_op: &UserOperationV06,
+        entry_point: Address,
+        chain_id: u64,
+    ) -> B256 {
+        // Hash dynamic fields
+        let hash_init_code = keccak256(&user_op.init_code);
+        let hash_call_data = keccak256(&user_op.call_data);
+        let hash_paymaster_and_data = keccak256(&user_op.paymaster_and_data);
+
+        // Pack the user operation
+        let packed = (
+            user_op.sender,
+            user_op.nonce,
+            hash_init_code,
+            hash_call_data,
+            user_op.call_gas_limit,
+            user_op.verification_gas_limit,
+            user_op.pre_verification_gas,
+            user_op.max_fee_per_gas,
+            user_op.max_priority_fee_per_gas,
+            hash_paymaster_and_data,
+        );
+
+        // Hash the packed structure
+        let packed_hash = keccak256(packed.abi_encode());
+
+        // Add entry point and chain ID context
+        let final_data = (packed_hash, entry_point, U256::from(chain_id));
+        keccak256(final_data.abi_encode())
     }
 }
 
@@ -248,30 +327,55 @@ where
         user_operation: UserOperation,
         entry_point: Address,
     ) -> RpcResult<B256> {
-        match &user_operation {
+        let chain_id = self.provider.chain_spec().chain.id();
+        
+        let user_op_hash = match &user_operation {
             UserOperation::V06(op) => {
                 info!(
                     sender = %op.sender,
                     entry_point = %entry_point,
-                    "Received sendUserOperation request (v0.6)"
+                    nonce = %op.nonce,
+                    "Received sendUserOperation (v0.6)"
                 );
-                // TODO: Validate v0.6 user operation
-                // TODO: Submit to bundler pool
+                
+                // Calculate the hash
+                let hash = Self::calculate_user_op_hash_v06(op, entry_point, chain_id);
+                
+                info!(
+                    hash = %hash,
+                    "Calculated UserOperation hash"
+                );
+                
+                hash
             }
             UserOperation::V07(op) => {
                 info!(
                     sender = %op.sender,
                     entry_point = %entry_point,
-                    "Received sendUserOperation request (v0.7+)"
+                    "Received sendUserOperation (v0.7+)"
                 );
-                // TODO: Validate v0.7 user operation
-                // TODO: Convert to PackedUserOperation for on-chain submission
-                // TODO: Submit to bundler pool
+                // TODO: Implement v0.7 hash calculation
+                warn!("v0.7 UserOperations not yet fully supported");
+                B256::default()
             }
+        };
+
+        // Store the UserOperation for bundling
+        {
+            let mut pending = self.pending_ops.write().await;
+            pending.push((user_operation.clone(), entry_point));
+            info!(
+                pending_count = pending.len(),
+                "UserOperation added to pending pool"
+            );
         }
 
-        // TODO: Return user operation hash
-        Ok(B256::default())
+        info!(
+            user_op_hash = %user_op_hash,
+            "UserOperation accepted, will be bundled soon"
+        );
+
+        Ok(user_op_hash)
     }
 
     async fn estimate_user_operation_gas(
@@ -474,8 +578,10 @@ where
 }
 
 /// Implementation of the base account abstraction RPC API
-pub struct BaseAccountAbstractionApiImpl<Provider> {
+pub struct BaseAccountAbstractionApiImpl<Provider>
+{
     provider: Provider,
+    pending_ops: Arc<RwLock<Vec<(UserOperation, Address)>>>,
 }
 
 impl<Provider> BaseAccountAbstractionApiImpl<Provider>
@@ -483,13 +589,20 @@ where
     Provider: StateProviderFactory + ChainSpecProvider<ChainSpec = OpChainSpec> + Clone,
 {
     /// Creates a new instance of BaseAccountAbstractionApi
-    pub fn new(provider: Provider) -> Self {
-        Self { provider }
+    pub fn new(
+        provider: Provider,
+        pending_ops: Arc<RwLock<Vec<(UserOperation, Address)>>>,
+    ) -> Self {
+        Self {
+            provider,
+            pending_ops,
+        }
     }
 }
 
 #[async_trait]
-impl<Provider> BaseAccountAbstractionApiServer for BaseAccountAbstractionApiImpl<Provider>
+impl<Provider> BaseAccountAbstractionApiServer
+    for BaseAccountAbstractionApiImpl<Provider>
 where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
@@ -531,6 +644,48 @@ where
             valid: true,
             reason: None,
         })
+    }
+
+    async fn bundle_now(&self) -> RpcResult<B256> {
+        info!("Received bundle_now request");
+
+        // Get all pending UserOperations
+        let pending_ops = {
+            let mut pending = self.pending_ops.write().await;
+            let ops = pending.drain(..).collect::<Vec<_>>();
+            ops
+        };
+
+        if pending_ops.is_empty() {
+            info!("No pending UserOperations to bundle");
+            return Ok(B256::ZERO);
+        }
+
+        info!(
+            count = pending_ops.len(),
+            "Bundling UserOperations"
+        );
+
+        // For MVP, just log what we would do
+        // In production, you would:
+        // 1. Create a transaction calling EntryPoint.handleOps()
+        // 2. Sign it with the bundler's key
+        // 3. Submit it to the network
+        // 4. Return the transaction hash
+
+        for (user_op, entry_point) in &pending_ops {
+            info!(
+                sender = %user_op.sender(),
+                entry_point = %entry_point,
+                "Would bundle UserOperation"
+            );
+        }
+
+        warn!("Bundle creation not yet implemented - UserOperations logged only");
+        warn!("To implement: create tx calling EntryPoint.handleOps() with pending ops");
+
+        // Return a dummy hash for now
+        Ok(B256::ZERO)
     }
 }
 

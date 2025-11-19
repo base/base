@@ -159,9 +159,16 @@ fn main() {
                             ctx.provider().clone(),
                             ctx.registry.eth_handlers().filter.clone(),
                         );
+                        
+                        // Get a clone of the pending_ops Arc to share with base API
+                        let pending_ops = aa_api.get_pending_ops();
+                        
                         ctx.modules.merge_configured(aa_api.into_rpc())?;
 
-                        let base_aa_api = BaseAccountAbstractionApiImpl::new(ctx.provider().clone());
+                        let base_aa_api = BaseAccountAbstractionApiImpl::new(
+                            ctx.provider().clone(),
+                            pending_ops,
+                        );
                         ctx.modules.merge_configured(base_aa_api.into_rpc())?;
 
                         info!(message = "Account Abstraction RPC endpoints registered");

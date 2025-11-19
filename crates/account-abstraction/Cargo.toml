@@ -38,7 +38,18 @@ jsonrpsee.workspace = true
 tracing.workspace = true
 serde.workspace = true
 eyre.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+
+[[example]]
+name = "create_userop"
+path = "examples/create_userop.rs"
+
+[[example]]
+name = "submit_bundle"
+path = "examples/submit_bundle.rs"
 

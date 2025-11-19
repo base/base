@@ -54,5 +54,6 @@ RUST_LOG=info ./target/release/base-reth-node node \
     --http.addr 0.0.0.0 \
     --http.port 8545 \
     --dev \
+    --dev.block-time 1s \
     --enable-account-abstraction
 

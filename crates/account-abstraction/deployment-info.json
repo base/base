@@ -1,0 +1,9 @@
+{
+  "entryPoint": "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789",
+  "simpleAccountFactory": "0x0b306bf915c4d645ff596e518faf3f9669b97016",
+  "exampleWalletAddress": "0x00000000000000000000000033f030231baeced0bad93dc6356ac41e02c9eeba",
+  "exampleOwner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "exampleSalt": "0",
+  "rpcUrl": "http://localhost:8545",
+  "chainId": "31337"
+}
