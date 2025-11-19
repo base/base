@@ -10,7 +10,7 @@ use alloy_primitives::{Address, Bytes, FixedBytes, Uint, U256};
 use alloy_provider::ProviderBuilder;
 use alloy_rpc_types_eth::TransactionReceipt;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::SolValue;
+use alloy_sol_types::{SolCall, SolValue};
 use alloy_transport_http::reqwest::Url;
 use anyhow::Result;
 use op_succinct_bindings::{
@@ -191,6 +191,35 @@ impl TestEnvironment {
         .await?;
         info!("✓ Deployed mock permissioned implementation at {address}");
         Ok(address)
+    }
+
+    /// Setup a legacy game type with init bond and implementation.
+    /// Returns the deployed implementation address.
+    pub async fn setup_legacy_game_type(
+        &self,
+        game_type: u32,
+        init_bond: Uint<256, 4>,
+    ) -> Result<Address> {
+        let legacy_impl = self.deploy_mock_permissioned_game().await?;
+
+        let set_init_call =
+            DisputeGameFactory::setInitBondCall { _gameType: game_type, _initBond: init_bond };
+        self.send_factory_tx(set_init_call.abi_encode(), None).await?;
+
+        let set_impl_call =
+            DisputeGameFactory::setImplementationCall { _gameType: game_type, _impl: legacy_impl };
+        self.send_factory_tx(set_impl_call.abi_encode(), None).await?;
+
+        info!("✓ Setup legacy game type {game_type} with implementation at {legacy_impl}");
+        Ok(legacy_impl)
+    }
+
+    /// Set the respected game type on the OptimismPortal2.
+    pub async fn set_respected_game_type(&self, game_type: u32) -> Result<()> {
+        let set_type_call = MockOptimismPortal2::setRespectedGameTypeCall { _gameType: game_type };
+        self.send_portal_tx(set_type_call.abi_encode(), None).await?;
+        info!("✓ Set respected game type to {game_type}");
+        Ok(())
     }
 
     pub async fn send_factory_tx(&self, call: Vec<u8>, value: Option<Uint<256, 4>>) -> Result<()> {

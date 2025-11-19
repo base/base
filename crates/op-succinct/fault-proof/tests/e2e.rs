@@ -20,9 +20,7 @@ mod e2e {
         challenger::Game,
         contract::{GameStatus, ProposalStatus},
     };
-    use op_succinct_bindings::{
-        dispute_game_factory::DisputeGameFactory, mock_optimism_portal2::MockOptimismPortal2,
-    };
+    use op_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use rand::Rng;
     use tokio::time::{sleep, Duration};
     use tracing::info;
@@ -113,25 +111,9 @@ mod e2e {
         let factory = env.factory()?;
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
 
-        let legacy_impl = env.deploy_mock_permissioned_game().await?;
-
-        let set_init_call = DisputeGameFactory::setInitBondCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-            _initBond: init_bond,
-        };
-        env.send_factory_tx(set_init_call.abi_encode(), None).await?;
-
-        let set_impl_call = DisputeGameFactory::setImplementationCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-            _impl: legacy_impl,
-        };
-        env.send_factory_tx(set_impl_call.abi_encode(), None).await?;
-
-        let legacy_game_type_call = MockOptimismPortal2::setRespectedGameTypeCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-        };
-        env.send_portal_tx(legacy_game_type_call.abi_encode(), None).await?;
-        info!("✓ Set respected game type to {MOCK_PERMISSIONED_GAME_TYPE}");
+        // Setup legacy game type and set it as respected
+        env.setup_legacy_game_type(MOCK_PERMISSIONED_GAME_TYPE, init_bond).await?;
+        env.set_respected_game_type(MOCK_PERMISSIONED_GAME_TYPE).await?;
 
         let initial_game_count = factory.gameCount().call().await?;
         let mut expected_index = initial_game_count;
@@ -164,10 +146,7 @@ mod e2e {
         assert_eq!(game_info.gameType_, MOCK_PERMISSIONED_GAME_TYPE);
         info!(" • Mock permissioned game at {mock_game_address}");
 
-        let restore_type_call =
-            MockOptimismPortal2::setRespectedGameTypeCall { _gameType: TEST_GAME_TYPE };
-        env.send_portal_tx(restore_type_call.abi_encode(), None).await?;
-        info!("✓ Respected game type restored to {TEST_GAME_TYPE}");
+        env.set_respected_game_type(TEST_GAME_TYPE).await?;
 
         let proposer_handle = env.start_proposer().await?;
         info!("✓ Proposer started after legacy games seeded");
@@ -216,24 +195,9 @@ mod e2e {
 
         let initial_game_count = factory_reader.gameCount().call().await?;
 
-        let legacy_impl = env.deploy_mock_permissioned_game().await?;
-
-        let set_init_call = DisputeGameFactory::setInitBondCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-            _initBond: init_bond,
-        };
-        env.send_factory_tx(set_init_call.abi_encode(), None).await?;
-
-        let set_impl_call = DisputeGameFactory::setImplementationCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-            _impl: legacy_impl,
-        };
-        env.send_factory_tx(set_impl_call.abi_encode(), None).await?;
-
-        let legacy_game_type_call = MockOptimismPortal2::setRespectedGameTypeCall {
-            _gameType: MOCK_PERMISSIONED_GAME_TYPE,
-        };
-        env.send_portal_tx(legacy_game_type_call.abi_encode(), None).await?;
+        // Setup legacy game type and set it as respected
+        env.setup_legacy_game_type(MOCK_PERMISSIONED_GAME_TYPE, init_bond).await?;
+        env.set_respected_game_type(MOCK_PERMISSIONED_GAME_TYPE).await?;
 
         let mut expected_index = initial_game_count;
         info!("Seeding legacy game (type {MOCK_PERMISSIONED_GAME_TYPE})");
@@ -267,10 +231,7 @@ mod e2e {
         assert_eq!(game_info.gameType_, MOCK_PERMISSIONED_GAME_TYPE);
         info!(" • Mock permissioned game at {mock_game_address}");
 
-        let restore_type_call =
-            MockOptimismPortal2::setRespectedGameTypeCall { _gameType: TEST_GAME_TYPE };
-        env.send_portal_tx(restore_type_call.abi_encode(), None).await?;
-        info!("✓ Respected game type restored to {TEST_GAME_TYPE}");
+        env.set_respected_game_type(TEST_GAME_TYPE).await?;
 
         let tracked_games = env.wait_and_track_games(3, 30).await?;
         assert_eq!(tracked_games.len(), 3);
