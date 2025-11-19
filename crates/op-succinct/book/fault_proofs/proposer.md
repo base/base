@@ -27,9 +27,9 @@ The proposer performs several key functions:
 
 The proposer is configured through environment variables.
 
-Create a `.env` file in the `fault-proof` directory with all required variables. This single file is used by:
+Create a `.env.proposer` file in the `fault-proof` directory with all required variables. This single file is used by:
 - Docker Compose (for both variable substitution and runtime configuration)
-- Direct binary execution (source it with `. .env` before running)
+- Direct binary execution (`cargo run --bin proposer` from the `fault-proof` directory; the binary automatically loads `.env.proposer`)
 
 ### Required Environment Variables
 
@@ -131,15 +131,19 @@ PROPOSER_METRICS_PORT=9000               # The port to expose metrics on
 
 1. Deploy the DisputeGameFactory contract following the [deployment guide](./deploy.md)
 2. Copy the factory address from the deployment output
-3. Create `.env` file with the above configuration
+3. Create a `.env.proposer` file with the above configuration
 4. Ensure your account has sufficient ETH for bonds and gas
 
 ## Running
 
 To run the proposer, from the fault-proof directory:
-   ```bash
-   cargo run --bin proposer
-   ```
+```bash
+# Uses .env.proposer by default
+cargo run --bin proposer
+
+# Or specify a custom environment file
+cargo run --bin proposer -- --env-file custom.env
+```
 
 The proposer will run indefinitely, creating new games and optionally resolving them based on the configuration.
 
