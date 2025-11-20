@@ -332,7 +332,7 @@ Span-batch rules, in validation order:
         if and only if the L1 epoch hash is correct.
     - `start_epoch_num < prev_l2_block.l1_origin.number` -> `drop`:
       epoch number cannot be older than the origin of parent block
-- Max Sequencer time-drift checks:
+- Max Sequencer time-drift & other L1 origin checks:
   - Note: The max time-drift is enforced for the _batch as a whole_, to keep the possible output variants small.
   - Variables:
     - `block_input`: an L2 block from the span-batch,
@@ -341,6 +341,7 @@ Span-batch rules, in validation order:
       It may reach to the next origin outside the L1 origins of the span.
   - Rules:
     - For each `block_input` whose timestamp is greater than `safe_head.timestamp`:
+      - `block_input.l1_origin.number < safe_head.l1_origin.number` -> `drop`: enforce increasing L1 origins.
       - `block_input.timestamp < block_input.origin.time` -> `drop`: enforce the min L2 timestamp rule.
       - `block_input.timestamp > block_input.origin.time + max_sequencer_drift`: enforce the L2 timestamp drift rule,
         but with exceptions to preserve above min L2 timestamp invariant:

@@ -147,6 +147,21 @@ which the span batch was derived, is also immediately dropped (see also [Fast Ch
 Invalidation](#fast-channel-invalidation)). However, a `past` span batch is only dropped, without
 dropping the remaining channel.
 
+> [!Note]
+> A word regarding overlapping span batches: the existing batch queue rules already contain the rule
+> to drop batches whose L1 origin is older than that of the L2 safe head. The Delta span batch
+> checks also have an equivalent rule that applies to all singular batcher past the safe head.
+> Now full span batch checks aren't done any more in Holocene, but the batch queue rules are still
+> applied to singular batches that are streamed out of span batches, so in particular this rule also
+> still applies to the first singular batch past the current safe head coming from an overlapping
+> span batch.
+>
+> It is a known footgun for implementations that the earliest point at which violations of this rule
+> are detected is when the full array of singular batches is extracted from the span batch and their
+> L1 origin hashes are populated. It is therefore important to treat singular batches with outdated
+> or otherwise invalid L1 origin numbers as invalid, and consequently the span batch as invalid, and
+> not generate a critical derivation error that stalls derivation.
+
 ## Batch Queue
 
 The batch queue is also simplified in that batches are required to arrive strictly ordered, and any
