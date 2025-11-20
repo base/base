@@ -16,8 +16,18 @@ use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth::builder::{
     Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
 };
+use reth_node_core::{
+    args::DatadirArgs,
+    dirs::{DataDirPath, MaybePlatformPath},
+};
 use reth::core::exit::NodeExitFuture;
 use reth::tasks::TaskManager;
+use reth_db::{
+    init_db,
+    mdbx::DatabaseArguments,
+    test_utils::{tempdir_path, TempDatabase, ERROR_DB_CREATION},
+    ClientVersion, DatabaseEnv,
+};
 use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
 use reth_optimism_chainspec::OpChainSpec;
@@ -99,12 +109,21 @@ impl LocalNode {
             .with_auth_ipc();
         rpc_args.auth_ipc_path = unique_ipc_path;
 
-        let node_config = NodeConfig::new(chain_spec.clone())
+        let node = OpNode::new(RollupArgs::default());
+
+        let temp_db = Self::create_test_database()?;
+        let db_path = temp_db.path().to_path_buf();
+
+        let mut node_config = NodeConfig::new(chain_spec.clone())
             .with_network(network_config)
             .with_rpc(rpc_args)
             .with_unused_ports();
 
-        let node = OpNode::new(RollupArgs::default());
+        let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
+        node_config = node_config.with_datadir_args(DatadirArgs {
+            datadir: datadir_path,
+            ..Default::default()
+        });
 
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
@@ -114,7 +133,8 @@ impl LocalNode {
             node: node_handle,
             node_exit_future,
         } = NodeBuilder::new(node_config.clone())
-            .testing_node(exec.clone())
+            .with_database(temp_db)
+            .with_launch_context(exec.clone())
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
             .with_components(node.components_builder())
             .with_add_ons(node.add_ons())
@@ -207,6 +227,32 @@ impl LocalNode {
             _node: Box::new(node_handle),
             _task_manager: tasks,
         })
+    }
+
+    /// Creates a test database with a smaller map size to reduce memory usage.
+    ///
+    /// Unlike `NodeBuilder::testing_node()` which hardcodes an 8 TB map size,
+    /// this method configures the database with a 100 MB map size. This prevents
+    /// `ENOMEM` errors when running parallel tests with `cargo test`, as the
+    /// default 8 TB size can cause memory exhaustion when multiple test processes
+    /// run concurrently.
+    fn create_test_database() -> Result<Arc<TempDatabase<DatabaseEnv>>> {
+        let default_size = 100 * 1024 * 1024; // 100 MB
+        Self::create_test_database_with_size(default_size)
+    }
+
+    /// Creates a test database with a configurable map size to reduce memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_size` - Maximum map size in bytes.
+    fn create_test_database_with_size(max_size: usize) -> Result<Arc<TempDatabase<DatabaseEnv>>> {
+        let path = tempdir_path();
+        let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
+        let args = DatabaseArguments::new(ClientVersion::default())
+            .with_geometry_max_size(Some(max_size));
+        let db = init_db(&path, args).expect(&emsg);
+        Ok(Arc::new(TempDatabase::new(db, path)))
     }
 
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
