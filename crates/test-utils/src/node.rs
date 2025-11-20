@@ -16,10 +16,6 @@ use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
 use reth::builder::{
     Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
 };
-use reth_node_core::{
-    args::DatadirArgs,
-    dirs::{DataDirPath, MaybePlatformPath},
-};
 use reth::core::exit::NodeExitFuture;
 use reth::tasks::TaskManager;
 use reth_db::{
@@ -30,6 +26,10 @@ use reth_db::{
 };
 use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
+use reth_node_core::{
+    args::DatadirArgs,
+    dirs::{DataDirPath, MaybePlatformPath},
+};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
@@ -249,8 +249,8 @@ impl LocalNode {
     fn create_test_database_with_size(max_size: usize) -> Result<Arc<TempDatabase<DatabaseEnv>>> {
         let path = tempdir_path();
         let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
-        let args = DatabaseArguments::new(ClientVersion::default())
-            .with_geometry_max_size(Some(max_size));
+        let args =
+            DatabaseArguments::new(ClientVersion::default()).with_geometry_max_size(Some(max_size));
         let db = init_db(&path, args).expect(&emsg);
         Ok(Arc::new(TempDatabase::new(db, path)))
     }

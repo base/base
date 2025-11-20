@@ -80,7 +80,13 @@ mod tests {
                 Self::decode_private_key(accounts.charlie.private_key),
             );
 
-            Self { node, flashblocks, provider, user_to_address, user_to_private_key }
+            Self {
+                node,
+                flashblocks,
+                provider,
+                user_to_address,
+                user_to_private_key,
+            }
         }
 
         fn decode_private_key(key: &str) -> B256 {
@@ -203,13 +209,13 @@ mod tests {
                 .await
                 .expect("able to build block");
             let target_block_number = previous_tip + 1;
-            
+
             let block = self
                 .provider
                 .block(BlockHashOrNumber::Number(target_block_number))
                 .expect("able to load block")
                 .expect("new canonical block should be available after building payload");
-            
+
             block
                 .try_into_recovered()
                 .expect("able to recover newly built block")

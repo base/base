@@ -186,8 +186,7 @@ impl TestHarness {
             .block(BlockHashOrNumber::Number(best_number))
             .expect("able to load canonical block")
             .expect("canonical block exists");
-        BlockT::try_into_recovered(block)
-            .expect("able to recover canonical block")
+        BlockT::try_into_recovered(block).expect("able to recover canonical block")
     }
 }
 
