@@ -7,11 +7,11 @@ mod tests {
     use alloy_consensus::{Receipt, Transaction};
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
     use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{hex, Address, BlockNumber, Bytes, B256, U256};
+    use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex};
     use alloy_rpc_types_engine::PayloadId;
     use base_reth_test_utils::accounts::TestAccounts;
     use base_reth_test_utils::harness::TestHarness as BaseHarness;
-    use base_reth_test_utils::node::{default_launcher, LocalNodeProvider};
+    use base_reth_test_utils::node::{LocalNodeProvider, default_launcher};
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::BlockResponse;
     use reth::chainspec::EthChainSpec;
@@ -44,9 +44,8 @@ mod tests {
 
     impl TestHarness {
         async fn new() -> Self {
-            let node = BaseHarness::new(default_launcher)
-                .await
-                .expect("able to launch base harness");
+            let node =
+                BaseHarness::new(default_launcher).await.expect("able to launch base harness");
             let provider = node.blockchain_provider();
             let flashblocks = FlashblocksState::new(provider.clone(), 5);
             flashblocks.start();
@@ -67,26 +66,14 @@ mod tests {
             user_to_address.insert(User::Charlie, accounts.charlie.address);
 
             let mut user_to_private_key = HashMap::default();
-            user_to_private_key.insert(
-                User::Alice,
-                Self::decode_private_key(accounts.alice.private_key),
-            );
-            user_to_private_key.insert(
-                User::Bob,
-                Self::decode_private_key(accounts.bob.private_key),
-            );
-            user_to_private_key.insert(
-                User::Charlie,
-                Self::decode_private_key(accounts.charlie.private_key),
-            );
+            user_to_private_key
+                .insert(User::Alice, Self::decode_private_key(accounts.alice.private_key));
+            user_to_private_key
+                .insert(User::Bob, Self::decode_private_key(accounts.bob.private_key));
+            user_to_private_key
+                .insert(User::Charlie, Self::decode_private_key(accounts.charlie.private_key));
 
-            Self {
-                node,
-                flashblocks,
-                provider,
-                user_to_address,
-                user_to_private_key,
-            }
+            Self { node, flashblocks, provider, user_to_address, user_to_private_key }
         }
 
         fn decode_private_key(key: &str) -> B256 {
@@ -196,18 +183,11 @@ mod tests {
             &mut self,
             user_transactions: Vec<OpTransactionSigned>,
         ) -> RecoveredBlock<OpBlock> {
-            let previous_tip = self
-                .provider
-                .best_block_number()
-                .expect("able to read best block number");
-            let txs: Vec<Bytes> = user_transactions
-                .into_iter()
-                .map(|tx| tx.encoded_2718().into())
-                .collect();
-            self.node
-                .build_block_from_transactions(txs)
-                .await
-                .expect("able to build block");
+            let previous_tip =
+                self.provider.best_block_number().expect("able to read best block number");
+            let txs: Vec<Bytes> =
+                user_transactions.into_iter().map(|tx| tx.encoded_2718().into()).collect();
+            self.node.build_block_from_transactions(txs).await.expect("able to build block");
             let target_block_number = previous_tip + 1;
 
             let block = self
@@ -216,9 +196,7 @@ mod tests {
                 .expect("able to load block")
                 .expect("new canonical block should be available after building payload");
 
-            block
-                .try_into_recovered()
-                .expect("able to recover newly built block")
+            block.try_into_recovered().expect("able to recover newly built block")
         }
 
         async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
@@ -303,10 +281,8 @@ mod tests {
 
         pub fn build(&self) -> Flashblock {
             let current_block = self.harness.node.latest_block();
-            let canonical_block_num = self
-                .canonical_block_number
-                .unwrap_or_else(|| current_block.number)
-                + 1;
+            let canonical_block_num =
+                self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;
 
             let base = if self.index == 0 {
                 Some(ExecutionPayloadBaseV1 {

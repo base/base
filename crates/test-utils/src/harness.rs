@@ -3,13 +3,13 @@
 use crate::accounts::TestAccounts;
 use crate::engine::{EngineApi, IpcEngine};
 use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
-use alloy_eips::{eip7685::Requests, BlockHashOrNumber};
-use alloy_primitives::{bytes, Bytes, B256};
+use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
+use alloy_primitives::{B256, Bytes, bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
 use base_reth_flashblocks_rpc::subscription::Flashblock;
-use eyre::{eyre, Result};
+use eyre::{Result, eyre};
 use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
@@ -28,7 +28,9 @@ const GAS_LIMIT: u64 = 200_000_000;
 const NODE_STARTUP_DELAY_MS: u64 = 500;
 const BLOCK_BUILD_DELAY_MS: u64 = 100;
 // Pre-captured L1 block info deposit transaction required by OP Stack.
-const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!("0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000");
+const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!(
+    "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000"
+);
 
 pub struct TestHarness {
     node: LocalNode,
@@ -48,17 +50,11 @@ impl TestHarness {
 
         sleep(Duration::from_millis(NODE_STARTUP_DELAY_MS)).await;
 
-        Ok(Self {
-            node,
-            engine,
-            accounts,
-        })
+        Ok(Self { node, engine, accounts })
     }
 
     pub fn provider(&self) -> RootProvider<Optimism> {
-        self.node
-            .provider()
-            .expect("provider should always be available after node initialization")
+        self.node.provider().expect("provider should always be available after node initialization")
     }
 
     pub fn accounts(&self) -> &TestAccounts {
@@ -79,10 +75,7 @@ impl TestHarness {
 
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
         // Ensure the block always starts with the required L1 block info deposit.
-        if !transactions
-            .first()
-            .is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX)
-        {
+        if !transactions.first().is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX) {
             transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
         }
 
@@ -93,10 +86,8 @@ impl TestHarness {
             .ok_or_else(|| eyre!("No genesis block found"))?;
 
         let parent_hash = latest_block.header.hash;
-        let parent_beacon_block_root = latest_block
-            .header
-            .parent_beacon_block_root
-            .unwrap_or(B256::ZERO);
+        let parent_beacon_block_root =
+            latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
 
         let payload_attributes = OpPayloadAttributes {
@@ -149,9 +140,7 @@ impl TestHarness {
             .latest_valid_hash
             .ok_or_else(|| eyre!("Payload status missing latest_valid_hash"))?;
 
-        self.engine
-            .update_forkchoice(parent_hash, new_block_hash, None)
-            .await?;
+        self.engine.update_forkchoice(parent_hash, new_block_hash, None).await?;
 
         Ok(())
     }
@@ -179,9 +168,7 @@ impl TestHarness {
 
     pub fn latest_block(&self) -> RecoveredBlock<OpBlock> {
         let provider = self.blockchain_provider();
-        let best_number = provider
-            .best_block_number()
-            .expect("able to read best block number");
+        let best_number = provider.best_block_number().expect("able to read best block number");
         let block = provider
             .block(BlockHashOrNumber::Number(best_number))
             .expect("able to load canonical block")
@@ -210,9 +197,7 @@ mod tests {
         let chain_id = provider.get_chain_id().await?;
         assert_eq!(chain_id, crate::node::BASE_CHAIN_ID);
 
-        let alice_balance = provider
-            .get_balance(harness.accounts().alice.address)
-            .await?;
+        let alice_balance = provider.get_balance(harness.accounts().alice.address).await?;
         assert!(alice_balance > U256::ZERO);
 
         let block_number = provider.get_block_number().await?;

@@ -19,10 +19,9 @@ use reth::builder::{
 use reth::core::exit::NodeExitFuture;
 use reth::tasks::TaskManager;
 use reth_db::{
-    init_db,
+    ClientVersion, DatabaseEnv, init_db,
     mdbx::DatabaseArguments,
-    test_utils::{tempdir_path, TempDatabase, ERROR_DB_CREATION},
-    ClientVersion, DatabaseEnv,
+    test_utils::{ERROR_DB_CREATION, TempDatabase, tempdir_path},
 };
 use reth_e2e_test_utils::{Adapter, TmpDB};
 use reth_exex::ExExEvent;
@@ -31,10 +30,10 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::args::RollupArgs;
 use reth_optimism_node::OpNode;
-use reth_provider::providers::BlockchainProvider;
+use reth_optimism_node::args::RollupArgs;
 use reth_provider::CanonStateSubscriptions;
+use reth_provider::providers::BlockchainProvider;
 use std::any::Any;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -84,10 +83,7 @@ impl LocalNode {
         let chain_spec = Arc::new(OpChainSpec::from_genesis(genesis));
 
         let network_config = NetworkArgs {
-            discovery: DiscoveryArgs {
-                disable_discovery: true,
-                ..DiscoveryArgs::default()
-            },
+            discovery: DiscoveryArgs { disable_discovery: true, ..DiscoveryArgs::default() },
             ..NetworkArgs::default()
         };
 
@@ -95,18 +91,12 @@ impl LocalNode {
         // Use timestamp + thread ID + process ID for uniqueness
         let unique_ipc_path = format!(
             "/tmp/reth_engine_api_{}_{}_{:?}.ipc",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
             std::process::id(),
             std::thread::current().id()
         );
 
-        let mut rpc_args = RpcServerArgs::default()
-            .with_unused_ports()
-            .with_http()
-            .with_auth_ipc();
+        let mut rpc_args = RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc();
         rpc_args.auth_ipc_path = unique_ipc_path;
 
         let node = OpNode::new(RollupArgs::default());
@@ -120,87 +110,83 @@ impl LocalNode {
             .with_unused_ports();
 
         let datadir_path = MaybePlatformPath::<DataDirPath>::from(db_path.clone());
-        node_config = node_config.with_datadir_args(DatadirArgs {
-            datadir: datadir_path,
-            ..Default::default()
-        });
+        node_config = node_config
+            .with_datadir_args(DatadirArgs { datadir: datadir_path, ..Default::default() });
 
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
         let provider_cell: Arc<OnceCell<LocalNodeProvider>> = Arc::new(OnceCell::new());
 
-        let NodeHandle {
-            node: node_handle,
-            node_exit_future,
-        } = NodeBuilder::new(node_config.clone())
-            .with_database(temp_db)
-            .with_launch_context(exec.clone())
-            .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
-            .with_components(node.components_builder())
-            .with_add_ons(node.add_ons())
-            .install_exex("flashblocks-canon", {
-                let fb_cell = fb_cell.clone();
-                let provider_cell = provider_cell.clone();
-                move |mut ctx| async move {
-                    let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
-                    let fb = init_flashblocks_state(&fb_cell, &provider);
-                    Ok(async move {
-                        while let Some(note) = ctx.notifications.try_next().await? {
-                            if let Some(committed) = note.committed_chain() {
-                                for block in committed.blocks_iter() {
-                                    fb.on_canonical_block_received(block);
+        let NodeHandle { node: node_handle, node_exit_future } =
+            NodeBuilder::new(node_config.clone())
+                .with_database(temp_db)
+                .with_launch_context(exec.clone())
+                .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
+                .with_components(node.components_builder())
+                .with_add_ons(node.add_ons())
+                .install_exex("flashblocks-canon", {
+                    let fb_cell = fb_cell.clone();
+                    let provider_cell = provider_cell.clone();
+                    move |mut ctx| async move {
+                        let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
+                        let fb = init_flashblocks_state(&fb_cell, &provider);
+                        Ok(async move {
+                            while let Some(note) = ctx.notifications.try_next().await? {
+                                if let Some(committed) = note.committed_chain() {
+                                    for block in committed.blocks_iter() {
+                                        fb.on_canonical_block_received(block);
+                                    }
+                                    let _ = ctx.events.send(ExExEvent::FinishedHeight(
+                                        committed.tip().num_hash(),
+                                    ));
                                 }
-                                let _ = ctx
-                                    .events
-                                    .send(ExExEvent::FinishedHeight(committed.tip().num_hash()));
                             }
-                        }
-                        Ok(())
-                    })
-                }
-            })
-            .extend_rpc_modules({
-                let fb_cell = fb_cell.clone();
-                let provider_cell = provider_cell.clone();
-                let mut receiver = Some(receiver);
-                move |ctx| {
-                    let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
-                    let fb = init_flashblocks_state(&fb_cell, &provider);
+                            Ok(())
+                        })
+                    }
+                })
+                .extend_rpc_modules({
+                    let fb_cell = fb_cell.clone();
+                    let provider_cell = provider_cell.clone();
+                    let mut receiver = Some(receiver);
+                    move |ctx| {
+                        let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
+                        let fb = init_flashblocks_state(&fb_cell, &provider);
 
-                    let provider_for_task = provider.clone();
-                    let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
-                        ctx.provider().subscribe_to_canonical_state(),
-                    );
-                    tokio::spawn(async move {
-                        use tokio_stream::StreamExt;
-                        while let Some(Ok(notification)) = canon_stream.next().await {
-                            provider_for_task
-                                .canonical_in_memory_state()
-                                .notify_canon_state(notification);
-                        }
-                    });
-                    let api_ext = EthApiExt::new(
-                        ctx.registry.eth_api().clone(),
-                        ctx.registry.eth_handlers().filter.clone(),
-                        fb.clone(),
-                    );
-                    ctx.modules.replace_configured(api_ext.into_rpc())?;
-                    // Spawn task to receive flashblocks from the test context
-                    let fb_for_task = fb.clone();
-                    let mut receiver = receiver
-                        .take()
-                        .expect("flashblock receiver should only be initialized once");
-                    tokio::spawn(async move {
-                        while let Some((payload, tx)) = receiver.recv().await {
-                            fb_for_task.on_flashblock_received(payload);
-                            let _ = tx.send(());
-                        }
-                    });
-                    Ok(())
-                }
-            })
-            .launch_with_fn(launcher)
-            .await?;
+                        let provider_for_task = provider.clone();
+                        let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
+                            ctx.provider().subscribe_to_canonical_state(),
+                        );
+                        tokio::spawn(async move {
+                            use tokio_stream::StreamExt;
+                            while let Some(Ok(notification)) = canon_stream.next().await {
+                                provider_for_task
+                                    .canonical_in_memory_state()
+                                    .notify_canon_state(notification);
+                            }
+                        });
+                        let api_ext = EthApiExt::new(
+                            ctx.registry.eth_api().clone(),
+                            ctx.registry.eth_handlers().filter.clone(),
+                            fb.clone(),
+                        );
+                        ctx.modules.replace_configured(api_ext.into_rpc())?;
+                        // Spawn task to receive flashblocks from the test context
+                        let fb_for_task = fb.clone();
+                        let mut receiver = receiver
+                            .take()
+                            .expect("flashblock receiver should only be initialized once");
+                        tokio::spawn(async move {
+                            while let Some((payload, tx)) = receiver.recv().await {
+                                fb_for_task.on_flashblock_received(payload);
+                                let _ = tx.send(());
+                            }
+                        });
+                        Ok(())
+                    }
+                })
+                .launch_with_fn(launcher)
+                .await?;
 
         let http_api_addr = node_handle
             .rpc_server_handle()
@@ -212,10 +198,8 @@ impl LocalNode {
             .get()
             .expect("FlashblocksState should be initialized during node launch")
             .clone();
-        let provider = provider_cell
-            .get()
-            .expect("Provider should be initialized during node launch")
-            .clone();
+        let provider =
+            provider_cell.get().expect("Provider should be initialized during node launch").clone();
 
         Ok(Self {
             http_api_addr,
@@ -257,10 +241,7 @@ impl LocalNode {
 
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
         let (tx, rx) = oneshot::channel();
-        self.flashblock_sender
-            .send((flashblock, tx))
-            .await
-            .map_err(|err| eyre::eyre!(err))?;
+        self.flashblock_sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
         rx.await.map_err(|err| eyre::eyre!(err))?;
         Ok(())
     }

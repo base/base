@@ -88,11 +88,7 @@ impl EngineApi<HttpEngine> {
         let url: Url = engine_url.parse()?;
         let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
 
-        Ok(Self {
-            address: EngineAddress::Http(url),
-            jwt_secret,
-            _phantom: PhantomData,
-        })
+        Ok(Self { address: EngineAddress::Http(url), jwt_secret, _phantom: PhantomData })
     }
 }
 
@@ -100,11 +96,7 @@ impl EngineApi<IpcEngine> {
     pub fn new(path: String) -> Result<Self> {
         let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
 
-        Ok(Self {
-            address: EngineAddress::Ipc(path),
-            jwt_secret,
-            _phantom: PhantomData,
-        })
+        Ok(Self { address: EngineAddress::Ipc(path), jwt_secret, _phantom: PhantomData })
     }
 }
 
@@ -119,15 +111,9 @@ impl<P: EngineProtocol> EngineApi<P> {
         &self,
         payload_id: PayloadId,
     ) -> eyre::Result<<OpEngineTypes as EngineTypes>::ExecutionPayloadEnvelopeV4> {
-        debug!(
-            "Fetching payload with id: {} at {}",
-            payload_id,
-            chrono::Utc::now()
-        );
-        Ok(
-            OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
-                .await?,
-        )
+        debug!("Fetching payload with id: {} at {}", payload_id, chrono::Utc::now());
+        Ok(OpEngineApiClient::<OpEngineTypes>::get_payload_v4(&self.client().await, payload_id)
+            .await?)
     }
 
     /// Submit a new payload to the Engine API

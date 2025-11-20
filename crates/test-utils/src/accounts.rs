@@ -2,7 +2,7 @@
 
 use alloy_consensus::{SignableTransaction, TxLegacy};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{address, hex, Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
@@ -62,12 +62,7 @@ pub struct TestAccounts {
 impl TestAccounts {
     /// Create a new instance with all test accounts
     pub fn new() -> Self {
-        Self {
-            alice: ALICE,
-            bob: BOB,
-            charlie: CHARLIE,
-            deployer: DEPLOYER,
-        }
+        Self { alice: ALICE, bob: BOB, charlie: CHARLIE, deployer: DEPLOYER }
     }
 
     /// Get all accounts as a vector
