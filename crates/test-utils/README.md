@@ -15,11 +15,12 @@ This crate provides reusable testing utilities for integration tests across the 
 ## Quick Start
 
 ```rust
-use base_reth_test_utils::TestHarness;
+use base_reth_test_utils::harness::TestHarness;
+use base_reth_test_utils::node::default_launcher;
 
 #[tokio::test]
 async fn test_example() -> eyre::Result<()> {
-    let harness = TestHarness::new().await?;
+    let harness = TestHarness::new(default_launcher).await?;
 
     // Advance the chain
     harness.advance_chain(5).await?;
@@ -44,6 +45,7 @@ The framework follows a three-layer architecture:
 │  - Coordinates node + engine        │
 │  - Builds blocks from transactions  │
 │  - Manages test accounts            │
+│  - Manages flashblocks              │
 └─────────────────────────────────────┘
            │            │
     ┌──────┘            └──────┐
@@ -67,12 +69,13 @@ The framework follows a three-layer architecture:
 The main entry point for integration tests. Combines node, engine, and accounts into a single interface.
 
 ```rust
-use base_reth_test_utils::TestHarness;
+use base_reth_test_utils::harness::TestHarness;
+use base_reth_test_utils::node::default_launcher;
 use alloy_primitives::Bytes;
 
 #[tokio::test]
 async fn test_harness() -> eyre::Result<()> {
-    let harness = TestHarness::new().await?;
+    let harness = TestHarness::new(default_launcher).await?;
 
     // Access provider
     let provider = harness.provider();
@@ -88,9 +91,6 @@ async fn test_harness() -> eyre::Result<()> {
     // Build block with transactions
     let txs: Vec<Bytes> = vec![/* signed transaction bytes */];
     harness.build_block_from_transactions(txs).await?;
-
-    // Build block from flashblocks
-    harness.build_block_from_flashblocks(&flashblocks).await?;
 
     // Send flashblocks for pending state testing
     harness.send_flashblock(flashblock).await?;
@@ -122,11 +122,11 @@ async fn test_harness() -> eyre::Result<()> {
 In-process Optimism node with Base Sepolia configuration.
 
 ```rust
-use base_reth_test_utils::LocalNode;
+use base_reth_test_utils::node::{LocalNode, default_launcher};
 
 #[tokio::test]
 async fn test_node() -> eyre::Result<()> {
-    let node = LocalNode::new().await?;
+    let node = LocalNode::new(default_launcher).await?;
 
     // Get provider
     let provider = node.provider()?;
@@ -156,7 +156,7 @@ async fn test_node() -> eyre::Result<()> {
 Type-safe Engine API client wrapping raw CL operations.
 
 ```rust
-use base_reth_test_utils::EngineApi;
+use base_reth_test_utils::engine::EngineApi;
 use alloy_primitives::B256;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
@@ -181,7 +181,8 @@ let status = engine.new_payload(payload, vec![], parent_root, requests).await?;
 Hardcoded test accounts with deterministic addresses (Anvil-compatible).
 
 ```rust
-use base_reth_test_utils::TestAccounts;
+use base_reth_test_utils::accounts::TestAccounts;
+use base_reth_test_utils::{harness::TestHarness, node::default_launcher};
 
 let accounts = TestAccounts::new();
 
@@ -191,7 +192,7 @@ let charlie = &accounts.charlie;
 let deployer = &accounts.deployer;
 
 // Access via harness
-let harness = TestHarness::new().await?;
+let harness = TestHarness::new(default_launcher).await?;
 let alice = &harness.accounts().alice;
 ```
 
@@ -209,23 +210,20 @@ Each account includes:
 
 ### 5. Flashblocks Support
 
-Test flashblocks delivery without WebSocket connections.
+Test flashblocks delivery without WebSocket connections. Flashblocks can be manually constructed and sent via the harness.
 
 ```rust
-use base_reth_test_utils::{FlashblocksContext, FlashblockBuilder};
+use base_reth_flashblocks_rpc::subscription::Flashblock;
 
 #[tokio::test]
 async fn test_flashblocks() -> eyre::Result<()> {
-    let (fb_ctx, receiver) = FlashblocksContext::new();
+    let harness = TestHarness::new(default_launcher).await?;
 
-    // Create base flashblock
-    let flashblock = FlashblockBuilder::new(1, 0)
-        .as_base(B256::ZERO, 1000)
-        .with_transaction(tx_bytes, tx_hash, 21000)
-        .with_balance(address, U256::from(1000))
-        .build();
+    // Construct a Flashblock manually
+    // Use base_reth_flashblocks_rpc imports to build the struct
+    let flashblock = Flashblock { ... };
 
-    fb_ctx.send_flashblock(flashblock).await?;
+    harness.send_flashblock(flashblock).await?;
 
     Ok(())
 }
@@ -233,7 +231,7 @@ async fn test_flashblocks() -> eyre::Result<()> {
 
 **Via TestHarness:**
 ```rust
-let harness = TestHarness::new().await?;
+let harness = TestHarness::new(default_launcher).await?;
 harness.send_flashblock(flashblock).await?;
 ```
 
@@ -257,8 +255,7 @@ test-utils/
 │   ├── accounts.rs      # Test account definitions
 │   ├── node.rs          # LocalNode (EL wrapper)
 │   ├── engine.rs        # EngineApi (CL wrapper)
-│   ├── harness.rs       # TestHarness (orchestration)
-│   └── flashblocks.rs   # Flashblocks support
+│   └── harness.rs       # TestHarness (orchestration)
 ├── assets/
 │   └── genesis.json     # Base Sepolia genesis
 └── Cargo.toml
@@ -276,13 +273,14 @@ base-reth-test-utils.workspace = true
 Import in tests:
 
 ```rust
-use base_reth_test_utils::TestHarness;
+use base_reth_test_utils::harness::TestHarness;
+use base_reth_test_utils::node::default_launcher;
 
 #[tokio::test]
 async fn my_test() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    let harness = TestHarness::new().await?;
+    let harness = TestHarness::new(default_launcher).await?;
     // Your test logic
 
     Ok(())
@@ -318,6 +316,7 @@ cargo test -p base-reth-test-utils test_harness_setup
 - Snapshot/restore functionality
 - Multi-node network simulation
 - Performance benchmarking utilities
+- Helper builder for Flashblocks
 
 ## References
 
