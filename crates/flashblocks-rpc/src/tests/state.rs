@@ -203,19 +203,16 @@ mod tests {
                 .await
                 .expect("able to build block");
             let target_block_number = previous_tip + 1;
-            for _ in 0..10 {
-                if let Some(block) = self
-                    .provider
-                    .block(BlockHashOrNumber::Number(target_block_number))
-                    .expect("able to load block")
-                {
-                    return block
-                        .try_into_recovered()
-                        .expect("able to recover newly built block");
-                }
-                sleep(Duration::from_millis(SLEEP_TIME)).await;
-            }
-            panic!("new canonical block not found after building payload");
+            
+            let block = self
+                .provider
+                .block(BlockHashOrNumber::Number(target_block_number))
+                .expect("able to load block")
+                .expect("new canonical block should be available after building payload");
+            
+            block
+                .try_into_recovered()
+                .expect("able to recover newly built block")
         }
 
         async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
