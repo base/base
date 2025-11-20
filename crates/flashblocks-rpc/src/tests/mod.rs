@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, Bytes, b256, bytes};
 
-mod framework_test;
+mod rpc;
 mod state;
 
 const BLOCK_INFO_TXN: Bytes = bytes!(
