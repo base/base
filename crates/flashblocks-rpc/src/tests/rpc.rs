@@ -1,19 +1,17 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::{EthApiExt, EthApiOverrideServer};
-    use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
-    use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use std::{str::FromStr, sync::Arc};
+
     use alloy_consensus::Receipt;
     use alloy_eips::BlockNumberOrTag;
-    use alloy_primitives::map::HashMap;
-    use alloy_primitives::{Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes};
+    use alloy_primitives::{
+        Address, B256, Bytes, LogData, TxHash, U256, address, b256, bytes, map::HashMap,
+    };
     use alloy_provider::Provider;
     use alloy_rpc_client::RpcClient;
     use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
     use alloy_rpc_types_engine::PayloadId;
-    use alloy_rpc_types_eth::TransactionInput;
-    use alloy_rpc_types_eth::error::EthRpcErrorCode;
+    use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
     use base_reth_test_utils::harness::TestHarness;
     use eyre::Result;
     use once_cell::sync::OnceCell;
@@ -24,10 +22,15 @@ mod tests {
     use reth_optimism_primitives::OpReceipt;
     use reth_rpc_eth_api::RpcReceipt;
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-    use std::str::FromStr;
-    use std::sync::Arc;
     use tokio::sync::{mpsc, oneshot};
     use tokio_stream::StreamExt;
+
+    use crate::{
+        rpc::{EthApiExt, EthApiOverrideServer},
+        state::FlashblocksState,
+        subscription::{Flashblock, FlashblocksReceiver, Metadata},
+        tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
+    };
 
     pub struct TestSetup {
         sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,

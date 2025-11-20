@@ -1,8 +1,7 @@
 //! Unified test harness combining node, engine API, and flashblocks functionality
 
-use crate::accounts::TestAccounts;
-use crate::engine::{EngineApi, IpcEngine};
-use crate::node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder};
+use std::{sync::Arc, time::Duration};
+
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B256, Bytes, bytes};
 use alloy_provider::{Provider, RootProvider};
@@ -13,15 +12,21 @@ use eyre::{Result, eyre};
 use futures_util::Future;
 use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
-use reth::builder::NodeHandle;
-use reth::providers::{BlockNumReader, BlockReader};
+use reth::{
+    builder::NodeHandle,
+    providers::{BlockNumReader, BlockReader},
+};
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
 use reth_optimism_primitives::OpBlock;
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::time::sleep;
+
+use crate::{
+    accounts::TestAccounts,
+    engine::{EngineApi, IpcEngine},
+    node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
+};
 
 const BLOCK_TIME_SECONDS: u64 = 2;
 const GAS_LIMIT: u64 = 200_000_000;
@@ -179,11 +184,11 @@ impl TestHarness {
 
 #[cfg(test)]
 mod tests {
-    use crate::node::default_launcher;
-
-    use super::*;
     use alloy_primitives::U256;
     use alloy_provider::Provider;
+
+    use super::*;
+    use crate::node::default_launcher;
 
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {

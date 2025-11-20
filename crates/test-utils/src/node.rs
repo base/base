@@ -1,23 +1,28 @@
 //! Local node setup with Base Sepolia chainspec
 
-use crate::engine::EngineApi;
+use std::{any::Any, net::SocketAddr, sync::Arc};
+
 use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_reth_flashblocks_rpc::rpc::{EthApiExt, EthApiOverrideServer};
-use base_reth_flashblocks_rpc::state::FlashblocksState;
-use base_reth_flashblocks_rpc::subscription::{Flashblock, FlashblocksReceiver};
+use base_reth_flashblocks_rpc::{
+    rpc::{EthApiExt, EthApiOverrideServer},
+    state::FlashblocksState,
+    subscription::{Flashblock, FlashblocksReceiver},
+};
 use eyre::Result;
 use futures_util::Future;
 use once_cell::sync::OnceCell;
 use op_alloy_network::Optimism;
-use reth::api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter};
-use reth::args::{DiscoveryArgs, NetworkArgs, RpcServerArgs};
-use reth::builder::{
-    Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
+use reth::{
+    api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
+    args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
+    builder::{
+        Node, NodeBuilder, NodeBuilderWithComponents, NodeConfig, NodeHandle, WithLaunchContext,
+    },
+    core::exit::NodeExitFuture,
+    tasks::TaskManager,
 };
-use reth::core::exit::NodeExitFuture;
-use reth::tasks::TaskManager;
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::DatabaseArguments,
@@ -30,15 +35,12 @@ use reth_node_core::{
     dirs::{DataDirPath, MaybePlatformPath},
 };
 use reth_optimism_chainspec::OpChainSpec;
-use reth_optimism_node::OpNode;
-use reth_optimism_node::args::RollupArgs;
-use reth_provider::CanonStateSubscriptions;
-use reth_provider::providers::BlockchainProvider;
-use std::any::Any;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_provider::{CanonStateSubscriptions, providers::BlockchainProvider};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
+
+use crate::engine::EngineApi;
 
 pub const BASE_CHAIN_ID: u64 = 84532;
 

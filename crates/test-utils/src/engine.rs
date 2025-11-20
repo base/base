@@ -3,20 +3,22 @@
 //! This module provides a typed, type-safe Engine API client based on
 //! reth's OpEngineApiClient trait instead of raw string-based RPC calls.
 
+use std::{marker::PhantomData, time::Duration};
+
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::{ForkchoiceUpdated, PayloadId, PayloadStatus};
 use eyre::Result;
 use jsonrpsee::core::client::SubscriptionClientT;
 use op_alloy_rpc_types_engine::OpExecutionPayloadV4;
-use reth::api::{EngineTypes, PayloadTypes};
-use reth::rpc::types::engine::ForkchoiceState;
+use reth::{
+    api::{EngineTypes, PayloadTypes},
+    rpc::types::engine::ForkchoiceState,
+};
 use reth_optimism_node::OpEngineTypes;
 use reth_optimism_rpc::OpEngineApiClient;
 use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
-use std::marker::PhantomData;
-use std::time::Duration;
 use url::Url;
 
 /// Default JWT secret for testing

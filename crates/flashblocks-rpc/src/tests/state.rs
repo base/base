@@ -1,28 +1,35 @@
 #[cfg(test)]
 mod tests {
-    use crate::rpc::{FlashblocksAPI, PendingBlocksAPI};
-    use crate::state::FlashblocksState;
-    use crate::subscription::{Flashblock, FlashblocksReceiver, Metadata};
-    use crate::tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+    use std::time::Duration;
+
     use alloy_consensus::{Receipt, Transaction};
     use alloy_eips::{BlockHashOrNumber, Encodable2718};
-    use alloy_primitives::map::foldhash::HashMap;
-    use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex};
+    use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex, map::foldhash::HashMap};
     use alloy_rpc_types_engine::PayloadId;
-    use base_reth_test_utils::accounts::TestAccounts;
-    use base_reth_test_utils::harness::TestHarness as BaseHarness;
-    use base_reth_test_utils::node::{LocalNodeProvider, default_launcher};
+    use base_reth_test_utils::{
+        accounts::TestAccounts,
+        harness::TestHarness as BaseHarness,
+        node::{LocalNodeProvider, default_launcher},
+    };
     use op_alloy_consensus::OpDepositReceipt;
     use op_alloy_network::BlockResponse;
-    use reth::chainspec::EthChainSpec;
-    use reth::providers::{AccountReader, BlockNumReader, BlockReader};
-    use reth::transaction_pool::test_utils::TransactionBuilder;
+    use reth::{
+        chainspec::EthChainSpec,
+        providers::{AccountReader, BlockNumReader, BlockReader},
+        transaction_pool::test_utils::TransactionBuilder,
+    };
     use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
     use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
     use reth_provider::{ChainSpecProvider, StateProviderFactory};
     use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-    use std::time::Duration;
     use tokio::time::sleep;
+
+    use crate::{
+        rpc::{FlashblocksAPI, PendingBlocksAPI},
+        state::FlashblocksState,
+        subscription::{Flashblock, FlashblocksReceiver, Metadata},
+        tests::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
+    };
     // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
     // so it can be processed by the state processor
     const SLEEP_TIME: u64 = 10;
