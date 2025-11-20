@@ -169,13 +169,10 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
         let grace_ms = self.config.grace_period_ms;
-
-        // Check if block is empty(only has the system tx)
-        let is_empty_block = latest.transaction_count == 1;
-
+        
         let state = if self.node.is_new_instance {
             HealthState::Healthy
-        } else if block_age_ms >= unhealthy_ms || is_empty_block {
+        } else if block_age_ms >= unhealthy_ms {
             HealthState::Unhealthy
         } else if block_age_ms > grace_ms {
             HealthState::Delayed
