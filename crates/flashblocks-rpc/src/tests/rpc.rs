@@ -40,13 +40,13 @@ mod tests {
             let harness = TestHarness::new(|builder| {
                 let fb_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
 
-                builder
+                let builder = builder
                     .install_exex("flashblocks-canon", {
                         let fb_cell = fb_cell.clone();
                         move |mut ctx| async move {
                             let fb = fb_cell
                                 .get_or_init(|| {
-                                    Arc::new(FlashblocksState::new(ctx.provider().clone()))
+                                    Arc::new(FlashblocksState::new(ctx.provider().clone(), 5))
                                 })
                                 .clone();
                             Ok(async move {
@@ -66,7 +66,7 @@ mod tests {
                     })
                     .extend_rpc_modules(move |ctx| {
                         let fb = fb_cell
-                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone())))
+                            .get_or_init(|| Arc::new(FlashblocksState::new(ctx.provider().clone(), 5)))
                             .clone();
 
                         fb.start();
@@ -87,8 +87,10 @@ mod tests {
                         });
 
                         Ok(())
-                    })
-                    .launch()
+                    });
+
+                let launcher = builder.engine_api_launcher();
+                builder.launch_with(launcher)
             })
             .await?;
 
@@ -326,15 +328,18 @@ mod tests {
         // Querying pending block when it does not exist yet
         let pending_block = provider
             .get_block_by_number(BlockNumberOrTag::Pending)
-            .await?;
-        assert_eq!(pending_block.is_none(), true);
+            .await?
+            .expect("latest block expected");
+
+        assert_eq!(pending_block.number(), latest_block.number());
+        assert_eq!(pending_block.hash(), latest_block.hash());
 
         let base_payload = create_first_payload();
         setup.send_flashblock(base_payload).await?;
 
         // Query pending block after sending the base payload with an empty delta
         let pending_block = provider
-            .get_block_by_number(alloy_eips::BlockNumberOrTag::Pending)
+            .get_block_by_number(BlockNumberOrTag::Pending)
             .await?
             .expect("pending block expected");
 

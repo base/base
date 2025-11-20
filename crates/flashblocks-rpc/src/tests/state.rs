@@ -48,7 +48,7 @@ mod tests {
                 .await
                 .expect("able to launch base harness");
             let provider = node.blockchain_provider();
-            let flashblocks = FlashblocksState::new(provider.clone());
+            let flashblocks = FlashblocksState::new(provider.clone(), 5);
             flashblocks.start();
 
             let genesis_block = provider

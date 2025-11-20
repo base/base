@@ -289,7 +289,7 @@ fn init_flashblocks_state(
     provider: &LocalNodeProvider,
 ) -> Arc<LocalFlashblocksState> {
     cell.get_or_init(|| {
-        let fb = Arc::new(FlashblocksState::new(provider.clone()));
+        let fb = Arc::new(FlashblocksState::new(provider.clone(), 5));
         fb.start();
         fb
     })
