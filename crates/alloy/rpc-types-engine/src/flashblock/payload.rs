@@ -2,7 +2,8 @@
 
 use super::{OpFlashblockPayloadBase, OpFlashblockPayloadDelta};
 use crate::flashblock::metadata::OpFlashblockPayloadMetadata;
-use alloy_primitives::B256;
+use alloy_eips::{Decodable2718, eip2718::Eip2718Result};
+use alloy_primitives::{B256, Bytes};
 use alloy_rpc_types_engine::PayloadId;
 
 /// Flashblock payload.
@@ -38,6 +39,43 @@ impl OpFlashblockPayload {
     /// Returns the first parent hash of this flashblock.
     pub fn parent_hash(&self) -> Option<B256> {
         Some(self.base.as_ref()?.parent_hash)
+    }
+
+    /// Returns the raw transactions in this flashblock.
+    pub fn raw_transactions(&self) -> &[Bytes] {
+        &self.diff.transactions
+    }
+
+    /// Returns an iterator over the decoded transaction in this flashblock.
+    ///
+    /// This iterator will be empty if there are no transactions in this flashblock.
+    pub fn decoded_transaction<T>(&self) -> impl Iterator<Item = Eip2718Result<T>> + '_
+    where
+        T: Decodable2718,
+    {
+        self.raw_transactions().iter().map(|tx| T::decode_2718_exact(tx))
+    }
+
+    /// Recovers transactions from flashblocks lazily.
+    ///
+    /// This is done only when we actually need to build a sequence, avoiding wasted computation.
+    #[cfg(feature = "k256")]
+    pub fn recover_transactions<T>(
+        &self,
+    ) -> impl Iterator<
+        Item = alloy_rlp::Result<
+            alloy_eips::eip2718::WithEncoded<alloy_consensus::transaction::Recovered<T>>,
+            alloy_consensus::crypto::RecoveryError,
+        >,
+    > + '_
+    where
+        T: Decodable2718 + alloy_consensus::transaction::SignerRecoverable,
+    {
+        self.raw_transactions().iter().map(|raw| {
+            let tx = T::decode_2718_exact(raw)
+                .map_err(alloy_consensus::crypto::RecoveryError::from_source)?;
+            tx.try_into_recovered().map(|tx| tx.into_encoded_with(raw.clone()))
+        })
     }
 }
 
