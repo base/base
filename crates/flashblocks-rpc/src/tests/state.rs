@@ -390,6 +390,7 @@ mod tests {
                     logs_bloom: Default::default(),
                     withdrawals_root: Default::default(),
                     transactions: self.transactions.clone(),
+                    blob_gas_used: Default::default(),
                 },
                 metadata: Metadata {
                     block_number: canonical_block_num,

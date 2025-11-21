@@ -308,6 +308,7 @@ mod tests {
                 withdrawals: Vec::new(),
                 logs_bloom: Default::default(),
                 withdrawals_root: Default::default(),
+                blob_gas_used: Default::default(),
             },
             metadata: Metadata {
                 block_number: 1,
