@@ -1,8 +1,11 @@
 //! Receipt types for RPC
 
-use alloy_consensus::{Receipt, ReceiptWithBloom};
+use alloy_consensus::{Receipt, ReceiptWithBloom, TxReceipt};
+use alloy_rpc_types_eth::Log;
 use alloy_serde::OtherFields;
-use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, OpReceiptEnvelope};
+use op_alloy_consensus::{
+    OpDepositReceipt, OpDepositReceiptWithBloom, OpReceipt, OpReceiptEnvelope,
+};
 use serde::{Deserialize, Serialize};
 
 /// OP Transaction Receipt type
@@ -12,7 +15,7 @@ use serde::{Deserialize, Serialize};
 pub struct OpTransactionReceipt {
     /// Regular eth transaction receipt including deposit receipts
     #[serde(flatten)]
-    pub inner: alloy_rpc_types_eth::TransactionReceipt<OpReceiptEnvelope<alloy_rpc_types_eth::Log>>,
+    pub inner: alloy_rpc_types_eth::TransactionReceipt<ReceiptWithBloom<OpReceipt<Log>>>,
     /// L1 block info of the transaction.
     #[serde(flatten)]
     pub l1_block_info: L1BlockInfo,
@@ -200,7 +203,7 @@ impl Eq for L1BlockInfo {}
 
 impl From<OpTransactionReceipt> for OpReceiptEnvelope<alloy_primitives::Log> {
     fn from(value: OpTransactionReceipt) -> Self {
-        let inner_envelope = value.inner.inner;
+        let inner_envelope = value.inner.inner.into();
 
         /// Helper function to convert the inner logs within a [ReceiptWithBloom] from RPC to
         /// consensus types.

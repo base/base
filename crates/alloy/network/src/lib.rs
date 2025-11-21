@@ -8,10 +8,10 @@
 
 pub use alloy_network::*;
 
-use alloy_consensus::{TxEnvelope, TxType, TypedTransaction};
+use alloy_consensus::{ReceiptWithBloom, TxEnvelope, TxType, TypedTransaction};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_rpc_types_eth::AccessList;
-use op_alloy_consensus::{OpTxEnvelope, OpTxType, OpTypedTransaction};
+use op_alloy_consensus::{OpReceipt, OpTxEnvelope, OpTxType, OpTypedTransaction};
 use op_alloy_rpc_types::OpTransactionRequest;
 
 /// Types for an Op-stack network.
@@ -27,7 +27,7 @@ impl Network for Optimism {
 
     type UnsignedTx = op_alloy_consensus::OpTypedTransaction;
 
-    type ReceiptEnvelope = op_alloy_consensus::OpReceiptEnvelope;
+    type ReceiptEnvelope = ReceiptWithBloom<OpReceipt>;
 
     type Header = alloy_consensus::Header;
 

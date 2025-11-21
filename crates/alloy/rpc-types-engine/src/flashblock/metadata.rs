@@ -16,7 +16,57 @@ pub struct OpFlashblockPayloadMetadata {
     pub new_account_balances: BTreeMap<Address, U256>,
     /// Execution receipts for all transactions in the block.
     /// Contains logs, gas usage, and other EVM-level metadata.
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_flashblock_receipts"))]
     pub receipts: BTreeMap<B256, OpReceipt>,
+}
+
+#[cfg(feature = "serde")]
+/// Supports deserializing flashblocks with externally tag receipts for backwards compatibility.
+fn deserialize_flashblock_receipts<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<B256, OpReceipt>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use alloy_consensus::Receipt;
+    use op_alloy_consensus::OpDepositReceipt;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    enum ExternallyTagged {
+        Legacy(Receipt),
+        Eip2930(Receipt),
+        Eip1559(Receipt),
+        Eip7702(Receipt),
+        Deposit(OpDepositReceipt),
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum MaybeExternallyTagged {
+        ExternallyTagged(ExternallyTagged),
+        InternallyTagged(OpReceipt),
+    }
+
+    impl From<MaybeExternallyTagged> for OpReceipt {
+        fn from(value: MaybeExternallyTagged) -> Self {
+            match value {
+                MaybeExternallyTagged::ExternallyTagged(receipt) => match receipt {
+                    ExternallyTagged::Legacy(receipt) => Self::Legacy(receipt),
+                    ExternallyTagged::Eip2930(receipt) => Self::Eip2930(receipt),
+                    ExternallyTagged::Eip1559(receipt) => Self::Eip1559(receipt),
+                    ExternallyTagged::Eip7702(receipt) => Self::Eip7702(receipt),
+                    ExternallyTagged::Deposit(receipt) => Self::Deposit(receipt),
+                },
+                MaybeExternallyTagged::InternallyTagged(receipt) => receipt,
+            }
+        }
+    }
+
+    Ok(BTreeMap::<B256, MaybeExternallyTagged>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(hash, receipt)| (hash, receipt.into()))
+        .collect())
 }
 
 #[cfg(test)]
@@ -135,8 +185,7 @@ mod tests {
             .get("0x0000000000000000000000000000000000000000000000000000000000000000")
             .unwrap();
 
-        // OpReceipt serializes as internally tagged enum
-        assert!(receipt_entry.get("Legacy").is_some());
+        assert_eq!(receipt_entry.get("type").unwrap().as_str().unwrap(), "0x0");
     }
 
     #[test]

@@ -1,15 +1,17 @@
 //! Optimism receipt type for execution and storage.
 
+use core::fmt::Debug;
+
 use super::{OpDepositReceipt, OpTxReceipt};
-use crate::OpTxType;
+use crate::{OpReceiptEnvelope, OpTxType};
 use alloc::vec::Vec;
 use alloy_consensus::{
-    Eip658Value, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom, RlpDecodableReceipt,
-    RlpEncodableReceipt, TxReceipt, Typed2718,
+    Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom,
+    RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
 };
 use alloy_eips::{
     Decodable2718, Encodable2718,
-    eip2718::{Eip2718Result, IsTyped2718},
+    eip2718::{Eip2718Error, Eip2718Result, IsTyped2718},
 };
 use alloy_primitives::{Bloom, Log};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header};
@@ -20,20 +22,26 @@ use alloy_rlp::{BufMut, Decodable, Encodable, Header};
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
-pub enum OpReceipt {
+#[cfg_attr(feature = "serde", serde(tag = "type"))]
+pub enum OpReceipt<T = Log> {
     /// Legacy receipt
-    Legacy(Receipt),
+    #[cfg_attr(feature = "serde", serde(rename = "0x0", alias = "0x00"))]
+    Legacy(Receipt<T>),
     /// EIP-2930 receipt
-    Eip2930(Receipt),
+    #[cfg_attr(feature = "serde", serde(rename = "0x1", alias = "0x01"))]
+    Eip2930(Receipt<T>),
     /// EIP-1559 receipt
-    Eip1559(Receipt),
+    #[cfg_attr(feature = "serde", serde(rename = "0x2", alias = "0x02"))]
+    Eip1559(Receipt<T>),
     /// EIP-7702 receipt
-    Eip7702(Receipt),
+    #[cfg_attr(feature = "serde", serde(rename = "0x4", alias = "0x04"))]
+    Eip7702(Receipt<T>),
     /// Deposit receipt
-    Deposit(OpDepositReceipt),
+    #[cfg_attr(feature = "serde", serde(rename = "0x7e", alias = "0x7E"))]
+    Deposit(OpDepositReceipt<T>),
 }
 
-impl OpReceipt {
+impl<T> OpReceipt<T> {
     /// Returns [`OpTxType`] of the receipt.
     pub const fn tx_type(&self) -> OpTxType {
         match self {
@@ -46,7 +54,7 @@ impl OpReceipt {
     }
 
     /// Returns inner [`Receipt`].
-    pub const fn as_receipt(&self) -> &Receipt {
+    pub const fn as_receipt(&self) -> &Receipt<T> {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -57,7 +65,7 @@ impl OpReceipt {
     }
 
     /// Returns a mutable reference to the inner [`Receipt`].
-    pub const fn as_receipt_mut(&mut self) -> &mut Receipt {
+    pub const fn as_receipt_mut(&mut self) -> &mut Receipt<T> {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -68,7 +76,7 @@ impl OpReceipt {
     }
 
     /// Consumes this and returns the inner [`Receipt`].
-    pub fn into_receipt(self) -> Receipt {
+    pub fn into_receipt(self) -> Receipt<T> {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -79,7 +87,10 @@ impl OpReceipt {
     }
 
     /// Returns length of RLP-encoded receipt fields with the given [`Bloom`] without an RLP header.
-    pub fn rlp_encoded_fields_length(&self, bloom: &Bloom) -> usize {
+    pub fn rlp_encoded_fields_length(&self, bloom: &Bloom) -> usize
+    where
+        T: Encodable,
+    {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -90,7 +101,10 @@ impl OpReceipt {
     }
 
     /// RLP-encodes receipt fields with the given [`Bloom`] without an RLP header.
-    pub fn rlp_encode_fields(&self, bloom: &Bloom, out: &mut dyn BufMut) {
+    pub fn rlp_encode_fields(&self, bloom: &Bloom, out: &mut dyn BufMut)
+    where
+        T: Encodable,
+    {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -101,12 +115,18 @@ impl OpReceipt {
     }
 
     /// Returns RLP header for inner encoding.
-    pub fn rlp_header_inner(&self, bloom: &Bloom) -> Header {
+    pub fn rlp_header_inner(&self, bloom: &Bloom) -> Header
+    where
+        T: Encodable,
+    {
         Header { list: true, payload_length: self.rlp_encoded_fields_length(bloom) }
     }
 
     /// Returns RLP header for inner encoding without bloom.
-    pub fn rlp_header_inner_without_bloom(&self) -> Header {
+    pub fn rlp_header_inner_without_bloom(&self) -> Header
+    where
+        T: Encodable,
+    {
         Header { list: true, payload_length: self.rlp_encoded_fields_length_without_bloom() }
     }
 
@@ -115,7 +135,10 @@ impl OpReceipt {
     pub fn rlp_decode_inner(
         buf: &mut &[u8],
         tx_type: OpTxType,
-    ) -> alloy_rlp::Result<ReceiptWithBloom<Self>> {
+    ) -> alloy_rlp::Result<ReceiptWithBloom<Self>>
+    where
+        T: Decodable,
+    {
         match tx_type {
             OpTxType::Legacy => {
                 let ReceiptWithBloom { receipt, logs_bloom } =
@@ -146,7 +169,10 @@ impl OpReceipt {
     }
 
     /// RLP-encodes receipt fields without an RLP header.
-    pub fn rlp_encode_fields_without_bloom(&self, out: &mut dyn BufMut) {
+    pub fn rlp_encode_fields_without_bloom(&self, out: &mut dyn BufMut)
+    where
+        T: Encodable,
+    {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -171,7 +197,10 @@ impl OpReceipt {
     }
 
     /// Returns length of RLP-encoded receipt fields without an RLP header.
-    pub fn rlp_encoded_fields_length_without_bloom(&self) -> usize {
+    pub fn rlp_encoded_fields_length_without_bloom(&self) -> usize
+    where
+        T: Encodable,
+    {
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -195,7 +224,10 @@ impl OpReceipt {
     pub fn rlp_decode_inner_without_bloom(
         buf: &mut &[u8],
         tx_type: OpTxType,
-    ) -> alloy_rlp::Result<Self> {
+    ) -> alloy_rlp::Result<Self>
+    where
+        T: Decodable,
+    {
         let header = Header::decode(buf)?;
         if !header.list {
             return Err(alloy_rlp::Error::UnexpectedString);
@@ -235,7 +267,7 @@ impl OpReceipt {
     }
 }
 
-impl Eip2718EncodableReceipt for OpReceipt {
+impl<T: Encodable> Eip2718EncodableReceipt for OpReceipt<T> {
     fn eip2718_encoded_length_with_bloom(&self, bloom: &Bloom) -> usize {
         !self.tx_type().is_legacy() as usize + self.rlp_header_inner(bloom).length_with_payload()
     }
@@ -249,7 +281,18 @@ impl Eip2718EncodableReceipt for OpReceipt {
     }
 }
 
-impl RlpEncodableReceipt for OpReceipt {
+impl<T: Decodable> Eip2718DecodableReceipt for OpReceipt<T> {
+    fn typed_decode_with_bloom(ty: u8, buf: &mut &[u8]) -> Eip2718Result<ReceiptWithBloom<Self>> {
+        let tx_type = OpTxType::try_from(ty).map_err(|_| Eip2718Error::UnexpectedType(ty))?;
+        Ok(Self::rlp_decode_inner(buf, tx_type)?)
+    }
+
+    fn fallback_decode_with_bloom(buf: &mut &[u8]) -> Eip2718Result<ReceiptWithBloom<Self>> {
+        Ok(Self::rlp_decode_inner(buf, OpTxType::Legacy)?)
+    }
+}
+
+impl<T: Encodable> RlpEncodableReceipt for OpReceipt<T> {
     fn rlp_encoded_length_with_bloom(&self, bloom: &Bloom) -> usize {
         let mut len = self.eip2718_encoded_length_with_bloom(bloom);
         if !self.tx_type().is_legacy() {
@@ -272,7 +315,7 @@ impl RlpEncodableReceipt for OpReceipt {
     }
 }
 
-impl RlpDecodableReceipt for OpReceipt {
+impl<T: Decodable> RlpDecodableReceipt for OpReceipt<T> {
     fn rlp_decode_with_bloom(buf: &mut &[u8]) -> alloy_rlp::Result<ReceiptWithBloom<Self>> {
         let header_buf = &mut &**buf;
         let header = Header::decode(header_buf)?;
@@ -297,7 +340,7 @@ impl RlpDecodableReceipt for OpReceipt {
     }
 }
 
-impl Encodable2718 for OpReceipt {
+impl<T: Encodable + Send + Sync> Encodable2718 for OpReceipt<T> {
     fn encode_2718_len(&self) -> usize {
         !self.tx_type().is_legacy() as usize
             + self.rlp_header_inner_without_bloom().length_with_payload()
@@ -312,7 +355,7 @@ impl Encodable2718 for OpReceipt {
     }
 }
 
-impl Decodable2718 for OpReceipt {
+impl<T: Decodable> Decodable2718 for OpReceipt<T> {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
         Ok(Self::rlp_decode_inner_without_bloom(buf, OpTxType::try_from(ty)?)?)
     }
@@ -322,7 +365,7 @@ impl Decodable2718 for OpReceipt {
     }
 }
 
-impl Encodable for OpReceipt {
+impl<T: Encodable + Send + Sync> Encodable for OpReceipt<T> {
     fn encode(&self, out: &mut dyn BufMut) {
         self.network_encode(out);
     }
@@ -332,14 +375,14 @@ impl Encodable for OpReceipt {
     }
 }
 
-impl Decodable for OpReceipt {
+impl<T: Decodable> Decodable for OpReceipt<T> {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         Ok(Self::network_decode(buf)?)
     }
 }
 
-impl TxReceipt for OpReceipt {
-    type Log = Log;
+impl<T: Send + Sync + Clone + Debug + Eq + AsRef<Log>> TxReceipt for OpReceipt<T> {
+    type Log = T;
 
     fn status_or_post_state(&self) -> Eip658Value {
         self.as_receipt().status_or_post_state()
@@ -357,7 +400,7 @@ impl TxReceipt for OpReceipt {
         self.as_receipt().cumulative_gas_used()
     }
 
-    fn logs(&self) -> &[Log] {
+    fn logs(&self) -> &[Self::Log] {
         self.as_receipt().logs()
     }
 
@@ -372,19 +415,19 @@ impl TxReceipt for OpReceipt {
     }
 }
 
-impl Typed2718 for OpReceipt {
+impl<T> Typed2718 for OpReceipt<T> {
     fn ty(&self) -> u8 {
         self.tx_type().into()
     }
 }
 
-impl IsTyped2718 for OpReceipt {
+impl<T> IsTyped2718 for OpReceipt<T> {
     fn is_type(type_id: u8) -> bool {
         <OpTxType as IsTyped2718>::is_type(type_id)
     }
 }
 
-impl OpTxReceipt for OpReceipt {
+impl<T: Send + Sync + Clone + Debug + Eq + AsRef<Log>> OpTxReceipt for OpReceipt<T> {
     fn deposit_nonce(&self) -> Option<u64> {
         match self {
             Self::Deposit(receipt) => receipt.deposit_nonce,
@@ -412,6 +455,19 @@ impl From<super::OpReceiptEnvelope> for OpReceipt {
                 deposit_receipt_version: receipt.receipt.deposit_receipt_version,
                 inner: receipt.receipt.inner,
             }),
+        }
+    }
+}
+
+impl<T> From<ReceiptWithBloom<OpReceipt<T>>> for OpReceiptEnvelope<T> {
+    fn from(value: ReceiptWithBloom<OpReceipt<T>>) -> Self {
+        let (receipt, logs_bloom) = value.into_components();
+        match receipt {
+            OpReceipt::Legacy(receipt) => Self::Legacy(ReceiptWithBloom { receipt, logs_bloom }),
+            OpReceipt::Eip2930(receipt) => Self::Eip2930(ReceiptWithBloom { receipt, logs_bloom }),
+            OpReceipt::Eip1559(receipt) => Self::Eip1559(ReceiptWithBloom { receipt, logs_bloom }),
+            OpReceipt::Eip7702(receipt) => Self::Eip7702(ReceiptWithBloom { receipt, logs_bloom }),
+            OpReceipt::Deposit(receipt) => Self::Deposit(ReceiptWithBloom { receipt, logs_bloom }),
         }
     }
 }
@@ -601,7 +657,7 @@ mod tests {
         );
 
         // Deposit Receipt (post-regolith)
-        let expected = ReceiptWithBloom {
+        let expected: ReceiptWithBloom<OpReceipt> = ReceiptWithBloom {
             receipt: OpReceipt::Deposit(OpDepositReceipt {
                 inner: Receipt {
                     status: Eip658Value::Eip658(true),
@@ -629,7 +685,7 @@ mod tests {
         );
 
         // Deposit Receipt (post-canyon)
-        let expected = ReceiptWithBloom {
+        let expected: ReceiptWithBloom<OpReceipt> = ReceiptWithBloom {
             receipt: OpReceipt::Deposit(OpDepositReceipt {
                 inner: Receipt {
                     status: Eip658Value::Eip658(true),
@@ -683,7 +739,7 @@ mod tests {
 
     #[test]
     fn test_encode_2718_length() {
-        let receipt = ReceiptWithBloom {
+        let receipt: ReceiptWithBloom<OpReceipt> = ReceiptWithBloom {
             receipt: OpReceipt::Eip1559(Receipt {
                 status: Eip658Value::Eip658(true),
                 cumulative_gas_used: 21000,
@@ -700,7 +756,7 @@ mod tests {
         );
 
         // Test for legacy receipt as well
-        let legacy_receipt = ReceiptWithBloom {
+        let legacy_receipt: ReceiptWithBloom<OpReceipt> = ReceiptWithBloom {
             receipt: OpReceipt::Legacy(Receipt {
                 status: Eip658Value::Eip658(true),
                 cumulative_gas_used: 21000,
