@@ -26,7 +26,7 @@ impl<'tx, S: OpProofsStore> OpProofsTrieCursorFactory<'tx, S> {
 
 impl<'tx, S> TrieCursorFactory for OpProofsTrieCursorFactory<'tx, S>
 where
-    S: OpProofsStore + 'tx,
+    for<'a> S: OpProofsStore + 'tx,
 {
     type AccountTrieCursor<'a>
         = OpProofsTrieCursor<S::AccountTrieCursor<'a>>
