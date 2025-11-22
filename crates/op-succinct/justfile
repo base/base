@@ -142,7 +142,7 @@ deploy-mock-verifier env_file=".env":
     cd contracts
 
     VERIFY=""
-    if [ $ETHERSCAN_API_KEY != "" ]; then
+    if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     
@@ -155,7 +155,7 @@ deploy-mock-verifier env_file=".env":
 # Deploy the OPSuccinct L2 Output Oracle
 deploy-oracle env_file=".env" *features='':
     #!/usr/bin/env bash
-    set -euo pipefail
+    set -aeo pipefail
     
     # First fetch rollup config using the env file
     if [ -z "{{features}}" ]; then
@@ -172,14 +172,14 @@ deploy-oracle env_file=".env" *features='':
     cd contracts
 
     VERIFY=""
-    if [ "$ETHERSCAN_API_KEY" != "" ]; then
+    if [ -n "${ETHERSCAN_API_KEY:-}" ]; then
       VERIFY="--verify --verifier etherscan --etherscan-api-key $ETHERSCAN_API_KEY"
     fi
     
     ENV_VARS=""
     if [ -n "${ADMIN_PK:-}" ]; then ENV_VARS="$ENV_VARS ADMIN_PK=$ADMIN_PK"; fi
     if [ -n "${DEPLOY_PK:-}" ]; then ENV_VARS="$ENV_VARS DEPLOY_PK=$DEPLOY_PK"; fi
-    
+
     # Run the forge deployment script
     $ENV_VARS forge script script/validity/OPSuccinctDeployer.s.sol:OPSuccinctDeployer \
         --rpc-url $L1_RPC \
@@ -404,3 +404,24 @@ e2e-tests target="":
    cd fault-proof
 
    cargo t $test_target --release --features e2e -- --test-threads=1 --nocapture
+
+forge-build *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    cd contracts
+
+    forge build {{ARGS}}
+
+    # Forge build compiles only the src/ graph; the scripts/ graph is compiled by `forge script`.
+    # On the first invocation, `forge script` may compile a small set of dependencies.
+    # To avoid paying this cost in every CI test, we pre‑warm the script cache once here.
+    #
+    # Notes:
+    # - A single `forge script <any script> --skip-simulation` is sufficient to compile the script
+    #   dependency graph into the cache.
+    forge script "script/validity/DeployMockVerifier.s.sol" \
+    --skip "/**/test/**" \
+    --sig "idonotexist()" \
+    --skip-simulation \
+    2>/dev/null || true

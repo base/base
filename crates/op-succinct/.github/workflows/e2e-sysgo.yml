@@ -1,0 +1,68 @@
+name: Sysgo E2E Tests
+
+on:
+  push:
+    tags:
+      - v[0-9]+.*
+    branches:
+      - "release/*"
+      - main
+  merge_group:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
+
+jobs:
+  e2e-sysgo-tests:
+    name: Run sysgo E2E Tests (${{ matrix.mode }})
+    runs-on:
+      - runs-on
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ["validity"]
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly-d592b3e0f142d694c3be539702704a4a73238773
+          
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            bindings
+
+      - name: Install just
+        uses: extractions/setup-just@v3
+
+      - name: Setup Go 1.23.8
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.8'
+          cache-dependency-path: |
+            tests/go.sum
+            tests/optimism/go.sum
+
+      - name: Run Sysgo E2E Tests
+        working-directory: tests
+        run: |
+          echo "Running tests..."
+          just test-e2e-sysgo "${{ matrix.mode }}"
