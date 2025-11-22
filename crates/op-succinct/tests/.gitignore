@@ -1,0 +1,7 @@
+devnets/specs/*
+optimism-package
+proofs
+actions
+
+artifacts/forge-artifacts
+artifacts/src

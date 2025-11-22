@@ -1,0 +1,51 @@
+SOURCE := source_directory()
+ROOT := parent_directory(SOURCE)
+
+test-e2e-sysgo BINARY FILTER="" : unzip-contract-artifacts
+    #!/bin/bash
+
+    if ! [ -z "{{FILTER}}" ]; then
+        export FILTER="-run {{FILTER}}"
+    fi
+
+    export OP_DEPLOYER_ARTIFACTS="{{SOURCE}}/artifacts/src/forge-artifacts"
+    export DISABLE_OP_E2E_LEGACY=true
+
+    if [ "{{BINARY}}" = "validity" ]; then
+        export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
+        export DEVSTACK_ORCHESTRATOR=sysgo
+        echo "Building validity proposer..."
+        cd .. && cargo build --bin validity --release
+    else
+        echo "Invalid BINARY specified. Must be either 'validity' or 'fault-proof'."
+        exit 1
+    fi
+
+    # Run the test with count=1 to avoid caching the test results.
+    cd {{SOURCE}} && go test -count=1 -timeout 40m -v ./e2e $FILTER
+
+unzip-contract-artifacts DEST_DIR="":
+    #!/bin/bash
+    set -euo pipefail
+
+    DEST_DIR="{{DEST_DIR}}"
+    if [ -z "$DEST_DIR" ]; then
+        DEST_DIR="{{SOURCE}}/artifacts/src"
+    fi
+
+    ARCHIVE="{{SOURCE}}/artifacts/compressed/artifacts.tzst"
+    if [ ! -f "$ARCHIVE" ]; then
+        echo "Missing artifact at $ARCHIVE. Run 'just update-packages' first." >&2
+        exit 1
+    fi
+
+    mkdir -p "$DEST_DIR"
+    zstd -d -c "$ARCHIVE" | tar -x -C "$DEST_DIR"
+
+update-packages: submodule
+    #!/bin/bash
+    cd {{SOURCE}}/optimism/op-deployer && just build-contracts copy-contract-artifacts
+    cp {{SOURCE}}/optimism/op-deployer/pkg/deployer/artifacts/forge-artifacts/artifacts.tzst {{SOURCE}}/artifacts/compressed/artifacts.tzst
+
+submodule:
+    git submodule update --init --recursive
