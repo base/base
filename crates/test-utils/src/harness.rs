@@ -25,7 +25,7 @@ use tokio::time::sleep;
 use crate::{
     accounts::TestAccounts,
     engine::{EngineApi, IpcEngine},
-    node::{default_launcher, LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
+    node::{default_launcher, FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
     tracing::init_silenced_tracing,
 };
 
@@ -184,6 +184,7 @@ impl TestHarness {
 
 pub struct FlashblocksHarness {
     inner: TestHarness,
+    parts: FlashblocksParts,
 }
 
 impl FlashblocksHarness {
@@ -197,20 +198,18 @@ impl FlashblocksHarness {
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
     {
         init_silenced_tracing();
-        let node = LocalNode::new_flashblocks(launcher).await?;
+        let flash_node = FlashblocksLocalNode::with_launcher(launcher).await?;
+        let (node, parts) = flash_node.into_parts();
         let inner = TestHarness::from_node(node).await?;
-        Ok(Self { inner })
+        Ok(Self { inner, parts })
     }
 
     pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
-        self.inner
-            .node
-            .flashblocks_state()
-            .expect("flashblocks harness must have flashblocks state")
+        self.parts.state()
     }
 
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.inner.node.send_flashblock(flashblock).await
+        self.parts.send(flashblock).await
     }
 
     pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>

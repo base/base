@@ -60,13 +60,25 @@ pub struct LocalNode {
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _task_manager: TaskManager,
-    flashblocks: Option<FlashblocksParts>,
 }
 
 #[derive(Clone)]
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     state: Arc<LocalFlashblocksState>,
+}
+
+impl FlashblocksParts {
+    pub fn state(&self) -> Arc<LocalFlashblocksState> {
+        self.state.clone()
+    }
+
+    pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
+        rx.await.map_err(|err| eyre::eyre!(err))?;
+        Ok(())
+    }
 }
 
 struct FlashblocksSetup {
@@ -95,18 +107,6 @@ impl LocalNode {
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
     {
         let (node, _) = Self::build_with_kind(launcher, LocalNodeKind::Base).await?;
-        Ok(node)
-    }
-
-    pub async fn new_flashblocks<L, LRet>(
-        launcher: L,
-    ) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        let (node, flashblocks) = Self::build_with_kind(launcher, LocalNodeKind::Flashblocks).await?;
-        flashblocks.expect("flashblocks parts initialized");
         Ok(node)
     }
 
@@ -257,7 +257,6 @@ impl LocalNode {
                 .expect("FlashblocksState should be initialized during node launch")
                 .clone(),
         });
-        let flashblocks_clone = flashblocks_parts.clone();
 
         Ok((
             Self {
@@ -267,7 +266,6 @@ impl LocalNode {
                 _node_exit_future: node_exit_future,
                 _node: Box::new(node_handle),
                 _task_manager: tasks,
-                flashblocks: flashblocks_clone,
             },
             flashblocks_parts,
         ))
@@ -313,21 +311,6 @@ impl LocalNode {
         self.provider.clone()
     }
 
-    pub(crate) fn flashblocks_state(&self) -> Option<Arc<LocalFlashblocksState>> {
-        self.flashblocks.as_ref().map(|parts| parts.state.clone())
-    }
-
-    pub(crate) async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        let parts = self
-            .flashblocks
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("flashblocks not configured for this node"))?;
-
-        let (tx, rx) = oneshot::channel();
-        parts.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
-        rx.await.map_err(|err| eyre::eyre!(err))?;
-        Ok(())
-    }
 }
 
 fn init_flashblocks_state(
@@ -340,4 +323,41 @@ fn init_flashblocks_state(
         fb
     })
     .clone()
+}
+
+pub struct FlashblocksLocalNode {
+    node: LocalNode,
+    parts: FlashblocksParts,
+}
+
+impl FlashblocksLocalNode {
+    pub async fn new() -> Result<Self> {
+        Self::with_launcher(default_launcher).await
+    }
+
+    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        let (node, parts) = LocalNode::build_with_kind(launcher, LocalNodeKind::Flashblocks).await?;
+        let parts = parts.expect("flashblocks parts initialized");
+        Ok(Self { node, parts })
+    }
+
+    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+        self.parts.state()
+    }
+
+    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
+        self.parts.send(flashblock).await
+    }
+
+    pub fn into_parts(self) -> (LocalNode, FlashblocksParts) {
+        (self.node, self.parts)
+    }
+
+    pub fn as_node(&self) -> &LocalNode {
+        &self.node
+    }
 }
