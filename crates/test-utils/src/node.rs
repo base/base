@@ -88,7 +88,6 @@ struct FlashblocksNodeExtensionsInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
-    provider_cell: Arc<OnceCell<LocalNodeProvider>>,
     process_canonical: bool,
 }
 
@@ -99,7 +98,6 @@ impl FlashblocksNodeExtensions {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
             fb_cell: Arc::new(OnceCell::new()),
-            provider_cell: Arc::new(OnceCell::new()),
             process_canonical,
         };
         Self { inner: Arc::new(inner) }
@@ -107,20 +105,17 @@ impl FlashblocksNodeExtensions {
 
     fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let fb_cell = self.inner.fb_cell.clone();
-        let provider_cell = self.inner.provider_cell.clone();
         let receiver = self.inner.receiver.clone();
         let process_canonical = self.inner.process_canonical;
 
         let fb_cell_for_exex = fb_cell.clone();
-        let provider_cell_for_exex = provider_cell.clone();
 
         builder
             .install_exex("flashblocks-canon", move |mut ctx| {
                 let fb_cell = fb_cell_for_exex.clone();
-                let provider_cell = provider_cell_for_exex.clone();
                 let process_canonical = process_canonical;
                 async move {
-                    let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
+                    let provider = ctx.provider().clone();
                     let fb = init_flashblocks_state(&fb_cell, &provider);
                     Ok(async move {
                         while let Some(note) = ctx.notifications.try_next().await? {
@@ -143,20 +138,16 @@ impl FlashblocksNodeExtensions {
             })
             .extend_rpc_modules(move |ctx| {
                 let fb_cell = fb_cell.clone();
-                let provider_cell = provider_cell.clone();
-                let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
+                let provider = ctx.provider().clone();
                 let fb = init_flashblocks_state(&fb_cell, &provider);
 
-                let provider_for_task = provider.clone();
                 let mut canon_stream = tokio_stream::wrappers::BroadcastStream::new(
                     ctx.provider().subscribe_to_canonical_state(),
                 );
                 tokio::spawn(async move {
                     use tokio_stream::StreamExt;
                     while let Some(Ok(notification)) = canon_stream.next().await {
-                        provider_for_task
-                            .canonical_in_memory_state()
-                            .notify_canon_state(notification);
+                        provider.canonical_in_memory_state().notify_canon_state(notification);
                     }
                 });
                 let api_ext = EthApiExt::new(
