@@ -12,7 +12,7 @@ use base_reth_flashblocks_rpc::{
     subscription::{Flashblock, Metadata},
 };
 use base_reth_test_utils::{
-    accounts::TestAccounts, harness::FlashblocksHarness, node::LocalNodeProvider,
+    accounts::TestAccounts, flashblocks_harness::FlashblocksHarness, node::LocalNodeProvider,
 };
 use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use op_alloy_consensus::OpDepositReceipt;

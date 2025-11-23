@@ -211,7 +211,7 @@ Each account includes:
 Use `FlashblocksHarness` when you need `send_flashblock` and access to the in-memory pending state.
 
 ```rust
-use base_reth_test_utils::harness::FlashblocksHarness;
+use base_reth_test_utils::flashblocks_harness::FlashblocksHarness;
 
 #[tokio::test]
 async fn test_flashblocks() -> eyre::Result<()> {

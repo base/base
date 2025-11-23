@@ -13,7 +13,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
-use base_reth_test_utils::harness::FlashblocksHarness;
+use base_reth_test_utils::flashblocks_harness::FlashblocksHarness;
 use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;

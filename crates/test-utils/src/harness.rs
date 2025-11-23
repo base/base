@@ -1,13 +1,12 @@
-//! Unified test harness combining node and engine helpers, plus an optional flashblocks adapter.
+//! Unified test harness combining node and engine helpers, plus optional flashblocks adapter.
 
-use std::{ops::Deref, sync::Arc, time::Duration};
+use std::time::Duration;
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B64, B256, Bytes, bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
-use base_reth_flashblocks_rpc::subscription::Flashblock;
 use eyre::{Result, eyre};
 use futures_util::Future;
 use op_alloy_network::Optimism;
@@ -25,10 +24,7 @@ use tokio::time::sleep;
 use crate::{
     accounts::TestAccounts,
     engine::{EngineApi, IpcEngine},
-    node::{
-        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, LocalNode,
-        LocalNodeProvider, OpAddOns, OpBuilder, default_launcher,
-    },
+    node::{LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher},
     tracing::init_silenced_tracing,
 };
 
@@ -62,7 +58,7 @@ impl TestHarness {
         Self::from_node(node).await
     }
 
-    async fn from_node(node: LocalNode) -> Result<Self> {
+    pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
 
@@ -182,79 +178,6 @@ impl TestHarness {
             .expect("able to load canonical block")
             .expect("canonical block exists");
         BlockT::try_into_recovered(block).expect("able to recover canonical block")
-    }
-}
-
-pub struct FlashblocksHarness {
-    inner: TestHarness,
-    parts: FlashblocksParts,
-}
-
-impl FlashblocksHarness {
-    pub async fn new() -> Result<Self> {
-        Self::with_launcher(default_launcher).await
-    }
-
-    /// Same as `new` but canonical block processing is left to the test, which is useful when
-    /// reproducing races or reorg scenarios that require deterministic sequencing.
-    pub async fn manual_canonical() -> Result<Self> {
-        Self::manual_canonical_with_launcher(default_launcher).await
-    }
-
-    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::with_launcher(launcher).await?;
-        Self::from_flashblocks_node(flash_node).await
-    }
-
-    pub async fn manual_canonical_with_launcher<L, LRet>(launcher: L) -> Result<Self>
-    where
-        L: FnOnce(OpBuilder) -> LRet,
-        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
-    {
-        init_silenced_tracing();
-        let flash_node = FlashblocksLocalNode::with_manual_canonical_launcher(launcher).await?;
-        Self::from_flashblocks_node(flash_node).await
-    }
-
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
-        self.parts.state()
-    }
-
-    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.parts.send(flashblock).await
-    }
-
-    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Flashblock>,
-    {
-        for flashblock in flashblocks {
-            self.send_flashblock(flashblock).await?;
-        }
-        Ok(())
-    }
-
-    pub fn into_inner(self) -> TestHarness {
-        self.inner
-    }
-
-    async fn from_flashblocks_node(flash_node: FlashblocksLocalNode) -> Result<Self> {
-        let (node, parts) = flash_node.into_parts();
-        let inner = TestHarness::from_node(node).await?;
-        Ok(Self { inner, parts })
-    }
-}
-
-impl Deref for FlashblocksHarness {
-    type Target = TestHarness;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
     }
 }
 
