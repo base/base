@@ -3,7 +3,7 @@
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
-use alloy_primitives::{B256, Bytes, bytes};
+use alloy_primitives::{B256, B64, Bytes, bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -14,7 +14,7 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 use reth::{
     builder::NodeHandle,
-    providers::{BlockNumReader, BlockReader},
+    providers::{BlockNumReader, BlockReader, ChainSpecProvider},
 };
 use reth_e2e_test_utils::Adapter;
 use reth_optimism_node::OpNode;
@@ -95,6 +95,12 @@ impl TestHarness {
             latest_block.header.parent_beacon_block_root.unwrap_or(B256::ZERO);
         let next_timestamp = latest_block.header.timestamp + BLOCK_TIME_SECONDS;
 
+        let min_base_fee = latest_block.header.base_fee_per_gas.unwrap_or_default();
+        let chain_spec = self.node.blockchain_provider().chain_spec();
+        let base_fee_params = chain_spec.base_fee_params_at_timestamp(next_timestamp);
+        let eip_1559_params = ((base_fee_params.max_change_denominator as u64) << 32)
+            | (base_fee_params.elasticity_multiplier as u64);
+
         let payload_attributes = OpPayloadAttributes {
             payload_attributes: PayloadAttributes {
                 timestamp: next_timestamp,
@@ -105,6 +111,8 @@ impl TestHarness {
             transactions: Some(transactions),
             gas_limit: Some(GAS_LIMIT),
             no_tx_pool: Some(true),
+            min_base_fee: Some(min_base_fee),
+            eip_1559_params: Some(B64::from(eip_1559_params)),
             ..Default::default()
         };
 
