@@ -250,7 +250,8 @@ test-utils/
 │   ├── accounts.rs      # Test account definitions
 │   ├── node.rs          # LocalNode (EL wrapper)
 │   ├── engine.rs        # EngineApi (CL wrapper)
-│   └── harness.rs       # TestHarness (orchestration)
+│   ├── harness.rs             # TestHarness (orchestration)
+│   └── flashblocks_harness.rs # FlashblocksHarness + helpers
 ├── assets/
 │   └── genesis.json     # Base Sepolia genesis
 └── Cargo.toml
