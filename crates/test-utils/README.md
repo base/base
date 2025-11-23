@@ -90,12 +90,11 @@ async fn test_harness() -> eyre::Result<()> {
     let txs: Vec<Bytes> = vec![/* signed transaction bytes */];
     harness.build_block_from_transactions(txs).await?;
 
-    // Send flashblocks for pending state testing
-    harness.send_flashblock(flashblock).await?;
-
     Ok(())
 }
 ```
+
+> Need pending-state testing? Use `FlashblocksHarness` (see Flashblocks section below) to gain `send_flashblock` helpers.
 
 **Key Methods:**
 - `new()` - Create new harness with node, engine, and accounts
@@ -103,8 +102,6 @@ async fn test_harness() -> eyre::Result<()> {
 - `accounts()` - Access test accounts
 - `advance_chain(n)` - Build N empty blocks
 - `build_block_from_transactions(txs)` - Build block with specific transactions (auto-prepends the L1 block info deposit)
-- `send_flashblock(fb)` - Send a single flashblock to the node for pending state processing
-- `send_flashblocks(iter)` - Convenience helper that sends multiple flashblocks sequentially
 
 **Block Building Process:**
 1. Fetches latest block header from provider (no local state tracking)
@@ -120,32 +117,35 @@ async fn test_harness() -> eyre::Result<()> {
 In-process Optimism node with Base Sepolia configuration.
 
 ```rust
-use base_reth_test_utils::node::{LocalNode, default_launcher};
+use base_reth_test_utils::node::LocalNode;
 
 #[tokio::test]
 async fn test_node() -> eyre::Result<()> {
     let node = LocalNode::new(default_launcher).await?;
 
-    // Get provider
     let provider = node.provider()?;
-
-    // Get Engine API
     let engine = node.engine_api()?;
-
-    // Send flashblocks
-    node.send_flashblock(flashblock).await?;
 
     Ok(())
 }
 ```
 
-**Features:**
+**Features (base):**
 - Base Sepolia chain configuration
 - Disabled P2P discovery (isolated testing)
 - Random unused ports (parallel test safety)
 - HTTP RPC server at `node.http_api_addr`
 - Engine API IPC at `node.engine_ipc_path`
-- Flashblocks-canon ExEx integration
+
+For flashblocks-enabled nodes, use `FlashblocksLocalNode`:
+
+```rust
+use base_reth_test_utils::node::FlashblocksLocalNode;
+
+let node = FlashblocksLocalNode::new().await?;
+let pending_state = node.flashblocks_state();
+node.send_flashblock(flashblock).await?;
+```
 
 **Note:** Most tests should use `TestHarness` instead of `LocalNode` directly.
 
@@ -228,30 +228,7 @@ async fn test_flashblocks() -> eyre::Result<()> {
 
 `FlashblocksHarness` derefs to the base `TestHarness`, so you can keep using methods like `provider()`, `build_block_from_transactions`, etc.
 
-Test flashblocks delivery without WebSocket connections. Flashblocks can be manually constructed and sent via the harness.
-
-```rust
-use base_reth_flashblocks_rpc::subscription::Flashblock;
-
-#[tokio::test]
-async fn test_flashblocks() -> eyre::Result<()> {
-    let harness = TestHarness::new().await?;
-
-    // Construct a Flashblock manually
-    // Use base_reth_flashblocks_rpc imports to build the struct
-    let flashblock = Flashblock { ... };
-
-    harness.send_flashblock(flashblock).await?;
-
-    Ok(())
-}
-```
-
-**Via TestHarness:**
-```rust
-let harness = TestHarness::new().await?;
-harness.send_flashblock(flashblock).await?;
-```
+Test flashblocks delivery without WebSocket connections by constructing payloads and sending them through `FlashblocksHarness` (or the lower-level `FlashblocksLocalNode`).
 
 ## Configuration Constants
 

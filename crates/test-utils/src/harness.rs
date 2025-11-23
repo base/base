@@ -3,7 +3,7 @@
 use std::{ops::Deref, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
-use alloy_primitives::{B256, B64, Bytes, bytes};
+use alloy_primitives::{B64, B256, Bytes, bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -25,7 +25,10 @@ use tokio::time::sleep;
 use crate::{
     accounts::TestAccounts,
     engine::{EngineApi, IpcEngine},
-    node::{default_launcher, FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
+    node::{
+        FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, LocalNode,
+        LocalNodeProvider, OpAddOns, OpBuilder, default_launcher,
+    },
     tracing::init_silenced_tracing,
 };
 
