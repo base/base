@@ -15,8 +15,11 @@ This crate provides reusable testing utilities for integration tests across the 
 ## Quick Start
 
 ```rust
-use base_reth_test_utils::harness::TestHarness;
-use base_reth_test_utils::node::default_launcher;
+use base_reth_test_utils::{
+    harness::TestHarness,
+    node::default_launcher,
+    tracing::init_silenced_tracing,
+};
 
 #[tokio::test]
 async fn test_example() -> eyre::Result<()> {
@@ -278,7 +281,7 @@ use base_reth_test_utils::node::default_launcher;
 
 #[tokio::test]
 async fn my_test() -> eyre::Result<()> {
-    reth_tracing::init_test_tracing();
+    init_silenced_tracing();
 
     let harness = TestHarness::new(default_launcher).await?;
     // Your test logic

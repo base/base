@@ -26,6 +26,7 @@ use crate::{
     accounts::TestAccounts,
     engine::{EngineApi, IpcEngine},
     node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
+    tracing::init_silenced_tracing,
 };
 
 const BLOCK_TIME_SECONDS: u64 = 2;
@@ -49,6 +50,7 @@ impl TestHarness {
         L: FnOnce(OpBuilder) -> LRet,
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
     {
+        init_silenced_tracing();
         let node = LocalNode::new(launcher).await?;
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
@@ -200,7 +202,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
-        reth_tracing::init_test_tracing();
         let harness = TestHarness::new(default_launcher).await?;
 
         assert_eq!(harness.accounts().alice.name, "Alice");

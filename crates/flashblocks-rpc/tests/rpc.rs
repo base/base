@@ -13,7 +13,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
-use base_reth_test_utils::{harness::TestHarness, node::default_launcher};
+use base_reth_test_utils::{harness::TestHarness, node::default_launcher, tracing::init_silenced_tracing};
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -30,6 +30,7 @@ struct TestSetup {
 
 impl TestSetup {
     async fn new() -> Result<Self> {
+        init_silenced_tracing();
         let harness = TestHarness::new(default_launcher).await?;
         Ok(Self { harness })
     }
@@ -261,8 +262,7 @@ fn create_second_payload() -> Flashblock {
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     let latest_block = provider
@@ -309,8 +309,7 @@ async fn test_get_pending_block() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_balance_pending() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -325,8 +324,7 @@ async fn test_get_balance_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_by_hash_pending() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     assert!(provider.get_transaction_by_hash(DEPOSIT_TX_HASH).await?.is_none());
@@ -347,8 +345,7 @@ async fn test_get_transaction_by_hash_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_receipt_pending() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     let receipt = provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?;
@@ -369,8 +366,7 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_count() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
@@ -386,8 +382,7 @@ async fn test_get_transaction_count() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_call() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // We ensure that eth_call will succeed because we are on plain state
@@ -458,8 +453,7 @@ async fn test_eth_call() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_estimate_gas() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // We ensure that eth_estimate_gas will succeed because we are on plain state
@@ -502,8 +496,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_simulate_v1() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
     setup.send_test_payloads().await?;
 
@@ -565,8 +558,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
 
     setup.send_flashblock(create_first_payload()).await?;
 
@@ -586,8 +578,7 @@ async fn test_send_raw_transaction_sync() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync_timeout() {
-    common::init_tracing();
-    let setup = TestSetup::new().await.unwrap();
+        let setup = TestSetup::new().await.unwrap();
 
     // fail request immediately by passing a timeout of 0 ms
     let receipt_result = setup.send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0)).await;
@@ -600,8 +591,7 @@ async fn test_send_raw_transaction_sync_timeout() {
 
 #[tokio::test]
 async fn test_get_logs_pending() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // Test no logs when no flashblocks sent
@@ -643,8 +633,7 @@ async fn test_get_logs_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_filter_by_address() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -684,8 +673,7 @@ async fn test_get_logs_filter_by_address() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_topic_filtering() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -720,8 +708,7 @@ async fn test_get_logs_topic_filtering() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_mixed_block_ranges() -> Result<()> {
-    common::init_tracing();
-    let setup = TestSetup::new().await?;
+        let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;

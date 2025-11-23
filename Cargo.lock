@@ -1586,6 +1586,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-primitives",
  "alloy-rpc-client",
+ "base-reth-test-utils",
  "eyre",
  "jsonrpsee 0.26.0",
  "op-alloy-consensus",
@@ -1726,6 +1727,7 @@ dependencies = [
  "tokio-util",
  "tower 0.5.2",
  "tracing",
+ "tracing-subscriber 0.3.20",
  "url",
 ]
 
