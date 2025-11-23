@@ -1,6 +1,6 @@
 mod common;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
@@ -9,10 +9,10 @@ use alloy_rpc_types_engine::PayloadId;
 use base_reth_flashblocks_rpc::{
     rpc::{FlashblocksAPI, PendingBlocksAPI},
     state::FlashblocksState,
-    subscription::{Flashblock, FlashblocksReceiver, Metadata},
+    subscription::{Flashblock, Metadata},
 };
 use base_reth_test_utils::{
-    accounts::TestAccounts, harness::TestHarness as BaseHarness, node::LocalNodeProvider,
+    accounts::TestAccounts, harness::FlashblocksHarness, node::LocalNodeProvider,
 };
 use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use op_alloy_consensus::OpDepositReceipt;
@@ -39,8 +39,8 @@ enum User {
 }
 
 struct TestHarness {
-    node: BaseHarness,
-    flashblocks: FlashblocksState<LocalNodeProvider>,
+    node: FlashblocksHarness,
+    flashblocks: Arc<FlashblocksState<LocalNodeProvider>>,
     provider: LocalNodeProvider,
     user_to_address: HashMap<User, Address>,
     user_to_private_key: HashMap<User, B256>,
@@ -48,10 +48,13 @@ struct TestHarness {
 
 impl TestHarness {
     async fn new() -> Self {
-        let node = BaseHarness::new().await.expect("able to launch base harness");
+        // These tests simulate pathological timing (missing receipts, reorgs, etc.), so we disable
+        // the automatic canonical listener and only apply blocks when the test explicitly requests it.
+        let node = FlashblocksHarness::manual_canonical()
+            .await
+            .expect("able to launch flashblocks harness");
         let provider = node.blockchain_provider();
-        let flashblocks = FlashblocksState::new(provider.clone(), 5);
-        flashblocks.start();
+        let flashblocks = node.flashblocks_state();
 
         let genesis_block = provider
             .block(BlockHashOrNumber::Number(0))
@@ -177,7 +180,10 @@ impl TestHarness {
     }
 
     async fn send_flashblock(&self, flashblock: Flashblock) {
-        self.flashblocks.on_flashblock_received(flashblock);
+        self.node
+            .send_flashblock(flashblock)
+            .await
+            .expect("flashblocks channel should accept payload");
         sleep(Duration::from_millis(SLEEP_TIME)).await;
     }
 

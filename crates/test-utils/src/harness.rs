@@ -195,6 +195,12 @@ impl FlashblocksHarness {
         Self::with_launcher(default_launcher).await
     }
 
+    /// Same as `new` but canonical block processing is left to the test, which is useful when
+    /// reproducing races or reorg scenarios that require deterministic sequencing.
+    pub async fn manual_canonical() -> Result<Self> {
+        Self::manual_canonical_with_launcher(default_launcher).await
+    }
+
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -202,9 +208,17 @@ impl FlashblocksHarness {
     {
         init_silenced_tracing();
         let flash_node = FlashblocksLocalNode::with_launcher(launcher).await?;
-        let (node, parts) = flash_node.into_parts();
-        let inner = TestHarness::from_node(node).await?;
-        Ok(Self { inner, parts })
+        Self::from_flashblocks_node(flash_node).await
+    }
+
+    pub async fn manual_canonical_with_launcher<L, LRet>(launcher: L) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        init_silenced_tracing();
+        let flash_node = FlashblocksLocalNode::with_manual_canonical_launcher(launcher).await?;
+        Self::from_flashblocks_node(flash_node).await
     }
 
     pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
@@ -227,6 +241,12 @@ impl FlashblocksHarness {
 
     pub fn into_inner(self) -> TestHarness {
         self.inner
+    }
+
+    async fn from_flashblocks_node(flash_node: FlashblocksLocalNode) -> Result<Self> {
+        let (node, parts) = flash_node.into_parts();
+        let inner = TestHarness::from_node(node).await?;
+        Ok(Self { inner, parts })
     }
 }
 

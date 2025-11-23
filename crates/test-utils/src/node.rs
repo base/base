@@ -89,16 +89,18 @@ struct FlashblocksLauncherInner {
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
     provider_cell: Arc<OnceCell<LocalNodeProvider>>,
+    process_canonical: bool,
 }
 
 impl FlashblocksLauncherContext {
-    fn new() -> Self {
+    fn new(process_canonical: bool) -> Self {
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
         let inner = FlashblocksLauncherInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
             fb_cell: Arc::new(OnceCell::new()),
             provider_cell: Arc::new(OnceCell::new()),
+            process_canonical,
         };
         Self { inner: Arc::new(inner) }
     }
@@ -107,6 +109,7 @@ impl FlashblocksLauncherContext {
         let fb_cell = self.inner.fb_cell.clone();
         let provider_cell = self.inner.provider_cell.clone();
         let receiver = self.inner.receiver.clone();
+        let process_canonical = self.inner.process_canonical;
 
         let fb_cell_for_exex = fb_cell.clone();
         let provider_cell_for_exex = provider_cell.clone();
@@ -115,14 +118,19 @@ impl FlashblocksLauncherContext {
             .install_exex("flashblocks-canon", move |mut ctx| {
                 let fb_cell = fb_cell_for_exex.clone();
                 let provider_cell = provider_cell_for_exex.clone();
+                let process_canonical = process_canonical;
                 async move {
                     let provider = provider_cell.get_or_init(|| ctx.provider().clone()).clone();
                     let fb = init_flashblocks_state(&fb_cell, &provider);
                     Ok(async move {
                         while let Some(note) = ctx.notifications.try_next().await? {
                             if let Some(committed) = note.committed_chain() {
-                                for block in committed.blocks_iter() {
-                                    fb.on_canonical_block_received(block);
+                                if process_canonical {
+                                    // Many suites drive canonical updates manually to reproduce race conditions, so
+                                    // allowing this to be disabled keeps canonical replay deterministic.
+                                    for block in committed.blocks_iter() {
+                                        fb.on_canonical_block_received(block);
+                                    }
                                 }
                                 let _ = ctx
                                     .events
@@ -337,12 +345,34 @@ impl FlashblocksLocalNode {
         Self::with_launcher(default_launcher).await
     }
 
+    /// Builds a flashblocks-enabled node with canonical block streaming disabled so tests can call
+    /// `FlashblocksState::on_canonical_block_received` at precise points.
+    pub async fn manual_canonical() -> Result<Self> {
+        Self::with_manual_canonical_launcher(default_launcher).await
+    }
+
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
     {
-        let context = FlashblocksLauncherContext::new();
+        Self::with_launcher_inner(launcher, true).await
+    }
+
+    pub async fn with_manual_canonical_launcher<L, LRet>(launcher: L) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        Self::with_launcher_inner(launcher, false).await
+    }
+
+    async fn with_launcher_inner<L, LRet>(launcher: L, process_canonical: bool) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        let context = FlashblocksLauncherContext::new(process_canonical);
         let builder_context = context.clone();
         let mut launcher = Some(launcher);
 
