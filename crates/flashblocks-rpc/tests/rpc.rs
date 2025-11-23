@@ -13,7 +13,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
-use base_reth_test_utils::harness::TestHarness;
+use base_reth_test_utils::harness::FlashblocksHarness;
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -25,12 +25,12 @@ use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 
 struct TestSetup {
-    harness: TestHarness,
+    harness: FlashblocksHarness,
 }
 
 impl TestSetup {
     async fn new() -> Result<Self> {
-        let harness = TestHarness::new().await?;
+        let harness = FlashblocksHarness::new().await?;
         Ok(Self { harness })
     }
 

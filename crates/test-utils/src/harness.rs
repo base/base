@@ -1,6 +1,6 @@
-//! Unified test harness combining node, engine API, and flashblocks functionality
+//! Unified test harness combining node and engine helpers, plus an optional flashblocks adapter.
 
-use std::{sync::Arc, time::Duration};
+use std::{ops::Deref, sync::Arc, time::Duration};
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
 use alloy_primitives::{B256, B64, Bytes, bytes};
@@ -56,6 +56,10 @@ impl TestHarness {
     {
         init_silenced_tracing();
         let node = LocalNode::new(launcher).await?;
+        Self::from_node(node).await
+    }
+
+    async fn from_node(node: LocalNode) -> Result<Self> {
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
 
@@ -74,10 +78,6 @@ impl TestHarness {
 
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.node.blockchain_provider()
-    }
-
-    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
-        self.node.flashblocks_state()
     }
 
     pub fn rpc_url(&self) -> String {
@@ -164,20 +164,6 @@ impl TestHarness {
         Ok(())
     }
 
-    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
-        self.node.send_flashblock(flashblock).await
-    }
-
-    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Flashblock>,
-    {
-        for flashblock in flashblocks {
-            self.send_flashblock(flashblock).await?;
-        }
-        Ok(())
-    }
-
     pub async fn advance_chain(&self, n: u64) -> Result<()> {
         for _ in 0..n {
             self.build_block_from_transactions(vec![]).await?;
@@ -193,6 +179,60 @@ impl TestHarness {
             .expect("able to load canonical block")
             .expect("canonical block exists");
         BlockT::try_into_recovered(block).expect("able to recover canonical block")
+    }
+}
+
+pub struct FlashblocksHarness {
+    inner: TestHarness,
+}
+
+impl FlashblocksHarness {
+    pub async fn new() -> Result<Self> {
+        Self::with_launcher(default_launcher).await
+    }
+
+    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+        LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
+    {
+        init_silenced_tracing();
+        let node = LocalNode::new_flashblocks(launcher).await?;
+        let inner = TestHarness::from_node(node).await?;
+        Ok(Self { inner })
+    }
+
+    pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
+        self.inner
+            .node
+            .flashblocks_state()
+            .expect("flashblocks harness must have flashblocks state")
+    }
+
+    pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
+        self.inner.node.send_flashblock(flashblock).await
+    }
+
+    pub async fn send_flashblocks<I>(&self, flashblocks: I) -> Result<()>
+    where
+        I: IntoIterator<Item = Flashblock>,
+    {
+        for flashblock in flashblocks {
+            self.send_flashblock(flashblock).await?;
+        }
+        Ok(())
+    }
+
+    pub fn into_inner(self) -> TestHarness {
+        self.inner
+    }
+}
+
+impl Deref for FlashblocksHarness {
+    type Target = TestHarness;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
     }
 }
 

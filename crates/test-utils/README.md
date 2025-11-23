@@ -65,7 +65,7 @@ The framework follows a three-layer architecture:
 
 ### 1. TestHarness
 
-The main entry point for integration tests. Combines node, engine, and accounts into a single interface.
+The main entry point for integration tests that only need canonical chain control. Combines node, engine, and accounts into a single interface.
 
 ```rust
 use base_reth_test_utils::harness::TestHarness;
@@ -207,6 +207,26 @@ Each account includes:
 - `initial_balance_eth` - Starting balance in ETH
 
 ### 5. Flashblocks Support
+
+Use `FlashblocksHarness` when you need `send_flashblock` and access to the in-memory pending state.
+
+```rust
+use base_reth_test_utils::harness::FlashblocksHarness;
+
+#[tokio::test]
+async fn test_flashblocks() -> eyre::Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+
+    harness.send_flashblock(flashblock).await?;
+
+    let pending = harness.flashblocks_state();
+    // assertions...
+
+    Ok(())
+}
+```
+
+`FlashblocksHarness` derefs to the base `TestHarness`, so you can keep using methods like `provider()`, `build_block_from_transactions`, etc.
 
 Test flashblocks delivery without WebSocket connections. Flashblocks can be manually constructed and sent via the harness.
 
