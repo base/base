@@ -13,7 +13,7 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
-use base_reth_test_utils::{harness::TestHarness, node::default_launcher, tracing::init_silenced_tracing};
+use base_reth_test_utils::harness::TestHarness;
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -30,8 +30,7 @@ struct TestSetup {
 
 impl TestSetup {
     async fn new() -> Result<Self> {
-        init_silenced_tracing();
-        let harness = TestHarness::new(default_launcher).await?;
+        let harness = TestHarness::new().await?;
         Ok(Self { harness })
     }
 

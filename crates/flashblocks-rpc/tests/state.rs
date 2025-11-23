@@ -11,12 +11,7 @@ use base_reth_flashblocks_rpc::{
     state::FlashblocksState,
     subscription::{Flashblock, FlashblocksReceiver, Metadata},
 };
-use base_reth_test_utils::{
-    accounts::TestAccounts,
-    harness::TestHarness as BaseHarness,
-    node::{LocalNodeProvider, default_launcher},
-    tracing::init_silenced_tracing,
-};
+use base_reth_test_utils::{accounts::TestAccounts, harness::TestHarness as BaseHarness, node::LocalNodeProvider};
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::BlockResponse;
 use reth::{
@@ -52,9 +47,7 @@ struct TestHarness {
 
 impl TestHarness {
     async fn new() -> Self {
-        init_silenced_tracing();
-        let node =
-            BaseHarness::new(default_launcher).await.expect("able to launch base harness");
+        let node = BaseHarness::new().await.expect("able to launch base harness");
         let provider = node.blockchain_provider();
         let flashblocks = FlashblocksState::new(provider.clone(), 5);
         flashblocks.start();

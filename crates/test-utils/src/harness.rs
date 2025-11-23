@@ -25,7 +25,7 @@ use tokio::time::sleep;
 use crate::{
     accounts::TestAccounts,
     engine::{EngineApi, IpcEngine},
-    node::{LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
+    node::{default_launcher, LocalFlashblocksState, LocalNode, LocalNodeProvider, OpAddOns, OpBuilder},
     tracing::init_silenced_tracing,
 };
 
@@ -45,7 +45,11 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    pub async fn new<L, LRet>(launcher: L) -> Result<Self>
+    pub async fn new() -> Result<Self> {
+        Self::with_launcher(default_launcher).await
+    }
+
+    pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
@@ -198,11 +202,9 @@ mod tests {
     use alloy_provider::Provider;
 
     use super::*;
-    use crate::node::default_launcher;
-
     #[tokio::test]
     async fn test_harness_setup() -> Result<()> {
-        let harness = TestHarness::new(default_launcher).await?;
+        let harness = TestHarness::new().await?;
 
         assert_eq!(harness.accounts().alice.name, "Alice");
         assert_eq!(harness.accounts().bob.name, "Bob");

@@ -15,15 +15,11 @@ This crate provides reusable testing utilities for integration tests across the 
 ## Quick Start
 
 ```rust
-use base_reth_test_utils::{
-    harness::TestHarness,
-    node::default_launcher,
-    tracing::init_silenced_tracing,
-};
+use base_reth_test_utils::harness::TestHarness;
 
 #[tokio::test]
 async fn test_example() -> eyre::Result<()> {
-    let harness = TestHarness::new(default_launcher).await?;
+    let harness = TestHarness::new().await?;
 
     // Advance the chain
     harness.advance_chain(5).await?;
@@ -73,12 +69,11 @@ The main entry point for integration tests. Combines node, engine, and accounts 
 
 ```rust
 use base_reth_test_utils::harness::TestHarness;
-use base_reth_test_utils::node::default_launcher;
 use alloy_primitives::Bytes;
 
 #[tokio::test]
 async fn test_harness() -> eyre::Result<()> {
-    let harness = TestHarness::new(default_launcher).await?;
+    let harness = TestHarness::new().await?;
 
     // Access provider
     let provider = harness.provider();
@@ -185,7 +180,7 @@ Hardcoded test accounts with deterministic addresses (Anvil-compatible).
 
 ```rust
 use base_reth_test_utils::accounts::TestAccounts;
-use base_reth_test_utils::{harness::TestHarness, node::default_launcher};
+use base_reth_test_utils::harness::TestHarness;
 
 let accounts = TestAccounts::new();
 
@@ -195,7 +190,7 @@ let charlie = &accounts.charlie;
 let deployer = &accounts.deployer;
 
 // Access via harness
-let harness = TestHarness::new(default_launcher).await?;
+let harness = TestHarness::new().await?;
 let alice = &harness.accounts().alice;
 ```
 
@@ -220,7 +215,7 @@ use base_reth_flashblocks_rpc::subscription::Flashblock;
 
 #[tokio::test]
 async fn test_flashblocks() -> eyre::Result<()> {
-    let harness = TestHarness::new(default_launcher).await?;
+    let harness = TestHarness::new().await?;
 
     // Construct a Flashblock manually
     // Use base_reth_flashblocks_rpc imports to build the struct
@@ -234,7 +229,7 @@ async fn test_flashblocks() -> eyre::Result<()> {
 
 **Via TestHarness:**
 ```rust
-let harness = TestHarness::new(default_launcher).await?;
+let harness = TestHarness::new().await?;
 harness.send_flashblock(flashblock).await?;
 ```
 
@@ -277,13 +272,10 @@ Import in tests:
 
 ```rust
 use base_reth_test_utils::harness::TestHarness;
-use base_reth_test_utils::node::default_launcher;
 
 #[tokio::test]
 async fn my_test() -> eyre::Result<()> {
-    init_silenced_tracing();
-
-    let harness = TestHarness::new(default_launcher).await?;
+    let harness = TestHarness::new().await?;
     // Your test logic
 
     Ok(())
