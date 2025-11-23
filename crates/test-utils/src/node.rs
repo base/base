@@ -80,11 +80,11 @@ impl FlashblocksParts {
 }
 
 #[derive(Clone)]
-struct FlashblocksLauncherContext {
-    inner: Arc<FlashblocksLauncherInner>,
+struct FlashblocksNodeExtensions {
+    inner: Arc<FlashblocksNodeExtensionsInner>,
 }
 
-struct FlashblocksLauncherInner {
+struct FlashblocksNodeExtensionsInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
@@ -92,10 +92,10 @@ struct FlashblocksLauncherInner {
     process_canonical: bool,
 }
 
-impl FlashblocksLauncherContext {
+impl FlashblocksNodeExtensions {
     fn new(process_canonical: bool) -> Self {
         let (sender, receiver) = mpsc::channel::<(Flashblock, oneshot::Sender<()>)>(100);
-        let inner = FlashblocksLauncherInner {
+        let inner = FlashblocksNodeExtensionsInner {
             sender,
             receiver: Arc::new(Mutex::new(Some(receiver))),
             fb_cell: Arc::new(OnceCell::new()),
@@ -105,7 +105,7 @@ impl FlashblocksLauncherContext {
         Self { inner: Arc::new(inner) }
     }
 
-    fn configure_builder(&self, builder: OpBuilder) -> OpBuilder {
+    fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let fb_cell = self.inner.fb_cell.clone();
         let provider_cell = self.inner.provider_cell.clone();
         let receiver = self.inner.receiver.clone();
@@ -181,6 +181,17 @@ impl FlashblocksLauncherContext {
 
                 Ok(())
             })
+    }
+
+    fn wrap_launcher<L, LRet>(&self, launcher: L) -> impl FnOnce(OpBuilder) -> LRet
+    where
+        L: FnOnce(OpBuilder) -> LRet,
+    {
+        let extensions = self.clone();
+        move |builder| {
+            let builder = extensions.apply(builder);
+            launcher(builder)
+        }
     }
 
     fn parts(&self) -> Result<FlashblocksParts> {
@@ -372,18 +383,11 @@ impl FlashblocksLocalNode {
         L: FnOnce(OpBuilder) -> LRet,
         LRet: Future<Output = eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>>>,
     {
-        let context = FlashblocksLauncherContext::new(process_canonical);
-        let builder_context = context.clone();
-        let mut launcher = Some(launcher);
+        let extensions = FlashblocksNodeExtensions::new(process_canonical);
+        let wrapped_launcher = extensions.wrap_launcher(launcher);
+        let node = LocalNode::new(wrapped_launcher).await?;
 
-        let node = LocalNode::new(move |builder| {
-            let builder = builder_context.configure_builder(builder);
-            let launcher = launcher.take().expect("launcher already taken");
-            launcher(builder)
-        })
-        .await?;
-
-        let parts = context.parts()?;
+        let parts = extensions.parts()?;
         Ok(Self { node, parts })
     }
 
