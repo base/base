@@ -261,7 +261,7 @@ fn create_second_payload() -> Flashblock {
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -309,7 +309,7 @@ async fn test_get_pending_block() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_balance_pending() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -325,7 +325,7 @@ async fn test_get_balance_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_by_hash_pending() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -347,7 +347,7 @@ async fn test_get_transaction_by_hash_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_receipt_pending() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -369,7 +369,7 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_count() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -386,7 +386,7 @@ async fn test_get_transaction_count() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_call() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -458,7 +458,7 @@ async fn test_eth_call() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_estimate_gas() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -502,7 +502,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_simulate_v1() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
     setup.send_test_payloads().await?;
@@ -565,7 +565,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
 
     setup.send_flashblock(create_first_payload()).await?;
@@ -586,7 +586,7 @@ async fn test_send_raw_transaction_sync() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync_timeout() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await.unwrap();
 
     // fail request immediately by passing a timeout of 0 ms
@@ -600,7 +600,7 @@ async fn test_send_raw_transaction_sync_timeout() {
 
 #[tokio::test]
 async fn test_get_logs_pending() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -643,7 +643,7 @@ async fn test_get_logs_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_filter_by_address() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -684,7 +684,7 @@ async fn test_get_logs_filter_by_address() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_topic_filtering() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
@@ -720,7 +720,7 @@ async fn test_get_logs_topic_filtering() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_mixed_block_ranges() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 

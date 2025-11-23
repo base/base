@@ -333,7 +333,7 @@ impl<'a> FlashblockBuilder<'a> {
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_flashblocks() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -410,7 +410,7 @@ async fn test_state_overrides_persisted_across_flashblocks() {
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_blocks() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     let initial_base = FlashblockBuilder::new_base(&test).build();
@@ -534,7 +534,7 @@ async fn test_state_overrides_persisted_across_blocks() {
 
 #[tokio::test]
 async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let mut test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -661,7 +661,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     // causing it to return an n+1 nonce instead of n
     // because underlying reth node `latest` block is already updated, but
     // relevant pending state has not been cleared yet
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let mut test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -722,7 +722,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
 
 #[tokio::test]
 async fn test_missing_receipts_will_not_process() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -749,7 +749,7 @@ async fn test_missing_receipts_will_not_process() {
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -771,7 +771,7 @@ async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -796,7 +796,7 @@ async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
 
 #[tokio::test]
 async fn test_non_sequential_payload_clears_pending_state() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
@@ -830,7 +830,7 @@ async fn test_non_sequential_payload_clears_pending_state() {
 
 #[tokio::test]
 async fn test_duplicate_flashblock_ignored() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
@@ -854,7 +854,7 @@ async fn test_duplicate_flashblock_ignored() {
 
 #[tokio::test]
 async fn test_progress_canonical_blocks_without_flashblocks() {
-    reth_tracing::init_test_tracing();
+    common::init_tracing();
     let mut test = TestHarness::new().await;
 
     let genesis_block = test.node.latest_block();
