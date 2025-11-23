@@ -14,6 +14,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
 use base_reth_test_utils::harness::FlashblocksHarness;
+use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::{Optimism, ReceiptResponse, TransactionResponse};
@@ -21,8 +22,6 @@ use op_alloy_rpc_types::OpTransactionRequest;
 use reth_optimism_primitives::OpReceipt;
 use reth_rpc_eth_api::RpcReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-
-use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 
 struct TestSetup {
     harness: FlashblocksHarness,
@@ -117,8 +116,7 @@ fn create_test_logs() -> Vec<alloy_primitives::Log> {
             address: COUNTER_ADDRESS,
             data: LogData::new(
                 vec![TEST_LOG_TOPIC_0, TEST_LOG_TOPIC_1, TEST_LOG_TOPIC_2],
-                bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000")
-                    .into(), // 1 ETH in wei
+                bytes!("0x0000000000000000000000000000000000000000000000000de0b6b3a7640000").into(), // 1 ETH in wei
             )
             .unwrap(),
         },
@@ -126,8 +124,7 @@ fn create_test_logs() -> Vec<alloy_primitives::Log> {
             address: TEST_ADDRESS,
             data: LogData::new(
                 vec![TEST_LOG_TOPIC_0],
-                bytes!("0x0000000000000000000000000000000000000000000000000000000000000001")
-                    .into(), // Value: 1
+                bytes!("0x0000000000000000000000000000000000000000000000000000000000000001").into(), // Value: 1
             )
             .unwrap(),
         },
@@ -261,7 +258,7 @@ fn create_second_payload() -> Flashblock {
 
 #[tokio::test]
 async fn test_get_pending_block() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     let latest_block = provider
@@ -308,7 +305,7 @@ async fn test_get_pending_block() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_balance_pending() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -323,7 +320,7 @@ async fn test_get_balance_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_by_hash_pending() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     assert!(provider.get_transaction_by_hash(DEPOSIT_TX_HASH).await?.is_none());
@@ -344,7 +341,7 @@ async fn test_get_transaction_by_hash_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_receipt_pending() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     let receipt = provider.get_transaction_receipt(DEPOSIT_TX_HASH).await?;
@@ -365,7 +362,7 @@ async fn test_get_transaction_receipt_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_transaction_count() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     assert_eq!(provider.get_transaction_count(DEPOSIT_SENDER).await?, 0);
@@ -381,7 +378,7 @@ async fn test_get_transaction_count() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_call() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // We ensure that eth_call will succeed because we are on plain state
@@ -394,8 +391,7 @@ async fn test_eth_call() -> Result<()> {
         .value(U256::from(9999999999849942300000u128))
         .input(TransactionInput::new(bytes!("0x")));
 
-    let res =
-        provider.call(send_eth_call.clone()).block(BlockNumberOrTag::Pending.into()).await;
+    let res = provider.call(send_eth_call.clone()).block(BlockNumberOrTag::Pending.into()).await;
 
     assert!(res.is_ok());
 
@@ -403,16 +399,11 @@ async fn test_eth_call() -> Result<()> {
 
     // We included a heavy spending transaction and now don't have enough funds for this request, so
     // this eth_call with fail
-    let res =
-        provider.call(send_eth_call.nonce(4)).block(BlockNumberOrTag::Pending.into()).await;
+    let res = provider.call(send_eth_call.nonce(4)).block(BlockNumberOrTag::Pending.into()).await;
 
     assert!(res.is_err());
     assert!(
-        res.unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas")
+        res.unwrap_err().as_error_resp().unwrap().message.contains("insufficient funds for gas")
     );
 
     // read count1 from counter contract
@@ -426,10 +417,7 @@ async fn test_eth_call() -> Result<()> {
         .input(TransactionInput::new(bytes!("0xa87d942c")));
     let res_count1 = provider.call(eth_call_count1).await;
     assert!(res_count1.is_ok());
-    assert_eq!(
-        U256::from_str(res_count1.unwrap().to_string().as_str()).unwrap(),
-        U256::from(2)
-    );
+    assert_eq!(U256::from_str(res_count1.unwrap().to_string().as_str()).unwrap(), U256::from(2));
 
     // read count2 from counter contract
     let eth_call_count2 = OpTransactionRequest::default()
@@ -442,17 +430,14 @@ async fn test_eth_call() -> Result<()> {
         .input(TransactionInput::new(bytes!("0xd631c639")));
     let res_count2 = provider.call(eth_call_count2).await;
     assert!(res_count2.is_ok());
-    assert_eq!(
-        U256::from_str(res_count2.unwrap().to_string().as_str()).unwrap(),
-        U256::from(2)
-    );
+    assert_eq!(U256::from_str(res_count2.unwrap().to_string().as_str()).unwrap(), U256::from(2));
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_eth_estimate_gas() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // We ensure that eth_estimate_gas will succeed because we are on plain state
@@ -483,11 +468,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
 
     assert!(res.is_err());
     assert!(
-        res.unwrap_err()
-            .as_error_resp()
-            .unwrap()
-            .message
-            .contains("insufficient funds for gas")
+        res.unwrap_err().as_error_resp().unwrap().message.contains("insufficient funds for gas")
     );
 
     Ok(())
@@ -495,7 +476,7 @@ async fn test_eth_estimate_gas() -> Result<()> {
 
 #[tokio::test]
 async fn test_eth_simulate_v1() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
     setup.send_test_payloads().await?;
 
@@ -557,7 +538,7 @@ async fn test_eth_simulate_v1() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
 
     setup.send_flashblock(create_first_payload()).await?;
 
@@ -577,27 +558,24 @@ async fn test_send_raw_transaction_sync() -> Result<()> {
 
 #[tokio::test]
 async fn test_send_raw_transaction_sync_timeout() {
-        let setup = TestSetup::new().await.unwrap();
+    let setup = TestSetup::new().await.unwrap();
 
     // fail request immediately by passing a timeout of 0 ms
     let receipt_result = setup.send_raw_transaction_sync(TRANSFER_ETH_TX, Some(0)).await;
 
     let error_code = EthRpcErrorCode::TransactionConfirmationTimeout.code();
-    assert!(
-        receipt_result.err().unwrap().to_string().contains(format!("{}", error_code).as_str())
-    );
+    assert!(receipt_result.err().unwrap().to_string().contains(format!("{}", error_code).as_str()));
 }
 
 #[tokio::test]
 async fn test_get_logs_pending() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     // Test no logs when no flashblocks sent
     let logs = provider
         .get_logs(
-            &alloy_rpc_types_eth::Filter::default()
-                .select(alloy_eips::BlockNumberOrTag::Pending),
+            &alloy_rpc_types_eth::Filter::default().select(alloy_eips::BlockNumberOrTag::Pending),
         )
         .await?;
     assert_eq!(logs.len(), 0);
@@ -632,7 +610,7 @@ async fn test_get_logs_pending() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_filter_by_address() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -672,7 +650,7 @@ async fn test_get_logs_filter_by_address() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_topic_filtering() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;
@@ -707,7 +685,7 @@ async fn test_get_logs_topic_filtering() -> Result<()> {
 
 #[tokio::test]
 async fn test_get_logs_mixed_block_ranges() -> Result<()> {
-        let setup = TestSetup::new().await?;
+    let setup = TestSetup::new().await?;
     let provider = setup.harness.provider();
 
     setup.send_test_payloads().await?;

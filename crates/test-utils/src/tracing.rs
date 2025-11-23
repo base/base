@@ -1,6 +1,6 @@
 use std::sync::Once;
 
-use tracing_subscriber::{filter::LevelFilter, EnvFilter};
+use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 static INIT: Once = Once::new();
 
@@ -12,9 +12,8 @@ static INIT: Once = Once::new();
 /// installs the subscriber.
 pub fn init_silenced_tracing() {
     INIT.call_once(|| {
-        let mut filter = EnvFilter::builder()
-            .with_default_directive(LevelFilter::INFO.into())
-            .from_env_lossy();
+        let mut filter =
+            EnvFilter::builder().with_default_directive(LevelFilter::INFO.into()).from_env_lossy();
 
         for directive in ["reth_tasks=off", "reth_node_builder::launch::common=off"].into_iter() {
             if let Ok(directive) = directive.parse() {

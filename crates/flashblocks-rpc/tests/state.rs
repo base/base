@@ -11,7 +11,10 @@ use base_reth_flashblocks_rpc::{
     state::FlashblocksState,
     subscription::{Flashblock, FlashblocksReceiver, Metadata},
 };
-use base_reth_test_utils::{accounts::TestAccounts, harness::TestHarness as BaseHarness, node::LocalNodeProvider};
+use base_reth_test_utils::{
+    accounts::TestAccounts, harness::TestHarness as BaseHarness, node::LocalNodeProvider,
+};
+use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::BlockResponse;
 use reth::{
@@ -24,8 +27,6 @@ use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use tokio::time::sleep;
-
-use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor
 const SLEEP_TIME: u64 = 10;
@@ -70,8 +71,7 @@ impl TestHarness {
         let mut user_to_private_key = HashMap::default();
         user_to_private_key
             .insert(User::Alice, Self::decode_private_key(accounts.alice.private_key));
-        user_to_private_key
-            .insert(User::Bob, Self::decode_private_key(accounts.bob.private_key));
+        user_to_private_key.insert(User::Bob, Self::decode_private_key(accounts.bob.private_key));
         user_to_private_key
             .insert(User::Charlie, Self::decode_private_key(accounts.charlie.private_key));
 
@@ -328,7 +328,7 @@ impl<'a> FlashblockBuilder<'a> {
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_flashblocks() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
     assert_eq!(
@@ -404,7 +404,7 @@ async fn test_state_overrides_persisted_across_flashblocks() {
 
 #[tokio::test]
 async fn test_state_overrides_persisted_across_blocks() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     let initial_base = FlashblockBuilder::new_base(&test).build();
     let initial_block_number = initial_base.metadata.block_number;
@@ -527,7 +527,7 @@ async fn test_state_overrides_persisted_across_blocks() {
 
 #[tokio::test]
 async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
-        let mut test = TestHarness::new().await;
+    let mut test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
     assert_eq!(
@@ -580,10 +580,8 @@ async fn test_only_current_pending_state_cleared_upon_canonical_block_reorg() {
         test.expected_pending_balance(User::Bob, 100_000)
     );
 
-    test.send_flashblock(
-        FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build(),
-    )
-    .await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
     test.send_flashblock(
         FlashblockBuilder::new(&test, 1)
             .with_canonical_block_number(1)
@@ -653,7 +651,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
     // causing it to return an n+1 nonce instead of n
     // because underlying reth node `latest` block is already updated, but
     // relevant pending state has not been cleared yet
-        let mut test = TestHarness::new().await;
+    let mut test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
     test.send_flashblock(
@@ -713,7 +711,7 @@ async fn test_nonce_uses_pending_canon_block_instead_of_latest() {
 
 #[tokio::test]
 async fn test_missing_receipts_will_not_process() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -739,7 +737,7 @@ async fn test_missing_receipts_will_not_process() {
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non_zero_index() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -749,10 +747,8 @@ async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non
     assert_eq!(current_block.header().number, 1);
     assert_eq!(current_block.transactions.len(), 1);
 
-    test.send_flashblock(
-        FlashblockBuilder::new(&test, 1).with_canonical_block_number(100).build(),
-    )
-    .await;
+    test.send_flashblock(FlashblockBuilder::new(&test, 1).with_canonical_block_number(100).build())
+        .await;
 
     let current_block = test.flashblocks.get_pending_blocks().get_block(true);
     assert!(current_block.is_none());
@@ -760,7 +756,7 @@ async fn test_flashblock_for_new_canonical_block_clears_older_flashblocks_if_non
 
 #[tokio::test]
 async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -770,10 +766,8 @@ async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
     assert_eq!(current_block.header().number, 1);
     assert_eq!(current_block.transactions.len(), 1);
 
-    test.send_flashblock(
-        FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build(),
-    )
-    .await;
+    test.send_flashblock(FlashblockBuilder::new_base(&test).with_canonical_block_number(1).build())
+        .await;
 
     let current_block =
         test.flashblocks.get_pending_blocks().get_block(true).expect("should be a block");
@@ -784,7 +778,7 @@ async fn test_flashblock_for_new_canonical_block_works_if_sequential() {
 
 #[tokio::test]
 async fn test_non_sequential_payload_clears_pending_state() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
@@ -817,7 +811,7 @@ async fn test_non_sequential_payload_clears_pending_state() {
 
 #[tokio::test]
 async fn test_duplicate_flashblock_ignored() {
-        let test = TestHarness::new().await;
+    let test = TestHarness::new().await;
 
     test.send_flashblock(FlashblockBuilder::new_base(&test).build()).await;
 
@@ -840,19 +834,15 @@ async fn test_duplicate_flashblock_ignored() {
 
 #[tokio::test]
 async fn test_progress_canonical_blocks_without_flashblocks() {
-        let mut test = TestHarness::new().await;
+    let mut test = TestHarness::new().await;
 
     let genesis_block = test.node.latest_block();
     assert_eq!(genesis_block.number, 0);
     assert_eq!(genesis_block.transaction_count(), 0);
     assert!(test.flashblocks.get_pending_blocks().get_block(true).is_none());
 
-    test.new_canonical_block(vec![test.build_transaction_to_send_eth(
-        User::Alice,
-        User::Bob,
-        100,
-    )])
-    .await;
+    test.new_canonical_block(vec![test.build_transaction_to_send_eth(User::Alice, User::Bob, 100)])
+        .await;
 
     let block_one = test.node.latest_block();
     assert_eq!(block_one.number, 1);

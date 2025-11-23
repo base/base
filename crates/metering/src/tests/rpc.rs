@@ -5,8 +5,8 @@ mod tests {
     use alloy_eips::Encodable2718;
     use alloy_genesis::Genesis;
     use alloy_primitives::{Bytes, U256, address, b256, bytes};
-    use base_reth_test_utils::tracing::init_silenced_tracing;
     use alloy_rpc_client::RpcClient;
+    use base_reth_test_utils::tracing::init_silenced_tracing;
     use op_alloy_consensus::OpTxEnvelope;
     use reth::{
         args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
