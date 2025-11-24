@@ -71,20 +71,24 @@ async fn main() {
         .expect("failed to set socket nonblocking");
     let sink =
         UdpMetricSink::from(statsd_addr.as_str(), socket).expect("failed to create StatsD sink");
-    
+
     // Read tags from CODEFLOW environment variables
-    let config_name = std::env::var("CODEFLOW_CONFIG_NAME").unwrap_or_else(|_| "unknown".to_string());
-    let environment = std::env::var("CODEFLOW_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
-    let project_name = std::env::var("CODEFLOW_PROJECT_NAME").unwrap_or_else(|_| "unknown".to_string());
-    let service_name = std::env::var("CODEFLOW_SERVICE_NAME").unwrap_or_else(|_| "unknown".to_string());
-    
+    let config_name =
+        std::env::var("CODEFLOW_CONFIG_NAME").unwrap_or_else(|_| "unknown".to_string());
+    let environment =
+        std::env::var("CODEFLOW_ENVIRONMENT").unwrap_or_else(|_| "unknown".to_string());
+    let project_name =
+        std::env::var("CODEFLOW_PROJECT_NAME").unwrap_or_else(|_| "unknown".to_string());
+    let service_name =
+        std::env::var("CODEFLOW_SERVICE_NAME").unwrap_or_else(|_| "unknown".to_string());
+
     let statsd_client = StatsdClient::builder("base.blocks", sink)
         .with_tag("configname", &config_name)
         .with_tag("environment", &environment)
         .with_tag("projectname", &project_name)
         .with_tag("servicename", &service_name)
         .build();
-    
+
     tracing::info!(
         configname = %config_name,
         environment = %environment,
@@ -92,7 +96,7 @@ async fn main() {
         servicename = %service_name,
         "Initialized StatsD client with tags"
     );
-    
+
     let metrics = HealthcheckMetrics::new(statsd_client);
 
     // Allow NODE_URL (exported from BBHC_SIDECAR_GETH_RPC in ConfigMap) to override

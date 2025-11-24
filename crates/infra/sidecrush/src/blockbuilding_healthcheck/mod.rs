@@ -169,7 +169,7 @@ impl<C: EthClient> BlockProductionHealthChecker<C> {
 
         let unhealthy_ms = self.config.unhealthy_node_threshold_ms;
         let grace_ms = self.config.grace_period_ms;
-        
+
         let state = if self.node.is_new_instance {
             HealthState::Healthy
         } else if block_age_ms >= unhealthy_ms {
