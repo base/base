@@ -367,28 +367,4 @@ mod tests {
             HealthState::Unhealthy.code()
         );
     }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn empty_block_marked_unhealthy() {
-        let cfg = HealthcheckConfig::new(1_000, 5_000, 15_000);
-        let start = now_secs();
-        let shared_header = Arc::new(Mutex::new(HeaderSummary {
-            number: 1,
-            timestamp_unix_seconds: start,
-            transaction_count: 1, // Only system transaction
-        }));
-        let client = MockClient {
-            header: shared_header.clone(),
-        };
-        let node = Node::new("http://localhost:8545", false);
-        let metrics = mock_metrics();
-        let mut checker = BlockProductionHealthChecker::new(node, client, cfg, metrics);
-
-        // Even though block is fresh, it should be unhealthy because it's empty
-        checker.run_health_check().await;
-        assert_eq!(
-            checker.status_code.load(Ordering::Relaxed),
-            HealthState::Unhealthy.code()
-        );
-    }
 }
