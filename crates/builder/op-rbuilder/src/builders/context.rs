@@ -43,6 +43,7 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
+    resource_metering::ResourceMetering,
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
     tx_signer::Signer,
@@ -77,6 +78,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
+    /// Per transaction resource metering information
+    pub resource_metering: ResourceMetering,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -440,6 +443,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             };
 
             num_txs_considered += 1;
+
+            let _resource_usage = self.resource_metering.get(&tx_hash);
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional

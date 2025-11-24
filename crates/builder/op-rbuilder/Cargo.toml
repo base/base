@@ -14,6 +14,8 @@ workspace = true
 [dependencies]
 p2p = { path = "../p2p" }
 
+tips-core.workspace = true
+
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
@@ -112,6 +114,7 @@ url.workspace = true
 anyhow = "1"
 opentelemetry = { workspace = true, optional = true }
 dashmap.workspace = true
+concurrent-queue.workspace = true
 hex = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }

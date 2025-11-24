@@ -161,6 +161,12 @@ pub struct OpRBuilderMetrics {
     pub bundles_reverted: Histogram,
     /// Histogram of eth_sendBundle request duration
     pub bundle_receive_duration: Histogram,
+    /// Count of the number of times transactions had metering information
+    pub metering_known_transaction: Counter,
+    /// Count of the number of times transactions did not have any metering information
+    pub metering_unknown_transaction: Counter,
+    /// Count of the number of times we were unable to resolve metering information due to locking
+    pub metering_locked_transaction: Counter,
 }
 
 impl OpRBuilderMetrics {

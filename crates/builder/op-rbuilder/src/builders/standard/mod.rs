@@ -1,9 +1,8 @@
+use super::BuilderConfig;
 use crate::{
     builders::standard::service::StandardServiceBuilder,
     traits::{NodeBounds, PoolBounds},
 };
-
-use super::BuilderConfig;
 
 mod builder_tx;
 mod payload;
