@@ -9,13 +9,6 @@ const DEBUG_QUOTE_SERVICE_URL: &str = "http://ns31695324.ip-141-94-163.eu:10080/
 const HEADER_LENGTH: usize = 48;
 const TD_REPORT10_LENGTH: usize = 584;
 
-// TDX workload constants
-const TD_XFAM_FPU: u64 = 0x0000000000000001;
-const TD_XFAM_SSE: u64 = 0x0000000000000002;
-const TD_TDATTRS_VE_DISABLED: u64 = 0x0000000010000000;
-const TD_TDATTRS_PKS: u64 = 0x0000000040000000;
-const TD_TDATTRS_KL: u64 = 0x0000000080000000;
-
 // TD10ReportBody field offsets
 // These offsets correspond to the Solidity parseRawReportBody implementation
 const OFFSET_TD_ATTRIBUTES: usize = 120;
@@ -186,23 +179,6 @@ pub fn parse_report_body(raw_quote: &[u8]) -> eyre::Result<ParsedQuote> {
 /// This corresponds to QuoteParser.parseV4VerifierOutput in Solidity implementation
 /// The workload ID uniquely identifies a TEE workload based on its measurement registers
 pub fn compute_workload_id_from_parsed(parsed: &ParsedQuote) -> [u8; 32] {
-    // Apply transformations as per the Solidity implementation
-    // expectedXfamBits = TD_XFAM_FPU | TD_XFAM_SSE
-    let expected_xfam_bits = TD_XFAM_FPU | TD_XFAM_SSE;
-
-    // ignoredTdAttributesBitmask = TD_TDATTRS_VE_DISABLED | TD_TDATTRS_PKS | TD_TDATTRS_KL
-    let ignored_td_attributes_bitmask = TD_TDATTRS_VE_DISABLED | TD_TDATTRS_PKS | TD_TDATTRS_KL;
-
-    // Transform xFAM: xFAM ^ expectedXfamBits
-    let transformed_xfam = parsed.xfam ^ expected_xfam_bits;
-
-    // Transform tdAttributes: tdAttributes & ~ignoredTdAttributesBitmask
-    let transformed_td_attributes = parsed.td_attributes & !ignored_td_attributes_bitmask;
-
-    // Convert transformed values to bytes (big-endian, to match Solidity bytes8)
-    let xfam_bytes = transformed_xfam.to_be_bytes();
-    let td_attributes_bytes = transformed_td_attributes.to_be_bytes();
-
     // Concatenate all fields
     let mut concatenated = Vec::new();
     concatenated.extend_from_slice(&parsed.mr_td);
@@ -211,8 +187,8 @@ pub fn compute_workload_id_from_parsed(parsed: &ParsedQuote) -> [u8; 32] {
     concatenated.extend_from_slice(&parsed.rt_mr2);
     concatenated.extend_from_slice(&parsed.rt_mr3);
     concatenated.extend_from_slice(&parsed.mr_config_id);
-    concatenated.extend_from_slice(&xfam_bytes);
-    concatenated.extend_from_slice(&td_attributes_bytes);
+    concatenated.extend_from_slice(&parsed.xfam.to_be_bytes());
+    concatenated.extend_from_slice(&parsed.td_attributes.to_be_bytes());
 
     // Compute keccak256 hash
     let mut hasher = Keccak256::new();
