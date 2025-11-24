@@ -385,6 +385,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
         best_txs: &mut impl PayloadTxsBounds,
         block_gas_limit: u64,
         block_da_limit: Option<u64>,
+        block_da_footprint_limit: Option<u64>,
     ) -> Result<Option<()>, PayloadBuilderError> {
         let execute_txs_start_time = Instant::now();
         let mut num_txs_considered = 0;
@@ -470,6 +471,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 block_da_limit,
                 tx.gas_limit(),
                 info.da_footprint_scalar,
+                block_da_footprint_limit,
             ) {
                 // we can't fit this transaction into the block, so we need to mark it as
                 // invalid which also removes all dependent transaction from
