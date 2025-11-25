@@ -43,7 +43,7 @@ pub const TEE_DEBUG_ADDRESS: alloy_primitives::Address =
     alloy_primitives::address!("6Af149F267e1e62dFc431F2de6deeEC7224746f4");
 
 pub const WORKLOAD_ID: B256 =
-    b256!("f724e7d117f5655cf33beefdfc7d31e930278fcb65cf6d1de632595e97ca82b2");
+    b256!("952569f637f3f7e36cd8f5a7578ae4d03a1cb05ddaf33b35d3054464bb1c862e");
 
 pub const SOURCE_LOCATORS: &[&str] = &[
     "https://github.com/flashbots/flashbots-images/commit/53d431f58a0d1a76f6711518ef8d876ce8181fc2",

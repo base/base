@@ -235,6 +235,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
                 // Add gas used by the transaction to cumulative gas used, before creating the receipt
                 let gas_used = result.gas_used();
                 info.cumulative_gas_used += gas_used;
+                info.cumulative_da_bytes_used += builder_tx.da_size;
 
                 let ctx = ReceiptBuilderCtx {
                     tx: builder_tx.signed_tx.inner(),

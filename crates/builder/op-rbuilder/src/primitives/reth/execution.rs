@@ -65,6 +65,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
     ///   per tx.
     /// - block DA limit: if configured, ensures the transaction's DA size does not exceed the
     ///   maximum allowed DA limit per block.
+    #[allow(clippy::too_many_arguments)]
     pub fn is_tx_over_limits(
         &self,
         tx_da_size: u64,
@@ -73,12 +74,12 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         block_data_limit: Option<u64>,
         tx_gas_limit: u64,
         da_footprint_gas_scalar: Option<u16>,
+        block_da_footprint_limit: Option<u64>,
     ) -> Result<(), TxnExecutionResult> {
         if tx_data_limit.is_some_and(|da_limit| tx_da_size > da_limit) {
             return Err(TxnExecutionResult::TransactionDALimitExceeded);
         }
         let total_da_bytes_used = self.cumulative_da_bytes_used.saturating_add(tx_da_size);
-
         if block_data_limit.is_some_and(|da_limit| total_da_bytes_used > da_limit) {
             return Err(TxnExecutionResult::BlockDALimitExceeded(
                 self.cumulative_da_bytes_used,
@@ -91,7 +92,7 @@ impl<T: Debug + Default> ExecutionInfo<T> {
         if let Some(da_footprint_gas_scalar) = da_footprint_gas_scalar {
             let tx_da_footprint =
                 total_da_bytes_used.saturating_mul(da_footprint_gas_scalar as u64);
-            if tx_da_footprint > block_gas_limit {
+            if tx_da_footprint > block_da_footprint_limit.unwrap_or(block_gas_limit) {
                 return Err(TxnExecutionResult::BlockDALimitExceeded(
                     total_da_bytes_used,
                     tx_da_size,

@@ -376,7 +376,6 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
         }
         // Save some space in the block_da_limit for builder tx
         let builder_tx_da_size = builder_txs.iter().fold(0, |acc, tx| acc + tx.da_size);
-        info.cumulative_da_bytes_used += builder_tx_da_size;
         let block_da_limit = ctx
             .da_config
             .max_da_block_size()
@@ -387,6 +386,14 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                 }
                 da_limit
             });
+        let block_da_footprint = info.da_footprint_scalar
+        .map(|da_footprint_scalar| {
+            let da_footprint_limit = ctx.block_gas_limit().saturating_sub(builder_tx_da_size.saturating_mul(da_footprint_scalar as u64));
+            if da_footprint_limit == 0 {
+                error!("Builder tx da size subtraction caused max_da_footprint to be 0. No transaction would be included.");
+            }
+            da_footprint_limit
+        });
 
         if !ctx.attributes().no_tx_pool {
             let best_txs_start_time = Instant::now();
@@ -406,6 +413,7 @@ impl<Txs: PayloadTxsBounds> OpBuilder<'_, Txs> {
                     &mut best_txs,
                     block_gas_limit,
                     block_da_limit,
+                    block_da_footprint,
                 )?
                 .is_some()
             {
