@@ -301,10 +301,9 @@ where
         // Cache reads across flashblocks, accumulating caches from previous
         // pending blocks if available
         let cache_db = match &prev_pending_blocks {
-            Some(pending_blocks) => CacheDB {
-                cache: pending_blocks.get_db_cache(),
-                db: state_provider_db,
-            },
+            Some(pending_blocks) => {
+                CacheDB { cache: pending_blocks.get_db_cache(), db: state_provider_db }
+            }
             None => CacheDB::new(state_provider_db),
         };
 
@@ -316,10 +315,7 @@ where
                 .with_bundle_update()
                 .with_bundle_prestate(pending_blocks.get_bundle_state())
                 .build(),
-            None => State::builder()
-                .with_database(cache_db)
-                .with_bundle_update()
-                .build(),
+            None => State::builder().with_database(cache_db).with_bundle_update().build(),
         };
 
         let mut state_overrides =

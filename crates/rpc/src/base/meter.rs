@@ -84,10 +84,7 @@ where
 
     // Apply flashblocks read cache if available
     let cache_db = if let Some(ref flashblocks) = flashblocks_state {
-        CacheDB {
-            cache: flashblocks.cache.clone(),
-            db: state_db,
-        }
+        CacheDB { cache: flashblocks.cache.clone(), db: state_db }
     } else {
         CacheDB::new(state_db)
     };
@@ -100,10 +97,7 @@ where
             .with_bundle_prestate(flashblocks.bundle_state.clone())
             .build()
     } else {
-        State::builder()
-            .with_database(cache_db)
-            .with_bundle_update()
-            .build()
+        State::builder().with_database(cache_db).with_bundle_update().build()
     };
 
     // Set up next block attributes

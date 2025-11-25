@@ -4,7 +4,7 @@ use alloy_primitives::B256;
 use arc_swap::ArcSwap;
 use eyre::Result as EyreResult;
 use reth_provider::StateProvider;
-use reth_trie_common::{updates::TrieUpdates, HashedPostState};
+use reth_trie_common::{HashedPostState, updates::TrieUpdates};
 
 use crate::FlashblocksState;
 
@@ -60,7 +60,8 @@ impl FlashblockTrieCache {
         flashblocks_state: &FlashblocksState,
         canonical_state_provider: &dyn StateProvider,
     ) -> EyreResult<FlashblockTrieData> {
-        if let Some(ref cached) = *self.cache.load() {
+        let cached_entry = self.cache.load();
+        if let Some(cached) = cached_entry.as_ref() {
             if cached.block_hash == block_hash && cached.flashblock_index == flashblock_index {
                 return Ok(cached.trie_data.clone());
             }
