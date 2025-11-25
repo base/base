@@ -597,6 +597,7 @@ where
                 state.games.iter().find(|(_, game)| game.address == *anchor_address)
             {
                 state.anchor_game = Some(anchor_game.clone());
+                tracing::debug!(?anchor_address, "Anchor game updated in cache");
             } else {
                 tracing::debug!(?anchor_address, "Anchor game not in cache yet");
             }
