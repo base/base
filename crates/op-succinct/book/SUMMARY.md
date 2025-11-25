@@ -46,6 +46,5 @@
   - [Cost Estimator](./advanced/cost-estimator.md)
   - [Reproduce Binaries](./advanced/verify-binaries.md)
   - [Node Setup](./advanced/node-setup.md)
-  - [Kurtosis](./advanced/kurtosis.md)
   - [FAQ](./faq.md)
   - [Troubleshooting](./troubleshooting.md)
