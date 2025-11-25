@@ -12,6 +12,9 @@ sol! {
         /// @notice Emitted when a new dispute game is created.
         event DisputeGameCreated(address indexed disputeProxy, GameType indexed gameType, Claim indexed rootClaim);
 
+        /// @notice Emitted when a new game implementation added to the factory
+        event ImplementationSet(address indexed impl, GameType indexed gameType);
+
         /// @notice `gameImpls` is a mapping that maps `GameType`s to their respective
         ///         `IDisputeGame` implementations.
         mapping(GameType => IDisputeGame) public gameImpls;

@@ -13,7 +13,7 @@ It combines a few key technologies:
 - [SP1](https://docs.succinct.xyz/docs/sp1/introduction), Succinct's state-of-the-art Rust zkVM
 - [Succinct Prover Network](https://docs.succinct.xyz/docs/sp1/prover-network/intro), Succinct's low-latency, cost-effective proving API
 
-OP Succinct is the only production-ready proving solution for the OP Stack and trusted by teams like [Mantle](https://www.mantle.xyz/blog/announcements/op-succinct-mantle-network-testnet) and [Phala](https://phala.network/posts/phala-network-20-first-opsuccinct-layer-2-on-ethereum).
+OP Succinct is the only production-ready proving solution for the OP Stack and trusted by teams like [Mantle](https://www.mantle.xyz/blog/announcements/op-succinct-mantle-network-testnet) and [Phala](https://phala.com/).
 
 
 ## Proving Options

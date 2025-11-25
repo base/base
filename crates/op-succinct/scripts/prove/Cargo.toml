@@ -26,6 +26,7 @@ dotenv.workspace = true
 csv.workspace = true
 tracing.workspace = true
 cfg-if.workspace = true
+serde_json.workspace = true
 
 # local
 op-succinct-host-utils.workspace = true
@@ -33,16 +34,27 @@ op-succinct-client-utils.workspace = true
 op-succinct-proof-utils.workspace = true
 op-succinct-scripts = { path = "../utils" }
 op-succinct-elfs.workspace = true
+op-succinct-fp.workspace = true
 
 # alloy
+alloy-contract.workspace = true
+alloy-eips.workspace = true
+alloy-network.workspace = true
+alloy-node-bindings.workspace = true
 alloy-primitives.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-signer-local.workspace = true
+alloy-sol-types.workspace = true
+alloy-transport-http = { workspace = true, features = [
+    "reqwest",
+    "reqwest-native-tls",
+] }
 
 # sp1
 sp1-sdk.workspace = true
 
 [dev-dependencies]
 reqwest = { version = "0.12.4", features = ["json"] }
-serde_json.workspace = true
 rustls = { version = "0.23", features = ["ring"] }
 
 [build-dependencies]

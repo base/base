@@ -36,6 +36,7 @@
   - [Resources](./fault_proofs/resources.md)
     - [Gas Costs](./fault_proofs/gas_costs.md)
     - [Testing Guide](./fault_proofs/testing.md)
+    - [Pre-Flight Validation](./fault_proofs/preflight.md)
     - [Best Practices](./fault_proofs/best_practices.md)
   - [Experimental Features](./fault_proofs/experimental/experimental.md)
     - [Celestia DA](./fault_proofs/experimental/celestia.md)
