@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
-use alloy_primitives::{hex::FromHex, B256};
+use alloy_primitives::{B256, hex::FromHex};
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
-    init_db,
-    mdbx::{DatabaseArguments, MaxReadTransactionDuration, KILOBYTE, MEGABYTE},
-    test_utils::{create_test_static_files_dir, tempdir_path, TempDatabase, ERROR_DB_CREATION},
-    ClientVersion, DatabaseEnv,
+    ClientVersion, DatabaseEnv, init_db,
+    mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
+    test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
 };
-use reth_provider::{providers::StaticFileProvider, ProviderFactory};
+use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
 pub fn secret_from_hex(hex_key: &str) -> B256 {
     B256::from_hex(hex_key).expect("32-byte private key")
