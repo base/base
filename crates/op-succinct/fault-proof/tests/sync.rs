@@ -13,9 +13,12 @@ mod sync {
     };
     use alloy_primitives::{Bytes, FixedBytes, Uint, U256};
     use alloy_sol_types::{SolCall, SolValue};
-    use anyhow::Result;
-    use fault_proof::proposer::{
-        GameFetchResult, OPSuccinctProposer, ProposerStateSnapshot, MAX_GAME_DEADLINE_LAG,
+    use anyhow::{Context, Result};
+    use fault_proof::{
+        contract::ProposalStatus,
+        proposer::{
+            Game, GameFetchResult, OPSuccinctProposer, ProposerStateSnapshot, MAX_GAME_DEADLINE_LAG,
+        },
     };
     use op_succinct_bindings::dispute_game_factory::DisputeGameFactory;
     use op_succinct_host_utils::host::OPSuccinctHost;
@@ -34,6 +37,16 @@ mod sync {
         let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
         let proposer = env.init_proposer().await?;
         Ok((env, proposer, init_bond))
+    }
+
+    async fn cached_game<H: OPSuccinctHost + Clone>(
+        proposer: &OPSuccinctProposer<fault_proof::L1Provider, H>,
+        index: u64,
+    ) -> Result<Game> {
+        proposer
+            .get_game(U256::from(index))
+            .await
+            .with_context(|| format!("game {index} missing from cache"))
     }
 
     trait Assertion {
@@ -687,7 +700,6 @@ mod sync {
 
         Ok(())
     }
-
     /// Tests CHALLENGER_WINS cascade removal at various tree positions.
     #[rstest]
     #[case::at_root(
@@ -912,6 +924,215 @@ mod sync {
             !game_indices.contains(&U256::from(4)),
             "Game 4 should be removed (child of CHALLENGER_WINS)"
         );
+
+        Ok(())
+    }
+    /// Tests the `should_attempt_to_resolve` flag logic for IN_PROGRESS games.
+    ///
+    /// Verifies that the flag is correctly set based on:
+    /// - Game status (IN_PROGRESS vs resolved)
+    /// - Deadline status (passed vs not passed)
+    /// - Parent resolution status (resolved vs IN_PROGRESS)
+    #[tokio::test]
+    async fn test_in_progress_games_resolution_marking() -> Result<()> {
+        let (env, proposer, init_bond) = setup().await?;
+
+        let starting_l2_block = env.anvil.starting_l2_block_number;
+
+        // Create a simple chain: M -> 0 -> 1 -> 2 -> 3 -> 4
+        // Add 100-second gaps between creations to control deadline spacing
+        let mut game_addresses = Vec::new();
+        let time_gap = 100u64;
+
+        let total_games = 5;
+        let num_time_gaps = total_games - 1;
+
+        for i in 0..total_games {
+            let block = starting_l2_block + 1 + i;
+            let root_claim = env.compute_output_root_at_block(block).await?;
+            let parent_id = if i == 0 { M } else { (i - 1) as u32 };
+            env.create_game(root_claim, block, parent_id, init_bond).await?;
+            let (_, address) = env.last_game_info().await?;
+            game_addresses.push(address);
+            tracing::info!("✓ Created game {i} at block {block} with parent {parent_id}");
+
+            // Add time gap before next game (except after last game)
+            if i < num_time_gaps {
+                env.warp_time(time_gap).await?;
+            }
+        }
+
+        // Sync state to cache games
+        proposer.sync_state().await?;
+
+        // === Case 1: IN_PROGRESS game with deadline NOT passed ===
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            !game_0.should_attempt_to_resolve,
+            "Game 0: should_attempt_to_resolve should be false (deadline not passed)"
+        );
+        tracing::info!("✓ Case 1: IN_PROGRESS + deadline not passed → should_attempt = false");
+
+        // === Case 2: DEFENDER_WINS (resolved game) ===
+        // Warp to just past game 0's deadline but before game 1's deadline
+        // Game 0 deadline is at T0 + MAX_CHALLENGE_DURATION
+        // Game 1 deadline is at T0 + 100 + MAX_CHALLENGE_DURATION
+        // Currently at T0 + 400 (after creating all `total_games` games with `time_gap`-second
+        // gaps)
+        // So we need to warp: MAX_CHALLENGE_DURATION - `num_time_gaps` * `time_gap` + 1
+        env.warp_time(MAX_CHALLENGE_DURATION - num_time_gaps * time_gap + 1).await?;
+
+        proposer.sync_state().await?;
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            game_0.should_attempt_to_resolve,
+            "Game 0: should_attempt_to_resolve should be true since deadline has passed"
+        );
+
+        env.resolve_game(game_addresses[0]).await?;
+        proposer.sync_state().await?;
+
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            !game_0.should_attempt_to_resolve,
+            "Game 0: should_attempt_to_resolve should be false (already resolved)"
+        );
+        tracing::info!("✓ Case 2: DEFENDER_WINS → should_attempt = false");
+
+        // === Case 3: IN_PROGRESS + parent resolved + deadline NOT passed ===
+        let game_1 = cached_game(&proposer, 1).await?;
+        assert!(
+            !game_1.should_attempt_to_resolve,
+            "Game 1: should_attempt_to_resolve should be false (deadline not passed despite parent resolved)"
+        );
+        tracing::info!(
+            "✓ Case 3: IN_PROGRESS + parent resolved + deadline not passed → should_attempt = false"
+        );
+
+        // === Case 4: IN_PROGRESS + parent resolved + deadline passed + own game ===
+        env.warp_time(time_gap).await?;
+        proposer.sync_state().await?;
+
+        let game_1 = cached_game(&proposer, 1).await?;
+        assert!(
+            game_1.should_attempt_to_resolve,
+            "Game 1: should_attempt_to_resolve should be true (all conditions met)"
+        );
+        tracing::info!(
+            "✓ Case 4: IN_PROGRESS + parent resolved + deadline passed + own game → should_attempt = true"
+        );
+
+        // === Case 5: IN_PROGRESS + parent NOT resolved + deadline passed ===
+        env.warp_time(time_gap).await?;
+        let game_2 = cached_game(&proposer, 2).await?;
+        assert!(
+            !game_2.should_attempt_to_resolve,
+            "Game 2: should_attempt_to_resolve should be false (parent not resolved)"
+        );
+        tracing::info!(
+            "✓ Case 5: IN_PROGRESS + parent NOT resolved + deadline passed → should_attempt = false"
+        );
+
+        env.resolve_game(game_addresses[1]).await?;
+        env.resolve_game(game_addresses[2]).await?;
+        proposer.sync_state().await?;
+
+        // === Case 6: IN_PROGRESS + UnchallengedAndValidProofProvided ===
+        env.prove_game(game_addresses[3]).await?;
+        proposer.sync_state().await?;
+
+        let game_3 = cached_game(&proposer, 3).await?;
+        assert_eq!(game_3.proposal_status, ProposalStatus::UnchallengedAndValidProofProvided);
+        assert!(
+            game_3.should_attempt_to_resolve,
+            "Game 3: should_attempt_to_resolve should be true (proof provided)"
+        );
+        tracing::info!(
+            "✓ Case 6: IN_PROGRESS + UnchallengedAndValidProofProvided → should_attempt = true"
+        );
+
+        env.resolve_game(game_addresses[3]).await?;
+        proposer.sync_state().await?;
+        // === Case 7: IN_PROGRESS + ChallengedAndValidProofProvided ===
+        env.challenge_game(game_addresses[4]).await?;
+        proposer.sync_state().await?;
+
+        let game_4 = cached_game(&proposer, 4).await?;
+        assert_eq!(game_4.proposal_status, ProposalStatus::Challenged);
+        assert!(
+            !game_4.should_attempt_to_resolve,
+            "Game 4: should_attempt_to_resolve should be false (challenged)"
+        );
+
+        env.prove_game(game_addresses[4]).await?;
+        proposer.sync_state().await?;
+        let game_4 = cached_game(&proposer, 4).await?;
+        assert_eq!(game_4.proposal_status, ProposalStatus::ChallengedAndValidProofProvided);
+        assert!(
+            game_4.should_attempt_to_resolve,
+            "Game 4: should_attempt_to_resolve should be true (proof provided)"
+        );
+
+        Ok(())
+    }
+
+    /// Tests the `should_attempt_to_claim_bond` flag logic for finalized games.
+    ///
+    /// Verifies that the flag is correctly set based on:
+    /// - Finality (finalized vs not finalized)
+    /// - Credit availability (credit > 0 vs credit = 0)
+    #[tokio::test]
+    async fn test_bond_claim_marking() -> Result<()> {
+        let (env, proposer, init_bond) = setup().await?;
+
+        let starting_l2_block = env.anvil.starting_l2_block_number;
+
+        let block = starting_l2_block + 1;
+        let root_claim = env.compute_output_root_at_block(block).await?;
+        env.create_game(root_claim, block, M, init_bond).await?;
+        let (_, address) = env.last_game_info().await?;
+        tracing::info!("✓ Created game 0 at block {block}");
+
+        env.warp_time(MAX_CHALLENGE_DURATION + 1).await?;
+        env.resolve_game(address).await?;
+        tracing::info!("✓ Resolved game 0 as DEFENDER_WINS");
+
+        // Sync state
+        proposer.sync_state().await?;
+
+        // === Case 1: DEFENDER_WINS + not finalized ===
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            !game_0.should_attempt_to_claim_bond,
+            "Game 0: should_attempt_to_claim_bond should be false (not finalized)"
+        );
+        tracing::info!(
+            "✓ Case 1: DEFENDER_WINS + not finalized → should_attempt_to_claim_bond = false"
+        );
+
+        // Warp time to finalize games
+        env.warp_time(DISPUTE_GAME_FINALITY_DELAY_SECONDS + 1).await?;
+        proposer.sync_state().await?;
+
+        // === Case 2: DEFENDER_WINS + finalized + credit > 0 ===
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            game_0.should_attempt_to_claim_bond,
+            "Game 0: should_attempt_to_claim_bond should be true (finalized + credit > 0)"
+        );
+        tracing::info!("✓ Case 2: DEFENDER_WINS + finalized + credit > 0 → should_attempt_to_claim_bond = true");
+
+        // Claim bond for game 0 to set credit = 0
+        env.claim_bond(address, PROPOSER_ADDRESS).await?;
+        proposer.sync_state().await?;
+
+        // === Case 3: DEFENDER_WINS + finalized + credit = 0 ===
+        let game_0 = cached_game(&proposer, 0).await?;
+        assert!(
+            !game_0.should_attempt_to_claim_bond,
+            "Game 0: should_attempt_to_claim_bond should be false (credit = 0)"
+        );
+        tracing::info!("✓ Case 3: DEFENDER_WINS + finalized + credit = 0 → should_attempt_to_claim_bond = false");
 
         Ok(())
     }
