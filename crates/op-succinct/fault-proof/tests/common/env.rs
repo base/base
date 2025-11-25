@@ -336,6 +336,22 @@ impl TestEnvironment {
         Ok(receipt)
     }
 
+    pub async fn claim_bond(
+        &self,
+        game_address: Address,
+        recipient: Address,
+    ) -> Result<TransactionReceipt> {
+        let game = self.fault_dispute_game(game_address).await?;
+        let receipt = game
+            .claimCredit(recipient)
+            .send()
+            .await?
+            .with_required_confirmations(1)
+            .get_receipt()
+            .await?;
+        Ok(receipt)
+    }
+
     pub async fn last_game_info(&self) -> Result<(Uint<256, 4>, Address)> {
         let factory = self.factory()?;
         let game_count = factory.gameCount().call().await?;
