@@ -105,4 +105,4 @@ jobs:
         with:
           cache-on-failure: true
       - uses: taiki-e/install-action@cargo-udeps
-      - run: cargo udeps --workspace --lib --examples --tests --benches --all-features --offline
+      - run: cargo udeps --workspace --lib --examples --tests --benches --all-features
