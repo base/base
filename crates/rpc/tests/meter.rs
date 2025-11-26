@@ -11,6 +11,7 @@ use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use rand::{SeedableRng, rngs::StdRng};
+use reth::revm::db::{BundleState, Cache};
 use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
@@ -20,6 +21,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
+use revm::primitives::KECCAK_EMPTY;
 use tips_core::types::{Bundle, ParsedBundle};
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
@@ -368,3 +370,100 @@ fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
 
     Ok(())
 }
+
+/// Integration test: verifies meter_bundle uses flashblocks state correctly.
+///
+/// A transaction using nonce=1 should fail without flashblocks state (since
+/// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.
+#[test]
+fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()> {
+    let harness = setup_harness()?;
+    let alice_address = harness.address(User::Alice);
+
+    // Create a transaction that requires nonce=1 (assuming canonical nonce is 0)
+    let to = Address::random();
+    let signed_tx = TransactionBuilder::default()
+        .signer(harness.signer(User::Alice))
+        .chain_id(harness.chain_spec.chain_id())
+        .nonce(1) // Requires pending state to have nonce=1
+        .to(to)
+        .value(100)
+        .gas_limit(21_000)
+        .max_fee_per_gas(10)
+        .max_priority_fee_per_gas(1)
+        .into_eip1559();
+
+    let tx =
+        OpTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone());
+    let envelope = envelope_from_signed(&tx)?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope])?;
+
+    // Without flashblocks state, transaction should fail (nonce mismatch)
+    let state_provider = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let result_without_flashblocks = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle.clone(),
+        &harness.header,
+        None, // No flashblocks state
+        None,
+    );
+
+    assert!(
+        result_without_flashblocks.is_err(),
+        "Transaction with nonce=1 should fail without pending state (canonical nonce is 0)"
+    );
+
+    // Now create flashblocks state with nonce=1 for Alice
+    // Use BundleState::new() to properly calculate state_size
+    let bundle_state = BundleState::new(
+        [(
+            alice_address,
+            Some(revm::state::AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 0, // original
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            }),
+            Some(revm::state::AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1, // pending (after first flashblock tx)
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            }),
+            Default::default(), // no storage changes
+        )],
+        Vec::<Vec<(Address, Option<Option<revm::state::AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+        Vec::<(B256, revm::bytecode::Bytecode)>::new(),
+    );
+
+    let flashblocks_state = FlashblocksState { cache: Cache::default(), bundle_state };
+
+    // With correct flashblocks state, transaction should succeed
+    let state_provider2 = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let result_with_flashblocks = meter_bundle(
+        state_provider2,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        Some(flashblocks_state),
+        None,
+    );
+
+    assert!(
+        result_with_flashblocks.is_ok(),
+        "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
+        result_with_flashblocks.err()
+    );
+
+    Ok(())
+}
+
