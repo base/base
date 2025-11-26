@@ -60,6 +60,7 @@ metrics-derive.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+revm.workspace = true
 reth-db.workspace = true
 once_cell.workspace = true
 reth-provider.workspace = true

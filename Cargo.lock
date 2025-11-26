@@ -1566,6 +1566,7 @@ dependencies = [
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-tracing",
+ "revm",
  "revm-database",
  "rollup-boost",
  "serde",
