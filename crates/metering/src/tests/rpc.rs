@@ -6,6 +6,7 @@ mod tests {
     use alloy_genesis::Genesis;
     use alloy_primitives::{Bytes, U256, address, b256, bytes};
     use alloy_rpc_client::RpcClient;
+    use base_reth_test_utils::tracing::init_silenced_tracing;
     use op_alloy_consensus::OpTxEnvelope;
     use reth::{
         args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},
@@ -54,6 +55,7 @@ mod tests {
     }
 
     async fn setup_node() -> eyre::Result<NodeContext> {
+        init_silenced_tracing();
         let tasks = TaskManager::current();
         let exec = tasks.executor();
         const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
@@ -106,7 +108,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_empty() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -125,7 +126,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_single_transaction() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -176,7 +176,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_multiple_transactions() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -249,7 +248,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_invalid_transaction() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -269,7 +267,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_uses_latest_block() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -287,7 +284,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_ignores_bundle_block_number() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -313,7 +309,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_custom_timestamp() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -335,7 +330,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_arbitrary_block_number() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 
@@ -354,7 +348,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_meter_bundle_gas_calculations() -> eyre::Result<()> {
-        reth_tracing::init_test_tracing();
         let node = setup_node().await?;
         let client = node.rpc_client().await?;
 

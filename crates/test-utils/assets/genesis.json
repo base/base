@@ -17,6 +17,13 @@
         "mergeNetsplitBlock": 0,
         "bedrockBlock": 0,
         "regolithTime": 0,
+        "canyonTime": 0,
+        "ecotoneTime": 0,
+        "fjordTime": 0,
+        "graniteTime": 0,
+        "isthmusTime": 0,
+        "jovianTime": 0,
+        "pragueTime": 0,
         "terminalTotalDifficulty": 0,
         "terminalTotalDifficultyPassed": true,
         "optimism": {

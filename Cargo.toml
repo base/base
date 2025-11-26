@@ -12,6 +12,7 @@ members = [
     "crates/flashblocks-rpc",
     "crates/metering",
     "crates/node",
+    "crates/test-utils",
     "crates/transaction-tracing",
 ]
 
@@ -41,6 +42,7 @@ codegen-units = 1
 base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-metering = { path = "crates/metering" }
 base-reth-node = { path = "crates/node" }
+base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # base/tips
@@ -69,6 +71,9 @@ reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-node-core = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 
 # revm
 revm = { version = "31.0.2", default-features = false }
@@ -100,6 +105,7 @@ op-alloy-consensus = { version = "0.22.0", default-features = false }
 # rollup-boost
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "v0.7.11" }
 rustls = "0.23.23"
+tracing-subscriber = "0.3"
 
 # tokio
 tokio = { version = "1.44.2", features = ["full"] }
