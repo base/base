@@ -1,7 +1,7 @@
 use std::{env, sync::Arc};
 
 use alloy_eips::BlockId;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use fault_proof::config::FaultDisputeGameConfig;
 use op_succinct_host_utils::{
     fetcher::{OPSuccinctDataFetcher, RPCMode},
@@ -150,9 +150,26 @@ async fn update_fdg_config() -> Result<()> {
                     None => search_start,
                 };
 
+            // NOTE: Starting from block 0 (genesis) is intentionally disallowed because in
+            // op-stack chains genesis state is provided as part of the `RollupConfig`, which is
+            // NOT part of the chain state.
+            if finalized_l2_block_number <= num_blocks_for_finality {
+                bail!(
+                    "finalized L2 block ({}) too low for finality window ({} blocks)",
+                    finalized_l2_block_number,
+                    num_blocks_for_finality,
+                );
+            }
+
             finalized_l2_block_number.saturating_sub(num_blocks_for_finality)
         }
     };
+
+    if starting_l2_block_number == 0 {
+        log::warn!("Starting L2 block number is 0. Make sure this is intended.");
+    } else {
+        log::info!("Using starting L2 block number: {starting_l2_block_number}");
+    }
 
     let starting_block_number_hex = format!("0x{starting_l2_block_number:x}");
     let optimism_output_data: Value = data_fetcher
