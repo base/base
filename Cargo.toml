@@ -50,8 +50,11 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
-# internal
 base-reth-cli = { path = "crates/cli" }
+base-reth-fbal = { path = "crates/fbal" }
+base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
+base-reth-metering = { path = "crates/metering" }
+base-reth-node = { path = "crates/node" }
 base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-flashblocks = { path = "crates/flashblocks" }
 base-reth-rpc = { path = "crates/rpc" }
@@ -81,7 +84,9 @@ reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = ["op"] }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
+    "op",
+] }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }

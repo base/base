@@ -1,0 +1,16 @@
+[package]
+name = "base-reth-fbal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "FBAL library crate"
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
