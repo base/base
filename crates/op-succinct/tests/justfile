@@ -8,21 +8,25 @@ test-e2e-sysgo BINARY FILTER="" : unzip-contract-artifacts
         export FILTER="-run {{FILTER}}"
     fi
 
+    export DEVSTACK_ORCHESTRATOR=sysgo
     export OP_DEPLOYER_ARTIFACTS="{{SOURCE}}/artifacts/src/forge-artifacts"
     export DISABLE_OP_E2E_LEGACY=true
 
     if [ "{{BINARY}}" = "validity" ]; then
         export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
-        export DEVSTACK_ORCHESTRATOR=sysgo
         echo "Building validity proposer..."
         cd .. && cargo build --bin validity --release
+    elif [ "{{BINARY}}" = "faultproof" ]; then
+        export FAULT_PROOF_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/proposer"
+        echo "Building fault-proof proposer..."
+        cd .. && cargo build --bin proposer --release
     else
-        echo "Invalid BINARY specified. Must be either 'validity' or 'fault-proof'."
+        echo "Invalid BINARY specified. Must be either 'validity' or 'faultproof'."
         exit 1
     fi
 
     # Run the test with count=1 to avoid caching the test results.
-    cd {{SOURCE}} && go test -count=1 -timeout 40m -v ./e2e $FILTER
+    cd {{SOURCE}} && go test -count=1 -timeout 40m -v ./e2e/{{BINARY}} $FILTER
 
 unzip-contract-artifacts DEST_DIR="":
     #!/bin/bash
