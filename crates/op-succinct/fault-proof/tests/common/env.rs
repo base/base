@@ -135,6 +135,60 @@ impl TestEnvironment {
         Ok(Self { game_type, private_keys, rpc_config, fetcher, anvil, deployed })
     }
 
+    /// Setup test environment with starting L2 block offset from actual finalized block
+    ///
+    /// # Arguments
+    /// * `offset` - Positive offset creates future block (for testing misconfiguration). Negative
+    ///   offset creates past block (for testing valid scenarios). Zero offset is equivalent to
+    ///   normal setup().
+    ///
+    /// # Examples
+    /// * `setup_with_starting_block_offset(1_000_000)` - 1M blocks ahead (misconfigured)
+    /// * `setup_with_starting_block_offset(-100)` - 100 blocks behind (valid)
+    /// * `setup_with_starting_block_offset(0)` - same as setup()
+    pub async fn setup_with_starting_block_offset(offset: i64) -> Result<Self> {
+        init_logging();
+
+        let mut rpc_config = get_rpcs_from_env();
+        let fetcher = OPSuccinctDataFetcher::new();
+
+        // Setup anvil chain - gets actual L2 finalized block
+        let anvil = setup_anvil_chain().await?;
+
+        // Apply offset to get custom starting block
+        let custom_starting_block = if offset >= 0 {
+            anvil.starting_l2_block_number.saturating_add(offset as u64)
+        } else {
+            anvil.starting_l2_block_number.saturating_sub(offset.unsigned_abs())
+        };
+
+        // For future blocks, use dummy root (can't compute root for blocks that don't exist)
+        // For past/current blocks, reuse the actual root from anvil setup
+        let starting_root = if offset > 0 {
+            // Dummy root for future blocks
+            "0x0000000000000000000000000000000000000000000000000000000000000000".to_string()
+        } else {
+            anvil.starting_root.clone()
+        };
+
+        // Create config with offset starting block
+        let test_config = test_config(custom_starting_block, starting_root);
+        let json = serde_json::to_string_pretty(&test_config)?;
+        std::fs::write(OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH.clone(), json)?;
+
+        // Update RPC config with Anvil endpoint
+        rpc_config.l1_rpc = Url::parse(&anvil.endpoint)?;
+
+        let game_type = TEST_GAME_TYPE;
+        let private_keys = TestPrivateKeys::default();
+
+        // Deploy contracts with the offset starting block
+        info!("=== Deploying Contracts with starting block offset: {} ===", offset);
+        let deployed = deploy_test_contracts(&anvil.endpoint, private_keys.deployer).await?;
+
+        Ok(Self { game_type, private_keys, rpc_config, fetcher, anvil, deployed })
+    }
+
     pub async fn init_proposer(
         &self,
     ) -> Result<OPSuccinctProposer<fault_proof::L1Provider, impl OPSuccinctHost + Clone>> {

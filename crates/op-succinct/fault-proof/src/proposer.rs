@@ -211,6 +211,10 @@ where
 
         // Initialize state with anchor L2 block number
         let anchor_l2_block = factory.get_anchor_l2_block_number(config.game_type).await?;
+
+        Self::validate_anchor_l2_block(anchor_l2_block, &config, host.as_ref(), fetcher.as_ref())
+            .await?;
+
         let initial_state =
             ProposerState { canonical_head_l2_block: Some(anchor_l2_block), ..Default::default() };
 
@@ -235,6 +239,39 @@ where
             next_task_id: Arc::new(AtomicU64::new(1)),
             state: Arc::new(RwLock::new(initial_state)),
         })
+    }
+
+    async fn validate_anchor_l2_block(
+        anchor_l2_block: U256,
+        config: &ProposerConfig,
+        host: &H,
+        fetcher: &OPSuccinctDataFetcher,
+    ) -> Result<()> {
+        let finalized_l2_block = host
+            .get_finalized_l2_block_number(fetcher, anchor_l2_block.to::<u64>())
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Cannot fetch finalized L2 block number from L2 RPC: {}\n\
+                     Please check that your L2 node is running and accessible.",
+                    config.l2_rpc
+                )
+            })?;
+
+        if anchor_l2_block > U256::from(finalized_l2_block) {
+            return Err(anyhow::anyhow!(
+                "Contract misconfiguration detected: Contract's anchor L2 block ({}) is ahead of \
+                 the current finalized L2 block ({}). This indicates:\n\
+                 1. The contract's startingL2BlockNumber is misconfigured to a future value, OR\n\
+                 2. Your L2 node is not fully synced, OR\n\
+                 3. Your L2 RPC endpoint is incorrect.\n\n\
+                 Please verify your configuration before starting the proposer.",
+                anchor_l2_block,
+                finalized_l2_block
+            ));
+        }
+
+        Ok(())
     }
 
     /// Returns a lightweight snapshot of the proposer's cached state.
