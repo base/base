@@ -89,9 +89,11 @@ alloy-rpc-types = { version = "1.0.41", default-features = false }
 alloy-rpc-types-engine = { version = "1.0.41", default-features = false }
 alloy-rpc-types-eth = { version = "1.0.41" }
 alloy-consensus = { version = "1.0.41" }
+alloy-trie = { version = "0.9.1", default-features = false }
 alloy-provider = { version = "1.0.41" }
 alloy-hardforks = "0.4.4"
 alloy-rpc-client = { version = "1.0.41" }
+alloy-serde = { version = "1.0.41" }
 
 # op-alloy
 op-alloy-rpc-types = { version = "0.22.0", default-features = false }
@@ -127,7 +129,10 @@ serde_json = "1.0"
 url = "2.5"
 metrics = "0.24.1"
 metrics-derive = "0.1"
+itertools = "0.14"
 eyre = { version = "0.6.12" }
+uuid = { version = "1.6.1", features = ["serde", "v5", "v4"] }
+time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }
 chrono = "0.4.41"
 brotli = "8.0.1"
 arc-swap = "1.7.1"
