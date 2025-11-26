@@ -5,7 +5,9 @@ use alloy_provider::Provider;
 use alloy_rpc_types_eth::TransactionInput;
 use alloy_sol_types::{SolCall, sol};
 use base_reth_flashblocks_rpc::rpc::FlashblocksAPI;
-use base_reth_test_utils::{flashblocks_harness::FlashblocksHarness, node::BASE_CHAIN_ID};
+use base_reth_test_utils::{
+    flashblocks_harness::FlashblocksHarness, node::BASE_CHAIN_ID, tracing::init_silenced_tracing,
+};
 use eyre::{Result, eyre};
 use hex_literal::hex;
 use op_alloy_consensus::OpTxEnvelope;
@@ -21,7 +23,7 @@ use crate::rpc::{MeteringApiImpl, MeteringApiServer};
 
 #[tokio::test]
 async fn meter_bundle_simulation_reflects_pending_state() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    init_silenced_tracing();
     let harness = FlashblocksHarness::new().await?;
 
     let provider = harness.provider();
@@ -133,7 +135,7 @@ async fn meter_bundle_simulation_reflects_pending_state() -> Result<()> {
 
 #[tokio::test]
 async fn meter_bundle_errors_when_beacon_root_missing() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    init_silenced_tracing();
     let harness = FlashblocksHarness::new().await?;
 
     let provider = harness.provider();
@@ -265,7 +267,7 @@ fn envelope_from_signed(tx: TransactionSigned) -> (OpTxEnvelope, Bytes) {
 
 #[tokio::test]
 async fn meter_bundle_reads_canonical_storage_without_mutation() -> Result<()> {
-    reth_tracing::init_test_tracing();
+    init_silenced_tracing();
     let harness = FlashblocksHarness::new().await?;
     let alice = &harness.accounts().alice;
     let alice_secret = secret_from_hex(alice.private_key);
