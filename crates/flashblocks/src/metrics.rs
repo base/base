@@ -60,4 +60,10 @@ pub struct Metrics {
     /// Total number of WebSocket reconnection attempts.
     #[metric(describe = "Total number of WebSocket reconnection attempts")]
     pub reconnect_attempts: Counter,
+
+    #[metric(describe = "Time taken to clone bundle state")]
+    pub bundle_state_clone_duration: Histogram,
+
+    #[metric(describe = "Size of bundle state being cloned (number of accounts)")]
+    pub bundle_state_clone_size: Histogram,
 }
