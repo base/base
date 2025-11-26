@@ -198,6 +198,8 @@ where
             state_block_number: header.number,
             state_flashblock_index,
             total_gas_used: result.total_gas_used,
+            // TODO: reintroduce state_root_time_us once tips-core exposes it again.
+            // TODO: rename total_execution_time_us to total_time_us since it includes state root time
             total_execution_time_us: result.total_time_us,
         })
     }
