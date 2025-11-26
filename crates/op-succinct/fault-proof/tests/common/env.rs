@@ -377,6 +377,14 @@ impl TestEnvironment {
         Ok(receipt)
     }
 
+    pub async fn get_credit(&self, game_address: Address, recipient: Address) -> Result<U256> {
+        let provider = &self.anvil.provider;
+        let game = OPSuccinctFaultDisputeGame::new(game_address, provider);
+        let normal_credit = game.normalModeCredit(recipient).call().await?;
+        let refund_credit = game.refundModeCredit(recipient).call().await?;
+        Ok(normal_credit + refund_credit)
+    }
+
     pub async fn last_game_info(&self) -> Result<(Uint<256, 4>, Address)> {
         let factory = self.factory()?;
         let game_count = factory.gameCount().call().await?;
