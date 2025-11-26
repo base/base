@@ -21,7 +21,7 @@ func TestMain(m *testing.M) {
 
 func TestValidityProposer_L2OODeployedAndUp(gt *testing.T) {
 	t := devtest.SerialT(gt)
-	sys := presets.NewMinimal(t)
+	sys := presets.NewMinimalWithProposer(t)
 
 	l2ooAddr := sys.L2Chain.Escape().Deployment().OPSuccinctL2OutputOracleAddr()
 	t.Logger().Info("L2 Output Oracle Address:", "address", l2ooAddr.Hex())
@@ -37,7 +37,7 @@ func TestValidityProposer_L2OODeployedAndUp(gt *testing.T) {
 
 func TestValidityProposer_ProveSingleRange(gt *testing.T) {
 	t := devtest.SerialT(gt)
-	sys := presets.NewMinimal(t)
+	sys := presets.NewMinimalWithProposer(t)
 
 	l2ooAddr := sys.L2Chain.Escape().Deployment().OPSuccinctL2OutputOracleAddr()
 	t.Logger().Info("L2 Output Oracle Address:", "address", l2ooAddr.Hex())
