@@ -7,7 +7,7 @@ use rdkafka::producer::FutureProducer;
 use tips_audit::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
 use tips_core::MeterBundleResponse;
 use tips_core::kafka::load_kafka_config_from_file;
-use tips_core::logger::init_logger;
+use tips_core::logger::init_logger_with_format;
 use tips_ingress_rpc::Config;
 use tips_ingress_rpc::connect_ingress_to_builder;
 use tips_ingress_rpc::metrics::init_prometheus_exporter;
@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
     // clone once instead of cloning each field before passing to `IngressService::new`
     let cfg = config.clone();
 
-    init_logger(&config.log_level);
+    init_logger_with_format(&config.log_level, config.log_format);
 
     init_prometheus_exporter(config.metrics_addr).expect("Failed to install Prometheus exporter");
 

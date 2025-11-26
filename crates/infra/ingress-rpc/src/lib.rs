@@ -86,6 +86,9 @@ pub struct Config {
     #[arg(long, env = "TIPS_INGRESS_LOG_LEVEL", default_value = "info")]
     pub log_level: String,
 
+    #[arg(long, env = "TIPS_INGRESS_LOG_FORMAT", default_value = "pretty")]
+    pub log_format: tips_core::logger::LogFormat,
+
     /// Default lifetime for sent transactions in seconds (default: 3 hours)
     #[arg(
         long,

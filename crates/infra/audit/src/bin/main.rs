@@ -7,7 +7,7 @@ use rdkafka::consumer::Consumer;
 use tips_audit::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
-use tips_core::logger::init_logger;
+use tips_core::logger::init_logger_with_format;
 use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -31,6 +31,9 @@ struct Args {
     #[arg(long, env = "TIPS_AUDIT_LOG_LEVEL", default_value = "info")]
     log_level: String,
 
+    #[arg(long, env = "TIPS_AUDIT_LOG_FORMAT", default_value = "pretty")]
+    log_format: tips_core::logger::LogFormat,
+
     #[arg(long, env = "TIPS_AUDIT_S3_CONFIG_TYPE", default_value = "aws")]
     s3_config_type: S3ConfigType,
 
@@ -53,7 +56,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    init_logger(&args.log_level);
+    init_logger_with_format(&args.log_level, args.log_format);
 
     info!(
         kafka_properties_file = %args.kafka_properties_file,
