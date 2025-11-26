@@ -10,8 +10,9 @@ mod e2e {
     use anyhow::{Context, Result};
     use common::{
         constants::{
-            CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS, MAX_CHALLENGE_DURATION,
-            MAX_PROVE_DURATION, MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
+            CHALLENGER_ADDRESS, DISPUTE_GAME_FINALITY_DELAY_SECONDS,
+            L2_BLOCK_OFFSET_FROM_FINALIZED, MAX_CHALLENGE_DURATION, MAX_PROVE_DURATION,
+            MOCK_PERMISSIONED_GAME_TYPE, PROPOSER_ADDRESS, TEST_GAME_TYPE,
         },
         monitor::{verify_all_resolved_correctly, TrackedGame},
         TestEnvironment,
@@ -938,6 +939,33 @@ mod e2e {
             .expect("anchor game not found in snapshot");
 
         env.stop_proposer(proposer_handle);
+
+        Ok(())
+    }
+
+    // Tests that the proposer fails fast when the contract's starting L2 block number is
+    // misconfigured to a future value (e.g., a single block ahead of actual finalized L2 block).
+    // This prevents the proposer from running indefinitely without creating games.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_proposer_rejects_future_starting_block() -> Result<()> {
+        let env = TestEnvironment::setup_with_starting_block_offset(
+            (L2_BLOCK_OFFSET_FROM_FINALIZED + 1) as i64,
+        )
+        .await?;
+
+        let result = env.init_proposer().await;
+
+        let error = match result {
+            Err(e) => e,
+            Ok(_) => panic!("Proposer should have failed due to future block configuration"),
+        };
+
+        let err_msg = error.to_string().to_lowercase();
+        assert!(
+            err_msg.contains("misconfiguration") || err_msg.contains("ahead of"),
+            "Unexpected error message. Got: '{}'. Expected reference to block gap.",
+            err_msg
+        );
 
         Ok(())
     }
