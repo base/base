@@ -16,7 +16,6 @@ workspace = true
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-optimism-cli.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-rpc = { workspace = true, features = ["client"] }
 reth-provider.workspace = true
