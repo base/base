@@ -37,6 +37,13 @@ Base Reth Node is an implementation of a Reth Ethereum node, specifically tailor
 - **Dockerized:** Comes with a `Dockerfile` for easy containerization and deployment.
 - **Development Toolkit:** Includes a `justfile` for streamlined build, test, and linting workflows.
 
+## Hardware recommendations
+
+| Node type | Disk (NVMe) | RAM | Notes |
+| -- | -- | -- | -- |
+| Full | ≥ 2TB TLC NVMe | ≥ 64GB | Suitable for most Base mainnet RPC and indexing workloads. |
+| Archive | ≥ 4TB TLC NVMe | ≥ 128GB | Recommended for full historical state access on Base mainnet. |
+
 ## Node Operators
 
 > [!IMPORTANT]
