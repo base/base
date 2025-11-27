@@ -864,18 +864,10 @@ async fn test_eth_call_sees_flashblock_state_changes() {
 
     // Flashblock 1: Alice sends a large amount to Bob
     let transfer_to_bob = 1_000_000_000_000_000_000u128; // 1 ETH
-    let tx = test.build_transaction_to_send_eth_with_nonce(
-        User::Alice,
-        User::Bob,
-        transfer_to_bob,
-        0,
-    );
-    test.send_flashblock(
-        FlashblockBuilder::new(&test, 1)
-            .with_transactions(vec![tx])
-            .build(),
-    )
-    .await;
+    let tx =
+        test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, transfer_to_bob, 0);
+    test.send_flashblock(FlashblockBuilder::new(&test, 1).with_transactions(vec![tx]).build())
+        .await;
 
     // Verify via state overrides that Bob received the funds
     let overrides = test
@@ -927,27 +919,20 @@ async fn test_sequential_nonces_across_flashblocks() {
     // Flashblock 1: Alice sends to Bob with nonce 0
     let tx_nonce_0 = test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Bob, 1000, 0);
     test.send_flashblock(
-        FlashblockBuilder::new(&test, 1)
-            .with_transactions(vec![tx_nonce_0])
-            .build(),
+        FlashblockBuilder::new(&test, 1).with_transactions(vec![tx_nonce_0]).build(),
     )
     .await;
 
     // Verify flashblock 1 was processed - Alice's pending nonce should now be 1
     let alice_state = test.account_state(User::Alice);
-    assert_eq!(
-        alice_state.nonce, 1,
-        "After flashblock 1, Alice's pending nonce should be 1"
-    );
+    assert_eq!(alice_state.nonce, 1, "After flashblock 1, Alice's pending nonce should be 1");
 
     // Flashblock 2: Alice sends to Charlie with nonce 1
     // This will FAIL if the execution layer can't see flashblock 1's state change
     let tx_nonce_1 =
         test.build_transaction_to_send_eth_with_nonce(User::Alice, User::Charlie, 2000, 1);
     test.send_flashblock(
-        FlashblockBuilder::new(&test, 2)
-            .with_transactions(vec![tx_nonce_1])
-            .build(),
+        FlashblockBuilder::new(&test, 2).with_transactions(vec![tx_nonce_1]).build(),
     )
     .await;
 

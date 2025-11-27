@@ -11,8 +11,11 @@ use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use rand::{SeedableRng, rngs::StdRng};
-use reth::revm::db::{BundleState, Cache};
-use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
+use reth::{
+    api::NodeTypesWithDBAdapter,
+    chainspec::EthChainSpec,
+    revm::db::{BundleState, Cache},
+};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_node::OpNode;
@@ -466,4 +469,3 @@ fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()
 
     Ok(())
 }
-

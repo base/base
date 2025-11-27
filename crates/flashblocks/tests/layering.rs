@@ -24,8 +24,10 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, U256};
 use eyre::Context;
 use rand::{SeedableRng, rngs::StdRng};
-use reth::api::NodeTypesWithDBAdapter;
-use reth::revm::db::{AccountState, BundleState, Cache, CacheDB, DbAccount, State};
+use reth::{
+    api::NodeTypesWithDBAdapter,
+    revm::db::{AccountState, BundleState, Cache, CacheDB, DbAccount, State},
+};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
     mdbx::{DatabaseArguments, KILOBYTE, MEGABYTE, MaxReadTransactionDuration},
@@ -35,11 +37,11 @@ use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_node::OpNode;
 use reth_primitives_traits::SealedHeader;
 use reth_provider::{
-    HeaderProvider, ProviderFactory, StateProviderFactory, providers::{BlockchainProvider, StaticFileProvider},
+    HeaderProvider, ProviderFactory, StateProviderFactory,
+    providers::{BlockchainProvider, StaticFileProvider},
 };
 use reth_testing_utils::generators::generate_keys;
-use revm::Database;
-use revm::primitives::KECCAK_EMPTY;
+use revm::{Database, primitives::KECCAK_EMPTY};
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 
@@ -170,10 +172,7 @@ fn layering_old_state_only_cannot_see_pending_state() -> eyre::Result<()> {
     let account = db.basic(alice_address)?.expect("account should exist");
 
     // Old implementation sees canonical nonce (0), not any pending state
-    assert_eq!(
-        account.nonce, 0,
-        "Old State-only layering can only see canonical state"
-    );
+    assert_eq!(account.nonce, 0, "Old State-only layering can only see canonical state");
 
     Ok(())
 }
@@ -337,12 +336,8 @@ fn layering_cachedb_makes_pending_balance_visible() -> eyre::Result<()> {
         .provider
         .state_by_block_hash(harness.header.hash())
         .context("getting state provider")?;
-    let canonical_balance2 =
-        state_provider2.account_balance(&alice_address)?.unwrap_or(U256::ZERO);
-    assert_eq!(
-        canonical_balance, canonical_balance2,
-        "Canonical state should be unchanged"
-    );
+    let canonical_balance2 = state_provider2.account_balance(&alice_address)?.unwrap_or(U256::ZERO);
+    assert_eq!(canonical_balance, canonical_balance2, "Canonical state should be unchanged");
 
     Ok(())
 }
@@ -409,10 +404,7 @@ fn layering_bundle_prestate_makes_pending_nonce_visible() -> eyre::Result<()> {
 
     // Read through State without prestate - should see canonical nonce (0)
     let account2 = db_without_prestate.basic(alice_address)?.expect("account should exist");
-    assert_eq!(
-        account2.nonce, 0,
-        "State without bundle_prestate should see canonical nonce"
-    );
+    assert_eq!(account2.nonce, 0, "State without bundle_prestate should see canonical nonce");
 
     Ok(())
 }
