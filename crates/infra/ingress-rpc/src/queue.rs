@@ -12,7 +12,6 @@ use tracing::{error, info};
 pub trait QueuePublisher: Send + Sync {
     async fn publish(&self, bundle: &AcceptedBundle, bundle_hash: &B256) -> Result<()>;
 }
-
 /// A queue to buffer transactions
 pub struct KafkaQueuePublisher {
     producer: FutureProducer,

@@ -14,6 +14,7 @@ use tips_audit::BundleEvent;
 use tips_core::types::ParsedBundle;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
+    user_ops_types::{SendUserOperationResponse, UserOperationRequest},
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Duration, Instant, timeout};
@@ -37,6 +38,13 @@ pub trait IngressApi {
     /// Handler for: `eth_sendRawTransaction`
     #[method(name = "sendRawTransaction")]
     async fn send_raw_transaction(&self, tx: Bytes) -> RpcResult<B256>;
+
+    /// Handler for: `eth_sendUserOperation`
+    #[method(name = "sendUserOperation")]
+    async fn send_user_operation(
+        &self,
+        user_operation: UserOperationRequest,
+    ) -> RpcResult<SendUserOperationResponse>;
 }
 
 pub struct IngressService<Queue> {
@@ -217,6 +225,21 @@ where
             .record(start.elapsed().as_secs_f64());
 
         Ok(transaction.tx_hash())
+    }
+
+    async fn send_user_operation(
+        &self,
+        user_operation: UserOperationRequest,
+    ) -> RpcResult<SendUserOperationResponse> {
+        dbg!(&user_operation);
+
+        // STEPS:
+        // 1. Reputation Service Validate
+        // 2. Base Node Validate User Operation
+        // 3. Send to Kafka
+        // Send Hash
+        // todo!("not yet implemented send_user_operation");
+        todo!("not yet implemented send_user_operation");
     }
 }
 

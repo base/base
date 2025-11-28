@@ -23,6 +23,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 op-alloy-flz.workspace = true
 serde.workspace = true
+alloy-rpc-types.workspace = true
+
 
 [dev-dependencies]
 alloy-signer-local.workspace = true
