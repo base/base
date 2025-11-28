@@ -6,6 +6,12 @@
 > This repository is for development purposes. For production deployments, please use the releases referenced in [base/node](https://github.com/base/node/releases).
 
 Base Reth Node is an implementation of a Reth Ethereum node, specifically tailored for the Base L2 network. It integrates Flashblocks capabilities and leverages Optimism components from Reth (see version pinned in [Cargo.toml](Cargo.toml)). This node is designed to provide a robust and efficient solution for interacting with the Base network.
+## Requirements
+
+- **RAM**: 16GB minimum (32GB+ recommended for Archive mode)
+- **Disk**: 300GB+ SSD
+- **CPU**: 4+ cores
+- **Network**: Stable connection to Base L1 RPC provider
 
 <!-- Badge row 1 - status -->
 
