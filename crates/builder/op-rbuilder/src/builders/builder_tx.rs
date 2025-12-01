@@ -12,7 +12,7 @@ use op_alloy_consensus::OpTypedTransaction;
 use op_alloy_rpc_types::OpTransactionRequest;
 use op_revm::{OpHaltReason, OpTransactionError};
 use reth_evm::{
-    ConfigureEvm, Evm, EvmEnv, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
+    ConfigureEvm, Evm, EvmError, InvalidTxError, eth::receipt_builder::ReceiptBuilderCtx,
     precompiles::PrecompilesMap,
 };
 use reth_node_api::PayloadBuilderError;
@@ -20,7 +20,7 @@ use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::Recovered;
 use reth_provider::{ProviderError, StateProvider};
 use reth_revm::{State, database::StateProviderDatabase};
-use reth_rpc_api::eth::{EthTxEnvError, TryIntoTxEnv};
+use reth_rpc_api::eth::{EthTxEnvError, transaction::TryIntoTxEnv};
 use revm::{
     DatabaseCommit, DatabaseRef,
     context::{
@@ -323,10 +323,7 @@ pub trait BuilderTransactions<ExtraCtx: Debug + Default = (), Extra: Debug + Def
         expected_logs: Vec<B256>,
         evm: &mut OpEvm<impl Database, NoOpInspector, PrecompilesMap>,
     ) -> Result<SimulationSuccessResult<T>, BuilderTransactionError> {
-        let tx_env = tx.try_into_tx_env(&EvmEnv {
-            cfg_env: evm.cfg().clone(),
-            block_env: evm.block().clone(),
-        })?;
+        let tx_env = tx.try_into_tx_env(evm.cfg(), evm.block())?;
         let to = tx_env.base.kind.into_to().unwrap_or_default();
 
         let ResultAndState { result, state } = match evm.transact(tx_env) {
