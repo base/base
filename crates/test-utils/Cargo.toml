@@ -83,3 +83,6 @@ tower = "0.5"
 base-reth-flashblocks-rpc.workspace = true
 
 [dev-dependencies]
+
+[package.metadata.cargo-udeps.ignore]
+normal = ["reth-optimism-cli"]

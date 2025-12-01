@@ -18,7 +18,6 @@ tips-core.workspace = true
 # reth
 reth.workspace = true
 reth-provider.workspace = true
-reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-evm.workspace = true
 reth-optimism-evm.workspace = true
@@ -35,15 +34,11 @@ alloy-eips.workspace = true
 # op-alloy
 op-alloy-consensus.workspace = true
 
-# revm
-revm.workspace = true
-
 # rpc
 jsonrpsee.workspace = true
 
 # misc
 tracing.workspace = true
-serde.workspace = true
 eyre.workspace = true
 
 [dev-dependencies]
@@ -61,3 +56,5 @@ serde_json.workspace = true
 tokio.workspace = true
 base-reth-test-utils.workspace = true
 
+[package.metadata.cargo-udeps.ignore]
+normal = ["reth-optimism-cli"]
