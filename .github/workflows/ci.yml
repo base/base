@@ -106,5 +106,5 @@ jobs:
           cache-on-failure: true
       - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
         with: 
-          tool: cargo-udeps@81ace8602452bb7d5ad4fdb82d38def93c0983c7 # v0.1.60
+          tool: cargo-udeps
       - run: cargo udeps --workspace --lib --tests --all-features
