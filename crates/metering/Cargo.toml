@@ -24,6 +24,7 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 reth-optimism-primitives.workspace = true
 reth-transaction-pool.workspace = true
+reth-optimism-cli.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -55,5 +56,5 @@ serde_json.workspace = true
 tokio.workspace = true
 base-reth-test-utils.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["reth-optimism-cli"]
+[package.metadata.cargo-udeps.ignore]
+normal = ["reth-optimism-cli"]
