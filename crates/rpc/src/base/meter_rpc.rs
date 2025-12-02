@@ -1,14 +1,19 @@
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
-use reth_provider::{ChainSpecProvider, StateProviderFactory};
+use reth_optimism_primitives::OpBlock;
+use reth_primitives_traits::Block as BlockT;
+use reth_provider::{BlockReader, ChainSpecProvider, StateProviderFactory};
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
-use crate::{MeteringApiServer, meter_bundle};
+use super::block::meter_block;
+use super::meter::meter_bundle;
+use super::traits::MeteringApiServer;
+use super::types::MeterBlockResponse;
 
 /// Implementation of the metering RPC API
 #[derive(Debug)]
@@ -21,6 +26,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
+        + BlockReader<Block = OpBlock>
         + Clone,
 {
     /// Creates a new instance of MeteringApi
@@ -35,6 +41,7 @@ where
     Provider: StateProviderFactory
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
+        + BlockReader<Block = OpBlock>
         + Clone
         + Send
         + Sync
@@ -122,6 +129,139 @@ where
             state_flashblock_index: None,
             total_gas_used,
             total_execution_time_us: total_execution_time,
+        })
+    }
+
+    async fn meter_block_by_hash(&self, hash: B256) -> RpcResult<MeterBlockResponse> {
+        info!(block_hash = %hash, "Starting block metering by hash");
+
+        let block = self
+            .provider
+            .block_by_hash(hash)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by hash");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {}", hash),
+                    None::<()>,
+                )
+            })?;
+
+        let response = self.meter_block_internal(&block)?;
+
+        info!(
+            block_hash = %hash,
+            execution_time_us = response.execution_time_us,
+            state_root_time_us = response.state_root_time_us,
+            total_time_us = response.total_time_us,
+            "Block metering completed successfully"
+        );
+
+        Ok(response)
+    }
+
+    async fn meter_block_by_number(&self, number: BlockNumberOrTag) -> RpcResult<MeterBlockResponse> {
+        info!(block_number = ?number, "Starting block metering by number");
+
+        let block = self
+            .provider
+            .block_by_number_or_tag(number)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get block by number");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get block: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InvalidParams.code(),
+                    format!("Block not found: {:?}", number),
+                    None::<()>,
+                )
+            })?;
+
+        let response = self.meter_block_internal(&block)?;
+
+        info!(
+            block_number = ?number,
+            block_hash = %response.block_hash,
+            execution_time_us = response.execution_time_us,
+            state_root_time_us = response.state_root_time_us,
+            total_time_us = response.total_time_us,
+            "Block metering completed successfully"
+        );
+
+        Ok(response)
+    }
+}
+
+impl<Provider> MeteringApiImpl<Provider>
+where
+    Provider: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = OpChainSpec>
+        + BlockReaderIdExt<Header = Header>
+        + BlockReader<Block = OpBlock>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    /// Internal helper to meter a block's execution
+    fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
+        // Get parent header
+        let parent_hash = block.header().parent_hash;
+        let parent_header = self
+            .provider
+            .sealed_header_by_hash(parent_hash)
+            .map_err(|e| {
+                error!(error = %e, "Failed to get parent header");
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Failed to get parent header: {}", e),
+                    None::<()>,
+                )
+            })?
+            .ok_or_else(|| {
+                jsonrpsee::types::ErrorObjectOwned::owned(
+                    jsonrpsee::types::ErrorCode::InternalError.code(),
+                    format!("Parent block not found: {}", parent_hash),
+                    None::<()>,
+                )
+            })?;
+
+        // Get state provider at parent block
+        let state_provider = self.provider.state_by_block_hash(parent_hash).map_err(|e| {
+            error!(error = %e, "Failed to get state provider for parent block");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Failed to get state provider: {}", e),
+                None::<()>,
+            )
+        })?;
+
+        // Meter the block
+        meter_block(
+            state_provider,
+            self.provider.chain_spec().clone(),
+            block,
+            &parent_header,
+        )
+        .map_err(|e| {
+            error!(error = %e, "Block metering failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Block metering failed: {}", e),
+                None::<()>,
+            )
         })
     }
 }
