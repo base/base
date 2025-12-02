@@ -1,44 +1,84 @@
 name: Integration Tests
 
 on:
+  pull_request:
+    paths:
+      - '.github/workflows/integration-tests.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'justfile'
+      - 'fault-proof/**'
+      - 'bindings/**'
   push:
     tags:
       - v[0-9]+.*
     branches:
       - "release/*"
       - main
-  pull_request:
-    branches: [ main ]
-    paths-ignore:
-      - '**/*.pdf'
-      - '**/*.md'
-  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
 
 jobs:
-  integration-tests:
+  fp-integration-tests:
+    name: Fault Proof (${{ matrix.target }})
     runs-on:
       - runs-on
-      - cpu=16
-      - ram=64
-      - family=m7a+m7i-flex
-      - image=ubuntu22-full-x64
-      - run-id=${{ github.run_id }} 
-      - spot=false 
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }}
+      - spot=false
+      - disk=large
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - integration
+          - sync
+
     steps:
-      - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-      - name: Setup CI
-        uses: ./.github/actions/setup
+    - name: Setup Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+        rustup component add rustfmt clippy
 
-      - name: Run cost estimator on recent block range
-        run: |
-          RUST_LOG=info cargo run --bin cost-estimator --release -- --rolling
-        env:
-          L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
-          L1_RPC: ${{ secrets.L1_RPC }}
-          L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
-          L2_RPC: ${{ secrets.L2_RPC }}
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly-d592b3e0f142d694c3be539702704a4a73238773
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          bindings
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
+    - name: Run integration tests
+      run: just fp-integration-tests ${{ matrix.target }}
+      env:
+        # TODO(fakedev9999): Remove L1 RPCs since we are using fresh Anvil chain
+        L1_RPC: ${{ secrets.L1_RPC }}
+        L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+        L2_RPC: ${{ secrets.L2_RPC }}
+        L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fp-integration-tests-${{ matrix.target }}-logs
+        path: |
+          **/*.log
+          target/debug/deps/*.log
+        retention-days: 7

@@ -4,7 +4,7 @@ This guide explains how to run and understand the test suite for the OP Succinct
 
 ## Overview
 
-The fault-proof crate includes comprehensive end-to-end tests that run actual proposer and challenger binaries against a forked Ethereum network. These tests validate the complete lifecycle of dispute games including creation, challenges, resolution, and bond claims.
+The fault-proof crate includes comprehensive integration tests that run actual proposer and challenger binaries against a forked Ethereum network (Anvil). These tests validate the complete lifecycle of dispute games including creation, challenges, resolution, and bond claims.
 
 ## Prerequisites
 
@@ -36,9 +36,9 @@ Before running the tests, ensure you have:
 
 ## Available Tests
 
-### End-to-End Tests (`fault-proof/tests/e2e.rs`)
+### Integration Tests (`fault-proof/tests/integration.rs`)
 
-The asynchronous end-to-end suite spins up real proposer and challenger services, interacts with
+The asynchronous integration test suite spins up real proposer and challenger services, interacts with
 the dispute game factory, and warps Anvil time to exercise full lifecycles. Each test uses the
 `_native` services and validates that contracts and coordination logic behave as expected.
 
@@ -90,6 +90,6 @@ These tests focus on anchor selection, parent validation, and handling of invali
 
 ### Basic Test Execution
 ```bash
-# Run all end-to-end tests with single thread and no capture
-just e2e-tests
+# Run all integration tests with single thread and no capture
+just fp-integration-tests
 ```

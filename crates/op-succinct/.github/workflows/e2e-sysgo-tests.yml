@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   e2e-sysgo-tests:
-    name: Run sysgo E2E Tests (${{ matrix.mode }})
+    name: (${{ matrix.target }})
     runs-on:
       - runs-on
       - runner=64cpu-linux-x64
@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: ["validity", "faultproof"]
+        target: ["./e2e/validity/...", "./e2e/faultproof/..."]
 
     steps:
       - name: Checkout sources
@@ -67,4 +67,4 @@ jobs:
         working-directory: tests
         run: |
           echo "Running tests..."
-          just test-e2e-sysgo "${{ matrix.mode }}"
+          just test-e2e-sysgo "${{ matrix.target }}"

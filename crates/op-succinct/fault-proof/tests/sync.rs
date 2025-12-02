@@ -1,6 +1,6 @@
 pub mod common;
 
-#[cfg(feature = "e2e")]
+#[cfg(feature = "integration")]
 mod sync {
     use std::collections::HashMap;
 

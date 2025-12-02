@@ -1,7 +1,7 @@
 SOURCE := source_directory()
 ROOT := parent_directory(SOURCE)
 
-test-e2e-sysgo BINARY FILTER="" : unzip-contract-artifacts
+test-e2e-sysgo PKG="" FILTER="" : unzip-contract-artifacts
     #!/bin/bash
 
     if ! [ -z "{{FILTER}}" ]; then
@@ -12,21 +12,31 @@ test-e2e-sysgo BINARY FILTER="" : unzip-contract-artifacts
     export OP_DEPLOYER_ARTIFACTS="{{SOURCE}}/artifacts/src/forge-artifacts"
     export DISABLE_OP_E2E_LEGACY=true
 
-    if [ "{{BINARY}}" = "validity" ]; then
+    TEST_PATH="{{PKG}}"
+    BUILD_ARGS=""
+
+    if [ -z "$TEST_PATH" ]; then
+        TEST_PATH="./e2e/..."
+        BUILD_ARGS="--bin validity --bin proposer"
         export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
-        echo "Building validity proposer..."
-        cd .. && cargo build --bin validity --release
-    elif [ "{{BINARY}}" = "faultproof" ]; then
         export FAULT_PROOF_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/proposer"
-        echo "Building fault-proof proposer..."
-        cd .. && cargo build --bin proposer --release
+    elif [[ "$TEST_PATH" == *"validity"* ]]; then
+        BUILD_ARGS="--bin validity"
+        export VALIDITY_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/validity"
+    elif [[ "$TEST_PATH" == *"faultproof"* ]]; then
+        BUILD_ARGS="--bin proposer"
+        export FAULT_PROOF_PROPOSER_EXEC_PATH="{{ROOT}}/target/release/proposer"
     else
-        echo "Invalid BINARY specified. Must be either 'validity' or 'faultproof'."
+        echo "PKG must contain 'validity' or 'faultproof' to choose a binary."
         exit 1
     fi
 
+    echo "Building binaries: $BUILD_ARGS ..."
+    cd .. && cargo build --release $BUILD_ARGS
+
     # Run the test with count=1 to avoid caching the test results.
-    cd {{SOURCE}} && go test -count=1 -timeout 40m -v ./e2e/{{BINARY}} $FILTER
+    echo "Running go test $TEST_PATH $FILTER"
+    cd {{SOURCE}} && go test -p 1 -count=1 -timeout 40m -v "$TEST_PATH" $FILTER
 
 unzip-contract-artifacts DEST_DIR="":
     #!/bin/bash

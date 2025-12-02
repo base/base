@@ -3,7 +3,7 @@ name: Foundry Test
 on:
   pull_request:
     paths:
-      - '.github/workflows/foundry_test.yml'
+      - '.github/workflows/foundry-test.yml'
       - 'justfile'
       - 'contracts/**'
   push:
