@@ -66,9 +66,11 @@ where
             let tx_hash = tx.tx_hash();
 
             // Recover the signer to create a Recovered transaction for execution
-            let signer = tx.recover_signer()
+            let signer = tx
+                .recover_signer()
                 .map_err(|e| eyre!("Failed to recover signer for tx {}: {}", tx_hash, e))?;
-            let recovered_tx = alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer);
+            let recovered_tx =
+                alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer);
 
             let gas_used = builder
                 .execute_transaction(recovered_tx)
