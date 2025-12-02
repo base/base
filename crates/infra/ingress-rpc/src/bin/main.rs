@@ -5,9 +5,9 @@ use op_alloy_network::Optimism;
 use rdkafka::ClientConfig;
 use rdkafka::producer::FutureProducer;
 use tips_audit::{BundleEvent, KafkaBundleEventPublisher, connect_audit_to_publisher};
-use tips_core::MeterBundleResponse;
 use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger_with_format;
+use tips_core::{Bundle, MeterBundleResponse};
 use tips_ingress_rpc::Config;
 use tips_ingress_rpc::connect_ingress_to_builder;
 use tips_ingress_rpc::health::bind_health_server;
@@ -68,9 +68,11 @@ async fn main() -> anyhow::Result<()> {
 
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
+    let (builder_backrun_tx, _) = broadcast::channel::<Bundle>(config.max_buffered_backrun_bundles);
     config.builder_rpcs.iter().for_each(|builder_rpc| {
-        let builder_rx = builder_tx.subscribe();
-        connect_ingress_to_builder(builder_rx, builder_rpc.clone());
+        let metering_rx = builder_tx.subscribe();
+        let backrun_rx = builder_backrun_tx.subscribe();
+        connect_ingress_to_builder(metering_rx, backrun_rx, builder_rpc.clone());
     });
 
     let health_check_addr = config.health_check_addr;
@@ -86,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
         queue,
         audit_tx,
         builder_tx,
+        builder_backrun_tx,
         cfg,
     );
     let bind_addr = format!("{}:{}", config.address, config.port);

@@ -31,6 +31,9 @@ pub trait IngressApi {
     #[method(name = "sendBundle")]
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
 
+    #[method(name = "sendBackrunBundle")]
+    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash>;
+
     /// `eth_cancelBundle` is used to prevent a submitted bundle from being included on-chain.
     #[method(name = "cancelBundle")]
     async fn cancel_bundle(&self, request: CancelBundle) -> RpcResult<()>;
@@ -58,6 +61,8 @@ pub struct IngressService<Queue> {
     block_time_milliseconds: u64,
     meter_bundle_timeout_ms: u64,
     builder_tx: broadcast::Sender<MeterBundleResponse>,
+    backrun_enabled: bool,
+    builder_backrun_tx: broadcast::Sender<Bundle>,
 }
 
 impl<Queue> IngressService<Queue> {
@@ -67,6 +72,7 @@ impl<Queue> IngressService<Queue> {
         queue: Queue,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
+        builder_backrun_tx: broadcast::Sender<Bundle>,
         config: Config,
     ) -> Self {
         Self {
@@ -81,6 +87,8 @@ impl<Queue> IngressService<Queue> {
             block_time_milliseconds: config.block_time_milliseconds,
             meter_bundle_timeout_ms: config.meter_bundle_timeout_ms,
             builder_tx,
+            backrun_enabled: config.backrun_enabled,
+            builder_backrun_tx,
         }
     }
 }
@@ -90,16 +98,45 @@ impl<Queue> IngressApiServer for IngressService<Queue>
 where
     Queue: QueuePublisher + Sync + Send + 'static,
 {
+    async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
+        if !self.backrun_enabled {
+            info!(
+                message = "Backrun bundle submission is disabled",
+                backrun_enabled = self.backrun_enabled
+            );
+            return Err(
+                EthApiError::InvalidParams("Backrun bundle submission is disabled".into())
+                    .into_rpc_err(),
+            );
+        }
+
+        let start = Instant::now();
+        let (accepted_bundle, bundle_hash) = self.validate_parse_and_meter_bundle(&bundle).await?;
+
+        self.metrics.backrun_bundles_received_total.increment(1);
+
+        if let Err(e) = self.builder_backrun_tx.send(bundle) {
+            warn!(
+                message = "Failed to send backrun bundle to builders",
+                bundle_hash = %bundle_hash,
+                error = %e
+            );
+        }
+
+        self.send_audit_event(&accepted_bundle, bundle_hash);
+
+        self.metrics
+            .backrun_bundles_sent_duration
+            .record(start.elapsed().as_secs_f64());
+
+        Ok(BundleHash { bundle_hash })
+    }
+
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
-        // validate the bundle and consume the `bundle` to get an `AcceptedBundle`
-        self.validate_bundle(&bundle).await?;
-        let parsed_bundle: ParsedBundle = bundle
-            .clone()
-            .try_into()
-            .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
-        let bundle_hash = &parsed_bundle.bundle_hash();
-        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
-        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
+        let (accepted_bundle, bundle_hash) = self.validate_parse_and_meter_bundle(&bundle).await?;
+
+        // Get meter_bundle_response for builder broadcast
+        let meter_bundle_response = accepted_bundle.meter_bundle_response.clone();
 
         // asynchronously send the meter bundle response to the builder
         self.builder_tx
@@ -109,7 +146,7 @@ where
         // publish the bundle to the queue
         if let Err(e) = self
             .bundle_queue
-            .publish(&accepted_bundle, bundle_hash)
+            .publish(&accepted_bundle, &bundle_hash)
             .await
         {
             warn!(message = "Failed to publish bundle to queue", bundle_hash = %bundle_hash, error = %e);
@@ -122,20 +159,9 @@ where
         );
 
         // asynchronously send the audit event to the audit channel
-        let audit_event = BundleEvent::Received {
-            bundle_id: *accepted_bundle.uuid(),
-            bundle: Box::new(accepted_bundle.clone()),
-        };
-        if let Err(e) = self.audit_channel.send(audit_event) {
-            warn!(message = "Failed to send audit event", error = %e);
-            return Err(
-                EthApiError::InvalidParams("Failed to send audit event".into()).into_rpc_err(),
-            );
-        }
+        self.send_audit_event(&accepted_bundle, bundle_hash);
 
-        Ok(BundleHash {
-            bundle_hash: *bundle_hash,
-        })
+        Ok(BundleHash { bundle_hash })
     }
 
     async fn cancel_bundle(&self, _request: CancelBundle) -> RpcResult<()> {
@@ -212,13 +238,7 @@ where
             }
         }
 
-        let audit_event = BundleEvent::Received {
-            bundle_id: *accepted_bundle.uuid(),
-            bundle: accepted_bundle.clone().into(),
-        };
-        if let Err(e) = self.audit_channel.send(audit_event) {
-            warn!(message = "Failed to send audit event", error = %e);
-        }
+        self.send_audit_event(&accepted_bundle, transaction.tx_hash());
 
         self.metrics
             .send_raw_transaction_duration
@@ -326,6 +346,37 @@ where
             );
         }
         Ok(res)
+    }
+
+    /// Helper method to validate, parse, and meter a bundle
+    async fn validate_parse_and_meter_bundle(
+        &self,
+        bundle: &Bundle,
+    ) -> RpcResult<(AcceptedBundle, B256)> {
+        self.validate_bundle(bundle).await?;
+        let parsed_bundle: ParsedBundle = bundle
+            .clone()
+            .try_into()
+            .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
+        let bundle_hash = parsed_bundle.bundle_hash();
+        let meter_bundle_response = self.meter_bundle(bundle, &bundle_hash).await?;
+        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
+        Ok((accepted_bundle, bundle_hash))
+    }
+
+    /// Helper method to send audit event for a bundle
+    fn send_audit_event(&self, accepted_bundle: &AcceptedBundle, bundle_hash: B256) {
+        let audit_event = BundleEvent::Received {
+            bundle_id: *accepted_bundle.uuid(),
+            bundle: Box::new(accepted_bundle.clone()),
+        };
+        if let Err(e) = self.audit_channel.send(audit_event) {
+            warn!(
+                message = "Failed to send audit event",
+                bundle_hash = %bundle_hash,
+                error = %e
+            );
+        }
     }
 }
 

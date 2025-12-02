@@ -138,6 +138,14 @@ pub struct Config {
     )]
     pub max_buffered_meter_bundle_responses: usize,
 
+    /// Maximum number of backrun bundles to buffer in memory
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_MAX_BUFFERED_BACKRUN_BUNDLES",
+        default_value = "100"
+    )]
+    pub max_buffered_backrun_bundles: usize,
+
     /// Address to bind the health check server to
     #[arg(
         long,
@@ -145,23 +153,29 @@ pub struct Config {
         default_value = "0.0.0.0:8081"
     )]
     pub health_check_addr: SocketAddr,
+
+    /// Enable backrun bundle submission to op-rbuilder
+    #[arg(long, env = "TIPS_INGRESS_BACKRUN_ENABLED", default_value = "false")]
+    pub backrun_enabled: bool,
 }
 
 pub fn connect_ingress_to_builder(
-    event_rx: broadcast::Receiver<MeterBundleResponse>,
+    metering_rx: broadcast::Receiver<MeterBundleResponse>,
+    backrun_rx: broadcast::Receiver<tips_core::Bundle>,
     builder_rpc: Url,
 ) {
-    tokio::spawn(async move {
-        let builder: RootProvider<Optimism> = ProviderBuilder::new()
-            .disable_recommended_fillers()
-            .network::<Optimism>()
-            .connect_http(builder_rpc);
+    let builder: RootProvider<Optimism> = ProviderBuilder::new()
+        .disable_recommended_fillers()
+        .network::<Optimism>()
+        .connect_http(builder_rpc);
 
-        let mut event_rx = event_rx;
+    let metering_builder = builder.clone();
+    tokio::spawn(async move {
+        let mut event_rx = metering_rx;
         while let Ok(event) = event_rx.recv().await {
             // we only support one transaction per bundle for now
             let tx_hash = event.results[0].tx_hash;
-            if let Err(e) = builder
+            if let Err(e) = metering_builder
                 .client()
                 .request::<(TxHash, MeterBundleResponse), ()>(
                     "base_setMeteringInformation",
@@ -170,6 +184,19 @@ pub fn connect_ingress_to_builder(
                 .await
             {
                 error!(error = %e, "Failed to set metering information for tx hash: {tx_hash}");
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        let mut event_rx = backrun_rx;
+        while let Ok(bundle) = event_rx.recv().await {
+            if let Err(e) = builder
+                .client()
+                .request::<(tips_core::Bundle,), ()>("base_sendBackrunBundle", (bundle,))
+                .await
+            {
+                error!(error = %e, "Failed to send backrun bundle to builder");
             }
         }
     });
