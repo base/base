@@ -1,0 +1,29 @@
+[package]
+name = "account-abstraction-core"
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[lib]
+path = "core/src/lib.rs"
+
+[dependencies]
+alloy-serde = { version = "1.0.41", default-features = false }
+serde.workspace = true
+alloy-rpc-types.workspace = true
+alloy-provider.workspace = true
+op-alloy-network.workspace = true
+alloy-primitives = { workspace = true }
+reth-rpc-eth-types.workspace = true
+tokio.workspace = true
+jsonrpsee.workspace = true
+async-trait = { workspace = true }
+
+[dev-dependencies]
+alloy-primitives.workspace = true
+serde_json.workspace = true
+wiremock.workspace = true
+

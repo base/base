@@ -14,7 +14,6 @@ use tips_audit::BundleEvent;
 use tips_core::types::ParsedBundle;
 use tips_core::{
     AcceptedBundle, Bundle, BundleExtensions, BundleHash, CancelBundle, MeterBundleResponse,
-    user_ops_types::{SendUserOperationResponse, UserOperationRequest},
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Duration, Instant, timeout};
@@ -24,6 +23,9 @@ use crate::metrics::{Metrics, record_histogram};
 use crate::queue::QueuePublisher;
 use crate::validation::validate_bundle;
 use crate::{Config, TxSubmissionMethod};
+use account_abstraction_core::types::{SendUserOperationResponse, UserOperationRequest};
+use account_abstraction_core::{AccountAbstractionService, AccountAbstractionServiceImpl};
+use std::sync::Arc;
 
 #[rpc(server, namespace = "eth")]
 pub trait IngressApi {
@@ -51,8 +53,9 @@ pub trait IngressApi {
 }
 
 pub struct IngressService<Queue> {
-    provider: RootProvider<Optimism>,
-    simulation_provider: RootProvider<Optimism>,
+    provider: Arc<RootProvider<Optimism>>,
+    simulation_provider: Arc<RootProvider<Optimism>>,
+    account_abstraction_service: AccountAbstractionServiceImpl,
     tx_submission_method: TxSubmissionMethod,
     bundle_queue: Queue,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
@@ -75,9 +78,17 @@ impl<Queue> IngressService<Queue> {
         builder_backrun_tx: broadcast::Sender<Bundle>,
         config: Config,
     ) -> Self {
+        let provider = Arc::new(provider);
+        let simulation_provider = Arc::new(simulation_provider);
+        let account_abstraction_service: AccountAbstractionServiceImpl =
+            AccountAbstractionServiceImpl::new(
+                simulation_provider.clone(),
+                config.validate_user_operation_timeout_ms,
+            );
         Self {
             provider,
             simulation_provider,
+            account_abstraction_service,
             tx_submission_method: config.tx_submission_method,
             bundle_queue: queue,
             audit_channel,
@@ -256,6 +267,10 @@ where
         // STEPS:
         // 1. Reputation Service Validate
         // 2. Base Node Validate User Operation
+        let _ = self
+            .account_abstraction_service
+            .validate_user_operation(user_operation)
+            .await?;
         // 3. Send to Kafka
         // Send Hash
         // todo!("not yet implemented send_user_operation");

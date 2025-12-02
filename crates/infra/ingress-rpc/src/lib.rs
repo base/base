@@ -126,6 +126,13 @@ pub struct Config {
     )]
     pub meter_bundle_timeout_ms: u64,
 
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_VALIDATE_USER_OPERATION_TIMEOUT_MS",
+        default_value = "2000"
+    )]
+    pub validate_user_operation_timeout_ms: u64,
+
     /// URLs of the builder RPC service for setting metering information
     #[arg(long, env = "TIPS_INGRESS_BUILDER_RPCS", value_delimiter = ',')]
     pub builder_rpcs: Vec<Url>,
