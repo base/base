@@ -81,7 +81,7 @@ mod tests {
                 assert_eq!(user_operation.signature, Bytes::from_str("0x01").unwrap());
             }
             _ => {
-                panic!("Expected EntryPointV06, got {:?}", user_operation);
+                panic!("Expected EntryPointV06, got {user_operation:?}");
             }
         }
     }
@@ -132,7 +132,7 @@ mod tests {
                 assert_eq!(user_operation.pre_verification_gas, Uint::from(0x186a0));
             }
             _ => {
-                panic!("Expected EntryPointV07, got {:?}", user_operation);
+                panic!("Expected EntryPointV07, got {user_operation:?}");
             }
         }
     }
