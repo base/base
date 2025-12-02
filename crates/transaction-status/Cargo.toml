@@ -8,17 +8,18 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-tips-audit.workspace = true
 jsonrpsee = { workspace = true, features = ["macros", "server", "http-client", "client"] }
 tracing.workspace = true
-aws-config.workspace = true
-aws-sdk-s3.workspace = true
 alloy-primitives.workspace = true
 serde.workspace = true
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+eyre.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 uuid.workspace = true
+httpmock.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

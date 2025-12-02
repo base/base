@@ -1,17 +1,14 @@
-mod proxy;
-mod rpc;
+pub mod rpc;
 
-pub use proxy::TransactionStatusProxyImpl;
-pub use rpc::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub enum Status {
     Unknown,
-    Pending,
-    Queued,
-    BlockIncluded,
-    BuilderIncluded,
-    Cancelled,
-    Dropped,
+    Known,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+pub struct TransactionStatusResponse {
+    pub status: Status,
 }
