@@ -55,6 +55,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 clap = { workspace = true, features = ["derive"] }
 dotenv.workspace = true
+futures.workspace = true
 rand = "0.9"
 serde.workspace = true
 tokio.workspace = true

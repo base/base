@@ -8,10 +8,11 @@ use std::{
 };
 
 use alloy_eips::BlockNumberOrTag;
-use alloy_primitives::{Address, FixedBytes, TxHash, U256};
-use alloy_provider::{Provider, ProviderBuilder};
+use alloy_primitives::{Address, FixedBytes, TxHash, B256, U256};
+use alloy_provider::{Provider, ProviderBuilder, RootProvider};
 use alloy_sol_types::{SolEvent, SolValue};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_elfs::AGGREGATION_ELF;
 use op_succinct_host_utils::{
@@ -26,7 +27,7 @@ use op_succinct_proof_utils::get_range_elf_embedded;
 use op_succinct_signer_utils::SignerLock;
 use sp1_sdk::{
     NetworkProver, Prover, ProverClient, SP1ProofMode, SP1ProofWithPublicValues, SP1ProvingKey,
-    SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
 };
 use tokio::{
     sync::{Mutex, RwLock},
@@ -37,7 +38,9 @@ use crate::{
     config::ProposerConfig,
     contract::{
         DisputeGameFactory::{DisputeGameCreated, DisputeGameFactoryInstance},
-        GameStatus, OPSuccinctFaultDisputeGame, ProposalStatus,
+        GameStatus,
+        OPSuccinctFaultDisputeGame::{self, OPSuccinctFaultDisputeGameInstance},
+        ProposalStatus,
     },
     is_parent_resolved,
     prometheus::ProposerGauge,
@@ -726,9 +729,106 @@ where
         let l1_head_hash = game.l1Head().call().await?.0;
         tracing::debug!("L1 head hash: {:?}", hex::encode(l1_head_hash));
 
+        let ranges = self
+            .config
+            .range_split_count
+            .split(start_block, end_block)
+            .context("failed to split range for proving")?;
+        let num_ranges = ranges.len();
+        tracing::info!("Proving over {num_ranges} ranges");
+
+        let tasks = ranges.into_iter().enumerate().map(|(idx, (start, end))| {
+            let this = self.clone();
+            async move {
+                tracing::info!("Generating Range Proof for blocks {start} to {end}");
+                let sp1_stdin = this.range_proof_stdin(start, end, l1_head_hash.into()).await?;
+                let (range_proof, inst_cycles, sp1_gas) =
+                    this.range_proof_request(&sp1_stdin).await?;
+                Ok::<_, anyhow::Error>((idx, range_proof, inst_cycles, sp1_gas))
+            }
+        });
+
+        let max_concurrent = self.config.max_concurrent_range_proofs.get().min(num_ranges);
+        let prove_stream = stream::iter(tasks);
+        let results: Vec<(usize, SP1ProofWithPublicValues, u64, u64)> =
+            prove_stream.buffer_unordered(max_concurrent).try_collect().await?;
+
+        let mut proofs = vec![None; num_ranges];
+        let mut boot_infos = vec![None; num_ranges];
+        let mut total_instruction_cycles: u64 = 0;
+        let mut total_sp1_gas: u64 = 0;
+
+        for (idx, range_proof, inst_cycles, sp1_gas) in results {
+            let proof = range_proof.proof.clone();
+            let mut public_values = range_proof.public_values.clone();
+            let boot_info: BootInfoStruct = public_values.read();
+
+            proofs[idx] = Some(proof);
+            boot_infos[idx] = Some(boot_info);
+            total_instruction_cycles = total_instruction_cycles
+                .checked_add(inst_cycles)
+                .ok_or_else(|| anyhow::anyhow!("Instruction cycles overflow"))?;
+            total_sp1_gas = total_sp1_gas
+                .checked_add(sp1_gas)
+                .ok_or_else(|| anyhow::anyhow!("SP1 gas overflow"))?;
+        }
+
+        let proofs = proofs
+            .into_iter()
+            .enumerate()
+            .map(|(idx, proof)| {
+                proof.ok_or_else(|| anyhow::anyhow!("missing proof for range index {idx}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let boot_infos = boot_infos
+            .into_iter()
+            .enumerate()
+            .map(|(idx, boot)| {
+                boot.ok_or_else(|| anyhow::anyhow!("missing boot info for range index {idx}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let latest_l1_head = boot_infos.last().context("No boot infos generated")?.l1Head;
+
+        let headers = match fetcher.get_header_preimages(&boot_infos, latest_l1_head).await {
+            Ok(headers) => headers,
+            Err(e) => {
+                tracing::error!("Failed to get header preimages: {e}");
+                bail!("Failed to get header preimages: {e}");
+            }
+        };
+
+        tracing::info!("Preparing Stdin for Agg Proof");
+        let sp1_stdin = match get_agg_proof_stdin(
+            proofs,
+            boot_infos,
+            headers,
+            &self.prover.range_vk,
+            latest_l1_head,
+            self.signer.address(),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("Failed to get agg proof stdin: {e}");
+                bail!("Failed to get agg proof stdin: {e}");
+            }
+        };
+
+        let tx_hash = self.agg_proof_request(&game, &sp1_stdin).await?;
+
+        Ok((tx_hash, total_instruction_cycles, total_sp1_gas))
+    }
+
+    async fn range_proof_stdin(
+        &self,
+        start_block: u64,
+        end_block: u64,
+        l1_head_hash: B256,
+    ) -> Result<SP1Stdin> {
         let host_args = self
             .host
-            .fetch(start_block, end_block, Some(l1_head_hash.into()), self.config.safe_db_fallback)
+            .fetch(start_block, end_block, Some(l1_head_hash), self.config.safe_db_fallback)
             .await
             .context("Failed to get host CLI args")?;
 
@@ -742,13 +842,19 @@ where
             }
         };
 
-        tracing::info!("Generating Range Proof");
-        let (range_proof, total_instruction_cycles, total_sp1_gas) = if self.config.mock_mode {
+        Ok(sp1_stdin)
+    }
+
+    async fn range_proof_request(
+        &self,
+        sp1_stdin: &SP1Stdin,
+    ) -> Result<(SP1ProofWithPublicValues, u64, u64)> {
+        if self.config.mock_mode {
             tracing::info!("Using mock mode for range proof generation");
             let (public_values, report) = self
                 .prover
                 .network_prover
-                .execute(get_range_elf_embedded(), &sp1_stdin)
+                .execute(get_range_elf_embedded(), sp1_stdin)
                 .calculate_gas(true)
                 .deferred_proof_verification(false)
                 .run()?;
@@ -775,13 +881,13 @@ where
                 SP1_CIRCUIT_VERSION,
             );
 
-            (proof, total_instruction_cycles, total_sp1_gas)
+            Ok((proof, total_instruction_cycles, total_sp1_gas))
         } else {
             // In network mode, we don't have access to execution stats
             let proof = self
                 .prover
                 .network_prover
-                .prove(&self.prover.range_pk, &sp1_stdin)
+                .prove(&self.prover.range_pk, sp1_stdin)
                 .compressed()
                 .skip_simulation(true)
                 .strategy(self.config.range_proof_strategy)
@@ -794,47 +900,22 @@ where
                 .run_async()
                 .await?;
 
-            (proof, 0, 0)
-        };
+            Ok((proof, 0, 0))
+        }
+    }
 
-        tracing::info!("Preparing Stdin for Agg Proof");
-        let proof = range_proof.proof.clone();
-        let mut public_values = range_proof.public_values.clone();
-        let boot_info: BootInfoStruct = public_values.read();
-
-        let headers = match fetcher
-            .get_header_preimages(&vec![boot_info.clone()], boot_info.clone().l1Head)
-            .await
-        {
-            Ok(headers) => headers,
-            Err(e) => {
-                tracing::error!("Failed to get header preimages: {}", e);
-                return Err(anyhow::anyhow!("Failed to get header preimages: {}", e));
-            }
-        };
-
-        let sp1_stdin = match get_agg_proof_stdin(
-            vec![proof],
-            vec![boot_info.clone()],
-            headers,
-            &self.prover.range_vk,
-            boot_info.l1Head,
-            self.signer.address(),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Failed to get agg proof stdin: {}", e);
-                return Err(anyhow::anyhow!("Failed to get agg proof stdin: {}", e));
-            }
-        };
-
+    async fn agg_proof_request(
+        &self,
+        game: &OPSuccinctFaultDisputeGameInstance<RootProvider>,
+        sp1_stdin: &SP1Stdin,
+    ) -> Result<TxHash> {
         tracing::info!("Generating Agg Proof");
         let agg_proof = if self.config.mock_mode {
             tracing::info!("Using mock mode for aggregation proof generation");
             let (public_values, _) = self
                 .prover
                 .network_prover
-                .execute(AGGREGATION_ELF, &sp1_stdin)
+                .execute(AGGREGATION_ELF, sp1_stdin)
                 .deferred_proof_verification(false)
                 .run()?;
 
@@ -848,7 +929,7 @@ where
         } else {
             self.prover
                 .network_prover
-                .prove(&self.prover.agg_pk, &sp1_stdin)
+                .prove(&self.prover.agg_pk, sp1_stdin)
                 .mode(self.prover.agg_mode)
                 .strategy(self.config.agg_proof_strategy)
                 .timeout(Duration::from_secs(self.config.timeout))
@@ -868,7 +949,7 @@ where
             .send_transaction_request(self.config.l1_rpc.clone(), transaction_request)
             .await?;
 
-        Ok((receipt.transaction_hash, total_instruction_cycles, total_sp1_gas))
+        Ok(receipt.transaction_hash)
     }
 
     /// Creates a new game with the given parameters.
@@ -1803,5 +1884,75 @@ impl std::fmt::Display for Cursor {
 impl From<U256> for Cursor {
     fn from(idx: U256) -> Self {
         Self { index: Some(idx) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::RangeSplitCount;
+    use anyhow::{bail, Result};
+    use futures::stream::{self, StreamExt, TryStreamExt};
+    use rstest::rstest;
+    use std::time::Duration;
+
+    async fn mock_prove(
+        idx: usize,
+        range: (u64, u64),
+        fail: bool,
+        delay: Duration,
+    ) -> Result<usize> {
+        tokio::time::sleep(delay).await;
+        if fail {
+            bail!("proof failed for range {}-{}", range.0, range.1);
+        }
+        Ok(idx)
+    }
+
+    async fn prove_ranges(
+        ranges: Vec<(u64, u64)>,
+        fail_idx: Option<usize>,
+        concurrency: usize,
+        delay: Duration,
+    ) -> Result<Vec<usize>> {
+        let tasks = ranges.into_iter().enumerate().map(|(idx, range)| {
+            let fail = fail_idx == Some(idx);
+            async move { mock_prove(idx, range, fail, delay).await }
+        });
+        stream::iter(tasks).buffer_unordered(concurrency).try_collect().await
+    }
+
+    #[rstest]
+    #[case::first(0, "0-25")]
+    #[case::middle(1, "25-50")]
+    #[case::last(3, "75-100")]
+    #[tokio::test]
+    async fn test_failure_aborts(#[case] fail_idx: usize, #[case] expected: &str) {
+        let ranges = RangeSplitCount::new(4).unwrap().split(0, 100).unwrap();
+        let err = prove_ranges(ranges, Some(fail_idx), 4, Duration::ZERO).await.unwrap_err();
+        assert!(err.to_string().contains(expected), "got: {err}");
+    }
+
+    #[rstest]
+    #[case::full(16)]
+    #[case::half(8)]
+    #[case::single(1)]
+    #[tokio::test]
+    async fn test_stress_varying_concurrency(#[case] concurrency: usize) {
+        let ranges = RangeSplitCount::new(16).unwrap().split(0, 1600).unwrap();
+        let results =
+            prove_ranges(ranges, None, concurrency, Duration::from_millis(5)).await.unwrap();
+
+        let mut indices: Vec<_> = results.clone();
+        indices.sort();
+        assert_eq!(indices, (0..16).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn test_stress_repeated() {
+        for _ in 0..50 {
+            let ranges = RangeSplitCount::new(8).unwrap().split(0, 800).unwrap();
+            let results = prove_ranges(ranges, None, 4, Duration::from_micros(100)).await.unwrap();
+            assert_eq!(results.len(), 8);
+        }
     }
 }

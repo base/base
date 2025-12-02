@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     setup_logger();
 
     let proposer_config = ProposerConfig::from_env()?;
+
     let proposer_signer = SignerLock::from_env().await?;
 
     let l1_provider =
