@@ -1,3 +1,4 @@
+pub mod health;
 pub mod metrics;
 pub mod queue;
 pub mod service;
@@ -136,6 +137,14 @@ pub struct Config {
         default_value = "100"
     )]
     pub max_buffered_meter_bundle_responses: usize,
+
+    /// Address to bind the health check server to
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_HEALTH_CHECK_ADDR",
+        default_value = "0.0.0.0:8081"
+    )]
+    pub health_check_addr: SocketAddr,
 }
 
 pub fn connect_ingress_to_builder(

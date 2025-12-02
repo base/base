@@ -10,6 +10,7 @@ use tips_core::kafka::load_kafka_config_from_file;
 use tips_core::logger::init_logger_with_format;
 use tips_ingress_rpc::Config;
 use tips_ingress_rpc::connect_ingress_to_builder;
+use tips_ingress_rpc::health::bind_health_server;
 use tips_ingress_rpc::metrics::init_prometheus_exporter;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
 use tips_ingress_rpc::service::{IngressApiServer, IngressService};
@@ -35,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         mempool_url = %config.mempool_url,
         simulation_rpc = %config.simulation_rpc,
         metrics_address = %config.metrics_addr,
+        health_check_address = %config.health_check_addr,
     );
 
     let provider: RootProvider<Optimism> = ProviderBuilder::new()
@@ -71,6 +73,13 @@ async fn main() -> anyhow::Result<()> {
         connect_ingress_to_builder(builder_rx, builder_rpc.clone());
     });
 
+    let health_check_addr = config.health_check_addr;
+    let (bound_health_addr, health_handle) = bind_health_server(health_check_addr).await?;
+    info!(
+        message = "Health check server started",
+        address = %bound_health_addr
+    );
+
     let service = IngressService::new(
         provider,
         simulation_provider,
@@ -91,5 +100,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     handle.stopped().await;
+    health_handle.abort();
+
     Ok(())
 }
