@@ -99,6 +99,8 @@ Depending on the one you choose, you must provide the corresponding environment 
 | `TIMEOUT` | The timeout to use for proving (in seconds). | `14,400` (4 hours) |
 | `RANGE_CYCLE_LIMIT` | The cycle limit to use for range proofs. | `1,000,000,000,000` |
 | `RANGE_GAS_LIMIT` | The gas limit to use for range proofs. | `1,000,000,000,000` |
+| `RANGE_SPLIT_COUNT` | The number of splits to use for range proofs. | `1` |
+| `MAX_CONCURRENT_RANGE_PROOFS` | The maximum number of concurrent range proof tasks. | `1` |
 | `AGG_CYCLE_LIMIT` | The cycle limit to use for aggregation proofs. | `1,000,000,000,000` |
 | `AGG_GAS_LIMIT` | The gas limit to use for aggregation proofs. | `1,000,000,000,000` |
 | `WHITELIST` | The list of prover addresses that are allowed to bid on proof requests. | `` |

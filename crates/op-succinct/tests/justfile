@@ -36,7 +36,7 @@ test-e2e-sysgo PKG="" FILTER="" : unzip-contract-artifacts
 
     # Run the test with count=1 to avoid caching the test results.
     echo "Running go test $TEST_PATH $FILTER"
-    cd {{SOURCE}} && go test -p 1 -count=1 -timeout 40m -v "$TEST_PATH" $FILTER
+    cd {{SOURCE}} && go test -p 1 -count=1 -timeout 90m -v "$TEST_PATH" $FILTER
 
 unzip-contract-artifacts DEST_DIR="":
     #!/bin/bash

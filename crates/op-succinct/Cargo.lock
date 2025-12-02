@@ -8634,6 +8634,7 @@ dependencies = [
  "async-trait",
  "clap",
  "dotenv",
+ "futures",
  "hex",
  "op-alloy-network",
  "op-alloy-rpc-types",

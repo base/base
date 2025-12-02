@@ -1,8 +1,12 @@
-use std::{env, str::FromStr};
+use std::{
+    env,
+    num::{NonZeroU8, NonZeroUsize},
+    str::FromStr,
+};
 
 use alloy_primitives::Address;
 use alloy_transport_http::reqwest::Url;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use op_succinct_host_utils::network::parse_fulfillment_strategy;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
@@ -79,6 +83,15 @@ pub struct ProposerConfig {
 
     /// The gas limit to use for range proofs.
     pub range_gas_limit: u64,
+
+    /// The number of segments to split the range into (1-16).
+    pub range_split_count: RangeSplitCount,
+
+    /// The maximum number of concurrent range proof tasks. (default: 1)
+    ///
+    /// Increasing this feeds more work into the prover and host in parallel; tune carefully based
+    /// on observed latency, and system resources before deviating from default.
+    pub max_concurrent_range_proofs: NonZeroUsize,
 
     /// The cycle limit to use for aggregation proofs.
     pub agg_cycle_limit: u64,
@@ -168,6 +181,10 @@ impl ProposerConfig {
             range_gas_limit: env::var("RANGE_GAS_LIMIT")
                 .unwrap_or("1000000000000".to_string()) // 1 trillion
                 .parse()?,
+            range_split_count: env::var("RANGE_SPLIT_COUNT").unwrap_or("1".to_string()).parse()?,
+            max_concurrent_range_proofs: env::var("MAX_CONCURRENT_RANGE_PROOFS")
+                .unwrap_or("1".to_string())
+                .parse()?,
             agg_cycle_limit: env::var("AGG_CYCLE_LIMIT")
                 .unwrap_or("1000000000000".to_string()) // 1 trillion
                 .parse()?,
@@ -241,4 +258,206 @@ pub struct FaultDisputeGameConfig {
     pub starting_root: String,
     pub use_sp1_mock_verifier: bool,
     pub verifier_address: String,
+}
+
+/// How many chunks the range proof input is partitioned into (1-16 inclusive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RangeSplitCount(NonZeroU8);
+
+impl RangeSplitCount {
+    pub const MAX: u8 = 16;
+
+    /// Create a new `RangeSplitCount`.
+    pub fn new(count: u8) -> Result<Self> {
+        if count == 0 || count > Self::MAX {
+            bail!("range splits must be between 1 and 16, got {count}");
+        }
+
+        let count = NonZeroU8::new(count)
+            .ok_or_else(|| anyhow::anyhow!("range splits must be non zero"))?;
+
+        Ok(Self(count))
+    }
+
+    /// Returns a `RangeSplitCount` of one.
+    pub fn one() -> Self {
+        Self(NonZeroU8::new(1).expect("1 is non-zero"))
+    }
+
+    /// Convert to `usize`.
+    pub fn to_usize(self) -> usize {
+        self.0.get() as usize
+    }
+
+    /// Split `[start, end)` into up to `count` contiguous, non-empty subranges.
+    ///
+    /// Behavior:
+    /// - Errors if `start > end` or the range is empty.
+    /// - Caps the number of produced segments to the number of blocks in the range.
+    /// - Uses ceil division to keep segments as even as possible; the final segment takes any
+    ///   remainder.
+    /// - Always returns ranges that exactly cover `[start, end)` with no gaps or overlaps.
+    ///
+    /// NOTE: Ceiling division may yield fewer segments than requested when step sizes exhaust the
+    /// range early. Example: 9 blocks ÷ 4 → step=3 → 3 segments: [0,3), [3,6), [6,9).
+    pub fn split(&self, start: u64, end: u64) -> Result<Vec<(u64, u64)>> {
+        let total = end.checked_sub(start).ok_or_else(|| {
+            anyhow::anyhow!("end block {end} is not greater than start block {start}")
+        })?;
+        if total == 0 {
+            bail!("start block equals end block ({start}); nothing to prove");
+        }
+
+        let splits = self.to_usize();
+
+        if splits == 1 {
+            return Ok(vec![(start, end)]);
+        }
+
+        // Never split into more parts than there are blocks.
+        let segments = splits.min(total as usize);
+        let mut ranges = Vec::with_capacity(segments);
+
+        let step = total.div_ceil(segments as u64);
+
+        let mut cur = start;
+        for _ in 0..segments {
+            if cur >= end {
+                break;
+            }
+            let next = cur.saturating_add(step).min(end);
+            ranges.push((cur, next));
+            cur = next;
+        }
+
+        Ok(ranges)
+    }
+}
+
+impl TryFrom<u64> for RangeSplitCount {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u64) -> Result<Self> {
+        let count: u8 = value
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("range splits must be between 1 and 16, got {value}"))?;
+        Self::new(count)
+    }
+}
+
+impl FromStr for RangeSplitCount {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let value: u64 = s.parse()?;
+        Self::try_from(value)
+    }
+}
+
+#[cfg(test)]
+mod split_range_tests {
+    use crate::config::RangeSplitCount;
+    use rstest::rstest;
+
+    fn range_split_count(count: u8) -> RangeSplitCount {
+        RangeSplitCount::new(count).expect("valid range split count")
+    }
+
+    /// Assert that ranges are non-empty, contiguous, and exactly cover [start, end).
+    fn assert_contiguous_cover(ranges: &[(u64, u64)], start: u64, end: u64) {
+        assert!(!ranges.is_empty(), "expected at least one range");
+        assert_eq!(ranges.first().unwrap().0, start, "first range should start at {start}");
+        assert_eq!(ranges.last().unwrap().1, end, "last range should end at {end}");
+        for window in ranges.windows(2) {
+            let a = window[0];
+            let b = window[1];
+            assert!(a.0 < a.1, "range must be non-empty: {}-{}", a.0, a.1);
+            assert_eq!(a.1, b.0, "ranges must be contiguous: {} != {}", a.1, b.0);
+            assert!(b.0 < b.1, "range must be non-empty: {}-{}", b.0, b.1);
+        }
+    }
+
+    #[rstest]
+    #[case::single_split(range_split_count(1), 10, 20, &[(10, 20)])]
+    #[case::single_block(range_split_count(2), 0, 1, &[(0, 1)])]
+    #[case::no_empty_tail(range_split_count(4), 0, 5, &[(0, 2), (2, 4), (4, 5)])]
+    #[case::offset_uneven(range_split_count(4), 5, 14, &[(5, 8), (8, 11), (11, 14)])]
+    #[case::even_split(range_split_count(4), 0, 10, &[(0, 3), (3, 6), (6, 9), (9, 10)])]
+    #[case::large_splits_small_range(range_split_count(15), 0, 1, &[(0, 1)])]
+    #[case::max_splits_exact(
+        range_split_count(RangeSplitCount::MAX),
+        0,
+        16,
+        &[
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 8),
+            (8, 9),
+            (9, 10),
+            (10, 11),
+            (11, 12),
+            (12, 13),
+            (13, 14),
+            (14, 15),
+            (15, 16)
+        ]
+    )]
+    #[case::max_splits_caps(range_split_count(RangeSplitCount::MAX), 0, 3, &[(0, 1), (1, 2), (2, 3)])]
+    #[case::stop_when_done(
+        RangeSplitCount::new(15).unwrap(),
+        0,
+        16,
+        &[(0, 2), (2, 4), (4, 6), (6, 8), (8, 10), (10, 12), (12, 14), (14, 16)]
+    )]
+    fn test_splits_expected_paths(
+        #[case] splits: RangeSplitCount,
+        #[case] start: u64,
+        #[case] end: u64,
+        #[case] expected: &[(u64, u64)],
+    ) {
+        let ranges = splits.split(start, end).expect("split should succeed");
+        assert_eq!(ranges, expected);
+        assert_contiguous_cover(&ranges, start, end);
+    }
+
+    #[test]
+    fn test_splits_extreme() {
+        let start = u64::MAX - 100;
+        let end = u64::MAX;
+        let ranges =
+            RangeSplitCount::new(15).unwrap().split(start, end).expect("split should succeed");
+        assert_contiguous_cover(&ranges, start, end);
+    }
+
+    #[test]
+    fn test_errors_on_reversed_bounds() {
+        let err = RangeSplitCount::new(2).unwrap().split(8, 3).unwrap_err();
+        assert!(
+            err.to_string().contains("not greater than start block"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_errors_on_empty_range() {
+        let err = RangeSplitCount::new(2).unwrap().split(5, 5).unwrap_err();
+        assert!(err.to_string().contains("equals end block"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_rejects_zero() {
+        let err = RangeSplitCount::new(0).unwrap_err();
+        assert!(err.to_string().contains("between 1 and 16"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_rejects_above_max_from_str() {
+        let err = "17".parse::<RangeSplitCount>().unwrap_err();
+        assert!(err.to_string().contains("between 1 and 16"), "unexpected error: {err}");
+    }
 }
