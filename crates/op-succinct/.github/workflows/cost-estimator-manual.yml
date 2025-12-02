@@ -19,6 +19,7 @@ jobs:
       - family=m7a+m7i-flex
       - image=ubuntu22-full-x64
       - run-id=${{ github.run_id }}
+      - spot=false
     steps:
       - uses: actions/checkout@v4
 
