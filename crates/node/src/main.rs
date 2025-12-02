@@ -6,6 +6,7 @@ use base_reth_flashblocks_rpc::{
     subscription::FlashblocksSubscriber,
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
+use base_reth_transaction_status::rpc::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use futures_util::TryStreamExt;
@@ -140,6 +141,13 @@ fn main() {
                         let metering_api = MeteringApiImpl::new(ctx.provider().clone());
                         ctx.modules.merge_configured(metering_api.into_rpc())?;
                     }
+
+                    let proxy_api = TransactionStatusApiImpl::new(
+                        args.rollup_args.sequencer.clone(),
+                        ctx.pool().clone(),
+                    )
+                    .expect("Failed to create transaction status proxy");
+                    ctx.modules.merge_configured(proxy_api.into_rpc())?;
 
                     if flashblocks_enabled {
                         info!(message = "Starting Flashblocks");
