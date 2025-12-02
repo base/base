@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/cargo-tests.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'justfile'

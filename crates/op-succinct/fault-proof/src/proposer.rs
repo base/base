@@ -286,7 +286,7 @@ where
     }
 
     /// Returns a copy of a game's full internal state for testing.
-    #[cfg(feature = "e2e")]
+    #[cfg(feature = "integration")]
     pub async fn get_game(&self, index: U256) -> Option<Game> {
         let state = self.state.read().await;
         state.games.get(&index).cloned()

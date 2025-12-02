@@ -1,4 +1,4 @@
-name: PR
+name: Lint
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
       - main
   pull_request:
     paths:
-      - ".github/workflows/pr.yaml"
+      - ".github/workflows/lint.yml"
       - "Cargo.toml"
       - "Cargo.lock"
       - "justfile"

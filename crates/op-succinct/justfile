@@ -415,15 +415,15 @@ build-agg-elf:
     cd programs/aggregation
     ~/.sp1/bin/cargo-prove prove build --elf-name aggregation-elf --docker --tag v5.2.2 --output-directory ../../elf
 
-# Run all unit and integration tests except for the specified ones.
+# Run all unit tests except for the specified ones.
 tests:
    cargo t --release \
     -- \
     --skip test_cycle_count_diff \
     --skip test_post_to_github
 
-# Run end-to-end tests.
-e2e-tests target="":
+# Run fault-proof integration tests.
+fp-integration-tests target="":
   #!/usr/bin/env bash
 
    test_target=""
@@ -433,7 +433,7 @@ e2e-tests target="":
 
    cd fault-proof
 
-   cargo t $test_target --release --features e2e -- --test-threads=1 --nocapture
+   cargo t $test_target --release --features integration -- --test-threads=1 --nocapture
 
 forge-build *ARGS:
     #!/usr/bin/env bash
