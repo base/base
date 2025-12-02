@@ -20,6 +20,7 @@ jobs:
       - runs-on
       - runner=1cpu-linux-x64
       - run-id=${{ github.run_id }} 
+      - spot=false
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
