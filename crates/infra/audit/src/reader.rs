@@ -77,9 +77,7 @@ impl EventReader for KafkaAuditLogReader {
                         .as_millis() as i64,
                 };
 
-                let json_bytes = lz4_flex::decompress_size_prepended(payload)
-                    .map_err(|e| anyhow::anyhow!("Failed to decompress LZ4: {e}"))?;
-                let event: BundleEvent = serde_json::from_slice(&json_bytes)?;
+                let event: BundleEvent = serde_json::from_slice(payload)?;
 
                 debug!(
                     bundle_id = %event.bundle_id(),

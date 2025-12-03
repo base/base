@@ -32,7 +32,6 @@ aws-config = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-credential-types = { workspace = true }
 bytes = { workspace = true }
-lz4_flex = { workspace = true }
 
 [dev-dependencies]
 testcontainers = { workspace = true }
