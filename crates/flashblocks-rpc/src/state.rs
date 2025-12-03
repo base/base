@@ -587,8 +587,7 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let existing_override =
-                                    state_overrides.entry(*addr).or_insert(Default::default());
+                                let existing_override = state_overrides.entry(*addr).or_default();
                                 existing_override.balance = Some(acc.info.balance);
                                 existing_override.nonce = Some(acc.info.nonce);
                                 existing_override.code =
