@@ -1,0 +1,24 @@
+name: Lychee Checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@v5
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config ./lychee.toml --cache-exclude-status 429 '**/README.md' './docs/**/*.md' './docs/**/*.mdx' './docs/**/*.html' './docs/**/*.json'
+          fail: true
