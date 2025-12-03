@@ -41,7 +41,7 @@ pub struct Args {
 impl Args {
     /// Returns if flashblocks is enabled.
     /// If the websocket url is specified through the CLI.
-    pub fn flashblocks_enabled(&self) -> bool {
+    pub const fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
     }
 }

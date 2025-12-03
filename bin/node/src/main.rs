@@ -1,3 +1,8 @@
+//! Base Reth Node binary.
+//!
+//! This is the main entry point for running a Base node with Reth,
+//! including support for flashblocks, transaction tracing, and metering.
+
 use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::{
@@ -25,6 +30,7 @@ use url::Url;
 pub mod cli;
 pub use cli::Args;
 
+/// The client version string for the Base Reth node.
 pub const NODE_RETH_CLIENT_VERSION: &str = concat!("base/v", env!("CARGO_PKG_VERSION"));
 
 #[global_allocator]

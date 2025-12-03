@@ -41,8 +41,9 @@ use tokio::sync::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    PendingBlocks,
     metrics::Metrics,
-    pending_blocks::{PendingBlocks, PendingBlocksBuilder},
+    pending_blocks::PendingBlocksBuilder,
     rpc::FlashblocksAPI,
     subscription::{Flashblock, FlashblocksReceiver},
 };
@@ -55,6 +56,7 @@ enum StateUpdate {
     Flashblock(Flashblock),
 }
 
+/// Manages the pending flashblock state and processes incoming updates.
 #[derive(Debug, Clone)]
 pub struct FlashblocksState<Client> {
     pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
@@ -71,6 +73,7 @@ where
         + Clone
         + 'static,
 {
+    /// Creates a new flashblocks state manager.
     pub fn new(client: Client, max_pending_blocks_depth: u64) -> Self {
         let (tx, rx) = mpsc::unbounded_channel::<StateUpdate>();
         let pending_blocks: Arc<ArcSwapOption<PendingBlocks>> = Arc::new(ArcSwapOption::new(None));
@@ -86,6 +89,7 @@ where
         Self { pending_blocks, queue: tx, flashblock_sender, state_processor }
     }
 
+    /// Starts the flashblocks state processor.
     pub fn start(&self) {
         let sp = self.state_processor.clone();
         tokio::spawn(async move {
@@ -93,6 +97,7 @@ where
         });
     }
 
+    /// Handles a canonical block being received.
     pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
         match self.queue.send(StateUpdate::Canonical(block.clone())) {
             Ok(_) => {
@@ -383,10 +388,10 @@ where
             None => CacheDB::new(state),
         };
 
-        let mut state_overrides = match &prev_pending_blocks {
-            Some(pending_blocks) => pending_blocks.get_state_overrides().unwrap_or_default(),
-            None => StateOverride::default(),
-        };
+        let mut state_overrides =
+            prev_pending_blocks.as_ref().map_or_else(StateOverride::default, |pending_blocks| {
+                pending_blocks.get_state_overrides().unwrap_or_default()
+            });
 
         for (_block_number, flashblocks) in flashblocks_per_block {
             let base = flashblocks
@@ -582,8 +587,7 @@ where
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {
-                                let existing_override =
-                                    state_overrides.entry(*addr).or_insert(Default::default());
+                                let existing_override = state_overrides.entry(*addr).or_default();
                                 existing_override.balance = Some(acc.info.balance);
                                 existing_override.nonce = Some(acc.info.nonce);
                                 existing_override.code =
