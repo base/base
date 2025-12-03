@@ -9,12 +9,9 @@ use alloy_consensus::{
     Eip658Value, Eip2718DecodableReceipt, Eip2718EncodableReceipt, Receipt, ReceiptWithBloom,
     RlpDecodableReceipt, RlpEncodableReceipt, TxReceipt, Typed2718,
 };
-use alloy_eips::{
-    Decodable2718, Encodable2718,
-    eip2718::{Eip2718Error, Eip2718Result, IsTyped2718},
-};
+use alloy_eips::eip2718::{Eip2718Error, Eip2718Result, IsTyped2718};
 use alloy_primitives::{Bloom, Log};
-use alloy_rlp::{BufMut, Decodable, Encodable, Header};
+use alloy_rlp::{Buf, BufMut, Decodable, Encodable, Header};
 
 /// Typed Optimism transaction receipt.
 ///
@@ -123,7 +120,7 @@ impl<T> OpReceipt<T> {
     }
 
     /// Returns RLP header for inner encoding without bloom.
-    pub fn rlp_header_inner_without_bloom(&self) -> Header
+    pub fn rlp_header_without_bloom(&self) -> Header
     where
         T: Encodable,
     {
@@ -173,6 +170,7 @@ impl<T> OpReceipt<T> {
     where
         T: Encodable,
     {
+        self.tx_type().encode(out);
         match self {
             Self::Legacy(receipt)
             | Self::Eip2930(receipt)
@@ -201,39 +199,32 @@ impl<T> OpReceipt<T> {
     where
         T: Encodable,
     {
-        match self {
-            Self::Legacy(receipt)
-            | Self::Eip2930(receipt)
-            | Self::Eip1559(receipt)
-            | Self::Eip7702(receipt) => {
-                receipt.status.length()
-                    + receipt.cumulative_gas_used.length()
-                    + receipt.logs.length()
+        self.tx_type().length()
+            + match self {
+                Self::Legacy(receipt)
+                | Self::Eip2930(receipt)
+                | Self::Eip1559(receipt)
+                | Self::Eip7702(receipt) => {
+                    receipt.status.length()
+                        + receipt.cumulative_gas_used.length()
+                        + receipt.logs.length()
+                }
+                Self::Deposit(receipt) => {
+                    receipt.inner.status.length()
+                        + receipt.inner.cumulative_gas_used.length()
+                        + receipt.inner.logs.length()
+                        + receipt.deposit_nonce.map_or(0, |nonce| nonce.length())
+                        + receipt.deposit_receipt_version.map_or(0, |version| version.length())
+                }
             }
-            Self::Deposit(receipt) => {
-                receipt.inner.status.length()
-                    + receipt.inner.cumulative_gas_used.length()
-                    + receipt.inner.logs.length()
-                    + receipt.deposit_nonce.map_or(0, |nonce| nonce.length())
-                    + receipt.deposit_receipt_version.map_or(0, |version| version.length())
-            }
-        }
     }
 
     /// RLP-decodes the receipt from the provided buffer without bloom.
-    pub fn rlp_decode_inner_without_bloom(
-        buf: &mut &[u8],
-        tx_type: OpTxType,
-    ) -> alloy_rlp::Result<Self>
+    pub fn rlp_decode_fields_without_bloom(buf: &mut &[u8]) -> alloy_rlp::Result<Self>
     where
         T: Decodable,
     {
-        let header = Header::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-
-        let remaining = buf.len();
+        let tx_type = OpTxType::decode(buf)?;
         let status = Decodable::decode(buf)?;
         let cumulative_gas_used = Decodable::decode(buf)?;
         let logs = Decodable::decode(buf)?;
@@ -242,15 +233,11 @@ impl<T> OpReceipt<T> {
         let mut deposit_receipt_version = None;
 
         // For deposit receipts, try to decode nonce and version if they exist
-        if tx_type == OpTxType::Deposit && buf.len() + header.payload_length > remaining {
+        if tx_type == OpTxType::Deposit && !buf.is_empty() {
             deposit_nonce = Some(Decodable::decode(buf)?);
-            if buf.len() + header.payload_length > remaining {
+            if !buf.is_empty() {
                 deposit_receipt_version = Some(Decodable::decode(buf)?);
             }
-        }
-
-        if buf.len() + header.payload_length != remaining {
-            return Err(alloy_rlp::Error::UnexpectedLength);
         }
 
         match tx_type {
@@ -340,44 +327,37 @@ impl<T: Decodable> RlpDecodableReceipt for OpReceipt<T> {
     }
 }
 
-impl<T: Encodable + Send + Sync> Encodable2718 for OpReceipt<T> {
-    fn encode_2718_len(&self) -> usize {
-        !self.tx_type().is_legacy() as usize
-            + self.rlp_header_inner_without_bloom().length_with_payload()
-    }
-
-    fn encode_2718(&self, out: &mut dyn BufMut) {
-        if !self.tx_type().is_legacy() {
-            out.put_u8(self.tx_type() as u8);
-        }
-        self.rlp_header_inner_without_bloom().encode(out);
-        self.rlp_encode_fields_without_bloom(out);
-    }
-}
-
-impl<T: Decodable> Decodable2718 for OpReceipt<T> {
-    fn typed_decode(ty: u8, buf: &mut &[u8]) -> Eip2718Result<Self> {
-        Ok(Self::rlp_decode_inner_without_bloom(buf, OpTxType::try_from(ty)?)?)
-    }
-
-    fn fallback_decode(buf: &mut &[u8]) -> Eip2718Result<Self> {
-        Ok(Self::rlp_decode_inner_without_bloom(buf, OpTxType::Legacy)?)
-    }
-}
-
 impl<T: Encodable + Send + Sync> Encodable for OpReceipt<T> {
     fn encode(&self, out: &mut dyn BufMut) {
-        self.network_encode(out);
+        self.rlp_header_without_bloom().encode(out);
+        self.rlp_encode_fields_without_bloom(out);
     }
 
     fn length(&self) -> usize {
-        self.network_len()
+        self.rlp_header_without_bloom().length_with_payload()
     }
 }
 
 impl<T: Decodable> Decodable for OpReceipt<T> {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        Ok(Self::network_decode(buf)?)
+        let header = Header::decode(buf)?;
+        if !header.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+
+        if buf.len() < header.payload_length {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+        let mut fields_buf = &buf[..header.payload_length];
+        let this = Self::rlp_decode_fields_without_bloom(&mut fields_buf)?;
+
+        if !fields_buf.is_empty() {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        buf.advance(header.payload_length);
+
+        Ok(this)
     }
 }
 
@@ -588,6 +568,7 @@ pub(crate) mod serde_bincode_compat {
 mod tests {
     use super::*;
     use alloc::vec;
+    use alloy_eips::Encodable2718;
     use alloy_primitives::{Bytes, address, b256, bytes, hex_literal::hex};
     use alloy_rlp::Encodable;
 
