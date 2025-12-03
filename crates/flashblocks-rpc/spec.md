@@ -2,7 +2,8 @@
 
 This document specifies the JSON-RPC methods implemented by the Flashblocks RPC provider.
 
-Note: This document serves as a reference for the current implementation and may differ from the full Flashblocks specification in terms of scope and methods implemented.
+> [!NOTE]
+> This document serves as a reference for the current implementation and may differ from the full Flashblocks specification in terms of scope and methods implemented.
 
 ## Type Definitions
 
@@ -12,7 +13,7 @@ All types used in these RPC methods are identical to the standard OP Stack RPC t
 
 The following standard Ethereum JSON-RPC methods are enhanced to support the `pending` tag for querying preconfirmed state.
 
-## eth_getBlockByNumber
+### `eth_getBlockByNumber`
 
 Returns block information for the specified block number.
 
