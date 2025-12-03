@@ -11,7 +11,7 @@ use base_reth_flashblocks_rpc::{
     subscription::FlashblocksSubscriber,
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_transaction_status::rpc::{TransactionStatusApiImpl, TransactionStatusApiServer};
+use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use base_reth_transaction_tracing::transaction_tracing_exex;
 use clap::Parser;
 use futures_util::TryStreamExt;
