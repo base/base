@@ -1,6 +1,7 @@
-use std::{ops::Deref, sync::Arc};
+use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::subscription::Flashblock;
+use derive_more::Deref;
 use eyre::Result;
 use futures_util::Future;
 use reth::builder::NodeHandle;
@@ -16,7 +17,9 @@ use crate::{
     tracing::init_silenced_tracing,
 };
 
+#[derive(Deref)]
 pub struct FlashblocksHarness {
+    #[deref]
     inner: TestHarness,
     parts: FlashblocksParts,
 }
@@ -79,10 +82,3 @@ impl FlashblocksHarness {
     }
 }
 
-impl Deref for FlashblocksHarness {
-    type Target = TestHarness;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}

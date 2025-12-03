@@ -24,6 +24,7 @@ futures.workspace = true
 tokio.workspace = true
 
 # misc
+derive_more = { workspace = true, features = ["display"] }
 eyre.workspace = true
 lru = "0.16.1"
 metrics.workspace = true

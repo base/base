@@ -134,6 +134,7 @@ jsonrpsee = "0.26.0"
 jsonrpsee-types = "0.26.0"
 
 # misc
+derive_more = { version = "2", default-features = false }
 clap = { version = "4.4.3" }
 tracing = { version = "0.1.41" }
 serde = "1"
