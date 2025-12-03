@@ -47,9 +47,17 @@ fix-clippy:
 build:
     cargo build --release
 
+# Builds all targets in debug mode
+build-all-targets:
+    cargo build --all-targets
+
 # Builds the workspace with maxperf
 build-maxperf:
     cargo build --profile maxperf --features jemalloc
+
+# Builds the base node binary
+build-node:
+    cargo build --bin base-reth-node
 
 # Cleans the workspace
 clean:
