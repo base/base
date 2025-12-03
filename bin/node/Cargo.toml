@@ -1,22 +1,23 @@
 [package]
 name = "base-reth-node"
+description = "Base Reth Binary"
+
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Base Reth Binary"
 
 [lints]
 workspace = true
 
 [dependencies]
 # internal
-base-reth-flashblocks-rpc.workspace = true
 base-reth-metering.workspace = true
-base-reth-transaction-tracing.workspace = true
+base-reth-flashblocks-rpc.workspace = true
 base-reth-transaction-status.workspace = true
+base-reth-transaction-tracing.workspace = true
 
 # reth
 reth.workspace = true
