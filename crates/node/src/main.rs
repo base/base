@@ -114,11 +114,11 @@ fn main() {
             let fb_cell: Arc<OnceLock<Arc<FlashblocksState<_>>>> = Arc::new(OnceLock::new());
 
             let proofs_storage_cell =
-                Arc::new(LazyLock::new(|| -> Arc<OpProofsStorage<MdbxProofsStorage>> {
+                Arc::new(LazyLock::new(|| -> OpProofsStorage<Arc<MdbxProofsStorage>> {
                     let path = args
                         .proofs_history_storage_path
                         .expect("path must be set when proofs history is enabled");
-                    let result: Arc<OpProofsStorage<MdbxProofsStorage>> = Arc::new(
+                    let result = Arc::new(
                         MdbxProofsStorage::new(&path).expect("Failed to create MdbxProofsStorage"),
                     )
                     .into();
