@@ -34,7 +34,7 @@ use tokio::{
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{metrics::Metrics, pending_blocks::PendingBlocks};
+use crate::{PendingBlocks, metrics::Metrics};
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -44,9 +44,11 @@ pub trait FlashblocksAPI {
     /// Retrieves the pending blocks.
     fn get_pending_blocks(&self) -> Guard<Option<Arc<PendingBlocks>>>;
 
+    /// Subscribes to flashblock updates.
     fn subscribe_to_flashblocks(&self) -> broadcast::Receiver<Arc<PendingBlocks>>;
 }
 
+/// API for accessing pending blocks data.
 pub trait PendingBlocksAPI {
     /// Get the canonical block number on top of which all pending state is built
     fn get_canonical_block_number(&self) -> BlockNumberOrTag;
@@ -73,9 +75,11 @@ pub trait PendingBlocksAPI {
     fn get_pending_logs(&self, filter: &Filter) -> Vec<Log>;
 }
 
+/// Eth API override trait for flashblocks integration.
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]
 #[cfg_attr(test, rpc(server, client, namespace = "eth"))]
 pub trait EthApiOverride {
+    /// Returns block by number, with flashblock support for pending blocks.
     #[method(name = "getBlockByNumber")]
     async fn block_by_number(
         &self,
@@ -83,16 +87,19 @@ pub trait EthApiOverride {
         full: bool,
     ) -> RpcResult<Option<RpcBlock<Optimism>>>;
 
+    /// Returns transaction receipt, checking flashblocks first.
     #[method(name = "getTransactionReceipt")]
     async fn get_transaction_receipt(
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcReceipt<Optimism>>>;
 
+    /// Returns account balance, with flashblock support for pending state.
     #[method(name = "getBalance")]
     async fn get_balance(&self, address: Address, block_number: Option<BlockId>)
     -> RpcResult<U256>;
 
+    /// Returns transaction count for an address.
     #[method(name = "getTransactionCount")]
     async fn get_transaction_count(
         &self,
@@ -100,12 +107,14 @@ pub trait EthApiOverride {
         block_number: Option<BlockId>,
     ) -> RpcResult<U256>;
 
+    /// Returns transaction by hash, checking flashblocks first.
     #[method(name = "getTransactionByHash")]
     async fn transaction_by_hash(
         &self,
         tx_hash: TxHash,
     ) -> RpcResult<Option<RpcTransaction<Optimism>>>;
 
+    /// Sends a raw transaction and waits for inclusion in a flashblock.
     #[method(name = "sendRawTransactionSync")]
     async fn send_raw_transaction_sync(
         &self,
@@ -113,6 +122,7 @@ pub trait EthApiOverride {
         timeout_ms: Option<u64>,
     ) -> RpcResult<RpcReceipt<Optimism>>;
 
+    /// Executes a call with flashblock state support.
     #[method(name = "call")]
     async fn call(
         &self,
@@ -122,6 +132,7 @@ pub trait EthApiOverride {
         block_overrides: Option<Box<BlockOverrides>>,
     ) -> RpcResult<alloy_primitives::Bytes>;
 
+    /// Estimates gas with flashblock state support.
     #[method(name = "estimateGas")]
     async fn estimate_gas(
         &self,
@@ -130,6 +141,7 @@ pub trait EthApiOverride {
         overrides: Option<StateOverride>,
     ) -> RpcResult<U256>;
 
+    /// Simulates transactions with flashblock state support.
     #[method(name = "simulateV1")]
     async fn simulate_v1(
         &self,
@@ -137,10 +149,12 @@ pub trait EthApiOverride {
         block_number: Option<BlockId>,
     ) -> RpcResult<Vec<SimulatedBlock<RpcBlock<Optimism>>>>;
 
+    /// Returns logs matching the filter, including pending flashblock logs.
     #[method(name = "getLogs")]
     async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
 }
 
+/// Extended Eth API with flashblocks support.
 #[derive(Debug)]
 pub struct EthApiExt<Eth: EthApiTypes, FB> {
     eth_api: Eth,
@@ -150,6 +164,7 @@ pub struct EthApiExt<Eth: EthApiTypes, FB> {
 }
 
 impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
+    /// Creates a new extended Eth API instance with flashblocks support.
     pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
         Self { eth_api, eth_filter, flashblocks_state, metrics: Metrics::default() }
     }

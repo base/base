@@ -1,3 +1,7 @@
+//! Transaction metering utilities for Base Reth.
+//!
+//! This crate provides RPC APIs and utilities for metering transaction bundles.
+
 mod meter;
 mod rpc;
 #[cfg(test)]

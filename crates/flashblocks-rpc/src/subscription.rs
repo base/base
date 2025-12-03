@@ -21,23 +21,35 @@ pub const PING_INTERVAL_MS: u64 = 500;
 /// Max duration of backoff before reconnecting to upstream.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
 
+/// Trait for receiving flashblock updates.
 pub trait FlashblocksReceiver {
+    /// Called when a new flashblock is received.
     fn on_flashblock_received(&self, flashblock: Flashblock);
 }
 
+/// Metadata associated with a flashblock.
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 pub struct Metadata {
+    /// Transaction receipts indexed by hash.
     pub receipts: HashMap<B256, OpReceipt>,
+    /// Updated account balances.
     pub new_account_balances: HashMap<Address, U256>,
+    /// Block number this flashblock belongs to.
     pub block_number: u64,
 }
 
+/// A flashblock containing partial block data.
 #[derive(Debug, Clone)]
 pub struct Flashblock {
+    /// Unique payload identifier.
     pub payload_id: PayloadId,
+    /// Index of this flashblock within the block.
     pub index: u64,
+    /// Base payload data (only present on first flashblock).
     pub base: Option<ExecutionPayloadBaseV1>,
+    /// Delta containing transactions and state changes.
     pub diff: ExecutionPayloadFlashblockDeltaV1,
+    /// Associated metadata.
     pub metadata: Metadata,
 }
 
@@ -47,6 +59,8 @@ enum ActorMessage {
     BestPayload { payload: Flashblock },
 }
 
+/// Subscribes to flashblocks via WebSocket and forwards them to the receiver.
+#[derive(Debug)]
 pub struct FlashblocksSubscriber<Receiver> {
     flashblocks_state: Arc<Receiver>,
     metrics: Metrics,
@@ -57,10 +71,12 @@ impl<Receiver> FlashblocksSubscriber<Receiver>
 where
     Receiver: FlashblocksReceiver + Send + Sync + 'static,
 {
+    /// Creates a new flashblocks subscriber.
     pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
         Self { ws_url, flashblocks_state, metrics: Metrics::default() }
     }
 
+    /// Starts the WebSocket subscription to receive flashblocks.
     pub fn start(&mut self) {
         info!(
             message = "Starting Flashblocks subscription",

@@ -162,6 +162,9 @@ impl Tracker {
     }
 }
 
+/// Execution extension that tracks transaction timing from mempool to inclusion.
+///
+/// Monitors transaction lifecycle events and records timing metrics.
 pub async fn transaction_tracing_exex<Node: FullNodeComponents>(
     mut ctx: ExExContext<Node>,
     enable_logs: bool,

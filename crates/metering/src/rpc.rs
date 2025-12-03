@@ -22,6 +22,7 @@ pub trait MeteringApi {
 }
 
 /// Implementation of the metering RPC API
+#[derive(Debug)]
 pub struct MeteringApiImpl<Provider> {
     provider: Provider,
 }
@@ -34,7 +35,7 @@ where
         + Clone,
 {
     /// Creates a new instance of MeteringApi
-    pub fn new(provider: Provider) -> Self {
+    pub const fn new(provider: Provider) -> Self {
         Self { provider }
     }
 }
@@ -96,20 +97,15 @@ where
 
         // Meter bundle using utility function
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-            meter_bundle(
-                state_provider,
-                self.provider.chain_spec().clone(),
-                parsed_bundle,
-                &header,
-            )
-            .map_err(|e| {
-                error!(error = %e, "Bundle metering failed");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Bundle metering failed: {}", e),
-                    None::<()>,
-                )
-            })?;
+            meter_bundle(state_provider, self.provider.chain_spec(), parsed_bundle, &header)
+                .map_err(|e| {
+                    error!(error = %e, "Bundle metering failed");
+                    jsonrpsee::types::ErrorObjectOwned::owned(
+                        jsonrpsee::types::ErrorCode::InternalError.code(),
+                        format!("Bundle metering failed: {}", e),
+                        None::<()>,
+                    )
+                })?;
 
         // Calculate average gas price
         let bundle_gas_price = if total_gas_used > 0 {

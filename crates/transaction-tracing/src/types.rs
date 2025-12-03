@@ -7,7 +7,7 @@ use chrono::{DateTime, Local};
 
 /// Types of transaction events to track
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TxEvent {
+pub(crate) enum TxEvent {
     Dropped,
     Replaced,
     Pending,
@@ -21,14 +21,14 @@ pub enum TxEvent {
 impl Display for TxEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            TxEvent::Dropped => "dropped",
-            TxEvent::Replaced => "replaced",
-            TxEvent::Pending => "pending",
-            TxEvent::Queued => "queued",
-            TxEvent::BlockInclusion => "block_inclusion",
-            TxEvent::PendingToQueued => "pending_to_queued",
-            TxEvent::QueuedToPending => "queued_to_pending",
-            TxEvent::Overflowed => "overflowed",
+            Self::Dropped => "dropped",
+            Self::Replaced => "replaced",
+            Self::Pending => "pending",
+            Self::Queued => "queued",
+            Self::BlockInclusion => "block_inclusion",
+            Self::PendingToQueued => "pending_to_queued",
+            Self::QueuedToPending => "queued_to_pending",
+            Self::Overflowed => "overflowed",
         };
         write!(f, "{s}")
     }
@@ -36,28 +36,28 @@ impl Display for TxEvent {
 
 /// Types of pools a transaction can be in
 #[derive(Debug, Clone, PartialEq)]
-pub enum Pool {
+pub(crate) enum Pool {
     Pending,
     Queued,
 }
 
 /// History of events for a transaction
-pub struct EventLog {
-    pub mempool_time: Instant,
-    pub events: Vec<(DateTime<Local>, TxEvent)>,
-    pub limit: usize,
+pub(crate) struct EventLog {
+    pub(crate) mempool_time: Instant,
+    pub(crate) events: Vec<(DateTime<Local>, TxEvent)>,
+    pub(crate) limit: usize,
 }
 
 impl EventLog {
-    pub fn new(t: DateTime<Local>, event: TxEvent) -> Self {
+    pub(crate) fn new(t: DateTime<Local>, event: TxEvent) -> Self {
         Self { mempool_time: Instant::now(), events: vec![(t, event)], limit: 10 }
     }
 
-    pub fn push(&mut self, t: DateTime<Local>, event: TxEvent) {
+    pub(crate) fn push(&mut self, t: DateTime<Local>, event: TxEvent) {
         self.events.push((t, event));
     }
 
-    pub fn to_vec(&self) -> Vec<String> {
+    pub(crate) fn to_vec(&self) -> Vec<String> {
         self.events
             .iter()
             .map(|(t, event)| {

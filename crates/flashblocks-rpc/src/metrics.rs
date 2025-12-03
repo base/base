@@ -7,7 +7,7 @@ use metrics_derive::Metrics;
 /// - Gauges reflect the current value/state.
 #[derive(Metrics, Clone)]
 #[metrics(scope = "reth_flashblocks")]
-pub struct Metrics {
+pub(crate) struct Metrics {
     #[metric(describe = "Count of times upstream receiver was closed/errored")]
     pub upstream_errors: Counter,
 
