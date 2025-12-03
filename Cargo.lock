@@ -1668,6 +1668,7 @@ dependencies = [
  "alloy-signer-local",
  "base-reth-flashblocks-rpc",
  "chrono",
+ "derive_more",
  "eyre",
  "futures",
  "futures-util",
@@ -1728,6 +1729,7 @@ version = "0.2.1"
 dependencies = [
  "alloy-primitives",
  "chrono",
+ "derive_more",
  "eyre",
  "futures",
  "lru 0.16.2",

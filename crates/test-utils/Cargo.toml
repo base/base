@@ -68,6 +68,7 @@ futures-util.workspace = true
 jsonrpsee.workspace = true
 
 # misc
+derive_more = { workspace = true, features = ["deref"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 serde.workspace = true

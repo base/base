@@ -1,37 +1,27 @@
-use std::{
-    fmt::{self, Display},
-    time::Instant,
-};
+use std::time::Instant;
 
 use chrono::{DateTime, Local};
+use derive_more::Display;
 
 /// Types of transaction events to track
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Display, Clone, Copy, PartialEq)]
 pub(crate) enum TxEvent {
+    #[display("dropped")]
     Dropped,
+    #[display("replaced")]
     Replaced,
+    #[display("pending")]
     Pending,
+    #[display("queued")]
     Queued,
+    #[display("block_inclusion")]
     BlockInclusion,
+    #[display("pending_to_queued")]
     PendingToQueued,
+    #[display("queued_to_pending")]
     QueuedToPending,
+    #[display("overflowed")]
     Overflowed,
-}
-
-impl Display for TxEvent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Self::Dropped => "dropped",
-            Self::Replaced => "replaced",
-            Self::Pending => "pending",
-            Self::Queued => "queued",
-            Self::BlockInclusion => "block_inclusion",
-            Self::PendingToQueued => "pending_to_queued",
-            Self::QueuedToPending => "queued_to_pending",
-            Self::Overflowed => "overflowed",
-        };
-        write!(f, "{s}")
-    }
 }
 
 /// Types of pools a transaction can be in
