@@ -606,6 +606,7 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
     /// @notice Update the submission interval.
     /// @param _submissionInterval The new submission interval.
     function updateSubmissionInterval(uint256 _submissionInterval) external onlyOwner {
+        require(_submissionInterval > 0, "L2OutputOracle: submission interval must be greater than 0");
         emit SubmissionIntervalUpdated(submissionInterval, _submissionInterval);
         submissionInterval = _submissionInterval;
     }

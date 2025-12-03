@@ -232,4 +232,10 @@ contract OPSuccinctConfigManagementTest is Test, Utils {
         (,, bytes32 rollupConfig) = l2oo.opSuccinctConfigs(TEST_CONFIG_NAME);
         assertEq(rollupConfig, bytes32(0));
     }
+
+    function testUpdateSubmissionInterval_CannotSetToZero() public {
+        vm.prank(owner);
+        vm.expectRevert("L2OutputOracle: submission interval must be greater than 0");
+        l2oo.updateSubmissionInterval(0);
+    }
 }
