@@ -9,8 +9,7 @@ repository = "https://github.com/base/node-reth"
 [workspace]
 resolver = "2"
 members = ["bin/*", "crates/*"]
-
-default-members = ["crates/*"]
+default-members = ["bin/node"]
 
 [workspace.lints]
 

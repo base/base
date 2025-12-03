@@ -86,6 +86,7 @@ struct FlashblocksNodeExtensions {
 
 struct FlashblocksNodeExtensionsInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
+    #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
     process_canonical: bool,
