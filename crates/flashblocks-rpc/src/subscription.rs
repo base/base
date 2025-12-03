@@ -1,3 +1,5 @@
+//! WebSocket subscription handling for flashblocks.
+
 use std::{io::Read, sync::Arc, time::Duration};
 
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
@@ -13,7 +15,7 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use crate::metrics::Metrics;
+use crate::Metrics;
 
 /// Interval of liveness check of upstream, in milliseconds.
 pub const PING_INTERVAL_MS: u64 = 500;

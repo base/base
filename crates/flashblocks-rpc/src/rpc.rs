@@ -1,3 +1,5 @@
+//! RPC trait definitions and implementations for flashblocks.
+
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};

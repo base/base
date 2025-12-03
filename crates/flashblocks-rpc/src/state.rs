@@ -1,3 +1,5 @@
+//! Flashblocks state management.
+
 use std::{
     collections::{BTreeMap, HashSet},
     sync::Arc,

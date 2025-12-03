@@ -1,3 +1,5 @@
+//! Transaction tracing execution extension.
+
 use std::{
     num::NonZeroUsize,
     time::{Duration, Instant},

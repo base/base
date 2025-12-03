@@ -1,4 +1,11 @@
+# Flashblocks RPC Extension for Base Reth
+
+This crate provides RPC APIs for accessing flashblocks state,
+including pending transactions, blocks, and receipts before
+they are finalized on-chain.
+
 ### Testing
+
 To include integration tests when testing, run:
 
 ```bash
