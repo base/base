@@ -1,0 +1,8 @@
+verbose = "debug"
+no_progress = false
+exclude_all_private = false
+accept = [200, 403] # 403 status code is often returned by private repos instead of 404
+exclude = [
+    'foo.bar',
+    'localhost',
+]
