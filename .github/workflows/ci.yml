@@ -24,7 +24,9 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
-      - run: cargo build --all-targets
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - run: just build-all-targets
 
   test:
     name: Test
@@ -37,10 +39,12 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
       - name: Build reth-node
-        run: cargo build --bin base-reth-node
+        run: just build-node
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: just test
 
   fmt:
     name: Format
@@ -55,7 +59,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@0c3131df9e5407c0c36352032d04af846dbe0fb7 # nightly
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - run: just check-format
 
   clippy:
     name: Clippy
@@ -70,7 +76,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2 # stable
         with:
           components: clippy
-      - run: cargo clippy -- -D warnings
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - run: just check-clippy
 
   docker:
     name: Docker
@@ -114,4 +122,6 @@ jobs:
       - uses: taiki-e/install-action@3575e532701a5fc614b0c842e4119af4cc5fd16d # v2.62.60
         with: 
           tool: cargo-udeps
-      - run: cargo udeps --workspace --lib --tests --all-features
+      - name: Install just
+        uses: extractions/setup-just@e33e0265a09d6d736e2ee1e0eb685ef1de4669ff # v3
+      - run: just check-udeps
