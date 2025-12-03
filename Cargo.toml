@@ -8,16 +8,8 @@ repository = "https://github.com/base/node-reth"
 
 [workspace]
 resolver = "2"
-members = [
-    "crates/flashblocks-rpc",
-    "crates/metering",
-    "crates/node",
-    "crates/test-utils",
-    "crates/transaction-status",
-    "crates/transaction-tracing",
-]
-
-default-members = ["crates/node"]
+members = ["bin/*", "crates/*"]
+default-members = ["bin/node"]
 
 [workspace.lints]
 
@@ -40,12 +32,11 @@ codegen-units = 1
 
 [workspace.dependencies]
 # internal
-base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-metering = { path = "crates/metering" }
-base-reth-node = { path = "crates/node" }
 base-reth-test-utils = { path = "crates/test-utils" }
-base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
+base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-transaction-status = { path = "crates/transaction-status" }
+base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies

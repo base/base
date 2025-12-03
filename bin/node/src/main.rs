@@ -18,52 +18,17 @@ use reth::{
 };
 use reth_exex::ExExEvent;
 use reth_optimism_cli::{Cli, chainspec::OpChainSpecParser};
-use reth_optimism_node::{OpNode, args::RollupArgs};
+use reth_optimism_node::OpNode;
 use tracing::info;
 use url::Url;
+
+pub mod cli;
+pub use cli::Args;
 
 pub const NODE_RETH_CLIENT_VERSION: &str = concat!("base/v", env!("CARGO_PKG_VERSION"));
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
-
-#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
-#[command(next_help_heading = "Rollup")]
-struct Args {
-    #[command(flatten)]
-    pub rollup_args: RollupArgs,
-
-    #[arg(long = "websocket-url", value_name = "WEBSOCKET_URL")]
-    pub websocket_url: Option<String>,
-
-    #[arg(
-        long = "max-pending-blocks-depth",
-        value_name = "MAX_PENDING_BLOCKS_DEPTH",
-        default_value = "3"
-    )]
-    pub max_pending_blocks_depth: u64,
-
-    /// Enable transaction tracing ExEx for mempool-to-block timing analysis
-    #[arg(long = "enable-transaction-tracing", value_name = "ENABLE_TRANSACTION_TRACING")]
-    pub enable_transaction_tracing: bool,
-
-    /// Enable `info` logs for transaction tracing
-    #[arg(
-        long = "enable-transaction-tracing-logs",
-        value_name = "ENABLE_TRANSACTION_TRACING_LOGS"
-    )]
-    pub enable_transaction_tracing_logs: bool,
-
-    /// Enable metering RPC for transaction bundle simulation
-    #[arg(long = "enable-metering", value_name = "ENABLE_METERING")]
-    pub enable_metering: bool,
-}
-
-impl Args {
-    fn flashblocks_enabled(&self) -> bool {
-        self.websocket_url.is_some()
-    }
-}
 
 fn main() {
     let default_version_metadata = default_reth_version_metadata();

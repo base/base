@@ -85,7 +85,7 @@ impl TestHarness {
 
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
         // Ensure the block always starts with the required L1 block info deposit.
-        if !transactions.first().is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX) {
+        if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
             transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
         }
 
@@ -118,7 +118,6 @@ impl TestHarness {
             no_tx_pool: Some(true),
             min_base_fee: Some(min_base_fee),
             eip_1559_params: Some(B64::from(eip_1559_params)),
-            ..Default::default()
         };
 
         let forkchoice_result = self
