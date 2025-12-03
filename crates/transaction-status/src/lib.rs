@@ -1,7 +1,7 @@
-//! Transaction status API for Base Reth.
-//!
-//! This crate provides an RPC API for querying transaction status
-//! from the local mempool or a remote sequencer.
+#![doc = include_str!("../README.md")]
+#![doc(issue_tracker_base_url = "https://github.com/base/node-reth/issues/")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 /// RPC implementation for transaction status queries.
 pub mod rpc;

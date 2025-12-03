@@ -1,12 +1,12 @@
 [package]
 name = "base-reth-flashblocks-rpc"
+description = "Flashblocks RPC Support"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 homepage.workspace = true
 repository.workspace = true
-description = "Flashblocks RPC Support"
 
 [lints]
 workspace = true
@@ -14,7 +14,6 @@ workspace = true
 [dependencies]
 # reth
 reth.workspace = true
-reth-optimism-node.workspace = true
 reth-rpc-eth-api.workspace = true
 reth-evm.workspace = true
 reth-optimism-primitives.workspace = true
@@ -22,10 +21,7 @@ reth-rpc-convert.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-provider.workspace = true
-reth-tracing.workspace = true
 reth-primitives.workspace = true
-reth-primitives-traits.workspace = true
 
 # alloy
 alloy-primitives.workspace = true
@@ -40,10 +36,6 @@ alloy-provider.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
 op-alloy-consensus.workspace = true
-
-# alloy
-alloy-genesis.workspace = true
-alloy-rpc-client.workspace = true
 
 # rollup-boost
 rollup-boost.workspace = true
@@ -72,6 +64,11 @@ brotli.workspace = true
 arc-swap.workspace = true
 
 [dev-dependencies]
+reth-provider.workspace = true
+op-alloy-consensus.workspace = true
+reth-optimism-primitives.workspace = true
+reth-primitives-traits.workspace = true
+alloy-rpc-client.workspace = true
 base-reth-test-utils.workspace = true
 rand.workspace = true
 reth-db.workspace = true

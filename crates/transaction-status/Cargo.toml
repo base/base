@@ -13,9 +13,9 @@ tracing.workspace = true
 alloy-primitives.workspace = true
 serde.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-eyre.workspace = true
 
 [dev-dependencies]
+eyre.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 httpmock.workspace = true
 serde_json.workspace = true

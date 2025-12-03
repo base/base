@@ -1,16 +1,17 @@
-//! Flashblocks RPC extension for Base Reth.
-//!
-//! This crate provides RPC APIs for accessing flashblock state,
-//! including pending transactions, blocks, and receipts before
-//! they are finalized on-chain.
+#![doc = include_str!("../README.md")]
+#![doc(issue_tracker_base_url = "https://github.com/base/node-reth/issues/")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod metrics;
+pub(crate) use metrics::Metrics;
+
 mod pending_blocks;
-/// RPC trait definitions and implementations for flashblocks.
+
 pub mod rpc;
-/// Flashblocks state management.
+
 pub mod state;
-/// WebSocket subscription handling for flashblocks.
+
 pub mod subscription;
 
 pub use pending_blocks::PendingBlocks;

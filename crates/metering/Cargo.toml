@@ -22,17 +22,11 @@ reth-primitives-traits.workspace = true
 reth-evm.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-optimism-primitives.workspace = true
-reth-transaction-pool.workspace = true
-reth-optimism-cli.workspace = true  # Enables serde & codec traits for OpReceipt/OpTxEnvelope
 
 # alloy
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
-
-# op-alloy
-op-alloy-consensus.workspace = true
 
 # rpc
 jsonrpsee.workspace = true
@@ -42,6 +36,8 @@ tracing.workspace = true
 eyre.workspace = true
 
 [dev-dependencies]
+reth-optimism-primitives.workspace = true
+op-alloy-consensus.workspace = true
 alloy-genesis.workspace = true
 alloy-rpc-client.workspace = true
 rand.workspace = true

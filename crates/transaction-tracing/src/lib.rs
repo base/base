@@ -1,10 +1,9 @@
-//! Transaction tracing utilities for Base Reth.
-//!
-//! This crate provides an ExEx for tracking transaction lifecycle events
-//! from mempool insertion to block inclusion.
+#![doc = include_str!("../README.md")]
+#![doc(issue_tracker_base_url = "https://github.com/base/node-reth/issues/")]
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+#![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-/// Transaction tracing execution extension.
-pub mod tracing;
-mod types;
-
+mod tracing;
 pub use tracing::transaction_tracing_exex;
+
+mod types;
