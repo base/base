@@ -17,7 +17,7 @@ use tips_core::{
 };
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Duration, Instant, timeout};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::metrics::{Metrics, record_histogram};
 use crate::queue::QueuePublisher;
@@ -26,6 +26,13 @@ use crate::{Config, TxSubmissionMethod};
 use account_abstraction_core::types::{SendUserOperationResponse, UserOperationRequest};
 use account_abstraction_core::{AccountAbstractionService, AccountAbstractionServiceImpl};
 use std::sync::Arc;
+
+/// RPC providers for different endpoints
+pub struct Providers {
+    pub mempool: RootProvider<Optimism>,
+    pub simulation: RootProvider<Optimism>,
+    pub raw_tx_forward: Option<RootProvider<Optimism>>,
+}
 
 #[rpc(server, namespace = "eth")]
 pub trait IngressApi {
@@ -53,8 +60,9 @@ pub trait IngressApi {
 }
 
 pub struct IngressService<Queue> {
-    provider: Arc<RootProvider<Optimism>>,
+    mempool_provider: Arc<RootProvider<Optimism>>,
     simulation_provider: Arc<RootProvider<Optimism>>,
+    raw_tx_forward_provider: Option<Arc<RootProvider<Optimism>>>,
     account_abstraction_service: AccountAbstractionServiceImpl,
     tx_submission_method: TxSubmissionMethod,
     bundle_queue: Queue,
@@ -70,24 +78,26 @@ pub struct IngressService<Queue> {
 
 impl<Queue> IngressService<Queue> {
     pub fn new(
-        provider: RootProvider<Optimism>,
-        simulation_provider: RootProvider<Optimism>,
+        providers: Providers,
         queue: Queue,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
         builder_backrun_tx: broadcast::Sender<Bundle>,
         config: Config,
     ) -> Self {
-        let provider = Arc::new(provider);
-        let simulation_provider = Arc::new(simulation_provider);
+        let mempool_provider = Arc::new(providers.mempool);
+        let simulation_provider = Arc::new(providers.simulation);
+        let raw_tx_forward_provider = providers.raw_tx_forward.map(Arc::new);
         let account_abstraction_service: AccountAbstractionServiceImpl =
             AccountAbstractionServiceImpl::new(
                 simulation_provider.clone(),
                 config.validate_user_operation_timeout_ms,
             );
+
         Self {
-            provider,
+            mempool_provider,
             simulation_provider,
+            raw_tx_forward_provider,
             account_abstraction_service,
             tx_submission_method: config.tx_submission_method,
             bundle_queue: queue,
@@ -241,7 +251,7 @@ where
 
         if send_to_mempool {
             let response = self
-                .provider
+                .mempool_provider
                 .send_raw_transaction(data.iter().as_slice())
                 .await;
             match response {
@@ -252,6 +262,25 @@ where
                     warn!(message = "Failed to send raw transaction to mempool", error = %e);
                 }
             }
+        }
+
+        if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
+            self.metrics.raw_tx_forwards_total.increment(1);
+            let tx_data = data.clone();
+            let tx_hash = transaction.tx_hash();
+            tokio::spawn(async move {
+                match forward_provider
+                    .send_raw_transaction(tx_data.iter().as_slice())
+                    .await
+                {
+                    Ok(_) => {
+                        debug!(message = "Forwarded raw tx", hash = %tx_hash);
+                    }
+                    Err(e) => {
+                        warn!(message = "Failed to forward raw tx", hash = %tx_hash, error = %e);
+                    }
+                }
+            });
         }
 
         self.send_audit_event(&accepted_bundle, transaction.tx_hash());
@@ -407,7 +436,7 @@ mod tests {
     use alloy_provider::RootProvider;
     use async_trait::async_trait;
     use std::net::{IpAddr, SocketAddr};
-    use std::sync::Arc;
+    use std::str::FromStr;
     use tips_core::test_utils::create_test_meter_bundle_response;
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
@@ -449,6 +478,7 @@ mod tests {
             max_buffered_backrun_bundles: 100,
             health_check_addr: SocketAddr::from(([127, 0, 0, 1], 8081)),
             backrun_enabled: false,
+            raw_tx_forward_rpc: None,
         }
     }
 
@@ -519,20 +549,19 @@ mod tests {
 
         let provider: RootProvider<Optimism> =
             RootProvider::new_http(mock_server.uri().parse().unwrap());
-        let simulation_provider = Arc::new(provider.clone());
+
+        let providers = Providers {
+            mempool: provider.clone(),
+            simulation: provider.clone(),
+            raw_tx_forward: None,
+        };
 
         let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
         let (builder_tx, _builder_rx) = broadcast::channel(1);
         let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
         let service = IngressService::new(
-            provider,
-            simulation_provider.as_ref().clone(),
-            MockQueue,
-            audit_tx,
-            builder_tx,
-            backrun_tx,
-            config,
+            providers, MockQueue, audit_tx, builder_tx, backrun_tx, config,
         );
 
         let bundle = Bundle::default();
@@ -544,5 +573,65 @@ mod tests {
         assert!(result.is_err());
         let response = result.unwrap_or_else(|_| MeterBundleResponse::default());
         assert_eq!(response, MeterBundleResponse::default());
+    }
+
+    #[tokio::test]
+    async fn test_raw_tx_forward() {
+        let simulation_server = MockServer::start().await;
+        let forward_server = MockServer::start().await;
+
+        // Mock error response from base_meterBundle
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32000,
+                    "message": "Simulation failed"
+                }
+            })))
+            .mount(&simulation_server)
+            .await;
+
+        // Mock forward endpoint - expect exactly 1 call
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": "0x0000000000000000000000000000000000000000000000000000000000000000"
+            })))
+            .expect(1)
+            .mount(&forward_server)
+            .await;
+
+        let mut config = create_test_config(&simulation_server);
+        config.tx_submission_method = TxSubmissionMethod::Kafka; // Skip mempool send
+
+        let providers = Providers {
+            mempool: RootProvider::new_http(simulation_server.uri().parse().unwrap()),
+            simulation: RootProvider::new_http(simulation_server.uri().parse().unwrap()),
+            raw_tx_forward: Some(RootProvider::new_http(
+                forward_server.uri().parse().unwrap(),
+            )),
+        };
+
+        let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
+
+        let service = IngressService::new(
+            providers, MockQueue, audit_tx, builder_tx, backrun_tx, config,
+        );
+
+        // Valid signed transaction bytes
+        let tx_bytes = Bytes::from_str("0x02f86c0d010183072335825208940000000000000000000000000000000000000000872386f26fc1000080c001a0cdb9e4f2f1ba53f9429077e7055e078cf599786e29059cd80c5e0e923bb2c114a01c90e29201e031baf1da66296c3a5c15c200bcb5e6c34da2f05f7d1778f8be07").unwrap();
+
+        let result = service.send_raw_transaction(tx_bytes).await;
+        assert!(result.is_ok());
+
+        // Wait for spawned forward task to complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // wiremock automatically verifies expect(1) when forward_server is dropped
     }
 }

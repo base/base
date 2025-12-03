@@ -1,4 +1,4 @@
-use alloy_provider::{ProviderBuilder, RootProvider};
+use alloy_provider::ProviderBuilder;
 use clap::Parser;
 use jsonrpsee::server::Server;
 use op_alloy_network::Optimism;
@@ -13,7 +13,7 @@ use tips_ingress_rpc::connect_ingress_to_builder;
 use tips_ingress_rpc::health::bind_health_server;
 use tips_ingress_rpc::metrics::init_prometheus_exporter;
 use tips_ingress_rpc::queue::KafkaQueuePublisher;
-use tips_ingress_rpc::service::{IngressApiServer, IngressService};
+use tips_ingress_rpc::service::{IngressApiServer, IngressService, Providers};
 use tokio::sync::{broadcast, mpsc};
 use tracing::info;
 
@@ -39,15 +39,22 @@ async fn main() -> anyhow::Result<()> {
         health_check_address = %config.health_check_addr,
     );
 
-    let provider: RootProvider<Optimism> = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Optimism>()
-        .connect_http(config.mempool_url);
-
-    let simulation_provider: RootProvider<Optimism> = ProviderBuilder::new()
-        .disable_recommended_fillers()
-        .network::<Optimism>()
-        .connect_http(config.simulation_rpc);
+    let providers = Providers {
+        mempool: ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Optimism>()
+            .connect_http(config.mempool_url),
+        simulation: ProviderBuilder::new()
+            .disable_recommended_fillers()
+            .network::<Optimism>()
+            .connect_http(config.simulation_rpc),
+        raw_tx_forward: config.raw_tx_forward_rpc.clone().map(|url| {
+            ProviderBuilder::new()
+                .disable_recommended_fillers()
+                .network::<Optimism>()
+                .connect_http(url)
+        }),
+    };
 
     let ingress_client_config = ClientConfig::from_iter(load_kafka_config_from_file(
         &config.ingress_kafka_properties,
@@ -83,8 +90,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let service = IngressService::new(
-        provider,
-        simulation_provider,
+        providers,
         queue,
         audit_tx,
         builder_tx,

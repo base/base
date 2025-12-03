@@ -35,6 +35,9 @@ pub struct Metrics {
 
     #[metric(describe = "Duration to send backrun bundle to op-rbuilder")]
     pub backrun_bundles_sent_duration: Histogram,
+
+    #[metric(describe = "Total raw transactions forwarded to additional endpoint")]
+    pub raw_tx_forwards_total: Counter,
 }
 
 /// Initialize Prometheus metrics exporter
