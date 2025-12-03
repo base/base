@@ -1,23 +1,16 @@
+//! RPC implementation for transaction status queries.
+
 use alloy_primitives::TxHash;
 use jsonrpsee::{
     core::{RpcResult, async_trait, client::ClientT},
     http_client::{HttpClient, HttpClientBuilder},
-    proc_macros::rpc,
     rpc_params,
     types::{ErrorCode, ErrorObjectOwned},
 };
 use reth_transaction_pool::TransactionPool;
 use tracing::{info, warn};
 
-use crate::{Status, TransactionStatusResponse};
-
-/// RPC API for transaction status
-#[rpc(server, namespace = "base")]
-pub trait TransactionStatusApi {
-    /// Gets the status of a transaction
-    #[method(name = "transactionStatus")]
-    async fn transaction_status(&self, tx_hash: TxHash) -> RpcResult<TransactionStatusResponse>;
-}
+use crate::{Status, TransactionStatusApiServer, TransactionStatusResponse};
 
 /// Implementation of the transaction status RPC API.
 #[derive(Debug)]
@@ -86,7 +79,7 @@ mod tests {
     use serde_json::{self, json};
 
     use super::*;
-    use crate::Status::{Known, Unknown};
+    use crate::Status;
 
     #[tokio::test]
     async fn test_transaction_status() -> eyre::Result<()> {
@@ -99,7 +92,7 @@ mod tests {
             .await
             .expect("should be able to fetch status")
             .status;
-        assert_eq!(Unknown, result);
+        assert_eq!(Status::Unknown, result);
 
         let tx = MockTransaction::eip1559();
         let hash = tx.hash().clone();
@@ -118,8 +111,8 @@ mod tests {
             .expect("should be able to fetch transaction status")
             .status;
 
-        assert_eq!(Unknown, before);
-        assert_eq!(Known, after);
+        assert_eq!(Status::Unknown, before);
+        assert_eq!(Status::Known, after);
 
         Ok(())
     }
@@ -172,14 +165,14 @@ mod tests {
                 .json_body(json!({"jsonrpc": "2.0", "id": 0, "method": "base_transactionStatus", "params": [known_tx]}));
             then.status(200)
                 .header("content-type", "application/json")
-                .body(serde_json::to_string(&response(0, Known)).unwrap());
+                .body(serde_json::to_string(&response(0, Status::Known)).unwrap());
         });
 
         let status = rpc
             .transaction_status(known_tx)
             .await
             .expect("should be able to fetch transaction status");
-        assert_eq!(Known, status.status);
+        assert_eq!(Status::Known, status.status);
         known_mock.assert();
 
         let unknown_mock = sequencer.mock(|when, then| {
@@ -188,14 +181,14 @@ mod tests {
                 .json_body(json!({"jsonrpc": "2.0", "id": 1, "method": "base_transactionStatus", "params": [unknown_tx]}));
             then.status(200)
                 .header("content-type", "application/json")
-                .body(serde_json::to_string(&response(1, Unknown)).unwrap());
+                .body(serde_json::to_string(&response(1, Status::Unknown)).unwrap());
         });
 
         let status = rpc
             .transaction_status(unknown_tx)
             .await
             .expect("should be able to fetch transaction status");
-        assert_eq!(Unknown, status.status);
+        assert_eq!(Status::Unknown, status.status);
         unknown_mock.assert();
 
         Ok(())
