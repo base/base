@@ -278,7 +278,7 @@ pub struct TransactionResult {
     pub execution_time_us: u128,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct MeterBundleResponse {
     pub bundle_gas_price: U256,

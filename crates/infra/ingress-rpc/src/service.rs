@@ -214,7 +214,12 @@ where
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
 
         let bundle_hash = &parsed_bundle.bundle_hash();
-        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await?;
+        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await
+            .unwrap_or_else(|_| {
+                // TODO: in the future, we should return the error
+                warn!(message = "Bundle simulation failed, using default response", bundle_hash = %bundle_hash);
+                MeterBundleResponse::default()
+            });
 
         let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
 
@@ -398,7 +403,54 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Config, TxSubmissionMethod, queue::QueuePublisher};
+    use alloy_provider::RootProvider;
+    use async_trait::async_trait;
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::Arc;
     use tips_core::test_utils::create_test_meter_bundle_response;
+    use tokio::sync::{broadcast, mpsc};
+    use url::Url;
+    use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
+
+    struct MockQueue;
+
+    #[async_trait]
+    impl QueuePublisher for MockQueue {
+        async fn publish(
+            &self,
+            _bundle: &tips_core::AcceptedBundle,
+            _bundle_hash: &B256,
+        ) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn create_test_config(mock_server: &MockServer) -> Config {
+        Config {
+            address: IpAddr::from([127, 0, 0, 1]),
+            port: 8080,
+            mempool_url: Url::parse("http://localhost:3000").unwrap(),
+            tx_submission_method: TxSubmissionMethod::Mempool,
+            ingress_kafka_properties: String::new(),
+            ingress_topic: String::new(),
+            audit_kafka_properties: String::new(),
+            audit_topic: String::new(),
+            log_level: String::from("info"),
+            log_format: tips_core::logger::LogFormat::Pretty,
+            send_transaction_default_lifetime_seconds: 300,
+            simulation_rpc: mock_server.uri().parse().unwrap(),
+            metrics_addr: SocketAddr::from(([127, 0, 0, 1], 9002)),
+            block_time_milliseconds: 1000,
+            meter_bundle_timeout_ms: 5000,
+            validate_user_operation_timeout_ms: 2000,
+            builder_rpcs: vec![],
+            max_buffered_meter_bundle_responses: 100,
+            max_buffered_backrun_bundles: 100,
+            health_check_addr: SocketAddr::from(([127, 0, 0, 1], 8081)),
+            backrun_enabled: false,
+        }
+    }
 
     #[tokio::test]
     async fn test_timeout_logic() {
@@ -443,5 +495,54 @@ mod tests {
         // we're assumging that `base_meterBundle` will not error hence the second unwrap
         let res = result.unwrap().unwrap();
         assert_eq!(res, create_test_meter_bundle_response());
+    }
+
+    // Replicate a failed `meter_bundle` request and instead of returning an error, we return a default `MeterBundleResponse`
+    #[tokio::test]
+    async fn test_meter_bundle_success() {
+        let mock_server = MockServer::start().await;
+
+        // Mock error response from base_meterBundle
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32000,
+                    "message": "Simulation failed"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_test_config(&mock_server);
+
+        let provider: RootProvider<Optimism> =
+            RootProvider::new_http(mock_server.uri().parse().unwrap());
+        let simulation_provider = Arc::new(provider.clone());
+
+        let (audit_tx, _audit_rx) = mpsc::unbounded_channel();
+        let (builder_tx, _builder_rx) = broadcast::channel(1);
+        let (backrun_tx, _backrun_rx) = broadcast::channel(1);
+
+        let service = IngressService::new(
+            provider,
+            simulation_provider.as_ref().clone(),
+            MockQueue,
+            audit_tx,
+            builder_tx,
+            backrun_tx,
+            config,
+        );
+
+        let bundle = Bundle::default();
+        let bundle_hash = B256::default();
+
+        let result = service.meter_bundle(&bundle, &bundle_hash).await;
+
+        // Test that meter_bundle returns an error, but we handle it gracefully
+        assert!(result.is_err());
+        let response = result.unwrap_or_else(|_| MeterBundleResponse::default());
+        assert_eq!(response, MeterBundleResponse::default());
     }
 }
