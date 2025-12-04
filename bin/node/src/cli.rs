@@ -2,6 +2,8 @@
 
 use reth_optimism_node::args::RollupArgs;
 
+use crate::node::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+
 /// CLI Arguments
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 #[command(next_help_heading = "Rollup")]
@@ -43,5 +45,24 @@ impl Args {
     /// If the websocket url is specified through the CLI.
     pub const fn flashblocks_enabled(&self) -> bool {
         self.websocket_url.is_some()
+    }
+}
+
+impl From<Args> for BaseNodeConfig {
+    fn from(args: Args) -> Self {
+        let flashblocks = args.websocket_url.map(|websocket_url| FlashblocksConfig {
+            websocket_url,
+            max_pending_blocks_depth: args.max_pending_blocks_depth,
+        });
+
+        Self {
+            rollup_args: args.rollup_args,
+            flashblocks,
+            tracing: TracingConfig {
+                enabled: args.enable_transaction_tracing,
+                logs_enabled: args.enable_transaction_tracing_logs,
+            },
+            metering_enabled: args.enable_metering,
+        }
     }
 }
