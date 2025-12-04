@@ -56,6 +56,7 @@ base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-transaction-status = { path = "crates/transaction-status" }
 base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
+base-reth-runner = { path = "crates/runner" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies

@@ -20,7 +20,7 @@ use reth_optimism_node::OpNode;
 use tracing::info;
 use url::Url;
 
-use super::{BaseNodeBuilder, BaseNodeConfig};
+use crate::{BaseNodeBuilder, BaseNodeConfig};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug, Clone)]

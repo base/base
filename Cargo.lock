@@ -1630,20 +1630,29 @@ dependencies = [
 name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
+ "base-reth-runner",
+ "clap",
+ "reth",
+ "reth-cli-util",
+ "reth-optimism-cli",
+ "reth-optimism-node",
+]
+
+[[package]]
+name = "base-reth-runner"
+version = "0.2.1"
+dependencies = [
  "base-reth-flashblocks-rpc",
  "base-reth-metering",
  "base-reth-transaction-status",
  "base-reth-transaction-tracing",
- "clap",
  "eyre",
  "futures-util",
  "once_cell",
  "reth",
- "reth-cli-util",
  "reth-db",
  "reth-exex",
  "reth-optimism-chainspec",
- "reth-optimism-cli",
  "reth-optimism-node",
  "tracing",
  "url",

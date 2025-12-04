@@ -1,8 +1,7 @@
 //! Contains the CLI arguments
 
+use base_reth_runner::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
 use reth_optimism_node::args::RollupArgs;
-
-use crate::node::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
 
 /// CLI Arguments
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]

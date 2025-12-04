@@ -1,0 +1,33 @@
+[package]
+name = "base-reth-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Base-specific node launcher wiring"
+
+[lints]
+workspace = true
+
+[dependencies]
+# internal
+base-reth-flashblocks-rpc.workspace = true
+base-reth-metering.workspace = true
+base-reth-transaction-status.workspace = true
+base-reth-transaction-tracing.workspace = true
+
+# reth
+reth.workspace = true
+reth-db.workspace = true
+reth-exex.workspace = true
+reth-optimism-node.workspace = true
+reth-optimism-chainspec.workspace = true
+
+# misc
+eyre.workspace = true
+futures-util.workspace = true
+once_cell.workspace = true
+tracing.workspace = true
+url.workspace = true
