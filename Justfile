@@ -12,6 +12,14 @@ alias wc := watch-check
 default:
     @just --list
 
+# Runs all ci checks.
+ci: fix check lychee
+
+# Performs lychee checks, installing the lychee command if necessary
+lychee:
+  @command -v lychee >/dev/null 2>&1 || cargo install lychee
+  lychee --config ./lychee.toml .
+
 # Checks formatting, clippy, and tests
 check: check-format check-clippy test
 
