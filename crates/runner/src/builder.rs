@@ -1,13 +1,5 @@
 use std::sync::Arc;
 
-use base_reth_flashblocks_rpc::{
-    pubsub::{BasePubSub, BasePubSubApiServer},
-    rpc::{EthApiExt, EthApiOverrideServer},
-    state::FlashblocksState,
-    subscription::FlashblocksSubscriber,
-};
-use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use eyre::Result;
 use once_cell::sync::OnceCell;
 use reth::{
@@ -16,10 +8,10 @@ use reth::{
 };
 use reth_optimism_node::OpNode;
 use tracing::info;
-use url::Url;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeConfig, FlashblocksCanonExtension, TransactionTracingExtension,
+    BaseNodeBuilder, BaseNodeConfig, BaseRpcExtension, FlashblocksCanonExtension,
+    TransactionTracingExtension,
 };
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -63,57 +55,13 @@ impl BaseNodeLauncher {
         let tracing_extension = TransactionTracingExtension::new(self.config.tracing);
         let builder = tracing_extension.apply(builder);
 
-        let metering_enabled = self.config.metering_enabled;
-        let sequencer_rpc = self.config.rollup_args.sequencer.clone();
-        let builder = builder.extend_rpc_modules({
-            let flashblocks_cell = flashblocks_cell.clone();
-            let flashblocks = flashblocks_config.clone();
-            move |ctx| {
-                if metering_enabled {
-                    info!(message = "Starting Metering RPC");
-                    let metering_api = MeteringApiImpl::new(ctx.provider().clone());
-                    ctx.modules.merge_configured(metering_api.into_rpc())?;
-                }
-
-                let proxy_api =
-                    TransactionStatusApiImpl::new(sequencer_rpc.clone(), ctx.pool().clone())
-                        .expect("Failed to create transaction status proxy");
-                ctx.modules.merge_configured(proxy_api.into_rpc())?;
-
-                if let Some(cfg) = flashblocks.clone() {
-                    info!(message = "Starting Flashblocks");
-
-                    let ws_url = Url::parse(cfg.websocket_url.as_str())?;
-                    let fb = flashblocks_cell
-                        .get_or_init(|| {
-                            Arc::new(FlashblocksState::new(
-                                ctx.provider().clone(),
-                                cfg.max_pending_blocks_depth,
-                            ))
-                        })
-                        .clone();
-                    fb.start();
-
-                    let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
-                    flashblocks_client.start();
-
-                    let api_ext = EthApiExt::new(
-                        ctx.registry.eth_api().clone(),
-                        ctx.registry.eth_handlers().filter.clone(),
-                        fb.clone(),
-                    );
-                    ctx.modules.replace_configured(api_ext.into_rpc())?;
-
-                    // Register the base_subscribe subscription endpoint
-                    let base_pubsub = BasePubSub::new(fb);
-                    ctx.modules.merge_configured(base_pubsub.into_rpc())?;
-                } else {
-                    info!(message = "flashblocks integration is disabled");
-                }
-
-                Ok(())
-            }
-        });
+        let rpc_extension = BaseRpcExtension::new(
+            flashblocks_cell.clone(),
+            flashblocks_config.clone(),
+            self.config.metering_enabled,
+            self.config.rollup_args.sequencer.clone(),
+        );
+        let builder = rpc_extension.apply(builder);
 
         let NodeHandle { node: _, node_exit_future } = builder
             .launch_with_fn(|builder| {

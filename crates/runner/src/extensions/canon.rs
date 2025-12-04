@@ -5,15 +5,12 @@ use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::state::FlashblocksState;
 use futures_util::TryStreamExt;
-use once_cell::sync::OnceCell;
 use reth_exex::ExExEvent;
 
 use crate::{
     FlashblocksConfig,
-    extensions::{OpBuilder, OpProvider},
+    extensions::{FlashblocksCell, OpBuilder},
 };
-
-type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;
 
 /// Helper struct that wires the Flashblocks canon ExEx into the node builder.
 #[derive(Debug, Clone)]
