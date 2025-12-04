@@ -28,7 +28,8 @@ fix: fix-format fix-clippy
 
 # Runs tests across workspace with all features enabled
 test:
-    cargo test --workspace --all-features
+    @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
+    cargo nextest run --workspace --all-features
 
 # Runs cargo hack against the workspace
 hack:
