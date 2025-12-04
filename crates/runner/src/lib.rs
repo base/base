@@ -9,3 +9,6 @@ pub use builder::BaseNodeLauncher;
 
 mod config;
 pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+
+mod extensions;
+pub use extensions::{FlashblocksCanonExtension, TransactionTracingExtension};

@@ -8,20 +8,19 @@ use base_reth_flashblocks_rpc::{
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
 use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
-use base_reth_transaction_tracing::transaction_tracing_exex;
 use eyre::Result;
-use futures_util::TryStreamExt;
 use once_cell::sync::OnceCell;
 use reth::{
     builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
     providers::providers::BlockchainProvider,
 };
-use reth_exex::ExExEvent;
 use reth_optimism_node::OpNode;
 use tracing::info;
 use url::Url;
 
-use crate::{BaseNodeBuilder, BaseNodeConfig};
+use crate::{
+    BaseNodeBuilder, BaseNodeConfig, FlashblocksCanonExtension, TransactionTracingExtension,
+};
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug, Clone)]
@@ -42,11 +41,12 @@ impl BaseNodeLauncher {
 
     /// Applies all Base-specific wiring to the supplied builder and launches the node.
     pub async fn build_and_run(&self, builder: BaseNodeBuilder) -> Result<()> {
-        info!(message = "starting custom Base node");
+        info!(target: "base-runner", "starting custom Base node");
 
         let op_node = OpNode::new(self.config.rollup_args.clone());
 
-        let flashblocks_cell: Arc<OnceCell<Arc<FlashblocksState<_>>>> = Arc::new(OnceCell::new());
+        let flashblocks_cell = Arc::new(OnceCell::new());
+        let flashblocks_config = self.config.flashblocks.clone();
 
         let builder = builder
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -54,50 +54,20 @@ impl BaseNodeLauncher {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
-        let tracing = self.config.tracing;
-        let flashblocks = self.config.flashblocks.clone();
-        let builder = builder
-            .install_exex_if(tracing.enabled, "transaction-tracing", move |ctx| async move {
-                Ok(transaction_tracing_exex(ctx, tracing.logs_enabled))
-            })
-            .install_exex_if(flashblocks.is_some(), "flashblocks-canon", {
-                let flashblocks_cell = flashblocks_cell.clone();
-                move |mut ctx| {
-                    let flashblocks_cell = flashblocks_cell.clone();
-                    let flashblocks = flashblocks;
-                    async move {
-                        let fb_config = flashblocks.expect("flashblocks config checked above");
-                        let fb = flashblocks_cell
-                            .get_or_init(|| {
-                                Arc::new(FlashblocksState::new(
-                                    ctx.provider().clone(),
-                                    fb_config.max_pending_blocks_depth,
-                                ))
-                            })
-                            .clone();
+        // Apply the Flashblocks Canon extension
+        let flashblocks_extension =
+            FlashblocksCanonExtension::new(flashblocks_cell.clone(), flashblocks_config.clone());
+        let builder = flashblocks_extension.apply(builder);
 
-                        Ok(async move {
-                            while let Some(note) = ctx.notifications.try_next().await? {
-                                if let Some(committed) = note.committed_chain() {
-                                    for block in committed.blocks_iter() {
-                                        fb.on_canonical_block_received(block);
-                                    }
-                                    let _ = ctx.events.send(ExExEvent::FinishedHeight(
-                                        committed.tip().num_hash(),
-                                    ));
-                                }
-                            }
-                            Ok(())
-                        })
-                    }
-                }
-            });
+        // Apply the Transaction Tracing extension
+        let tracing_extension = TransactionTracingExtension::new(self.config.tracing);
+        let builder = tracing_extension.apply(builder);
 
         let metering_enabled = self.config.metering_enabled;
         let sequencer_rpc = self.config.rollup_args.sequencer.clone();
         let builder = builder.extend_rpc_modules({
             let flashblocks_cell = flashblocks_cell.clone();
-            let flashblocks = self.config.flashblocks.clone();
+            let flashblocks = flashblocks_config.clone();
             move |ctx| {
                 if metering_enabled {
                     info!(message = "Starting Metering RPC");
