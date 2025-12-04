@@ -1,9 +1,11 @@
+//! Contains the [`BaseNodeRunner`], which is responsible for configuring and launching a Base node.
+
 use std::sync::Arc;
 
 use eyre::Result;
 use once_cell::sync::OnceCell;
 use reth::{
-    builder::{EngineNodeLauncher, Node, NodeHandle, TreeConfig},
+    builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig},
     providers::providers::BlockchainProvider,
 };
 use reth_optimism_node::OpNode;
@@ -16,11 +18,12 @@ use crate::{
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
 #[derive(Debug, Clone)]
-pub struct BaseNodeLauncher {
+pub struct BaseNodeRunner {
+    /// Contains the configuration for the Base node.
     config: BaseNodeConfig,
 }
 
-impl BaseNodeLauncher {
+impl BaseNodeRunner {
     /// Creates a new launcher using the provided configuration.
     pub fn new(config: impl Into<BaseNodeConfig>) -> Self {
         Self { config: config.into() }
@@ -31,8 +34,8 @@ impl BaseNodeLauncher {
         &self.config
     }
 
-    /// Applies all Base-specific wiring to the supplied builder and launches the node.
-    pub async fn build_and_run(&self, builder: BaseNodeBuilder) -> Result<()> {
+    /// Applies all Base-specific wiring to the supplied builder and launches the node, returning its handle.
+    pub async fn build(&self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<OpNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
         let op_node = OpNode::new(self.config.rollup_args.clone());
@@ -63,7 +66,7 @@ impl BaseNodeLauncher {
         );
         let builder = rpc_extension.apply(builder);
 
-        let NodeHandle { node: _, node_exit_future } = builder
+        builder
             .launch_with_fn(|builder| {
                 let engine_tree_config = TreeConfig::default()
                     .with_persistence_threshold(builder.config().engine.persistence_threshold)
@@ -79,8 +82,12 @@ impl BaseNodeLauncher {
 
                 builder.launch_with(launcher)
             })
-            .await?;
+            .await
+    }
 
+    /// Runs the previously constructed node until it exits.
+    pub async fn run(&self, handle: NodeHandleFor<OpNode>) -> Result<()> {
+        let NodeHandle { node: _, node_exit_future } = handle;
         node_exit_future.await
     }
 }
