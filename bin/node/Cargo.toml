@@ -14,31 +14,16 @@ workspace = true
 
 [dependencies]
 # internal
-base-reth-metering.workspace = true
-base-reth-flashblocks-rpc.workspace = true
-base-reth-transaction-status.workspace = true
-base-reth-transaction-tracing.workspace = true
+base-reth-runner.workspace = true
 
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
 reth-cli-util.workspace = true
-reth-db.workspace = true
-reth-optimism-chainspec.workspace = true
-
-# async
-futures-util.workspace = true
-
-# reth-exex
-reth-exex.workspace = true
 
 # misc
 clap.workspace = true
-tracing.workspace = true
-url.workspace = true
-once_cell.workspace = true
-eyre.workspace = true
 
 [features]
 default = []
