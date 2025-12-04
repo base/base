@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use base_reth_flashblocks_rpc::{
+    pubsub::{BasePubSub, BasePubSubApiServer},
     rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,
     subscription::FlashblocksSubscriber,
@@ -129,9 +130,13 @@ impl BaseNodeLauncher {
                     let api_ext = EthApiExt::new(
                         ctx.registry.eth_api().clone(),
                         ctx.registry.eth_handlers().filter.clone(),
-                        fb,
+                        fb.clone(),
                     );
                     ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                    // Register the base_subscribe subscription endpoint
+                    let base_pubsub = BasePubSub::new(fb);
+                    ctx.modules.merge_configured(base_pubsub.into_rpc())?;
                 } else {
                     info!(message = "flashblocks integration is disabled");
                 }

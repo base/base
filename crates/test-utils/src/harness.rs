@@ -83,6 +83,10 @@ impl TestHarness {
         format!("http://{}", self.node.http_api_addr)
     }
 
+    pub fn ws_url(&self) -> String {
+        format!("ws://{}", self.node.ws_api_addr)
+    }
+
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
         // Ensure the block always starts with the required L1 block info deposit.
         if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
