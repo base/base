@@ -4,7 +4,6 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 pub mod cli;
-pub mod version;
 
 use base_reth_runner::BaseNodeLauncher;
 
@@ -13,7 +12,7 @@ static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::ne
 
 fn main() {
     // Step 1: Initialize versioning so logs / telemetry report the right build info.
-    version::Version::init();
+    base_reth_cli::Version::init();
 
     // Step 2: Parse CLI arguments and hand execution to the Optimism node runner.
     use clap::Parser;

@@ -4,14 +4,14 @@ use reth::version::{
     RethCliVersionConsts, default_reth_version_metadata, try_init_version_metadata,
 };
 
-/// The client version string for the Base Reth node.
-pub const NODE_RETH_CLIENT_VERSION: &str = concat!("base/v", env!("CARGO_PKG_VERSION"));
-
 /// Encapsulates versioning.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Version;
 
 impl Version {
+    /// The client version string for the Base Reth node.
+    pub const NODE_RETH_CLIENT_VERSION: &str = concat!("base/v", env!("CARGO_PKG_VERSION"));
+
     /// Initializes the versioning for the Base Reth node.
     ///
     /// ### Panics
@@ -29,12 +29,14 @@ impl Version {
             .into(),
             p2p_client_version: format!(
                 "{}/{}",
-                default_version_metadata.p2p_client_version, NODE_RETH_CLIENT_VERSION
+                default_version_metadata.p2p_client_version,
+                Self::NODE_RETH_CLIENT_VERSION
             )
             .into(),
             extra_data: format!(
                 "{}/{}",
-                default_version_metadata.extra_data, NODE_RETH_CLIENT_VERSION
+                default_version_metadata.extra_data,
+                Self::NODE_RETH_CLIENT_VERSION
             )
             .into(),
             ..default_version_metadata
