@@ -10,6 +10,7 @@ use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_reth_flashblocks_rpc::{
+    pubsub::{BasePubSub, BasePubSubApiServer},
     rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,
     subscription::{Flashblock, FlashblocksReceiver},
@@ -54,6 +55,7 @@ pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
 pub struct LocalNode {
     pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
+    pub(crate) ws_api_addr: SocketAddr,
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
@@ -158,6 +160,10 @@ impl FlashblocksNodeExtensions {
                 );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
+                // Register base_subscribe subscription endpoint
+                let base_pubsub = BasePubSub::new(fb.clone());
+                ctx.modules.merge_configured(base_pubsub.into_rpc())?;
+
                 let fb_for_task = fb.clone();
                 let mut receiver = receiver
                     .lock()
@@ -256,6 +262,10 @@ impl LocalNode {
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
     }
+
+    pub fn ws_url(&self) -> String {
+        format!("ws://{}", self.ws_api_addr)
+    }
 }
 
 async fn build_node<L, LRet>(launcher: L) -> Result<LocalNode>
@@ -281,7 +291,8 @@ where
         std::thread::current().id()
     );
 
-    let mut rpc_args = RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc();
+    let mut rpc_args =
+        RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
     rpc_args.auth_ipc_path = unique_ipc_path;
 
     let node = OpNode::new(RollupArgs::default());
@@ -313,11 +324,17 @@ where
         .http_local_addr()
         .ok_or_else(|| eyre::eyre!("HTTP RPC server failed to bind to address"))?;
 
+    let ws_api_addr = node_handle
+        .rpc_server_handle()
+        .ws_local_addr()
+        .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
+
     let engine_ipc_path = node_config.rpc.auth_ipc_path;
     let provider = node_handle.provider().clone();
 
     Ok(LocalNode {
         http_api_addr,
+        ws_api_addr,
         engine_ipc_path,
         provider,
         _node_exit_future: node_exit_future,

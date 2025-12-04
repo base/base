@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use jsonrpsee::{
-    core::{async_trait, SubscriptionResult},
+    PendingSubscriptionSink, SubscriptionSink,
+    core::{SubscriptionResult, async_trait},
     proc_macros::rpc,
     server::SubscriptionMessage,
-    PendingSubscriptionSink, SubscriptionSink,
 };
 use op_alloy_network::Optimism;
 use reth_rpc_eth_api::RpcBlock;
 use serde::{Deserialize, Serialize};
-use tokio_stream::{wrappers::BroadcastStream, Stream, StreamExt};
+use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
 use crate::rpc::FlashblocksAPI;
@@ -52,30 +52,28 @@ pub struct BasePubSub<FB> {
 
 impl<FB> BasePubSub<FB> {
     /// Creates a new instance with the given flashblocks state
-    pub fn new(flashblocks_state: Arc<FB>) -> Self {
+    pub const fn new(flashblocks_state: Arc<FB>) -> Self {
         Self { flashblocks_state }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
-    fn new_flashblocks_stream(&self) -> impl Stream<Item = RpcBlock<Optimism>>
+    fn new_flashblocks_stream(flashblocks_state: Arc<FB>) -> impl Stream<Item = RpcBlock<Optimism>>
     where
         FB: FlashblocksAPI + Send + Sync + 'static,
     {
-        BroadcastStream::new(self.flashblocks_state.subscribe_to_flashblocks()).filter_map(
-            |result| {
-                let pending_blocks = match result {
-                    Ok(blocks) => blocks,
-                    Err(err) => {
-                        error!(
-                            message = "Error in flashblocks stream",
-                            error = %err
-                        );
-                        return None;
-                    }
-                };
-                Some(pending_blocks.get_latest_block(true))
-            },
-        )
+        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
+            let pending_blocks = match result {
+                Ok(blocks) => blocks,
+                Err(err) => {
+                    error!(
+                        message = "Error in flashblocks stream",
+                        error = %err
+                    );
+                    return None;
+                }
+            };
+            Some(pending_blocks.get_latest_block(true))
+        })
     }
 }
 
@@ -94,7 +92,7 @@ where
 
         match kind {
             BaseSubscriptionKind::NewFlashblocks => {
-                let stream = self.new_flashblocks_stream();
+                let stream = Self::new_flashblocks_stream(Arc::clone(&self.flashblocks_state));
 
                 tokio::spawn(async move {
                     pipe_from_stream(sink, stream).await;
