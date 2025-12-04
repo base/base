@@ -1541,6 +1541,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-reth-cli"
+version = "0.2.1"
+dependencies = [
+ "reth",
+]
+
+[[package]]
 name = "base-reth-flashblocks-rpc"
 version = "0.2.1"
 dependencies = [
@@ -1630,9 +1637,9 @@ dependencies = [
 name = "base-reth-node"
 version = "0.2.1"
 dependencies = [
+ "base-reth-cli",
  "base-reth-runner",
  "clap",
- "reth",
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
