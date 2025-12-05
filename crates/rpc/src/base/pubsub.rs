@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::traits::FlashblocksAPI;
+use base_reth_flashblocks::FlashblocksAPI;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},

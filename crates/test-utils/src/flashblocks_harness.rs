@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::subscription::Flashblock;
+use base_reth_flashblocks::Flashblock;
 use derive_more::Deref;
 use eyre::Result;
 use futures_util::Future;

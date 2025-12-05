@@ -13,7 +13,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
-use base_reth_flashblocks::traits::{FlashblocksAPI, PendingBlocksAPI};
+use base_reth_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,

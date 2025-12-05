@@ -4,13 +4,19 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod metrics;
-pub(crate) use metrics::Metrics;
+pub use metrics::Metrics;
 
 mod pending_blocks;
+pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder};
 
-pub mod state;
+mod state;
+pub use state::FlashblocksState;
 
-pub mod subscription;
-pub mod traits;
+mod subscription;
+pub use subscription::{FlashblocksReceiver, FlashblocksSubscriber};
 
-pub use pending_blocks::PendingBlocks;
+mod traits;
+pub use traits::{FlashblocksAPI, PendingBlocksAPI};
+
+mod blocks;
+pub use blocks::{Flashblock, Metadata};

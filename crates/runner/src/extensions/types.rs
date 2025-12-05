@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use base_reth_flashblocks::state::FlashblocksState;
+use base_reth_flashblocks::FlashblocksState;
 use once_cell::sync::OnceCell;
 use reth::{
     api::{FullNodeTypesAdapter, NodeTypesWithDBAdapter},
