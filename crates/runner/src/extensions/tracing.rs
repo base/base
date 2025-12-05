@@ -1,7 +1,7 @@
-//! Contains the [TransactionTracingExtension] which wires up the `transaction-tracing`
+//! Contains the [TransactionTracingExtension] which wires up the `tracex`
 //! execution extension on the Base node builder.
 
-use base_reth_transaction_tracing::transaction_tracing_exex;
+use base_tracex::tracex_exex;
 
 use crate::{TracingConfig, extensions::OpBuilder};
 
@@ -21,8 +21,8 @@ impl TransactionTracingExtension {
     /// Applies the extension to the supplied builder.
     pub fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let tracing = self.config;
-        builder.install_exex_if(tracing.enabled, "transaction-tracing", move |ctx| async move {
-            Ok(transaction_tracing_exex(ctx, tracing.logs_enabled))
+        builder.install_exex_if(tracing.enabled, "tracex", move |ctx| async move {
+            Ok(tracex_exex(ctx, tracing.logs_enabled))
         })
     }
 }

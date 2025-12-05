@@ -55,7 +55,7 @@ base-reth-cli = { path = "crates/cli" }
 base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-flashblocks = { path = "crates/flashblocks" }
 base-reth-rpc = { path = "crates/rpc" }
-base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
+base-tracex = { path = "crates/tracex" }
 base-reth-runner = { path = "crates/runner" }
 
 # base/tips
@@ -136,6 +136,7 @@ jsonrpsee-types = "0.26.0"
 
 # misc
 url = "2.5.7"
+lru = "0.16.2"
 rand = "0.9.2"
 clap = "4.5.53"
 eyre = "0.6.12"
@@ -151,6 +152,6 @@ itertools = "0.14.0"
 serde_json = "1.0.145"
 metrics-derive = "0.1.0"
 
-derive_more = { version = "2", default-features = false }
+derive_more = { version = "2.1.0", default-features = false }
 uuid = { version = "1.18.1", features = ["serde", "v5", "v4"] }
 time = { version = "0.3.36", features = ["macros", "formatting", "parsing"] }

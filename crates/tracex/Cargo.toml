@@ -1,5 +1,6 @@
 [package]
-name = "base-reth-transaction-tracing"
+name = "base-tracex"
+description = "A transaction tracing execution extension for reth"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -20,12 +21,12 @@ reth-tracing.workspace = true
 alloy-primitives.workspace = true
 
 # async
-futures.workspace = true
 tokio.workspace = true
+futures.workspace = true
 
 # misc
-derive_more = { workspace = true, features = ["display"] }
+lru.workspace = true
 eyre.workspace = true
-lru = "0.16.1"
-metrics.workspace = true
 chrono.workspace = true
+metrics.workspace = true
+derive_more = { workspace = true, features = ["display"] }
