@@ -8,7 +8,7 @@ use reth_db::{
 };
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
-pub fn create_provider_factory<N: NodeTypes>(
+pub(super) fn create_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     let (static_dir, _) = create_test_static_files_dir();

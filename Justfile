@@ -40,7 +40,7 @@ zepter-fix:
 
 # Runs tests across workspace with all features enabled
 test:
-    cargo test --workspace --all-features
+    RUSTFLAGS="-D warnings" cargo test --workspace --all-features
 
 # Runs cargo hack against the workspace
 hack:

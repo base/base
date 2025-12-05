@@ -2,6 +2,7 @@
 
 use std::{
     any::Any,
+    fmt,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -47,11 +48,15 @@ use tokio_stream::StreamExt;
 
 use crate::engine::EngineApi;
 
+/// Chain ID for the Base Sepolia environment spun up by the harness.
 pub const BASE_CHAIN_ID: u64 = 84532;
 
+/// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>;
+/// Convenience alias for the Flashblocks state backing the local node.
 pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
 
+/// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
     pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
@@ -62,17 +67,36 @@ pub struct LocalNode {
     _task_manager: TaskManager,
 }
 
+impl fmt::Debug for LocalNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalNode")
+            .field("http_api_addr", &self.http_api_addr)
+            .field("ws_api_addr", &self.ws_api_addr)
+            .field("engine_ipc_path", &self.engine_ipc_path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     state: Arc<LocalFlashblocksState>,
 }
 
+impl fmt::Debug for FlashblocksParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksParts").finish_non_exhaustive()
+    }
+}
+
 impl FlashblocksParts {
+    /// Clone the shared [`FlashblocksState`] handle.
     pub fn state(&self) -> Arc<LocalFlashblocksState> {
         self.state.clone()
     }
 
+    /// Send a flashblock to the background processor and wait until it is handled.
     pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
@@ -200,13 +224,18 @@ impl FlashblocksNodeExtensions {
     }
 }
 
+/// Optimism node types used for the local harness.
 pub type OpTypes =
     FullNodeTypesAdapter<OpNode, TmpDB, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>>;
+/// Builder that wires up the concrete node components.
 pub type OpComponentsBuilder = <OpNode as Node<OpTypes>>::ComponentsBuilder;
+/// Additional services attached to the node builder.
 pub type OpAddOns = <OpNode as Node<OpTypes>>::AddOns;
+/// Launcher builder used by the harness to customize node startup.
 pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpTypes, OpComponentsBuilder, OpAddOns>>;
 
+/// Default launcher that is reused across the harness and integration tests.
 pub async fn default_launcher(
     builder: OpBuilder,
 ) -> eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>> {
@@ -215,6 +244,7 @@ pub async fn default_launcher(
 }
 
 impl LocalNode {
+    /// Launch a new local node using the provided launcher function.
     pub async fn new<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -249,20 +279,24 @@ impl LocalNode {
         Ok(Arc::new(TempDatabase::new(db, path)))
     }
 
+    /// Create an HTTP provider pointed at the node's public RPC endpoint.
     pub fn provider(&self) -> Result<RootProvider<Optimism>> {
         let url = format!("http://{}", self.http_api_addr);
         let client = RpcClient::builder().http(url.parse()?);
         Ok(RootProvider::<Optimism>::new(client))
     }
 
+    /// Build an Engine API client that talks to the node's IPC endpoint.
     pub fn engine_api(&self) -> Result<EngineApi<crate::engine::IpcEngine>> {
         EngineApi::<crate::engine::IpcEngine>::new(self.engine_ipc_path.clone())
     }
 
+    /// Clone the underlying blockchain provider so callers can inspect chain state.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
     }
 
+    /// Websocket URL for the local node.
     pub fn ws_url(&self) -> String {
         format!("ws://{}", self.ws_api_addr)
     }
@@ -355,12 +389,23 @@ fn init_flashblocks_state(
     .clone()
 }
 
+/// Local node wrapper that exposes helpers specific to Flashblocks tests.
 pub struct FlashblocksLocalNode {
     node: LocalNode,
     parts: FlashblocksParts,
 }
 
+impl fmt::Debug for FlashblocksLocalNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksLocalNode")
+            .field("node", &self.node)
+            .field("parts", &self.parts)
+            .finish()
+    }
+}
+
 impl FlashblocksLocalNode {
+    /// Launch a flashblocks-enabled node using the default launcher.
     pub async fn new() -> Result<Self> {
         Self::with_launcher(default_launcher).await
     }
@@ -371,6 +416,7 @@ impl FlashblocksLocalNode {
         Self::with_manual_canonical_launcher(default_launcher).await
     }
 
+    /// Launch a flashblocks-enabled node with a custom launcher and canonical processing enabled.
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -379,6 +425,7 @@ impl FlashblocksLocalNode {
         Self::with_launcher_inner(launcher, true).await
     }
 
+    /// Same as [`Self::with_launcher`] but leaves canonical processing to the caller.
     pub async fn with_manual_canonical_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -400,18 +447,22 @@ impl FlashblocksLocalNode {
         Ok(Self { node, parts })
     }
 
+    /// Access the shared Flashblocks state for assertions or manual driving.
     pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
         self.parts.state()
     }
 
+    /// Send a flashblock through the background processor and await completion.
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
         self.parts.send(flashblock).await
     }
 
+    /// Split the wrapper into the underlying node plus flashblocks parts.
     pub fn into_parts(self) -> (LocalNode, FlashblocksParts) {
         (self.node, self.parts)
     }
 
+    /// Borrow the underlying [`LocalNode`].
     pub fn as_node(&self) -> &LocalNode {
         &self.node
     }
