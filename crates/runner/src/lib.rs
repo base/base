@@ -4,8 +4,11 @@
 mod context;
 pub use context::BaseNodeBuilder;
 
-mod builder;
-pub use builder::BaseNodeLauncher;
+mod runner;
+pub use runner::BaseNodeRunner;
 
 mod config;
 pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+
+mod extensions;
+pub use extensions::{BaseRpcExtension, FlashblocksCanonExtension, TransactionTracingExtension};

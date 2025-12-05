@@ -82,7 +82,7 @@ reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v
 reth-evm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-cli-util = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-exex = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
-reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = ["op"] }
 reth-testing-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db-common = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-layer = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
