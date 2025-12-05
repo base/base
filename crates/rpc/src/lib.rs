@@ -3,6 +3,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
+// Re-export tips core types
+pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
+
 mod traits;
 pub use traits::{MeteringApiServer, TransactionStatusApiServer};
 
@@ -10,8 +13,6 @@ mod transaction_rpc;
 pub use transaction_rpc::TransactionStatusApiImpl;
 
 mod types;
-// Re-export tips core types
-pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 pub use types::{Status, TransactionStatusResponse};
 
 mod meter;
