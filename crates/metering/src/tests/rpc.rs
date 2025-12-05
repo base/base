@@ -25,7 +25,7 @@ mod tests {
 
     use crate::rpc::{MeteringApiImpl, MeteringApiServer};
 
-    pub struct NodeContext {
+    struct NodeContext {
         http_api_addr: SocketAddr,
         _node_exit_future: NodeExitFuture,
         _node: Box<dyn Any + Sync + Send>,
@@ -47,7 +47,7 @@ mod tests {
     }
 
     impl NodeContext {
-        pub async fn rpc_client(&self) -> eyre::Result<RpcClient> {
+        async fn rpc_client(&self) -> eyre::Result<RpcClient> {
             let url = format!("http://{}", self.http_api_addr);
             let client = RpcClient::new_http(url.parse()?);
             Ok(client)

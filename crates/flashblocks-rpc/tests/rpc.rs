@@ -1,3 +1,5 @@
+//! Integration tests covering the Flashblocks RPC surface area.
+
 mod common;
 
 use std::str::FromStr;
@@ -12,10 +14,7 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
-use base_reth_flashblocks_rpc::{
-    pubsub::{BasePubSub, BasePubSubApiServer},
-    subscription::{Flashblock, Metadata},
-};
+use base_reth_flashblocks_rpc::subscription::{Flashblock, Metadata};
 use base_reth_test_utils::flashblocks_harness::FlashblocksHarness;
 use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
 use eyre::Result;
@@ -742,7 +741,7 @@ async fn test_get_logs_mixed_block_ranges() -> Result<()> {
 #[tokio::test]
 async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
+    let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
     let (mut ws_stream, _) = connect_async(&ws_url).await?;
 
@@ -785,7 +784,7 @@ async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
 #[tokio::test]
 async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
+    let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
     let (mut ws_stream, _) = connect_async(&ws_url).await?;
 
@@ -832,7 +831,7 @@ async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
 #[tokio::test]
 async fn test_base_unsubscribe() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
+    let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
     let (mut ws_stream, _) = connect_async(&ws_url).await?;
 
@@ -878,7 +877,7 @@ async fn test_base_unsubscribe() -> eyre::Result<()> {
 #[tokio::test]
 async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
-    let provider = setup.harness.provider();
+    let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
     let (mut ws1, _) = connect_async(&ws_url).await?;
     let (mut ws2, _) = connect_async(&ws_url).await?;

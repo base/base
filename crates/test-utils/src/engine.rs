@@ -3,7 +3,7 @@
 //! This module provides a typed, type-safe Engine API client based on
 //! reth's OpEngineApiClient trait instead of raw string-based RPC calls.
 
-use std::{marker::PhantomData, time::Duration};
+use std::{fmt, marker::PhantomData, time::Duration};
 
 use alloy_eips::eip7685::Requests;
 use alloy_primitives::B256;
@@ -25,13 +25,18 @@ use url::Url;
 const DEFAULT_JWT_SECRET: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Describes how to reach the Engine API endpoint.
 #[derive(Clone, Debug)]
 pub enum EngineAddress {
+    /// Connect to an HTTP endpoint.
     Http(Url),
+    /// Connect to an IPC endpoint.
     Ipc(String),
 }
 
+/// Abstraction over HTTP and IPC engine transports so tests can swap easily.
 pub trait EngineProtocol: Send + Sync {
+    /// Build a subscription-capable client for the Engine API.
     fn client(
         jwt: JwtSecret,
         address: EngineAddress,
@@ -40,6 +45,8 @@ pub trait EngineProtocol: Send + Sync {
     > + Send;
 }
 
+/// Implementation of [`EngineProtocol`] that talks to the Engine API over HTTP.
+#[derive(Debug, Default, Clone, Copy)]
 pub struct HttpEngine;
 
 impl EngineProtocol for HttpEngine {
@@ -62,6 +69,8 @@ impl EngineProtocol for HttpEngine {
     }
 }
 
+/// Implementation of [`EngineProtocol`] that talks to the Engine API over IPC.
+#[derive(Debug, Default, Clone, Copy)]
 pub struct IpcEngine;
 
 impl EngineProtocol for IpcEngine {
@@ -79,6 +88,7 @@ impl EngineProtocol for IpcEngine {
     }
 }
 
+/// Thin wrapper around a typed Engine API client that hides transport details.
 pub struct EngineApi<P: EngineProtocol = HttpEngine> {
     address: EngineAddress,
     jwt_secret: JwtSecret,
@@ -86,6 +96,7 @@ pub struct EngineApi<P: EngineProtocol = HttpEngine> {
 }
 
 impl EngineApi<HttpEngine> {
+    /// Build a new HTTP-backed Engine API client from the provided URL.
     pub fn new(engine_url: String) -> Result<Self> {
         let url: Url = engine_url.parse()?;
         let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
@@ -95,6 +106,7 @@ impl EngineApi<HttpEngine> {
 }
 
 impl EngineApi<IpcEngine> {
+    /// Build a new IPC-backed Engine API client using the IPC socket path.
     pub fn new(path: String) -> Result<Self> {
         let jwt_secret: JwtSecret = DEFAULT_JWT_SECRET.parse()?;
 
@@ -102,8 +114,14 @@ impl EngineApi<IpcEngine> {
     }
 }
 
+impl<P: EngineProtocol> fmt::Debug for EngineApi<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EngineApi").field("address", &self.address).finish_non_exhaustive()
+    }
+}
+
 impl<P: EngineProtocol> EngineApi<P> {
-    /// Get a client instance
+    /// Create a subscription-capable client for the configured Engine endpoint.
     async fn client(&self) -> impl SubscriptionClientT + Send + Sync + Unpin + 'static + use<P> {
         P::client(self.jwt_secret, self.address.clone()).await
     }
