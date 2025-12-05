@@ -1653,7 +1653,7 @@ version = "0.2.1"
 dependencies = [
  "base-reth-flashblocks",
  "base-reth-rpc",
- "base-reth-transaction-tracing",
+ "base-tracex",
  "eyre",
  "futures-util",
  "once_cell",
@@ -1725,7 +1725,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-reth-transaction-tracing"
+name = "base-tracex"
 version = "0.2.1"
 dependencies = [
  "alloy-primitives",

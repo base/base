@@ -1,5 +1,5 @@
 [package]
-name = "base-reth-transaction-tracing"
+name = "base-tracex"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

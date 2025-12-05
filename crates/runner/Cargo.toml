@@ -15,7 +15,7 @@ workspace = true
 # internal
 base-reth-flashblocks.workspace = true
 base-reth-rpc.workspace = true
-base-reth-transaction-tracing.workspace = true
+base-tracex.workspace = true
 
 # reth
 reth.workspace = true
