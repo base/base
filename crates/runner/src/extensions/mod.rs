@@ -4,11 +4,13 @@
 //! of the node building process.
 
 mod canon;
-mod rpc;
-mod tracing;
-mod types;
-
 pub use canon::FlashblocksCanonExtension;
+
+mod rpc;
 pub use rpc::BaseRpcExtension;
+
+mod tracing;
 pub use tracing::TransactionTracingExtension;
-pub(crate) use types::{FlashblocksCell, OpBuilder};
+
+mod types;
+pub use types::{FlashblocksCell, OpProvider, OpBuilder};
