@@ -4,16 +4,16 @@ use crate::{ProofsCell, ProofsConfig, extensions::OpBuilder};
 
 /// Proofs Extension.
 #[derive(Debug, Clone)]
-pub struct ProofsExtension {
+pub struct ProofsExtension<S> {
     /// Shared state.
-    pub cell: ProofsCell,
+    pub cell: ProofsCell<S>,
     /// Proofs config.
     pub config: ProofsConfig,
 }
 
-impl ProofsExtension {
+impl<S> ProofsExtension<S> {
     /// Create a new Proofs extension helper.
-    pub const fn new(cell: ProofsCell, config: ProofsConfig) -> Self {
+    pub const fn new(cell: ProofsCell<S>, config: ProofsConfig) -> Self {
         Self { cell, config }
     }
 

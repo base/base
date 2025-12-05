@@ -27,4 +27,4 @@ pub type OpBuilder =
 pub type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;
 
 /// A cell holding the proofs state.
-pub type ProofsCell = Arc<OnceCell<()>>;
+pub type ProofsCell<S> = Arc<OnceCell<Arc<S>>>;

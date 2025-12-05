@@ -12,8 +12,8 @@ use reth_optimism_node::OpNode;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeConfig, BaseRpcExtension, FlashblocksCanonExtension,
-    TransactionTracingExtension,
+    BaseNodeBuilder, BaseNodeConfig, BaseRpcExtension, FlashblocksCanonExtension, ProofsCell,
+    ProofsExtension, TransactionTracingExtension,
 };
 
 /// Wraps the Base node configuration and orchestrates builder wiring.
@@ -54,10 +54,17 @@ impl BaseNodeRunner {
             FlashblocksCanonExtension::new(flashblocks_cell.clone(), flashblocks_config.clone());
         let builder = flashblocks_extension.apply(builder);
 
+        // Apply the Proofs extension
+        let proofs_cell: ProofsCell<()> = Arc::new(OnceCell::new());
+        let proofs_extension =
+            ProofsExtension::new(proofs_cell.clone(), self.config.proofs.clone());
+        let builder = ProofsExtension::apply(&proofs_extension, builder);
+
         // Apply the Transaction Tracing extension
         let tracing_extension = TransactionTracingExtension::new(self.config.tracing);
         let builder = tracing_extension.apply(builder);
 
+        // Apply the Base RPC extension
         let rpc_extension = BaseRpcExtension::new(
             flashblocks_cell.clone(),
             flashblocks_config.clone(),
