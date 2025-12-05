@@ -3,12 +3,11 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
-/// Domain events tracked by tracex.
-pub mod events;
-mod exex;
-mod tracker;
+mod events;
+pub use events::{EventLog, Pool, TxEvent};
 
-pub use crate::{
-    events::{EventLog, Pool, TxEvent},
-    exex::tracex_exex,
-};
+mod exex;
+pub use exex::tracex_exex;
+
+mod tracker;
+pub use tracker::Tracker;

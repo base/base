@@ -10,13 +10,11 @@ use chrono::Local;
 use lru::LruCache;
 use reth_tracing::tracing::{debug, info};
 
-use crate::events::{EventLog, Pool, TxEvent};
+use crate::{EventLog, Pool, TxEvent};
 
-/// Max size of the LRU caches.
-const MAX_SIZE: usize = 20_000;
-
+/// Tracks transactions as they move through the mempool and into blocks.
 #[derive(Debug)]
-pub(crate) struct Tracker {
+pub struct Tracker {
     /// Map of transaction hash to timestamp when first seen in mempool.
     txs: LruCache<TxHash, EventLog>,
     /// Map of transaction hash to current state.
@@ -26,17 +24,20 @@ pub(crate) struct Tracker {
 }
 
 impl Tracker {
+    /// Max size of the LRU caches.
+    pub const MAX_SIZE: usize = 20_000;
+
     /// Create a new tracker.
-    pub(crate) fn new(enable_logs: bool) -> Self {
+    pub fn new(enable_logs: bool) -> Self {
         Self {
-            txs: LruCache::new(NonZeroUsize::new(MAX_SIZE).expect("non zero")),
-            tx_states: LruCache::new(NonZeroUsize::new(MAX_SIZE).expect("non zero")),
+            txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
+            tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
         }
     }
 
     /// Track the first time we see a transaction in the mempool.
-    pub(crate) fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
+    pub fn transaction_inserted(&mut self, tx_hash: TxHash, event: TxEvent) {
         // If we've seen the tx before, don't track it again. For example,
         // if a tx was pending then moved to queued, we don't want to update the timestamp
         // with the queued timestamp.
@@ -46,7 +47,7 @@ impl Tracker {
 
         // If the LRU is full and we're about to insert a new tx, log the `EventLog` for that tx
         // before it gets evicted. This can be useful to see the full history of a transaction.
-        if self.txs.len() == MAX_SIZE
+        if self.txs.len() == Self::MAX_SIZE
             && let Some((tx_hash, event_log)) = self.txs.peek_lru()
         {
             self.log(tx_hash, event_log, "Transaction inserted");
@@ -56,7 +57,7 @@ impl Tracker {
     }
 
     /// Track a transaction moving from one pool to another.
-    pub(crate) fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
+    pub fn transaction_moved(&mut self, tx_hash: TxHash, pool: Pool) {
         // If we've seen the transaction pending or queued before, track the pending <> queue transition.
         if let Some(prev_pool) = self.tx_states.get(&tx_hash)
             && prev_pool != &pool
@@ -88,7 +89,7 @@ impl Tracker {
     }
 
     /// Track a transaction being included in a block or dropped.
-    pub(crate) fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
+    pub fn transaction_completed(&mut self, tx_hash: TxHash, event: TxEvent) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
@@ -107,7 +108,7 @@ impl Tracker {
     }
 
     /// Track a transaction being replaced by removing it from the cache and adding the new tx.
-    pub(crate) fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
+    pub fn transaction_replaced(&mut self, tx_hash: TxHash, replaced_by: TxHash) {
         if let Some(mut event_log) = self.txs.pop(&tx_hash) {
             let mempool_time = event_log.mempool_time;
             let time_in_mempool = Instant::now().duration_since(mempool_time);
