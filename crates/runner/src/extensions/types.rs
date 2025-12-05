@@ -1,3 +1,5 @@
+//! Type aliases
+
 use std::sync::Arc;
 
 use base_reth_flashblocks::FlashblocksState;
@@ -10,11 +12,16 @@ use reth::{
 use reth_db::DatabaseEnv;
 use reth_optimism_node::OpNode;
 
-pub(crate) type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<DatabaseEnv>>>;
 type OpNodeTypes = FullNodeTypesAdapter<OpNode, Arc<DatabaseEnv>, OpProvider>;
 type OpComponentsBuilder = <OpNode as Node<OpNodeTypes>>::ComponentsBuilder;
 type OpAddOns = <OpNode as Node<OpNodeTypes>>::AddOns;
-pub(crate) type OpBuilder =
+
+/// A [`BlockchainProvider`] instance.
+pub type OpProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, Arc<DatabaseEnv>>>;
+
+/// OP Builder is a [`WithLaunchContext`] reth node builder.
+pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpNodeTypes, OpComponentsBuilder, OpAddOns>>;
 
-pub(crate) type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;
+/// The flashblocks cell holds the [`FlashblocksState`].
+pub type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;
