@@ -11,6 +11,8 @@ pub struct BaseNodeConfig {
     pub flashblocks: Option<FlashblocksConfig>,
     /// Execution extension tracing toggles.
     pub tracing: TracingConfig,
+    /// Proofs extension configuration.
+    pub proofs: ProofsConfig,
     /// Indicates whether the metering RPC surface should be installed.
     pub metering_enabled: bool,
 }
@@ -29,6 +31,16 @@ pub struct FlashblocksConfig {
     pub websocket_url: String,
     /// Maximum number of pending flashblocks to retain in memory.
     pub max_pending_blocks_depth: u64,
+}
+
+/// Proofs Extension Configuration.
+#[derive(Debug, Clone)]
+pub struct ProofsConfig {
+    /// If true, initializes external-proofs ExEx to save and serve trie nodes to provide proofs
+    /// faster.
+    pub enabled: bool,
+    /// The path to the storage DB for proofs history.
+    pub storage_path: Option<std::path::PathBuf>,
 }
 
 /// Transaction tracing toggles.

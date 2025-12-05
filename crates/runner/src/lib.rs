@@ -10,7 +10,7 @@ mod runner;
 pub use runner::BaseNodeRunner;
 
 mod config;
-pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+pub use config::{BaseNodeConfig, FlashblocksConfig, ProofsConfig, TracingConfig};
 
 mod extensions;
 pub use extensions::{
