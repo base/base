@@ -15,5 +15,5 @@ pub use config::{BaseNodeConfig, FlashblocksConfig, ProofsConfig, TracingConfig}
 mod extensions;
 pub use extensions::{
     BaseRpcExtension, FlashblocksCanonExtension, FlashblocksCell, OpBuilder, OpProvider,
-    TransactionTracingExtension,
+    ProofsCell, ProofsExtension, TransactionTracingExtension,
 };

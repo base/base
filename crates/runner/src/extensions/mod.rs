@@ -3,6 +3,9 @@
 //! Builder extensions for the node nicely modularizes parts
 //! of the node building process.
 
+mod proofs;
+pub use proofs::ProofsExtension;
+
 mod canon;
 pub use canon::FlashblocksCanonExtension;
 
@@ -13,4 +16,4 @@ mod tracing;
 pub use tracing::TransactionTracingExtension;
 
 mod types;
-pub use types::{FlashblocksCell, OpBuilder, OpProvider};
+pub use types::{FlashblocksCell, OpBuilder, OpProvider, ProofsCell};

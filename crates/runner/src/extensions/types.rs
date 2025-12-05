@@ -25,3 +25,6 @@ pub type OpBuilder =
 
 /// The flashblocks cell holds the [`FlashblocksState`].
 pub type FlashblocksCell = Arc<OnceCell<Arc<FlashblocksState<OpProvider>>>>;
+
+/// A cell holding the proofs state.
+pub type ProofsCell = Arc<OnceCell<()>>;
