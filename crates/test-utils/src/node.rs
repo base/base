@@ -10,7 +10,7 @@ use std::{
 use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_reth_flashblocks_rpc::{
+use base_reth_flashblocks::{
     pubsub::{BasePubSub, BasePubSubApiServer},
     rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,

@@ -13,9 +13,9 @@ workspace = true
 
 [dependencies]
 # internal
-base-reth-flashblocks-rpc.workspace = true
+base-reth-flashblocks.workspace = true
 base-reth-metering.workspace = true
-base-reth-transaction-status.workspace = true
+base-reth-rpc.workspace = true
 base-reth-transaction-tracing.workspace = true
 
 # reth

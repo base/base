@@ -1,6 +1,6 @@
 [package]
-name = "base-reth-flashblocks-rpc"
-description = "Flashblocks RPC Support"
+name = "base-reth-flashblocks"
+description = "Flashblocks State Management"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

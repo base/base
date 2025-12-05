@@ -54,8 +54,8 @@ codegen-units = 1
 base-reth-cli = { path = "crates/cli" }
 base-reth-metering = { path = "crates/metering" }
 base-reth-test-utils = { path = "crates/test-utils" }
-base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
-base-reth-transaction-status = { path = "crates/transaction-status" }
+base-reth-flashblocks = { path = "crates/flashblocks" }
+base-reth-rpc = { path = "crates/rpc" }
 base-reth-transaction-tracing = { path = "crates/transaction-tracing" }
 base-reth-runner = { path = "crates/runner" }
 
