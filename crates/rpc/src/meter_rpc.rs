@@ -1,25 +1,14 @@
 use alloy_consensus::Header;
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::U256;
-use jsonrpsee::{
-    core::{RpcResult, async_trait},
-    proc_macros::rpc,
-};
+use jsonrpsee::core::{RpcResult, async_trait};
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
-use crate::meter_bundle;
-
-/// RPC API for transaction metering
-#[rpc(server, namespace = "base")]
-pub trait MeteringApi {
-    /// Simulates and meters a bundle of transactions
-    #[method(name = "meterBundle")]
-    async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse>;
-}
+use crate::{MeteringApiServer, meter_bundle};
 
 /// Implementation of the metering RPC API
 #[derive(Debug)]

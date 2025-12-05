@@ -23,7 +23,7 @@ mod tests {
     use serde_json;
     use tips_core::types::Bundle;
 
-    use crate::rpc::{MeteringApiImpl, MeteringApiServer};
+    use crate::{meter_rpc::MeteringApiImpl, traits::MeteringApiServer};
 
     struct NodeContext {
         http_api_addr: SocketAddr,
