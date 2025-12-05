@@ -150,7 +150,7 @@ dropping the remaining channel.
 > [!Note]
 > A word regarding overlapping span batches: the existing batch queue rules already contain the rule
 > to drop batches whose L1 origin is older than that of the L2 safe head. The Delta span batch
-> checks also have an equivalent rule that applies to all singular batcher past the safe head.
+> checks also have an equivalent rule that applies to all singular batches past the safe head.
 > Now full span batch checks aren't done any more in Holocene, but the batch queue rules are still
 > applied to singular batches that are streamed out of span batches, so in particular this rule also
 > still applies to the first singular batch past the current safe head coming from an overlapping
