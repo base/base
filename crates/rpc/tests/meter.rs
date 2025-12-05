@@ -1,9 +1,13 @@
+//! Integration tests covering the Metering logic surface area.
+mod common;
 use std::sync::Arc;
 
 use alloy_consensus::crypto::secp256k1::public_key_to_address;
 use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
+use base_reth_rpc::meter_bundle;
+use common::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use rand::{SeedableRng, rngs::StdRng};
@@ -17,9 +21,6 @@ use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainP
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 use tips_core::types::{Bundle, ParsedBundle};
-
-use super::utils::create_provider_factory;
-use crate::meter_bundle;
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
 

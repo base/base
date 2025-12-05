@@ -19,6 +19,3 @@ pub use meter::meter_bundle;
 
 mod meter_rpc;
 pub use meter_rpc::MeteringApiImpl;
-
-#[cfg(test)]
-mod tests;
