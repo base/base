@@ -42,15 +42,10 @@ rollup-boost.workspace = true
 
 # tokio
 tokio.workspace = true
-tokio-stream.workspace = true
 tokio-tungstenite.workspace = true
 
 # async
 futures-util.workspace = true
-
-# rpc
-jsonrpsee.workspace = true
-jsonrpsee-types.workspace = true
 
 # misc
 tracing.workspace = true

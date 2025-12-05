@@ -11,11 +11,10 @@ use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_reth_flashblocks::{
-    pubsub::{BasePubSub, BasePubSubApiServer},
-    rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,
     subscription::{Flashblock, FlashblocksReceiver},
 };
+use base_reth_rpc::{BasePubSub, BasePubSubApiServer, EthApiExt, EthApiOverrideServer};
 use eyre::Result;
 use futures_util::Future;
 use once_cell::sync::OnceCell;

@@ -20,35 +20,11 @@ pub(crate) struct Metrics {
     #[metric(describe = "Number of Flashblocks that arrive in an unexpected order")]
     pub unexpected_block_order: Counter,
 
-    #[metric(describe = "Count of times flashblocks get_transaction_count is called")]
-    pub get_transaction_count: Counter,
-
-    #[metric(describe = "Count of times flashblocks get_transaction_receipt is called")]
-    pub get_transaction_receipt: Counter,
-
-    #[metric(describe = "Count of times flashblocks get_balance is called")]
-    pub get_balance: Counter,
-
-    #[metric(describe = "Count of times flashblocks get_block_by_number is called")]
-    pub get_block_by_number: Counter,
-
     #[metric(describe = "Number of flashblocks in a block")]
     pub flashblocks_in_block: Histogram,
 
     #[metric(describe = "Count of times flashblocks are unable to be converted to blocks")]
     pub block_processing_error: Counter,
-
-    #[metric(describe = "Count of times flashblocks call is called")]
-    pub call: Counter,
-
-    #[metric(describe = "Count of times flashblocks estimate_gas is called")]
-    pub estimate_gas: Counter,
-
-    #[metric(describe = "Count of times flashblocks simulate_v1 is called")]
-    pub simulate_v1: Counter,
-
-    #[metric(describe = "Count of times flashblocks get_logs is called")]
-    pub get_logs: Counter,
 
     #[metric(
         describe = "Number of times pending snapshot was cleared because canonical caught up"

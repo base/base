@@ -6,17 +6,17 @@
 // Re-export tips core types
 pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 
-mod traits;
-pub use traits::{MeteringApiServer, TransactionStatusApiServer};
+mod base;
+pub use base::{
+    meter::meter_bundle,
+    meter_rpc::MeteringApiImpl,
+    pubsub::{BasePubSub, BasePubSubApiServer},
+    traits::{MeteringApiServer, TransactionStatusApiServer},
+    transaction_rpc::TransactionStatusApiImpl,
+    types::{BaseSubscriptionKind, Status, TransactionStatusResponse},
+};
 
-mod transaction_rpc;
-pub use transaction_rpc::TransactionStatusApiImpl;
+mod eth;
+pub use eth::rpc::{EthApiExt, EthApiOverrideServer};
 
-mod types;
-pub use types::{Status, TransactionStatusResponse};
-
-mod meter;
-pub use meter::meter_bundle;
-
-mod meter_rpc;
-pub use meter_rpc::MeteringApiImpl;
+mod metrics;

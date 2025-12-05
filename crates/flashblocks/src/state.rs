@@ -46,8 +46,8 @@ use crate::{
     PendingBlocks,
     metrics::Metrics,
     pending_blocks::PendingBlocksBuilder,
-    rpc::FlashblocksAPI,
     subscription::{Flashblock, FlashblocksReceiver},
+    traits::FlashblocksAPI,
 };
 
 // Buffer 4s of flashblocks for flashblock_sender
