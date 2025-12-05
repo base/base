@@ -12,6 +12,10 @@ description = "Common integration test utilities for node-reth crates"
 workspace = true
 
 [dependencies]
+# Project
+base-reth-flashblocks.workspace = true
+base-reth-rpc.workspace = true
+
 # reth
 reth.workspace = true
 reth-optimism-node.workspace = true
@@ -81,7 +85,6 @@ chrono.workspace = true
 # tower for middleware
 tower = "0.5"
 
-base-reth-flashblocks.workspace = true
 
 [dev-dependencies]
 

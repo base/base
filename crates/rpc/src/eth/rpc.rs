@@ -13,6 +13,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use base_reth_flashblocks::traits::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -32,13 +33,10 @@ use tokio::{sync::broadcast::error::RecvError, time};
 use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
-use crate::{
-    metrics::Metrics,
-    traits::{FlashblocksAPI, PendingBlocksAPI},
-};
+use crate::metrics::Metrics;
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
-pub const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
+const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
 
 /// Eth API override trait for flashblocks integration.
 #[cfg_attr(not(test), rpc(server, namespace = "eth"))]

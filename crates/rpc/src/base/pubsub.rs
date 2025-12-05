@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use base_reth_flashblocks::traits::FlashblocksAPI;
 use jsonrpsee::{
     PendingSubscriptionSink, SubscriptionSink,
     core::{SubscriptionResult, async_trait},
@@ -10,24 +11,11 @@ use jsonrpsee::{
 };
 use op_alloy_network::Optimism;
 use reth_rpc_eth_api::RpcBlock;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::traits::FlashblocksAPI;
-
-/// Subscription kind for Base-specific subscriptions
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum BaseSubscriptionKind {
-    /// New flashblocks subscription.
-    ///
-    /// Fires a notification each time a new flashblock is processed, providing the current
-    /// pending block state. Each flashblock represents an incremental update to the pending
-    /// block, so multiple notifications may be emitted for the same block height as new
-    /// flashblocks arrive.
-    NewFlashblocks,
-}
+use crate::BaseSubscriptionKind;
 
 /// Base pub-sub RPC interface for flashblocks subscriptions.
 #[rpc(server, namespace = "base")]

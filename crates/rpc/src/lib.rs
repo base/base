@@ -10,7 +10,13 @@ mod base;
 pub use base::{
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
+    pubsub::{BasePubSub, BasePubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
-    types::{Status, TransactionStatusResponse},
+    types::{BaseSubscriptionKind, Status, TransactionStatusResponse},
 };
+
+mod eth;
+pub use eth::rpc::{EthApiExt, EthApiOverrideServer};
+
+mod metrics;

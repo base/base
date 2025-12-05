@@ -17,3 +17,16 @@ pub struct TransactionStatusResponse {
     /// The status of the queried transaction.
     pub status: Status,
 }
+
+/// Subscription kind for Base-specific subscriptions
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BaseSubscriptionKind {
+    /// New flashblocks subscription.
+    ///
+    /// Fires a notification each time a new flashblock is processed, providing the current
+    /// pending block state. Each flashblock represents an incremental update to the pending
+    /// block, so multiple notifications may be emitted for the same block height as new
+    /// flashblocks arrive.
+    NewFlashblocks,
+}
