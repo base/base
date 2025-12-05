@@ -8,7 +8,7 @@ use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
-use base_reth_flashblocks_rpc::{
+use base_reth_flashblocks::{
     rpc::{FlashblocksAPI, PendingBlocksAPI},
     state::FlashblocksState,
     subscription::{Flashblock, Metadata},

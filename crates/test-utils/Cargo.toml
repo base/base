@@ -81,7 +81,7 @@ chrono.workspace = true
 # tower for middleware
 tower = "0.5"
 
-base-reth-flashblocks-rpc.workspace = true
+base-reth-flashblocks.workspace = true
 
 [dev-dependencies]
 

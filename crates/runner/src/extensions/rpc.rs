@@ -2,14 +2,14 @@
 
 use std::sync::Arc;
 
-use base_reth_flashblocks_rpc::{
+use base_reth_flashblocks::{
     pubsub::{BasePubSub, BasePubSubApiServer},
     rpc::{EthApiExt, EthApiOverrideServer},
     state::FlashblocksState,
     subscription::FlashblocksSubscriber,
 };
 use base_reth_metering::{MeteringApiImpl, MeteringApiServer};
-use base_reth_transaction_status::{TransactionStatusApiImpl, TransactionStatusApiServer};
+use base_reth_rpc::{TransactionStatusApiImpl, TransactionStatusApiServer};
 use tracing::info;
 use url::Url;
 
