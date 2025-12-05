@@ -5,7 +5,7 @@
 
 pub mod cli;
 
-use base_reth_runner::BaseNodeLauncher;
+use base_reth_runner::BaseNodeRunner;
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -20,8 +20,10 @@ fn main() {
     let cli = Cli::<OpChainSpecParser, cli::Args>::parse();
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
-    cli.run(
-        |builder, args| async move { BaseNodeLauncher::new(args).build_and_run(builder).await },
-    )
+    cli.run(|builder, args| async move {
+        let runner = BaseNodeRunner::new(args);
+        let handle = runner.build(builder).await?;
+        runner.run(handle).await
+    })
     .unwrap();
 }

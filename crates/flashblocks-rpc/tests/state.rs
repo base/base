@@ -1,3 +1,5 @@
+//! Integration tests that stress Flashblocks state handling.
+
 mod common;
 
 use std::{sync::Arc, time::Duration};
@@ -223,7 +225,7 @@ struct FlashblockBuilder<'a> {
 }
 
 impl<'a> FlashblockBuilder<'a> {
-    pub fn new_base(harness: &'a TestHarness) -> Self {
+    fn new_base(harness: &'a TestHarness) -> Self {
         Self {
             canonical_block_number: None,
             transactions: vec![BLOCK_INFO_TXN.clone()],
@@ -247,7 +249,7 @@ impl<'a> FlashblockBuilder<'a> {
             harness,
         }
     }
-    pub fn new(harness: &'a TestHarness, index: u64) -> Self {
+    fn new(harness: &'a TestHarness, index: u64) -> Self {
         Self {
             canonical_block_number: None,
             transactions: Vec::new(),
@@ -257,12 +259,12 @@ impl<'a> FlashblockBuilder<'a> {
         }
     }
 
-    pub fn with_receipts(&mut self, receipts: HashMap<B256, OpReceipt>) -> &mut Self {
+    fn with_receipts(&mut self, receipts: HashMap<B256, OpReceipt>) -> &mut Self {
         self.receipts = receipts;
         self
     }
 
-    pub fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
+    fn with_transactions(&mut self, transactions: Vec<OpTransactionSigned>) -> &mut Self {
         assert_ne!(self.index, 0, "Cannot set txns for initial flashblock");
         self.transactions.clear();
 
@@ -282,12 +284,12 @@ impl<'a> FlashblockBuilder<'a> {
         self
     }
 
-    pub fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
+    fn with_canonical_block_number(&mut self, num: BlockNumber) -> &mut Self {
         self.canonical_block_number = Some(num);
         self
     }
 
-    pub fn build(&self) -> Flashblock {
+    fn build(&self) -> Flashblock {
         let current_block = self.harness.node.latest_block();
         let canonical_block_num =
             self.canonical_block_number.unwrap_or_else(|| current_block.number) + 1;

@@ -48,14 +48,19 @@ impl Account {
     }
 }
 
+/// Handy alias used throughout tests to refer to the deterministic `Account`.
 pub type TestAccount = Account;
 
 /// Collection of all test accounts
 #[derive(Debug, Clone)]
 pub struct TestAccounts {
+    /// Alice (Anvil account #0) with a large starting balance.
     pub alice: TestAccount,
+    /// Bob (Anvil account #1) handy for bilateral tests.
     pub bob: TestAccount,
+    /// Charlie (Anvil account #2) used when three participants are required.
     pub charlie: TestAccount,
+    /// Deterministic account intended for contract deployments.
     pub deployer: TestAccount,
 }
 

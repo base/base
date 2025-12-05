@@ -26,10 +26,22 @@ check: check-format check-clippy test
 # Fixes formatting and clippy issues
 fix: fix-format fix-clippy
 
+# Runs zepter feature checks, installing zepter if necessary
+zepter:
+  @command -v zepter >/dev/null 2>&1 || cargo install zepter
+  zepter --version
+  zepter format features
+  zepter
+
+# Fixes zepter feature formatting.
+zepter-fix:
+  @command -v zepter >/dev/null 2>&1 || cargo install zepter
+  zepter format features --fix
+
 # Runs tests across workspace with all features enabled
 test:
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
-    cargo nextest run --workspace --all-features
+    RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
 
 # Runs cargo hack against the workspace
 hack:
