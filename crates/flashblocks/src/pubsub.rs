@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::rpc::FlashblocksAPI;
+use crate::traits::FlashblocksAPI;
 
 /// Subscription kind for Base-specific subscriptions
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
