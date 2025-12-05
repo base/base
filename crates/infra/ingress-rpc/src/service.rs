@@ -224,18 +224,15 @@ where
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
 
         let bundle_hash = &parsed_bundle.bundle_hash();
-        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await
-            .unwrap_or_else(|_| {
-                // TODO: in the future, we should return the error
-                warn!(message = "Bundle simulation failed, using default response", bundle_hash = %bundle_hash);
-                MeterBundleResponse::default()
-            });
 
-        let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
+        let meter_bundle_response = self.meter_bundle(&bundle, bundle_hash).await.ok();
 
-        self.builder_tx
-            .send(meter_bundle_response)
-            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
+        if let Some(meter_info) = meter_bundle_response.as_ref() {
+            _ = self.builder_tx.send(meter_info.clone());
+        }
+
+        let accepted_bundle =
+            AcceptedBundle::new(parsed_bundle, meter_bundle_response.unwrap_or_default());
 
         if send_to_kafka {
             if let Err(e) = self
@@ -256,7 +253,7 @@ where
                 .await;
             match response {
                 Ok(_) => {
-                    info!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
+                    debug!(message = "sent transaction to the mempool", hash=%transaction.tx_hash());
                 }
                 Err(e) => {
                     warn!(message = "Failed to send raw transaction to mempool", error = %e);
