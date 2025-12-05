@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 use std::sync::Arc;
 
+use alloy_genesis::Genesis;
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -7,8 +10,9 @@ use reth_db::{
     test_utils::{ERROR_DB_CREATION, TempDatabase, create_test_static_files_dir, tempdir_path},
 };
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
+use serde_json;
 
-pub(super) fn create_provider_factory<N: NodeTypes>(
+pub(crate) fn create_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
     let (static_dir, _) = create_test_static_files_dir();
@@ -18,6 +22,10 @@ pub(super) fn create_provider_factory<N: NodeTypes>(
         chain_spec,
         StaticFileProvider::read_write(static_dir.keep()).expect("static file provider"),
     )
+}
+
+pub(crate) fn load_genesis() -> Genesis {
+    serde_json::from_str(include_str!("genesis.json")).unwrap()
 }
 
 fn create_test_db() -> Arc<TempDatabase<DatabaseEnv>> {

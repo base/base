@@ -4,10 +4,18 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 
 mod traits;
-pub use traits::TransactionStatusApiServer;
+pub use traits::{MeteringApiServer, TransactionStatusApiServer};
 
-mod rpc;
-pub use rpc::TransactionStatusApiImpl;
+mod transaction_rpc;
+pub use transaction_rpc::TransactionStatusApiImpl;
 
 mod types;
+// Re-export tips core types
+pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 pub use types::{Status, TransactionStatusResponse};
+
+mod meter;
+pub use meter::meter_bundle;
+
+mod meter_rpc;
+pub use meter_rpc::MeteringApiImpl;
