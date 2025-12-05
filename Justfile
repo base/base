@@ -13,7 +13,7 @@ default:
     @just --list
 
 # Runs all ci checks.
-ci: fix check lychee
+ci: fix check lychee zepter
 
 # Performs lychee checks, installing the lychee command if necessary
 lychee:
@@ -24,7 +24,7 @@ lychee:
 check: check-format check-clippy test
 
 # Fixes formatting and clippy issues
-fix: fix-format fix-clippy
+fix: format-fix clippy-fix zepter-fix
 
 # Runs zepter feature checks, installing zepter if necessary
 zepter:
@@ -52,7 +52,7 @@ check-format:
     cargo +nightly fmt --all -- --check
 
 # Fixes any formatting issues
-fix-format:
+format-fix:
     cargo fix --allow-dirty --allow-staged
     cargo +nightly fmt --all
 
@@ -61,7 +61,7 @@ check-clippy:
     cargo clippy --all-targets -- -D warnings
 
 # Fixes any clippy issues
-fix-clippy:
+clippy-fix:
     cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 # Builds the workspace with release
