@@ -2,57 +2,19 @@
 
 use std::{io::Read, sync::Arc, time::Duration};
 
-use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
-use alloy_rpc_types_engine::PayloadId;
 use futures_util::{SinkExt as _, StreamExt};
-use reth_optimism_primitives::OpReceipt;
-use rollup_boost::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
-};
-use serde::{Deserialize, Serialize};
+use rollup_boost::FlashblocksPayloadV1;
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use crate::Metrics;
-
-/// Interval of liveness check of upstream, in milliseconds.
-pub const PING_INTERVAL_MS: u64 = 500;
-
-/// Max duration of backoff before reconnecting to upstream.
-pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
+use crate::{Flashblock, Metadata, Metrics};
 
 /// Trait for receiving flashblock updates.
 pub trait FlashblocksReceiver {
     /// Called when a new flashblock is received.
     fn on_flashblock_received(&self, flashblock: Flashblock);
-}
-
-/// Metadata associated with a flashblock.
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Metadata {
-    /// Transaction receipts indexed by hash.
-    pub receipts: HashMap<B256, OpReceipt>,
-    /// Updated account balances.
-    pub new_account_balances: HashMap<Address, U256>,
-    /// Block number this flashblock belongs to.
-    pub block_number: u64,
-}
-
-/// A flashblock containing partial block data.
-#[derive(Debug, Clone)]
-pub struct Flashblock {
-    /// Unique payload identifier.
-    pub payload_id: PayloadId,
-    /// Index of this flashblock within the block.
-    pub index: u64,
-    /// Base payload data (only present on first flashblock).
-    pub base: Option<ExecutionPayloadBaseV1>,
-    /// Delta containing transactions and state changes.
-    pub diff: ExecutionPayloadFlashblockDeltaV1,
-    /// Associated metadata.
-    pub metadata: Metadata,
 }
 
 // Simplify actor messages to just handle shutdown
@@ -73,6 +35,12 @@ impl<Receiver> FlashblocksSubscriber<Receiver>
 where
     Receiver: FlashblocksReceiver + Send + Sync + 'static,
 {
+    /// Interval of liveness check of upstream, in milliseconds.
+    pub const PING_INTERVAL_MS: u64 = 500;
+
+    /// Max duration of backoff before reconnecting to upstream.
+    pub const MAX_BACKOFF: Duration = Duration::from_secs(10);
+
     /// Creates a new flashblocks subscriber.
     pub fn new(flashblocks_state: Arc<Receiver>, ws_url: Url) -> Self {
         Self { ws_url, flashblocks_state, metrics: Metrics::default() }
@@ -98,7 +66,8 @@ where
                     Ok((ws_stream, _)) => {
                         info!(message = "WebSocket connection established");
 
-                        let mut ping_interval = interval(Duration::from_millis(PING_INTERVAL_MS));
+                        let mut ping_interval =
+                            interval(Duration::from_millis(Self::PING_INTERVAL_MS));
                         let mut awaiting_pong_resp = false;
 
                         let (mut write, mut read) = ws_stream.split();
@@ -152,11 +121,11 @@ where
                                           warn!(
                                             target: "flashblocks_rpc::subscription",
                                             ?backoff,
-                                            timeout_ms = PING_INTERVAL_MS,
+                                            timeout_ms = Self::PING_INTERVAL_MS,
                                             "No pong response from upstream, reconnecting",
                                         );
 
-                                        backoff = sleep(&metrics, backoff).await;
+                                        backoff = Self::sleep(&metrics, backoff).await;
                                         break 'conn;
                                     }
 
@@ -172,7 +141,7 @@ where
                                             "WebSocket connection lost, reconnecting",
                                         );
 
-                                        backoff = sleep(&metrics, backoff).await;
+                                        backoff = Self::sleep(&metrics, backoff).await;
                                         break 'conn;
                                     }
                                     awaiting_pong_resp = true
@@ -187,7 +156,7 @@ where
                             error = %e
                         );
 
-                        backoff = sleep(&metrics, backoff).await;
+                        backoff = Self::sleep(&metrics, backoff).await;
                         continue;
                     }
                 }
@@ -205,13 +174,13 @@ where
             }
         });
     }
-}
 
-/// Sleeps for given backoff duration. Returns incremented backoff duration, capped at [`MAX_BACKOFF`].
-async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
-    metrics.reconnect_attempts.increment(1);
-    tokio::time::sleep(backoff).await;
-    std::cmp::min(backoff * 2, MAX_BACKOFF)
+    /// Sleeps for given backoff duration. Returns incremented backoff duration, capped at [`MAX_BACKOFF`].
+    async fn sleep(metrics: &Metrics, backoff: Duration) -> Duration {
+        metrics.reconnect_attempts.increment(1);
+        tokio::time::sleep(backoff).await;
+        std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
+    }
 }
 
 fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {

@@ -9,9 +9,7 @@ use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use base_reth_flashblocks::{
-    state::FlashblocksState,
-    subscription::{Flashblock, Metadata},
-    traits::{FlashblocksAPI, PendingBlocksAPI},
+    Flashblock, FlashblocksAPI, FlashblocksState, Metadata, PendingBlocksAPI,
 };
 use base_reth_test_utils::{
     accounts::TestAccounts, flashblocks_harness::FlashblocksHarness, node::LocalNodeProvider,

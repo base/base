@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::state::FlashblocksState;
+use base_reth_flashblocks::FlashblocksState;
 use futures_util::TryStreamExt;
 use reth_exex::ExExEvent;
 

@@ -17,9 +17,11 @@ use reth::revm::{db::Cache, state::EvmState};
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 
-use crate::{subscription::Flashblock, traits::PendingBlocksAPI};
+use crate::{Flashblock, PendingBlocksAPI};
 
-pub(crate) struct PendingBlocksBuilder {
+/// Builder for [`PendingBlocks`].
+#[derive(Debug)]
+pub struct PendingBlocksBuilder {
     flashblocks: Vec<Flashblock>,
     headers: Vec<Sealed<Header>>,
 

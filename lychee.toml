@@ -7,4 +7,5 @@ exclude = [
     'localhost',
     'https://img.shields.io/github/commit-activity/w/base/node-reth',
     'https://img.shields.io/github/issues-pr-raw/base/node-reth',
+    'https://rustup.rs/',
 ]

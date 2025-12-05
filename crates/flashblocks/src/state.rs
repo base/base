@@ -43,11 +43,7 @@ use tokio::sync::{
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    PendingBlocks,
-    metrics::Metrics,
-    pending_blocks::PendingBlocksBuilder,
-    subscription::{Flashblock, FlashblocksReceiver},
-    traits::FlashblocksAPI,
+    Flashblock, FlashblocksAPI, FlashblocksReceiver, Metrics, PendingBlocks, PendingBlocksBuilder,
 };
 
 // Buffer 4s of flashblocks for flashblock_sender

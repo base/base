@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use base_reth_flashblocks::{state::FlashblocksState, subscription::FlashblocksSubscriber};
+use base_reth_flashblocks::{FlashblocksState, FlashblocksSubscriber};
 use base_reth_rpc::{
     BasePubSub, BasePubSubApiServer, EthApiExt, EthApiOverrideServer, MeteringApiImpl,
     MeteringApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
