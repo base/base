@@ -13,4 +13,7 @@ mod config;
 pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
 
 mod extensions;
-pub use extensions::{FlashblocksCell, OpProvider, OpBuilder, BaseRpcExtension, FlashblocksCanonExtension, TransactionTracingExtension};
+pub use extensions::{
+    BaseRpcExtension, FlashblocksCanonExtension, FlashblocksCell, OpBuilder, OpProvider,
+    TransactionTracingExtension,
+};

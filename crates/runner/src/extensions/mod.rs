@@ -13,4 +13,4 @@ mod tracing;
 pub use tracing::TransactionTracingExtension;
 
 mod types;
-pub use types::{FlashblocksCell, OpProvider, OpBuilder};
+pub use types::{FlashblocksCell, OpBuilder, OpProvider};
