@@ -57,7 +57,7 @@ upgrade-l2oo l1_rpc admin_pk etherscan_api_key="":
 # Deploy OPSuccinct FDG contracts
 deploy-fdg-contracts env_file=".env" *features='':
     #!/usr/bin/env bash
-    set -euo pipefail
+    set -aeo pipefail
     
     # First fetch FDG config using the env file
     echo "Fetching Fault Dispute Game configuration..."

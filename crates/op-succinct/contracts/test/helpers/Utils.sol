@@ -80,19 +80,26 @@ contract Utils is Test, JSONDecoder {
 
     // Read the config from the json file.
     function readL2OOJson(string memory filepath) public view returns (L2OOConfig memory) {
-        string memory root = vm.projectRoot();
-        string memory path = string.concat(root, "/", filepath);
+        string memory path = resolvePath(filepath);
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         return abi.decode(data, (L2OOConfig));
     }
 
     function readFDGJson(string memory filepath) public view returns (FDGConfig memory) {
-        string memory root = vm.projectRoot();
-        string memory path = string.concat(root, "/", filepath);
+        string memory path = resolvePath(filepath);
         string memory json = vm.readFile(path);
         bytes memory data = vm.parseJson(json);
         return abi.decode(data, (FDGConfig));
+    }
+
+    // Resolve filepath: if absolute (starts with /), use as-is; otherwise prepend project root.
+    function resolvePath(string memory filepath) internal view returns (string memory) {
+        bytes memory b = bytes(filepath);
+        if (b.length > 0 && b[0] == "/") {
+            return filepath;
+        }
+        return string.concat(vm.projectRoot(), "/", filepath);
     }
 
     // Helper functions for test setup

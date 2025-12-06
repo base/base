@@ -1,3 +1,5 @@
+// These tests intentionally omit TestMain because each test creates its own
+// isolated system via NewFaultProofSystem() with per-test configuration.
 package fpfastfinality
 
 import (

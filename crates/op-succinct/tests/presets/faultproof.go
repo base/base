@@ -2,11 +2,8 @@ package presets
 
 import (
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
-	"github.com/ethereum-optimism/optimism/op-devstack/dsl"
 	"github.com/ethereum-optimism/optimism/op-devstack/presets"
-	"github.com/ethereum-optimism/optimism/op-devstack/shim"
 	"github.com/ethereum-optimism/optimism/op-devstack/stack"
-	"github.com/ethereum-optimism/optimism/op-devstack/stack/match"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
 )
@@ -69,34 +66,5 @@ func WithSuccinctFPProposerFastFinality(dest *sysgo.DefaultSingleChainInteropSys
 // This allows per-test configuration instead of relying on TestMain.
 func NewFaultProofSystem(t devtest.T, cfg FaultProofConfig) *presets.MinimalWithProposer {
 	var ids sysgo.DefaultSingleChainInteropSystemIDs
-	opt := stack.Combine(
-		WithSuccinctFPProposer(&ids, cfg),
-		presets.WithSafeDBEnabled(),
-	)
-
-	p := devtest.NewP(t.Ctx(), t.Logger(), func(now bool) {
-		t.Errorf("test failed")
-		if now {
-			t.FailNow()
-		}
-	}, func() {
-		t.SkipNow()
-	})
-	t.Cleanup(p.Close)
-
-	orch := sysgo.NewOrchestrator(p, stack.SystemHook(opt))
-	var orchIntf stack.Orchestrator = orch
-	stack.ApplyOptionLifecycle(opt, orchIntf)
-
-	system := shim.NewSystem(t)
-	orch.Hydrate(system)
-
-	minimal := presets.MinimalFromSystem(t, system, orch)
-	l2 := system.L2Network(match.Assume(t, match.L2ChainA))
-	proposer := l2.L2Proposer(match.Assume(t, match.FirstL2Proposer))
-
-	return &presets.MinimalWithProposer{
-		Minimal:    *minimal,
-		L2Proposer: dsl.NewL2Proposer(proposer),
-	}
+	return NewSystem(t, WithSuccinctFPProposer(&ids, cfg))
 }
