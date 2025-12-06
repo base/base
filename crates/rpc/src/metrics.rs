@@ -14,6 +14,9 @@ pub(crate) struct Metrics {
     #[metric(describe = "Count of times flashblocks get_transaction_receipt is called")]
     pub get_transaction_receipt: Counter,
 
+    #[metric(describe = "Count of times flashblocks get_transaction_by_hash is called")]
+    pub get_transaction_by_hash: Counter,
+
     #[metric(describe = "Count of times flashblocks get_balance is called")]
     pub get_balance: Counter,
 
