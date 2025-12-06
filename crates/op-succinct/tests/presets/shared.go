@@ -6,7 +6,11 @@ import (
 	"github.com/ethereum-optimism/optimism/op-chain-ops/devkeys"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/artifacts"
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
+	"github.com/ethereum-optimism/optimism/op-devstack/dsl"
+	"github.com/ethereum-optimism/optimism/op-devstack/presets"
+	"github.com/ethereum-optimism/optimism/op-devstack/shim"
 	"github.com/ethereum-optimism/optimism/op-devstack/stack"
+	"github.com/ethereum-optimism/optimism/op-devstack/stack/match"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/intentbuilder"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
@@ -70,4 +74,52 @@ func withSuccinctPreset(dest *sysgo.DefaultSingleChainInteropSystemIDs, configur
 	}))
 
 	return stack.MakeCommon(opt)
+}
+
+// NewSystem creates a new test system with the given stack option.
+// This is a unified function for creating both validity and fault proof test systems.
+func NewSystem(t devtest.T, opt stack.CommonOption) *presets.MinimalWithProposer {
+	sys, _ := newSystemWithProposer(t, opt, nil)
+	return sys
+}
+
+// newSystemWithProposer creates a new test system and optionally returns the L2Prop backend.
+// If ids is provided, it retrieves the proposer from the orchestrator.
+func newSystemWithProposer(t devtest.T, opt stack.CommonOption, ids *sysgo.DefaultSingleChainInteropSystemIDs) (*presets.MinimalWithProposer, sysgo.L2Prop) {
+	p := devtest.NewP(t.Ctx(), t.Logger(), func(now bool) {
+		t.Errorf("test failed")
+		if now {
+			t.FailNow()
+		}
+	}, func() {
+		t.SkipNow()
+	})
+	t.Cleanup(p.Close)
+
+	combinedOpt := stack.Combine(opt, presets.WithSafeDBEnabled())
+
+	orch := sysgo.NewOrchestrator(p, stack.SystemHook(combinedOpt))
+	var orchIntf stack.Orchestrator = orch
+	stack.ApplyOptionLifecycle(combinedOpt, orchIntf)
+
+	system := shim.NewSystem(t)
+	orch.Hydrate(system)
+
+	minimal := presets.MinimalFromSystem(t, system, orch)
+	l2 := system.L2Network(match.Assume(t, match.L2ChainA))
+	proposer := l2.L2Proposer(match.Assume(t, match.FirstL2Proposer))
+
+	sys := &presets.MinimalWithProposer{
+		Minimal:    *minimal,
+		L2Proposer: dsl.NewL2Proposer(proposer),
+	}
+
+	var prop sysgo.L2Prop
+	if ids != nil {
+		var ok bool
+		prop, ok = orch.GetProposer(ids.L2AProposer)
+		t.Require().True(ok, "proposer not found")
+	}
+
+	return sys, prop
 }

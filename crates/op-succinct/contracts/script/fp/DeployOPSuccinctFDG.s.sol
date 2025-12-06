@@ -55,7 +55,9 @@ contract DeployOPSuccinctFDG is Script, Utils {
         vm.startBroadcast();
 
         // Load configuration
-        FDGConfig memory config = readFDGJson("opsuccinctfdgconfig.json");
+        string memory configPath =
+            vm.envOr("OP_SUCCINCT_FAULT_DISPUTE_GAME_CONFIG_PATH", string("opsuccinctfdgconfig.json"));
+        FDGConfig memory config = readFDGJson(configPath);
 
         // Deploy contracts
         DeployedContracts memory deployedContracts = deployContracts(config);

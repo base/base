@@ -28,7 +28,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ["./e2e/validity/...", "./e2e/faultproof/..."]
+        target: 
+          - "./e2e/validity/bootstrap/..."
+          - "./e2e/validity/proving/..."
+          - "./e2e/faultproof/bootstrap/..."
+          - "./e2e/faultproof/fastfinality/..."
 
     steps:
       - name: Checkout sources
