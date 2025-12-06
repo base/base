@@ -1,7 +1,5 @@
 //! Integration tests covering the Flashblocks RPC surface area.
 
-mod common;
-
 use std::str::FromStr;
 
 use alloy_consensus::Receipt;
@@ -15,8 +13,10 @@ use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks::{Flashblock, Metadata};
-use base_reth_test_utils::flashblocks_harness::FlashblocksHarness;
-use common::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH};
+use base_reth_test_utils::{
+    fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
+    flashblocks_harness::FlashblocksHarness,
+};
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
 use op_alloy_consensus::OpDepositReceipt;

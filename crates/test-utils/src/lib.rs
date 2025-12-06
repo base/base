@@ -3,6 +3,8 @@
 
 /// Convenience types and helpers for working with deterministic test accounts.
 pub mod accounts;
+/// Shared fixtures and test data reused by integration tests.
+pub mod fixtures;
 /// Ergonomic wrapper around the Engine API clients used by the harness.
 pub mod engine;
 /// Flashblocks-aware harness helpers.
