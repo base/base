@@ -174,13 +174,22 @@ where
             tx_hash = %tx_hash
         );
 
+        // Check canonical chain first to avoid race condition where flashblocks
+        // state hasn't been cleared yet after canonical block commit
+        if let Some(canonical_receipt) =
+            EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await?
+        {
+            return Ok(Some(canonical_receipt));
+        }
+
+        // Fall back to flashblocks for pending transactions
         let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_receipt) = pending_blocks.get_transaction_receipt(tx_hash) {
             self.metrics.get_transaction_receipt.increment(1);
             return Ok(Some(fb_receipt));
         }
 
-        EthTransactions::transaction_receipt(&self.eth_api, tx_hash).await.map_err(Into::into)
+        Ok(None)
     }
 
     async fn get_balance(
@@ -241,17 +250,24 @@ where
             tx_hash = %tx_hash
         );
 
-        let pending_blocks = self.flashblocks_state.get_pending_blocks();
+        // Check canonical chain first to avoid race condition where flashblocks
+        // state hasn't been cleared yet after canonical block commit
+        if let Some(canonical_tx) = EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
+            .await?
+            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
+            .transpose()?
+        {
+            return Ok(Some(canonical_tx));
+        }
 
+        // Fall back to flashblocks for pending transactions
+        let pending_blocks = self.flashblocks_state.get_pending_blocks();
         if let Some(fb_transaction) = pending_blocks.get_transaction_by_hash(tx_hash) {
-            self.metrics.get_transaction_receipt.increment(1);
+            self.metrics.get_transaction_by_hash.increment(1);
             return Ok(Some(fb_transaction));
         }
 
-        Ok(EthTransactions::transaction_by_hash(&self.eth_api, tx_hash)
-            .await?
-            .map(|tx| tx.into_transaction(self.eth_api.tx_resp_builder()))
-            .transpose()?)
+        Ok(None)
     }
 
     async fn send_raw_transaction_sync(
