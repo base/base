@@ -107,6 +107,9 @@ alloy-provider = { version = "1.0.41" }
 alloy-hardforks = "0.4.4"
 alloy-rpc-client = { version = "1.0.41" }
 alloy-serde = { version = "1.0.41" }
+alloy-sol-macro = { version = "1.4.1", features = ["json"] }
+alloy-sol-types = { version = "1.4.1" }
+alloy-contract = { version = "1.0.41" }
 
 # op-alloy
 op-alloy-rpc-types = { version = "0.22.0", default-features = false }

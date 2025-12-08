@@ -80,6 +80,10 @@ build-maxperf:
 build-node:
     cargo build --bin base-reth-node
 
+# Build the contracts used for tests
+build-contracts:
+    cd crates/test-utils/contracts && forge build
+
 # Cleans the workspace
 clean:
     cargo clean
