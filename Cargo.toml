@@ -51,8 +51,6 @@ codegen-units = 1
 
 [workspace.dependencies]
 base-reth-cli = { path = "crates/cli" }
-base-reth-fbal = { path = "crates/fbal" }
-base-reth-flashblocks-rpc = { path = "crates/flashblocks-rpc" }
 base-reth-metering = { path = "crates/metering" }
 base-reth-node = { path = "crates/node" }
 base-reth-test-utils = { path = "crates/test-utils" }
@@ -60,6 +58,7 @@ base-reth-flashblocks = { path = "crates/flashblocks" }
 base-reth-rpc = { path = "crates/rpc" }
 base-tracex = { path = "crates/tracex" }
 base-reth-runner = { path = "crates/runner" }
+base-fbal = { path = "crates/fbal" }
 
 # base/tips
 # Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies

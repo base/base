@@ -1552,7 +1552,7 @@ name = "base-reth-fbal"
 version = "0.2.1"
 
 [[package]]
-name = "base-reth-flashblocks-rpc"
+name = "base-reth-flashblocks"
 version = "0.2.1"
 dependencies = [
  "alloy-consensus",
