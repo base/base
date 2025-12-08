@@ -89,12 +89,12 @@ clean:
     cargo clean
 
 # Checks if there are any unused dependencies
-check-udeps:
+check-udeps: build-contracts
   @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
   cargo +nightly udeps --workspace --all-features --all-targets
 
 # Watches tests
-watch-test:
+watch-test: build-contracts
     cargo watch -x test
 
 # Watches checks
