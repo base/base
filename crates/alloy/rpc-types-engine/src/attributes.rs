@@ -6,13 +6,14 @@ use alloy_eips::{
     eip1559::BaseFeeParams,
     eip2718::{Eip2718Result, WithEncoded},
 };
-use alloy_primitives::{B64, Bytes};
-use alloy_rlp::Result;
-use alloy_rpc_types_engine::PayloadAttributes;
+use alloy_primitives::{B64, B256, Bytes, keccak256};
+use alloy_rlp::{Encodable, Result};
+use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
 use op_alloy_consensus::{
     EIP1559ParamError, OpTxEnvelope, decode_eip_1559_params, encode_holocene_extra_data,
     encode_jovian_extra_data,
 };
+use sha2::Digest;
 
 /// Optimism Payload Attributes
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -52,6 +53,61 @@ pub struct OpPayloadAttributes {
 }
 
 impl OpPayloadAttributes {
+    /// Generates the payload id for the configured payload from the [`OpPayloadAttributes`].
+    ///
+    /// Returns an 8-byte identifier by hashing the payload components with sha256 hash.
+    ///
+    /// Note: This must be updated whenever the [`OpPayloadAttributes`] changes for a hardfork.
+    /// See also <https://github.com/ethereum-optimism/op-geth/blob/d401af16f2dd94b010a72eaef10e07ac10b31931/miner/payload_building.go#L59-L59>
+    pub fn payload_id(&self, parent: &B256, payload_version: u8) -> PayloadId {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(parent.as_slice());
+        hasher.update(&self.payload_attributes.timestamp.to_be_bytes()[..]);
+        hasher.update(self.payload_attributes.prev_randao.as_slice());
+        hasher.update(self.payload_attributes.suggested_fee_recipient.as_slice());
+        if let Some(withdrawals) = &self.payload_attributes.withdrawals {
+            let mut buf = Vec::new();
+            withdrawals.encode(&mut buf);
+            hasher.update(buf);
+        }
+
+        if let Some(parent_beacon_block) = self.payload_attributes.parent_beacon_block_root {
+            hasher.update(parent_beacon_block);
+        }
+
+        let no_tx_pool = self.no_tx_pool.unwrap_or_default();
+        if no_tx_pool || self.transactions.as_ref().is_some_and(|txs| !txs.is_empty()) {
+            hasher.update([no_tx_pool as u8]);
+            let txs_len = self.transactions.as_ref().map(|txs| txs.len()).unwrap_or_default();
+            hasher.update(&txs_len.to_be_bytes()[..]);
+            if let Some(txs) = &self.transactions {
+                for tx in txs {
+                    // we have to just hash the bytes here because otherwise we would need to decode
+                    // the transactions here which really isn't ideal
+                    let tx_hash = keccak256(tx);
+                    // maybe we can try just taking the hash and not decoding
+                    hasher.update(tx_hash)
+                }
+            }
+        }
+
+        if let Some(gas_limit) = self.gas_limit {
+            hasher.update(gas_limit.to_be_bytes());
+        }
+
+        if let Some(eip_1559_params) = self.eip_1559_params {
+            hasher.update(eip_1559_params.as_slice());
+        }
+
+        if let Some(min_base_fee) = self.min_base_fee {
+            hasher.update(min_base_fee.to_be_bytes());
+        }
+
+        let mut out = hasher.finalize();
+        out[0] = payload_version;
+        PayloadId::new(out[..8].try_into().expect("sufficient length"))
+    }
+
     /// Encodes the `eip1559` parameters for the payload.
     pub fn get_holocene_extra_data(
         &self,
@@ -166,9 +222,76 @@ impl OpPayloadAttributes {
 mod test {
     use super::*;
     use alloc::vec;
-    use alloy_primitives::{Address, B256, b64};
+    use alloy_primitives::{Address, B256, FixedBytes, address, b64, b256, bytes};
     use alloy_rpc_types_engine::PayloadAttributes;
     use core::str::FromStr;
+
+    #[test]
+    fn test_payload_id_parity_op_geth() {
+        const PAYLOAD_VERSION: u8 = 3;
+
+        // INFO rollup_boost::server:received fork_choice_updated_v3 from builder and l2_client
+        // payload_id_builder="0x6ef26ca02318dcf9" payload_id_l2="0x03d2dae446d2a86a"
+        let expected =
+            PayloadId::new(FixedBytes::<8>::from_str("0x03d2dae446d2a86a").unwrap().into());
+        let attrs = OpPayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: 1728933301,
+                prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
+                suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
+                withdrawals: Some([].into()),
+                parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+            },
+            transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
+            no_tx_pool: None,
+            gas_limit: Some(30000000),
+            eip_1559_params: None,
+            min_base_fee: None,
+        };
+
+        // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
+        assert_eq!(
+            expected,
+            attrs.payload_id(
+                &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
+                // Payload version
+                PAYLOAD_VERSION
+            )
+        );
+    }
+
+    #[test]
+    fn test_payload_id_parity_op_geth_jovian() {
+        // <https://github.com/ethereum-optimism/op-geth/compare/optimism...mattsse:op-geth:matt/check-payload-id-equality>
+        const PAYLOAD_VERSION: u8 = 4;
+
+        let expected =
+            PayloadId::new(FixedBytes::<8>::from_str("0x046c65ffc4d659ec").unwrap().into());
+        let attrs = OpPayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: 1728933301,
+                prev_randao: b256!("0x9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"),
+                suggested_fee_recipient: address!("0x4200000000000000000000000000000000000011"),
+                withdrawals: Some([].into()),
+                parent_beacon_block_root: b256!("0x8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff").into(),
+            },
+            transactions: Some([bytes!("7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc")].into()),
+            no_tx_pool: None,
+            gas_limit: Some(30000000),
+            eip_1559_params: None,
+            min_base_fee: Some(100),
+        };
+
+        // Reth's `PayloadId` should match op-geth's `PayloadId`. This fails
+        assert_eq!(
+            expected,
+            attrs.payload_id(
+                &b256!("0x3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"),
+                // Payload version
+                PAYLOAD_VERSION
+            )
+        );
+    }
 
     #[test]
     fn test_serde_roundtrip_attributes_pre_holocene() {

@@ -38,6 +38,9 @@ alloy-serde = { workspace = true, optional = true }
 thiserror.workspace = true
 arbitrary = { workspace = true, features = ["derive"], optional = true }
 
+# hashing
+sha2.workspace = true
+
 derive_more = { workspace = true, features = ["as_ref", "deref_mut"] }
 
 [dev-dependencies]
