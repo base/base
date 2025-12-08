@@ -39,7 +39,7 @@ zepter-fix:
   zepter format features --fix
 
 # Runs tests across workspace with all features enabled
-test:
+test: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
 
@@ -65,7 +65,7 @@ clippy-fix:
     cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 # Builds the workspace with release
-build: build-contracts
+build:
     cargo build --release
 
 # Builds all targets in debug mode
