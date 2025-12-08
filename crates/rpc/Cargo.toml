@@ -76,6 +76,9 @@ futures-util.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true
 alloy-provider.workspace = true
+alloy-sol-macro.workspace = true
+alloy-sol-types.workspace = true
+alloy-contract.workspace = true
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["reth-optimism-cli"]

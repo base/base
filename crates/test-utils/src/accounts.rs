@@ -1,11 +1,16 @@
 //! Test accounts with pre-funded balances for integration testing
 
-use alloy_consensus::{SignableTransaction, TxLegacy};
+use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_primitives::{Address, Bytes, FixedBytes, U256, address, hex};
+use alloy_primitives::{Address, Bytes, FixedBytes, TxHash, address, hex};
 use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::Result;
+use op_alloy_network::TransactionBuilder;
+use op_alloy_rpc_types::OpTransactionRequest;
+use reth::{revm::context::TransactionType, rpc::compat::SignTxRequestError};
+
+use crate::node::BASE_CHAIN_ID;
 
 /// Hardcoded test account with a fixed private key
 #[derive(Debug, Clone)]
@@ -19,32 +24,62 @@ pub struct Account {
 }
 
 impl Account {
-    /// Sign a simple ETH transfer transaction and return the signed bytes
-    pub fn sign_transaction_bytes(
+    /// Constructs a signed CREATE transaction with a given nonce and
+    /// returns the signed bytes, contract address, and transaction hash
+    pub fn create_deployment_tx(
         &self,
-        to: Address,
-        value: U256,
+        bytecode: Bytes,
         nonce: u64,
-        chain_id: u64,
-    ) -> Result<Bytes> {
-        let key_bytes = hex::decode(self.private_key)?;
-        let key_fixed: FixedBytes<32> = FixedBytes::from_slice(&key_bytes);
-        let signer = PrivateKeySigner::from_bytes(&key_fixed)?;
+    ) -> Result<(Bytes, Address, TxHash)> {
+        let tx_request = OpTransactionRequest::default()
+            .from(self.address)
+            .transaction_type(TransactionType::Eip1559.into())
+            .with_gas_limit(500_000)
+            .with_max_fee_per_gas(1_000_000_000)
+            .with_max_priority_fee_per_gas(0)
+            .with_chain_id(BASE_CHAIN_ID)
+            .with_deploy_code(bytecode)
+            .with_nonce(nonce);
 
-        let tx = TxLegacy {
-            chain_id: Some(chain_id),
-            nonce,
-            gas_price: 200,
-            gas_limit: 21_000,
-            to: alloy_primitives::TxKind::Call(to),
-            value,
-            input: Bytes::new(),
-        };
-
-        let signature = signer.sign_hash_sync(&tx.signature_hash())?;
+        let tx = tx_request
+            .build_typed_tx()
+            .map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
+        let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;
         let signed_tx = tx.into_signed(signature);
+        let signed_tx_bytes = signed_tx.encoded_2718().into();
 
-        Ok(signed_tx.encoded_2718().into())
+        let contract_address = self.address.create(signed_tx.nonce());
+        Ok((signed_tx_bytes, contract_address, signed_tx.hash().clone()))
+    }
+
+    /// Sign a TransactionRequest and return the signed bytes
+    pub fn sign_txn_request(&self, tx_request: OpTransactionRequest) -> Result<(Bytes, TxHash)> {
+        let tx_request = tx_request
+            .from(self.address)
+            .transaction_type(TransactionType::Eip1559.into())
+            .with_gas_limit(500_000)
+            .with_chain_id(BASE_CHAIN_ID)
+            .with_max_fee_per_gas(1_000_000_000)
+            .with_max_priority_fee_per_gas(0);
+
+        let tx = tx_request
+            .build_typed_tx()
+            .map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
+        let signature = self.signer().sign_hash_sync(&tx.signature_hash())?;
+        let signed_tx = tx.into_signed(signature);
+        let signed_tx_bytes = signed_tx.encoded_2718().into();
+        let tx_hash = signed_tx.hash();
+        Ok((signed_tx_bytes, tx_hash.clone()))
+    }
+
+    /// Constructs and returns a PrivateKeySigner for the TestAccount
+    pub fn signer(&self) -> PrivateKeySigner {
+        let key_bytes =
+            hex::decode(self.private_key).expect("should be able to decode private key");
+        let key_fixed: FixedBytes<32> = FixedBytes::from_slice(&key_bytes);
+        PrivateKeySigner::from_bytes(&key_fixed)
+            .expect("should be able to build the PrivateKeySigner")
+            .into()
     }
 }
 

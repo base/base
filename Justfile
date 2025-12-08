@@ -39,7 +39,7 @@ zepter-fix:
   zepter format features --fix
 
 # Runs tests across workspace with all features enabled
-test:
+test: build-contracts
     @command -v cargo-nextest >/dev/null 2>&1 || cargo install cargo-nextest
     RUSTFLAGS="-D warnings" cargo nextest run --workspace --all-features
 
@@ -80,17 +80,21 @@ build-maxperf:
 build-node:
     cargo build --bin base-reth-node
 
+# Build the contracts used for tests
+build-contracts:
+    cd crates/test-utils/contracts && forge build
+
 # Cleans the workspace
 clean:
     cargo clean
 
 # Checks if there are any unused dependencies
-check-udeps:
+check-udeps: build-contracts
   @command -v cargo-udeps >/dev/null 2>&1 || cargo install cargo-udeps
   cargo +nightly udeps --workspace --all-features --all-targets
 
 # Watches tests
-watch-test:
+watch-test: build-contracts
     cargo watch -x test
 
 # Watches checks
