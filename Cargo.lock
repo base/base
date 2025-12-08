@@ -1592,6 +1592,7 @@ dependencies = [
  "base-reth-test-utils",
  "brotli",
  "bytes",
+ "derive_more",
  "eyre",
  "futures-util",
  "metrics",

@@ -78,16 +78,16 @@ impl Flashblock {
 #[derive(Debug, Display)]
 pub enum FlashblockDecodeError {
     /// Failed to deserialize the flashblock payload JSON into the expected struct.
-    #[display(fmt = "failed to parse flashblock payload JSON: {0}")]
+    #[display("failed to parse flashblock payload JSON: {_0}")]
     PayloadParse(serde_json::Error),
     /// Failed to deserialize the flashblock metadata into the expected struct.
-    #[display(fmt = "failed to parse flashblock metadata: {0}")]
+    #[display("failed to parse flashblock metadata: {_0}")]
     MetadataParse(serde_json::Error),
     /// Brotli decompression failed.
-    #[display(fmt = "failed to decompress brotli payload: {0}")]
+    #[display("failed to decompress brotli payload: {_0}")]
     Decompress(std::io::Error),
     /// The decompressed payload was not valid UTF-8 JSON.
-    #[display(fmt = "decompressed payload is not valid UTF-8 JSON: {0}")]
+    #[display("decompressed payload is not valid UTF-8 JSON: {_0}")]
     Utf8(std::string::FromUtf8Error),
 }
 
