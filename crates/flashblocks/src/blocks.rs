@@ -1,10 +1,11 @@
 //! Contains the [`Flashblock`] and [`Metadata`] types used in Flashblocks.
 
-use std::{fmt, io::Read};
+use std::io::Read;
 
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
+use derive_more::Display;
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -74,31 +75,20 @@ impl Flashblock {
 }
 
 /// Errors that can occur while decoding a flashblock payload.
-#[derive(Debug)]
+#[derive(Debug, Display)]
 pub enum FlashblockDecodeError {
     /// Failed to deserialize the flashblock payload JSON into the expected struct.
+    #[display(fmt = "failed to parse flashblock payload JSON: {0}")]
     PayloadParse(serde_json::Error),
     /// Failed to deserialize the flashblock metadata into the expected struct.
+    #[display(fmt = "failed to parse flashblock metadata: {0}")]
     MetadataParse(serde_json::Error),
     /// Brotli decompression failed.
+    #[display(fmt = "failed to decompress brotli payload: {0}")]
     Decompress(std::io::Error),
     /// The decompressed payload was not valid UTF-8 JSON.
+    #[display(fmt = "decompressed payload is not valid UTF-8 JSON: {0}")]
     Utf8(std::string::FromUtf8Error),
-}
-
-impl fmt::Display for FlashblockDecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PayloadParse(err) => {
-                write!(f, "failed to parse flashblock payload JSON: {err}")
-            }
-            Self::MetadataParse(err) => {
-                write!(f, "failed to parse flashblock metadata: {err}")
-            }
-            Self::Decompress(err) => write!(f, "failed to decompress brotli payload: {err}"),
-            Self::Utf8(err) => write!(f, "decompressed payload is not valid UTF-8 JSON: {err}"),
-        }
-    }
 }
 
 impl std::error::Error for FlashblockDecodeError {}

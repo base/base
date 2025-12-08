@@ -58,6 +58,7 @@ metrics-derive.workspace = true
 eyre.workspace = true
 brotli.workspace = true
 arc-swap.workspace = true
+derive_more = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 reth-provider.workspace = true
