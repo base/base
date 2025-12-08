@@ -13,10 +13,10 @@ mod state;
 pub use state::FlashblocksState;
 
 mod subscription;
-pub use subscription::{FlashblocksReceiver, FlashblocksSubscriber};
+pub use subscription::FlashblocksSubscriber;
 
 mod traits;
-pub use traits::{FlashblocksAPI, PendingBlocksAPI};
+pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
 mod blocks;
 pub use blocks::{Flashblock, Metadata};
