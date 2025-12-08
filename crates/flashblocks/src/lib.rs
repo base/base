@@ -19,4 +19,4 @@ mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
 mod blocks;
-pub use blocks::{Flashblock, Metadata};
+pub use blocks::{Flashblock, FlashblockDecodeError, Metadata};

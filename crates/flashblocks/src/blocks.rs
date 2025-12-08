@@ -1,11 +1,10 @@
 //! Contains the [`Flashblock`] and [`Metadata`] types used in Flashblocks.
 
-use std::io::Read;
+use std::{fmt, io::Read};
 
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
-use eyre::eyre;
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -40,14 +39,14 @@ pub struct Flashblock {
 
 impl Flashblock {
     /// Attempts to decode a flashblock from bytes that may be plain JSON or brotli-compressed JSON.
-    pub fn try_decode_message(bytes: impl Into<Bytes>) -> eyre::Result<Self> {
-        let text = try_parse_message(bytes.into())?;
+    pub fn try_decode_message(bytes: impl Into<Bytes>) -> Result<Self, FlashblockDecodeError> {
+        let text = Self::try_parse_message(bytes.into())?;
 
         let payload: FlashblocksPayloadV1 =
-            serde_json::from_str(&text).map_err(|e| eyre!("failed to parse message: {}", e))?;
+            serde_json::from_str(&text).map_err(FlashblockDecodeError::PayloadParse)?;
 
         let metadata: Metadata = serde_json::from_value(payload.metadata.clone())
-            .map_err(|e| eyre!("failed to parse message metadata: {}", e))?;
+            .map_err(FlashblockDecodeError::MetadataParse)?;
 
         Ok(Self {
             payload_id: payload.payload_id,
@@ -57,22 +56,52 @@ impl Flashblock {
             metadata,
         })
     }
-}
 
-fn try_parse_message(bytes: Bytes) -> eyre::Result<String> {
-    if let Ok(text) = std::str::from_utf8(&bytes)
-        && text.trim_start().starts_with('{')
-    {
-        return Ok(text.to_owned());
+    fn try_parse_message(bytes: Bytes) -> Result<String, FlashblockDecodeError> {
+        if let Ok(text) = std::str::from_utf8(&bytes)
+            && text.trim_start().starts_with('{')
+        {
+            return Ok(text.to_owned());
+        }
+
+        let mut decompressor = brotli::Decompressor::new(bytes.as_ref(), 4096);
+        let mut decompressed = Vec::new();
+        decompressor.read_to_end(&mut decompressed).map_err(FlashblockDecodeError::Decompress)?;
+
+        let text = String::from_utf8(decompressed).map_err(FlashblockDecodeError::Utf8)?;
+        Ok(text)
     }
-
-    let mut decompressor = brotli::Decompressor::new(bytes.as_ref(), 4096);
-    let mut decompressed = Vec::new();
-    decompressor.read_to_end(&mut decompressed)?;
-
-    let text = String::from_utf8(decompressed)?;
-    Ok(text)
 }
+
+/// Errors that can occur while decoding a flashblock payload.
+#[derive(Debug)]
+pub enum FlashblockDecodeError {
+    /// Failed to deserialize the flashblock payload JSON into the expected struct.
+    PayloadParse(serde_json::Error),
+    /// Failed to deserialize the flashblock metadata into the expected struct.
+    MetadataParse(serde_json::Error),
+    /// Brotli decompression failed.
+    Decompress(std::io::Error),
+    /// The decompressed payload was not valid UTF-8 JSON.
+    Utf8(std::string::FromUtf8Error),
+}
+
+impl fmt::Display for FlashblockDecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PayloadParse(err) => {
+                write!(f, "failed to parse flashblock payload JSON: {err}")
+            }
+            Self::MetadataParse(err) => {
+                write!(f, "failed to parse flashblock metadata: {err}")
+            }
+            Self::Decompress(err) => write!(f, "failed to decompress brotli payload: {err}"),
+            Self::Utf8(err) => write!(f, "decompressed payload is not valid UTF-8 JSON: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for FlashblockDecodeError {}
 
 #[cfg(test)]
 mod tests {
