@@ -65,7 +65,7 @@ clippy-fix:
     cargo clippy --all-targets --fix --allow-dirty --allow-staged
 
 # Builds the workspace with release
-build:
+build: build-contracts
     cargo build --release
 
 # Builds all targets in debug mode
