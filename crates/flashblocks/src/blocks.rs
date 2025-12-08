@@ -5,7 +5,7 @@ use std::io::Read;
 use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
-use derive_more::Display;
+use derive_more::{Display, Error};
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{
     ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
@@ -75,7 +75,7 @@ impl Flashblock {
 }
 
 /// Errors that can occur while decoding a flashblock payload.
-#[derive(Debug, Display)]
+#[derive(Debug, Display, Error)]
 pub enum FlashblockDecodeError {
     /// Failed to deserialize the flashblock payload JSON into the expected struct.
     #[display("failed to parse flashblock payload JSON: {_0}")]
@@ -90,8 +90,6 @@ pub enum FlashblockDecodeError {
     #[display("decompressed payload is not valid UTF-8 JSON: {_0}")]
     Utf8(std::string::FromUtf8Error),
 }
-
-impl std::error::Error for FlashblockDecodeError {}
 
 #[cfg(test)]
 mod tests {
