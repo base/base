@@ -22,8 +22,8 @@ fn main() {
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
         let runner = BaseNodeRunner::new(args);
-        let handle = runner.build(builder).await?;
-        runner.run(handle).await
+        let handle = runner.run(builder);
+        handle.await
     })
     .unwrap();
 }

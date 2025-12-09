@@ -6,6 +6,9 @@
 mod context;
 pub use context::BaseNodeBuilder;
 
+mod handle;
+pub use handle::BaseNodeHandle;
+
 mod runner;
 pub use runner::BaseNodeRunner;
 

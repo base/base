@@ -1701,6 +1701,7 @@ dependencies = [
  "base-reth-flashblocks",
  "base-reth-rpc",
  "base-tracex",
+ "derive_more",
  "eyre",
  "futures-util",
  "once_cell",

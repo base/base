@@ -5,14 +5,14 @@ use std::sync::Arc;
 use eyre::Result;
 use once_cell::sync::OnceCell;
 use reth::{
-    builder::{EngineNodeLauncher, Node, NodeHandle, NodeHandleFor, TreeConfig},
+    builder::{EngineNodeLauncher, Node, NodeHandleFor, TreeConfig},
     providers::providers::BlockchainProvider,
 };
 use reth_optimism_node::OpNode;
 use tracing::info;
 
 use crate::{
-    BaseNodeBuilder, BaseNodeConfig, BaseRpcExtension, FlashblocksCanonExtension,
+    BaseNodeBuilder, BaseNodeConfig, BaseNodeHandle, BaseRpcExtension, FlashblocksCanonExtension,
     TransactionTracingExtension,
 };
 
@@ -34,14 +34,21 @@ impl BaseNodeRunner {
         &self.config
     }
 
-    /// Applies all Base-specific wiring to the supplied builder and launches the node, returning its handle.
-    pub async fn build(&self, builder: BaseNodeBuilder) -> Result<NodeHandleFor<OpNode>> {
+    /// Applies all Base-specific wiring to the supplied builder, launches the node, and returns a handle that can be awaited.
+    pub fn run(&self, builder: BaseNodeBuilder) -> BaseNodeHandle {
+        BaseNodeHandle::new(Self::launch_node(self.config.clone(), builder))
+    }
+
+    async fn launch_node(
+        config: BaseNodeConfig,
+        builder: BaseNodeBuilder,
+    ) -> Result<NodeHandleFor<OpNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
-        let op_node = OpNode::new(self.config.rollup_args.clone());
+        let op_node = OpNode::new(config.rollup_args.clone());
 
         let flashblocks_cell = Arc::new(OnceCell::new());
-        let flashblocks_config = self.config.flashblocks.clone();
+        let flashblocks_config = config.flashblocks.clone();
 
         let builder = builder
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()
@@ -55,14 +62,14 @@ impl BaseNodeRunner {
         let builder = flashblocks_extension.apply(builder);
 
         // Apply the Transaction Tracing extension
-        let tracing_extension = TransactionTracingExtension::new(self.config.tracing);
+        let tracing_extension = TransactionTracingExtension::new(config.tracing);
         let builder = tracing_extension.apply(builder);
 
         let rpc_extension = BaseRpcExtension::new(
             flashblocks_cell.clone(),
             flashblocks_config.clone(),
-            self.config.metering_enabled,
-            self.config.rollup_args.sequencer.clone(),
+            config.metering_enabled,
+            config.rollup_args.sequencer.clone(),
         );
         let builder = rpc_extension.apply(builder);
 
@@ -83,11 +90,5 @@ impl BaseNodeRunner {
                 builder.launch_with(launcher)
             })
             .await
-    }
-
-    /// Runs the previously constructed node until it exits.
-    pub async fn run(&self, handle: NodeHandleFor<OpNode>) -> Result<()> {
-        let NodeHandle { node: _, node_exit_future } = handle;
-        node_exit_future.await
     }
 }
