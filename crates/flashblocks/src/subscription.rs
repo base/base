@@ -1,21 +1,14 @@
 //! WebSocket subscription handling for flashblocks.
 
-use std::{io::Read, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use futures_util::{SinkExt as _, StreamExt};
-use rollup_boost::FlashblocksPayloadV1;
 use tokio::{sync::mpsc, time::interval};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use crate::{Flashblock, Metadata, Metrics};
-
-/// Trait for receiving flashblock updates.
-pub trait FlashblocksReceiver {
-    /// Called when a new flashblock is received.
-    fn on_flashblock_received(&self, flashblock: Flashblock);
-}
+use crate::{Flashblock, FlashblocksReceiver, Metrics};
 
 // Simplify actor messages to just handle shutdown
 #[derive(Debug)]
@@ -78,7 +71,7 @@ where
                                     metrics.upstream_messages.increment(1);
 
                                     match msg {
-                                        Ok(Message::Binary(bytes)) => match try_decode_message(&bytes) {
+                                        Ok(Message::Binary(bytes)) => match Flashblock::try_decode_message(bytes) {
                                             Ok(payload) => {
                                                 let _ = sender.send(ActorMessage::BestPayload { payload: payload.clone() }).await.map_err(|e| {
                                                     error!(message = "Failed to publish message to channel", error = %e);
@@ -181,45 +174,4 @@ where
         tokio::time::sleep(backoff).await;
         std::cmp::min(backoff * 2, Self::MAX_BACKOFF)
     }
-}
-
-fn try_decode_message(bytes: &[u8]) -> eyre::Result<Flashblock> {
-    let text = try_parse_message(bytes)?;
-
-    let payload: FlashblocksPayloadV1 = match serde_json::from_str(&text) {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(eyre::eyre!("failed to parse message: {}", e));
-        }
-    };
-
-    let metadata: Metadata = match serde_json::from_value(payload.metadata.clone()) {
-        Ok(m) => m,
-        Err(e) => {
-            return Err(eyre::eyre!("failed to parse message metadata: {}", e));
-        }
-    };
-
-    Ok(Flashblock {
-        payload_id: payload.payload_id,
-        index: payload.index,
-        base: payload.base,
-        diff: payload.diff,
-        metadata,
-    })
-}
-
-fn try_parse_message(bytes: &[u8]) -> eyre::Result<String> {
-    if let Ok(text) = String::from_utf8(bytes.to_vec())
-        && text.trim_start().starts_with("{")
-    {
-        return Ok(text);
-    }
-
-    let mut decompressor = brotli::Decompressor::new(bytes, 4096);
-    let mut decompressed = Vec::new();
-    decompressor.read_to_end(&mut decompressed)?;
-
-    let text = String::from_utf8(decompressed)?;
-    Ok(text)
 }

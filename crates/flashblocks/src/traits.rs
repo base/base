@@ -11,7 +11,13 @@ use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use tokio::sync::broadcast;
 
-use crate::PendingBlocks;
+use crate::{Flashblock, PendingBlocks};
+
+/// Trait for receiving flashblock updates.
+pub trait FlashblocksReceiver {
+    /// Called when a new flashblock is received.
+    fn on_flashblock_received(&self, flashblock: Flashblock);
+}
 
 /// Core API for accessing flashblock state and data.
 pub trait FlashblocksAPI {
