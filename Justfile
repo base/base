@@ -100,3 +100,7 @@ watch-test: build-contracts
 # Watches checks
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+
+# Runs flashblocks pending state benchmarks
+bench-flashblocks:
+    cargo bench -p base-reth-flashblocks --bench pending_state
