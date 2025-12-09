@@ -14,27 +14,27 @@ workspace = true
 [dependencies]
 # reth
 reth.workspace = true
-reth-rpc-eth-api.workspace = true
 reth-evm.workspace = true
-reth-optimism-primitives.workspace = true
+reth-primitives.workspace = true
+reth-rpc-eth-api.workspace = true
 reth-rpc-convert.workspace = true
 reth-optimism-rpc.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-primitives.workspace = true
+reth-optimism-primitives.workspace = true
 
 # alloy
-alloy-primitives.workspace = true
 alloy-eips.workspace = true
-alloy-rpc-types.workspace = true
-alloy-rpc-types-engine.workspace = true
-alloy-rpc-types-eth.workspace = true
-alloy-consensus.workspace = true
 alloy-provider.workspace = true
+alloy-rpc-types.workspace = true
+alloy-consensus.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-engine.workspace = true
 
 # op-alloy
-op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
 op-alloy-consensus.workspace = true
 
 # rollup-boost
@@ -48,30 +48,30 @@ tokio-tungstenite.workspace = true
 futures-util.workspace = true
 
 # misc
-bytes = "1.9.0"
-tracing.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 url.workspace = true
-metrics.workspace = true
-metrics-derive.workspace = true
 eyre.workspace = true
+bytes.workspace = true
+serde.workspace = true
 brotli.workspace = true
+tracing.workspace = true
+metrics.workspace = true
 arc-swap.workspace = true
+serde_json.workspace = true
+metrics-derive.workspace = true
 derive_more = { workspace = true, features = ["display", "error"] }
 
 [dev-dependencies]
-reth-provider.workspace = true
-op-alloy-consensus.workspace = true
-reth-optimism-primitives.workspace = true
-reth-primitives-traits.workspace = true
-alloy-rpc-client.workspace = true
-base-reth-test-utils.workspace = true
 rand.workspace = true
+rstest.workspace = true
 reth-db.workspace = true
-reth-testing-utils.workspace = true
-reth-db-common.workspace = true
-reth-e2e-test-utils.workspace = true
 once_cell.workspace = true
+reth-provider.workspace = true
+reth-db-common.workspace = true
+alloy-rpc-client.workspace = true
+op-alloy-consensus.workspace = true
+reth-testing-utils.workspace = true
 tracing-subscriber.workspace = true
-rstest = "0.23.0"
+reth-e2e-test-utils.workspace = true
+base-reth-test-utils.workspace = true
+reth-primitives-traits.workspace = true
+reth-optimism-primitives.workspace = true
