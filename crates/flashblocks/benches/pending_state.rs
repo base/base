@@ -13,7 +13,7 @@ use base_reth_flashblocks::{
     Flashblock, FlashblocksAPI, FlashblocksReceiver, FlashblocksState, Metadata,
 };
 use base_reth_test_utils::{accounts::TestAccounts, harness::TestHarness, node::LocalNodeProvider};
-use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use op_alloy_consensus::OpDepositReceipt;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
@@ -88,7 +88,7 @@ fn pending_state_benches(c: &mut Criterion) {
     init_bench_tracing();
 
     let runtime = Runtime::new().expect("tokio runtime should start");
-    let setup = runtime.block_on(BenchSetup::new(&[5, 25]));
+    let setup = runtime.block_on(BenchSetup::new(&[5, 25, 100]));
     let mut group = c.benchmark_group("pending_state_build");
 
     for (label, flashblocks) in setup.flashblocks {
@@ -97,6 +97,9 @@ fn pending_state_benches(c: &mut Criterion) {
         let target_block = setup.target_block;
         let flashblocks = flashblocks.clone();
         let last_index = flashblocks.last().map(|fb| fb.index).unwrap_or_default();
+        let tx_count = flashblocks.iter().map(|fb| fb.diff.transactions.len()).sum::<usize>();
+
+        group.throughput(Throughput::Elements(tx_count as u64));
 
         group.bench_function(label, |b| {
             b.to_async(&runtime).iter_batched(
