@@ -2,6 +2,8 @@
 
 use reth_optimism_node::args::RollupArgs;
 
+use crate::extensions::FlashblocksCell;
+
 /// Captures the pieces of CLI configuration that the node logic cares about.
 #[derive(Debug, Clone)]
 pub struct BaseNodeConfig {
@@ -13,6 +15,8 @@ pub struct BaseNodeConfig {
     pub tracing: TracingConfig,
     /// Indicates whether the metering RPC surface should be installed.
     pub metering_enabled: bool,
+    /// Shared Flashblocks state cache.
+    pub flashblocks_cell: FlashblocksCell,
 }
 
 impl BaseNodeConfig {

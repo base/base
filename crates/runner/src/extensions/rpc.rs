@@ -11,8 +11,8 @@ use tracing::info;
 use url::Url;
 
 use crate::{
-    FlashblocksConfig,
-    extensions::{FlashblocksCell, OpBuilder},
+    BaseNodeConfig, FlashblocksConfig,
+    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, OpBuilder},
 };
 
 /// Helper struct that wires the custom RPC modules into the node builder.
@@ -30,17 +30,19 @@ pub struct BaseRpcExtension {
 
 impl BaseRpcExtension {
     /// Creates a new RPC extension helper.
-    pub const fn new(
-        flashblocks_cell: FlashblocksCell,
-        flashblocks: Option<FlashblocksConfig>,
-        metering_enabled: bool,
-        sequencer_rpc: Option<String>,
-    ) -> Self {
-        Self { flashblocks_cell, flashblocks, metering_enabled, sequencer_rpc }
+    pub fn new(config: &BaseNodeConfig) -> Self {
+        Self {
+            flashblocks_cell: config.flashblocks_cell.clone(),
+            flashblocks: config.flashblocks.clone(),
+            metering_enabled: config.metering_enabled,
+            sequencer_rpc: config.rollup_args.sequencer.clone(),
+        }
     }
+}
 
+impl BaseNodeExtension for BaseRpcExtension {
     /// Applies the extension to the supplied builder.
-    pub fn apply(&self, builder: OpBuilder) -> OpBuilder {
+    fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let flashblocks_cell = self.flashblocks_cell.clone();
         let flashblocks = self.flashblocks.clone();
         let metering_enabled = self.metering_enabled;
@@ -91,5 +93,11 @@ impl BaseRpcExtension {
 
             Ok(())
         })
+    }
+}
+
+impl ConfigurableBaseNodeExtension for BaseRpcExtension {
+    fn build(config: &BaseNodeConfig) -> eyre::Result<Self> {
+        Ok(Self::new(config))
     }
 }

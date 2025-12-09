@@ -1635,6 +1635,7 @@ dependencies = [
  "base-reth-cli",
  "base-reth-runner",
  "clap",
+ "once_cell",
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
