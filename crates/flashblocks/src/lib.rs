@@ -9,6 +9,9 @@ pub use metrics::Metrics;
 mod pending_blocks;
 pub use pending_blocks::{PendingBlocks, PendingBlocksBuilder};
 
+mod processor;
+pub use processor::{StateProcessor, StateUpdate};
+
 mod state;
 pub use state::FlashblocksState;
 
