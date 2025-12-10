@@ -8,6 +8,13 @@ use std::{
 use alloy_primitives::TxHash;
 use chrono::Local;
 use lru::LruCache;
+use reth::{
+    api::{BlockBody, NodePrimitives},
+    core::primitives::{AlloyBlockHeader, transaction::TxHashRef},
+    providers::Chain,
+    transaction_pool::{FullTransactionEvent, PoolTransaction},
+};
+use reth_exex::{ExExEvent, ExExNotification};
 use reth_tracing::tracing::{debug, info};
 
 use crate::{EventLog, Pool, TxEvent};
@@ -33,6 +40,60 @@ impl Tracker {
             txs: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             tx_states: LruCache::new(NonZeroUsize::new(Self::MAX_SIZE).expect("non zero")),
             enable_logs,
+        }
+    }
+
+    /// Parse [`FullTransactionEvent`]s and update the tracker.
+    pub fn handle_event<T: PoolTransaction>(&mut self, event: FullTransactionEvent<T>) {
+        match event {
+            FullTransactionEvent::Pending(tx_hash) => {
+                self.transaction_inserted(tx_hash, TxEvent::Pending);
+                self.transaction_moved(tx_hash, Pool::Pending);
+            }
+            FullTransactionEvent::Queued(tx_hash, _) => {
+                self.transaction_inserted(tx_hash, TxEvent::Queued);
+                self.transaction_moved(tx_hash, Pool::Queued);
+            }
+            FullTransactionEvent::Discarded(tx_hash) => {
+                self.transaction_completed(tx_hash, TxEvent::Dropped);
+            }
+            FullTransactionEvent::Replaced { transaction, replaced_by } => {
+                let tx_hash = transaction.hash();
+                self.transaction_replaced(*tx_hash, TxHash::from(replaced_by));
+            }
+            _ => {
+                // Other events.
+            }
+        }
+    }
+
+    /// Parse [`ExExNotification`]s and update the tracker.
+    pub fn handle_notification<N: NodePrimitives>(
+        &mut self,
+        notification: ExExNotification<N>,
+    ) -> ExExEvent {
+        match notification {
+            ExExNotification::ChainCommitted { new } => {
+                self.track_committed_chain(&new);
+                ExExEvent::FinishedHeight(new.tip().num_hash())
+            }
+            ExExNotification::ChainReorged { old: _, new } => {
+                debug!(target: "tracex", tip = ?new.tip().number(), "Chain reorg detected");
+                self.track_committed_chain(&new);
+                ExExEvent::FinishedHeight(new.tip().num_hash())
+            }
+            ExExNotification::ChainReverted { old } => {
+                debug!(target: "tracex", old_tip = ?old.tip().number(), "Chain reverted");
+                ExExEvent::FinishedHeight(old.tip().num_hash())
+            }
+        }
+    }
+
+    fn track_committed_chain<N: NodePrimitives>(&mut self, chain: &Chain<N>) {
+        for block in chain.blocks().values() {
+            for transaction in block.body().transactions() {
+                self.transaction_completed(*transaction.tx_hash(), TxEvent::BlockInclusion);
+            }
         }
     }
 
@@ -79,7 +140,7 @@ impl Tracker {
                 event_log.push(Local::now(), event);
                 self.txs.put(tx_hash, event_log);
 
-                record_histogram(time_in_mempool, event);
+                Self::record_histogram(time_in_mempool, event);
             }
         }
 
@@ -103,7 +164,7 @@ impl Tracker {
 
             // If a tx is included/dropped, log it now.
             self.log(&tx_hash, &event_log, &format!("Transaction {event}"));
-            record_histogram(time_in_mempool, event);
+            Self::record_histogram(time_in_mempool, event);
         }
     }
 
@@ -121,10 +182,11 @@ impl Tracker {
             event_log.push(Local::now(), TxEvent::Replaced);
             self.txs.put(replaced_by, event_log);
 
-            record_histogram(time_in_mempool, TxEvent::Replaced);
+            Self::record_histogram(time_in_mempool, TxEvent::Replaced);
         }
     }
 
+    /// Logs an [`EventLog`] through tracing.
     fn log(&self, tx_hash: &TxHash, event_log: &EventLog, msg: &str) {
         if !self.enable_logs {
             return;
@@ -144,12 +206,13 @@ impl Tracker {
         }
 
         self.log(tx_hash, event_log, "Transaction removed from cache due to limit");
-        record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
+        Self::record_histogram(event_log.mempool_time.elapsed(), TxEvent::Overflowed);
         true
     }
-}
 
-fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
-    metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
-        .record(time_in_mempool.as_millis() as f64);
+    /// Records a metrics histogram.
+    fn record_histogram(time_in_mempool: Duration, event: TxEvent) {
+        metrics::histogram!("reth_transaction_tracing_tx_event", "event" => event.to_string())
+            .record(time_in_mempool.as_millis() as f64);
+    }
 }
