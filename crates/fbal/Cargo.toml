@@ -13,11 +13,12 @@ workspace = true
 
 [dependencies]
 alloy-primitives.workspace = true
-alloy-eip7928 = {workspace = true, features = ["serde"]}
+alloy-eip7928 = {workspace = true, features = ["serde", "rlp"]}
 reth-evm.workspace = true
 reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 alloy-consensus.workspace = true
+alloy-rlp = {workspace = true, features = ["derive"]}
 
 revm.workspace = true
 op-revm.workspace = true

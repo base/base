@@ -44,7 +44,7 @@ fn execute_txns_build_access_list(
         fal_hash: B256::ZERO,
     };
 
-    for tx in txs {
+    for (idx, tx) in txs.into_iter().enumerate() {
         let inspector = TouchedAccountsInspector::default();
         let evm_env = evm_config.evm_env(&header).unwrap();
         let mut evm = evm_config.evm_with_env_and_inspector(db, evm_env, inspector);
@@ -75,26 +75,28 @@ fn execute_txns_build_access_list(
                 initial_account.map(|a| a.is_empty_code_hash()).unwrap_or_default();
 
             if initial_balance != account.info.balance {
-                entry.balance_changes.push(BalanceChange::new(0, account.info.balance));
+                entry.balance_changes.push(BalanceChange::new(idx as u64, account.info.balance));
             }
 
             if initial_nonce != account.info.nonce {
-                entry.nonce_changes.push(NonceChange::new(0, account.info.nonce));
+                entry.nonce_changes.push(NonceChange::new(idx as u64, account.info.nonce));
             }
 
             if initially_no_code && !account.info.is_empty_code_hash() {
                 entry
                     .code_changes
-                    .push(CodeChange::new(0, account.info.code.as_ref().unwrap().bytes()));
+                    .push(CodeChange::new(idx as u64, account.info.code.as_ref().unwrap().bytes()));
             }
         }
 
         evm.db_mut().commit(state);
         db = evm.into_db();
 
-        access_list.account_changes.extend(account_changes.values().cloned());
+        access_list.merge_account_changes(account_changes.values().cloned().collect());
+        // access_list.account_changes.extend(account_changes.values().cloned());
     }
 
+    access_list.finalize();
     access_list
 }
 
@@ -113,6 +115,8 @@ pub fn test_precompiles() {
 pub fn test_single_transfer() {
     let sender = U256::from(0xDEAD).into_address();
     let recipient = U256::from(0xBEEF).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
 
     let tx = OpTransaction::builder()
         .base(
@@ -127,8 +131,37 @@ pub fn test_single_transfer() {
                 .gas_limit(21_100),
         )
         .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+    dbg!(access_list);
+}
+
+#[test]
+pub fn test_multiple_transfers() {
+    let sender = U256::from(0xDEAD).into_address();
+    let recipient = U256::from(0xBEEF).into_address();
     let mut overrides = HashMap::new();
     overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
-    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+
+    let mut txs = Vec::new();
+    for i in 0..10 {
+        let tx = OpTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(sender)
+                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .nonce(i)
+                    .kind(TxKind::Call(recipient))
+                    .value(U256::from(1_000_000))
+                    .gas_price(0)
+                    .gas_priority_fee(None)
+                    .max_fee_per_gas(0)
+                    .gas_limit(21_100),
+            )
+            .build_fill();
+        txs.push(tx);
+    }
+
+    let access_list = execute_txns_build_access_list(txs, Some(overrides));
     dbg!(access_list);
 }
