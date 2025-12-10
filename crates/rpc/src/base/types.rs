@@ -18,10 +18,10 @@ pub struct TransactionStatusResponse {
     pub status: Status,
 }
 
-/// Subscription kind for Base-specific subscriptions
+/// Subscription kind for flashblocks-specific eth_subscribe subscriptions
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum BaseSubscriptionKind {
+pub enum EthSubscriptionKind {
     /// New flashblocks subscription.
     ///
     /// Fires a notification each time a new flashblock is processed, providing the current

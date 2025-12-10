@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use base_reth_flashblocks::{FlashblocksState, FlashblocksSubscriber};
 use base_reth_rpc::{
-    BasePubSub, BasePubSubApiServer, EthApiExt, EthApiOverrideServer, MeteringApiImpl,
+    EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer, MeteringApiImpl,
     MeteringApiServer, TransactionStatusApiImpl, TransactionStatusApiServer,
 };
 use tracing::info;
@@ -82,9 +82,10 @@ impl BaseRpcExtension {
                 );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
-                // Register the base_subscribe subscription endpoint
-                let base_pubsub = BasePubSub::new(fb);
-                ctx.modules.merge_configured(base_pubsub.into_rpc())?;
+                // Register the eth_subscribe subscription endpoint for flashblocks
+                // Uses replace_configured since eth_subscribe already exists from reth's standard module
+                let eth_pubsub = EthPubSub::new(fb);
+                ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
             } else {
                 info!(message = "flashblocks integration is disabled");
             }

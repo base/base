@@ -1,4 +1,4 @@
-//! `base_` PubSub RPC implementation for flashblocks subscriptions
+//! `eth_` PubSub RPC extension for flashblocks subscriptions
 
 use std::sync::Arc;
 
@@ -15,30 +15,30 @@ use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::BaseSubscriptionKind;
+use crate::EthSubscriptionKind;
 
-/// Base pub-sub RPC interface for flashblocks subscriptions.
-#[rpc(server, namespace = "base")]
-pub trait BasePubSubApi {
-    /// Create a Base subscription for the given kind
+/// Eth pub-sub RPC extension for flashblocks subscriptions.
+#[rpc(server, namespace = "eth")]
+pub trait EthPubSubApi {
+    /// Create an Eth subscription for the given kind
     #[subscription(
         name = "subscribe" => "subscription",
         unsubscribe = "unsubscribe",
         item = RpcBlock<Optimism>
     )]
-    async fn subscribe(&self, kind: BaseSubscriptionKind) -> SubscriptionResult;
+    async fn subscribe(&self, kind: EthSubscriptionKind) -> SubscriptionResult;
 }
 
-/// `Base` pubsub RPC implementation.
+/// `Eth` pubsub RPC extension implementation.
 ///
-/// This handles `base_subscribe` RPC calls for flashblocks-specific subscriptions.
+/// This handles `eth_subscribe` RPC calls for flashblocks-specific subscriptions.
 #[derive(Clone, Debug)]
-pub struct BasePubSub<FB> {
+pub struct EthPubSub<FB> {
     /// Flashblocks state for accessing pending blocks stream
     flashblocks_state: Arc<FB>,
 }
 
-impl<FB> BasePubSub<FB> {
+impl<FB> EthPubSub<FB> {
     /// Creates a new instance with the given flashblocks state
     pub const fn new(flashblocks_state: Arc<FB>) -> Self {
         Self { flashblocks_state }
@@ -66,20 +66,20 @@ impl<FB> BasePubSub<FB> {
 }
 
 #[async_trait]
-impl<FB> BasePubSubApiServer for BasePubSub<FB>
+impl<FB> EthPubSubApiServer for EthPubSub<FB>
 where
     FB: FlashblocksAPI + Send + Sync + 'static,
 {
-    /// Handler for `base_subscribe`
+    /// Handler for `eth_subscribe`
     async fn subscribe(
         &self,
         pending: PendingSubscriptionSink,
-        kind: BaseSubscriptionKind,
+        kind: EthSubscriptionKind,
     ) -> SubscriptionResult {
         let sink = pending.accept().await?;
 
         match kind {
-            BaseSubscriptionKind::NewFlashblocks => {
+            EthSubscriptionKind::NewFlashblocks => {
                 let stream = Self::new_flashblocks_stream(Arc::clone(&self.flashblocks_state));
 
                 tokio::spawn(async move {
