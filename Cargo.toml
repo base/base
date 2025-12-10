@@ -50,6 +50,7 @@ lto = "fat"
 codegen-units = 1
 
 [workspace.dependencies]
+# local
 base-fbal = { path = "crates/fbal" }
 base-reth-cli = { path = "crates/cli" }
 base-reth-rpc = { path = "crates/rpc" }
@@ -59,8 +60,7 @@ base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-flashblocks = { path = "crates/flashblocks" }
 
 # base/tips
-# Note: default-features = false avoids version conflicts with reth's alloy/op-alloy dependencies
-tips-core = { git = "https://github.com/base/tips", rev = "a21ee492dede17f31eea108c12c669a8190f31aa", default-features = false }
+tips-core = { git = "https://github.com/base/tips", rev = "b1dfde6a5c8f603f19f9309ca6dc015bad260b44" }
 
 # rollup-boost
 rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "v0.7.11" }
