@@ -83,6 +83,19 @@ impl<T> OpReceipt<T> {
         }
     }
 
+    /// Converts the receipt's log type by applying a function to each log.
+    ///
+    /// Returns the receipt with the new log type
+    pub fn map_logs<U>(self, f: impl FnMut(T) -> U) -> OpReceipt<U> {
+        match self {
+            Self::Legacy(receipt) => OpReceipt::Legacy(receipt.map_logs(f)),
+            Self::Eip2930(receipt) => OpReceipt::Eip2930(receipt.map_logs(f)),
+            Self::Eip1559(receipt) => OpReceipt::Eip1559(receipt.map_logs(f)),
+            Self::Eip7702(receipt) => OpReceipt::Eip7702(receipt.map_logs(f)),
+            Self::Deposit(receipt) => OpReceipt::Deposit(receipt.map_logs(f)),
+        }
+    }
+
     /// Returns length of RLP-encoded receipt fields with the given [`Bloom`] without an RLP header.
     pub fn rlp_encoded_fields_length(&self, bloom: &Bloom) -> usize
     where
