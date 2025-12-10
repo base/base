@@ -1,5 +1,5 @@
 [package]
-name = "base-reth-fbal"
+name = "base-fbal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,5 +12,17 @@ description = "FBAL library crate"
 workspace = true
 
 [dependencies]
+alloy-primitives.workspace = true
+alloy-eip7928 = {workspace = true, features = ["serde"]}
+reth-evm.workspace = true
+reth-optimism-evm.workspace = true
+reth-optimism-chainspec.workspace = true
+alloy-consensus.workspace = true
+
+revm.workspace = true
+op-revm.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]

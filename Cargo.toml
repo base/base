@@ -100,6 +100,7 @@ revm-bytecode = { version = "7.1.1", default-features = false }
 # alloy
 alloy-trie = "0.9.1"
 alloy-eips = "1.0.41"
+alloy-eip7928 = { git = "https://github.com/alloy-rs/eips", version = "0.1.0"  }
 alloy-serde = "1.0.41"
 alloy-genesis = "1.0.41"
 alloy-hardforks = "0.4.4"
@@ -120,6 +121,9 @@ op-alloy-rpc-types = "0.22.0"
 op-alloy-consensus = "0.22.0"
 op-alloy-rpc-jsonrpsee = "0.22.0"
 op-alloy-rpc-types-engine = "0.22.0"
+
+# op-revm
+op-revm = { version = "12.0.2", default-features = false }
 
 # tokio
 tokio = "1.48.0"

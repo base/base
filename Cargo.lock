@@ -237,6 +237,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-eip7928"
+version = "0.1.0"
+source = "git+https://github.com/alloy-rs/eips#2197bdb48ae842b00f43b2cb29d59f20b29ec419"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "borsh",
+ "serde",
+]
+
+[[package]]
 name = "alloy-eips"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1566,15 +1577,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-fbal"
+version = "0.2.1"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eip7928",
+ "alloy-primitives",
+ "op-revm",
+ "reth-evm",
+ "reth-optimism-chainspec",
+ "reth-optimism-evm",
+ "revm",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "base-reth-cli"
 version = "0.2.1"
 dependencies = [
  "reth",
 ]
-
-[[package]]
-name = "base-reth-fbal"
-version = "0.2.1"
 
 [[package]]
 name = "base-reth-flashblocks"
