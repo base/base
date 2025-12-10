@@ -13,7 +13,7 @@ use tokio::time::sleep;
 use tracing::{debug, error};
 
 pub fn create_kafka_consumer(kafka_properties_file: &str) -> Result<StreamConsumer> {
-    let client_config =
+    let client_config: ClientConfig =
         ClientConfig::from_iter(load_kafka_config_from_file(kafka_properties_file)?);
     let consumer: StreamConsumer = client_config.create()?;
     Ok(consumer)

@@ -1,4 +1,4 @@
-use crate::types::{UserOperationRequest, UserOperationRequestValidationResult};
+use crate::types::{UserOperationRequestValidationResult, VersionedUserOperation};
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
@@ -10,7 +10,7 @@ use tokio::time::{Duration, timeout};
 pub trait AccountAbstractionService: Send + Sync {
     async fn validate_user_operation(
         &self,
-        user_operation: UserOperationRequest,
+        user_operation: &VersionedUserOperation,
     ) -> RpcResult<UserOperationRequestValidationResult>;
 }
 
@@ -24,7 +24,7 @@ pub struct AccountAbstractionServiceImpl {
 impl AccountAbstractionService for AccountAbstractionServiceImpl {
     async fn validate_user_operation(
         &self,
-        user_operation: UserOperationRequest,
+        user_operation: &VersionedUserOperation,
     ) -> RpcResult<UserOperationRequestValidationResult> {
         // Steps: Reputation Service Validate
         // Steps: Base Node Validate User Operation
@@ -45,7 +45,7 @@ impl AccountAbstractionServiceImpl {
 
     pub async fn base_node_validate_user_operation(
         &self,
-        user_operation: UserOperationRequest,
+        user_operation: &VersionedUserOperation,
     ) -> RpcResult<UserOperationRequestValidationResult> {
         let result = timeout(
             Duration::from_secs(self.validate_user_operation_timeout),
@@ -88,8 +88,8 @@ mod tests {
         MockServer::start().await
     }
 
-    fn new_test_user_operation_v06() -> UserOperationRequest {
-        UserOperationRequest::EntryPointV06(UserOperation {
+    fn new_test_user_operation_v06() -> VersionedUserOperation {
+        VersionedUserOperation::UserOperation(UserOperation {
             sender: Address::ZERO,
             nonce: U256::from(0),
             init_code: Bytes::default(),
@@ -126,7 +126,7 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(user_operation)
+            .base_node_validate_user_operation(&user_operation)
             .await;
 
         assert!(result.is_err());
@@ -153,7 +153,7 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(user_operation)
+            .base_node_validate_user_operation(&user_operation)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Internal error"));
@@ -178,7 +178,7 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(user_operation)
+            .base_node_validate_user_operation(&user_operation)
             .await
             .unwrap();
 

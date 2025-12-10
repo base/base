@@ -1,55 +1,52 @@
+use account_abstraction_core::types::VersionedUserOperation;
 use alloy_primitives::B256;
 use anyhow::Result;
 use async_trait::async_trait;
 use backon::{ExponentialBuilder, Retryable};
 use rdkafka::producer::{FutureProducer, FutureRecord};
+use std::sync::Arc;
 use tips_core::AcceptedBundle;
 use tokio::time::Duration;
 use tracing::{error, info};
 
-/// A queue to buffer transactions
 #[async_trait]
-pub trait QueuePublisher: Send + Sync {
-    async fn publish(&self, bundle: &AcceptedBundle, bundle_hash: &B256) -> Result<()>;
-}
-/// A queue to buffer transactions
-pub struct KafkaQueuePublisher {
-    producer: FutureProducer,
-    topic: String,
+pub trait MessageQueue: Send + Sync {
+    async fn publish(&self, topic: &str, key: &str, payload: &[u8]) -> Result<()>;
 }
 
-impl KafkaQueuePublisher {
-    pub fn new(producer: FutureProducer, topic: String) -> Self {
-        Self { producer, topic }
+pub struct KafkaMessageQueue {
+    producer: FutureProducer,
+}
+
+impl KafkaMessageQueue {
+    pub fn new(producer: FutureProducer) -> Self {
+        Self { producer }
     }
 }
 
 #[async_trait]
-impl QueuePublisher for KafkaQueuePublisher {
-    async fn publish(&self, bundle: &AcceptedBundle, bundle_hash: &B256) -> Result<()> {
-        let key = bundle_hash.to_string();
-        let payload = serde_json::to_vec(&bundle)?;
-
+impl MessageQueue for KafkaMessageQueue {
+    async fn publish(&self, topic: &str, key: &str, payload: &[u8]) -> Result<()> {
         let enqueue = || async {
-            let record = FutureRecord::to(&self.topic).key(&key).payload(&payload);
+            let record = FutureRecord::to(topic).key(key).payload(payload);
 
             match self.producer.send(record, Duration::from_secs(5)).await {
                 Ok((partition, offset)) => {
                     info!(
-                        bundle_hash = %bundle_hash,
+                        key = %key,
                         partition = partition,
                         offset = offset,
-                        topic = %self.topic,
-                        "Successfully enqueued bundle"
+                        topic = %topic,
+                        "Successfully enqueued message"
                     );
                     Ok(())
                 }
                 Err((err, _)) => {
                     error!(
-                        bundle_hash = %bundle_hash,
+                        key = key,
                         error = %err,
-                        topic = %self.topic,
-                        "Failed to enqueue bundle"
+                        topic = topic,
+                        "Failed to enqueue message"
                     );
                     Err(anyhow::anyhow!("Failed to enqueue bundle: {err}"))
                 }
@@ -64,9 +61,43 @@ impl QueuePublisher for KafkaQueuePublisher {
                     .with_max_times(3),
             )
             .notify(|err: &anyhow::Error, dur: Duration| {
-                info!("retrying to enqueue bundle {:?} after {:?}", err, dur);
+                info!("retrying to enqueue message {:?} after {:?}", err, dur);
             })
             .await
+    }
+}
+
+pub struct UserOpQueuePublisher<Q: MessageQueue> {
+    queue: Arc<Q>,
+    topic: String,
+}
+
+impl<Q: MessageQueue> UserOpQueuePublisher<Q> {
+    pub fn new(queue: Arc<Q>, topic: String) -> Self {
+        Self { queue, topic }
+    }
+
+    pub async fn publish(&self, user_op: &VersionedUserOperation, hash: &B256) -> Result<()> {
+        let key = hash.to_string();
+        let payload = serde_json::to_vec(&user_op)?;
+        self.queue.publish(&self.topic, &key, &payload).await
+    }
+}
+
+pub struct BundleQueuePublisher<Q: MessageQueue> {
+    queue: Arc<Q>,
+    topic: String,
+}
+
+impl<Q: MessageQueue> BundleQueuePublisher<Q> {
+    pub fn new(queue: Arc<Q>, topic: String) -> Self {
+        Self { queue, topic }
+    }
+
+    pub async fn publish(&self, bundle: &AcceptedBundle, hash: &B256) -> Result<()> {
+        let key = hash.to_string();
+        let payload = serde_json::to_vec(bundle)?;
+        self.queue.publish(&self.topic, &key, &payload).await
     }
 }
 
@@ -92,7 +123,7 @@ mod tests {
             .create()
             .expect("Producer creation failed");
 
-        let publisher = KafkaQueuePublisher::new(producer, "tips-ingress-rpc".to_string());
+        let publisher = KafkaMessageQueue::new(producer);
         let bundle = create_test_bundle();
         let accepted_bundle = AcceptedBundle::new(
             bundle.try_into().unwrap(),
@@ -101,7 +132,13 @@ mod tests {
         let bundle_hash = &accepted_bundle.bundle_hash();
 
         let start = Instant::now();
-        let result = publisher.publish(&accepted_bundle, bundle_hash).await;
+        let result = publisher
+            .publish(
+                "tips-ingress-rpc",
+                bundle_hash.to_string().as_str(),
+                &serde_json::to_vec(&accepted_bundle).unwrap(),
+            )
+            .await;
         let elapsed = start.elapsed();
 
         // the backoff tries at minimum 100ms, so verify we tried at least once

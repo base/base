@@ -20,7 +20,7 @@ use tokio::time::{Duration, Instant, timeout};
 use tracing::{debug, info, warn};
 
 use crate::metrics::{Metrics, record_histogram};
-use crate::queue::QueuePublisher;
+use crate::queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher};
 use crate::validation::validate_bundle;
 use crate::{Config, TxSubmissionMethod};
 use account_abstraction_core::types::{SendUserOperationResponse, UserOperationRequest};
@@ -59,13 +59,14 @@ pub trait IngressApi {
     ) -> RpcResult<SendUserOperationResponse>;
 }
 
-pub struct IngressService<Queue> {
+pub struct IngressService<Q: MessageQueue> {
     mempool_provider: Arc<RootProvider<Optimism>>,
     simulation_provider: Arc<RootProvider<Optimism>>,
     raw_tx_forward_provider: Option<Arc<RootProvider<Optimism>>>,
     account_abstraction_service: AccountAbstractionServiceImpl,
     tx_submission_method: TxSubmissionMethod,
-    bundle_queue: Queue,
+    bundle_queue_publisher: BundleQueuePublisher<Q>,
+    user_op_queue_publisher: UserOpQueuePublisher<Q>,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
     send_transaction_default_lifetime_seconds: u64,
     metrics: Metrics,
@@ -76,10 +77,10 @@ pub struct IngressService<Queue> {
     builder_backrun_tx: broadcast::Sender<Bundle>,
 }
 
-impl<Queue> IngressService<Queue> {
+impl<Q: MessageQueue> IngressService<Q> {
     pub fn new(
         providers: Providers,
-        queue: Queue,
+        queue: Q,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
         builder_backrun_tx: broadcast::Sender<Bundle>,
@@ -93,14 +94,21 @@ impl<Queue> IngressService<Queue> {
                 simulation_provider.clone(),
                 config.validate_user_operation_timeout_ms,
             );
-
+        let queue_connection = Arc::new(queue);
         Self {
             mempool_provider,
             simulation_provider,
             raw_tx_forward_provider,
             account_abstraction_service,
             tx_submission_method: config.tx_submission_method,
-            bundle_queue: queue,
+            user_op_queue_publisher: UserOpQueuePublisher::new(
+                queue_connection.clone(),
+                config.user_operation_topic,
+            ),
+            bundle_queue_publisher: BundleQueuePublisher::new(
+                queue_connection.clone(),
+                config.ingress_topic,
+            ),
             audit_channel,
             send_transaction_default_lifetime_seconds: config
                 .send_transaction_default_lifetime_seconds,
@@ -115,10 +123,7 @@ impl<Queue> IngressService<Queue> {
 }
 
 #[async_trait]
-impl<Queue> IngressApiServer for IngressService<Queue>
-where
-    Queue: QueuePublisher + Sync + Send + 'static,
-{
+impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
     async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
         if !self.backrun_enabled {
             info!(
@@ -166,7 +171,7 @@ where
 
         // publish the bundle to the queue
         if let Err(e) = self
-            .bundle_queue
+            .bundle_queue_publisher
             .publish(&accepted_bundle, &bundle_hash)
             .await
         {
@@ -236,7 +241,7 @@ where
 
         if send_to_kafka {
             if let Err(e) = self
-                .bundle_queue
+                .bundle_queue_publisher
                 .publish(&accepted_bundle, bundle_hash)
                 .await
             {
@@ -291,28 +296,36 @@ where
 
     async fn send_user_operation(
         &self,
-        user_operation: UserOperationRequest,
+        user_operation_request: UserOperationRequest,
     ) -> RpcResult<SendUserOperationResponse> {
-        dbg!(&user_operation);
+        let user_op_hash = user_operation_request
+            .hash()
+            .map_err(|e| EthApiError::InvalidParams(e.to_string()).into_rpc_err())?;
 
-        // STEPS:
-        // 1. Reputation Service Validate
-        // 2. Base Node Validate User Operation
         let _ = self
             .account_abstraction_service
-            .validate_user_operation(user_operation)
+            .validate_user_operation(&user_operation_request.user_operation)
             .await?;
-        // 3. Send to Kafka
-        // Send Hash
-        // todo!("not yet implemented send_user_operation");
+
+        if let Err(e) = self
+            .user_op_queue_publisher
+            .publish(&user_operation_request.user_operation, &user_op_hash)
+            .await
+        {
+            warn!(
+                message = "Failed to publish user operation to queue",
+                user_operation_hash = %user_op_hash,
+                error = %e
+            );
+            return Err(
+                EthApiError::InvalidParams("Failed to queue user operation".into()).into_rpc_err(),
+            );
+        }
         todo!("not yet implemented send_user_operation");
     }
 }
 
-impl<Queue> IngressService<Queue>
-where
-    Queue: QueuePublisher + Sync + Send + 'static,
-{
+impl<Q: MessageQueue> IngressService<Q> {
     async fn get_tx(&self, data: &Bytes) -> RpcResult<Recovered<OpTxEnvelope>> {
         if data.is_empty() {
             return Err(EthApiError::EmptyRawTransactionData.into_rpc_err());
@@ -429,8 +442,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Config, TxSubmissionMethod, queue::QueuePublisher};
+    use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
     use alloy_provider::RootProvider;
+    use anyhow::Result;
     use async_trait::async_trait;
     use std::net::{IpAddr, SocketAddr};
     use std::str::FromStr;
@@ -438,16 +452,11 @@ mod tests {
     use tokio::sync::{broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
-
     struct MockQueue;
 
     #[async_trait]
-    impl QueuePublisher for MockQueue {
-        async fn publish(
-            &self,
-            _bundle: &tips_core::AcceptedBundle,
-            _bundle_hash: &B256,
-        ) -> anyhow::Result<()> {
+    impl MessageQueue for MockQueue {
+        async fn publish(&self, _topic: &str, _key: &str, _payload: &[u8]) -> Result<()> {
             Ok(())
         }
     }
@@ -476,6 +485,7 @@ mod tests {
             health_check_addr: SocketAddr::from(([127, 0, 0, 1], 8081)),
             backrun_enabled: false,
             raw_tx_forward_rpc: None,
+            user_operation_topic: String::new(),
         }
     }
 

@@ -1,15 +1,40 @@
-use alloy_primitives::U256;
+use crate::entrypoints::{v06, v07, version::EntryPointVersion};
+use alloy_primitives::{Address, B256, ChainId, U256};
 use alloy_rpc_types::erc4337;
-use serde::{Deserialize, Serialize};
-
-// Re-export SendUserOperationResponse
 pub use alloy_rpc_types::erc4337::SendUserOperationResponse;
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
-pub enum UserOperationRequest {
-    EntryPointV06(erc4337::UserOperation),
-    EntryPointV07(erc4337::PackedUserOperation),
+pub enum VersionedUserOperation {
+    UserOperation(erc4337::UserOperation),
+    PackedUserOperation(erc4337::PackedUserOperation),
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UserOperationRequest {
+    pub user_operation: VersionedUserOperation,
+    pub entry_point: Address,
+    pub chain_id: ChainId,
+}
+
+impl UserOperationRequest {
+    pub fn hash(&self) -> Result<B256> {
+        let entry_point_version = EntryPointVersion::try_from(self.entry_point)
+            .map_err(|_| anyhow::anyhow!("Unknown entry point version: {:#x}", self.entry_point))?;
+
+        match (&self.user_operation, entry_point_version) {
+            (VersionedUserOperation::UserOperation(op), EntryPointVersion::V06) => Ok(
+                v06::hash_user_operation(op, self.entry_point, self.chain_id),
+            ),
+            (VersionedUserOperation::PackedUserOperation(op), EntryPointVersion::V07) => Ok(
+                v07::hash_user_operation(op, self.entry_point, self.chain_id),
+            ),
+            _ => Err(anyhow::anyhow!(
+                "Mismatched operation type and entry point version"
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,14 +55,14 @@ mod tests {
     fn should_throw_error_when_deserializing_invalid() {
         const TEST_INVALID_USER_OPERATION: &str = r#"
         {
-        "type": "EntryPointV06",
+        "type": "UserOperation",
         "sender": "0x1111111111111111111111111111111111111111",
         "nonce": "0x0",
         "callGasLimit": "0x5208"
         }
     "#;
-        let user_operation: Result<UserOperationRequest, serde_json::Error> =
-            serde_json::from_str::<UserOperationRequest>(TEST_INVALID_USER_OPERATION);
+        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
+            serde_json::from_str::<VersionedUserOperation>(TEST_INVALID_USER_OPERATION);
         assert!(user_operation.is_err());
     }
 
@@ -45,7 +70,7 @@ mod tests {
     fn should_deserialize_v06() {
         const TEST_USER_OPERATION: &str = r#"
         {
-            "type": "EntryPointV06",
+            "type": "UserOperation",
             "sender": "0x1111111111111111111111111111111111111111",
             "nonce": "0x0",
             "initCode": "0x",
@@ -59,14 +84,14 @@ mod tests {
             "signature": "0x01"
         }
     "#;
-        let user_operation: Result<UserOperationRequest, serde_json::Error> =
-            serde_json::from_str::<UserOperationRequest>(TEST_USER_OPERATION);
+        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
+            serde_json::from_str::<VersionedUserOperation>(TEST_USER_OPERATION);
         if user_operation.is_err() {
             panic!("Error: {:?}", user_operation.err());
         }
         let user_operation = user_operation.unwrap();
         match user_operation {
-            UserOperationRequest::EntryPointV06(user_operation) => {
+            VersionedUserOperation::UserOperation(user_operation) => {
                 assert_eq!(
                     user_operation.sender,
                     Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
@@ -98,7 +123,7 @@ mod tests {
     fn should_deserialize_v07() {
         const TEST_PACKED_USER_OPERATION: &str = r#"
         {
-        "type": "EntryPointV07",
+        "type": "PackedUserOperation",
         "sender": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         "nonce": "0x1",
         "factory": "0x2222222222222222222222222222222222222222",
@@ -116,14 +141,14 @@ mod tests {
         "signature": "0xa3c5f1b90014e68abbbdc42e4b77b9accc0b7e1c5d0b5bcde1a47ba8faba00ff55c9a7de12e98b731766e35f6c51ab25c9b58cc0e7c4a33f25e75c51c6ad3c3a"
         }
     "#;
-        let user_operation: Result<UserOperationRequest, serde_json::Error> =
-            serde_json::from_str::<UserOperationRequest>(TEST_PACKED_USER_OPERATION);
+        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
+            serde_json::from_str::<VersionedUserOperation>(TEST_PACKED_USER_OPERATION);
         if user_operation.is_err() {
             panic!("Error: {:?}", user_operation.err());
         }
         let user_operation = user_operation.unwrap();
         match user_operation {
-            UserOperationRequest::EntryPointV07(user_operation) => {
+            VersionedUserOperation::PackedUserOperation(user_operation) => {
                 assert_eq!(
                     user_operation.sender,
                     Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap()
