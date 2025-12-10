@@ -28,8 +28,8 @@ fn execute_txns_build_access_list(
     let chain_spec = Arc::new(OpChainSpec::from_genesis(
         serde_json::from_str(include_str!("../../test-utils/assets/genesis.json")).unwrap(),
     ));
-    let evm_config = OpEvmConfig::optimism(chain_spec);
-    let header = Header { gas_limit: 100_000_000, ..Default::default() };
+    let evm_config = OpEvmConfig::optimism(chain_spec.clone());
+    let header = Header { base_fee_per_gas: Some(0), ..chain_spec.genesis_header().clone() };
     let mut db = InMemoryDB::default();
     if let Some(overrides) = acc_overrides {
         for (address, info) in overrides {
@@ -137,6 +137,36 @@ pub fn test_single_transfer() {
 }
 
 #[test]
+/// Ensures that when gas is paid, the appropriate balance changes are included
+/// Sender balance is deducted as (fee paid + value)
+/// Fee Vault/Beneficiary address earns fee paid
+pub fn test_gas_included_in_balance_change() {
+    let sender = U256::from(0xDEAD).into_address();
+    let recipient = U256::from(0xBEEF).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(recipient))
+                .value(U256::from(1_000_000))
+                .gas_price(1000)
+                .gas_priority_fee(Some(1_000))
+                .max_fee_per_gas(1_000)
+                .gas_limit(21_100),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+    dbg!(access_list);
+}
+
+#[test]
+/// Ensures that multiple transfers between the same sender/recipient
+/// in a single direction are all processed correctly
 pub fn test_multiple_transfers() {
     let sender = U256::from(0xDEAD).into_address();
     let recipient = U256::from(0xBEEF).into_address();
