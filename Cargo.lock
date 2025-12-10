@@ -11880,11 +11880,12 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 [[package]]
 name = "tips-core"
 version = "0.1.0"
-source = "git+https://github.com/base/tips?rev=a21ee492dede17f31eea108c12c669a8190f31aa#a21ee492dede17f31eea108c12c669a8190f31aa"
+source = "git+https://github.com/base/tips?rev=b1dfde6a5c8f603f19f9309ca6dc015bad260b44#b1dfde6a5c8f603f19f9309ca6dc015bad260b44"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rpc-types",
  "alloy-serde",
  "op-alloy-consensus",
  "op-alloy-flz",
