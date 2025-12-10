@@ -174,8 +174,8 @@ long-term maintainability.
 System config updates are signaled through the `ConfigUpdate(uint256,uint8,bytes)` event. The event
 structure includes:
 
-- The first topic determines the version (unknown versions are critical derivation errors)
-- The second topic determines the type of update (unknown types are critical derivation errors)
+- The first topic determines the version
+- The second topic determines the type of update
 - The remaining event data encodes the configuration update
 
 In version `0`, the following update types are supported:
@@ -190,6 +190,8 @@ In version `0`, the following update types are supported:
 - Type `5`: `operatorFeeParams` overwrite, as `uint256` payload encoding scalar and constant
 - Type `6`: `minBaseFee` overwrite, as `uint64` payload
 - Type `7`: `daFootprintGasScalar` overwrite, as `uint16` payload
+
+If a System Config Update cannot be parsed for any reason, it is not applied and is instead skipped.
 
 ## Function Specification
 
