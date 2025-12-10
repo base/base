@@ -3,7 +3,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use alloy_consensus::Header;
-use alloy_eip7928::{AccountChanges, BalanceChange, CodeChange, NonceChange};
+use alloy_eip7928::{
+    AccountChanges, BalanceChange, CodeChange, EMPTY_BLOCK_ACCESS_LIST_HASH, NonceChange,
+    SlotChanges, StorageChange,
+};
 use alloy_primitives::{Address, B256, TxKind, U256};
 use base_fbal::{FlashblockAccessList, TouchedAccountsInspector};
 use op_revm::{DefaultOp, OpBuilder, OpContext, OpSpecId, OpTransaction};
@@ -11,11 +14,13 @@ use reth_evm::{ConfigureEvm, Evm};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec};
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use revm::{
-    Context, DatabaseCommit, ExecuteCommitEvm, ExecuteEvm, InspectEvm, MainBuilder, MainContext,
+    Context, DatabaseCommit, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectEvm, MainBuilder,
+    MainContext,
     context::{CfgEnv, ContextTr, TxEnv, result::ResultAndState},
     database::InMemoryDB,
     inspector::JournalExt,
     interpreter::instructions::utility::IntoAddress,
+    primitives::KECCAK_EMPTY,
     state::AccountInfo,
 };
 
@@ -41,7 +46,7 @@ fn execute_txns_build_access_list(
         min_tx_index: 0,
         max_tx_index: (txs.len() - 1) as u64,
         account_changes: vec![],
-        fal_hash: B256::ZERO,
+        fal_hash: EMPTY_BLOCK_ACCESS_LIST_HASH,
     };
 
     for (idx, tx) in txs.into_iter().enumerate() {
@@ -71,8 +76,7 @@ fn execute_txns_build_access_list(
 
             let initial_balance = initial_account.map(|a| a.balance).unwrap_or_default();
             let initial_nonce = initial_account.map(|a| a.nonce).unwrap_or_default();
-            let initially_no_code =
-                initial_account.map(|a| a.is_empty_code_hash()).unwrap_or_default();
+            let initial_code_hash = initial_account.map(|a| a.code_hash()).unwrap_or(KECCAK_EMPTY);
 
             if initial_balance != account.info.balance {
                 entry.balance_changes.push(BalanceChange::new(idx as u64, account.info.balance));
@@ -82,18 +86,44 @@ fn execute_txns_build_access_list(
                 entry.nonce_changes.push(NonceChange::new(idx as u64, account.info.nonce));
             }
 
-            if initially_no_code && !account.info.is_empty_code_hash() {
-                entry
-                    .code_changes
-                    .push(CodeChange::new(idx as u64, account.info.code.as_ref().unwrap().bytes()));
+            if initial_code_hash != account.info.code_hash() {
+                let bytecode = match account.info.code.clone() {
+                    Some(code) => code,
+                    None => evm.db_mut().code_by_hash_ref(account.info.code_hash()).unwrap(),
+                };
+                entry.code_changes.push(CodeChange::new(idx as u64, bytecode.bytes()));
             }
+
+            // TODO: This currently does not check if a storage key already exists within `storage_changes`
+            // for a given account, and instead adds a new `SlotChanges` struct for the same storage key
+            account.storage.iter().for_each(|(key, value)| {
+                let previous_value = evm.db_mut().storage_ref(*address, *key);
+                match previous_value {
+                    Ok(prev) => {
+                        if prev != value.present_value {
+                            entry.storage_changes.push(SlotChanges::new(
+                                B256::from(*key),
+                                vec![StorageChange::new(
+                                    idx as u64,
+                                    B256::from(value.present_value()),
+                                )],
+                            ));
+                        }
+                    }
+                    Err(_) => {
+                        entry.storage_changes.push(SlotChanges::new(
+                            B256::from(*key),
+                            vec![StorageChange::new(idx as u64, B256::from(value.present_value()))],
+                        ));
+                    }
+                }
+            });
         }
 
         evm.db_mut().commit(state);
         db = evm.into_db();
 
         access_list.merge_account_changes(account_changes.values().cloned().collect());
-        // access_list.account_changes.extend(account_changes.values().cloned());
     }
 
     access_list.finalize();
