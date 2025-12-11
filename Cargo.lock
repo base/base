@@ -1581,9 +1581,12 @@ name = "base-fbal"
 version = "0.2.1"
 dependencies = [
  "alloy-consensus",
+ "alloy-contract",
  "alloy-eip7928",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-sol-macro",
+ "alloy-sol-types",
  "op-revm",
  "reth-evm",
  "reth-optimism-chainspec",

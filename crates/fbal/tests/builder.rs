@@ -8,6 +8,8 @@ use alloy_eip7928::{
     SlotChanges, StorageChange,
 };
 use alloy_primitives::{Address, B256, TxKind, U256};
+use alloy_sol_macro::sol;
+use alloy_sol_types::SolCall;
 use base_fbal::{FlashblockAccessList, TouchedAccountsInspector};
 use op_revm::{DefaultOp, OpBuilder, OpContext, OpSpecId, OpTransaction};
 use reth_evm::{ConfigureEvm, Evm};
@@ -16,13 +18,22 @@ use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use revm::{
     Context, DatabaseCommit, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectEvm, MainBuilder,
     MainContext,
-    context::{CfgEnv, ContextTr, TxEnv, result::ResultAndState},
+    context::{CfgEnv, ContextTr, TxEnv, result::ResultAndState, tx::TxEnvBuilder},
     database::InMemoryDB,
     inspector::JournalExt,
     interpreter::instructions::utility::IntoAddress,
-    primitives::KECCAK_EMPTY,
-    state::AccountInfo,
+    primitives::{KECCAK_EMPTY, ONE_ETHER},
+    state::{AccountInfo, Bytecode},
 };
+
+sol!(
+    #[sol(rpc)]
+    AccessListContract,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../test-utils/contracts/out/AccessList.sol/AccessList.json"
+    )
+);
 
 const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
@@ -146,7 +157,7 @@ pub fn test_single_transfer() {
     let sender = U256::from(0xDEAD).into_address();
     let recipient = U256::from(0xBEEF).into_address();
     let mut overrides = HashMap::new();
-    overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
 
     let tx = OpTransaction::builder()
         .base(
@@ -174,7 +185,7 @@ pub fn test_gas_included_in_balance_change() {
     let sender = U256::from(0xDEAD).into_address();
     let recipient = U256::from(0xBEEF).into_address();
     let mut overrides = HashMap::new();
-    overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
 
     let tx = OpTransaction::builder()
         .base(
@@ -201,7 +212,7 @@ pub fn test_multiple_transfers() {
     let sender = U256::from(0xDEAD).into_address();
     let recipient = U256::from(0xBEEF).into_address();
     let mut overrides = HashMap::new();
-    overrides.insert(sender, AccountInfo::from_balance(U256::from(1_000_000_000u32)));
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
 
     let mut txs = Vec::new();
     for i in 0..10 {
@@ -221,6 +232,92 @@ pub fn test_multiple_transfers() {
             .build_fill();
         txs.push(tx);
     }
+
+    let access_list = execute_txns_build_access_list(txs, Some(overrides));
+    dbg!(access_list);
+}
+
+#[test]
+/// Tests that we can SLOAD a zero-value from a freshly deployed contract's state
+pub fn test_sload_zero_value() {
+    let sender = U256::from(0xDEAD).into_address();
+    let contract = U256::from(0xCAFE).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+    overrides.insert(
+        contract,
+        AccountInfo::default()
+            .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
+    );
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(contract))
+                .data(AccessListContract::valueCall {}.abi_encode().into())
+                .gas_price(0)
+                .gas_priority_fee(None)
+                .max_fee_per_gas(0)
+                .gas_limit(100_000),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+    dbg!(access_list);
+}
+
+#[test]
+/// Tests that we can SSTORE and later SLOAD one value from a contract's state
+pub fn test_update_one_value() {
+    let sender = U256::from(0xDEAD).into_address();
+    let contract = U256::from(0xCAFE).into_address();
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+    overrides.insert(
+        contract,
+        AccountInfo::default()
+            .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
+    );
+
+    let mut txs = Vec::new();
+    txs.push(
+        OpTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(sender)
+                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .kind(TxKind::Call(contract))
+                    .data(
+                        AccessListContract::updateValueCall { newValue: U256::from(42) }
+                            .abi_encode()
+                            .into(),
+                    )
+                    .nonce(0)
+                    .gas_price(0)
+                    .gas_priority_fee(None)
+                    .max_fee_per_gas(0)
+                    .gas_limit(100_000),
+            )
+            .build_fill(),
+    );
+    txs.push(
+        OpTransaction::builder()
+            .base(
+                TxEnv::builder()
+                    .caller(sender)
+                    .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                    .kind(TxKind::Call(contract))
+                    .data(AccessListContract::valueCall {}.abi_encode().into())
+                    .nonce(1)
+                    .gas_price(0)
+                    .gas_priority_fee(None)
+                    .max_fee_per_gas(0)
+                    .gas_limit(100_000),
+            )
+            .build_fill(),
+    );
 
     let access_list = execute_txns_build_access_list(txs, Some(overrides));
     dbg!(access_list);

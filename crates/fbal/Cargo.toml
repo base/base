@@ -19,6 +19,9 @@ reth-optimism-evm.workspace = true
 reth-optimism-chainspec.workspace = true
 alloy-consensus.workspace = true
 alloy-rlp = {workspace = true, features = ["derive"]}
+alloy-sol-macro = { workspace = true, features = ["json"] }
+alloy-sol-types.workspace = true
+alloy-contract.workspace = true
 
 revm.workspace = true
 op-revm.workspace = true
