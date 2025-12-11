@@ -5,6 +5,8 @@
 pub mod accounts;
 /// Ergonomic wrapper around the Engine API clients used by the harness.
 pub mod engine;
+/// Shared fixtures and test data reused by integration tests.
+pub mod fixtures;
 /// Flashblocks-aware harness helpers.
 pub mod flashblocks_harness;
 /// High-level façade for interacting with a local Base node.

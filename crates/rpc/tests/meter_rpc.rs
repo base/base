@@ -1,13 +1,12 @@
 //! Integration tests covering the Metering RPC surface area.
-mod common;
+
 use std::{any::Any, net::SocketAddr, sync::Arc};
 
 use alloy_eips::Encodable2718;
 use alloy_primitives::{Bytes, U256, address, b256, bytes};
 use alloy_rpc_client::RpcClient;
 use base_reth_rpc::{MeterBundleResponse, MeteringApiImpl, MeteringApiServer};
-use base_reth_test_utils::tracing::init_silenced_tracing;
-use common::load_genesis;
+use base_reth_test_utils::{fixtures::load_genesis, tracing::init_silenced_tracing};
 use op_alloy_consensus::OpTxEnvelope;
 use reth::{
     args::{DiscoveryArgs, NetworkArgs, RpcServerArgs},

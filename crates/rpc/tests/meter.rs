@@ -1,5 +1,5 @@
 //! Integration tests covering the Metering logic surface area.
-mod common;
+
 use std::sync::Arc;
 
 use alloy_consensus::crypto::secp256k1::public_key_to_address;
@@ -7,7 +7,7 @@ use alloy_eips::Encodable2718;
 use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, Bytes, U256, keccak256};
 use base_reth_rpc::meter_bundle;
-use common::create_provider_factory;
+use base_reth_test_utils::fixtures::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use rand::{SeedableRng, rngs::StdRng};
