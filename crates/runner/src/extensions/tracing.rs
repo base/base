@@ -3,7 +3,10 @@
 
 use base_tracex::tracex_exex;
 
-use crate::{TracingConfig, extensions::OpBuilder};
+use crate::{
+    BaseNodeConfig, TracingConfig,
+    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, OpBuilder},
+};
 
 /// Helper struct that wires the transaction tracing ExEx into the node builder.
 #[derive(Debug, Clone, Copy)]
@@ -14,15 +17,23 @@ pub struct TransactionTracingExtension {
 
 impl TransactionTracingExtension {
     /// Creates a new transaction tracing extension helper.
-    pub const fn new(config: TracingConfig) -> Self {
-        Self { config }
+    pub const fn new(config: &BaseNodeConfig) -> Self {
+        Self { config: config.tracing }
     }
+}
 
+impl BaseNodeExtension for TransactionTracingExtension {
     /// Applies the extension to the supplied builder.
-    pub fn apply(&self, builder: OpBuilder) -> OpBuilder {
+    fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let tracing = self.config;
         builder.install_exex_if(tracing.enabled, "tracex", move |ctx| async move {
             Ok(tracex_exex(ctx, tracing.logs_enabled))
         })
+    }
+}
+
+impl ConfigurableBaseNodeExtension for TransactionTracingExtension {
+    fn build(config: &BaseNodeConfig) -> eyre::Result<Self> {
+        Ok(Self::new(config))
     }
 }

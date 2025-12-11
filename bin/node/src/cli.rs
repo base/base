@@ -1,6 +1,9 @@
 //! Contains the CLI arguments
 
-use base_reth_runner::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+use std::sync::Arc;
+
+use base_reth_runner::{BaseNodeConfig, FlashblocksCell, FlashblocksConfig, TracingConfig};
+use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
 
 /// CLI Arguments
@@ -49,6 +52,7 @@ impl Args {
 
 impl From<Args> for BaseNodeConfig {
     fn from(args: Args) -> Self {
+        let flashblocks_cell: FlashblocksCell = Arc::new(OnceCell::new());
         let flashblocks = args.websocket_url.map(|websocket_url| FlashblocksConfig {
             websocket_url,
             max_pending_blocks_depth: args.max_pending_blocks_depth,
@@ -62,6 +66,7 @@ impl From<Args> for BaseNodeConfig {
                 logs_enabled: args.enable_transaction_tracing_logs,
             },
             metering_enabled: args.enable_metering,
+            flashblocks_cell,
         }
     }
 }

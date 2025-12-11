@@ -3,6 +3,9 @@
 //! Builder extensions for the node nicely modularizes parts
 //! of the node building process.
 
+mod extension;
+pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
+
 mod canon;
 pub use canon::FlashblocksCanonExtension;
 

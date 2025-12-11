@@ -5,7 +5,9 @@
 
 pub mod cli;
 
-use base_reth_runner::BaseNodeRunner;
+use base_reth_runner::{
+    BaseNodeRunner, BaseRpcExtension, FlashblocksCanonExtension, TransactionTracingExtension,
+};
 
 #[global_allocator]
 static ALLOC: reth_cli_util::allocator::Allocator = reth_cli_util::allocator::new_allocator();
@@ -21,9 +23,12 @@ fn main() {
 
     // Step 3: Hand the parsed CLI to the node runner so it can build and launch the Base node.
     cli.run(|builder, args| async move {
-        let runner = BaseNodeRunner::new(args);
-        let handle = runner.build(builder).await?;
-        runner.run(handle).await
+        let mut runner = BaseNodeRunner::new(args);
+        runner.install_ext::<FlashblocksCanonExtension>()?;
+        runner.install_ext::<TransactionTracingExtension>()?;
+        runner.install_ext::<BaseRpcExtension>()?;
+        let handle = runner.run(builder);
+        handle.await
     })
     .unwrap();
 }

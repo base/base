@@ -8,8 +8,8 @@ use futures_util::TryStreamExt;
 use reth_exex::ExExEvent;
 
 use crate::{
-    FlashblocksConfig,
-    extensions::{FlashblocksCell, OpBuilder},
+    BaseNodeConfig, FlashblocksConfig,
+    extensions::{BaseNodeExtension, ConfigurableBaseNodeExtension, FlashblocksCell, OpBuilder},
 };
 
 /// Helper struct that wires the Flashblocks canon ExEx into the node builder.
@@ -23,12 +23,14 @@ pub struct FlashblocksCanonExtension {
 
 impl FlashblocksCanonExtension {
     /// Create a new Flashblocks canon extension helper.
-    pub const fn new(cell: FlashblocksCell, config: Option<FlashblocksConfig>) -> Self {
-        Self { cell, config }
+    pub fn new(config: &BaseNodeConfig) -> Self {
+        Self { cell: config.flashblocks_cell.clone(), config: config.flashblocks.clone() }
     }
+}
 
+impl BaseNodeExtension for FlashblocksCanonExtension {
     /// Applies the extension to the supplied builder.
-    pub fn apply(&self, builder: OpBuilder) -> OpBuilder {
+    fn apply(&self, builder: OpBuilder) -> OpBuilder {
         let flashblocks = self.config.clone();
         let flashblocks_enabled = flashblocks.is_some();
         let flashblocks_cell = self.cell.clone();
@@ -62,5 +64,11 @@ impl FlashblocksCanonExtension {
                 })
             }
         })
+    }
+}
+
+impl ConfigurableBaseNodeExtension for FlashblocksCanonExtension {
+    fn build(config: &BaseNodeConfig) -> eyre::Result<Self> {
+        Ok(Self::new(config))
     }
 }

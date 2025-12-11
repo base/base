@@ -6,6 +6,9 @@
 mod context;
 pub use context::BaseNodeBuilder;
 
+mod handle;
+pub use handle::BaseNodeHandle;
+
 mod runner;
 pub use runner::BaseNodeRunner;
 
@@ -14,6 +17,6 @@ pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
 
 mod extensions;
 pub use extensions::{
-    BaseRpcExtension, FlashblocksCanonExtension, FlashblocksCell, OpBuilder, OpProvider,
-    TransactionTracingExtension,
+    BaseNodeExtension, BaseRpcExtension, ConfigurableBaseNodeExtension, FlashblocksCanonExtension,
+    FlashblocksCell, OpBuilder, OpProvider, TransactionTracingExtension,
 };
