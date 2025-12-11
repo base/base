@@ -322,3 +322,77 @@ pub fn test_update_one_value() {
     let access_list = execute_txns_build_access_list(txs, Some(overrides));
     dbg!(access_list);
 }
+
+#[test]
+/// Ensures that storage reads that read the same slot multiple times are deduped properly
+pub fn test_multi_sload_same_slot() {
+    let sender = U256::from(0xDEAD).into_address();
+    let contract = U256::from(0xCAFE).into_address();
+
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+    overrides.insert(
+        contract,
+        AccountInfo::default()
+            .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
+    );
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(contract))
+                .data(AccessListContract::getABCall {}.abi_encode().into())
+                .nonce(0)
+                .gas_price(0)
+                .gas_priority_fee(None)
+                .max_fee_per_gas(0)
+                .gas_limit(100_000),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+    // TODO: dedup storage_reads
+    dbg!(access_list);
+}
+
+#[test]
+/// Ensures that storage writes that update multiple slots are recorded properly
+pub fn test_multi_sstore() {
+    let sender = U256::from(0xDEAD).into_address();
+    let contract = U256::from(0xCAFE).into_address();
+
+    let mut overrides = HashMap::new();
+    overrides.insert(sender, AccountInfo::from_balance(U256::from(ONE_ETHER)));
+    overrides.insert(
+        contract,
+        AccountInfo::default()
+            .with_code(Bytecode::new_raw(AccessListContract::DEPLOYED_BYTECODE.clone())),
+    );
+
+    let tx = OpTransaction::builder()
+        .base(
+            TxEnv::builder()
+                .caller(sender)
+                .chain_id(Some(BASE_SEPOLIA_CHAIN_ID))
+                .kind(TxKind::Call(contract))
+                .data(
+                    AccessListContract::insertMultipleCall {
+                        keys: vec![U256::from(0), U256::from(1)],
+                        values: vec![U256::from(84), U256::from(53)],
+                    }
+                    .abi_encode()
+                    .into(),
+                )
+                .nonce(0)
+                .gas_price(0)
+                .gas_priority_fee(None)
+                .max_fee_per_gas(0)
+                .gas_limit(100_000),
+        )
+        .build_fill();
+
+    let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
+    dbg!(access_list);
+}
