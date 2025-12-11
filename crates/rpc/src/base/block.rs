@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Instant};
 
-use alloy_consensus::{BlockHeader, transaction::SignerRecoverable};
+use alloy_consensus::{BlockHeader, Header, transaction::SignerRecoverable};
 use alloy_primitives::B256;
 use eyre::{Result as EyreResult, eyre};
 use reth::revm::db::State;
@@ -8,14 +8,14 @@ use reth_evm::{ConfigureEvm, execute::BlockBuilder};
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
 use reth_optimism_primitives::OpBlock;
-use reth_primitives_traits::{Block as BlockT, SealedHeader};
-use reth_provider::{HashedPostStateProvider, StateRootProvider};
+use reth_primitives_traits::Block as BlockT;
+use reth_provider::{HeaderProvider, StateProviderFactory};
 
 use super::types::{MeterBlockResponse, MeterBlockTransactions};
 
 /// Re-executes a block and meters execution time, state root calculation time, and total time.
 ///
-/// Takes a state provider at the parent block, the chain spec, and the block to meter.
+/// Takes a provider, the chain spec, and the block to meter.
 ///
 /// Returns `MeterBlockResponse` containing:
 /// - Block hash
@@ -32,19 +32,27 @@ use super::types::{MeterBlockResponse, MeterBlockTransactions};
 /// State root calculation timing is most accurate for recent blocks where state tries are
 /// cached. For older blocks, trie nodes may not be cached, which can significantly inflate
 /// the `state_root_time_us` value.
-pub fn meter_block<SP>(
-    state_provider: SP,
+pub fn meter_block<P>(
+    provider: P,
     chain_spec: Arc<OpChainSpec>,
     block: &OpBlock,
-    parent_header: &SealedHeader,
 ) -> EyreResult<MeterBlockResponse>
 where
-    SP: reth_provider::StateProvider + StateRootProvider + HashedPostStateProvider,
+    P: StateProviderFactory + HeaderProvider<Header = Header>,
 {
     let block_hash = block.header().hash_slow();
     let block_number = block.header().number();
     let transactions: Vec<_> = block.body().transactions().cloned().collect();
     let tx_count = transactions.len();
+
+    // Get parent header
+    let parent_hash = block.header().parent_hash();
+    let parent_header = provider
+        .sealed_header_by_hash(parent_hash)?
+        .ok_or_else(|| eyre!("Parent header not found: {}", parent_hash))?;
+
+    // Get state provider at parent block
+    let state_provider = provider.state_by_block_hash(parent_hash)?;
 
     // Create state database from parent state
     let state_db = reth::revm::database::StateProviderDatabase::new(&state_provider);
@@ -80,7 +88,7 @@ where
     let evm_start = Instant::now();
     {
         let evm_config = OpEvmConfig::optimism(chain_spec);
-        let mut builder = evm_config.builder_for_next_block(&mut db, parent_header, attributes)?;
+        let mut builder = evm_config.builder_for_next_block(&mut db, &parent_header, attributes)?;
 
         builder.apply_pre_execution_changes()?;
 

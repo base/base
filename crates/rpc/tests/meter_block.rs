@@ -14,8 +14,8 @@ use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_node::OpNode;
 use reth_optimism_primitives::{OpBlock, OpBlockBody, OpTransactionSigned};
-use reth_primitives_traits::{Block as BlockT, SealedHeader};
-use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
+use reth_primitives_traits::Block as BlockT;
+use reth_provider::{HeaderProvider, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
 
@@ -30,7 +30,9 @@ enum User {
 #[derive(Debug, Clone)]
 struct TestHarness {
     provider: BlockchainProvider<NodeTypes>,
-    header: SealedHeader,
+    genesis_header_hash: B256,
+    genesis_header_number: u64,
+    genesis_header_timestamp: u64,
     chain_spec: Arc<OpChainSpec>,
     user_to_private_key: std::collections::HashMap<User, B256>,
 }
@@ -83,7 +85,14 @@ fn setup_harness() -> eyre::Result<TestHarness> {
         .context("fetching genesis header")?
         .expect("genesis header exists");
 
-    Ok(TestHarness { provider, header, chain_spec, user_to_private_key })
+    Ok(TestHarness {
+        provider,
+        genesis_header_hash: header.hash(),
+        genesis_header_number: header.number(),
+        genesis_header_timestamp: header.timestamp(),
+        chain_spec,
+        user_to_private_key,
+    })
 }
 
 fn create_block_with_transactions(
@@ -91,9 +100,9 @@ fn create_block_with_transactions(
     transactions: Vec<OpTransactionSigned>,
 ) -> OpBlock {
     let header = Header {
-        parent_hash: harness.header.hash(),
-        number: harness.header.number() + 1,
-        timestamp: harness.header.timestamp() + 2,
+        parent_hash: harness.genesis_header_hash,
+        number: harness.genesis_header_number + 1,
+        timestamp: harness.genesis_header_timestamp + 2,
         gas_limit: 30_000_000,
         beneficiary: Address::random(),
         base_fee_per_gas: Some(1),
@@ -113,13 +122,7 @@ fn meter_block_empty_transactions() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![]);
 
-    let state_provider = harness
-        .provider
-        .state_by_block_hash(harness.header.hash())
-        .context("getting state provider")?;
-
-    let response =
-        meter_block(state_provider, harness.chain_spec.clone(), &block, &harness.header)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -157,13 +160,7 @@ fn meter_block_single_transaction() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx]);
 
-    let state_provider = harness
-        .provider
-        .state_by_block_hash(harness.header.hash())
-        .context("getting state provider")?;
-
-    let response =
-        meter_block(state_provider, harness.chain_spec.clone(), &block, &harness.header)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -228,13 +225,7 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx_1, tx_2]);
 
-    let state_provider = harness
-        .provider
-        .state_by_block_hash(harness.header.hash())
-        .context("getting state provider")?;
-
-    let response =
-        meter_block(state_provider, harness.chain_spec.clone(), &block, &harness.header)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
 
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
@@ -292,13 +283,7 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
 
     let block = create_block_with_transactions(&harness, vec![tx]);
 
-    let state_provider = harness
-        .provider
-        .state_by_block_hash(harness.header.hash())
-        .context("getting state provider")?;
-
-    let response =
-        meter_block(state_provider, harness.chain_spec.clone(), &block, &harness.header)?;
+    let response = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block)?;
 
     // Verify timing invariants
     assert!(response.signer_recovery_time_us > 0, "signer recovery time must be positive");

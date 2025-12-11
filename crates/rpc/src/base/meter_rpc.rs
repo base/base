@@ -5,8 +5,7 @@ use jsonrpsee::core::{RpcResult, async_trait};
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
 use reth_optimism_primitives::OpBlock;
-use reth_primitives_traits::Block as BlockT;
-use reth_provider::{BlockReader, ChainSpecProvider, StateProviderFactory};
+use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProviderFactory};
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
@@ -27,6 +26,7 @@ where
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = OpBlock>
+        + HeaderProvider<Header = Header>
         + Clone,
 {
     /// Creates a new instance of MeteringApi
@@ -42,6 +42,7 @@ where
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = OpBlock>
+        + HeaderProvider<Header = Header>
         + Clone
         + Send
         + Sync
@@ -212,6 +213,7 @@ where
         + ChainSpecProvider<ChainSpec = OpChainSpec>
         + BlockReaderIdExt<Header = Header>
         + BlockReader<Block = OpBlock>
+        + HeaderProvider<Header = Header>
         + Clone
         + Send
         + Sync
@@ -219,51 +221,15 @@ where
 {
     /// Internal helper to meter a block's execution
     fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
-        // Get parent header
-        let parent_hash = block.header().parent_hash;
-        let parent_header = self
-            .provider
-            .sealed_header_by_hash(parent_hash)
-            .map_err(|e| {
-                error!(error = %e, "Failed to get parent header");
+        meter_block(self.provider.clone(), self.provider.chain_spec().clone(), block).map_err(
+            |e| {
+                error!(error = %e, "Block metering failed");
                 jsonrpsee::types::ErrorObjectOwned::owned(
                     jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Failed to get parent header: {}", e),
+                    format!("Block metering failed: {}", e),
                     None::<()>,
                 )
-            })?
-            .ok_or_else(|| {
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Parent block not found: {}", parent_hash),
-                    None::<()>,
-                )
-            })?;
-
-        // Get state provider at parent block
-        let state_provider = self.provider.state_by_block_hash(parent_hash).map_err(|e| {
-            error!(error = %e, "Failed to get state provider for parent block");
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Failed to get state provider: {}", e),
-                None::<()>,
-            )
-        })?;
-
-        // Meter the block
-        meter_block(
-            state_provider,
-            self.provider.chain_spec().clone(),
-            block,
-            &parent_header,
+            },
         )
-        .map_err(|e| {
-            error!(error = %e, "Block metering failed");
-            jsonrpsee::types::ErrorObjectOwned::owned(
-                jsonrpsee::types::ErrorCode::InternalError.code(),
-                format!("Block metering failed: {}", e),
-                None::<()>,
-            )
-        })
     }
 }
