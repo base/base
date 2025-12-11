@@ -19,10 +19,19 @@ use super::types::{MeterBlockResponse, MeterBlockTransactions};
 ///
 /// Returns `MeterBlockResponse` containing:
 /// - Block hash
+/// - Signer recovery time (can be parallelized)
 /// - EVM execution time for all transactions
 /// - State root calculation time
 /// - Total time
 /// - Per-transaction timing information
+///
+/// # Note
+///
+/// If the parent block's state has been pruned, this function will return an error.
+///
+/// State root calculation timing is most accurate for recent blocks where state tries are
+/// cached. For older blocks, trie nodes may not be cached, which can significantly inflate
+/// the `state_root_time_us` value.
 pub fn meter_block<SP>(
     state_provider: SP,
     chain_spec: Arc<OpChainSpec>,

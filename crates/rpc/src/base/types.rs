@@ -112,7 +112,10 @@ pub struct MeterBlockResponse {
     pub signer_recovery_time_us: u128,
     /// Duration of EVM execution in microseconds
     pub execution_time_us: u128,
-    /// Duration of state root calculation in microseconds
+    /// Duration of state root calculation in microseconds.
+    ///
+    /// Note: This timing is most accurate for recent blocks where state tries are cached.
+    /// For older blocks, trie nodes may not be cached, which can significantly inflate this value.
     pub state_root_time_us: u128,
     /// Total duration (signer recovery + EVM execution + state root calculation) in microseconds
     pub total_time_us: u128,
