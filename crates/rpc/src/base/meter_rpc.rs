@@ -158,6 +158,7 @@ where
 
         info!(
             block_hash = %hash,
+            signer_recovery_time_us = response.signer_recovery_time_us,
             execution_time_us = response.execution_time_us,
             state_root_time_us = response.state_root_time_us,
             total_time_us = response.total_time_us,
@@ -194,6 +195,7 @@ where
         info!(
             block_number = ?number,
             block_hash = %response.block_hash,
+            signer_recovery_time_us = response.signer_recovery_time_us,
             execution_time_us = response.execution_time_us,
             state_root_time_us = response.state_root_time_us,
             total_time_us = response.total_time_us,

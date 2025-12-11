@@ -124,9 +124,14 @@ fn meter_block_empty_transactions() -> eyre::Result<()> {
     assert_eq!(response.block_hash, block.header().hash_slow());
     assert_eq!(response.block_number, block.header().number());
     assert!(response.transactions.is_empty());
+    // No transactions means no signer recovery
+    assert_eq!(response.signer_recovery_time_us, 0);
     assert!(response.execution_time_us > 0, "execution time should be non-zero due to EVM setup");
     assert!(response.state_root_time_us > 0, "state root time should be non-zero");
-    assert_eq!(response.total_time_us, response.execution_time_us + response.state_root_time_us);
+    assert_eq!(
+        response.total_time_us,
+        response.signer_recovery_time_us + response.execution_time_us + response.state_root_time_us
+    );
 
     Ok(())
 }
@@ -170,9 +175,13 @@ fn meter_block_single_transaction() -> eyre::Result<()> {
     assert_eq!(metered_tx.gas_used, 21_000);
     assert!(metered_tx.execution_time_us > 0, "transaction execution time should be non-zero");
 
+    assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
     assert!(response.execution_time_us > 0);
     assert!(response.state_root_time_us > 0);
-    assert_eq!(response.total_time_us, response.execution_time_us + response.state_root_time_us);
+    assert_eq!(
+        response.total_time_us,
+        response.signer_recovery_time_us + response.execution_time_us + response.state_root_time_us
+    );
 
     Ok(())
 }
@@ -245,9 +254,13 @@ fn meter_block_multiple_transactions() -> eyre::Result<()> {
     assert!(metered_tx_2.execution_time_us > 0);
 
     // Check aggregate times
+    assert!(response.signer_recovery_time_us > 0, "signer recovery should take time");
     assert!(response.execution_time_us > 0);
     assert!(response.state_root_time_us > 0);
-    assert_eq!(response.total_time_us, response.execution_time_us + response.state_root_time_us);
+    assert_eq!(
+        response.total_time_us,
+        response.signer_recovery_time_us + response.execution_time_us + response.state_root_time_us
+    );
 
     // Ensure individual transaction times are consistent with total
     let individual_times: u128 = response.transactions.iter().map(|t| t.execution_time_us).sum();
@@ -289,12 +302,13 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
         meter_block(state_provider, harness.chain_spec.clone(), &block, &harness.header)?;
 
     // Verify timing invariants
+    assert!(response.signer_recovery_time_us > 0, "signer recovery time must be positive");
     assert!(response.execution_time_us > 0, "execution time must be positive");
     assert!(response.state_root_time_us > 0, "state root time must be positive");
     assert_eq!(
         response.total_time_us,
-        response.execution_time_us + response.state_root_time_us,
-        "total time must equal execution + state root times"
+        response.signer_recovery_time_us + response.execution_time_us + response.state_root_time_us,
+        "total time must equal signer recovery + execution + state root times"
     );
 
     Ok(())

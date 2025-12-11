@@ -108,11 +108,13 @@ pub struct MeterBlockResponse {
     pub block_hash: B256,
     /// The block number that was metered
     pub block_number: u64,
+    /// Duration of signer recovery in microseconds (can be parallelized)
+    pub signer_recovery_time_us: u128,
     /// Duration of EVM execution in microseconds
     pub execution_time_us: u128,
     /// Duration of state root calculation in microseconds
     pub state_root_time_us: u128,
-    /// Total duration (EVM execution + state root calculation) in microseconds
+    /// Total duration (signer recovery + EVM execution + state root calculation) in microseconds
     pub total_time_us: u128,
     /// Per-transaction metering data
     pub transactions: Vec<MeterBlockTransactions>,

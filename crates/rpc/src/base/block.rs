@@ -51,6 +51,20 @@ where
         extra_data: block.header().extra_data().clone(),
     };
 
+    // Recover signers first (this can be parallelized in production)
+    let signer_recovery_start = Instant::now();
+    let recovered_transactions: Vec<_> = transactions
+        .iter()
+        .map(|tx| {
+            let tx_hash = tx.tx_hash();
+            let signer = tx
+                .recover_signer()
+                .map_err(|e| eyre!("Failed to recover signer for tx {}: {}", tx_hash, e))?;
+            Ok(alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer))
+        })
+        .collect::<EyreResult<Vec<_>>>()?;
+    let signer_recovery_time = signer_recovery_start.elapsed().as_micros();
+
     // Execute transactions and measure time
     let mut transaction_times = Vec::with_capacity(tx_count);
 
@@ -61,16 +75,9 @@ where
 
         builder.apply_pre_execution_changes()?;
 
-        for tx in &transactions {
+        for recovered_tx in recovered_transactions {
             let tx_start = Instant::now();
-            let tx_hash = tx.tx_hash();
-
-            // Recover the signer to create a Recovered transaction for execution
-            let signer = tx
-                .recover_signer()
-                .map_err(|e| eyre!("Failed to recover signer for tx {}: {}", tx_hash, e))?;
-            let recovered_tx =
-                alloy_consensus::transaction::Recovered::new_unchecked(tx.clone(), signer);
+            let tx_hash = recovered_tx.tx_hash();
 
             let gas_used = builder
                 .execute_transaction(recovered_tx)
@@ -96,11 +103,12 @@ where
         .map_err(|e| eyre!("Failed to calculate state root: {}", e))?;
     let state_root_time = state_root_start.elapsed().as_micros();
 
-    let total_time = execution_time + state_root_time;
+    let total_time = signer_recovery_time + execution_time + state_root_time;
 
     Ok(MeterBlockResponse {
         block_hash,
         block_number,
+        signer_recovery_time_us: signer_recovery_time,
         execution_time_us: execution_time,
         state_root_time_us: state_root_time,
         total_time_us: total_time,
