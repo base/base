@@ -285,7 +285,13 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             });
         }
 
-        self.send_audit_event(&accepted_bundle, transaction.tx_hash());
+        debug!(
+            message = "processed transaction",
+            bundle_hash = %bundle_hash,
+            transaction_hash = %transaction.tx_hash(),
+        );
+
+        self.send_audit_event(&accepted_bundle, accepted_bundle.bundle_hash());
 
         self.metrics
             .send_raw_transaction_duration
@@ -431,7 +437,7 @@ impl<Q: MessageQueue> IngressService<Q> {
         };
         if let Err(e) = self.audit_channel.send(audit_event) {
             warn!(
-                message = "Failed to send audit event",
+                message = "failed to send audit event",
                 bundle_hash = %bundle_hash,
                 error = %e
             );

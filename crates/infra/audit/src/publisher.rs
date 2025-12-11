@@ -40,7 +40,7 @@ impl KafkaBundleEventPublisher {
                     bundle_id = %bundle_id,
                     topic = %self.topic,
                     payload_size = payload.len(),
-                    "Successfully published event"
+                    "successfully published event"
                 );
                 Ok(())
             }
@@ -49,7 +49,7 @@ impl KafkaBundleEventPublisher {
                     bundle_id = %bundle_id,
                     topic = %self.topic,
                     error = %err,
-                    "Failed to publish event"
+                    "failed to publish event"
                 );
                 Err(anyhow::anyhow!("Failed to publish event: {err}"))
             }

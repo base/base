@@ -21,7 +21,7 @@ where
         let mut event_rx = event_rx;
         while let Some(event) = event_rx.recv().await {
             if let Err(e) = publisher.publish(event).await {
-                error!(error = %e, "Failed to publish bundle event");
+                error!(error = %e, "failed to publish bundle event");
             }
         }
     });
