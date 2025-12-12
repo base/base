@@ -34,7 +34,7 @@ impl Account {
         let tx_request = OpTransactionRequest::default()
             .from(self.address)
             .transaction_type(TransactionType::Eip1559.into())
-            .with_gas_limit(500_000)
+            .with_gas_limit(1_000_000)
             .with_max_fee_per_gas(1_000_000_000)
             .with_max_priority_fee_per_gas(0)
             .with_chain_id(BASE_CHAIN_ID)

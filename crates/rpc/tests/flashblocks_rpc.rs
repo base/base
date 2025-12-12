@@ -32,12 +32,49 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::DoubleCounterContract::DoubleCounterContractInstance;
 
+/// Encodes TransparentProxy constructor arguments: (address implementation, address admin)
+fn encode_proxy_constructor(implementation: Address, admin: Address) -> Vec<u8> {
+    use alloy_sol_types::SolType;
+    type ConstructorArgs = (
+        alloy_sol_types::sol_data::Address,
+        alloy_sol_types::sol_data::Address,
+    );
+    ConstructorArgs::abi_encode_params(&(implementation, admin))
+}
+
 sol!(
     #[sol(rpc)]
     DoubleCounterContract,
     concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../test-utils/contracts/out/DoubleCounter.sol/DoubleCounter.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
+    TestTokenContract,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../test-utils/contracts/out/TestToken.sol/TestToken.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
+    SimpleTokenContract,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../test-utils/contracts/out/SimpleToken.sol/SimpleToken.json"
+    )
+);
+
+sol!(
+    #[sol(rpc)]
+    TransparentProxyContract,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../test-utils/contracts/out/TransparentProxy.sol/TransparentProxy.json"
     )
 );
 
@@ -965,6 +1002,941 @@ async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
     assert_eq!(block1["number"], "0x1");
     assert_eq!(block1["number"], block2["number"]);
     assert_eq!(block1["hash"], block2["hash"]);
+
+    Ok(())
+}
+
+// ============================================================================
+// ERC-20 eth_call tests
+// ============================================================================
+
+/// ERC-20 Test Setup following the same pattern as TestSetup.
+/// Uses the same flashblock structure that's proven to work.
+struct ERC20TestSetup {
+    harness: FlashblocksHarness,
+    token_address: Address,
+    mint_amount: U256,
+}
+
+impl ERC20TestSetup {
+    async fn new() -> Result<Self> {
+        let harness = FlashblocksHarness::new().await?;
+        let provider = harness.provider();
+        let deployer = &harness.accounts().deployer;
+        let alice = &harness.accounts().alice;
+
+        // Deploy SimpleToken (no constructor args, like DoubleCounter)
+        let (token_deploy_tx, token_address, token_deploy_hash) = deployer
+            .create_deployment_tx(SimpleTokenContract::BYTECODE.clone(), 0)
+            .expect("should sign token deployment");
+
+        use crate::SimpleTokenContract::SimpleTokenContractInstance;
+        let token = SimpleTokenContractInstance::new(token_address, provider.clone());
+
+        // Mint tokens to Alice
+        let mint_amount = U256::from(1000u64);
+        let (mint_tx, mint_tx_hash) = deployer
+            .sign_txn_request(
+                token
+                    .mint(alice.address, mint_amount)
+                    .into_transaction_request()
+                    .nonce(1),
+            )
+            .expect("should sign mint txn");
+
+        // First flashblock: base with L1 info
+        let first_flashblock = Flashblock {
+            payload_id: PayloadId::new([0; 8]),
+            index: 0,
+            base: Some(ExecutionPayloadBaseV1 {
+                parent_beacon_block_root: B256::default(),
+                parent_hash: B256::default(),
+                fee_recipient: Address::ZERO,
+                prev_randao: B256::default(),
+                block_number: 1,
+                gas_limit: 30_000_000,
+                timestamp: 0,
+                extra_data: Bytes::new(),
+                base_fee_per_gas: U256::ZERO,
+            }),
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                blob_gas_used: Some(0),
+                transactions: vec![BLOCK_INFO_TXN],
+                ..Default::default()
+            },
+            metadata: Metadata {
+                block_number: 1,
+                receipts: {
+                    let mut receipts = HashMap::default();
+                    receipts.insert(
+                        BLOCK_INFO_TXN_HASH,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 10000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012991u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                    receipts
+                },
+                new_account_balances: HashMap::default(),
+            },
+        };
+
+        harness.send_flashblock(first_flashblock).await?;
+
+        // Second flashblock: includes DEPOSIT_TX (like the working tests), deploy, and mint
+        let second_flashblock = Flashblock {
+            payload_id: PayloadId::new([0; 8]),
+            index: 1,
+            base: None,
+            diff: ExecutionPayloadFlashblockDeltaV1 {
+                state_root: B256::default(),
+                receipts_root: B256::default(),
+                gas_used: 0,
+                block_hash: B256::default(),
+                blob_gas_used: Some(0),
+                transactions: vec![DEPOSIT_TX, token_deploy_tx, mint_tx],
+                withdrawals: Vec::new(),
+                logs_bloom: Default::default(),
+                withdrawals_root: Default::default(),
+            },
+            metadata: Metadata {
+                block_number: 1,
+                receipts: {
+                    let mut receipts = HashMap::default();
+                    receipts.insert(
+                        DEPOSIT_TX_HASH,
+                        OpReceipt::Deposit(OpDepositReceipt {
+                            inner: Receipt {
+                                status: true.into(),
+                                cumulative_gas_used: 31000,
+                                logs: vec![],
+                            },
+                            deposit_nonce: Some(4012992u64),
+                            deposit_receipt_version: None,
+                        }),
+                    );
+                    receipts.insert(
+                        token_deploy_hash,
+                        OpReceipt::Legacy(Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 800000,
+                            logs: vec![],
+                        }),
+                    );
+                    receipts.insert(
+                        mint_tx_hash,
+                        OpReceipt::Legacy(Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 850000,
+                            logs: vec![alloy_primitives::Log {
+                                address: token_address,
+                                data: LogData::new(
+                                    vec![
+                                        // Transfer event signature
+                                        b256!("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"),
+                                        B256::ZERO,
+                                        B256::left_padding_from(alice.address.as_slice()),
+                                    ],
+                                    alloy_primitives::Bytes::from(mint_amount.to_be_bytes_vec()),
+                                )
+                                .unwrap(),
+                            }],
+                        }),
+                    );
+                    receipts
+                },
+                new_account_balances: HashMap::default(),
+            },
+        };
+
+        harness.send_flashblock(second_flashblock).await?;
+
+        Ok(Self {
+            harness,
+            token_address,
+            mint_amount,
+        })
+    }
+}
+
+/// Tests basic ERC-20 functionality via eth_call including:
+/// - balanceOf: Check token balance
+/// - totalSupply: Check total supply
+/// - State changes via mint reflected in eth_call
+#[tokio::test]
+async fn test_eth_call_erc20_balance_of() -> Result<()> {
+    let setup = ERC20TestSetup::new().await?;
+    let provider = setup.harness.provider();
+    let alice = &setup.harness.accounts().alice;
+
+    use crate::SimpleTokenContract::SimpleTokenContractInstance;
+    let token = SimpleTokenContractInstance::new(setup.token_address, provider.clone());
+
+    // Test balanceOf via eth_call - should return minted amount
+    let balance_call = token.balanceOf(alice.address).into_transaction_request();
+    let balance_result = provider.call(balance_call).await?;
+    let balance = U256::from_str(&balance_result.to_string())?;
+    assert_eq!(balance, setup.mint_amount, "Alice's balance should equal minted amount");
+
+    // Test balanceOf for address with no tokens
+    let zero_balance_call = token
+        .balanceOf(setup.harness.accounts().bob.address)
+        .into_transaction_request();
+    let zero_balance_result = provider.call(zero_balance_call).await?;
+    let zero_balance = U256::from_str(&zero_balance_result.to_string())?;
+    assert_eq!(zero_balance, U256::ZERO, "Bob's balance should be zero");
+
+    // Test totalSupply via eth_call
+    let supply_call = token.totalSupply().into_transaction_request();
+    let supply_result = provider.call(supply_call).await?;
+    let supply = U256::from_str(&supply_result.to_string())?;
+    assert_eq!(supply, setup.mint_amount, "Total supply should equal minted amount");
+
+    Ok(())
+}
+
+/// Tests ERC-20 transfer functionality via eth_call
+#[tokio::test]
+async fn test_eth_call_erc20_transfer() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let provider = harness.provider();
+    let deployer = &harness.accounts().deployer;
+    let alice = &harness.accounts().alice;
+    let bob = &harness.accounts().bob;
+
+    // Deploy SimpleToken (no constructor args)
+    let (token_deploy_tx, token_address, token_deploy_hash) = deployer
+        .create_deployment_tx(SimpleTokenContract::BYTECODE.clone(), 0)
+        .expect("should sign token deployment");
+
+    use crate::SimpleTokenContract::SimpleTokenContractInstance;
+    let token = SimpleTokenContractInstance::new(token_address, provider.clone());
+
+    // Mint tokens to Alice
+    let mint_amount = U256::from(1000u64);
+    let (mint_tx, mint_tx_hash) = deployer
+        .sign_txn_request(
+            token
+                .mint(alice.address, mint_amount)
+                .into_transaction_request()
+                .nonce(1),
+        )
+        .expect("should sign mint txn");
+
+    // Alice transfers tokens to Bob
+    let transfer_amount = U256::from(100u64);
+    let (transfer_tx, transfer_tx_hash) = alice
+        .sign_txn_request(
+            token
+                .transfer(bob.address, transfer_amount)
+                .into_transaction_request()
+                .nonce(0),
+        )
+        .expect("should sign transfer txn");
+
+    // First flashblock: base with L1 info
+    let first_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 0,
+        base: Some(ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: B256::default(),
+            parent_hash: B256::default(),
+            fee_recipient: Address::ZERO,
+            prev_randao: B256::default(),
+            block_number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 0,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: U256::ZERO,
+        }),
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            blob_gas_used: Some(0),
+            transactions: vec![BLOCK_INFO_TXN],
+            ..Default::default()
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    BLOCK_INFO_TXN_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(first_flashblock).await?;
+
+    // Second flashblock: includes DEPOSIT_TX, deploy, mint, and transfer
+    let second_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 1,
+        base: None,
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            state_root: B256::default(),
+            receipts_root: B256::default(),
+            gas_used: 0,
+            block_hash: B256::default(),
+            blob_gas_used: Some(0),
+            transactions: vec![DEPOSIT_TX, token_deploy_tx, mint_tx, transfer_tx],
+            withdrawals: Vec::new(),
+            logs_bloom: Default::default(),
+            withdrawals_root: Default::default(),
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    DEPOSIT_TX_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 31000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012992u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts.insert(
+                    token_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 800000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    mint_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 850000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    transfer_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 900000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(second_flashblock).await?;
+
+    // Verify Alice's balance decreased
+    let alice_balance_call = token.balanceOf(alice.address).into_transaction_request();
+    let alice_balance_result = provider
+        .call(alice_balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let alice_balance = U256::from_str(&alice_balance_result.to_string())?;
+    assert_eq!(
+        alice_balance,
+        mint_amount - transfer_amount,
+        "Alice's balance should be reduced by transfer amount"
+    );
+
+    // Verify Bob received the tokens
+    let bob_balance_call = token.balanceOf(bob.address).into_transaction_request();
+    let bob_balance_result = provider
+        .call(bob_balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let bob_balance = U256::from_str(&bob_balance_result.to_string())?;
+    assert_eq!(bob_balance, transfer_amount, "Bob should have received transfer amount");
+
+    Ok(())
+}
+
+/// Tests ERC-20 allowance and transferFrom via eth_call
+#[tokio::test]
+async fn test_eth_call_erc20_allowance() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let provider = harness.provider();
+    let deployer = &harness.accounts().deployer;
+    let alice = &harness.accounts().alice;
+    let bob = &harness.accounts().bob;
+
+    // Deploy SimpleToken (no constructor args)
+    let (token_deploy_tx, token_address, token_deploy_hash) = deployer
+        .create_deployment_tx(SimpleTokenContract::BYTECODE.clone(), 0)
+        .expect("should sign token deployment");
+
+    use crate::SimpleTokenContract::SimpleTokenContractInstance;
+    let token = SimpleTokenContractInstance::new(token_address, provider.clone());
+
+    // Mint tokens to Alice
+    let mint_amount = U256::from(1000u64);
+    let (mint_tx, mint_tx_hash) = deployer
+        .sign_txn_request(
+            token
+                .mint(alice.address, mint_amount)
+                .into_transaction_request()
+                .nonce(1),
+        )
+        .expect("should sign mint txn");
+
+    // Alice approves Bob to spend tokens
+    let approval_amount = U256::from(500u64);
+    let (approve_tx, approve_tx_hash) = alice
+        .sign_txn_request(
+            token
+                .approve(bob.address, approval_amount)
+                .into_transaction_request()
+                .nonce(0),
+        )
+        .expect("should sign approve txn");
+
+    // First flashblock: base with L1 info
+    let first_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 0,
+        base: Some(ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: B256::default(),
+            parent_hash: B256::default(),
+            fee_recipient: Address::ZERO,
+            prev_randao: B256::default(),
+            block_number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 0,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: U256::ZERO,
+        }),
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            blob_gas_used: Some(0),
+            transactions: vec![BLOCK_INFO_TXN],
+            ..Default::default()
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    BLOCK_INFO_TXN_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(first_flashblock).await?;
+
+    // Second flashblock: includes DEPOSIT_TX, deploy, mint, and approve
+    let second_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 1,
+        base: None,
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            state_root: B256::default(),
+            receipts_root: B256::default(),
+            gas_used: 0,
+            block_hash: B256::default(),
+            blob_gas_used: Some(0),
+            transactions: vec![DEPOSIT_TX, token_deploy_tx, mint_tx, approve_tx],
+            withdrawals: Vec::new(),
+            logs_bloom: Default::default(),
+            withdrawals_root: Default::default(),
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    DEPOSIT_TX_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 31000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012992u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts.insert(
+                    token_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 800000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    mint_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 850000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    approve_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 900000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(second_flashblock).await?;
+
+    // Check allowance via eth_call
+    let allowance_call = token.allowance(alice.address, bob.address).into_transaction_request();
+    let allowance_result = provider
+        .call(allowance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let allowance = U256::from_str(&allowance_result.to_string())?;
+    assert_eq!(allowance, approval_amount, "Allowance should equal approval amount");
+
+    // Check zero allowance for non-approved spender
+    let zero_allowance_call = token
+        .allowance(alice.address, harness.accounts().charlie.address)
+        .into_transaction_request();
+    let zero_allowance_result = provider
+        .call(zero_allowance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let zero_allowance = U256::from_str(&zero_allowance_result.to_string())?;
+    assert_eq!(zero_allowance, U256::ZERO, "Non-approved spender should have zero allowance");
+
+    Ok(())
+}
+
+// ============================================================================
+// TransparentProxy eth_call tests
+// ============================================================================
+
+/// Tests eth_call through a TransparentProxy contract.
+/// This tests the delegatecall pattern used by USDC and other major tokens.
+/// The proxy delegates calls to the implementation (SimpleToken), but state is stored in proxy.
+#[tokio::test]
+async fn test_eth_call_transparent_proxy_erc20() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let provider = harness.provider();
+    let deployer = &harness.accounts().deployer;
+    let alice = &harness.accounts().alice;
+    // Charlie will be the proxy admin (can't call through proxy)
+    let proxy_admin = &harness.accounts().charlie;
+
+    // Step 1: Deploy the implementation contract (SimpleToken - no constructor args)
+    let (impl_deploy_tx, impl_address, impl_deploy_hash) = deployer
+        .create_deployment_tx(SimpleTokenContract::BYTECODE.clone(), 0)
+        .expect("should sign implementation deployment");
+
+    // Step 2: Deploy the TransparentProxy pointing to the implementation
+    let proxy_deploy_data = [
+        TransparentProxyContract::BYTECODE.to_vec(),
+        encode_proxy_constructor(impl_address, proxy_admin.address),
+    ]
+    .concat();
+
+    let (proxy_deploy_tx, proxy_address, proxy_deploy_hash) = deployer
+        .create_deployment_tx(proxy_deploy_data.into(), 1)
+        .expect("should sign proxy deployment");
+
+    // Create a token instance pointing to the PROXY address (not implementation)
+    use crate::SimpleTokenContract::SimpleTokenContractInstance;
+    let proxied_token = SimpleTokenContractInstance::new(proxy_address, provider.clone());
+
+    // Step 3: Mint tokens through the proxy
+    let mint_amount = U256::from(1_000_000u64);
+    let (mint_tx, mint_tx_hash) = deployer
+        .sign_txn_request(
+            proxied_token
+                .mint(alice.address, mint_amount)
+                .into_transaction_request()
+                .nonce(2),
+        )
+        .expect("should sign mint txn through proxy");
+
+    // First flashblock: base with L1 info
+    let first_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 0,
+        base: Some(ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: B256::default(),
+            parent_hash: B256::default(),
+            fee_recipient: Address::ZERO,
+            prev_randao: B256::default(),
+            block_number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 0,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: U256::ZERO,
+        }),
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            blob_gas_used: Some(0),
+            transactions: vec![BLOCK_INFO_TXN],
+            ..Default::default()
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    BLOCK_INFO_TXN_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(first_flashblock).await?;
+
+    // Second flashblock: includes DEPOSIT_TX, impl deploy, proxy deploy, and mint
+    let second_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 1,
+        base: None,
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            state_root: B256::default(),
+            receipts_root: B256::default(),
+            gas_used: 0,
+            block_hash: B256::default(),
+            blob_gas_used: Some(0),
+            transactions: vec![DEPOSIT_TX, impl_deploy_tx, proxy_deploy_tx, mint_tx],
+            withdrawals: Vec::new(),
+            logs_bloom: Default::default(),
+            withdrawals_root: Default::default(),
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    DEPOSIT_TX_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 31000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012992u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts.insert(
+                    impl_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 800000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    proxy_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 1200000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    mint_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 1300000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(second_flashblock).await?;
+
+    // Test: eth_call balanceOf through proxy should return minted amount
+    // This tests that delegatecall correctly reads state from proxy storage
+    let balance_call = proxied_token.balanceOf(alice.address).into_transaction_request();
+    let balance_result = provider
+        .call(balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let balance = U256::from_str(&balance_result.to_string())?;
+    assert_eq!(
+        balance, mint_amount,
+        "Balance through proxy should equal minted amount"
+    );
+
+    // Test: eth_call totalSupply through proxy
+    let supply_call = proxied_token.totalSupply().into_transaction_request();
+    let supply_result = provider
+        .call(supply_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let supply = U256::from_str(&supply_result.to_string())?;
+    assert_eq!(
+        supply, mint_amount,
+        "Total supply through proxy should equal minted amount"
+    );
+
+    // Test: Implementation contract should have ZERO balance
+    // (state is stored in proxy, not implementation)
+    let impl_token = SimpleTokenContractInstance::new(impl_address, provider.clone());
+    let impl_balance_call = impl_token.balanceOf(alice.address).into_transaction_request();
+    let impl_balance_result = provider
+        .call(impl_balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let impl_balance = U256::from_str(&impl_balance_result.to_string())?;
+    assert_eq!(
+        impl_balance,
+        U256::ZERO,
+        "Implementation should have zero balance (state in proxy)"
+    );
+
+    Ok(())
+}
+
+/// Tests transfer functionality through a TransparentProxy.
+/// Verifies that delegatecall-based transfers work correctly with eth_call.
+#[tokio::test]
+async fn test_eth_call_transparent_proxy_transfer() -> Result<()> {
+    let harness = FlashblocksHarness::new().await?;
+    let provider = harness.provider();
+    let deployer = &harness.accounts().deployer;
+    let alice = &harness.accounts().alice;
+    let bob = &harness.accounts().bob;
+    let proxy_admin = &harness.accounts().charlie;
+
+    // Deploy implementation (SimpleToken)
+    let (impl_deploy_tx, impl_address, impl_deploy_hash) = deployer
+        .create_deployment_tx(SimpleTokenContract::BYTECODE.clone(), 0)
+        .expect("should deploy implementation");
+
+    // Deploy proxy
+    let proxy_deploy_data = [
+        TransparentProxyContract::BYTECODE.to_vec(),
+        encode_proxy_constructor(impl_address, proxy_admin.address),
+    ]
+    .concat();
+
+    let (proxy_deploy_tx, proxy_address, proxy_deploy_hash) = deployer
+        .create_deployment_tx(proxy_deploy_data.into(), 1)
+        .expect("should deploy proxy");
+
+    use crate::SimpleTokenContract::SimpleTokenContractInstance;
+    let proxied_token = SimpleTokenContractInstance::new(proxy_address, provider.clone());
+
+    // Mint to Alice
+    let mint_amount = U256::from(10_000_000u64);
+    let (mint_tx, mint_tx_hash) = deployer
+        .sign_txn_request(
+            proxied_token
+                .mint(alice.address, mint_amount)
+                .into_transaction_request()
+                .nonce(2),
+        )
+        .expect("should sign mint");
+
+    // Alice transfers to Bob through proxy
+    let transfer_amount = U256::from(1_000_000u64);
+    let (transfer_tx, transfer_tx_hash) = alice
+        .sign_txn_request(
+            proxied_token
+                .transfer(bob.address, transfer_amount)
+                .into_transaction_request()
+                .nonce(0),
+        )
+        .expect("should sign transfer");
+
+    // First flashblock: base with L1 info
+    let first_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 0,
+        base: Some(ExecutionPayloadBaseV1 {
+            parent_beacon_block_root: B256::default(),
+            parent_hash: B256::default(),
+            fee_recipient: Address::ZERO,
+            prev_randao: B256::default(),
+            block_number: 1,
+            gas_limit: 30_000_000,
+            timestamp: 0,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: U256::ZERO,
+        }),
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            blob_gas_used: Some(0),
+            transactions: vec![BLOCK_INFO_TXN],
+            ..Default::default()
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    BLOCK_INFO_TXN_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 10000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012991u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(first_flashblock).await?;
+
+    // Second flashblock: includes all transactions
+    let second_flashblock = Flashblock {
+        payload_id: PayloadId::new([0; 8]),
+        index: 1,
+        base: None,
+        diff: ExecutionPayloadFlashblockDeltaV1 {
+            state_root: B256::default(),
+            receipts_root: B256::default(),
+            gas_used: 0,
+            block_hash: B256::default(),
+            blob_gas_used: Some(0),
+            transactions: vec![
+                DEPOSIT_TX,
+                impl_deploy_tx,
+                proxy_deploy_tx,
+                mint_tx,
+                transfer_tx,
+            ],
+            withdrawals: Vec::new(),
+            logs_bloom: Default::default(),
+            withdrawals_root: Default::default(),
+        },
+        metadata: Metadata {
+            block_number: 1,
+            receipts: {
+                let mut receipts = HashMap::default();
+                receipts.insert(
+                    DEPOSIT_TX_HASH,
+                    OpReceipt::Deposit(OpDepositReceipt {
+                        inner: Receipt {
+                            status: true.into(),
+                            cumulative_gas_used: 31000,
+                            logs: vec![],
+                        },
+                        deposit_nonce: Some(4012992u64),
+                        deposit_receipt_version: None,
+                    }),
+                );
+                receipts.insert(
+                    impl_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 800000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    proxy_deploy_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 1200000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    mint_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 1300000,
+                        logs: vec![],
+                    }),
+                );
+                receipts.insert(
+                    transfer_tx_hash,
+                    OpReceipt::Legacy(Receipt {
+                        status: true.into(),
+                        cumulative_gas_used: 1400000,
+                        logs: vec![],
+                    }),
+                );
+                receipts
+            },
+            new_account_balances: HashMap::default(),
+        },
+    };
+
+    harness.send_flashblock(second_flashblock).await?;
+
+    // Verify balances through proxy via eth_call
+    let alice_balance_call = proxied_token.balanceOf(alice.address).into_transaction_request();
+    let alice_balance_result = provider
+        .call(alice_balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let alice_balance = U256::from_str(&alice_balance_result.to_string())?;
+    assert_eq!(
+        alice_balance,
+        mint_amount - transfer_amount,
+        "Alice's balance through proxy should be reduced"
+    );
+
+    let bob_balance_call = proxied_token.balanceOf(bob.address).into_transaction_request();
+    let bob_balance_result = provider
+        .call(bob_balance_call)
+        .block(BlockNumberOrTag::Pending.into())
+        .await?;
+    let bob_balance = U256::from_str(&bob_balance_result.to_string())?;
+    assert_eq!(
+        bob_balance, transfer_amount,
+        "Bob should have received tokens through proxy"
+    );
 
     Ok(())
 }
