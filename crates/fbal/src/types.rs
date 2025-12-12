@@ -33,7 +33,7 @@ impl FlashblockAccessList {
                 }
             }
 
-            if (!found) {
+            if !found {
                 self.account_changes.push(new.clone());
             }
         }

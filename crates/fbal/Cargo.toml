@@ -14,19 +14,19 @@ workspace = true
 [dependencies]
 alloy-primitives.workspace = true
 alloy-eip7928 = {workspace = true, features = ["serde", "rlp"]}
-reth-evm.workspace = true
-reth-optimism-evm.workspace = true
-reth-optimism-chainspec.workspace = true
-alloy-consensus.workspace = true
 alloy-rlp = {workspace = true, features = ["derive"]}
-alloy-sol-macro = { workspace = true, features = ["json"] }
-alloy-sol-types.workspace = true
-alloy-contract.workspace = true
 
 revm.workspace = true
-op-revm.workspace = true
 
 serde.workspace = true
-serde_json.workspace = true
 
 [dev-dependencies]
+alloy-consensus.workspace = true
+alloy-contract.workspace = true
+alloy-sol-macro = { workspace = true, features = ["json"] }
+alloy-sol-types.workspace = true
+op-revm.workspace = true
+reth-evm.workspace = true
+reth-optimism-chainspec.workspace = true
+reth-optimism-evm.workspace = true
+serde_json.workspace = true

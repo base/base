@@ -11,16 +11,14 @@ use alloy_primitives::{Address, B256, TxKind, U256};
 use alloy_sol_macro::sol;
 use alloy_sol_types::SolCall;
 use base_fbal::{FlashblockAccessList, TouchedAccountsInspector};
-use op_revm::{DefaultOp, OpBuilder, OpContext, OpSpecId, OpTransaction};
+use op_revm::OpTransaction;
 use reth_evm::{ConfigureEvm, Evm};
-use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec};
-use reth_optimism_evm::{OpEvmConfig, OpNextBlockEnvAttributes};
+use reth_optimism_chainspec::OpChainSpec;
+use reth_optimism_evm::OpEvmConfig;
 use revm::{
-    Context, DatabaseCommit, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectEvm, MainBuilder,
-    MainContext,
-    context::{CfgEnv, ContextTr, TxEnv, result::ResultAndState, tx::TxEnvBuilder},
+    DatabaseCommit, DatabaseRef,
+    context::{TxEnv, result::ResultAndState},
     database::InMemoryDB,
-    inspector::JournalExt,
     interpreter::instructions::utility::IntoAddress,
     primitives::{KECCAK_EMPTY, ONE_ETHER},
     state::{AccountInfo, Bytecode},

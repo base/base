@@ -1,19 +1,19 @@
-use alloy_eip7928::{AccountChanges, BalanceChange, CodeChange, NonceChange};
-use alloy_primitives::{Address, FixedBytes, U256, map::foldhash::HashMap};
+use alloy_primitives::{Address, FixedBytes, map::foldhash::HashMap};
 use revm::{
     Inspector,
     bytecode::opcode,
-    context::{ContextTr, JournalTr, Transaction},
+    context::ContextTr,
     inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter,
         interpreter_types::{InputsTr, Jumps},
     },
-    primitives::StorageKey,
 };
 
+/// Inspector that tracks all accounts and storage slots touched during execution.
 #[derive(Debug, Default)]
 pub struct TouchedAccountsInspector {
+    /// Map of touched accounts to the storage slots accessed.
     pub touched_accounts: HashMap<Address, Vec<FixedBytes<32>>>,
     // pub account_changes: HashMap<Address, AccountChanges>,
 }
