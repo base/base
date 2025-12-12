@@ -43,6 +43,7 @@ struct Erc20TestSetup {
     harness: TestHarness,
     token_address: Address,
     proxy_address: Option<Address>,
+    deployer_nonce: u64,
 }
 
 impl Erc20TestSetup {
@@ -66,11 +67,10 @@ impl Erc20TestSetup {
         // Build block with token deployment
         harness.build_block_from_transactions(vec![token_deploy_tx]).await?;
 
-        let proxy_address = if with_proxy {
+        let (proxy_address, deployer_nonce) = if with_proxy {
             // Deploy TransparentProxy pointing to token implementation
-            let proxy_constructor = TransparentProxy::constructorCall {
-                _implementation: token_address,
-            };
+            let proxy_constructor =
+                TransparentProxy::constructorCall { _implementation: token_address };
             let proxy_deploy_data =
                 [TransparentProxy::BYTECODE.to_vec(), proxy_constructor.abi_encode()].concat();
 
@@ -78,12 +78,12 @@ impl Erc20TestSetup {
                 deployer.create_deployment_tx(Bytes::from(proxy_deploy_data), 1)?;
 
             harness.build_block_from_transactions(vec![proxy_deploy_tx]).await?;
-            Some(proxy_addr)
+            (Some(proxy_addr), 2)
         } else {
-            None
+            (None, 1)
         };
 
-        Ok(Self { harness, token_address, proxy_address })
+        Ok(Self { harness, token_address, proxy_address, deployer_nonce })
     }
 
     /// Get the address to interact with (proxy if available, otherwise token directly)
@@ -102,8 +102,10 @@ async fn test_erc20_transfer() -> Result<()> {
     let token = TestERC20::TestERC20Instance::new(token_address, provider.clone());
 
     // First mint some tokens to Alice
-    let mint_tx = token.mint(accounts.alice.address, U256::from(1000u64)).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(1))?;
+    let mint_tx =
+        token.mint(accounts.alice.address, U256::from(1000u64)).into_transaction_request();
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify Alice's balance via eth_call
@@ -158,7 +160,8 @@ async fn test_erc20_mint() -> Result<()> {
     // Mint tokens to Alice
     let mint_amount = U256::from(5000u64);
     let mint_tx = token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(1))?;
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify Alice's balance increased
@@ -176,7 +179,8 @@ async fn test_erc20_mint() -> Result<()> {
     // Mint more tokens to Bob
     let mint_bob_amount = U256::from(3000u64);
     let mint_bob_tx = token.mint(accounts.bob.address, mint_bob_amount).into_transaction_request();
-    let (mint_bob_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_bob_tx.nonce(2))?;
+    let (mint_bob_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_bob_tx.nonce(setup.deployer_nonce + 1))?;
     setup.harness.build_block_from_transactions(vec![mint_bob_tx_bytes]).await?;
 
     // Verify Bob's balance
@@ -206,7 +210,8 @@ async fn test_erc20_burn() -> Result<()> {
     // Mint tokens to Alice first
     let mint_amount = U256::from(1000u64);
     let mint_tx = token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(1))?;
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify initial balance
@@ -218,7 +223,8 @@ async fn test_erc20_burn() -> Result<()> {
     // Burn some tokens from Alice
     let burn_amount = U256::from(400u64);
     let burn_tx = token.burn(accounts.alice.address, burn_amount).into_transaction_request();
-    let (burn_tx_bytes, _) = accounts.deployer.sign_txn_request(burn_tx.nonce(2))?;
+    let (burn_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(burn_tx.nonce(setup.deployer_nonce + 1))?;
     setup.harness.build_block_from_transactions(vec![burn_tx_bytes]).await?;
 
     // Verify Alice's balance decreased
@@ -248,7 +254,8 @@ async fn test_erc20_approve_transfer_from() -> Result<()> {
     // Mint tokens to Alice
     let mint_amount = U256::from(1000u64);
     let mint_tx = token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(1))?;
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Alice approves Bob to spend 500 tokens
@@ -277,8 +284,7 @@ async fn test_erc20_approve_transfer_from() -> Result<()> {
     setup.harness.build_block_from_transactions(vec![transfer_from_tx_bytes]).await?;
 
     // Verify Charlie received the tokens
-    let charlie_balance_call =
-        token.balanceOf(accounts.charlie.address).into_transaction_request();
+    let charlie_balance_call = token.balanceOf(accounts.charlie.address).into_transaction_request();
     let charlie_balance_result = provider.call(charlie_balance_call).await?;
     let charlie_balance = U256::from_str(&charlie_balance_result.to_string())?;
     assert_eq!(charlie_balance, transfer_amount);
@@ -310,8 +316,10 @@ async fn test_transparent_proxy_erc20_transfer() -> Result<()> {
     let token = TestERC20::TestERC20Instance::new(proxy_address, provider.clone());
 
     // Mint tokens through proxy
-    let mint_tx = token.mint(accounts.alice.address, U256::from(1000u64)).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(2))?;
+    let mint_tx =
+        token.mint(accounts.alice.address, U256::from(1000u64)).into_transaction_request();
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify balance through proxy
@@ -353,8 +361,10 @@ async fn test_transparent_proxy_erc20_approve_transfer_from() -> Result<()> {
     let token = TestERC20::TestERC20Instance::new(proxy_address, provider.clone());
 
     // Mint tokens to Alice through proxy
-    let mint_tx = token.mint(accounts.alice.address, U256::from(2000u64)).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(2))?;
+    let mint_tx =
+        token.mint(accounts.alice.address, U256::from(2000u64)).into_transaction_request();
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Alice approves Bob through proxy
@@ -381,8 +391,7 @@ async fn test_transparent_proxy_erc20_approve_transfer_from() -> Result<()> {
     setup.harness.build_block_from_transactions(vec![transfer_from_tx_bytes]).await?;
 
     // Verify Charlie's balance through proxy
-    let charlie_balance_call =
-        token.balanceOf(accounts.charlie.address).into_transaction_request();
+    let charlie_balance_call = token.balanceOf(accounts.charlie.address).into_transaction_request();
     let charlie_balance_result = provider.call(charlie_balance_call).await?;
     let charlie_balance = U256::from_str(&charlie_balance_result.to_string())?;
     assert_eq!(charlie_balance, U256::from(500u64));
@@ -422,7 +431,8 @@ async fn test_transparent_proxy_erc20_mint() -> Result<()> {
     // Mint tokens to Alice through proxy
     let mint_amount = U256::from(7500u64);
     let mint_tx = token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(2))?;
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify Alice's balance increased through proxy
@@ -440,7 +450,8 @@ async fn test_transparent_proxy_erc20_mint() -> Result<()> {
     // Mint more tokens to Bob through proxy
     let mint_bob_amount = U256::from(2500u64);
     let mint_bob_tx = token.mint(accounts.bob.address, mint_bob_amount).into_transaction_request();
-    let (mint_bob_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_bob_tx.nonce(3))?;
+    let (mint_bob_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_bob_tx.nonce(setup.deployer_nonce + 1))?;
     setup.harness.build_block_from_transactions(vec![mint_bob_tx_bytes]).await?;
 
     // Verify Bob's balance through proxy
@@ -471,7 +482,8 @@ async fn test_transparent_proxy_erc20_burn() -> Result<()> {
     // Mint tokens to Alice first through proxy
     let mint_amount = U256::from(1500u64);
     let mint_tx = token.mint(accounts.alice.address, mint_amount).into_transaction_request();
-    let (mint_tx_bytes, _) = accounts.deployer.sign_txn_request(mint_tx.nonce(2))?;
+    let (mint_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(mint_tx.nonce(setup.deployer_nonce))?;
     setup.harness.build_block_from_transactions(vec![mint_tx_bytes]).await?;
 
     // Verify initial balance through proxy
@@ -489,7 +501,8 @@ async fn test_transparent_proxy_erc20_burn() -> Result<()> {
     // Burn some tokens from Alice through proxy
     let burn_amount = U256::from(600u64);
     let burn_tx = token.burn(accounts.alice.address, burn_amount).into_transaction_request();
-    let (burn_tx_bytes, _) = accounts.deployer.sign_txn_request(burn_tx.nonce(3))?;
+    let (burn_tx_bytes, _) =
+        accounts.deployer.sign_txn_request(burn_tx.nonce(setup.deployer_nonce + 1))?;
     setup.harness.build_block_from_transactions(vec![burn_tx_bytes]).await?;
 
     // Verify Alice's balance decreased through proxy
