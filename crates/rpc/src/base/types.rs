@@ -22,28 +22,36 @@ pub struct TransactionStatusResponse {
 /// Extended subscription kind that includes both standard Ethereum subscription types
 /// and flashblocks-specific types.
 ///
-/// This enum wraps the standard `SubscriptionKind` from alloy and adds flashblocks support,
-/// allowing `eth_subscribe` to handle both standard subscriptions (newHeads, logs, etc.)
+/// This enum encapsulates the standard [`SubscriptionKind`] from alloy and adds flashblocks
+/// support, allowing `eth_subscribe` to handle both standard subscriptions (newHeads, logs, etc.)
 /// and custom flashblocks subscriptions.
+///
+/// By encapsulating [`SubscriptionKind`] rather than redefining its variants, we automatically
+/// inherit support for any new variants added upstream, or get a compile error if the signature
+/// changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExtendedSubscriptionKind {
+    /// Standard Ethereum subscription types (newHeads, logs, newPendingTransactions, syncing).
+    ///
+    /// These are proxied to reth's underlying `EthPubSub` implementation.
+    Standard(SubscriptionKind),
+    /// Base-specific subscription types for flashblocks.
+    Base(BaseSubscriptionKind),
+}
+
+/// Base-specific subscription types for flashblocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum ExtendedSubscriptionKind {
-    /// New block headers subscription (standard).
-    NewHeads,
-    /// Logs subscription (standard).
-    Logs,
-    /// New pending transactions subscription (standard).
-    NewPendingTransactions,
-    /// Node syncing status subscription (standard).
-    Syncing,
-    /// New flashblocks subscription (Base-specific).
+pub enum BaseSubscriptionKind {
+    /// New flashblocks subscription.
     ///
     /// Fires a notification each time a new flashblock is processed, providing the current
     /// pending block state. Each flashblock represents an incremental update to the pending
     /// block, so multiple notifications may be emitted for the same block height as new
     /// flashblocks arrive.
     NewFlashblocks,
-    /// Pending logs subscription (Base-specific).
+    /// Pending logs subscription.
     ///
     /// Returns logs from flashblocks pending state that match the given filter criteria.
     /// Unlike standard `logs` subscription which only includes logs from confirmed blocks,
@@ -55,16 +63,25 @@ impl ExtendedSubscriptionKind {
     /// Returns the standard subscription kind if this is a standard subscription type.
     pub const fn as_standard(&self) -> Option<SubscriptionKind> {
         match self {
-            Self::NewHeads => Some(SubscriptionKind::NewHeads),
-            Self::Logs => Some(SubscriptionKind::Logs),
-            Self::NewPendingTransactions => Some(SubscriptionKind::NewPendingTransactions),
-            Self::Syncing => Some(SubscriptionKind::Syncing),
-            Self::NewFlashblocks | Self::PendingLogs => None,
+            Self::Standard(kind) => Some(*kind),
+            Self::Base(_) => None,
         }
     }
 
     /// Returns true if this is a flashblocks-specific subscription.
     pub const fn is_flashblocks(&self) -> bool {
-        matches!(self, Self::NewFlashblocks | Self::PendingLogs)
+        matches!(self, Self::Base(_))
+    }
+}
+
+impl From<SubscriptionKind> for ExtendedSubscriptionKind {
+    fn from(kind: SubscriptionKind) -> Self {
+        Self::Standard(kind)
+    }
+}
+
+impl From<BaseSubscriptionKind> for ExtendedSubscriptionKind {
+    fn from(kind: BaseSubscriptionKind) -> Self {
+        Self::Base(kind)
     }
 }
