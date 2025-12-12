@@ -11,7 +11,7 @@ use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
 use base_reth_flashblocks::{Flashblock, FlashblocksReceiver, FlashblocksState};
-use base_reth_rpc::{BasePubSub, BasePubSubApiServer, EthApiExt, EthApiOverrideServer};
+use base_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use eyre::Result;
 use futures_util::Future;
 use once_cell::sync::OnceCell;
@@ -180,9 +180,11 @@ impl FlashblocksNodeExtensions {
                 );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
 
-                // Register base_subscribe subscription endpoint
-                let base_pubsub = BasePubSub::new(fb.clone());
-                ctx.modules.merge_configured(base_pubsub.into_rpc())?;
+                // Register eth_subscribe subscription endpoint for flashblocks
+                // Uses replace_configured since eth_subscribe already exists from reth's standard module
+                // Pass eth_api to enable proxying standard subscription types to reth's implementation
+                let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
+                ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
                 let fb_for_task = fb.clone();
                 let mut receiver = receiver

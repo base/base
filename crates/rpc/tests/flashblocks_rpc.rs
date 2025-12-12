@@ -793,9 +793,9 @@ async fn test_get_logs_mixed_block_ranges() -> Result<()> {
     Ok(())
 }
 
-// base_ methods
+// eth_ subscription methods for flashblocks
 #[tokio::test]
-async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
+async fn test_eth_subscribe_new_flashblocks() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
     let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
@@ -806,7 +806,7 @@ async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "base_subscribe",
+                "method": "eth_subscribe",
                 "params": ["newFlashblocks"]
             })
             .to_string()
@@ -824,7 +824,7 @@ async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
 
     let notification = ws_stream.next().await.unwrap()?;
     let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
-    assert_eq!(notif["method"], "base_subscription");
+    assert_eq!(notif["method"], "eth_subscription");
     assert_eq!(notif["params"]["subscription"], subscription_id);
 
     let block = &notif["params"]["result"];
@@ -838,7 +838,7 @@ async fn test_base_subscribe_new_flashblocks() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
+async fn test_eth_subscribe_multiple_flashblocks() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
     let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
@@ -849,7 +849,7 @@ async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "base_subscribe",
+                "method": "eth_subscribe",
                 "params": ["newFlashblocks"]
             })
             .to_string()
@@ -885,7 +885,7 @@ async fn test_base_subscribe_multiple_flashblocks() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_base_unsubscribe() -> eyre::Result<()> {
+async fn test_eth_unsubscribe() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
     let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
@@ -896,7 +896,7 @@ async fn test_base_unsubscribe() -> eyre::Result<()> {
             json!({
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "base_subscribe",
+                "method": "eth_subscribe",
                 "params": ["newFlashblocks"]
             })
             .to_string()
@@ -913,7 +913,7 @@ async fn test_base_unsubscribe() -> eyre::Result<()> {
             json!({
                 "jsonrpc": "2.0",
                 "id": 2,
-                "method": "base_unsubscribe",
+                "method": "eth_unsubscribe",
                 "params": [subscription_id]
             })
             .to_string()
@@ -931,7 +931,7 @@ async fn test_base_unsubscribe() -> eyre::Result<()> {
 }
 
 #[tokio::test]
-async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
+async fn test_eth_subscribe_multiple_clients() -> eyre::Result<()> {
     let setup = TestSetup::new().await?;
     let _provider = setup.harness.provider();
     let ws_url = setup.harness.ws_url();
@@ -941,7 +941,7 @@ async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
     let req = json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "base_subscribe",
+        "method": "eth_subscribe",
         "params": ["newFlashblocks"]
     });
     ws1.send(Message::Text(req.to_string().into())).await?;
@@ -957,14 +957,47 @@ async fn test_base_subscribe_multiple_clients() -> eyre::Result<()> {
     let notif2 = ws2.next().await.unwrap()?;
     let notif2: serde_json::Value = serde_json::from_str(notif2.to_text()?)?;
 
-    assert_eq!(notif1["method"], "base_subscription");
-    assert_eq!(notif2["method"], "base_subscription");
+    assert_eq!(notif1["method"], "eth_subscription");
+    assert_eq!(notif2["method"], "eth_subscription");
 
     let block1 = &notif1["params"]["result"];
     let block2 = &notif2["params"]["result"];
     assert_eq!(block1["number"], "0x1");
     assert_eq!(block1["number"], block2["number"]);
     assert_eq!(block1["hash"], block2["hash"]);
+
+    Ok(())
+}
+
+/// Test that standard subscription types (newHeads) work correctly.
+/// This verifies that our ExtendedSubscriptionKind properly proxies to reth's implementation.
+#[tokio::test]
+async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
+    let setup = TestSetup::new().await?;
+    let _provider = setup.harness.provider();
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    // Subscribe to newHeads - this should be proxied to reth's standard implementation
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": ["newHeads"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+
+    let response = ws_stream.next().await.unwrap()?;
+    let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+    assert_eq!(sub["jsonrpc"], "2.0");
+    assert_eq!(sub["id"], 1);
+    // Should return a subscription ID, confirming the subscription was accepted
+    assert!(sub["result"].is_string(), "Expected subscription ID, got: {:?}", sub);
 
     Ok(())
 }

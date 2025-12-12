@@ -1681,6 +1681,7 @@ dependencies = [
  "reth-optimism-primitives",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-rpc",
  "reth-rpc-eth-api",
  "reth-testing-utils",
  "reth-tracing",
