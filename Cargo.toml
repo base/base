@@ -67,6 +67,7 @@ reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-node = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-cli = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-rpc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }

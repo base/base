@@ -84,7 +84,8 @@ impl BaseRpcExtension {
 
                 // Register the eth_subscribe subscription endpoint for flashblocks
                 // Uses replace_configured since eth_subscribe already exists from reth's standard module
-                let eth_pubsub = EthPubSub::new(fb);
+                // Pass eth_api to enable proxying standard subscription types to reth's implementation
+                let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb);
                 ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
             } else {
                 info!(message = "flashblocks integration is disabled");

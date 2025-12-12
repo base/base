@@ -912,3 +912,36 @@ async fn test_eth_subscribe_multiple_clients() -> eyre::Result<()> {
 
     Ok(())
 }
+
+/// Test that standard subscription types (newHeads) work correctly.
+/// This verifies that our ExtendedSubscriptionKind properly proxies to reth's implementation.
+#[tokio::test]
+async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
+    let setup = TestSetup::new().await?;
+    let _provider = setup.harness.provider();
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    // Subscribe to newHeads - this should be proxied to reth's standard implementation
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": ["newHeads"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+
+    let response = ws_stream.next().await.unwrap()?;
+    let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+    assert_eq!(sub["jsonrpc"], "2.0");
+    assert_eq!(sub["id"], 1);
+    // Should return a subscription ID, confirming the subscription was accepted
+    assert!(sub["result"].is_string(), "Expected subscription ID, got: {:?}", sub);
+
+    Ok(())
+}
