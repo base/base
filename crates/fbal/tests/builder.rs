@@ -455,42 +455,26 @@ pub fn test_create_deployment_tracked() {
     let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
 
     // Verify factory is in the access list
-    let factory_entry = access_list
-        .account_changes
-        .iter()
-        .find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // The factory's nonce should change (CREATE increments deployer nonce)
     let factory_changes = factory_entry.unwrap();
-    assert!(
-        !factory_changes.nonce_changes.is_empty(),
-        "Factory nonce should change due to CREATE"
-    );
+    assert!(!factory_changes.nonce_changes.is_empty(), "Factory nonce should change due to CREATE");
 
     // Find the deployed contract - it should have a code change
     let deployed_entry = access_list
         .account_changes
         .iter()
         .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
-    assert!(
-        deployed_entry.is_some(),
-        "Deployed contract should have code change"
-    );
+    assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
-    assert_eq!(
-        deployed_changes.code_changes.len(),
-        1,
-        "Should have exactly one code change"
-    );
+    assert_eq!(deployed_changes.code_changes.len(), 1, "Should have exactly one code change");
 
     // Verify the deployed bytecode matches SimpleStorage's deployed bytecode
     let code_change = &deployed_changes.code_changes[0];
-    assert!(
-        !code_change.new_code.is_empty(),
-        "Deployed code should not be empty"
-    );
+    assert!(!code_change.new_code.is_empty(), "Deployed code should not be empty");
 
     dbg!(&access_list);
 }
@@ -539,10 +523,7 @@ pub fn test_create2_deployment_tracked() {
     let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
 
     // Verify factory is in the access list
-    let factory_entry = access_list
-        .account_changes
-        .iter()
-        .find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // Find the deployed contract - it should have a code change
@@ -550,24 +531,14 @@ pub fn test_create2_deployment_tracked() {
         .account_changes
         .iter()
         .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
-    assert!(
-        deployed_entry.is_some(),
-        "Deployed contract should have code change"
-    );
+    assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
-    assert_eq!(
-        deployed_changes.code_changes.len(),
-        1,
-        "Should have exactly one code change"
-    );
+    assert_eq!(deployed_changes.code_changes.len(), 1, "Should have exactly one code change");
 
     // Verify the deployed bytecode is present
     let code_change = &deployed_changes.code_changes[0];
-    assert!(
-        !code_change.new_code.is_empty(),
-        "Deployed code should not be empty"
-    );
+    assert!(!code_change.new_code.is_empty(), "Deployed code should not be empty");
 
     dbg!(&access_list);
 }
@@ -617,10 +588,7 @@ pub fn test_create_and_immediate_call() {
     let access_list = execute_txns_build_access_list(vec![tx], Some(overrides));
 
     // Verify factory is in the access list
-    let factory_entry = access_list
-        .account_changes
-        .iter()
-        .find(|ac| ac.address() == factory);
+    let factory_entry = access_list.account_changes.iter().find(|ac| ac.address() == factory);
     assert!(factory_entry.is_some(), "Factory should be in access list");
 
     // Find the deployed contract - it should have both code change AND storage change
@@ -628,19 +596,12 @@ pub fn test_create_and_immediate_call() {
         .account_changes
         .iter()
         .find(|ac| !ac.code_changes.is_empty() && ac.address() != factory);
-    assert!(
-        deployed_entry.is_some(),
-        "Deployed contract should have code change"
-    );
+    assert!(deployed_entry.is_some(), "Deployed contract should have code change");
 
     let deployed_changes = deployed_entry.unwrap();
 
     // Verify code change exists
-    assert_eq!(
-        deployed_changes.code_changes.len(),
-        1,
-        "Should have exactly one code change"
-    );
+    assert_eq!(deployed_changes.code_changes.len(), 1, "Should have exactly one code change");
 
     // Verify storage change exists (from setValue(42))
     // SimpleStorage stores `value` at slot 0
@@ -651,11 +612,7 @@ pub fn test_create_and_immediate_call() {
 
     // Verify the storage slot is 0 and value is 42
     let storage_change = &deployed_changes.storage_changes[0];
-    assert_eq!(
-        storage_change.slot,
-        B256::ZERO,
-        "Storage slot should be 0"
-    );
+    assert_eq!(storage_change.slot, B256::ZERO, "Storage slot should be 0");
     assert_eq!(
         storage_change.changes[0].new_value,
         B256::from(U256::from(42)),
