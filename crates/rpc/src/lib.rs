@@ -13,7 +13,7 @@ pub use base::{
     pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
-    types::{ExtendedSubscriptionKind, Status, TransactionStatusResponse},
+    types::{BaseSubscriptionKind, ExtendedSubscriptionKind, Status, TransactionStatusResponse},
 };
 
 mod eth;
