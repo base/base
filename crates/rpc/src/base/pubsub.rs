@@ -16,7 +16,10 @@ use jsonrpsee::{
 };
 use op_alloy_network::Optimism;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
-use reth_rpc_eth_api::{EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction, pubsub::EthPubSubApiServer as RethEthPubSubApiServer};
+use reth_rpc_eth_api::{
+    EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
+    pubsub::EthPubSubApiServer as RethEthPubSubApiServer,
+};
 use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
@@ -61,10 +64,7 @@ pub struct EthPubSub<Eth, FB> {
 impl<Eth, FB> EthPubSub<Eth, FB> {
     /// Creates a new instance with the given eth API and flashblocks state.
     pub fn new(eth_api: Eth, flashblocks_state: Arc<FB>) -> Self {
-        Self {
-            inner: RethEthPubSub::new(eth_api),
-            flashblocks_state,
-        }
+        Self { inner: RethEthPubSub::new(eth_api), flashblocks_state }
     }
 
     /// Returns a stream that yields all new flashblocks as RPC blocks
@@ -108,11 +108,7 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
                     }
                 };
                 let logs = pending_blocks.get_pending_logs(&filter);
-                if logs.is_empty() {
-                    None
-                } else {
-                    Some(logs)
-                }
+                if logs.is_empty() { None } else { Some(logs) }
             },
         )
     }
@@ -137,7 +133,8 @@ where
     ) -> SubscriptionResult {
         // For standard subscription types, delegate to reth's implementation
         if let Some(standard_kind) = kind.as_standard() {
-            return RethEthPubSubApiServer::subscribe(&self.inner, pending, standard_kind, params).await;
+            return RethEthPubSubApiServer::subscribe(&self.inner, pending, standard_kind, params)
+                .await;
         }
 
         // Handle flashblocks-specific subscriptions
@@ -158,8 +155,7 @@ where
                     _ => Filter::default(),
                 };
 
-                let stream =
-                    Self::pending_logs_stream(Arc::clone(&self.flashblocks_state), filter);
+                let stream = Self::pending_logs_stream(Arc::clone(&self.flashblocks_state), filter);
 
                 tokio::spawn(async move {
                     pipe_from_stream(sink, stream).await;
