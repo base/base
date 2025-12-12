@@ -5,9 +5,7 @@ use std::collections::HashMap;
 use alloy_primitives::{TxKind, U256};
 use op_revm::OpTransaction;
 use revm::{
-    context::TxEnv,
-    interpreter::instructions::utility::IntoAddress,
-    primitives::ONE_ETHER,
+    context::TxEnv, interpreter::instructions::utility::IntoAddress, primitives::ONE_ETHER,
     state::AccountInfo,
 };
 
