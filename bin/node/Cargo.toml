@@ -25,6 +25,7 @@ reth-cli-util.workspace = true
 # misc
 clap.workspace = true
 once_cell.workspace = true
+humantime.workspace = true
 
 [features]
 default = []

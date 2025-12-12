@@ -1,6 +1,6 @@
 //! Contains the CLI arguments
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use base_reth_runner::{BaseNodeConfig, FlashblocksConfig, ProofsConfig, TracingConfig};
 use once_cell::sync::OnceCell;
@@ -53,6 +53,37 @@ pub struct Args {
         required_if_eq("proofs_history", "true")
     )]
     pub proofs_history_storage_path: Option<PathBuf>,
+
+    /// The window to span blocks for proofs history. Value is the number of blocks.
+    /// Default is 1 month of blocks based on 2 seconds block time.
+    /// 30 * 24 * 60 * 60 / 2 = `1_296_000`
+    // TODO: Pass this arg to the ExEx or remove it if not needed.
+    #[arg(
+        long = "proofs-history.window",
+        default_value_t = 1_296_000,
+        value_name = "PROOFS_HISTORY_WINDOW"
+    )]
+    pub proofs_history_window: u64,
+
+    /// Interval between proof-storage prune runs. Accepts human-friendly durations
+    /// like "100s", "5m", "1h". Defaults to 1h.
+    ///
+    /// - Shorter intervals prune smaller batches more often, so each prune run tends to be faster
+    ///   and the blocking pause for writes is shorter, at the cost of more frequent pauses.
+    /// - Longer intervals prune larger batches less often, which reduces how often pruning runs,
+    ///   but each run can take longer and block writes for longer.
+    ///
+    /// A shorter interval is preferred so that prune
+    /// runs stay small and don’t stall writes for too long.
+    ///
+    /// CLI: `--proofs-history.prune-interval 10m`
+    #[arg(
+        long = "proofs-history.prune-interval",
+        value_name = "PROOFS_HISTORY_PRUNE_INTERVAL",
+        default_value = "1h",
+        value_parser = humantime::parse_duration
+    )]
+    pub proofs_history_prune_interval: Duration,
 }
 
 impl Args {
