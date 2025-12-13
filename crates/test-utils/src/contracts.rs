@@ -25,5 +25,8 @@ sol!(
 sol!(
     #[sol(rpc)]
     TransparentUpgradeableProxy,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json")
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json"
+    )
 );

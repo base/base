@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
@@ -29,8 +30,6 @@ use reth_rpc_eth_api::RpcReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-use DoubleCounter::DoubleCounterInstance;
 
 struct TestSetup {
     harness: FlashblocksHarness,
@@ -241,18 +240,14 @@ impl TestSetup {
     }
 
     fn count1(&self) -> OpTransactionRequest {
-        let counter = DoubleCounterInstance::new(
-            self.txn_details.counter_address,
-            self.harness.provider(),
-        );
+        let counter =
+            DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count1().into_transaction_request()
     }
 
     fn count2(&self) -> OpTransactionRequest {
-        let counter = DoubleCounterInstance::new(
-            self.txn_details.counter_address,
-            self.harness.provider(),
-        );
+        let counter =
+            DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count2().into_transaction_request()
     }
 

@@ -66,11 +66,9 @@ impl Erc20TestSetup {
                 initialOwner: deployer.address,
                 _data: Bytes::new(),
             };
-            let proxy_deploy_data = [
-                TransparentUpgradeableProxy::BYTECODE.to_vec(),
-                proxy_constructor.abi_encode(),
-            ]
-            .concat();
+            let proxy_deploy_data =
+                [TransparentUpgradeableProxy::BYTECODE.to_vec(), proxy_constructor.abi_encode()]
+                    .concat();
 
             let (proxy_tx, proxy_addr, proxy_hash) =
                 deployer.create_deployment_tx(Bytes::from(proxy_deploy_data), 1)?;
