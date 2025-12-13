@@ -3,6 +3,8 @@
 
 /// Convenience types and helpers for working with deterministic test accounts.
 pub mod accounts;
+/// Solidity contract bindings for integration tests.
+pub mod contracts;
 /// Ergonomic wrapper around the Engine API clients used by the harness.
 pub mod engine;
 /// Shared fixtures and test data reused by integration tests.

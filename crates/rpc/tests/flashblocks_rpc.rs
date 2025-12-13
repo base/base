@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use DoubleCounter::DoubleCounterInstance;
 use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{
@@ -12,9 +13,9 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
-use alloy_sol_macro::sol;
 use base_reth_flashblocks::{Flashblock, Metadata};
 use base_reth_test_utils::{
+    contracts::DoubleCounter,
     fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
     flashblocks_harness::FlashblocksHarness,
 };
@@ -29,17 +30,6 @@ use reth_rpc_eth_api::RpcReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-
-use crate::DoubleCounterContract::DoubleCounterContractInstance;
-
-sol!(
-    #[sol(rpc)]
-    DoubleCounterContract,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../test-utils/contracts/out/DoubleCounter.sol/DoubleCounter.json"
-    )
-);
 
 struct TestSetup {
     harness: FlashblocksHarness,
@@ -71,9 +61,9 @@ impl TestSetup {
         let bob = &harness.accounts().bob;
 
         let (counter_deployment_tx, counter_address, counter_deployment_hash) = deployer
-            .create_deployment_tx(DoubleCounterContract::BYTECODE.clone(), 0)
+            .create_deployment_tx(DoubleCounter::BYTECODE.clone(), 0)
             .expect("should be able to sign DoubleCounter deployment txn");
-        let counter = DoubleCounterContractInstance::new(counter_address.clone(), provider);
+        let counter = DoubleCounterInstance::new(counter_address.clone(), provider);
         let (increment1_tx, increment1_tx_hash) = deployer
             .sign_txn_request(counter.increment().into_transaction_request().nonce(1))
             .expect("should be able to sign increment() txn");
@@ -250,18 +240,14 @@ impl TestSetup {
     }
 
     fn count1(&self) -> OpTransactionRequest {
-        let counter = DoubleCounterContractInstance::new(
-            self.txn_details.counter_address,
-            self.harness.provider(),
-        );
+        let counter =
+            DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count1().into_transaction_request()
     }
 
     fn count2(&self) -> OpTransactionRequest {
-        let counter = DoubleCounterContractInstance::new(
-            self.txn_details.counter_address,
-            self.harness.provider(),
-        );
+        let counter =
+            DoubleCounterInstance::new(self.txn_details.counter_address, self.harness.provider());
         counter.count2().into_transaction_request()
     }
 

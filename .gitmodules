@@ -4,3 +4,6 @@
 [submodule "crates/test-utils/contracts/lib/solmate"]
 	path = crates/test-utils/contracts/lib/solmate
 	url = https://github.com/transmissions11/solmate
+[submodule "crates/test-utils/contracts/lib/openzeppelin-contracts"]
+	path = crates/test-utils/contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
