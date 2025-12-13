@@ -24,7 +24,7 @@ use serde::Serialize;
 use tokio_stream::{Stream, StreamExt, wrappers::BroadcastStream};
 use tracing::error;
 
-use crate::ExtendedSubscriptionKind;
+use crate::{BaseSubscriptionKind, ExtendedSubscriptionKind};
 
 /// Eth pub-sub RPC extension for flashblocks and standard subscriptions.
 ///
@@ -138,17 +138,21 @@ where
         }
 
         // Handle flashblocks-specific subscriptions
+        let ExtendedSubscriptionKind::Base(base_kind) = kind else {
+            unreachable!("Standard subscription types should be delegated to inner");
+        };
+
         let sink = pending.accept().await?;
 
-        match kind {
-            ExtendedSubscriptionKind::NewFlashblocks => {
+        match base_kind {
+            BaseSubscriptionKind::NewFlashblocks => {
                 let stream = Self::new_flashblocks_stream(Arc::clone(&self.flashblocks_state));
 
                 tokio::spawn(async move {
                     pipe_from_stream(sink, stream).await;
                 });
             }
-            ExtendedSubscriptionKind::PendingLogs => {
+            BaseSubscriptionKind::PendingLogs => {
                 // Extract filter from params, default to empty filter (match all)
                 let filter = match params {
                     Some(Params::Logs(filter)) => *filter,
@@ -161,8 +165,6 @@ where
                     pipe_from_stream(sink, stream).await;
                 });
             }
-            // Standard types are handled above, this branch is unreachable
-            _ => unreachable!("Standard subscription types should be delegated to inner"),
         }
 
         Ok(())
