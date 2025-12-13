@@ -1721,6 +1721,7 @@ name = "base-reth-test-utils"
 version = "0.2.1"
 dependencies = [
  "alloy-consensus",
+ "alloy-contract",
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
@@ -1732,6 +1733,8 @@ dependencies = [
  "alloy-serde",
  "alloy-signer",
  "alloy-signer-local",
+ "alloy-sol-macro",
+ "alloy-sol-types",
  "base-reth-flashblocks",
  "base-reth-rpc",
  "chrono",

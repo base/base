@@ -12,10 +12,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, B256, Bytes, LogData, TxHash, U256, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::PayloadId;
-use alloy_sol_macro::sol;
 use alloy_sol_types::{SolConstructor, SolValue};
 use base_reth_flashblocks::{Flashblock, Metadata};
 use base_reth_test_utils::{
+    contracts::{TestERC20, TransparentProxy},
     fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
     flashblocks_harness::FlashblocksHarness,
 };
@@ -23,24 +23,6 @@ use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
-
-sol!(
-    #[sol(rpc)]
-    TestERC20,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../test-utils/contracts/out/TestERC20.sol/TestERC20.json"
-    )
-);
-
-sol!(
-    #[sol(rpc)]
-    TransparentProxy,
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../test-utils/contracts/out/TransparentProxy.sol/TransparentProxy.json"
-    )
-);
 
 /// ERC-20 Transfer event topic (keccak256("Transfer(address,address,uint256)"))
 const TRANSFER_EVENT_TOPIC: B256 =
