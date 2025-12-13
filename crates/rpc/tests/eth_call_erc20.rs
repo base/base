@@ -2,10 +2,14 @@
 //!
 //! Tests cover:
 //! - Basic ERC-20 functionality (transfer, mint, burn, approve, transferFrom)
-//! - TransparentProxy with ERC-20 (USDC-style delegatecall patterns)
+//! - TransparentUpgradeableProxy with ERC-20 (USDC-style delegatecall patterns)
 //!
 //! These tests use FlashblocksHarness with manually constructed flashblock payloads
 //! to properly test eth_call against contract state.
+//!
+//! Contract sources:
+//! - MockERC20: Solmate's MockERC20 (lib/solmate)
+//! - TransparentUpgradeableProxy: OpenZeppelin's proxy (lib/openzeppelin-contracts)
 
 use alloy_consensus::Receipt;
 use alloy_eips::BlockNumberOrTag;
@@ -15,7 +19,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::{SolConstructor, SolValue};
 use base_reth_flashblocks::{Flashblock, Metadata};
 use base_reth_test_utils::{
-    contracts::{TestERC20, TransparentProxy},
+    contracts::{MockERC20, TransparentUpgradeableProxy},
     fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
     flashblocks_harness::FlashblocksHarness,
 };
@@ -43,15 +47,30 @@ impl Erc20TestSetup {
         let harness = FlashblocksHarness::new().await?;
         let deployer = &harness.accounts().deployer;
 
-        // Deploy TestERC20 contract (no constructor args)
+        // Deploy MockERC20 from solmate with constructor args (name, symbol, decimals)
+        let token_constructor = MockERC20::constructorCall {
+            _name: "Test Token".to_string(),
+            _symbol: "TEST".to_string(),
+            _decimals: 18,
+        };
+        let token_deploy_data =
+            [MockERC20::BYTECODE.to_vec(), token_constructor.abi_encode()].concat();
         let (token_deploy_tx, token_address, token_deploy_hash) =
-            deployer.create_deployment_tx(TestERC20::BYTECODE.clone(), 0)?;
+            deployer.create_deployment_tx(Bytes::from(token_deploy_data), 0)?;
 
         let (proxy_address, proxy_deploy_tx, proxy_deploy_hash) = if with_proxy {
-            let proxy_constructor =
-                TransparentProxy::constructorCall { _implementation: token_address };
-            let proxy_deploy_data =
-                [TransparentProxy::BYTECODE.to_vec(), proxy_constructor.abi_encode()].concat();
+            // Deploy TransparentUpgradeableProxy from OpenZeppelin
+            // Constructor: (implementation, initialOwner, data)
+            let proxy_constructor = TransparentUpgradeableProxy::constructorCall {
+                _logic: token_address,
+                initialOwner: deployer.address,
+                _data: Bytes::new(),
+            };
+            let proxy_deploy_data = [
+                TransparentUpgradeableProxy::BYTECODE.to_vec(),
+                proxy_constructor.abi_encode(),
+            ]
+            .concat();
 
             let (proxy_tx, proxy_addr, proxy_hash) =
                 deployer.create_deployment_tx(Bytes::from(proxy_deploy_data), 1)?;
@@ -119,7 +138,8 @@ impl Erc20TestSetup {
                 new_account_balances: {
                     // Give deployer enough ETH for contract deployments
                     let mut balances = HashMap::default();
-                    balances.insert(deployer_address, U256::from(10_000_000_000_000_000_000_000u128)); // 10000 ETH
+                    balances
+                        .insert(deployer_address, U256::from(10_000_000_000_000_000_000_000u128)); // 10000 ETH
                     balances
                 },
             },
@@ -255,7 +275,7 @@ async fn test_erc20_deployment() -> Result<()> {
     setup.send_base_and_deploy().await?;
 
     // Verify contract is deployed by querying name
-    let token = TestERC20::TestERC20Instance::new(setup.token_address, provider.clone());
+    let token = MockERC20::MockERC20Instance::new(setup.token_address, provider.clone());
     let name_call = token.name().into_transaction_request();
 
     let result = provider.call(name_call).block(BlockNumberOrTag::Pending.into()).await?;
@@ -268,7 +288,7 @@ async fn test_erc20_deployment() -> Result<()> {
     let symbol = String::abi_decode(&result)?;
     assert_eq!(symbol, "TEST");
 
-    // Query decimals
+    // Query decimals (returns uint8, but ABI encodes as uint256)
     let decimals_call = token.decimals().into_transaction_request();
     let result = provider.call(decimals_call).block(BlockNumberOrTag::Pending.into()).await?;
     let decimals = U256::abi_decode(&result)?;
@@ -277,7 +297,7 @@ async fn test_erc20_deployment() -> Result<()> {
     Ok(())
 }
 
-/// Test ERC-20 token deployment with TransparentProxy
+/// Test ERC-20 token deployment with TransparentUpgradeableProxy
 #[tokio::test]
 async fn test_proxy_erc20_deployment() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;
@@ -287,25 +307,17 @@ async fn test_proxy_erc20_deployment() -> Result<()> {
     setup.send_base_and_deploy().await?;
 
     // Verify token implementation is deployed
-    let token = TestERC20::TestERC20Instance::new(setup.token_address, provider.clone());
+    let token = MockERC20::MockERC20Instance::new(setup.token_address, provider.clone());
     let name_call = token.name().into_transaction_request();
     let result = provider.call(name_call).block(BlockNumberOrTag::Pending.into()).await?;
     let name = String::abi_decode(&result)?;
     assert_eq!(name, "Test Token");
 
-    // Verify proxy is deployed and points to implementation
-    let proxy = TransparentProxy::TransparentProxyInstance::new(
-        setup.proxy_address.unwrap(),
-        provider.clone(),
-    );
-    let impl_call = proxy.implementation().into_transaction_request();
-    let result = provider.call(impl_call).block(BlockNumberOrTag::Pending.into()).await?;
-    let impl_address = Address::abi_decode(&result)?;
-    assert_eq!(impl_address, setup.token_address);
-
-    // Note: name() through proxy returns empty because proxy uses its own storage
-    // and TestERC20 sets name/symbol in constructor (not an initializer pattern).
-    // The proxy's storage was never initialized with these values.
+    // Note: OpenZeppelin's TransparentUpgradeableProxy doesn't expose implementation()
+    // to external callers (only admin can access it via ProxyAdmin).
+    // We verify the proxy is deployed by checking we can call through it.
+    // name() through proxy returns empty because proxy uses its own storage
+    // and MockERC20 sets name/symbol in constructor (not an initializer pattern).
     // State-changing operations like mint() work correctly through proxy
     // because they modify proxy's storage at runtime.
 
@@ -323,7 +335,7 @@ async fn test_erc20_mint() -> Result<()> {
     setup.send_base_and_deploy().await?;
 
     // Check initial balance is zero
-    let token = TestERC20::TestERC20Instance::new(setup.token_address, provider.clone());
+    let token = MockERC20::MockERC20Instance::new(setup.token_address, provider.clone());
     let balance_call = token.balanceOf(accounts.alice.address).into_transaction_request();
     let result =
         provider.call(balance_call.clone()).block(BlockNumberOrTag::Pending.into()).await?;
@@ -349,7 +361,7 @@ async fn test_erc20_mint() -> Result<()> {
     Ok(())
 }
 
-/// Test ERC-20 mint through TransparentProxy
+/// Test ERC-20 mint through TransparentUpgradeableProxy
 #[tokio::test]
 async fn test_proxy_erc20_mint() -> Result<()> {
     let setup = Erc20TestSetup::new(true).await?;
@@ -361,7 +373,7 @@ async fn test_proxy_erc20_mint() -> Result<()> {
 
     // Check initial balance is zero through proxy
     let proxy_address = setup.proxy_address.unwrap();
-    let token_via_proxy = TestERC20::TestERC20Instance::new(proxy_address, provider.clone());
+    let token_via_proxy = MockERC20::MockERC20Instance::new(proxy_address, provider.clone());
     let balance_call = token_via_proxy.balanceOf(accounts.alice.address).into_transaction_request();
     let result =
         provider.call(balance_call.clone()).block(BlockNumberOrTag::Pending.into()).await?;

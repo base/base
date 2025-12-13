@@ -2,6 +2,11 @@
 //!
 //! This module provides pre-compiled contract bindings that can be used
 //! across different test crates without needing relative path references.
+//!
+//! Contract sources:
+//! - `DoubleCounter`: Custom test contract (src/DoubleCounter.sol)
+//! - `MockERC20`: Solmate's MockERC20 (lib/solmate)
+//! - `TransparentUpgradeableProxy`: OpenZeppelin's TransparentUpgradeableProxy (lib/openzeppelin-contracts)
 
 use alloy_sol_macro::sol;
 
@@ -13,12 +18,12 @@ sol!(
 
 sol!(
     #[sol(rpc)]
-    TestERC20,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/TestERC20.sol/TestERC20.json")
+    MockERC20,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/MockERC20.sol/MockERC20.json")
 );
 
 sol!(
     #[sol(rpc)]
-    TransparentProxy,
-    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/TransparentProxy.sol/TransparentProxy.json")
+    TransparentUpgradeableProxy,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/contracts/out/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json")
 );
