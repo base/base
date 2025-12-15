@@ -95,11 +95,16 @@ deploy-fdg-contracts env_file=".env" *features='':
     
     # Change to contracts directory
     cd contracts
-    
-    # Install dependencies
-    echo "Installing forge dependencies..."
-    forge install
-    
+
+    # Install dependencies only if not already present 
+    # (avoids git lock conflicts in parallel test runs)
+    if [ ! -d "lib/forge-std" ]; then
+        echo "Installing forge dependencies..."
+        forge install
+    else
+        echo "Forge dependencies already installed, skipping..."
+    fi
+
     # Build contracts
     echo "Building contracts..."
     forge build

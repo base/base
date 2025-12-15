@@ -15,7 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rpc"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	opsbind "github.com/succinctlabs/op-succinct/bindings"
 )
@@ -273,7 +273,7 @@ func (w ethCaller) CodeAt(ctx context.Context, contract common.Address, blockNum
 func WaitForDefenderWins(ctx context.Context, t devtest.T, dgf *FdgClient) {
 	for {
 		status, err := dgf.Status(ctx)
-		require.NoError(t, err, "failed to get game count from factory")
+		require.NoError(t, err, "failed to get game status")
 
 		if GameStatus(status) == DefenderWins {
 			return
@@ -331,6 +331,67 @@ func FetchRangeProofs(ctx context.Context, dbURL string, startBlock, endBlock ui
 		proofs = append(proofs, p)
 	}
 	return proofs, rows.Err()
+}
+
+// CountRangeProofRequests counts all range proof requests in the database (any status).
+// Returns 0 if the requests table doesn't exist yet (proposer still initializing).
+func CountRangeProofRequests(ctx context.Context, dbURL string) (int, error) {
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM requests WHERE req_type = 0`).Scan(&count)
+	if err != nil {
+		// 42P01 = undefined_table (table doesn't exist yet during proposer init)
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "42P01" {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return count, nil
+}
+
+// WaitForRangeProofProgress waits until at least minCount range proof requests exist in the database.
+func WaitForRangeProofProgress(ctx context.Context, t devtest.T, dbURL string, minCount int) {
+	for {
+		count, err := CountRangeProofRequests(ctx, dbURL)
+		require.NoError(t, err, "failed to count range proof requests")
+
+		if count >= minCount {
+			t.Logger().Info("Range proof progress detected", "count", count, "minRequired", minCount)
+			return
+		}
+
+		t.Logger().Info("Waiting for range proof progress...", "current", count, "minRequired", minCount)
+
+		select {
+		case <-ctx.Done():
+			t.Errorf("timeout waiting for range proof progress (current: %d, required: %d)", count, minCount)
+			t.FailNow()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// VerifyRangeProofsWithExpected fetches and verifies range proofs from the database.
+func VerifyRangeProofsWithExpected(ctx context.Context, t devtest.T, dbURL string, startingBlock, outputBlock uint64, expectedCount int) {
+	require := t.Require()
+	logger := t.Logger()
+
+	ranges, err := FetchRangeProofs(ctx, dbURL, startingBlock, outputBlock)
+	require.NoError(err, "failed to fetch range proofs")
+
+	for i, r := range ranges {
+		logger.Info("Range proof", "index", i, "start", r.StartBlock, "end", r.EndBlock)
+	}
+
+	err = VerifyRanges(ranges, int64(startingBlock), int64(outputBlock), expectedCount)
+	require.NoError(err, "range verification failed")
+
+	logger.Info("Range proofs verified", "count", len(ranges), "expected", expectedCount)
 }
 
 // VerifyRanges checks that ranges have correct count, are contiguous, and cover the expected interval.

@@ -37,17 +37,15 @@ func TestFaultProofProposer_RangeSplitTwo_ThreeGames(gt *testing.T) {
 }
 
 func waitForDefenderWinsAtIndex(gt *testing.T, index int, timeout time.Duration, cfg opspresets.FaultProofConfig) {
-	t := devtest.SerialT(gt)
+	t := devtest.ParallelT(gt)
 	sys := opspresets.NewFaultProofSystem(t, cfg)
 	require := t.Require()
 	logger := t.Logger()
 	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)
 	defer cancel()
 
-	dgfAddr := sys.L2Chain.Escape().Deployment().DisputeGameFactoryProxyAddr()
-	logger.Info("Dispute Game Factory Address:", "address", dgfAddr.Hex())
-	dgf, err := utils.NewDgfClient(sys.L1EL.EthClient(), dgfAddr)
-	require.NoError(err, "failed to create Dispute Game Factory client")
+	dgf := sys.DgfClient(t)
+	logger.Info("Waiting for game creation", "targetIndex", index)
 
 	utils.WaitForGameCount(ctx, t, dgf, uint64(index+1))
 
@@ -58,5 +56,5 @@ func waitForDefenderWinsAtIndex(gt *testing.T, index int, timeout time.Duration,
 	require.NoError(err, "failed to create Fault Dispute Game client")
 
 	utils.WaitForDefenderWins(ctx, t, fdg)
-	t.Logger().Info("Dispute game defender wins", "gameIndex", index)
+	logger.Info("Dispute game defender wins", "gameIndex", index)
 }

@@ -31,8 +31,10 @@ jobs:
         target: 
           - "./e2e/validity/bootstrap/..."
           - "./e2e/validity/proving/..."
+          - "./e2e/validity/recovery/..."
           - "./e2e/faultproof/bootstrap/..."
           - "./e2e/faultproof/fastfinality/..."
+          - "./e2e/faultproof/recovery/..."
 
     steps:
       - name: Checkout sources

@@ -6,6 +6,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-devstack/stack"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/succinctlabs/op-succinct/utils"
 )
 
 // ValidityConfig holds configuration for validity proposer tests.
@@ -13,14 +14,21 @@ type ValidityConfig struct {
 	StartingBlock      uint64
 	SubmissionInterval uint64
 	RangeProofInterval uint64
+	// LoopInterval is the proposer's main loop interval in seconds.
+	// The proposer acquires a database lock that expires after this duration.
+	// Recovery tests must wait longer than this before restarting the proposer.
+	// If nil, the default proposer value (60s) is used.
+	LoopInterval *uint64
 }
 
 // DefaultValidityConfig returns the default configuration.
 func DefaultValidityConfig() ValidityConfig {
+	loopInterval := uint64(1) // 1s lock expiry; recovery tests wait 2s before restart
 	return ValidityConfig{
 		StartingBlock:      1,
 		SubmissionInterval: 10,
 		RangeProofInterval: 10,
+		LoopInterval:       &loopInterval,
 	}
 }
 
@@ -45,10 +53,16 @@ func WithSuccinctValidityProposer(dest *sysgo.DefaultSingleChainInteropSystemIDs
 			sysgo.WithL2OOStartingBlockNumber(cfg.StartingBlock),
 			sysgo.WithL2OOSubmissionInterval(cfg.SubmissionInterval),
 			sysgo.WithL2OORangeProofInterval(cfg.RangeProofInterval)))
-		opt.Add(sysgo.WithSuperSuccinctValidityProposer(ids.L2AProposer, ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL,
+
+		vpOpts := []sysgo.ValidityProposerOption{
 			sysgo.WithVPSubmissionInterval(cfg.SubmissionInterval),
 			sysgo.WithVPRangeProofInterval(cfg.RangeProofInterval),
-			sysgo.WithVPMockMode(true)))
+			sysgo.WithVPMockMode(true),
+		}
+		if cfg.LoopInterval != nil {
+			vpOpts = append(vpOpts, sysgo.WithVPLoopInterval(*cfg.LoopInterval))
+		}
+		opt.Add(sysgo.WithSuperSuccinctValidityProposer(ids.L2AProposer, ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL, vpOpts...))
 	})
 }
 
@@ -64,9 +78,27 @@ type ValiditySystem struct {
 	proposer sysgo.ValidityProposer
 }
 
+// L2OOClient creates an L2OutputOracle client for the validity system.
+func (s *ValiditySystem) L2OOClient(t devtest.T) *utils.L2OOClient {
+	l2ooAddr := s.L2Chain.Escape().Deployment().OPSuccinctL2OutputOracleAddr()
+	l2oo, err := utils.NewL2OOClient(s.L1EL.EthClient(), l2ooAddr)
+	t.Require().NoError(err, "failed to create L2OO client")
+	return l2oo
+}
+
 // DatabaseURL returns the database URL used by the validity proposer.
 func (s *ValiditySystem) DatabaseURL() string {
 	return s.proposer.DatabaseURL()
+}
+
+// StopProposer stops the validity proposer (for restart testing).
+func (s *ValiditySystem) StopProposer() {
+	s.proposer.Stop()
+}
+
+// StartProposer starts the validity proposer (for restart testing).
+func (s *ValiditySystem) StartProposer() {
+	s.proposer.Start()
 }
 
 // NewValiditySystem creates a new validity test system with custom configuration.
