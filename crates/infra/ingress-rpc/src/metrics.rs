@@ -18,6 +18,24 @@ pub fn record_histogram(rpc_latency: Duration, rpc: String) {
 #[derive(Metrics, Clone)]
 #[metrics(scope = "tips_ingress_rpc")]
 pub struct Metrics {
+    #[metric(describe = "Number of valid transactions received")]
+    pub transactions_received: Counter,
+
+    #[metric(describe = "Number of valid bundles parsed")]
+    pub bundles_parsed: Counter,
+
+    #[metric(describe = "Number of bundles simulated")]
+    pub successful_simulations: Counter,
+
+    #[metric(describe = "Number of bundles simulated")]
+    pub failed_simulations: Counter,
+
+    #[metric(describe = "Number of bundles sent to kafka")]
+    pub sent_to_kafka: Counter,
+
+    #[metric(describe = "Number of transactions sent to mempool")]
+    pub sent_to_mempool: Counter,
+
     #[metric(describe = "Duration of validate_tx")]
     pub validate_tx_duration: Histogram,
 
