@@ -1558,7 +1558,6 @@ dependencies = [
  "reth-rpc-convert",
  "reth-rpc-eth-api",
  "reth-testing-utils",
- "rstest",
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
