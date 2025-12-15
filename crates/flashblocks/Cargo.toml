@@ -75,3 +75,8 @@ reth-e2e-test-utils.workspace = true
 base-reth-test-utils.workspace = true
 reth-primitives-traits.workspace = true
 reth-optimism-primitives.workspace = true
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "pending_state"
+harness = false
