@@ -7,7 +7,7 @@ use std::{
 
 use alloy_consensus::Receipt;
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, b256, bytes, hex};
+use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, b256, bytes, hex::FromHex};
 use alloy_rpc_types_engine::PayloadId;
 use base_reth_flashblocks::{
     Flashblock, FlashblocksAPI, FlashblocksReceiver, FlashblocksState, Metadata,
@@ -296,7 +296,7 @@ fn sample_transactions(
     accounts: &TestAccounts,
     count: usize,
 ) -> Vec<OpTransactionSigned> {
-    let signer = decode_private_key(accounts.alice.private_key);
+    let signer = B256::from_hex(accounts.alice.private_key).expect("valid private key hex");
     let chain_id = provider.chain_spec().chain_id();
 
     (0..count as u64)
@@ -320,10 +320,6 @@ fn sample_transactions(
         .collect()
 }
 
-fn decode_private_key(key: &str) -> B256 {
-    let bytes = hex::decode(key).expect("valid private key hex");
-    B256::from_slice(&bytes)
-}
 
 criterion_group!(benches, pending_state_benches);
 criterion_main!(benches);
