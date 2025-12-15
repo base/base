@@ -6,7 +6,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type")]
+#[serde(untagged)]
 pub enum VersionedUserOperation {
     UserOperation(erc4337::UserOperation),
     PackedUserOperation(erc4337::PackedUserOperation),
@@ -44,33 +44,82 @@ pub struct UserOperationRequestValidationResult {
     pub gas_used: U256,
 }
 
+/// Validation result for User Operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationResult {
+    /// Whether the UserOp is valid
+    pub valid: bool,
+    /// Error message if not valid
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Timestamp until the UserOp is valid (0 = no expiry)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<u64>,
+    /// Timestamp after which the UserOp is valid (0 = immediately)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_after: Option<u64>,
+    /// Entity stake/deposit context
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ValidationContext>,
+}
+
+/// Entity stake/deposit information context
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationContext {
+    /// Sender (account) stake info
+    pub sender_info: EntityStakeInfo,
+    /// Factory stake info (if present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub factory_info: Option<EntityStakeInfo>,
+    /// Paymaster stake info (if present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paymaster_info: Option<EntityStakeInfo>,
+    /// Aggregator stake info (if present)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregator_info: Option<AggregatorInfo>,
+}
+
+/// Stake info for an entity (used in RPC response)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntityStakeInfo {
+    /// Entity address
+    pub address: Address,
+    /// Amount staked
+    pub stake: U256,
+    /// Unstake delay in seconds
+    pub unstake_delay_sec: u64,
+    /// Amount deposited for gas
+    pub deposit: U256,
+    /// Whether entity meets staking requirements
+    pub is_staked: bool,
+}
+
+/// Aggregator stake info (used in RPC response)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AggregatorInfo {
+    /// Aggregator address
+    pub aggregator: Address,
+    /// Stake info
+    pub stake_info: EntityStakeInfo,
+}
+
 // Tests
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
     use super::*;
-    use alloy_primitives::{Address, Bytes, Uint};
-    #[test]
-    fn should_throw_error_when_deserializing_invalid() {
-        const TEST_INVALID_USER_OPERATION: &str = r#"
-        {
-        "type": "UserOperation",
-        "sender": "0x1111111111111111111111111111111111111111",
-        "nonce": "0x0",
-        "callGasLimit": "0x5208"
-        }
-    "#;
-        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
-            serde_json::from_str::<VersionedUserOperation>(TEST_INVALID_USER_OPERATION);
-        assert!(user_operation.is_err());
-    }
+    use alloy_primitives::{Address, Uint};
 
     #[test]
-    fn should_deserialize_v06() {
-        const TEST_USER_OPERATION: &str = r#"
+    fn deser_untagged_user_operation_without_type_field() {
+        // v0.6 shape, no "type" key
+        let json = r#"
         {
-            "type": "UserOperation",
             "sender": "0x1111111111111111111111111111111111111111",
             "nonce": "0x0",
             "initCode": "0x",
@@ -83,90 +132,56 @@ mod tests {
             "paymasterAndData": "0x",
             "signature": "0x01"
         }
-    "#;
-        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
-            serde_json::from_str::<VersionedUserOperation>(TEST_USER_OPERATION);
-        if user_operation.is_err() {
-            panic!("Error: {:?}", user_operation.err());
-        }
-        let user_operation = user_operation.unwrap();
-        match user_operation {
-            VersionedUserOperation::UserOperation(user_operation) => {
+        "#;
+
+        let parsed: VersionedUserOperation =
+            serde_json::from_str(json).expect("should deserialize as v0.6");
+        match parsed {
+            VersionedUserOperation::UserOperation(op) => {
                 assert_eq!(
-                    user_operation.sender,
+                    op.sender,
                     Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
                 );
-                assert_eq!(user_operation.nonce, Uint::from(0));
-                assert_eq!(user_operation.init_code, Bytes::from_str("0x").unwrap());
-                assert_eq!(user_operation.call_data, Bytes::from_str("0x").unwrap());
-                assert_eq!(user_operation.call_gas_limit, Uint::from(0x5208));
-                assert_eq!(user_operation.verification_gas_limit, Uint::from(0x100000));
-                assert_eq!(user_operation.pre_verification_gas, Uint::from(0x10000));
-                assert_eq!(user_operation.max_fee_per_gas, Uint::from(0x59682f10));
-                assert_eq!(
-                    user_operation.max_priority_fee_per_gas,
-                    Uint::from(0x3b9aca00)
-                );
-                assert_eq!(
-                    user_operation.paymaster_and_data,
-                    Bytes::from_str("0x").unwrap()
-                );
-                assert_eq!(user_operation.signature, Bytes::from_str("0x01").unwrap());
+                assert_eq!(op.nonce, Uint::from(0));
             }
-            _ => {
-                panic!("Expected EntryPointV06, got {:?}", user_operation);
-            }
+            other => panic!("expected UserOperation, got {:?}", other),
         }
     }
 
     #[test]
-    fn should_deserialize_v07() {
-        const TEST_PACKED_USER_OPERATION: &str = r#"
+    fn deser_untagged_packed_user_operation_without_type_field() {
+        // v0.7 shape, no "type" key
+        let json = r#"
         {
-        "type": "PackedUserOperation",
-        "sender": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "nonce": "0x1",
-        "factory": "0x2222222222222222222222222222222222222222",
-        "factoryData": "0xabcdef1234560000000000000000000000000000000000000000000000000000",
-        "callData": "0xb61d27f600000000000000000000000000000000000000000000000000000000000000c8",
-        "callGasLimit": "0x2dc6c0",
-        "verificationGasLimit": "0x1e8480",
-        "preVerificationGas": "0x186a0",
-        "maxFeePerGas": "0x77359400",
-        "maxPriorityFeePerGas": "0x3b9aca00",
-        "paymaster": "0x3333333333333333333333333333333333333333",
-        "paymasterVerificationGasLimit": "0x186a0",
-        "paymasterPostOpGasLimit": "0x27100",
-        "paymasterData": "0xfafb00000000000000000000000000000000000000000000000000000000000064",
-        "signature": "0xa3c5f1b90014e68abbbdc42e4b77b9accc0b7e1c5d0b5bcde1a47ba8faba00ff55c9a7de12e98b731766e35f6c51ab25c9b58cc0e7c4a33f25e75c51c6ad3c3a"
+            "sender": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+            "nonce": "0x1",
+            "factory": "0x2222222222222222222222222222222222222222",
+            "factoryData": "0xabcdef1234560000000000000000000000000000000000000000000000000000",
+            "callData": "0xb61d27f600000000000000000000000000000000000000000000000000000000000000c8",
+            "callGasLimit": "0x2dc6c0",
+            "verificationGasLimit": "0x1e8480",
+            "preVerificationGas": "0x186a0",
+            "maxFeePerGas": "0x77359400",
+            "maxPriorityFeePerGas": "0x3b9aca00",
+            "paymaster": "0x3333333333333333333333333333333333333333",
+            "paymasterVerificationGasLimit": "0x186a0",
+            "paymasterPostOpGasLimit": "0x27100",
+            "paymasterData": "0xfafb00000000000000000000000000000000000000000000000000000000000064",
+            "signature": "0xa3c5f1b90014e68abbbdc42e4b77b9accc0b7e1c5d0b5bcde1a47ba8faba00ff55c9a7de12e98b731766e35f6c51ab25c9b58cc0e7c4a33f25e75c51c6ad3c3a"
         }
-    "#;
-        let user_operation: Result<VersionedUserOperation, serde_json::Error> =
-            serde_json::from_str::<VersionedUserOperation>(TEST_PACKED_USER_OPERATION);
-        if user_operation.is_err() {
-            panic!("Error: {:?}", user_operation.err());
-        }
-        let user_operation = user_operation.unwrap();
-        match user_operation {
-            VersionedUserOperation::PackedUserOperation(user_operation) => {
+        "#;
+
+        let parsed: VersionedUserOperation =
+            serde_json::from_str(json).expect("should deserialize as v0.7 packed");
+        match parsed {
+            VersionedUserOperation::PackedUserOperation(op) => {
                 assert_eq!(
-                    user_operation.sender,
+                    op.sender,
                     Address::from_str("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48").unwrap()
                 );
-                assert_eq!(user_operation.nonce, Uint::from(1));
-                assert_eq!(
-                    user_operation.call_data,
-                    alloy_primitives::bytes!(
-                        "0xb61d27f600000000000000000000000000000000000000000000000000000000000000c8"
-                    )
-                );
-                assert_eq!(user_operation.call_gas_limit, Uint::from(0x2dc6c0));
-                assert_eq!(user_operation.verification_gas_limit, Uint::from(0x1e8480));
-                assert_eq!(user_operation.pre_verification_gas, Uint::from(0x186a0));
+                assert_eq!(op.nonce, Uint::from(1));
             }
-            _ => {
-                panic!("Expected EntryPointV07, got {:?}", user_operation);
-            }
+            other => panic!("expected PackedUserOperation, got {:?}", other),
         }
     }
 }

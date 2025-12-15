@@ -1,4 +1,5 @@
-use crate::types::{UserOperationRequestValidationResult, VersionedUserOperation};
+use crate::types::{ValidationResult, VersionedUserOperation};
+use alloy_primitives::Address;
 use alloy_provider::{Provider, RootProvider};
 use async_trait::async_trait;
 use jsonrpsee::core::RpcResult;
@@ -11,7 +12,8 @@ pub trait AccountAbstractionService: Send + Sync {
     async fn validate_user_operation(
         &self,
         user_operation: &VersionedUserOperation,
-    ) -> RpcResult<UserOperationRequestValidationResult>;
+        entry_point: &Address,
+    ) -> RpcResult<ValidationResult>;
 }
 
 #[derive(Debug, Clone)]
@@ -25,10 +27,12 @@ impl AccountAbstractionService for AccountAbstractionServiceImpl {
     async fn validate_user_operation(
         &self,
         user_operation: &VersionedUserOperation,
-    ) -> RpcResult<UserOperationRequestValidationResult> {
+        entry_point: &Address,
+    ) -> RpcResult<ValidationResult> {
         // Steps: Reputation Service Validate
         // Steps: Base Node Validate User Operation
-        self.base_node_validate_user_operation(user_operation).await
+        self.base_node_validate_user_operation(user_operation, entry_point)
+            .await
     }
 }
 
@@ -46,16 +50,17 @@ impl AccountAbstractionServiceImpl {
     pub async fn base_node_validate_user_operation(
         &self,
         user_operation: &VersionedUserOperation,
-    ) -> RpcResult<UserOperationRequestValidationResult> {
+        entry_point: &Address,
+    ) -> RpcResult<ValidationResult> {
         let result = timeout(
             Duration::from_secs(self.validate_user_operation_timeout),
             self.simulation_provider
                 .client()
-                .request("base_validateUserOperation", (user_operation,)),
+                .request("base_validateUserOperation", (user_operation, entry_point)),
         )
         .await;
 
-        let validation_result: UserOperationRequestValidationResult = match result {
+        let validation_result: ValidationResult = match result {
             Err(_) => {
                 return Err(
                     EthApiError::InvalidParams("Timeout on requesting validation".into())
@@ -126,7 +131,7 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(&user_operation)
+            .base_node_validate_user_operation(&user_operation, &Address::ZERO)
             .await;
 
         assert!(result.is_err());
@@ -153,7 +158,7 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(&user_operation)
+            .base_node_validate_user_operation(&user_operation, &Address::ZERO)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Internal error"));
@@ -167,8 +172,11 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "expirationTimestamp": 1000,
-                    "gasUsed": "10000"
+                 "valid": true,
+                 "reason": null,
+                 "valid_until": null,
+                 "valid_after": null,
+                 "context": null
                 }
             })))
             .mount(&mock_server)
@@ -178,11 +186,10 @@ mod tests {
         let user_operation = new_test_user_operation_v06();
 
         let result = service
-            .base_node_validate_user_operation(&user_operation)
+            .base_node_validate_user_operation(&user_operation, &Address::ZERO)
             .await
             .unwrap();
 
-        assert_eq!(result.expiration_timestamp, 1000);
-        assert_eq!(result.gas_used, U256::from(10_000));
+        assert_eq!(result.valid, true);
     }
 }

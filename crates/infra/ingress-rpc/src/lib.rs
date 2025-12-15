@@ -170,6 +170,10 @@ pub struct Config {
     )]
     pub health_check_addr: SocketAddr,
 
+    /// chain id
+    #[arg(long, env = "TIPS_INGRESS_CHAIN_ID", default_value = "11")]
+    pub chain_id: u64,
+
     /// Enable backrun bundle submission to op-rbuilder
     #[arg(long, env = "TIPS_INGRESS_BACKRUN_ENABLED", default_value = "false")]
     pub backrun_enabled: bool,
