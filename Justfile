@@ -2,6 +2,7 @@ set positional-arguments
 alias t := test
 alias f := fix
 alias b := build
+alias be := benches
 alias c := clean
 alias h := hack
 alias u := check-udeps
@@ -100,6 +101,10 @@ watch-test: build-contracts
 # Watches checks
 watch-check:
     cargo watch -x "fmt --all -- --check" -x "clippy --all-targets -- -D warnings" -x test
+
+# Runs all benchmarks
+benches:
+    @just bench-flashblocks
 
 # Runs flashblocks pending state benchmarks
 bench-flashblocks:
