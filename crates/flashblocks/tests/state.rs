@@ -62,7 +62,7 @@ impl TestHarness {
             .expect("block exists")
             .try_into_recovered()
             .expect("able to recover block");
-        flashblocks.on_canonical_block_received(&genesis_block);
+        flashblocks.on_canonical_block_received(genesis_block);
 
         let accounts: TestAccounts = node.accounts().clone();
 
@@ -209,7 +209,7 @@ impl TestHarness {
 
     async fn new_canonical_block(&mut self, user_transactions: Vec<OpTransactionSigned>) {
         let block = self.new_canonical_block_without_processing(user_transactions).await;
-        self.flashblocks.on_canonical_block_received(&block);
+        self.flashblocks.on_canonical_block_received(block);
         sleep(Duration::from_millis(SLEEP_TIME)).await;
     }
 }

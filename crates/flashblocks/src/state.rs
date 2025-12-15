@@ -68,16 +68,14 @@ where
     }
 
     /// Handles a canonical block being received.
-    pub fn on_canonical_block_received(&self, block: &RecoveredBlock<OpBlock>) {
-        match self.queue.send(StateUpdate::Canonical(block.clone())) {
+    pub fn on_canonical_block_received(&self, block: RecoveredBlock<OpBlock>) {
+        let block_number = block.number;
+        match self.queue.send(StateUpdate::Canonical(block)) {
             Ok(_) => {
-                info!(
-                    message = "added canonical block to processing queue",
-                    block_number = block.number
-                )
+                info!(message = "added canonical block to processing queue", block_number)
             }
             Err(e) => {
-                error!(message = "could not add canonical block to processing queue", block_number = block.number, error = %e);
+                error!(message = "could not add canonical block to processing queue", block_number, error = %e);
             }
         }
     }
@@ -85,16 +83,17 @@ where
 
 impl<Client> FlashblocksReceiver for FlashblocksState<Client> {
     fn on_flashblock_received(&self, flashblock: Flashblock) {
-        match self.queue.send(StateUpdate::Flashblock(flashblock.clone())) {
+        let flashblock_index = flashblock.index;
+        let block_number = flashblock.metadata.block_number;
+        match self.queue.send(StateUpdate::Flashblock(flashblock)) {
             Ok(_) => {
                 info!(
                     message = "added flashblock to processing queue",
-                    block_number = flashblock.metadata.block_number,
-                    flashblock_index = flashblock.index
+                    block_number, flashblock_index,
                 );
             }
             Err(e) => {
-                error!(message = "could not add flashblock to processing queue", block_number = flashblock.metadata.block_number, flashblock_index = flashblock.index, error = %e);
+                error!(message = "could not add flashblock to processing queue", block_number, flashblock_index, error = %e);
             }
         }
     }

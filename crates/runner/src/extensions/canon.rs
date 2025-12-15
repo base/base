@@ -52,12 +52,12 @@ impl BaseNodeExtension for FlashblocksCanonExtension {
                 Ok(async move {
                     while let Some(note) = ctx.notifications.try_next().await? {
                         if let Some(committed) = note.committed_chain() {
-                            for block in committed.blocks_iter() {
+                            let tip = committed.tip().num_hash();
+                            let chain = Arc::unwrap_or_clone(committed);
+                            for (_, block) in chain.into_blocks() {
                                 fb.on_canonical_block_received(block);
                             }
-                            let _ = ctx
-                                .events
-                                .send(ExExEvent::FinishedHeight(committed.tip().num_hash()));
+                            let _ = ctx.events.send(ExExEvent::FinishedHeight(tip));
                         }
                     }
                     Ok(())
