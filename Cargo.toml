@@ -63,9 +63,6 @@ base-reth-flashblocks = { path = "crates/flashblocks" }
 # base/tips
 tips-core = { git = "https://github.com/base/tips", rev = "b1dfde6a5c8f603f19f9309ca6dc015bad260b44" }
 
-# rollup-boost
-rollup-boost = { git = "http://github.com/flashbots/rollup-boost", rev = "v0.7.11" }
-
 # reth
 reth = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-ipc = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
