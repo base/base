@@ -7,7 +7,7 @@ use alloy_eip7928::{
     AccountChanges, BalanceChange, CodeChange, EMPTY_BLOCK_ACCESS_LIST_HASH, NonceChange,
     SlotChanges, StorageChange,
 };
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_macro::sol;
 use base_fbal::{FlashblockAccessList, TouchedAccountsInspector};
 use op_revm::OpTransaction;
@@ -22,6 +22,7 @@ use revm::{
     state::AccountInfo,
 };
 
+mod delegatecall;
 mod deployment;
 mod storage;
 mod transfers;
@@ -53,11 +54,30 @@ sol!(
     )
 );
 
+sol!(
+    #[sol(rpc)]
+    Proxy,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../test-utils/contracts/out/Proxy.sol/Proxy.json")
+);
+
+sol!(
+    #[sol(rpc)]
+    Logic,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../test-utils/contracts/out/Proxy.sol/Logic.json")
+);
+
+sol!(
+    #[sol(rpc)]
+    Logic2,
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../test-utils/contracts/out/Proxy.sol/Logic2.json")
+);
+
 const BASE_SEPOLIA_CHAIN_ID: u64 = 84532;
 
 fn execute_txns_build_access_list(
     txs: Vec<OpTransaction<TxEnv>>,
     acc_overrides: Option<HashMap<Address, AccountInfo>>,
+    storage_overrides: Option<HashMap<Address, HashMap<U256, B256>>>,
 ) -> FlashblockAccessList {
     let chain_spec = Arc::new(OpChainSpec::from_genesis(
         serde_json::from_str(include_str!("../../../test-utils/assets/genesis.json")).unwrap(),
@@ -68,6 +88,13 @@ fn execute_txns_build_access_list(
     if let Some(overrides) = acc_overrides {
         for (address, info) in overrides {
             db.insert_account_info(address, info);
+        }
+    }
+    if let Some(storage) = storage_overrides {
+        for (address, slots) in storage {
+            for (slot, value) in slots {
+                db.insert_account_storage(address, slot, U256::from_be_bytes(value.0)).unwrap();
+            }
         }
     }
 
