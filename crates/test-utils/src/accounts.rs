@@ -1,4 +1,4 @@
-//! Test accounts with pre-funded balances for integration testing
+//! Test accounts with pre-funded balances for integration testing.
 
 use alloy_consensus::{SignableTransaction, Transaction};
 use alloy_eips::eip2718::Encodable2718;
@@ -10,7 +10,7 @@ use op_alloy_network::TransactionBuilder;
 use op_alloy_rpc_types::OpTransactionRequest;
 use reth::{revm::context::TransactionType, rpc::compat::SignTxRequestError};
 
-use crate::node::BASE_CHAIN_ID;
+use crate::BASE_CHAIN_ID;
 
 /// Hardcoded test account with a fixed private key
 #[derive(Debug, Clone)]

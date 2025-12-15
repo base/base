@@ -12,10 +12,8 @@ use base_reth_flashblocks::{
     Flashblock, FlashblocksAPI, FlashblocksState, Metadata, PendingBlocksAPI,
 };
 use base_reth_test_utils::{
-    accounts::TestAccounts,
-    fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
-    flashblocks_harness::FlashblocksHarness,
-    node::LocalNodeProvider,
+    FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider,
+    TestAccounts,
 };
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::BlockResponse;
@@ -227,11 +225,11 @@ impl<'a> FlashblockBuilder<'a> {
     fn new_base(harness: &'a TestHarness) -> Self {
         Self {
             canonical_block_number: None,
-            transactions: vec![BLOCK_INFO_TXN.clone()],
+            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone()],
             receipts: {
                 let mut receipts = alloy_primitives::map::HashMap::default();
                 receipts.insert(
-                    BLOCK_INFO_TXN_HASH,
+                    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
                     OpReceipt::Deposit(OpDepositReceipt {
                         inner: Receipt {
                             status: true.into(),

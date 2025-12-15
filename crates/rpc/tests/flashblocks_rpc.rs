@@ -15,9 +15,7 @@ use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
 use base_reth_flashblocks::{Flashblock, Metadata};
 use base_reth_test_utils::{
-    contracts::DoubleCounter,
-    fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
-    flashblocks_harness::FlashblocksHarness,
+    DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
 };
 use eyre::Result;
 use futures_util::{SinkExt, StreamExt};
@@ -115,7 +113,7 @@ impl TestSetup {
             }),
             diff: ExecutionPayloadFlashblockDeltaV1 {
                 blob_gas_used: Some(0),
-                transactions: vec![BLOCK_INFO_TXN],
+                transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX],
                 ..Default::default()
             },
             metadata: Metadata {
@@ -123,7 +121,7 @@ impl TestSetup {
                 receipts: {
                     let mut receipts = HashMap::default();
                     receipts.insert(
-                        BLOCK_INFO_TXN_HASH,
+                        L1_BLOCK_INFO_DEPOSIT_TX_HASH,
                         OpReceipt::Deposit(OpDepositReceipt {
                             inner: Receipt {
                                 status: true.into(),

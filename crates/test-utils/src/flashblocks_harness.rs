@@ -12,11 +12,11 @@ use reth_optimism_node::OpNode;
 
 use crate::{
     harness::TestHarness,
+    init_silenced_tracing,
     node::{
         FlashblocksLocalNode, FlashblocksParts, LocalFlashblocksState, OpAddOns, OpBuilder,
         default_launcher,
     },
-    tracing::init_silenced_tracing,
 };
 
 /// Helper that exposes [`TestHarness`] conveniences plus Flashblocks helpers.

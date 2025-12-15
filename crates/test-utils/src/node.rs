@@ -44,9 +44,6 @@ use tokio_stream::StreamExt;
 
 use crate::engine::EngineApi;
 
-/// Chain ID for the Base Sepolia environment spun up by the harness.
-pub const BASE_CHAIN_ID: u64 = 84532;
-
 /// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>;
 /// Convenience alias for the Flashblocks state backing the local node.

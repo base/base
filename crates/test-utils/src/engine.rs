@@ -1,4 +1,4 @@
-//! Engine API integration for canonical block production
+//! Engine API integration for canonical block production.
 //!
 //! This module provides a typed, type-safe Engine API client based on
 //! reth's OpEngineApiClient trait instead of raw string-based RPC calls.
@@ -21,9 +21,7 @@ use reth_rpc_layer::{AuthClientLayer, JwtSecret};
 use reth_tracing::tracing::debug;
 use url::Url;
 
-/// Default JWT secret for testing
-const DEFAULT_JWT_SECRET: &str =
-    "0x0000000000000000000000000000000000000000000000000000000000000000";
+use crate::DEFAULT_JWT_SECRET;
 
 /// Describes how to reach the Engine API endpoint.
 #[derive(Clone, Debug)]
