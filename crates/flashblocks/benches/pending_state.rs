@@ -320,6 +320,5 @@ fn sample_transactions(
         .collect()
 }
 
-
 criterion_group!(benches, pending_state_benches);
 criterion_main!(benches);

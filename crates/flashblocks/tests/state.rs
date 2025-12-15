@@ -4,7 +4,9 @@ use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{Receipt, Transaction};
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
-use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap};
+use alloy_primitives::{
+    Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap,
+};
 use alloy_rpc_types_engine::PayloadId;
 use base_reth_flashblocks::{
     Flashblock, FlashblocksAPI, FlashblocksState, Metadata, PendingBlocksAPI,
