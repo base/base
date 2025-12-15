@@ -24,6 +24,7 @@ tracing-subscriber.workspace = true
 op-alloy-flz.workspace = true
 serde.workspace = true
 alloy-rpc-types.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 
 [dev-dependencies]

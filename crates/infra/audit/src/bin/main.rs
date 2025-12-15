@@ -4,10 +4,12 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::{Client as S3Client, config::Builder as S3ConfigBuilder};
 use clap::{Parser, ValueEnum};
 use rdkafka::consumer::Consumer;
+use std::net::SocketAddr;
 use tips_audit::{
     KafkaAuditArchiver, KafkaAuditLogReader, S3EventReaderWriter, create_kafka_consumer,
 };
 use tips_core::logger::init_logger_with_format;
+use tips_core::metrics::init_prometheus_exporter;
 use tracing::info;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -48,6 +50,9 @@ struct Args {
 
     #[arg(long, env = "TIPS_AUDIT_S3_SECRET_ACCESS_KEY")]
     s3_secret_access_key: Option<String>,
+
+    #[arg(long, env = "TIPS_AUDIT_METRICS_ADDR", default_value = "0.0.0.0:9002")]
+    metrics_addr: SocketAddr,
 }
 
 #[tokio::main]
@@ -58,10 +63,13 @@ async fn main() -> Result<()> {
 
     init_logger_with_format(&args.log_level, args.log_format);
 
+    init_prometheus_exporter(args.metrics_addr).expect("Failed to install Prometheus exporter");
+
     info!(
         kafka_properties_file = %args.kafka_properties_file,
         kafka_topic = %args.kafka_topic,
         s3_bucket = %args.s3_bucket,
+        metrics_addr = %args.metrics_addr,
         "Starting audit archiver"
     );
 

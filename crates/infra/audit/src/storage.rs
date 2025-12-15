@@ -1,3 +1,4 @@
+use crate::metrics::Metrics;
 use crate::reader::Event;
 use crate::types::{BundleEvent, BundleId, DropReason, TransactionId};
 use alloy_primitives::TxHash;
@@ -10,6 +11,7 @@ use aws_sdk_s3::primitives::ByteStream;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Debug;
+use std::time::Instant;
 use tips_core::AcceptedBundle;
 use tracing::info;
 
@@ -182,11 +184,16 @@ pub trait BundleEventS3Reader {
 pub struct S3EventReaderWriter {
     s3_client: S3Client,
     bucket: String,
+    metrics: Metrics,
 }
 
 impl S3EventReaderWriter {
     pub fn new(s3_client: S3Client, bucket: String) -> Self {
-        Self { s3_client, bucket }
+        Self {
+            s3_client,
+            bucket,
+            metrics: Metrics::default(),
+        }
     }
 
     async fn update_bundle_history(&self, event: Event) -> Result<()> {
@@ -221,7 +228,12 @@ impl S3EventReaderWriter {
         const BASE_DELAY_MS: u64 = 100;
 
         for attempt in 0..MAX_RETRIES {
+            let get_start = Instant::now();
             let (current_value, etag) = self.get_object_with_etag::<T>(key).await?;
+            self.metrics
+                .s3_get_duration
+                .record(get_start.elapsed().as_secs_f64());
+
             let value = current_value.unwrap_or_default();
 
             match transform_fn(value.clone()) {
@@ -241,8 +253,12 @@ impl S3EventReaderWriter {
                         put_request = put_request.if_none_match("*");
                     }
 
+                    let put_start = Instant::now();
                     match put_request.send().await {
                         Ok(_) => {
+                            self.metrics
+                                .s3_put_duration
+                                .record(put_start.elapsed().as_secs_f64());
                             info!(
                                 s3_key = %key,
                                 attempt = attempt + 1,
@@ -251,6 +267,10 @@ impl S3EventReaderWriter {
                             return Ok(());
                         }
                         Err(e) => {
+                            self.metrics
+                                .s3_put_duration
+                                .record(put_start.elapsed().as_secs_f64());
+
                             if attempt < MAX_RETRIES - 1 {
                                 let delay = BASE_DELAY_MS * 2_u64.pow(attempt as u32);
                                 info!(
@@ -270,6 +290,7 @@ impl S3EventReaderWriter {
                     }
                 }
                 None => {
+                    self.metrics.s3_writes_skipped.increment(1);
                     info!(
                         s3_key = %key,
                         "Transform function returned None, no write required"
@@ -328,12 +349,20 @@ impl EventWriter for S3EventReaderWriter {
         let bundle_id = event.event.bundle_id();
         let transaction_ids = event.event.transaction_ids();
 
+        let start = Instant::now();
         self.update_bundle_history(event.clone()).await?;
+        self.metrics
+            .update_bundle_history_duration
+            .record(start.elapsed().as_secs_f64());
 
+        let start = Instant::now();
         for tx_id in &transaction_ids {
             self.update_transaction_by_hash_index(tx_id, bundle_id)
                 .await?;
         }
+        self.metrics
+            .update_tx_indexes_duration
+            .record(start.elapsed().as_secs_f64());
 
         Ok(())
     }

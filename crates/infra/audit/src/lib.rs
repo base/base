@@ -1,4 +1,5 @@
 pub mod archiver;
+pub mod metrics;
 pub mod publisher;
 pub mod reader;
 pub mod storage;
