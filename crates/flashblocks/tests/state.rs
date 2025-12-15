@@ -8,9 +8,10 @@ use alloy_primitives::{
     Address, B256, BlockNumber, Bytes, U256, hex::FromHex, map::foldhash::HashMap,
 };
 use alloy_rpc_types_engine::PayloadId;
-use base_reth_flashblocks::{
-    Flashblock, FlashblocksAPI, FlashblocksState, Metadata, PendingBlocksAPI,
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
+use base_reth_flashblocks::{FlashblocksAPI, FlashblocksState, PendingBlocksAPI};
 use base_reth_test_utils::{
     FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, LocalNodeProvider,
     TestAccounts,
@@ -25,7 +26,6 @@ use reth::{
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_primitives_traits::{Account, Block as BlockT, RecoveredBlock};
 use reth_provider::{ChainSpecProvider, StateProviderFactory};
-use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use tokio::time::sleep;
 // The amount of time to wait (in milliseconds) after sending a new flashblock or canonical block
 // so it can be processed by the state processor

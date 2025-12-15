@@ -11,7 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-# Project
+# workspace
 base-reth-flashblocks.workspace = true
 
 # base/tips
@@ -55,6 +55,7 @@ metrics.workspace = true
 metrics-derive.workspace = true
 
 [dev-dependencies]
+base-flashtypes.workspace = true
 reth-optimism-primitives.workspace = true
 op-alloy-consensus.workspace = true
 alloy-genesis.workspace = true
@@ -72,7 +73,6 @@ tokio.workspace = true
 tokio-tungstenite.workspace = true
 base-reth-test-utils.workspace = true
 httpmock.workspace = true
-rollup-boost.workspace = true
 futures-util.workspace = true
 alloy-rpc-types-eth.workspace = true
 alloy-rpc-types-engine.workspace = true

@@ -20,6 +20,3 @@ pub use subscription::FlashblocksSubscriber;
 
 mod traits;
 pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
-
-mod blocks;
-pub use blocks::{Flashblock, FlashblockDecodeError, Metadata};

@@ -1,30 +1,18 @@
-//! Contains the [`Flashblock`] and [`Metadata`] types used in Flashblocks.
+//! Contains the [`Flashblock`] type used in Flashblocks.
 
 use std::io::Read;
 
-use alloy_primitives::{Address, B256, U256, map::foldhash::HashMap};
 use alloy_rpc_types_engine::PayloadId;
 use bytes::Bytes;
-use derive_more::{Display, Error};
-use reth_optimism_primitives::OpReceipt;
-use rollup_boost::{
-    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblocksPayloadV1,
-};
 use serde::{Deserialize, Serialize};
 
-/// Metadata associated with a flashblock.
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct Metadata {
-    /// Transaction receipts indexed by hash.
-    pub receipts: HashMap<B256, OpReceipt>,
-    /// Updated account balances.
-    pub new_account_balances: HashMap<Address, U256>,
-    /// Block number this flashblock belongs to.
-    pub block_number: u64,
-}
+use crate::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, FlashblockDecodeError,
+    FlashblocksPayloadV1, Metadata,
+};
 
 /// A flashblock containing partial block data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Flashblock {
     /// Unique payload identifier.
     pub payload_id: PayloadId,
@@ -74,28 +62,11 @@ impl Flashblock {
     }
 }
 
-/// Errors that can occur while decoding a flashblock payload.
-#[derive(Debug, Display, Error)]
-pub enum FlashblockDecodeError {
-    /// Failed to deserialize the flashblock payload JSON into the expected struct.
-    #[display("failed to parse flashblock payload JSON: {_0}")]
-    PayloadParse(serde_json::Error),
-    /// Failed to deserialize the flashblock metadata into the expected struct.
-    #[display("failed to parse flashblock metadata: {_0}")]
-    MetadataParse(serde_json::Error),
-    /// Brotli decompression failed.
-    #[display("failed to decompress brotli payload: {_0}")]
-    Decompress(std::io::Error),
-    /// The decompressed payload was not valid UTF-8 JSON.
-    #[display("decompressed payload is not valid UTF-8 JSON: {_0}")]
-    Utf8(std::string::FromUtf8Error),
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
 
-    use alloy_primitives::{Address, Bloom, Bytes as PrimitiveBytes, U256};
+    use alloy_primitives::{Address, B256, Bloom, Bytes as PrimitiveBytes, U256};
     use rstest::rstest;
     use serde_json::json;
 

@@ -10,7 +10,8 @@ use std::{
 use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_reth_flashblocks::{Flashblock, FlashblocksReceiver, FlashblocksState};
+use base_flashtypes::Flashblock;
+use base_reth_flashblocks::{FlashblocksReceiver, FlashblocksState};
 use base_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use eyre::Result;
 use futures_util::Future;

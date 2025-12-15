@@ -6,12 +6,13 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{Address, TxHash, U256};
 use alloy_rpc_types_eth::{Filter, Log, state::StateOverride};
 use arc_swap::Guard;
+use base_flashtypes::Flashblock;
 use op_alloy_network::Optimism;
 use reth_rpc_convert::RpcTransaction;
 use reth_rpc_eth_api::{RpcBlock, RpcReceipt};
 use tokio::sync::broadcast;
 
-use crate::{Flashblock, PendingBlocks};
+use crate::PendingBlocks;
 
 /// Trait for receiving flashblock updates.
 pub trait FlashblocksReceiver {

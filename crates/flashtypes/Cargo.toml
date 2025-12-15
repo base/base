@@ -1,0 +1,32 @@
+[package]
+name = "base-flashtypes"
+description = "Flashblocks Primitive Types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-serde.workspace = true
+alloy-primitives.workspace = true
+alloy-rpc-types-eth.workspace = true
+alloy-rpc-types-engine.workspace = true
+
+# reth
+reth-optimism-primitives.workspace = true
+
+# misc
+bytes.workspace = true
+serde.workspace = true
+brotli.workspace = true
+serde_json.workspace = true
+derive_more.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
