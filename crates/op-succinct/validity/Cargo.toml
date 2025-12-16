@@ -65,6 +65,9 @@ strum_macros.workspace = true
 [build-dependencies]
 op-succinct-build-utils.workspace = true
 
+[dev-dependencies]
+postgresql_embedded = { version = "0.15", features = ["bundled"] }
+
 [features]
 default = ["ethereum"]
 celestia = ["op-succinct-proof-utils/celestia"]
