@@ -9,7 +9,7 @@ use tracing::{error, info};
 pub struct KafkaAuditArchiver<R, W>
 where
     R: EventReader,
-    W: EventWriter,
+    W: EventWriter + Clone + Send + 'static,
 {
     reader: R,
     writer: W,
@@ -19,7 +19,7 @@ where
 impl<R, W> KafkaAuditArchiver<R, W>
 where
     R: EventReader,
-    W: EventWriter,
+    W: EventWriter + Clone + Send + 'static,
 {
     pub fn new(reader: R, writer: W) -> Self {
         Self {
@@ -47,23 +47,28 @@ where
                     let event_age_ms = now_ms.saturating_sub(event.timestamp);
                     self.metrics.event_age.record(event_age_ms as f64);
 
-                    let archive_start = Instant::now();
-                    if let Err(e) = self.writer.archive_event(event).await {
-                        error!(error = %e, "Failed to write event");
-                    } else {
-                        self.metrics
-                            .archive_event_duration
-                            .record(archive_start.elapsed().as_secs_f64());
-                        self.metrics.events_processed.increment(1);
-
-                        let commit_start = Instant::now();
-                        if let Err(e) = self.reader.commit().await {
-                            error!(error = %e, "Failed to commit message");
+                    // TODO: the integration test breaks because Minio doesn't support etag
+                    let writer = self.writer.clone();
+                    let metrics = self.metrics.clone();
+                    tokio::spawn(async move {
+                        let archive_start = Instant::now();
+                        if let Err(e) = writer.archive_event(event).await {
+                            error!(error = %e, "Failed to write event");
+                        } else {
+                            metrics
+                                .archive_event_duration
+                                .record(archive_start.elapsed().as_secs_f64());
+                            metrics.events_processed.increment(1);
                         }
-                        self.metrics
-                            .kafka_commit_duration
-                            .record(commit_start.elapsed().as_secs_f64());
+                    });
+
+                    let commit_start = Instant::now();
+                    if let Err(e) = self.reader.commit().await {
+                        error!(error = %e, "Failed to commit message");
                     }
+                    self.metrics
+                        .kafka_commit_duration
+                        .record(commit_start.elapsed().as_secs_f64());
                 }
                 Err(e) => {
                     error!(error = %e, "Error reading events");

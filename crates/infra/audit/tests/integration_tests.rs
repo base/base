@@ -11,6 +11,7 @@ mod common;
 use common::TestHarness;
 
 #[tokio::test]
+#[ignore = "TODO doesn't appear to work with minio, should test against a real S3 bucket"]
 async fn test_kafka_publisher_s3_archiver_integration()
 -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let harness = TestHarness::new().await?;
