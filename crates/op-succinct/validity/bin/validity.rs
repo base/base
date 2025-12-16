@@ -84,6 +84,7 @@ async fn main() -> Result<()> {
         min_auction_period: env_config.min_auction_period,
         auction_timeout: env_config.auction_timeout,
     };
+    proposer_config.log();
 
     let l1_provider = ProviderBuilder::new().connect_http(env_config.l1_rpc.clone());
 

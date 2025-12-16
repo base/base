@@ -194,6 +194,39 @@ impl ProposerConfig {
             whitelist: parse_whitelist(&env::var("WHITELIST").unwrap_or("".to_string()))?,
         })
     }
+
+    /// Log the configuration using structured tracing fields.
+    pub fn log(&self) {
+        tracing::info!(
+            l1_rpc = %self.l1_rpc,
+            l2_rpc = %self.l2_rpc,
+            factory_address = %self.factory_address,
+            mock_mode = self.mock_mode,
+            fast_finality_mode = self.fast_finality_mode,
+            game_type = self.game_type,
+            proposal_interval_in_blocks = self.proposal_interval_in_blocks,
+            fetch_interval = self.fetch_interval,
+            range_proof_strategy = ?self.range_proof_strategy,
+            agg_proof_strategy = ?self.agg_proof_strategy,
+            agg_proof_mode = ?self.agg_proof_mode,
+            max_concurrent_defense_tasks = self.max_concurrent_defense_tasks,
+            safe_db_fallback = self.safe_db_fallback,
+            metrics_port = self.metrics_port,
+            fast_finality_proving_limit = self.fast_finality_proving_limit,
+            use_kms_requester = self.use_kms_requester,
+            max_price_per_pgu = self.max_price_per_pgu,
+            min_auction_period = self.min_auction_period,
+            timeout = self.timeout,
+            range_cycle_limit = self.range_cycle_limit,
+            range_gas_limit = self.range_gas_limit,
+            range_split_count = ?self.range_split_count,
+            max_concurrent_range_proofs = ?self.max_concurrent_range_proofs,
+            agg_cycle_limit = self.agg_cycle_limit,
+            agg_gas_limit = self.agg_gas_limit,
+            whitelist = ?self.whitelist,
+            "Proposer configuration loaded"
+        );
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +265,20 @@ impl ChallengerConfig {
                 .unwrap_or("0.0".to_string())
                 .parse()?,
         })
+    }
+
+    /// Log the configuration using structured tracing fields.
+    pub fn log(&self) {
+        tracing::info!(
+            l1_rpc = %self.l1_rpc,
+            l2_rpc = %self.l2_rpc,
+            factory_address = %self.factory_address,
+            game_type = self.game_type,
+            fetch_interval = self.fetch_interval,
+            metrics_port = self.metrics_port,
+            malicious_challenge_percentage = self.malicious_challenge_percentage,
+            "Challenger configuration loaded"
+        );
     }
 }
 
