@@ -116,7 +116,9 @@ mod sync {
     #[case::noanch_five_games_three_branches(5, &[], &[M, 0, 1, 0, 0], &[1, 1, 1, 4, 3], Some(3), 5)] // Branches: M->0->1->2, 0->3, 0->4, Blocks: 0->1->2->3, 1->5, 1->4
     #[case::anch_single_game_default_interval(1, &[0], &[M], &[], Some(0), 1)]
     #[case::anch_two_games_same_branch(2, &[0, 1], &[M, 0], &[], Some(1), 2)]
-    #[case::anch_two_games_same_parent_diff_intervals(2, &[0], &[M, M], &[1, 2], Some(0), 1)]
+    #[case::anch_two_games_genesis_parent_override(2, &[0], &[M, M], &[1, 2], Some(1), 2)] // M->0(anchor), M->1, game 1 overrides (genesis, higher block)
+    #[case::anch_lower_parent_override(4, &[0, 1], &[M, 0, 1, 0], &[1, 1, 1, 3], Some(3), 4)] // M->0->1(anchor)->2, 0->3, game 3 overrides (lower parent, higher block)
+    #[case::anch_no_override_lower_block(4, &[0, 1], &[M, 0, 1, 0], &[1, 1, 2, 2], Some(2), 4)] // M->0->1(anchor)->2, 0->3, no override (game 3 block < game 2)
     #[case::anch_five_games_two_branches(5, &[0, 1], &[M, 0, 1, 0, 3], &[1, 1, 1, 2, 2], Some(2), 3)]
     #[tokio::test]
     async fn test_sync_state_happy_paths(
