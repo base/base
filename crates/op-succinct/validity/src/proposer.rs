@@ -978,7 +978,7 @@ where
             let curr_proof = &range_proofs[i];
 
             // Check for gap
-            if prev_proof.end_block != curr_proof.start_block {
+            if prev_proof.end_block < curr_proof.start_block {
                 debug!(
                     "Gap detected: proof {} ends at {} but proof {} starts at {}",
                     i - 1,
