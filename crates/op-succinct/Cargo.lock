@@ -8557,6 +8557,7 @@ dependencies = [
  "async-trait",
  "canoe-sp1-cc-host",
  "canoe-verifier-address-fetcher",
+ "dotenv",
  "hokulea-compute-proof",
  "hokulea-eigenda",
  "hokulea-host-bin",
@@ -8572,6 +8573,8 @@ dependencies = [
  "sp1-core-executor",
  "sp1-prover",
  "sp1-sdk",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

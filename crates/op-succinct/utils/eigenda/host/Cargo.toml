@@ -37,3 +37,11 @@ anyhow.workspace = true
 async-trait.workspace = true
 rkyv.workspace = true
 serde_cbor.workspace = true
+
+[dev-dependencies]
+dotenv.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[features]
+integration = []

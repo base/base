@@ -9,6 +9,7 @@ on:
       - 'justfile'
       - 'fault-proof/**'
       - 'bindings/**'
+      - 'utils/**'
   push:
     tags:
       - v[0-9]+.*
@@ -22,32 +23,39 @@ concurrency:
 
 jobs:
   fp-integration-tests:
-    name: Fault Proof (${{ matrix.target }})
+    name: Fault Proof (${{ matrix.test }}${{ matrix.da != 'ethereum' && format(' - {0}', matrix.da) || '' }})
     runs-on:
       - runs-on
       - runner=64cpu-linux-x64
       - run-id=${{ github.run_id }}
       - spot=false
       - disk=large
+      - extras=s3-cache
     timeout-minutes: 60
 
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - integration
-          - sync
+        # sync is DA-agnostic (runs once), integration is DA-specific
+        include:
+          - test: sync
+            da: ethereum
+          - test: integration
+            da: ethereum
+          - test: integration
+            da: eigenda
 
     steps:
+    - name: Configure runs-on cache
+      uses: runs-on/action@v2
+
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
     - name: Setup Rust
-      run: |
-        rustup toolchain install stable --profile minimal
-        rustup component add rustfmt clippy
+      run: rustup toolchain install stable --profile minimal
 
     - name: Install Foundry
       uses: foundry-rs/foundry-toolchain@v1
@@ -64,20 +72,79 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v3
 
-    - name: Run integration tests
-      run: just fp-integration-tests ${{ matrix.target }}
+    - name: Run tests
+      run: just fp-integration-tests ${{ matrix.test }} ${{ matrix.da }}
       env:
-        # TODO(fakedev9999): Remove L1 RPCs since we are using fresh Anvil chain
         L1_RPC: ${{ secrets.L1_RPC }}
         L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
-        L2_RPC: ${{ secrets.L2_RPC }}
-        L2_NODE_RPC: ${{ secrets.L2_NODE_RPC }}
+        L2_RPC: ${{ matrix.da == 'eigenda' && secrets.L2_EIGENDA_RPC || secrets.L2_RPC }}
+        L2_NODE_RPC: ${{ matrix.da == 'eigenda' && secrets.L2_EIGENDA_RPC || secrets.L2_NODE_RPC }}
+        EIGENDA_PROXY_ADDRESS: ${{ secrets.EIGENDA_PROXY_ADDRESS }}
 
     - name: Upload test logs on failure
       if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: fp-integration-tests-${{ matrix.target }}-logs
+        name: fp-${{ matrix.test }}-${{ matrix.da }}-logs
+        path: |
+          **/*.log
+          target/debug/deps/*.log
+        retention-days: 7
+
+  da-integration-tests:
+    name: DA Host (${{ matrix.da }})
+    runs-on:
+      - runs-on
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }}
+      - spot=false
+      - disk=large
+      - extras=s3-cache
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        da: [eigenda]
+
+    steps:
+    - name: Configure runs-on cache
+      uses: runs-on/action@v2
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Rust
+      run: |
+        rustup toolchain install stable --profile minimal
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          bindings
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
+    - name: Run tests
+      run: just da-integration-tests ${{ matrix.da }}
+      env:
+        L1_RPC: ${{ secrets.L1_RPC }}
+        L1_BEACON_RPC: ${{ secrets.L1_BEACON_RPC }}
+        L2_RPC: ${{ matrix.da == 'eigenda' && secrets.L2_EIGENDA_RPC || secrets.L2_RPC }}
+        L2_NODE_RPC: ${{ matrix.da == 'eigenda' && secrets.L2_EIGENDA_RPC || secrets.L2_NODE_RPC }}
+        EIGENDA_PROXY_ADDRESS: ${{ secrets.EIGENDA_PROXY_ADDRESS }}
+        OP_SUCCINCT_MOCK: 'true'
+
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: da-host-${{ matrix.da }}-logs
         path: |
           **/*.log
           target/debug/deps/*.log
