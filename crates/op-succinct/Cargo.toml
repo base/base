@@ -190,12 +190,12 @@ revm-precompile = { version = "28.1.1", default-features = false }
 op-revm = { version = "11.3.0", default-features = false }
 
 # SP1
-sp1-sdk = { version = "=5.2.2", default-features = false, features = ["network"] }
-sp1-lib = { version = "=5.2.2", features = ["verify"] }
-sp1-zkvm = { version = "=5.2.2", features = ["verify"] }
-sp1-build = { version = "=5.2.2" }
-sp1-prover = { version = "=5.2.2" }
-sp1-core-executor = { version = "=5.2.2" }
+sp1-sdk = { version = "=5.2.4", default-features = false, features = ["network"] }
+sp1-lib = { version = "=5.2.4", features = ["verify"] }
+sp1-zkvm = { version = "=5.2.4", features = ["verify"] }
+sp1-build = { version = "=5.2.4" }
+sp1-prover = { version = "=5.2.4" }
+sp1-core-executor = { version = "=5.2.4" }
 
 # kzg
 kzg-rs = { version = "0.2.6", features = ["rkyv", "serde"] }
