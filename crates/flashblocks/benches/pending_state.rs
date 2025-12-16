@@ -12,7 +12,7 @@ use alloy_rpc_types_engine::PayloadId;
 use base_reth_flashblocks::{
     Flashblock, FlashblocksAPI, FlashblocksReceiver, FlashblocksState, Metadata,
 };
-use base_reth_test_utils::{accounts::TestAccounts, harness::TestHarness, node::LocalNodeProvider};
+use base_reth_test_utils::{LocalNodeProvider, TestAccounts, TestHarness};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use op_alloy_consensus::OpDepositReceipt;
 use reth::{
@@ -122,7 +122,7 @@ fn pending_state_benches(c: &mut Criterion) {
 async fn build_pending_state(input: BenchInput) {
     let state = FlashblocksState::new(input.provider, 5);
     state.start();
-    state.on_canonical_block_received(&input.canonical_block);
+    state.on_canonical_block_received(input.canonical_block);
 
     for flashblock in input.flashblocks {
         state.on_flashblock_received(flashblock);

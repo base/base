@@ -14,8 +14,8 @@ This crate provides reusable testing utilities for integration tests across the 
 
 ## Quick Start
 
-```rust
-use base_reth_test_utils::harness::TestHarness;
+```rust,ignore
+use base_reth_test_utils::TestHarness;
 
 #[tokio::test]
 async fn test_example() -> eyre::Result<()> {
@@ -38,7 +38,7 @@ async fn test_example() -> eyre::Result<()> {
 
 The framework follows a three-layer architecture:
 
-```
+```text
 ┌─────────────────────────────────────┐
 │         TestHarness                 │  ← Orchestration layer (tests use this)
 │  - Coordinates node + engine        │
@@ -67,8 +67,8 @@ The framework follows a three-layer architecture:
 
 The main entry point for integration tests that only need canonical chain control. Combines node, engine, and accounts into a single interface.
 
-```rust
-use base_reth_test_utils::harness::TestHarness;
+```rust,ignore
+use base_reth_test_utils::TestHarness;
 use alloy_primitives::Bytes;
 
 #[tokio::test]
@@ -116,8 +116,8 @@ async fn test_harness() -> eyre::Result<()> {
 
 In-process Optimism node with Base Sepolia configuration.
 
-```rust
-use base_reth_test_utils::node::LocalNode;
+```rust,ignore
+use base_reth_test_utils::{LocalNode, default_launcher};
 
 #[tokio::test]
 async fn test_node() -> eyre::Result<()> {
@@ -139,8 +139,8 @@ async fn test_node() -> eyre::Result<()> {
 
 For flashblocks-enabled nodes, use `FlashblocksLocalNode`:
 
-```rust
-use base_reth_test_utils::node::FlashblocksLocalNode;
+```rust,ignore
+use base_reth_test_utils::FlashblocksLocalNode;
 
 let node = FlashblocksLocalNode::new().await?;
 let pending_state = node.flashblocks_state();
@@ -153,8 +153,8 @@ node.send_flashblock(flashblock).await?;
 
 Type-safe Engine API client wrapping raw CL operations.
 
-```rust
-use base_reth_test_utils::engine::EngineApi;
+```rust,ignore
+use base_reth_test_utils::EngineApi;
 use alloy_primitives::B256;
 use op_alloy_rpc_types_engine::OpPayloadAttributes;
 
@@ -178,9 +178,8 @@ let status = engine.new_payload(payload, vec![], parent_root, requests).await?;
 
 Hardcoded test accounts with deterministic addresses (Anvil-compatible).
 
-```rust
-use base_reth_test_utils::accounts::TestAccounts;
-use base_reth_test_utils::harness::TestHarness;
+```rust,ignore
+use base_reth_test_utils::{TestAccounts, TestHarness};
 
 let accounts = TestAccounts::new();
 
@@ -210,8 +209,8 @@ Each account includes:
 
 Use `FlashblocksHarness` when you need `send_flashblock` and access to the in-memory pending state.
 
-```rust
-use base_reth_test_utils::flashblocks_harness::FlashblocksHarness;
+```rust,ignore
+use base_reth_test_utils::FlashblocksHarness;
 
 #[tokio::test]
 async fn test_flashblocks() -> eyre::Result<()> {
@@ -232,28 +231,39 @@ Test flashblocks delivery without WebSocket connections by constructing payloads
 
 ## Configuration Constants
 
-Key constants defined in `harness.rs`:
+Key constants are exported from the crate root:
 
-```rust
-const BLOCK_TIME_SECONDS: u64 = 2;          // Base L2 block time
-const GAS_LIMIT: u64 = 200_000_000;         // Default gas limit
-const NODE_STARTUP_DELAY_MS: u64 = 500;     // IPC endpoint initialization
-const BLOCK_BUILD_DELAY_MS: u64 = 100;      // Payload construction wait
+```rust,ignore
+use base_reth_test_utils::{
+    BASE_CHAIN_ID,              // Chain ID for Base Sepolia (84532)
+    BLOCK_TIME_SECONDS,         // Base L2 block time (2 seconds)
+    GAS_LIMIT,                  // Default gas limit (200M)
+    NODE_STARTUP_DELAY_MS,      // IPC endpoint initialization (500ms)
+    BLOCK_BUILD_DELAY_MS,       // Payload construction wait (100ms)
+    L1_BLOCK_INFO_DEPOSIT_TX,   // Pre-captured L1 block info deposit
+    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
+    DEFAULT_JWT_SECRET,         // All-zeros JWT for local testing
+};
 ```
 
 ## File Structure
 
-```
+```text
 test-utils/
 ├── src/
-│   ├── lib.rs           # Public API and re-exports
-│   ├── accounts.rs      # Test account definitions
-│   ├── node.rs          # LocalNode (EL wrapper)
-│   ├── engine.rs        # EngineApi (CL wrapper)
+│   ├── lib.rs                 # Public API and re-exports
+│   ├── accounts.rs            # Test account definitions
+│   ├── constants.rs           # Shared constants (chain ID, timing, etc.)
+│   ├── contracts.rs           # Solidity contract bindings
+│   ├── engine.rs              # EngineApi (CL wrapper)
+│   ├── fixtures.rs            # Genesis loading, provider factories
+│   ├── flashblocks_harness.rs # FlashblocksHarness + helpers
 │   ├── harness.rs             # TestHarness (orchestration)
-│   └── flashblocks_harness.rs # FlashblocksHarness + helpers
+│   ├── node.rs                # LocalNode (EL wrapper)
+│   └── tracing.rs             # Tracing initialization helpers
 ├── assets/
-│   └── genesis.json     # Base Sepolia genesis
+│   └── genesis.json           # Base Sepolia genesis
+├── contracts/                 # Solidity sources + compiled artifacts
 └── Cargo.toml
 ```
 
@@ -268,8 +278,8 @@ base-reth-test-utils.workspace = true
 
 Import in tests:
 
-```rust
-use base_reth_test_utils::harness::TestHarness;
+```rust,ignore
+use base_reth_test_utils::TestHarness;
 
 #[tokio::test]
 async fn my_test() -> eyre::Result<()> {

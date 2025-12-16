@@ -20,15 +20,11 @@ base-reth-rpc.workspace = true
 reth.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
-reth-optimism-cli.workspace = true
 reth-optimism-primitives.workspace = true
 reth-optimism-rpc = { workspace = true, features = ["client"] }
 reth-provider.workspace = true
-reth-primitives.workspace = true
 reth-primitives-traits.workspace = true
 reth-db.workspace = true
-reth-db-common.workspace = true
-reth-testing-utils.workspace = true
 reth-e2e-test-utils.workspace = true
 reth-node-core.workspace = true
 reth-exex.workspace = true
@@ -45,11 +41,9 @@ alloy-contract.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-engine.workspace = true
-alloy-rpc-types-eth.workspace = true
 alloy-consensus.workspace = true
 alloy-provider.workspace = true
 alloy-rpc-client.workspace = true
-alloy-serde.workspace = true
 alloy-signer = "1.0"
 alloy-signer-local = "1.1.0"
 
@@ -57,18 +51,12 @@ alloy-signer-local = "1.1.0"
 op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
-
-# rollup-boost
-rollup-boost.workspace = true
 
 # tokio
 tokio.workspace = true
 tokio-stream.workspace = true
-tokio-util = { version = "0.7", features = ["compat"] }
 
 # async
-futures.workspace = true
 futures-util.workspace = true
 
 # rpc
@@ -76,9 +64,7 @@ jsonrpsee.workspace = true
 
 # misc
 derive_more = { workspace = true, features = ["deref"] }
-tracing.workspace = true
 tracing-subscriber.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 eyre.workspace = true
 once_cell.workspace = true
@@ -88,8 +74,4 @@ chrono.workspace = true
 # tower for middleware
 tower = "0.5"
 
-
 [dev-dependencies]
-
-[package.metadata.cargo-udeps.ignore]
-normal = ["reth-optimism-cli"]
