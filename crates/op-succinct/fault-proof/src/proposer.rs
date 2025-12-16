@@ -655,21 +655,41 @@ where
 
     /// Computes the canonical head by scanning all cached games.
     ///
-    /// Canonical head is the game with the highest L2 block number. When an anchor game is present,
-    /// only its descendants are eligible for canonical head.
+    /// Canonical head is the game with the highest L2 block number. When an anchor game exists,
+    /// the canonical head is chosen from its descendants, unless a non-descendant has a higher L2
+    /// block number and an earlier lineage (parent is genesis or has a lower parent index than the
+    /// best descendant).
     async fn compute_canonical_head(&self) {
         let mut state = self.state.write().await;
 
-        let canonical_head = if let Some(anchor_game) = state.anchor_game.as_ref() {
-            let reachable = state.descendants_of(anchor_game.index);
-            state
-                .games
-                .values()
-                .filter(|game| reachable.contains(&game.index))
-                .max_by_key(|game| game.l2_block)
-                .cloned()
-        } else {
-            state.games.values().max_by_key(|game| game.l2_block).cloned()
+        let canonical_head = match state.anchor_game.as_ref() {
+            None => state.games.values().max_by_key(|g| g.l2_block).cloned(),
+            Some(anchor_game) => {
+                let reachable = state.descendants_of(anchor_game.index);
+
+                // Best among descendants
+                let anchor_head = state
+                    .games
+                    .values()
+                    .filter(|g| reachable.contains(&g.index))
+                    .max_by_key(|g| g.l2_block);
+
+                // Check non-descendants for override (higher block with genesis or lower parent)
+                let override_head = anchor_head.and_then(|anchor| {
+                    state
+                        .games
+                        .values()
+                        .filter(|g| !reachable.contains(&g.index))
+                        .filter(|g| {
+                            g.l2_block > anchor.l2_block &&
+                                (g.parent_index == u32::MAX ||
+                                    g.parent_index < anchor.parent_index)
+                        })
+                        .max_by_key(|g| g.l2_block)
+                });
+
+                override_head.or(anchor_head).cloned()
+            }
         };
 
         let previous_canonical_index = state.canonical_head_index;
