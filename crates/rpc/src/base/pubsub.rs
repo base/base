@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use alloy_primitives::B256;
 use alloy_rpc_types_eth::{Filter, Log, pubsub::Params};
 use base_reth_flashblocks::FlashblocksAPI;
 use jsonrpsee::{
@@ -15,6 +16,7 @@ use jsonrpsee::{
     server::SubscriptionMessage,
 };
 use op_alloy_network::Optimism;
+use op_alloy_rpc_types::Transaction;
 use reth_rpc::eth::EthPubSub as RethEthPubSub;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcBlock, RpcNodeCore, RpcTransaction,
@@ -112,6 +114,52 @@ impl<Eth, FB> EthPubSub<Eth, FB> {
             },
         )
     }
+
+    /// Returns a stream that yields full transactions from pending flashblocks
+    fn new_flashblock_transactions_full_stream(
+        flashblocks_state: Arc<FB>,
+    ) -> impl Stream<Item = Vec<Transaction>>
+    where
+        FB: FlashblocksAPI + Send + Sync + 'static,
+    {
+        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
+            let pending_blocks = match result {
+                Ok(blocks) => blocks,
+                Err(err) => {
+                    error!(
+                        message = "Error in flashblocks stream for transactions",
+                        error = %err
+                    );
+                    return None;
+                }
+            };
+            let txs = pending_blocks.get_pending_transactions();
+            if txs.is_empty() { None } else { Some(txs) }
+        })
+    }
+
+    /// Returns a stream that yields transaction hashes from pending flashblocks
+    fn new_flashblock_transactions_hash_stream(
+        flashblocks_state: Arc<FB>,
+    ) -> impl Stream<Item = Vec<B256>>
+    where
+        FB: FlashblocksAPI + Send + Sync + 'static,
+    {
+        BroadcastStream::new(flashblocks_state.subscribe_to_flashblocks()).filter_map(|result| {
+            let pending_blocks = match result {
+                Ok(blocks) => blocks,
+                Err(err) => {
+                    error!(
+                        message = "Error in flashblocks stream for transaction hashes",
+                        error = %err
+                    );
+                    return None;
+                }
+            };
+            let hashes = pending_blocks.get_pending_transaction_hashes();
+            if hashes.is_empty() { None } else { Some(hashes) }
+        })
+    }
 }
 
 #[async_trait]
@@ -164,6 +212,29 @@ where
                 tokio::spawn(async move {
                     pipe_from_stream(sink, stream).await;
                 });
+            }
+            BaseSubscriptionKind::NewFlashblockTransactions => {
+                // Extract full_transactions param, default to false (hash only)
+                let full = match params {
+                    Some(Params::Bool(full)) => full,
+                    _ => false,
+                };
+
+                if full {
+                    let stream = Self::new_flashblock_transactions_full_stream(Arc::clone(
+                        &self.flashblocks_state,
+                    ));
+                    tokio::spawn(async move {
+                        pipe_from_stream(sink, stream).await;
+                    });
+                } else {
+                    let stream = Self::new_flashblock_transactions_hash_stream(Arc::clone(
+                        &self.flashblocks_state,
+                    ));
+                    tokio::spawn(async move {
+                        pipe_from_stream(sink, stream).await;
+                    });
+                }
             }
         }
 

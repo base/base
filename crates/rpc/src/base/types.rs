@@ -57,6 +57,16 @@ pub enum BaseSubscriptionKind {
     /// Unlike standard `logs` subscription which only includes logs from confirmed blocks,
     /// this includes logs from the current pending flashblock state.
     PendingLogs,
+    /// New flashblock transactions subscription.
+    ///
+    /// Returns transactions from flashblocks as they are sequenced, providing higher inclusion
+    /// confidence than standard `newPendingTransactions` which returns mempool transactions.
+    /// Flashblock transactions have been included by the sequencer and are effectively preconfirmed.
+    ///
+    /// Accepts an optional boolean parameter:
+    /// - `true`: Returns full transaction objects
+    /// - `false` (default): Returns only transaction hashes
+    NewFlashblockTransactions,
 }
 
 impl ExtendedSubscriptionKind {
