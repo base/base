@@ -121,6 +121,7 @@ where
                 rollup_config_hash,
             },
         };
+        program_config.log();
 
         // Initialize the proof requester.
         let proof_requester = Arc::new(OPSuccinctProofRequester::new(

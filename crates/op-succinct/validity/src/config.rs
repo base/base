@@ -33,6 +33,17 @@ pub struct ProgramConfig {
     pub commitments: CommitmentConfig,
 }
 
+impl ProgramConfig {
+    pub fn log(&self) {
+        tracing::info!(
+            range_vkey_commitment = %self.commitments.range_vkey_commitment,
+            agg_vkey_hash = %self.commitments.agg_vkey_hash,
+            rollup_config_hash = %self.commitments.rollup_config_hash,
+            "Program configuration loaded"
+        );
+    }
+}
+
 pub struct RequesterConfig {
     pub l1_chain_id: i64,
     pub l2_chain_id: i64,
@@ -89,4 +100,39 @@ pub struct RequesterConfig {
 
     /// How long to wait before cancelling a proof request that hasn't been assigned.
     pub auction_timeout: u64,
+}
+
+impl RequesterConfig {
+    /// Log the configuration using structured tracing fields.
+    pub fn log(&self) {
+        tracing::info!(
+            l1_chain_id = self.l1_chain_id,
+            l2_chain_id = self.l2_chain_id,
+            l2oo_address = %self.l2oo_address,
+            dgf_address = %self.dgf_address,
+            evm_gas_limit = self.evm_gas_limit,
+            range_proof_interval = self.range_proof_interval,
+            submission_interval = self.submission_interval,
+            max_concurrent_witness_gen = self.max_concurrent_witness_gen,
+            max_concurrent_proof_requests = self.max_concurrent_proof_requests,
+            range_proof_strategy = ?self.range_proof_strategy,
+            agg_proof_strategy = ?self.agg_proof_strategy,
+            agg_proof_mode = ?self.agg_proof_mode,
+            op_succinct_config_name_hash = %self.op_succinct_config_name_hash,
+            mock = self.mock,
+            safe_db_fallback = self.safe_db_fallback,
+            use_kms_requester = self.use_kms_requester,
+            max_price_per_pgu = self.max_price_per_pgu,
+            proving_timeout = self.proving_timeout,
+            network_calls_timeout = self.network_calls_timeout,
+            range_cycle_limit = self.range_cycle_limit,
+            range_gas_limit = self.range_gas_limit,
+            agg_cycle_limit = self.agg_cycle_limit,
+            agg_gas_limit = self.agg_gas_limit,
+            whitelist = ?self.whitelist,
+            min_auction_period = self.min_auction_period,
+            auction_timeout = self.auction_timeout,
+            "Validity proposer configuration loaded"
+        );
+    }
 }

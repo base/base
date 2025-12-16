@@ -33,6 +33,8 @@ async fn main() -> Result<()> {
     setup_logger();
 
     let challenger_config = ChallengerConfig::from_env()?;
+    challenger_config.log();
+
     let challenger_signer = SignerLock::from_env().await?;
 
     let l1_provider = ProviderBuilder::default()
