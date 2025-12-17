@@ -21,8 +21,7 @@ mod flashblocks;
 mod generator;
 mod standard;
 
-use crate::bundles::BackrunBundleStore;
-use crate::resource_metering::ResourceMetering;
+use crate::{bundles::BackrunBundleStore, resource_metering::ResourceMetering};
 pub use builder_tx::{
     BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
     SimulationSuccessResult, get_balance, get_nonce,
