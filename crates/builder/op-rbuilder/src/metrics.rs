@@ -167,6 +167,12 @@ pub struct OpRBuilderMetrics {
     pub metering_unknown_transaction: Counter,
     /// Count of the number of times we were unable to resolve metering information due to locking
     pub metering_locked_transaction: Counter,
+    /// Current number of backrun bundles in store
+    pub backrun_bundles_in_store: Gauge,
+    /// Number of target transactions found with backrun bundles
+    pub backrun_target_txs_found_total: Counter,
+    /// Number of backrun bundles received via RPC
+    pub backrun_bundles_received_total: Counter,
 }
 
 impl OpRBuilderMetrics {

@@ -80,6 +80,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub address_gas_limiter: AddressGasLimiter,
     /// Per transaction resource metering information
     pub resource_metering: ResourceMetering,
+    /// Backrun bundle store for storing backrun transactions
+    pub backrun_bundle_store: crate::bundles::BackrunBundleStore,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -543,7 +545,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 continue;
             }
 
-            if result.is_success() {
+            let is_success = result.is_success();
+            if is_success {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
@@ -600,6 +603,50 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+
+            if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
+                self.metrics.backrun_target_txs_found_total.increment(1);
+
+                for stored_bundle in backrun_bundles {
+                    for backrun_tx in stored_bundle.backrun_txs {
+                        let ResultAndState { result, state } = match evm.transact(&backrun_tx) {
+                            Ok(res) => res,
+                            Err(err) => {
+                                return Err(PayloadBuilderError::evm(err));
+                            }
+                        };
+
+                        let backrun_gas_used = result.gas_used();
+                        let is_backrun_success = result.is_success();
+
+                        if !is_backrun_success {
+                            continue;
+                        }
+
+                        info.cumulative_gas_used += backrun_gas_used;
+                        info.cumulative_da_bytes_used += backrun_tx.encoded_2718().len() as u64;
+
+                        let ctx = ReceiptBuilderCtx {
+                            tx: backrun_tx.inner(),
+                            evm: &evm,
+                            result,
+                            state: &state,
+                            cumulative_gas_used: info.cumulative_gas_used,
+                        };
+                        info.receipts.push(self.build_receipt(ctx, None));
+
+                        evm.db_mut().commit(state);
+
+                        let miner_fee = backrun_tx
+                            .effective_tip_per_gas(base_fee)
+                            .expect("fee is always valid; execution succeeded");
+                        info.total_fees += U256::from(miner_fee) * U256::from(backrun_gas_used);
+
+                        info.executed_senders.push(backrun_tx.signer());
+                        info.executed_transactions.push(backrun_tx.into_inner());
+                    }
+                }
+            }
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();

@@ -58,6 +58,10 @@ pub struct OpRbuilderArgs {
     )]
     pub resource_metering_buffer_size: usize,
 
+    /// Buffer size for backrun bundles (LRU eviction when full)
+    #[arg(long = "builder.backrun-bundle-buffer-size", default_value = "10000")]
+    pub backrun_bundle_buffer_size: usize,
+
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(
         long = "builder.playground",

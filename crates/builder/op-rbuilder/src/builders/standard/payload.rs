@@ -252,6 +252,7 @@ where
             max_gas_per_txn: self.config.max_gas_per_txn,
             address_gas_limiter: self.address_gas_limiter.clone(),
             resource_metering: self.config.resource_metering.clone(),
+            backrun_bundle_store: self.config.backrun_bundle_store.clone(),
         };
 
         let builder = OpBuilder::new(best);
