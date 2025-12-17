@@ -8,7 +8,7 @@ use jsonrpsee::{
 use op_alloy_consensus::OpTxEnvelope;
 use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Instant};
 use tips_core::AcceptedBundle;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::metrics::OpRBuilderMetrics;
@@ -51,8 +51,6 @@ impl BackrunBundleStore {
     }
 
     pub fn insert(&self, bundle: AcceptedBundle) -> Result<(), String> {
-        warn!("Inserting backrun bundle for tx:");
-
         if bundle.txs.len() < 2 {
             return Err("Bundle must have at least 2 transactions (target + backrun)".to_string());
         }
@@ -83,12 +81,10 @@ impl BackrunBundleStore {
         let replaced = {
             let mut entry = self.data.by_target_tx.entry(target_tx_hash).or_default();
             entry.insert(backrun_sender, stored_bundle).is_some()
-        }; // entry lock released here
-
-        warn!("Replaced: {}", replaced);
+        };
 
         if replaced {
-            warn!(
+            info!(
                 target: "backrun_bundles",
                 target_tx = ?target_tx_hash,
                 sender = ?backrun_sender,
