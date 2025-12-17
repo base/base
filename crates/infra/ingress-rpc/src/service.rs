@@ -76,7 +76,7 @@ pub struct IngressService<Q: MessageQueue> {
     meter_bundle_timeout_ms: u64,
     builder_tx: broadcast::Sender<MeterBundleResponse>,
     backrun_enabled: bool,
-    builder_backrun_tx: broadcast::Sender<Bundle>,
+    builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
 }
 
 impl<Q: MessageQueue> IngressService<Q> {
@@ -85,7 +85,7 @@ impl<Q: MessageQueue> IngressService<Q> {
         queue: Q,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
-        builder_backrun_tx: broadcast::Sender<Bundle>,
+        builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
         config: Config,
     ) -> Self {
         let mempool_provider = Arc::new(providers.mempool);
@@ -139,11 +139,12 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
         }
 
         let start = Instant::now();
-        let (accepted_bundle, bundle_hash) = self.validate_parse_and_meter_bundle(&bundle).await?;
+        let (accepted_bundle, bundle_hash) =
+            self.validate_parse_and_meter_bundle(&bundle, false).await?;
 
         self.metrics.backrun_bundles_received_total.increment(1);
 
-        if let Err(e) = self.builder_backrun_tx.send(bundle) {
+        if let Err(e) = self.builder_backrun_tx.send(accepted_bundle.clone()) {
             warn!(
                 message = "Failed to send backrun bundle to builders",
                 bundle_hash = %bundle_hash,
@@ -161,7 +162,8 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
     }
 
     async fn send_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
-        let (accepted_bundle, bundle_hash) = self.validate_parse_and_meter_bundle(&bundle).await?;
+        let (accepted_bundle, bundle_hash) =
+            self.validate_parse_and_meter_bundle(&bundle, true).await?;
 
         // Get meter_bundle_response for builder broadcast
         let meter_bundle_response = accepted_bundle.meter_bundle_response.clone();
@@ -214,6 +216,26 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             self.tx_submission_method,
             TxSubmissionMethod::Mempool | TxSubmissionMethod::MempoolAndKafka
         );
+
+        // Forward before metering
+        if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
+            self.metrics.raw_tx_forwards_total.increment(1);
+            let tx_data = data.clone();
+            let tx_hash = transaction.tx_hash();
+            tokio::spawn(async move {
+                match forward_provider
+                    .send_raw_transaction(tx_data.iter().as_slice())
+                    .await
+                {
+                    Ok(_) => {
+                        debug!(message = "Forwarded raw tx", hash = %tx_hash);
+                    }
+                    Err(e) => {
+                        warn!(message = "Failed to forward raw tx", hash = %tx_hash, error = %e);
+                    }
+                }
+            });
+        }
 
         let expiry_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -276,25 +298,6 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
                     warn!(message = "Failed to send raw transaction to mempool", error = %e);
                 }
             }
-        }
-
-        if let Some(forward_provider) = self.raw_tx_forward_provider.clone() {
-            self.metrics.raw_tx_forwards_total.increment(1);
-            let tx_data = data.clone();
-            let tx_hash = transaction.tx_hash();
-            tokio::spawn(async move {
-                match forward_provider
-                    .send_raw_transaction(tx_data.iter().as_slice())
-                    .await
-                {
-                    Ok(_) => {
-                        debug!(message = "Forwarded raw tx", hash = %tx_hash);
-                    }
-                    Err(e) => {
-                        warn!(message = "Failed to forward raw tx", hash = %tx_hash, error = %e);
-                    }
-                }
-            });
         }
 
         info!(
@@ -461,6 +464,7 @@ impl<Q: MessageQueue> IngressService<Q> {
     async fn validate_parse_and_meter_bundle(
         &self,
         bundle: &Bundle,
+        to_meter: bool,
     ) -> RpcResult<(AcceptedBundle, B256)> {
         self.validate_bundle(bundle).await?;
         let parsed_bundle: ParsedBundle = bundle
@@ -468,7 +472,11 @@ impl<Q: MessageQueue> IngressService<Q> {
             .try_into()
             .map_err(|e: String| EthApiError::InvalidParams(e).into_rpc_err())?;
         let bundle_hash = parsed_bundle.bundle_hash();
-        let meter_bundle_response = self.meter_bundle(bundle, &bundle_hash).await?;
+        let meter_bundle_response = if to_meter {
+            self.meter_bundle(bundle, &bundle_hash).await?
+        } else {
+            MeterBundleResponse::default()
+        };
         let accepted_bundle = AcceptedBundle::new(parsed_bundle, meter_bundle_response.clone());
         Ok((accepted_bundle, bundle_hash))
     }

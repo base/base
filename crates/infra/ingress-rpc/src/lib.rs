@@ -9,7 +9,7 @@ use clap::Parser;
 use op_alloy_network::Optimism;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use tips_core::MeterBundleResponse;
+use tips_core::{AcceptedBundle, MeterBundleResponse};
 use tokio::sync::broadcast;
 use tracing::{error, warn};
 use url::Url;
@@ -185,7 +185,7 @@ pub struct Config {
 
 pub fn connect_ingress_to_builder(
     metering_rx: broadcast::Receiver<MeterBundleResponse>,
-    backrun_rx: broadcast::Receiver<tips_core::Bundle>,
+    backrun_rx: broadcast::Receiver<AcceptedBundle>,
     builder_rpc: Url,
 ) {
     let builder: RootProvider<Optimism> = ProviderBuilder::new()
@@ -218,13 +218,13 @@ pub fn connect_ingress_to_builder(
 
     tokio::spawn(async move {
         let mut event_rx = backrun_rx;
-        while let Ok(bundle) = event_rx.recv().await {
+        while let Ok(accepted_bundle) = event_rx.recv().await {
             if let Err(e) = builder
                 .client()
-                .request::<(tips_core::Bundle,), ()>("base_sendBackrunBundle", (bundle,))
+                .request::<(AcceptedBundle,), ()>("base_sendBackrunBundle", (accepted_bundle,))
                 .await
             {
-                error!(error = %e, "Failed to send backrun bundle to builder");
+                error!(error = ?e, "Failed to send backrun bundle to builder");
             }
         }
     });
