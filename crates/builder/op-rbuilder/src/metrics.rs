@@ -173,6 +173,10 @@ pub struct OpRBuilderMetrics {
     pub backrun_target_txs_found_total: Counter,
     /// Number of backrun bundles received via RPC
     pub backrun_bundles_received_total: Counter,
+    /// Number of backrun transactions that reverted during execution
+    pub backrun_txs_reverted_total: Counter,
+    /// Latency of inserting a backrun bundle into the store
+    pub backrun_bundle_insert_duration: Histogram,
 }
 
 impl OpRBuilderMetrics {

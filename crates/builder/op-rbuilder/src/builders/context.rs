@@ -608,6 +608,13 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 self.metrics.backrun_target_txs_found_total.increment(1);
 
                 for stored_bundle in backrun_bundles {
+                    info!(
+                        target: "payload_builder",
+                        message = "Executing backrun bundles",
+                        tx_hash = ?tx_hash,
+                        bundle_id = ?stored_bundle.bundle_id,
+                    );
+
                     for backrun_tx in stored_bundle.backrun_txs {
                         let ResultAndState { result, state } = match evm.transact(&backrun_tx) {
                             Ok(res) => res,
@@ -620,6 +627,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         let is_backrun_success = result.is_success();
 
                         if !is_backrun_success {
+                            self.metrics.backrun_txs_reverted_total.increment(1);
+                            info!(
+                                target: "payload_builder",
+                                target_tx = ?tx_hash,
+                                backrun_tx = ?backrun_tx.tx_hash(),
+                                bundle_id = ?stored_bundle.bundle_id,
+                                gas_used = backrun_gas_used,
+                                "Backrun transaction reverted"
+                            );
                             continue;
                         }
 
