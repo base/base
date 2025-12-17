@@ -21,7 +21,6 @@ on:
   push:
     branches:
       - main
-      - "release/*"
     tags:
       - "v[0-9]+.*"
     paths-ignore:
