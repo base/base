@@ -53,7 +53,7 @@ pub trait WitnessGenerator {
         });
         let beacon = OnlineBlobStore { provider: blob_provider.clone(), store: blob_data.clone() };
 
-        let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
+        let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await?;
         if let Some((cursor, l1_provider, l2_provider)) = input {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
             let l1_config = Arc::new(boot_info.l1_config.clone());
@@ -70,7 +70,7 @@ pub trait WitnessGenerator {
                 )
                 .await
                 .unwrap();
-            self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await.unwrap();
+            self.get_executor().run(boot_info, pipeline, cursor, l2_provider).await?;
         }
 
         let witness = Self::WitnessData::from_parts(
