@@ -7,7 +7,7 @@ use kona_preimage::{
 use kona_proof::FlushableCache;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Archive, rkyv::Deserialize,
@@ -24,11 +24,21 @@ impl PreimageStore {
         Ok(())
     }
 
-    pub fn save_preimage(&mut self, key: PreimageKey, value: Vec<u8>) {
-        check_preimage(&key, &value).expect("Invalid preimage");
-        if let Some(old) = self.preimage_map.insert(key, value.clone()) {
-            assert_eq!(old, value, "Cannot overwrite key");
-        }
+    pub fn save_preimage(&mut self, key: PreimageKey, value: Vec<u8>) -> PreimageOracleResult<()> {
+        check_preimage(&key, &value)?;
+
+        match self.preimage_map.entry(key) {
+            Entry::Vacant(e) => {
+                e.insert(value);
+            }
+            Entry::Occupied(e) => {
+                if e.get() != &value {
+                    return Err(PreimageOracleError::Other("cannot overwrite key".to_string()))
+                }
+            }
+        };
+
+        Ok(())
     }
 }
 

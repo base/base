@@ -852,7 +852,13 @@ where
             .await
             .context("Failed to get host CLI args")?;
 
-        let witness_data = self.host.run(&host_args).await?;
+        let witness_data = match self.host.run(&host_args).await {
+            Ok(witness) => witness,
+            Err(e) => {
+                tracing::error!("Failed to generate witness: {}", e);
+                return Err(anyhow::anyhow!("Failed to generate witness: {}", e));
+            }
+        };
 
         let sp1_stdin = match self.host.witness_generator().get_sp1_stdin(witness_data) {
             Ok(stdin) => stdin,

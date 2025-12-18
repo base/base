@@ -105,10 +105,15 @@ where
         let (agg_pk, agg_vk) = network_prover.setup(AGGREGATION_ELF);
         let multi_block_vkey_u8 = u32_to_u8(range_vk.vk.hash_u32());
         let range_vkey_commitment = B256::from(multi_block_vkey_u8);
-        let agg_vkey_hash = B256::from_str(&agg_vk.bytes32()).unwrap();
+        let agg_vkey_hash = B256::from_str(&agg_vk.bytes32())?;
 
         // Initialize fetcher
-        let rollup_config_hash = hash_rollup_config(fetcher.rollup_config.as_ref().unwrap());
+        let rollup_config_hash = hash_rollup_config(
+            fetcher
+                .rollup_config
+                .as_ref()
+                .ok_or_else(|| anyhow!("Rollup config must be set to initialize the proposer."))?,
+        );
 
         let program_config = ProgramConfig {
             range_vk: Arc::new(range_vk),
@@ -352,10 +357,8 @@ where
                 .await?;
 
             // Check if current time exceeds deadline. If so, the proof has timed out.
-            let current_time = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
+            let current_time =
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
 
             // Cancel the request in the network if the auction timeout is exceeded.
             if let Some(request_details) = request_details {
@@ -459,7 +462,7 @@ where
 
                 let proof_bytes = match proof.proof {
                     // If it's a compressed proof, serialize with bincode.
-                    SP1Proof::Compressed(_) => bincode::serialize(&proof).unwrap(),
+                    SP1Proof::Compressed(_) => bincode::serialize(&proof)?,
                     // If it's Groth16 or PLONK, get the on-chain proof bytes.
                     SP1Proof::Groth16(_) | SP1Proof::Plonk(_) => proof.bytes(),
                     SP1Proof::Core(_) => return Err(anyhow!("Core proofs are not supported.")),
@@ -1462,14 +1465,8 @@ where
             .set(fetcher.get_l2_header(BlockId::finalized()).await?.number as f64);
 
         // Get submission interval from contract and set gauge
-        let contract_submission_interval: u64 = self
-            .contract_config
-            .l2oo_contract
-            .submissionInterval()
-            .call()
-            .await?
-            .try_into()
-            .unwrap();
+        let contract_submission_interval: u64 =
+            self.contract_config.l2oo_contract.submissionInterval().call().await?.try_into()?;
 
         let submission_interval =
             contract_submission_interval.max(self.requester_config.submission_interval);

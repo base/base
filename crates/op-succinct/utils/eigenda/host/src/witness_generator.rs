@@ -114,7 +114,7 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
 
         let executor = EigenDAWitnessExecutor::new(eigenda_preimage_provider);
 
-        let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await.unwrap();
+        let (boot_info, input) = get_inputs_for_pipeline(oracle.clone()).await?;
         if let Some((cursor, l1_provider, l2_provider)) = input {
             let rollup_config = Arc::new(boot_info.rollup_config.clone());
             let l1_config = Arc::new(boot_info.l1_config.clone());
@@ -128,11 +128,9 @@ impl WitnessGenerator for EigenDAWitnessGenerator {
                 l1_provider.clone(),
                 l2_provider.clone(),
             )
-            .await
-            .unwrap();
+            .await?;
             WitnessExecutorTrait::run(&executor, boot_info.clone(), pipeline, cursor, l2_provider)
-                .await
-                .unwrap();
+                .await?;
         }
 
         // Extract the EigenDA preimage data
