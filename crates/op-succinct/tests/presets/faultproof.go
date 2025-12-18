@@ -23,14 +23,23 @@ type FaultProofConfig struct {
 	MaxConcurrentRangeProofs uint64
 	FastFinalityMode         bool
 	FastFinalityProvingLimit uint64
+	// Timeout is the proving timeout in seconds.
+	// If nil, the default (4 hours / 14400s) is used.
+	Timeout     *uint64
+	EnvFilePath string
+
+	// AggProofMode selects the SP1 verifier backend ("plonk" or "groth16").
+	// Only applies for network proving (i.e. when utils.UseNetworkProver() is true).
+	// If nil/empty, defaults to "plonk".
+	AggProofMode *string
 }
 
-// DefaultFaultProofConfig returns the default configuration.
+// DefaultFaultProofConfig returns the default configuration for fast tests.
 func DefaultFaultProofConfig() FaultProofConfig {
 	return FaultProofConfig{
-		MaxChallengeDuration:         10, // Low for tests (vs 7 days production)
-		MaxProveDuration:             10, // Low for tests (vs 1 day production)
-		DisputeGameFinalityDelaySecs: 60, // Low for tests (vs 7 days production)
+		MaxChallengeDuration:         10, // Low for tests (vs 1 hour production)
+		MaxProveDuration:             10, // Low for tests (vs 12 hours production)
+		DisputeGameFinalityDelaySecs: 30, // Low for tests (vs 7 days production)
 		ProposalIntervalInBlocks:     10,
 		FetchInterval:                1,
 		RangeSplitCount:              1,
@@ -47,33 +56,76 @@ func FastFinalityFaultProofConfig() FaultProofConfig {
 	return cfg
 }
 
+// LongRunningFaultProofConfig returns configuration optimized for long-running progress tests.
+// If NETWORK_PRIVATE_KEY is set, uses larger intervals tuned for network proving.
+func LongRunningFaultProofConfig() FaultProofConfig {
+	cfg := DefaultFaultProofConfig()
+	cfg.MaxChallengeDuration = 1800 // =30m
+
+	timeout := uint64(900) // =15m
+	cfg.Timeout = &timeout
+
+	if utils.UseNetworkProver() {
+		cfg.ProposalIntervalInBlocks = 240
+	} else {
+		cfg.ProposalIntervalInBlocks = 120
+	}
+	return cfg
+}
+
+// LongRunningFastFinalityFaultProofConfig returns configuration for long-running fast finality tests.
+// If NETWORK_PRIVATE_KEY is set, uses larger intervals tuned for network proving.
+func LongRunningFastFinalityFaultProofConfig() FaultProofConfig {
+	cfg := LongRunningFaultProofConfig()
+	cfg.FastFinalityMode = true
+	cfg.FastFinalityProvingLimit = 8
+	return cfg
+}
+
+// ProposerOptions returns the proposer options for this configuration.
+func (c FaultProofConfig) ProposerOptions() []sysgo.FaultProofProposerOption {
+	opts := []sysgo.FaultProofProposerOption{
+		sysgo.WithFPProposalIntervalInBlocks(c.ProposalIntervalInBlocks),
+		sysgo.WithFPFetchInterval(c.FetchInterval),
+		sysgo.WithFPRangeSplitCount(c.RangeSplitCount),
+		sysgo.WithFPMaxConcurrentRangeProofs(c.MaxConcurrentRangeProofs),
+		sysgo.WithFPFastFinalityMode(c.FastFinalityMode),
+		sysgo.WithFPFastFinalityProvingLimit(c.FastFinalityProvingLimit),
+	}
+	if c.Timeout != nil {
+		opts = append(opts, sysgo.WithFPTimeout(*c.Timeout))
+	}
+	if c.EnvFilePath != "" {
+		opts = append(opts, sysgo.WithFPWriteEnvFile(c.EnvFilePath))
+	}
+	return opts
+}
+
 // WithSuccinctFPProposer creates a fault proof proposer with custom configuration.
-func WithSuccinctFPProposer(dest *sysgo.DefaultSingleChainInteropSystemIDs, cfg FaultProofConfig) stack.CommonOption {
-	return withSuccinctPreset(dest, func(opt *stack.CombinedOption[*sysgo.Orchestrator], ids sysgo.DefaultSingleChainInteropSystemIDs, l2ChainID eth.ChainID) {
-		opt.Add(sysgo.WithSuperDeploySP1MockVerifier(ids.L1EL, l2ChainID))
+func WithSuccinctFPProposer(dest *sysgo.DefaultSingleChainInteropSystemIDs, cfg FaultProofConfig, chain L2ChainConfig) stack.CommonOption {
+	// Set batcher's MaxBlocksPerSpanBatch to match the proposal interval
+	maxBlocksPerSpanBatch := int(cfg.ProposalIntervalInBlocks)
+	return withSuccinctPreset(dest, chain, maxBlocksPerSpanBatch, cfg.AggProofMode, func(opt *stack.CombinedOption[*sysgo.Orchestrator], ids sysgo.DefaultSingleChainInteropSystemIDs, l2ChainID eth.ChainID) {
+		if !utils.UseNetworkProver() {
+			opt.Add(sysgo.WithSuperDeploySP1MockVerifier(ids.L1EL, l2ChainID))
+		}
 		opt.Add(sysgo.WithSuperDeployOPSuccinctFaultDisputeGame(ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL,
 			sysgo.WithFdgL2StartingBlockNumber(1),
 			sysgo.WithFdgMaxChallengeDuration(cfg.MaxChallengeDuration),
 			sysgo.WithFdgMaxProveDuration(cfg.MaxProveDuration),
 			sysgo.WithFdgDisputeGameFinalityDelaySecs(cfg.DisputeGameFinalityDelaySecs)))
-		opt.Add(sysgo.WithSuperSuccinctFaultProofProposer(ids.L2AProposer, ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL,
-			sysgo.WithFPProposalIntervalInBlocks(cfg.ProposalIntervalInBlocks),
-			sysgo.WithFPFetchInterval(cfg.FetchInterval),
-			sysgo.WithFPRangeSplitCount(cfg.RangeSplitCount),
-			sysgo.WithFPMaxConcurrentRangeProofs(cfg.MaxConcurrentRangeProofs),
-			sysgo.WithFPFastFinalityMode(cfg.FastFinalityMode),
-			sysgo.WithFPFastFinalityProvingLimit(cfg.FastFinalityProvingLimit)))
+		opt.Add(sysgo.WithSuperSuccinctFaultProofProposer(ids.L2AProposer, ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL, cfg.ProposerOptions()...))
 	})
 }
 
 // WithDefaultSuccinctFPProposer creates a fault proof proposer with default configuration.
 func WithDefaultSuccinctFPProposer(dest *sysgo.DefaultSingleChainInteropSystemIDs) stack.CommonOption {
-	return WithSuccinctFPProposer(dest, DefaultFaultProofConfig())
+	return WithSuccinctFPProposer(dest, DefaultFaultProofConfig(), DefaultL2ChainConfig())
 }
 
 // WithSuccinctFPProposerFastFinality creates a fault proof proposer optimized for fast finality.
 func WithSuccinctFPProposerFastFinality(dest *sysgo.DefaultSingleChainInteropSystemIDs) stack.CommonOption {
-	return WithSuccinctFPProposer(dest, FastFinalityFaultProofConfig())
+	return WithSuccinctFPProposer(dest, FastFinalityFaultProofConfig(), DefaultL2ChainConfig())
 }
 
 // FaultProofSystem wraps MinimalWithProposer and provides access to faultproof-specific features.
@@ -101,9 +153,9 @@ func (s *FaultProofSystem) StartProposer() {
 }
 
 // NewFaultProofSystem creates a new fault proof test system with custom configuration.
-func NewFaultProofSystem(t devtest.T, cfg FaultProofConfig) *FaultProofSystem {
+func NewFaultProofSystem(t devtest.T, cfg FaultProofConfig, chain L2ChainConfig) *FaultProofSystem {
 	var ids sysgo.DefaultSingleChainInteropSystemIDs
-	sys, prop := newSystemWithProposer(t, WithSuccinctFPProposer(&ids, cfg), &ids)
+	sys, prop := newSystemWithProposer(t, WithSuccinctFPProposer(&ids, cfg, chain), &ids)
 
 	fp, ok := prop.(sysgo.FaultProofProposer)
 	t.Require().True(ok, "proposer must implement FaultProofProposer")

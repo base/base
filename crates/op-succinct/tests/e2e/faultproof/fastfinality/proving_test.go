@@ -17,7 +17,7 @@ func TestFaultProofProposer_RangeSplitOne(gt *testing.T) {
 	cfg.ProposalIntervalInBlocks = 40
 	cfg.RangeSplitCount = 1
 	cfg.MaxConcurrentRangeProofs = 1
-	waitForDefenderWinsAtIndex(gt, 0, 10*time.Minute, cfg)
+	waitForDefenderWinsAtIndex(gt, 0, utils.ShortTimeout(), cfg)
 }
 
 func TestFaultProofProposer_RangeSplitSixteen(gt *testing.T) {
@@ -25,7 +25,7 @@ func TestFaultProofProposer_RangeSplitSixteen(gt *testing.T) {
 	cfg.ProposalIntervalInBlocks = 40
 	cfg.RangeSplitCount = 16
 	cfg.MaxConcurrentRangeProofs = 16
-	waitForDefenderWinsAtIndex(gt, 0, 10*time.Minute, cfg)
+	waitForDefenderWinsAtIndex(gt, 0, utils.ShortTimeout(), cfg)
 }
 
 func TestFaultProofProposer_RangeSplitTwo_ThreeGames(gt *testing.T) {
@@ -33,12 +33,12 @@ func TestFaultProofProposer_RangeSplitTwo_ThreeGames(gt *testing.T) {
 	cfg.RangeSplitCount = 2
 	cfg.MaxConcurrentRangeProofs = 2
 	cfg.FastFinalityProvingLimit = 4
-	waitForDefenderWinsAtIndex(gt, 2, 60*time.Minute, cfg)
+	waitForDefenderWinsAtIndex(gt, 2, utils.LongTimeout(), cfg)
 }
 
 func waitForDefenderWinsAtIndex(gt *testing.T, index int, timeout time.Duration, cfg opspresets.FaultProofConfig) {
 	t := devtest.ParallelT(gt)
-	sys := opspresets.NewFaultProofSystem(t, cfg)
+	sys := opspresets.NewFaultProofSystem(t, cfg, opspresets.DefaultL2ChainConfig())
 	require := t.Require()
 	logger := t.Logger()
 	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)

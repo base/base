@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
-	"github.com/ethereum-optimism/optimism/op-service/eth"
 	opspresets "github.com/succinctlabs/op-succinct/presets"
 	"github.com/succinctlabs/op-succinct/utils"
 )
@@ -20,29 +19,29 @@ const (
 
 func TestValidityProposer_RestartRecovery_Basic(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
-	runRecoveryTest(gt, cfg, 1, 1, 20*time.Minute)
+	runRecoveryTest(gt, cfg, 1, 1, utils.ShortTimeout())
 }
 
 func TestValidityProposer_RestartRecovery_ThreeSubmissions(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
-	runRecoveryTest(gt, cfg, 1, 3, 20*time.Minute)
+	runRecoveryTest(gt, cfg, 1, 3, utils.LongTimeout())
 }
 
 func TestValidityProposer_RestartRecovery_RangeSplit(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
 	cfg.SubmissionInterval = 20
 	cfg.RangeProofInterval = 5
-	runRecoveryTest(gt, cfg, 1, 1, 20*time.Minute)
+	runRecoveryTest(gt, cfg, 1, 1, utils.ShortTimeout())
 }
 
 func TestValidityProposer_RestartRecovery_MultipleRestarts(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
-	runRecoveryTest(gt, cfg, 3, 1, 20*time.Minute)
+	runRecoveryTest(gt, cfg, 3, 1, utils.ShortTimeout())
 }
 
 func runRecoveryTest(gt *testing.T, cfg opspresets.ValidityConfig, restartCount, expectedSubmissions int, timeout time.Duration) {
 	t := devtest.ParallelT(gt)
-	sys := opspresets.NewValiditySystem(t, cfg)
+	sys := opspresets.NewValiditySystem(t, cfg, opspresets.DefaultL2ChainConfig())
 	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)
 	defer cancel()
 
@@ -96,9 +95,8 @@ func verifySubmission(ctx context.Context, t devtest.T, sys *opspresets.Validity
 	require.NoError(err, "failed to get output proposal")
 	require.Equal(expectedBlock, outputProposal.L2BlockNumber, "L2 block number mismatch")
 
-	expectedOutput, err := sys.L2EL.Escape().L2EthClient().OutputV0AtBlockNumber(ctx, outputProposal.L2BlockNumber)
-	require.NoError(err, "failed to get expected output")
-	require.Equal(eth.OutputRoot(expectedOutput), outputProposal.OutputRoot, "output root mismatch")
+	err = utils.VerifyOutputRoot(ctx, sys.L2EL.Escape().L2EthClient(), outputProposal.L2BlockNumber, outputProposal.OutputRoot)
+	require.NoError(err, "output root verification failed")
 
 	logger.Info("Output verified", "block", outputProposal.L2BlockNumber)
 }

@@ -1,0 +1,314 @@
+{
+  "title": "Fault Proof Proposer",
+  "uid": "faultproof",
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Blocks Behind (max 900)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1080,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_finalized_l2_block_number - op_succinct_fp_latest_game_l2_block_number",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Errors",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_game_creation_error + op_succinct_fp_game_proving_error + op_succinct_fp_game_resolution_error + op_succinct_fp_bond_claiming_error + op_succinct_fp_metrics_error",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "RAM (GB)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes / (1024 * 1024 * 1024)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "CPU (%)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * rate(process_cpu_seconds_total[1m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Block Lag Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_finalized_l2_block_number - op_succinct_fp_latest_game_l2_block_number",
+          "legendFormat": "Finalized - Latest Game",
+          "refId": "A"
+        },
+        {
+          "expr": "op_succinct_fp_latest_game_l2_block_number - op_succinct_fp_anchor_game_l2_block_number",
+          "legendFormat": "Latest Game - Anchor",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Game Lifecycle",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_games_created",
+          "legendFormat": "Created",
+          "refId": "A"
+        },
+        {
+          "expr": "op_succinct_fp_games_proven",
+          "legendFormat": "Proven",
+          "refId": "B"
+        },
+        {
+          "expr": "op_succinct_fp_games_resolved",
+          "legendFormat": "Resolved",
+          "refId": "C"
+        },
+        {
+          "expr": "op_succinct_fp_games_bonds_claimed",
+          "legendFormat": "Bonds Claimed",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Active Proving Tasks",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_active_proving_tasks",
+          "legendFormat": "Active Tasks",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Errors Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "op_succinct_fp_game_creation_error",
+          "legendFormat": "Game Creation",
+          "refId": "A"
+        },
+        {
+          "expr": "op_succinct_fp_game_proving_error",
+          "legendFormat": "Proving",
+          "refId": "B"
+        },
+        {
+          "expr": "op_succinct_fp_game_resolution_error",
+          "legendFormat": "Resolution",
+          "refId": "C"
+        },
+        {
+          "expr": "op_succinct_fp_bond_claiming_error",
+          "legendFormat": "Bond Claim",
+          "refId": "D"
+        },
+        {
+          "expr": "op_succinct_fp_metrics_error",
+          "legendFormat": "Metrics",
+          "refId": "E"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39
+}

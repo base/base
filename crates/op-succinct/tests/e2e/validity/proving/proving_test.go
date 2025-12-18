@@ -8,19 +8,18 @@ import (
 	"time"
 
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
-	"github.com/ethereum-optimism/optimism/op-service/eth"
 	opspresets "github.com/succinctlabs/op-succinct/presets"
 	"github.com/succinctlabs/op-succinct/utils"
 )
 
 func TestValidityProposer_SingleSubmission(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
-	waitForOutputAndVerify(gt, 1, 10*time.Minute, cfg)
+	waitForOutputAndVerify(gt, 1, utils.ShortTimeout(), cfg)
 }
 
 func TestValidityProposer_ThreeSubmissions(gt *testing.T) {
 	cfg := opspresets.DefaultValidityConfig()
-	waitForOutputAndVerify(gt, 3, 30*time.Minute, cfg)
+	waitForOutputAndVerify(gt, 3, utils.LongTimeout(), cfg)
 }
 
 func TestValidityProposer_ProofIntervalOne(gt *testing.T) {
@@ -29,7 +28,7 @@ func TestValidityProposer_ProofIntervalOne(gt *testing.T) {
 		SubmissionInterval: 5, // Keep low since more range proofs to generate takes longer
 		RangeProofInterval: 1,
 	}
-	waitForOutputAndVerify(gt, 1, 20*time.Minute, cfg)
+	waitForOutputAndVerify(gt, 1, utils.ShortTimeout(), cfg)
 }
 
 func TestValidityProposer_ProofIntervalNotDivisible(gt *testing.T) {
@@ -38,7 +37,7 @@ func TestValidityProposer_ProofIntervalNotDivisible(gt *testing.T) {
 		SubmissionInterval: 10,
 		RangeProofInterval: 7,
 	}
-	waitForOutputAndVerify(gt, 1, 10*time.Minute, cfg)
+	waitForOutputAndVerify(gt, 1, utils.ShortTimeout(), cfg)
 }
 
 func TestValidityProposer_RangeIntervalLargerThanSubmission(gt *testing.T) {
@@ -47,12 +46,12 @@ func TestValidityProposer_RangeIntervalLargerThanSubmission(gt *testing.T) {
 		SubmissionInterval: 5,
 		RangeProofInterval: 10, // Larger than submission interval
 	}
-	waitForOutputAndVerify(gt, 1, 10*time.Minute, cfg)
+	waitForOutputAndVerify(gt, 1, utils.ShortTimeout(), cfg)
 }
 
 func waitForOutputAndVerify(gt *testing.T, submissionCount int, timeout time.Duration, cfg opspresets.ValidityConfig) {
 	t := devtest.ParallelT(gt)
-	sys := opspresets.NewValiditySystem(t, cfg)
+	sys := opspresets.NewValiditySystem(t, cfg, opspresets.DefaultL2ChainConfig())
 	require := t.Require()
 	logger := t.Logger()
 	ctx, cancel := context.WithTimeout(t.Ctx(), timeout)
@@ -71,9 +70,8 @@ func waitForOutputAndVerify(gt *testing.T, submissionCount int, timeout time.Dur
 	require.Equal(expectedOutputBlock, outputProposal.L2BlockNumber, "L2 block number mismatch")
 
 	// Verify output root matches expected L2 state
-	expectedOutput, err := sys.L2EL.Escape().L2EthClient().OutputV0AtBlockNumber(ctx, outputProposal.L2BlockNumber)
-	require.NoError(err, "failed to get expected output from L2")
-	require.Equal(eth.OutputRoot(expectedOutput), outputProposal.OutputRoot, "output root mismatch")
+	err = utils.VerifyOutputRoot(ctx, sys.L2EL.Escape().L2EthClient(), outputProposal.L2BlockNumber, outputProposal.OutputRoot)
+	require.NoError(err, "output root verification failed")
 
 	logger.Info("Output verified", "block", outputProposal.L2BlockNumber)
 

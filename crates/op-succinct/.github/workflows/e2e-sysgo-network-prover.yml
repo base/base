@@ -1,0 +1,63 @@
+name: Sysgo E2E Long Running Tests with Network Prover
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect-elf-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      elf_changed: ${{ steps.filter.outputs.elf }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            elf:
+              - 'elf/**'
+
+  e2e-sysgo-long-running-with-network-prover:
+    name: (${{ matrix.target }})
+    needs: detect-elf-changes
+    if: |
+      needs.detect-elf-changes.outputs.elf_changed == 'true' ||
+      contains(github.event.head_commit.message, 'release/')
+    runs-on:
+      - runs-on
+      - runner=64cpu-linux-x64
+      - run-id=${{ github.run_id }}
+      - spot=false
+      - disk=large
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - "./e2e/validity/long-running/progress_test.go"
+          - "./e2e/faultproof/long-running/progress_test.go"
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Setup E2E environment
+        uses: ./.github/actions/setup-e2e-sysgo
+
+      - name: Run Long Running E2E Tests (Network Proving)
+        working-directory: tests
+        env:
+          PROGRESS_TEST_DURATION: "60m"
+          NETWORK_PRIVATE_KEY: ${{ secrets.NETWORK_PRIVATE_KEY }}
+        run: |
+          echo "Running long-running tests with network proving..."
+          just test-e2e-sysgo "${{ matrix.target }}"
