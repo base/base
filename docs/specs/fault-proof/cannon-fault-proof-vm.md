@@ -447,6 +447,8 @@ If an unsupported syscall is encountered, the VM will raise an exception.
 | 5034 | nanosleep     | 🚫              | 🚫               | 🚫           | 🚫               | Preempts the active thread and returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                |
 | 5222 | clock_gettime | uint64 clock_id | uint64 addr      | 🚫           | 🚫               | Supports `clock_id`'s `REALTIME`(0) and `MONOTONIC`(1). For other `clock_id`'s, sets errno to `0x16`.  Calculates a deterministic time value based on the state's `step` field and a constant `HZ` (10,000,000) where `HZ` represents the approximate clock rate (steps / second) of the FPVM:<br/><br/>`seconds = step/HZ`<br/>`nsecs = (step % HZ) * 10^9/HZ`<br/><br/>Seconds are set at memory address `addr` and nsecs are set at `addr + WordSize`. |
 | 5038 | getpid        | 🚫              | 🚫               | 🚫           | 🚫               | Returns 0.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 5313 | getrandom     | char \*buf      | uint64 buflen    | 🚫           | 🚫               | Generates pseudorandom bytes and writes them to the buffer at `buf`. Uses splitmix64 seeded with the current step count. Returns the number of bytes written, which is at most `buflen` and limited by alignment boundaries.                                                                                                                                                                                                                             |
+| 5284 | eventfd2      | uint64 initval  | int64 flags      | 🚫           | 🚫               | Creates an eventfd file descriptor. Only non-blocking mode is supported: if `flags` does not include `EFD_NONBLOCK` (0x80), sets errno to `0x16`. On success, returns file descriptor 100.                                                                                                                                                                                                                                                               |
 <!-- cspell:enable -->
 
 ### Noop Syscalls
@@ -458,6 +460,7 @@ and errno (`$a3`) registers.
 | \$v0 | system call        |
 |------|--------------------|
 | 5011 | munmap             |
+| 5010 | mprotect           |
 | 5196 | sched_get_affinity |
 | 5027 | madvise            |
 | 5014 | rt_sigprocmask     |
@@ -476,7 +479,6 @@ and errno (`$a3`) registers.
 | 5287 | pipe2              |
 | 5208 | epoll_ctl          |
 | 5272 | epoll_pwait        |
-| 5313 | getrandom          |
 | 5061 | uname              |
 | 5100 | getuid             |
 | 5102 | getgid             |
@@ -503,6 +505,7 @@ The VM does not support Linux open(2). However, the VM can read from and write t
 | hint request       | 4               | write-only. Used to provide [pre-image hints](../fault-proof/index.md#hinting)              |
 | pre-image response | 5               | read-only. Used to [read pre-images](../fault-proof/index.md#pre-image-communication).      |
 | pre-image request  | 6               | write-only. Used to [request pre-images](../fault-proof/index.md#pre-image-communication).  |
+| eventfd            | 100             | read-write. Created by `eventfd2` syscall. Reads return `EAGAIN`. Writes return `EAGAIN`.   |
 
 Syscalls referencing unknown file descriptors fail with an `EBADF` errno as done on Linux.
 
