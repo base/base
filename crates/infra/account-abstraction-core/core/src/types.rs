@@ -26,8 +26,20 @@ impl VersionedUserOperation {
             VersionedUserOperation::PackedUserOperation(op) => op.max_priority_fee_per_gas,
         }
     }
-}
+    pub fn nonce(&self) -> U256 {
+        match self {
+            VersionedUserOperation::UserOperation(op) => op.nonce,
+            VersionedUserOperation::PackedUserOperation(op) => op.nonce,
+        }
+    }
 
+    pub fn sender(&self) -> Address {
+        match self {
+            VersionedUserOperation::UserOperation(op) => op.sender,
+            VersionedUserOperation::PackedUserOperation(op) => op.sender,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UserOperationRequest {
     pub user_operation: VersionedUserOperation,
@@ -127,13 +139,13 @@ pub struct AggregatorInfo {
 pub type UserOpHash = FixedBytes<32>;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct PoolOperation {
+pub struct WrappedUserOperation {
     pub operation: VersionedUserOperation,
     pub hash: UserOpHash,
 }
 
-impl PoolOperation {
-    pub fn should_replace(&self, other: &PoolOperation) -> bool {
+impl WrappedUserOperation {
+    pub fn has_higher_max_fee(&self, other: &WrappedUserOperation) -> bool {
         self.operation.max_fee_per_gas() > other.operation.max_fee_per_gas()
     }
 }
