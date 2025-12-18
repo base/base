@@ -1,0 +1,10 @@
+# Minimal config for building DeployVerifier.s.sol
+# Requires: git submodule update --init --recursive tests/sp1-contracts
+[profile.default]
+src = "scripts"
+out = "../contracts/out"
+libs = ["sp1-contracts/contracts/lib"]
+remappings = [
+    "forge-std/=sp1-contracts/contracts/lib/forge-std/src/",
+    "@sp1-contracts-v5/=sp1-contracts/contracts/",
+]

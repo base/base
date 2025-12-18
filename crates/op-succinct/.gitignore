@@ -54,3 +54,7 @@ config.alloy
 
 # EigenDA SRS symlink (created by `just da-integration-tests eigenda`)
 utils/eigenda/host/resources
+
+# Forge build artifacts in tests/
+tests/cache/
+tests/out/

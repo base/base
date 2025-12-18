@@ -1,0 +1,37 @@
+name: Setup E2E Sysgo Tests
+description: Common setup steps for E2E sysgo tests (Rust, Foundry, Go, Just)
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      shell: bash
+      run: rustup toolchain install stable --profile minimal
+
+    - name: Install Foundry
+      uses: foundry-rs/foundry-toolchain@v1
+      with:
+        version: nightly-d592b3e0f142d694c3be539702704a4a73238773
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: |
+          .
+          bindings
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
+    - name: Setup Go 1.23.8
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.8'
+        cache-dependency-path: |
+          tests/go.sum
+          tests/optimism/go.sum
+
+    - name: Build contracts
+      shell: bash
+      working-directory: contracts
+      run: forge build

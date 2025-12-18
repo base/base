@@ -1,0 +1,328 @@
+{
+  "title": "Validity Proposer",
+  "uid": "validity",
+  "refresh": "5s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Blocks Behind (max 900)",
+      "type": "gauge",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1080,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "succinct_l2_finalized_block - succinct_latest_contract_l2_block",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total Errors",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "succinct_total_error_count",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "RAM (GB)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decgbytes",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes / (1024 * 1024 * 1024)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "CPU (%)",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1
+        }
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 * rate(process_cpu_seconds_total[1m])",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Block Lag Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          },
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "succinct_l2_finalized_block - succinct_latest_contract_l2_block",
+          "legendFormat": "Finalized - Proven",
+          "refId": "A"
+        },
+        {
+          "expr": "succinct_l2_unsafe_head_block - succinct_l2_finalized_block",
+          "legendFormat": "Unsafe - Finalized",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Proof Pipeline (Active by Stage)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0
+        }
+      },
+      "targets": [
+        {
+          "expr": "succinct_current_unrequested_proofs",
+          "legendFormat": "Unrequested",
+          "refId": "A"
+        },
+        {
+          "expr": "succinct_current_witnessgen_proofs",
+          "legendFormat": "Witnessgen",
+          "refId": "B"
+        },
+        {
+          "expr": "succinct_current_execute_proofs",
+          "legendFormat": "Execute",
+          "refId": "C"
+        },
+        {
+          "expr": "succinct_current_proving_proofs",
+          "legendFormat": "Proving",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Errors by Type",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "succinct_proof_request_timeout_error_count",
+          "legendFormat": "Timeout",
+          "refId": "A"
+        },
+        {
+          "expr": "succinct_retry_error_count",
+          "legendFormat": "Retry",
+          "refId": "B"
+        },
+        {
+          "expr": "succinct_witnessgen_error_count",
+          "legendFormat": "Witnessgen",
+          "refId": "C"
+        },
+        {
+          "expr": "succinct_execution_error_count",
+          "legendFormat": "Execution",
+          "refId": "D"
+        },
+        {
+          "expr": "succinct_range_proof_request_error_count",
+          "legendFormat": "Range Request",
+          "refId": "E"
+        },
+        {
+          "expr": "succinct_agg_proof_request_error_count",
+          "legendFormat": "Agg Request",
+          "refId": "F"
+        },
+        {
+          "expr": "succinct_agg_proof_validation_error_count",
+          "legendFormat": "Agg Validation",
+          "refId": "G"
+        },
+        {
+          "expr": "succinct_relay_agg_proof_error_count",
+          "legendFormat": "Relay",
+          "refId": "H"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39
+}

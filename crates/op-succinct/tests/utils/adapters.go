@@ -127,9 +127,7 @@ func NewDgfClient(client apis.EthClient, addr common.Address) (*DgfClient, error
 		return nil, fmt.Errorf("bind DGF: %w", err)
 	}
 
-	return &DgfClient{
-		caller: dgfCaller,
-	}, nil
+	return &DgfClient{caller: dgfCaller}, nil
 }
 
 func (dfg *DgfClient) GameAtIndex(ctx context.Context, index uint64) (GameAtIndexResult, error) {
@@ -141,12 +139,28 @@ func (dfg *DgfClient) GameAtIndex(ctx context.Context, index uint64) (GameAtInde
 }
 
 // GameCount fetches the number of dispute games created.
-func (dfg *DgfClient) GameCount(ctx context.Context) (uint64, error) {
-	count, err := dfg.caller.GameCount(opts(ctx))
+func (dgf *DgfClient) GameCount(ctx context.Context) (uint64, error) {
+	count, err := dgf.caller.GameCount(opts(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("call gameCount: %w", err)
 	}
 	return count.Uint64(), nil
+}
+
+// LatestGame returns the most recent game, or nil if no games exist.
+func (dgf *DgfClient) LatestGame(ctx context.Context) (*GameAtIndexResult, error) {
+	count, err := dgf.GameCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if count == 0 {
+		return nil, nil
+	}
+	game, err := dgf.GameAtIndex(ctx, count-1)
+	if err != nil {
+		return nil, err
+	}
+	return &game, nil
 }
 
 // WaitForGameCount waits until the dispute game factory has at least min games created.
@@ -235,6 +249,65 @@ func (fdg *FdgClient) ParentIndex(ctx context.Context) (uint32, error) {
 	return uint32(parentIndex), nil
 }
 
+// IsProven returns true if the game has been proven (prover address is set).
+func (fdg *FdgClient) IsProven(ctx context.Context) (bool, error) {
+	claimData, err := fdg.caller.ClaimData(opts(ctx))
+	if err != nil {
+		return false, fmt.Errorf("call claimData: %w", err)
+	}
+	return claimData.Prover != common.Address{}, nil
+}
+
+// AnchorStateRegistryAddr returns the anchor state registry address.
+func (fdg *FdgClient) AnchorStateRegistryAddr(ctx context.Context) (common.Address, error) {
+	addr, err := fdg.caller.AnchorStateRegistry(opts(ctx))
+	if err != nil {
+		return common.Address{}, fmt.Errorf("call anchorStateRegistry: %w", err)
+	}
+	return addr, nil
+}
+
+// AnchorL2BlockNumber returns the anchor L2 block number for the given game type.
+func (fdg *FdgClient) AnchorL2BlockNumber(ctx context.Context, client apis.EthClient, gameType uint32) (uint64, error) {
+	asrAddr, err := fdg.AnchorStateRegistryAddr(ctx)
+	if err != nil {
+		return 0, err
+	}
+	asr, err := NewAsrClient(client, asrAddr)
+	if err != nil {
+		return 0, err
+	}
+	return asr.AnchorL2BlockNumber(ctx, gameType)
+}
+
+// -------------------------------------------------------------
+// Anchor State Registry Client
+// -------------------------------------------------------------
+
+// AsrClient is a client for interacting with the AnchorStateRegistry contract.
+type AsrClient struct {
+	caller *opsbind.AnchorStateRegistryCaller
+}
+
+// NewAsrClient creates a new AsrClient.
+func NewAsrClient(client apis.EthClient, addr common.Address) (*AsrClient, error) {
+	caller := ethCaller{c: client}
+	asrCaller, err := opsbind.NewAnchorStateRegistryCaller(addr, caller)
+	if err != nil {
+		return nil, fmt.Errorf("bind ASR: %w", err)
+	}
+	return &AsrClient{caller: asrCaller}, nil
+}
+
+// AnchorL2BlockNumber returns the anchor L2 block number for the given game type.
+func (asr *AsrClient) AnchorL2BlockNumber(ctx context.Context, gameType uint32) (uint64, error) {
+	anchor, err := asr.caller.Anchors(opts(ctx), gameType)
+	if err != nil {
+		return 0, fmt.Errorf("call anchors: %w", err)
+	}
+	return anchor.L2BlockNumber.Uint64(), nil
+}
+
 var _ bind.ContractCaller = ethCaller{}
 
 // implements bind/v2.ContractCaller using apis.EthClient
@@ -290,6 +363,19 @@ func WaitForDefenderWins(ctx context.Context, t devtest.T, dgf *FdgClient) {
 
 func opts(ctx context.Context) *bind.CallOpts {
 	return &bind.CallOpts{Context: ctx}
+}
+
+// VerifyOutputRoot checks that the claimed output root matches the expected output at blockNum.
+func VerifyOutputRoot(ctx context.Context, l2Client apis.OutputRootFetcher, blockNum uint64, claimed eth.Bytes32) error {
+	expected, err := l2Client.OutputV0AtBlockNumber(ctx, blockNum)
+	if err != nil {
+		return fmt.Errorf("get expected output at block %d: %w", blockNum, err)
+	}
+	if eth.OutputRoot(expected) != claimed {
+		return fmt.Errorf("output root mismatch at block %d: expected %s, got %s",
+			blockNum, eth.OutputRoot(expected), claimed)
+	}
+	return nil
 }
 
 // -------------------------------------------------------------

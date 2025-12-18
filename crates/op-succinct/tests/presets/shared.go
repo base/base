@@ -3,6 +3,7 @@ package presets
 import (
 	"os"
 
+	bss "github.com/ethereum-optimism/optimism/op-batcher/batcher"
 	"github.com/ethereum-optimism/optimism/op-chain-ops/devkeys"
 	"github.com/ethereum-optimism/optimism/op-deployer/pkg/deployer/artifacts"
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
@@ -14,6 +15,7 @@ import (
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
 	"github.com/ethereum-optimism/optimism/op-e2e/e2eutils/intentbuilder"
 	"github.com/ethereum-optimism/optimism/op-service/eth"
+	"github.com/succinctlabs/op-succinct/utils"
 )
 
 const (
@@ -21,9 +23,42 @@ const (
 	DefaultL2ID = 901
 )
 
+// L2ChainConfig holds L2 chain parameters configured at deploy time.
+type L2ChainConfig struct {
+	// L2BlockTime is the L2 block time in seconds
+	L2BlockTime uint64
+}
+
+// DefaultL2ChainConfig returns the default L2 chain config for tests (1s block time).
+func DefaultL2ChainConfig() L2ChainConfig {
+	return L2ChainConfig{L2BlockTime: 1}
+}
+
+// LongRunningL2ChainConfig returns the L2 chain config for long-running tests (2s block time).
+func LongRunningL2ChainConfig() L2ChainConfig {
+	return L2ChainConfig{L2BlockTime: 2}
+}
+
+// ApplyOverrides applies chain parameters as deployer global overrides.
+func (c L2ChainConfig) ApplyOverrides(builder intentbuilder.Builder) {
+	builder.WithGlobalOverride("l2BlockTime", c.L2BlockTime)
+}
+
 type succinctConfigurator func(*stack.CombinedOption[*sysgo.Orchestrator], sysgo.DefaultSingleChainInteropSystemIDs, eth.ChainID)
 
-func withSuccinctPreset(dest *sysgo.DefaultSingleChainInteropSystemIDs, configure succinctConfigurator) stack.CommonOption {
+func withSuccinctPreset(dest *sysgo.DefaultSingleChainInteropSystemIDs, chain L2ChainConfig, maxBlocksPerSpanBatch int, aggProofMode *string, configure succinctConfigurator) stack.CommonOption {
+	// Ensure OP Succinct artifact symlinks exist before deployer loads artifacts
+	if root := utils.RepoRoot(); root != "" {
+		if err := utils.SymlinkSuccinctArtifacts(root); err != nil {
+			panic("failed to symlink Succinct artifacts: " + err.Error())
+		}
+	}
+
+	sp1ProofMode := "plonk"
+	if aggProofMode != nil {
+		sp1ProofMode = *aggProofMode
+	}
+
 	l1ChainID := eth.ChainIDFromUInt64(DefaultL1ID)
 	l2ChainID := eth.ChainIDFromUInt64(DefaultL2ID)
 	ids := sysgo.NewDefaultSingleChainInteropSystemIDs(l1ChainID, l2ChainID)
@@ -46,14 +81,25 @@ func withSuccinctPreset(dest *sysgo.DefaultSingleChainInteropSystemIDs, configur
 		),
 		sysgo.WithDeployerOptions(
 			func(_ devtest.P, _ devkeys.Keys, builder intentbuilder.Builder) {
-				builder.WithGlobalOverride("l2BlockTime", uint64(1))
+				chain.ApplyOverrides(builder)
 				builder.WithL1ContractsLocator(artifacts.MustNewFileLocator(artifactsPath))
 				builder.WithL2ContractsLocator(artifacts.MustNewFileLocator(artifactsPath))
 			},
+			sysgo.WithSP1ProofMode(sp1ProofMode),
 			sysgo.WithCommons(ids.L1.ChainID()),
 			sysgo.WithPrefundedL2(ids.L1.ChainID(), ids.L2A.ChainID()),
 		),
 	)
+	// Configure batcher to accumulate more blocks before submitting.
+	// MaxBlocksPerSpanBatch: max L2 blocks per span batch (matches proposer interval)
+	// MaxChannelDuration: max L1 blocks before forcing submission
+	const l1BlockTime = uint64(6) // L1 block time in test environment (see sysgo/deployer.go)
+	l2TimeSeconds := uint64(maxBlocksPerSpanBatch) * chain.L2BlockTime
+	maxChannelDuration := (l2TimeSeconds + l1BlockTime - 1) / l1BlockTime
+	opt.Add(sysgo.WithBatcherOption(func(id stack.L2BatcherID, cfg *bss.CLIConfig) {
+		cfg.MaxBlocksPerSpanBatch = maxBlocksPerSpanBatch
+		cfg.MaxChannelDuration = maxChannelDuration
+	}))
 
 	opt.Add(sysgo.WithL1Nodes(ids.L1EL, ids.L1CL))
 

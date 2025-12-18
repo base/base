@@ -1,7 +1,7 @@
 SOURCE := source_directory()
 ROOT := parent_directory(SOURCE)
 
-test-e2e-sysgo PKG="" FILTER="" : unzip-contract-artifacts
+test-e2e-sysgo PKG="" FILTER="" TIMEOUT="90m": build-contracts unzip-contract-artifacts
     #!/bin/bash
 
     if ! [ -z "{{FILTER}}" ]; then
@@ -11,6 +11,12 @@ test-e2e-sysgo PKG="" FILTER="" : unzip-contract-artifacts
     export DEVSTACK_ORCHESTRATOR=sysgo
     export OP_DEPLOYER_ARTIFACTS="{{SOURCE}}/artifacts/src/forge-artifacts"
     export DISABLE_OP_E2E_LEGACY=true
+
+    # Metrics off by default. Enable with: SYSGO_METRICS_ENABLED=true just test-e2e-sysgo ...
+    export SYSGO_METRICS_ENABLED="${SYSGO_METRICS_ENABLED:-false}"
+    if [ "$SYSGO_METRICS_ENABLED" = "true" ]; then
+        export SYSGO_GRAFANA_PROVISIONING_DIR="{{SOURCE}}/monitoring/grafana"
+    fi
 
     TEST_PATH="{{PKG}}"
     BUILD_ARGS=""
@@ -36,7 +42,19 @@ test-e2e-sysgo PKG="" FILTER="" : unzip-contract-artifacts
 
     # Run the test with count=1 to avoid caching the test results.
     echo "Running go test $TEST_PATH $FILTER"
-    cd {{SOURCE}} && go test -p 1 -count=1 -timeout 90m -v "$TEST_PATH" $FILTER
+    cd {{SOURCE}} && go test -p 1 -count=1 -timeout {{TIMEOUT}} -v "$TEST_PATH" $FILTER
+
+# Long-running tests - logs to tests/logs/<mode>-<timestamp>.log
+# Usage: just long-running <validity|faultproof|faultproof-ff>
+long-running MODE:
+    #!/bin/bash
+    set -euo pipefail
+    case "{{MODE}}" in
+        validity)     just logged {{MODE}} just test-e2e-sysgo "./e2e/validity/long-running/..." "TestValidityProposer_LongRunning" "0" ;;
+        faultproof)   just logged {{MODE}} just test-e2e-sysgo "./e2e/faultproof/long-running/..." "TestFaultProofProposer_LongRunning" "0" ;;
+        faultproof-ff) just logged {{MODE}} just test-e2e-sysgo "./e2e/faultproof/long-running/..." "TestFaultProofProposer_FastFinality_LongRunning" "0" ;;
+        *) echo "Usage: just long-running <validity|faultproof|faultproof-ff>"; exit 1 ;;
+    esac
 
 unzip-contract-artifacts DEST_DIR="":
     #!/bin/bash
@@ -63,3 +81,23 @@ update-packages: submodule
 
 submodule:
     git submodule update --init --recursive
+
+# Build op-succinct contracts and verifier scripts
+build-contracts: submodule
+    #!/bin/bash
+    set -euo pipefail
+    echo "Building contracts..."
+    cd {{ROOT}}/contracts && forge build
+    echo "Building verifier scripts..."
+    cd {{SOURCE}} && forge build
+
+# Logging wrapper - saves output to tests/logs/<name>-<timestamp>.log
+logged NAME +CMD:
+    #!/bin/bash
+    set -euo pipefail
+    LOG_DIR="{{SOURCE}}/logs"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/{{NAME}}-$(date +%Y%m%d-%H%M%S).log"
+    echo "Logging to: $LOG_FILE"
+    exec > >(tee "$LOG_FILE") 2>&1
+    {{CMD}}

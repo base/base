@@ -4,12 +4,10 @@ import (
 	"context"
 	"math"
 	"testing"
-	"time"
 
 	"github.com/ethereum-optimism/optimism/op-devstack/devtest"
 	"github.com/ethereum-optimism/optimism/op-devstack/presets"
 	"github.com/ethereum-optimism/optimism/op-devstack/sysgo"
-	"github.com/ethereum-optimism/optimism/op-service/eth"
 	opspresets "github.com/succinctlabs/op-succinct/presets"
 	"github.com/succinctlabs/op-succinct/utils"
 )
@@ -44,7 +42,7 @@ func TestFaultProofProposer_DetectsFirstGameCreated(gt *testing.T) {
 	sys := presets.NewMinimalWithProposer(t)
 	require := t.Require()
 	logger := t.Logger()
-	ctx, cancel := context.WithTimeout(t.Ctx(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Ctx(), utils.ShortTimeout())
 	defer cancel()
 
 	dgfAddr := sys.L2Chain.Escape().Deployment().DisputeGameFactoryProxyAddr()
@@ -71,11 +69,9 @@ func TestFaultProofProposer_DetectsFirstGameCreated(gt *testing.T) {
 	l2BlockNumber, err := fdg.L2BlockNumber(ctx)
 	require.NoError(err, "failed to read L2 block number")
 	logger.Info("Fault dispute game L2 block number", "l2BlockNumber", l2BlockNumber)
-	output, err := sys.L2EL.Escape().L2EthClient().OutputV0AtBlockNumber(ctx, l2BlockNumber)
-	require.NoError(err, "failed to get output root at L2 block number")
 	rootClaim, err := fdg.RootClaim(ctx)
 	require.NoError(err, "failed to read root claim")
-	expectedRoot := eth.OutputRoot(output)
 	logger.Info("Fault dispute game root claim", "rootClaim", rootClaim)
-	require.Equal(expectedRoot, rootClaim, "unexpected root claim")
+	err = utils.VerifyOutputRoot(ctx, sys.L2EL.Escape().L2EthClient(), l2BlockNumber, rootClaim)
+	require.NoError(err, "root claim verification failed")
 }
