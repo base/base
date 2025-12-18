@@ -435,7 +435,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(
+                info!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
