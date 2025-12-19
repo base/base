@@ -35,6 +35,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// SHA3 opcode (keccak256).
+/// Used when implementing the full Inspector trait to intercept mapping slot computations.
+#[allow(dead_code)]
 const OPCODE_SHA3: u8 = 0x20;
 
 /// Tracks mapping key -> computed slot relationships discovered during execution.

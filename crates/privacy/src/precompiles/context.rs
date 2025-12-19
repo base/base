@@ -80,7 +80,7 @@ pub fn clear_context() {
 /// Execute a function with access to the current precompile context.
 ///
 /// Returns `None` if no context is set.
-pub fn with_context<F, R>(f: F) -> Option<R>
+pub(super) fn with_context<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&PrecompileContext) -> R,
 {
@@ -90,7 +90,8 @@ where
 /// Execute a function with mutable access to the precompile context.
 ///
 /// Returns `None` if no context is set.
-pub fn with_context_mut<F, R>(f: F) -> Option<R>
+#[cfg(test)]
+pub(super) fn with_context_mut<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut PrecompileContext) -> R,
 {
@@ -98,7 +99,8 @@ where
 }
 
 /// Check if a context is currently set.
-pub fn has_context() -> bool {
+#[cfg(test)]
+pub(super) fn has_context() -> bool {
     CONTEXT.with(|c| c.borrow().is_some())
 }
 

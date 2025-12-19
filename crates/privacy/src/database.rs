@@ -6,7 +6,7 @@
 use crate::{
     classification::{classify_slot, resolve_mapping_owner, SlotClassification},
     inspector::SlotKeyCache,
-    registry::{OwnershipType, PrivacyRegistry},
+    registry::PrivacyRegistry,
     store::PrivateStateStore,
 };
 use alloy_primitives::{Address, B256, U256};

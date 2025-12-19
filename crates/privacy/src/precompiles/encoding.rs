@@ -37,21 +37,21 @@ pub struct SlotConfigInput {
 
 /// Decoded input for the `addSlots` function.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddSlotsInput {
+pub(super) struct AddSlotsInput {
     /// Slot configurations to add
     pub slots: Vec<SlotConfigInput>,
 }
 
 /// Decoded input for `setHideEvents` function.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SetHideEventsInput {
+pub(super) struct SetHideEventsInput {
     /// Whether to hide events
     pub hide: bool,
 }
 
 /// Decoded input for `isRegistered` function.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IsRegisteredInput {
+pub(super) struct IsRegisteredInput {
     /// Contract address to query
     pub contract: Address,
 }
@@ -97,7 +97,7 @@ pub struct IsAuthorizedInput {
 
 /// Registry function call variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RegistryCall {
+pub(super) enum RegistryCall {
     Register(RegistrationInput),
     AddSlots(AddSlotsInput),
     SetHideEvents(SetHideEventsInput),
@@ -106,7 +106,7 @@ pub enum RegistryCall {
 
 /// Auth function call variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AuthCall {
+pub(super) enum AuthCall {
     Grant(AuthGrantInput),
     Revoke(AuthRevokeInput),
     IsAuthorized(IsAuthorizedInput),
@@ -168,7 +168,7 @@ fn u8_to_slot_type(val: u8) -> Result<SlotType, PrecompileInputError> {
 }
 
 /// Convert a u8 to OwnershipType.
-fn u8_to_ownership_type(val: u8, data: &[u8], offset: usize) -> Result<OwnershipType, PrecompileInputError> {
+fn u8_to_ownership_type(val: u8, _data: &[u8], _offset: usize) -> Result<OwnershipType, PrecompileInputError> {
     match val {
         0 => Ok(OwnershipType::Contract),
         1 => Ok(OwnershipType::MappingKey),
@@ -234,7 +234,7 @@ fn decode_slot_configs(data: &[u8], start_offset: usize) -> Result<Vec<SlotConfi
 // ============================================================================
 
 /// Decode a registry precompile call.
-pub fn decode_registry_call(input: &[u8]) -> Result<RegistryCall, PrecompileInputError> {
+pub(super) fn decode_registry_call(input: &[u8]) -> Result<RegistryCall, PrecompileInputError> {
     if input.len() < 4 {
         return Err(PrecompileInputError::InputTooShort {
             expected: 4,
@@ -288,7 +288,7 @@ pub fn decode_registry_call(input: &[u8]) -> Result<RegistryCall, PrecompileInpu
 }
 
 /// Decode an auth precompile call.
-pub fn decode_auth_call(input: &[u8]) -> Result<AuthCall, PrecompileInputError> {
+pub(super) fn decode_auth_call(input: &[u8]) -> Result<AuthCall, PrecompileInputError> {
     if input.len() < 4 {
         return Err(PrecompileInputError::InputTooShort {
             expected: 4,
@@ -352,31 +352,36 @@ pub fn decode_auth_call(input: &[u8]) -> Result<AuthCall, PrecompileInputError> 
 // ============================================================================
 
 /// Encode an address as a 32-byte word.
-pub fn encode_address(addr: Address) -> [u8; 32] {
+#[cfg(test)]
+pub(crate) fn encode_address(addr: Address) -> [u8; 32] {
     let mut result = [0u8; 32];
     result[12..32].copy_from_slice(addr.as_slice());
     result
 }
 
 /// Encode a U256 as a 32-byte word.
-pub fn encode_u256(val: U256) -> [u8; 32] {
+#[cfg(test)]
+pub(crate) fn encode_u256(val: U256) -> [u8; 32] {
     val.to_be_bytes::<32>()
 }
 
 /// Encode a u8 as a 32-byte word.
-pub fn encode_u8(val: u8) -> [u8; 32] {
+#[cfg(test)]
+pub(crate) fn encode_u8(val: u8) -> [u8; 32] {
     let mut result = [0u8; 32];
     result[31] = val;
     result
 }
 
 /// Encode a bool as a 32-byte word.
-pub fn encode_bool(val: bool) -> [u8; 32] {
+#[cfg(test)]
+pub(crate) fn encode_bool(val: bool) -> [u8; 32] {
     encode_u8(if val { 1 } else { 0 })
 }
 
 /// Build a registration input for testing.
-pub fn build_register_input(
+#[cfg(test)]
+pub(crate) fn build_register_input(
     admin: Address,
     hide_events: bool,
     slots: &[SlotConfigInput],
@@ -397,7 +402,8 @@ pub fn build_register_input(
 }
 
 /// Build a grant input for testing.
-pub fn build_grant_input(
+#[cfg(test)]
+pub(crate) fn build_grant_input(
     contract: Address,
     slot: U256,
     grantee: Address,
@@ -413,7 +419,8 @@ pub fn build_grant_input(
 }
 
 /// Build a revoke input for testing.
-pub fn build_revoke_input(contract: Address, slot: U256, grantee: Address) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn build_revoke_input(contract: Address, slot: U256, grantee: Address) -> Vec<u8> {
     let mut result = Vec::new();
     result.extend_from_slice(&REVOKE_SELECTOR);
     result.extend_from_slice(&encode_address(contract));
@@ -423,7 +430,8 @@ pub fn build_revoke_input(contract: Address, slot: U256, grantee: Address) -> Ve
 }
 
 /// Build an isAuthorized input for testing.
-pub fn build_is_authorized_input(contract: Address, slot: U256, query: Address) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn build_is_authorized_input(contract: Address, slot: U256, query: Address) -> Vec<u8> {
     let mut result = Vec::new();
     result.extend_from_slice(&IS_AUTHORIZED_SELECTOR);
     result.extend_from_slice(&encode_address(contract));
@@ -433,7 +441,8 @@ pub fn build_is_authorized_input(contract: Address, slot: U256, query: Address) 
 }
 
 /// Build an isRegistered input for testing.
-pub fn build_is_registered_input(contract: Address) -> Vec<u8> {
+#[cfg(test)]
+pub(crate) fn build_is_registered_input(contract: Address) -> Vec<u8> {
     let mut result = Vec::new();
     result.extend_from_slice(&IS_REGISTERED_SELECTOR);
     result.extend_from_slice(&encode_address(contract));
@@ -444,9 +453,10 @@ pub fn build_is_registered_input(contract: Address) -> Vec<u8> {
 // SlotType and OwnershipType helpers
 // ============================================================================
 
+#[cfg(test)]
 impl SlotType {
     /// Convert SlotType to u8 for encoding.
-    pub fn to_u8(&self) -> u8 {
+    pub(crate) fn to_u8(&self) -> u8 {
         match self {
             SlotType::Simple => 0,
             SlotType::Mapping => 1,
@@ -456,9 +466,10 @@ impl SlotType {
     }
 }
 
+#[cfg(test)]
 impl OwnershipType {
     /// Convert OwnershipType to u8 for encoding.
-    pub fn to_u8(&self) -> u8 {
+    pub(crate) fn to_u8(&self) -> u8 {
         match self {
             OwnershipType::Contract => 0,
             OwnershipType::MappingKey => 1,

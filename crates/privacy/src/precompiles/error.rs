@@ -10,7 +10,9 @@ use core::fmt;
 pub enum PrecompileInputError {
     /// Input is too short to contain the expected data
     InputTooShort {
+        /// Expected minimum length in bytes
         expected: usize,
+        /// Actual length received
         actual: usize,
     },
     /// Unknown function selector
@@ -72,7 +74,7 @@ impl std::error::Error for PrecompileInputError {}
 ///
 /// Uses the standard Solidity error encoding:
 /// `Error(string)` selector (0x08c379a0) + ABI-encoded string
-pub fn encode_revert_message(msg: &str) -> Vec<u8> {
+pub(super) fn encode_revert_message(msg: &str) -> Vec<u8> {
     // Error(string) selector
     let selector: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
 
@@ -104,7 +106,7 @@ pub fn encode_revert_message(msg: &str) -> Vec<u8> {
 }
 
 /// Encode a simple boolean return value.
-pub fn encode_bool(value: bool) -> Vec<u8> {
+pub(super) fn encode_bool(value: bool) -> Vec<u8> {
     let mut result = [0u8; 32];
     if value {
         result[31] = 1;
@@ -113,7 +115,7 @@ pub fn encode_bool(value: bool) -> Vec<u8> {
 }
 
 /// Encode a simple success return (true).
-pub fn encode_success() -> Vec<u8> {
+pub(super) fn encode_success() -> Vec<u8> {
     encode_bool(true)
 }
 

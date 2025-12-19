@@ -23,19 +23,19 @@ pub const AUTH_PRECOMPILE_ADDRESS: Address = Address::new([
 
 /// Selector for `register(address admin, tuple[] slots, bool hideEvents)`
 /// keccak256("register(address,(uint256,uint8,uint8)[],bool)")[:4]
-pub const REGISTER_SELECTOR: [u8; 4] = [0x8f, 0x59, 0x8a, 0x70];
+pub(super) const REGISTER_SELECTOR: [u8; 4] = [0x8f, 0x59, 0x8a, 0x70];
 
 /// Selector for `addSlots(tuple[] slots)`
 /// keccak256("addSlots((uint256,uint8,uint8)[])")[:4]
-pub const ADD_SLOTS_SELECTOR: [u8; 4] = [0x1a, 0x8b, 0x6b, 0x8f];
+pub(super) const ADD_SLOTS_SELECTOR: [u8; 4] = [0x1a, 0x8b, 0x6b, 0x8f];
 
 /// Selector for `setHideEvents(bool hide)`
 /// keccak256("setHideEvents(bool)")[:4]
-pub const SET_HIDE_EVENTS_SELECTOR: [u8; 4] = [0x77, 0x4a, 0x2d, 0xd8];
+pub(super) const SET_HIDE_EVENTS_SELECTOR: [u8; 4] = [0x77, 0x4a, 0x2d, 0xd8];
 
 /// Selector for `isRegistered(address contract)`
 /// keccak256("isRegistered(address)")[:4]
-pub const IS_REGISTERED_SELECTOR: [u8; 4] = [0xc3, 0xc5, 0xa5, 0x47];
+pub(super) const IS_REGISTERED_SELECTOR: [u8; 4] = [0xc3, 0xc5, 0xa5, 0x47];
 
 // ============================================================================
 // Auth Precompile Function Selectors
@@ -43,15 +43,15 @@ pub const IS_REGISTERED_SELECTOR: [u8; 4] = [0xc3, 0xc5, 0xa5, 0x47];
 
 /// Selector for `grant(address contract, uint256 slot, address grantee, uint8 permission)`
 /// keccak256("grant(address,uint256,address,uint8)")[:4]
-pub const GRANT_SELECTOR: [u8; 4] = [0x1a, 0x95, 0xe7, 0x9a];
+pub(super) const GRANT_SELECTOR: [u8; 4] = [0x1a, 0x95, 0xe7, 0x9a];
 
 /// Selector for `revoke(address contract, uint256 slot, address grantee)`
 /// keccak256("revoke(address,uint256,address)")[:4]
-pub const REVOKE_SELECTOR: [u8; 4] = [0x8d, 0x2d, 0x7e, 0x10];
+pub(super) const REVOKE_SELECTOR: [u8; 4] = [0x8d, 0x2d, 0x7e, 0x10];
 
 /// Selector for `isAuthorized(address contract, uint256 slot, address query)`
 /// keccak256("isAuthorized(address,uint256,address)")[:4]
-pub const IS_AUTHORIZED_SELECTOR: [u8; 4] = [0x2f, 0x54, 0xbf, 0x6e];
+pub(super) const IS_AUTHORIZED_SELECTOR: [u8; 4] = [0x2f, 0x54, 0xbf, 0x6e];
 
 #[cfg(test)]
 mod tests {
