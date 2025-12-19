@@ -607,7 +607,15 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
                 self.metrics.backrun_target_txs_found_total.increment(1);
 
-                for mut stored_bundle in backrun_bundles {
+                'bundle_loop: for mut stored_bundle in backrun_bundles {
+                    info!(
+                        target: "payload_builder",
+                        message = "Executing backrun bundle",
+                        tx_hash = ?tx_hash,
+                        bundle_id = ?stored_bundle.bundle_id,
+                        tx_count = stored_bundle.backrun_txs.len(),
+                    );
+
                     // Sort backrun txs by priority fee (highest first)
                     stored_bundle.backrun_txs.sort_unstable_by(|a, b| {
                         let a_tip = a.effective_tip_per_gas(base_fee).unwrap_or(0);
@@ -615,36 +623,35 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         b_tip.cmp(&a_tip)
                     });
 
-                    info!(
-                        target: "payload_builder",
-                        message = "Executing backrun bundles",
-                        tx_hash = ?tx_hash,
-                        bundle_id = ?stored_bundle.bundle_id,
-                    );
+                    // All-or-nothing: simulate all txs first, only commit if all succeed
+                    let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
 
-                    for backrun_tx in stored_bundle.backrun_txs {
-                        let ResultAndState { result, state } = match evm.transact(&backrun_tx) {
+                    for backrun_tx in &stored_bundle.backrun_txs {
+                        let ResultAndState { result, state } = match evm.transact(backrun_tx) {
                             Ok(res) => res,
                             Err(err) => {
                                 return Err(PayloadBuilderError::evm(err));
                             }
                         };
 
-                        let backrun_gas_used = result.gas_used();
-                        let is_backrun_success = result.is_success();
-
-                        if !is_backrun_success {
-                            self.metrics.backrun_txs_reverted_total.increment(1);
+                        if !result.is_success() {
+                            self.metrics.backrun_bundles_reverted_total.increment(1);
                             info!(
                                 target: "payload_builder",
                                 target_tx = ?tx_hash,
-                                backrun_tx = ?backrun_tx.tx_hash(),
+                                failed_tx = ?backrun_tx.tx_hash(),
                                 bundle_id = ?stored_bundle.bundle_id,
-                                gas_used = backrun_gas_used,
-                                "Backrun transaction reverted"
+                                gas_used = result.gas_used(),
+                                "Backrun bundle reverted (all-or-nothing)"
                             );
-                            continue;
+                            continue 'bundle_loop;
                         }
+
+                        pending_results.push((backrun_tx, result, state));
+                    }
+
+                    for (backrun_tx, result, state) in pending_results {
+                        let backrun_gas_used = result.gas_used();
 
                         info.cumulative_gas_used += backrun_gas_used;
                         info.cumulative_da_bytes_used += backrun_tx.encoded_2718().len() as u64;
@@ -666,8 +673,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         info.total_fees += U256::from(miner_fee) * U256::from(backrun_gas_used);
 
                         info.executed_senders.push(backrun_tx.signer());
-                        info.executed_transactions.push(backrun_tx.into_inner());
+                        info.executed_transactions
+                            .push(backrun_tx.clone().into_inner());
                     }
+
+                    self.metrics.backrun_bundles_landed_total.increment(1);
                 }
 
                 // Remove the target tx from the backrun bundle store as already executed
