@@ -7,8 +7,6 @@ homepage.workspace = true
 repository.workspace = true
 edition.workspace = true
 
-[lib]
-path = "core/src/lib.rs"
 [dependencies]
 alloy-serde = { version = "1.0.41", default-features = false }
 serde.workspace = true
@@ -20,12 +18,12 @@ reth-rpc-eth-types.workspace = true
 tokio.workspace = true
 jsonrpsee.workspace = true
 async-trait = { workspace = true }
-alloy-sol-types.workspace= true
+alloy-sol-types.workspace = true
 anyhow.workspace = true
 rdkafka.workspace = true
 serde_json.workspace = true
 tips-core.workspace = true
-tracing.workspace=true
+tracing.workspace = true
 
 [dev-dependencies]
 alloy-primitives.workspace = true

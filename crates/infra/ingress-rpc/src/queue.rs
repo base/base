@@ -1,4 +1,4 @@
-use account_abstraction_core_v2::{
+use account_abstraction_core::{
     MempoolEvent,
     domain::types::{VersionedUserOperation, WrappedUserOperation},
 };

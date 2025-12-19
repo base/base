@@ -1,4 +1,4 @@
-# account-abstraction-core-v2
+# account-abstraction-core
 
 Clean architecture implementation for ERC-4337 account abstraction mempool and validation.
 
@@ -228,10 +228,10 @@ pub fn create_mempool_engine(
 3. **Reusability**: Services can be used in multiple binaries
    ```rust
    // ingress-rpc binary
-   use account_abstraction_core_v2::MempoolEngine;
+   use account_abstraction_core::MempoolEngine;
 
    // batch-processor binary
-   use account_abstraction_core_v2::MempoolEngine;
+   use account_abstraction_core::MempoolEngine;
 
    // Same code, different contexts!
    ```
@@ -252,7 +252,7 @@ pub fn create_mempool_engine(
 ### Basic Usage (with Factory)
 
 ```rust
-use account_abstraction_core_v2::create_mempool_engine;
+use account_abstraction_core::create_mempool_engine;
 
 let engine = create_mempool_engine(
     "kafka.properties",
@@ -269,7 +269,7 @@ tokio::spawn(async move {
 ### Custom Setup (without Factory)
 
 ```rust
-use account_abstraction_core_v2::{
+use account_abstraction_core::{
     MempoolEngine,
     infrastructure::kafka::consumer::KafkaEventSource,
 };
@@ -282,7 +282,7 @@ let engine = MempoolEngine::with_event_source(event_source, Some(custom_config))
 ### Testing
 
 ```rust
-use account_abstraction_core_v2::{
+use account_abstraction_core::{
     MempoolEngine, MempoolEvent,
     services::interfaces::event_source::EventSource,
 };

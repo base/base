@@ -1,8 +1,8 @@
-use account_abstraction_core_v2::domain::ReputationService;
-use account_abstraction_core_v2::infrastructure::base_node::validator::BaseNodeValidator;
-use account_abstraction_core_v2::services::ReputationServiceImpl;
-use account_abstraction_core_v2::services::interfaces::user_op_validator::UserOperationValidator;
-use account_abstraction_core_v2::{Mempool, MempoolEngine};
+use account_abstraction_core::domain::ReputationService;
+use account_abstraction_core::infrastructure::base_node::validator::BaseNodeValidator;
+use account_abstraction_core::services::ReputationServiceImpl;
+use account_abstraction_core::services::interfaces::user_op_validator::UserOperationValidator;
+use account_abstraction_core::{Mempool, MempoolEngine};
 use alloy_consensus::transaction::Recovered;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes};
@@ -28,8 +28,8 @@ use crate::metrics::{Metrics, record_histogram};
 use crate::queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher};
 use crate::validation::validate_bundle;
 use crate::{Config, TxSubmissionMethod};
-use account_abstraction_core_v2::domain::entrypoints::version::EntryPointVersion;
-use account_abstraction_core_v2::domain::types::{UserOperationRequest, VersionedUserOperation};
+use account_abstraction_core::domain::entrypoints::version::EntryPointVersion;
+use account_abstraction_core::domain::types::{UserOperationRequest, VersionedUserOperation};
 use std::sync::Arc;
 
 /// RPC providers for different endpoints
@@ -514,10 +514,10 @@ impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
 mod tests {
     use super::*;
     use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
-    use account_abstraction_core_v2::MempoolEvent;
-    use account_abstraction_core_v2::domain::PoolConfig;
-    use account_abstraction_core_v2::infrastructure::in_memory::mempool::InMemoryMempool;
-    use account_abstraction_core_v2::services::interfaces::event_source::EventSource;
+    use account_abstraction_core::MempoolEvent;
+    use account_abstraction_core::domain::PoolConfig;
+    use account_abstraction_core::infrastructure::in_memory::mempool::InMemoryMempool;
+    use account_abstraction_core::services::interfaces::event_source::EventSource;
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
@@ -811,7 +811,7 @@ mod tests {
 
         let user_op = sample_user_operation_v06();
         let entry_point =
-            account_abstraction_core_v2::domain::entrypoints::version::EntryPointVersion::V06_ADDRESS;
+            account_abstraction_core::domain::entrypoints::version::EntryPointVersion::V06_ADDRESS;
 
         let result: Result<FixedBytes<32>, _> = client
             .request("eth_sendUserOperation", (user_op, entry_point))
