@@ -41,7 +41,10 @@ use tracing::{debug, error, info, warn};
 use crate::{Flashblock, Metrics, PendingBlocks, PendingBlocksBuilder};
 
 #[cfg(feature = "privacy")]
-use base_reth_privacy::{PrivacyDatabase, PrivacyRegistry, PrivateStateStore};
+use base_reth_privacy::{
+    PrivacyDatabase, PrivacyRegistry, PrivateStateStore,
+    inspector::{PrivacyInspector, SlotKeyCache},
+};
 
 /// Messages consumed by the state processor.
 #[derive(Debug, Clone)]
@@ -483,7 +486,25 @@ where
             };
 
             let evm_env = evm_config.next_evm_env(&last_block_header, &block_env_attributes)?;
+
+            // When privacy is enabled, use the inspector to capture SHA3 computations
+            // for mapping slot ownership tracking.
+            #[cfg(feature = "privacy")]
+            let slot_key_cache = Arc::new(SlotKeyCache::new());
+            #[cfg(feature = "privacy")]
+            let inspector = PrivacyInspector::new(Arc::clone(&slot_key_cache));
+            #[cfg(feature = "privacy")]
+            let mut evm = evm_config.evm_with_env_and_inspector(db, evm_env, inspector);
+            #[cfg(not(feature = "privacy"))]
             let mut evm = evm_config.evm_with_env(db, evm_env);
+
+            // Set the slot key cache on the privacy database so it can resolve mapping ownership
+            // during commit operations.
+            #[cfg(feature = "privacy")]
+            {
+                // Access the inner PrivacyDatabase through CacheDB -> State -> database
+                evm.db_mut().db.database.set_slot_key_cache(Arc::clone(&slot_key_cache));
+            }
 
             let mut gas_used = 0;
             let mut next_log_index = 0;
@@ -592,6 +613,12 @@ where
                 }
 
                 if should_execute_transaction {
+                    // Set transaction sender on privacy database for fallback ownership
+                    #[cfg(feature = "privacy")]
+                    {
+                        evm.db_mut().db.database.set_tx_sender(sender);
+                    }
+
                     match evm.transact(recovered_transaction) {
                         Ok(ResultAndState { state, .. }) => {
                             for (addr, acc) in &state {

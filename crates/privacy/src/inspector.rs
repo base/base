@@ -30,13 +30,13 @@
 //! }
 //! ```
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
+use revm::interpreter::{CallInputs, CallOutcome, Interpreter, InterpreterTypes};
+use revm::Inspector;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 /// SHA3 opcode (keccak256).
-/// Used when implementing the full Inspector trait to intercept mapping slot computations.
-#[allow(dead_code)]
 const OPCODE_SHA3: u8 = 0x20;
 
 /// Tracks mapping key -> computed slot relationships discovered during execution.
@@ -141,22 +141,97 @@ impl PrivacyInspector {
     pub fn clear_current_contract(&mut self) {
         self.current_contract = None;
     }
+
+    /// Process a SHA3 operation to extract mapping key information.
+    ///
+    /// This is called from the `step` method when we detect a SHA3 opcode.
+    /// If the input is 64 bytes (mapping slot pattern), we record the relationship.
+    fn process_sha3<INTR: InterpreterTypes>(&mut self, interp: &Interpreter<INTR>) {
+        use revm::interpreter::interpreter_types::{MemoryTr, StackTr};
+
+        let Some(contract) = self.current_contract else {
+            return;
+        };
+
+        // SHA3 takes (offset, size) from stack
+        // Stack: [..., size, offset] - offset is at top (index 0), size is at index 1
+        let stack_data = interp.stack.data();
+        if stack_data.len() < 2 {
+            return;
+        }
+
+        // Get offset and size from stack (top of stack is last element)
+        let stack_len = stack_data.len();
+        let offset = stack_data[stack_len - 1]; // top of stack
+        let size = stack_data[stack_len - 2]; // second from top
+
+        // We're looking for mapping slot computation: keccak256(abi.encode(key, base_slot))
+        // This is 64 bytes: 32-byte key + 32-byte base_slot
+        if size != U256::from(64) {
+            return;
+        }
+
+        let Ok(offset_usize) = TryInto::<usize>::try_into(offset) else {
+            return;
+        };
+
+        // Check memory bounds
+        if interp.memory.size() < offset_usize + 64 {
+            return;
+        }
+
+        // Read the 64 bytes from memory
+        let data_slice = interp.memory.slice(offset_usize..offset_usize + 64);
+        let mut data = [0u8; 64];
+        data.copy_from_slice(&data_slice);
+        drop(data_slice);
+
+        // Parse: first 32 bytes = key, second 32 bytes = base_slot
+        let key = B256::from_slice(&data[0..32]);
+        let base_slot = U256::from_be_bytes::<32>(data[32..64].try_into().unwrap());
+
+        // Compute what the result will be (same as EVM will compute)
+        let computed_hash = keccak256(&data);
+        let computed_slot = U256::from_be_bytes(computed_hash.0);
+
+        // Store in cache for later lookup
+        self.cache.insert(contract, computed_slot, base_slot, key);
+    }
 }
 
-// Note: The full Inspector implementation requires complex trait bounds that
-// vary by revm version. For now, we provide the core data structures and logic.
-// The actual Inspector trait implementation will be added when integrating with
-// the processor, as it requires access to the specific types used there.
-//
-// The key logic that would go in the `step` method:
-//
-// 1. Check if opcode is SHA3 (0x20)
-// 2. Read offset and size from stack (stack[0] = offset, stack[1] = size)
-// 3. If size == 64, this is likely a mapping slot computation
-// 4. Read 64 bytes from memory at offset
-// 5. Parse: first 32 bytes = key, second 32 bytes = base_slot
-// 6. Compute the result: keccak256(memory[offset..offset+64])
-// 7. Store in cache: (contract, computed_slot) -> (base_slot, key)
+/// Implementation of the revm Inspector trait for PrivacyInspector.
+///
+/// This implementation intercepts:
+/// - `step`: To detect SHA3 opcodes and extract mapping keys
+/// - `call`: To track the current contract address
+impl<CTX, INTR> Inspector<CTX, INTR> for PrivacyInspector
+where
+    INTR: InterpreterTypes,
+    INTR::Bytecode: revm::interpreter::interpreter_types::Jumps,
+    INTR::Stack: revm::interpreter::interpreter_types::StackTr,
+    INTR::Memory: revm::interpreter::interpreter_types::MemoryTr,
+{
+    fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
+        use revm::interpreter::interpreter_types::Jumps;
+
+        // Check if this is SHA3 opcode (0x20)
+        let opcode = interp.bytecode.opcode();
+        if opcode == OPCODE_SHA3 {
+            self.process_sha3(interp);
+        }
+    }
+
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        // Track current contract being called
+        self.current_contract = Some(inputs.target_address);
+        None
+    }
+
+    fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
+        // Optionally clear contract on call end, but we typically want to keep it
+        // for the duration of nested calls. The contract will be updated on next call.
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -242,5 +317,90 @@ mod tests {
 
         inspector.clear_current_contract();
         assert!(inspector.current_contract.is_none());
+    }
+
+    #[test]
+    fn test_mapping_slot_computation() {
+        // This test verifies that our slot computation matches Solidity's
+        // mapping slot formula: keccak256(abi.encode(key, base_slot))
+
+        // Example: mapping(address => uint256) balances at slot 0
+        // For address 0x1111...1111 accessing balances[address]:
+        // computed_slot = keccak256(abi.encode(address, 0))
+
+        let owner = Address::new([0x11; 20]);
+        let base_slot = U256::ZERO;
+
+        // Build the 64-byte input as Solidity would
+        // First 32 bytes: key (address left-padded to 32 bytes)
+        // Second 32 bytes: base_slot
+        let mut data = [0u8; 64];
+        data[12..32].copy_from_slice(owner.as_slice()); // address is 20 bytes, left-pad with 12 zeros
+        data[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
+
+        // Compute the slot
+        let computed_hash = keccak256(&data);
+        let computed_slot = U256::from_be_bytes(computed_hash.0);
+
+        // Store in cache as the inspector would
+        let cache = SlotKeyCache::new();
+        let contract = test_address(1);
+        let key = B256::from_slice(&data[0..32]);
+
+        cache.insert(contract, computed_slot, base_slot, key);
+
+        // Verify we can look it up
+        let result = cache.get(contract, computed_slot);
+        assert!(result.is_some());
+
+        let (retrieved_base, retrieved_key) = result.unwrap();
+        assert_eq!(retrieved_base, base_slot);
+        assert_eq!(retrieved_key, key);
+
+        // Verify the key contains the owner address (last 20 bytes)
+        let key_address = Address::from_slice(&retrieved_key[12..32]);
+        assert_eq!(key_address, owner);
+    }
+
+    #[test]
+    fn test_nested_mapping_slot_computation() {
+        // Test nested mapping: mapping(address => mapping(uint256 => uint256))
+        // E.g., allowances[owner][spender]
+
+        let owner = Address::new([0x11; 20]);
+        let spender = Address::new([0x22; 20]);
+        let base_slot = U256::from(1);
+
+        // First level: keccak256(abi.encode(owner, base_slot))
+        let mut data1 = [0u8; 64];
+        data1[12..32].copy_from_slice(owner.as_slice());
+        data1[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
+        let slot1_hash = keccak256(&data1);
+        let slot1 = U256::from_be_bytes(slot1_hash.0);
+
+        // Second level: keccak256(abi.encode(spender, slot1))
+        let mut data2 = [0u8; 64];
+        data2[12..32].copy_from_slice(spender.as_slice());
+        data2[32..64].copy_from_slice(&slot1.to_be_bytes::<32>());
+        let slot2_hash = keccak256(&data2);
+        let slot2 = U256::from_be_bytes(slot2_hash.0);
+
+        // Cache would capture both computations
+        let cache = SlotKeyCache::new();
+        let contract = test_address(1);
+
+        cache.insert(contract, slot1, base_slot, B256::from_slice(&data1[0..32]));
+        cache.insert(contract, slot2, slot1, B256::from_slice(&data2[0..32]));
+
+        // Can look up the second level
+        let result = cache.get(contract, slot2);
+        assert!(result.is_some());
+
+        let (retrieved_base, retrieved_key) = result.unwrap();
+        // The base for slot2 is slot1 (the result of first hash)
+        assert_eq!(retrieved_base, slot1);
+        // The key contains the spender address
+        let key_address = Address::from_slice(&retrieved_key[12..32]);
+        assert_eq!(key_address, spender);
     }
 }
