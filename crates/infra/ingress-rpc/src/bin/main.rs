@@ -1,3 +1,4 @@
+use account_abstraction_core_v2::create_mempool_engine;
 use alloy_provider::ProviderBuilder;
 use clap::Parser;
 use jsonrpsee::server::Server;
@@ -73,6 +74,20 @@ async fn main() -> anyhow::Result<()> {
     let (audit_tx, audit_rx) = mpsc::unbounded_channel::<BundleEvent>();
     connect_audit_to_publisher(audit_rx, audit_publisher);
 
+    let user_op_properties_file = &config.user_operation_consumer_properties;
+
+    let mempool_engine = create_mempool_engine(
+        user_op_properties_file,
+        &config.user_operation_topic,
+        &config.user_operation_consumer_group_id,
+        None,
+    )?;
+
+    let mempool_engine_handle = {
+        let engine = mempool_engine.clone();
+        tokio::spawn(async move { engine.run().await })
+    };
+
     let (builder_tx, _) =
         broadcast::channel::<MeterBundleResponse>(config.max_buffered_meter_bundle_responses);
     let (builder_backrun_tx, _) =
@@ -96,6 +111,7 @@ async fn main() -> anyhow::Result<()> {
         audit_tx,
         builder_tx,
         builder_backrun_tx,
+        mempool_engine.clone(),
         cfg,
     );
     let bind_addr = format!("{}:{}", config.address, config.port);
@@ -111,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
 
     handle.stopped().await;
     health_handle.abort();
+    mempool_engine_handle.abort();
 
     Ok(())
 }

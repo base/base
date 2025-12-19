@@ -1,4 +1,4 @@
-use crate::entrypoints::{v06, v07, version::EntryPointVersion};
+use super::entrypoints::{v06, v07, version::EntryPointVersion};
 use alloy_primitives::{Address, B256, ChainId, FixedBytes, U256};
 use alloy_rpc_types::erc4337;
 pub use alloy_rpc_types::erc4337::SendUserOperationResponse;
@@ -73,66 +73,46 @@ pub struct UserOperationRequestValidationResult {
     pub gas_used: U256,
 }
 
-/// Validation result for User Operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidationResult {
-    /// Whether the UserOp is valid
     pub valid: bool,
-    /// Error message if not valid
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// Timestamp until the UserOp is valid (0 = no expiry)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valid_until: Option<u64>,
-    /// Timestamp after which the UserOp is valid (0 = immediately)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub valid_after: Option<u64>,
-    /// Entity stake/deposit context
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ValidationContext>,
 }
 
-/// Entity stake/deposit information context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidationContext {
-    /// Sender (account) stake info
     pub sender_info: EntityStakeInfo,
-    /// Factory stake info (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub factory_info: Option<EntityStakeInfo>,
-    /// Paymaster stake info (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paymaster_info: Option<EntityStakeInfo>,
-    /// Aggregator stake info (if present)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aggregator_info: Option<AggregatorInfo>,
 }
 
-/// Stake info for an entity (used in RPC response)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityStakeInfo {
-    /// Entity address
     pub address: Address,
-    /// Amount staked
     pub stake: U256,
-    /// Unstake delay in seconds
     pub unstake_delay_sec: u64,
-    /// Amount deposited for gas
     pub deposit: U256,
-    /// Whether entity meets staking requirements
     pub is_staked: bool,
 }
 
-/// Aggregator stake info (used in RPC response)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AggregatorInfo {
-    /// Aggregator address
     pub aggregator: Address,
-    /// Stake info
     pub stake_info: EntityStakeInfo,
 }
 
@@ -150,7 +130,6 @@ impl WrappedUserOperation {
     }
 }
 
-// Tests
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -160,7 +139,6 @@ mod tests {
 
     #[test]
     fn deser_untagged_user_operation_without_type_field() {
-        // v0.6 shape, no "type" key
         let json = r#"
         {
             "sender": "0x1111111111111111111111111111111111111111",
@@ -193,7 +171,6 @@ mod tests {
 
     #[test]
     fn deser_untagged_packed_user_operation_without_type_field() {
-        // v0.7 shape, no "type" key
         let json = r#"
         {
             "sender": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",

@@ -1,3 +1,8 @@
+use account_abstraction_core_v2::domain::ReputationService;
+use account_abstraction_core_v2::infrastructure::base_node::validator::BaseNodeValidator;
+use account_abstraction_core_v2::services::ReputationServiceImpl;
+use account_abstraction_core_v2::services::interfaces::user_op_validator::UserOperationValidator;
+use account_abstraction_core_v2::{Mempool, MempoolEngine};
 use alloy_consensus::transaction::Recovered;
 use alloy_consensus::{Transaction, transaction::SignerRecoverable};
 use alloy_primitives::{Address, B256, Bytes, FixedBytes};
@@ -23,9 +28,8 @@ use crate::metrics::{Metrics, record_histogram};
 use crate::queue::{BundleQueuePublisher, MessageQueue, UserOpQueuePublisher};
 use crate::validation::validate_bundle;
 use crate::{Config, TxSubmissionMethod};
-use account_abstraction_core::entrypoints::version::EntryPointVersion;
-use account_abstraction_core::types::{UserOperationRequest, VersionedUserOperation};
-use account_abstraction_core::{AccountAbstractionService, AccountAbstractionServiceImpl};
+use account_abstraction_core_v2::domain::entrypoints::version::EntryPointVersion;
+use account_abstraction_core_v2::domain::types::{UserOperationRequest, VersionedUserOperation};
 use std::sync::Arc;
 
 /// RPC providers for different endpoints
@@ -61,14 +65,15 @@ pub trait IngressApi {
     ) -> RpcResult<FixedBytes<32>>;
 }
 
-pub struct IngressService<Q: MessageQueue> {
+pub struct IngressService<Q: MessageQueue, M: Mempool> {
     mempool_provider: Arc<RootProvider<Optimism>>,
     simulation_provider: Arc<RootProvider<Optimism>>,
     raw_tx_forward_provider: Option<Arc<RootProvider<Optimism>>>,
-    account_abstraction_service: AccountAbstractionServiceImpl,
+    user_op_validator: BaseNodeValidator,
     tx_submission_method: TxSubmissionMethod,
     bundle_queue_publisher: BundleQueuePublisher<Q>,
     user_op_queue_publisher: UserOpQueuePublisher<Q>,
+    reputation_service: Arc<ReputationServiceImpl<M>>,
     audit_channel: mpsc::UnboundedSender<BundleEvent>,
     send_transaction_default_lifetime_seconds: u64,
     metrics: Metrics,
@@ -79,29 +84,30 @@ pub struct IngressService<Q: MessageQueue> {
     builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
 }
 
-impl<Q: MessageQueue> IngressService<Q> {
+impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
     pub fn new(
         providers: Providers,
         queue: Q,
         audit_channel: mpsc::UnboundedSender<BundleEvent>,
         builder_tx: broadcast::Sender<MeterBundleResponse>,
         builder_backrun_tx: broadcast::Sender<AcceptedBundle>,
+        mempool_engine: Arc<MempoolEngine<M>>,
         config: Config,
     ) -> Self {
         let mempool_provider = Arc::new(providers.mempool);
         let simulation_provider = Arc::new(providers.simulation);
         let raw_tx_forward_provider = providers.raw_tx_forward.map(Arc::new);
-        let account_abstraction_service: AccountAbstractionServiceImpl =
-            AccountAbstractionServiceImpl::new(
-                simulation_provider.clone(),
-                config.validate_user_operation_timeout_ms,
-            );
+        let user_op_validator = BaseNodeValidator::new(
+            simulation_provider.clone(),
+            config.validate_user_operation_timeout_ms,
+        );
         let queue_connection = Arc::new(queue);
+        let reputation_service = ReputationServiceImpl::new(mempool_engine.get_mempool());
         Self {
             mempool_provider,
             simulation_provider,
             raw_tx_forward_provider,
-            account_abstraction_service,
+            user_op_validator,
             tx_submission_method: config.tx_submission_method,
             user_op_queue_publisher: UserOpQueuePublisher::new(
                 queue_connection.clone(),
@@ -111,6 +117,7 @@ impl<Q: MessageQueue> IngressService<Q> {
                 queue_connection.clone(),
                 config.ingress_topic,
             ),
+            reputation_service: Arc::new(reputation_service),
             audit_channel,
             send_transaction_default_lifetime_seconds: config
                 .send_transaction_default_lifetime_seconds,
@@ -125,7 +132,7 @@ impl<Q: MessageQueue> IngressService<Q> {
 }
 
 #[async_trait]
-impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
+impl<Q: MessageQueue + 'static, M: Mempool + 'static> IngressApiServer for IngressService<Q, M> {
     async fn send_backrun_bundle(&self, bundle: Bundle) -> RpcResult<BundleHash> {
         if !self.backrun_enabled {
             info!(
@@ -345,13 +352,19 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
             chain_id: 1,
         };
 
+        // DO Nothing with reputation at the moment as this is scafolding
+        let _ = self
+            .reputation_service
+            .get_reputation(&request.user_operation.sender())
+            .await;
+
         let user_op_hash = request.hash().map_err(|e| {
             warn!(message = "Failed to hash user operation", error = %e);
             EthApiError::InvalidParams(e.to_string()).into_rpc_err()
         })?;
 
         let _ = self
-            .account_abstraction_service
+            .user_op_validator
             .validate_user_operation(&request.user_operation, &entry_point)
             .await
             .map_err(|e| {
@@ -378,7 +391,7 @@ impl<Q: MessageQueue + 'static> IngressApiServer for IngressService<Q> {
     }
 }
 
-impl<Q: MessageQueue> IngressService<Q> {
+impl<Q: MessageQueue, M: Mempool> IngressService<Q, M> {
     async fn get_tx(&self, data: &Bytes) -> RpcResult<Recovered<OpTxEnvelope>> {
         if data.is_empty() {
             return Err(EthApiError::EmptyRawTransactionData.into_rpc_err());
@@ -501,6 +514,10 @@ impl<Q: MessageQueue> IngressService<Q> {
 mod tests {
     use super::*;
     use crate::{Config, TxSubmissionMethod, queue::MessageQueue};
+    use account_abstraction_core_v2::MempoolEvent;
+    use account_abstraction_core_v2::domain::PoolConfig;
+    use account_abstraction_core_v2::infrastructure::in_memory::mempool::InMemoryMempool;
+    use account_abstraction_core_v2::services::interfaces::event_source::EventSource;
     use alloy_provider::RootProvider;
     use anyhow::Result;
     use async_trait::async_trait;
@@ -512,7 +529,7 @@ mod tests {
     use std::net::{IpAddr, SocketAddr};
     use std::str::FromStr;
     use tips_core::test_utils::create_test_meter_bundle_response;
-    use tokio::sync::{broadcast, mpsc};
+    use tokio::sync::{RwLock, broadcast, mpsc};
     use url::Url;
     use wiremock::{Mock, MockServer, ResponseTemplate, matchers::method};
     struct MockQueue;
@@ -521,6 +538,15 @@ mod tests {
     impl MessageQueue for MockQueue {
         async fn publish(&self, _topic: &str, _key: &str, _payload: &[u8]) -> Result<()> {
             Ok(())
+        }
+    }
+
+    struct NoopEventSource;
+
+    #[async_trait]
+    impl EventSource for NoopEventSource {
+        async fn receive(&self) -> anyhow::Result<MempoolEvent> {
+            Err(anyhow::anyhow!("no events"))
         }
     }
 
@@ -534,6 +560,8 @@ mod tests {
             ingress_topic: String::new(),
             audit_kafka_properties: String::new(),
             audit_topic: String::new(),
+            user_operation_consumer_properties: String::new(),
+            user_operation_consumer_group_id: "tips-user-operation".to_string(),
             log_level: String::from("info"),
             log_format: tips_core::logger::LogFormat::Pretty,
             send_transaction_default_lifetime_seconds: 300,
@@ -660,8 +688,19 @@ mod tests {
         let (builder_tx, _builder_rx) = broadcast::channel(1);
         let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
+        let mempool_engine = Arc::new(MempoolEngine::<InMemoryMempool>::new(
+            Arc::new(RwLock::new(InMemoryMempool::new(PoolConfig::default()))),
+            Arc::new(NoopEventSource),
+        ));
+
         let service = IngressService::new(
-            providers, MockQueue, audit_tx, builder_tx, backrun_tx, config,
+            providers,
+            MockQueue,
+            audit_tx,
+            builder_tx,
+            backrun_tx,
+            mempool_engine,
+            config,
         );
 
         let bundle = Bundle::default();
@@ -719,8 +758,19 @@ mod tests {
         let (builder_tx, _builder_rx) = broadcast::channel(1);
         let (backrun_tx, _backrun_rx) = broadcast::channel(1);
 
+        let mempool_engine = Arc::new(MempoolEngine::<InMemoryMempool>::new(
+            Arc::new(RwLock::new(InMemoryMempool::new(PoolConfig::default()))),
+            Arc::new(NoopEventSource),
+        ));
+
         let service = IngressService::new(
-            providers, MockQueue, audit_tx, builder_tx, backrun_tx, config,
+            providers,
+            MockQueue,
+            audit_tx,
+            builder_tx,
+            backrun_tx,
+            mempool_engine,
+            config,
         );
 
         // Valid signed transaction bytes
@@ -761,7 +811,7 @@ mod tests {
 
         let user_op = sample_user_operation_v06();
         let entry_point =
-            account_abstraction_core::entrypoints::version::EntryPointVersion::V06_ADDRESS;
+            account_abstraction_core_v2::domain::entrypoints::version::EntryPointVersion::V06_ADDRESS;
 
         let result: Result<FixedBytes<32>, _> = client
             .request("eth_sendUserOperation", (user_op, entry_point))

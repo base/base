@@ -85,6 +85,21 @@ pub struct Config {
     )]
     pub audit_topic: String,
 
+    /// Kafka properties file for the user operation consumer
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_KAFKA_USER_OPERATION_CONSUMER_PROPERTIES_FILE"
+    )]
+    pub user_operation_consumer_properties: String,
+
+    /// Consumer group id for user operation topic (set uniquely per deployment)
+    #[arg(
+        long,
+        env = "TIPS_INGRESS_KAFKA_USER_OPERATION_CONSUMER_GROUP_ID",
+        default_value = "tips-user-operation"
+    )]
+    pub user_operation_consumer_group_id: String,
+
     /// User operation topic for pushing valid user operations
     #[arg(
         long,

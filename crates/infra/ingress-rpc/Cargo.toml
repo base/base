@@ -14,7 +14,7 @@ path = "src/bin/main.rs"
 [dependencies]
 tips-core.workspace = true
 tips-audit.workspace = true
-account-abstraction-core.workspace = true
+account-abstraction-core-v2.workspace = true
 jsonrpsee.workspace = true
 alloy-primitives.workspace = true
 op-alloy-network.workspace = true

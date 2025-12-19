@@ -1,37 +1,33 @@
-use crate::types::{UserOpHash, WrappedUserOperation};
+use crate::domain::mempool::{Mempool, PoolConfig};
+use crate::domain::types::{UserOpHash, WrappedUserOperation};
 use alloy_primitives::Address;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-
-#[derive(Default)]
-pub struct PoolConfig {
-    minimum_max_fee_per_gas: u128,
-}
+use tracing::warn;
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct OrderedPoolOperation {
-    pub pool_operation: WrappedUserOperation,
-    pub submission_id: u64,
+struct OrderedPoolOperation {
+    pool_operation: WrappedUserOperation,
+    submission_id: u64,
 }
 
 impl OrderedPoolOperation {
-    pub fn from_wrapped(operation: &WrappedUserOperation, submission_id: u64) -> Self {
+    fn from_wrapped(operation: &WrappedUserOperation, submission_id: u64) -> Self {
         Self {
             pool_operation: operation.clone(),
             submission_id,
         }
     }
 
-    pub fn sender(&self) -> Address {
+    fn sender(&self) -> Address {
         self.pool_operation.operation.sender()
     }
 }
 
-/// Ordering by max priority fee (desc) then submission id, then hash to ensure total order
 #[derive(Clone, Debug)]
-pub struct ByMaxFeeAndSubmissionId(pub OrderedPoolOperation);
+struct ByMaxFeeAndSubmissionId(OrderedPoolOperation);
 
 impl PartialEq for ByMaxFeeAndSubmissionId {
     fn eq(&self, other: &Self) -> bool {
@@ -55,13 +51,11 @@ impl Ord for ByMaxFeeAndSubmissionId {
             .max_priority_fee_per_gas()
             .cmp(&self.0.pool_operation.operation.max_priority_fee_per_gas())
             .then_with(|| self.0.submission_id.cmp(&other.0.submission_id))
-            .then_with(|| self.0.pool_operation.hash.cmp(&other.0.pool_operation.hash))
     }
 }
 
-/// Ordering by nonce (asc), then submission id, then hash to ensure total order
 #[derive(Clone, Debug)]
-pub struct ByNonce(pub OrderedPoolOperation);
+struct ByNonce(OrderedPoolOperation);
 
 impl PartialEq for ByNonce {
     fn eq(&self, other: &Self) -> bool {
@@ -77,8 +71,6 @@ impl PartialOrd for ByNonce {
 }
 
 impl Ord for ByNonce {
-    /// TODO: There can be invalid opperations, where base fee, + expected gas price
-    /// is greater that the maximum gas, in that case we don't include it in the mempool as such mempool changes.
     fn cmp(&self, other: &Self) -> Ordering {
         self.0
             .pool_operation
@@ -86,22 +78,11 @@ impl Ord for ByNonce {
             .nonce()
             .cmp(&other.0.pool_operation.operation.nonce())
             .then_with(|| self.0.submission_id.cmp(&other.0.submission_id))
+            .then_with(|| self.0.pool_operation.hash.cmp(&other.0.pool_operation.hash))
     }
 }
 
-pub trait Mempool {
-    fn add_operation(
-        &mut self,
-        operation: &WrappedUserOperation,
-    ) -> Result<Option<OrderedPoolOperation>, anyhow::Error>;
-    fn get_top_operations(&self, n: usize) -> impl Iterator<Item = Arc<WrappedUserOperation>>;
-    fn remove_operation(
-        &mut self,
-        operation_hash: &UserOpHash,
-    ) -> Result<Option<WrappedUserOperation>, anyhow::Error>;
-}
-
-pub struct MempoolImpl {
+pub struct InMemoryMempool {
     config: PoolConfig,
     best: BTreeSet<ByMaxFeeAndSubmissionId>,
     hash_to_operation: HashMap<UserOpHash, OrderedPoolOperation>,
@@ -109,24 +90,18 @@ pub struct MempoolImpl {
     submission_id_counter: AtomicU64,
 }
 
-impl Mempool for MempoolImpl {
-    fn add_operation(
-        &mut self,
-        operation: &WrappedUserOperation,
-    ) -> Result<Option<OrderedPoolOperation>, anyhow::Error> {
+impl Mempool for InMemoryMempool {
+    fn add_operation(&mut self, operation: &WrappedUserOperation) -> Result<(), anyhow::Error> {
         if operation.operation.max_fee_per_gas() < self.config.minimum_max_fee_per_gas {
             return Err(anyhow::anyhow!(
                 "Gas price is below the minimum required PVG gas"
             ));
         }
-        let ordered_operation_result = self.handle_add_operation(operation)?;
-        Ok(ordered_operation_result)
+        self.handle_add_operation(operation)?;
+        Ok(())
     }
 
     fn get_top_operations(&self, n: usize) -> impl Iterator<Item = Arc<WrappedUserOperation>> {
-        // TODO: There is a case where we skip operations that are not the lowest nonce for an account.
-        // But we still have not given the N number of operations, meaning we don't return those operations.
-
         self.best
             .iter()
             .filter_map(|op_by_fee| {
@@ -143,9 +118,9 @@ impl Mempool for MempoolImpl {
                     }
                     Some(_) => None,
                     None => {
-                        println!(
-                            "No operations found for account: {} but one was found in the best set",
-                            op_by_fee.0.sender()
+                        warn!(
+                            account = %op_by_fee.0.sender(),
+                            "Inconsistent state: operation in best set but not in account index"
                         );
                         None
                     }
@@ -171,16 +146,13 @@ impl Mempool for MempoolImpl {
     }
 }
 
-// When user opperation is added to the mempool we need to check
-
-impl MempoolImpl {
+impl InMemoryMempool {
     fn handle_add_operation(
         &mut self,
         operation: &WrappedUserOperation,
-    ) -> Result<Option<OrderedPoolOperation>, anyhow::Error> {
-        // Account
+    ) -> Result<(), anyhow::Error> {
         if self.hash_to_operation.contains_key(&operation.hash) {
-            return Ok(None);
+            return Ok(());
         }
 
         let order = self.get_next_order_id();
@@ -194,7 +166,7 @@ impl MempoolImpl {
             .insert(ByNonce(ordered_operation.clone()));
         self.hash_to_operation
             .insert(operation.hash, ordered_operation.clone());
-        Ok(Some(ordered_operation))
+        Ok(())
     }
 
     fn get_next_order_id(&self) -> u64 {
@@ -216,9 +188,10 @@ impl MempoolImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::VersionedUserOperation;
+    use crate::domain::types::VersionedUserOperation;
     use alloy_primitives::{Address, FixedBytes, Uint};
     use alloy_rpc_types::erc4337;
+
     fn create_test_user_operation(max_priority_fee_per_gas: u128) -> VersionedUserOperation {
         VersionedUserOperation::UserOperation(erc4337::UserOperation {
             sender: Address::random(),
@@ -245,13 +218,12 @@ mod tests {
         }
     }
 
-    fn create_test_mempool(minimum_required_pvg_gas: u128) -> MempoolImpl {
-        MempoolImpl::new(PoolConfig {
+    fn create_test_mempool(minimum_required_pvg_gas: u128) -> InMemoryMempool {
+        InMemoryMempool::new(PoolConfig {
             minimum_max_fee_per_gas: minimum_required_pvg_gas,
         })
     }
 
-    // Tests successfully adding a valid operation to the mempool
     #[test]
     fn test_add_operation_success() {
         let mut mempool = create_test_mempool(1000);
@@ -261,17 +233,8 @@ mod tests {
         let result = mempool.add_operation(&operation);
 
         assert!(result.is_ok());
-        let ordered_op = result.unwrap();
-        assert!(ordered_op.is_some());
-        let ordered_op = ordered_op.unwrap();
-        assert_eq!(ordered_op.pool_operation.hash, hash);
-        assert_eq!(
-            ordered_op.pool_operation.operation.max_fee_per_gas(),
-            Uint::from(2000)
-        );
     }
 
-    // Tests adding an operation with a gas price below the minimum required PVG gas
     #[test]
     fn test_add_operation_below_minimum_gas() {
         let mut mempool = create_test_mempool(2000);
@@ -289,34 +252,29 @@ mod tests {
         );
     }
 
-    // Tests adding multiple operations with different hashes
     #[test]
-    fn test_add_multiple_operations() {
+    fn test_add_multiple_operations_with_different_hashes() {
         let mut mempool = create_test_mempool(1000);
 
         let hash1 = FixedBytes::from([1u8; 32]);
         let operation1 = create_wrapped_operation(2000, hash1);
         let result1 = mempool.add_operation(&operation1);
         assert!(result1.is_ok());
-        assert!(result1.unwrap().is_some());
 
         let hash2 = FixedBytes::from([2u8; 32]);
         let operation2 = create_wrapped_operation(3000, hash2);
         let result2 = mempool.add_operation(&operation2);
         assert!(result2.is_ok());
-        assert!(result2.unwrap().is_some());
 
         let hash3 = FixedBytes::from([3u8; 32]);
         let operation3 = create_wrapped_operation(1500, hash3);
         let result3 = mempool.add_operation(&operation3);
         assert!(result3.is_ok());
-        assert!(result3.unwrap().is_some());
 
         assert_eq!(mempool.hash_to_operation.len(), 3);
         assert_eq!(mempool.best.len(), 3);
     }
 
-    // Tests removing an operation that is not in the mempool
     #[test]
     fn test_remove_operation_not_in_mempool() {
         let mut mempool = create_test_mempool(1000);
@@ -327,7 +285,6 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    // Tests removing an operation that exists in the mempool
     #[test]
     fn test_remove_operation_exists() {
         let mut mempool = create_test_mempool(1000);
@@ -345,7 +302,6 @@ mod tests {
         assert_eq!(removed_op.operation.max_fee_per_gas(), Uint::from(2000));
     }
 
-    // Tests removing an operation and checking the best operations
     #[test]
     fn test_remove_operation_and_check_best() {
         let mut mempool = create_test_mempool(1000);
@@ -366,7 +322,6 @@ mod tests {
         assert_eq!(best_after.len(), 0);
     }
 
-    // Tests getting the top operations with ordering
     #[test]
     fn test_get_top_operations_ordering() {
         let mut mempool = create_test_mempool(1000);
@@ -390,7 +345,6 @@ mod tests {
         assert_eq!(best[2].operation.max_fee_per_gas(), Uint::from(1500));
     }
 
-    // Tests getting the top operations with a limit
     #[test]
     fn test_get_top_operations_limit() {
         let mut mempool = create_test_mempool(1000);
@@ -413,18 +367,17 @@ mod tests {
         assert_eq!(best[1].operation.max_fee_per_gas(), Uint::from(2000));
     }
 
-    // Tests top opperations tie breaker with submission id
     #[test]
     fn test_get_top_operations_submission_id_tie_breaker() {
         let mut mempool = create_test_mempool(1000);
 
         let hash1 = FixedBytes::from([1u8; 32]);
         let operation1 = create_wrapped_operation(2000, hash1);
-        mempool.add_operation(&operation1).unwrap().unwrap();
+        mempool.add_operation(&operation1).unwrap();
 
         let hash2 = FixedBytes::from([2u8; 32]);
         let operation2 = create_wrapped_operation(2000, hash2);
-        mempool.add_operation(&operation2).unwrap().unwrap();
+        mempool.add_operation(&operation2).unwrap();
 
         let best: Vec<_> = mempool.get_top_operations(2).collect();
         assert_eq!(best.len(), 2);
@@ -438,7 +391,6 @@ mod tests {
         let hash1 = FixedBytes::from([1u8; 32]);
         let test_user_operation = create_test_user_operation(2000);
 
-        // Destructure to the inner struct, then update nonce
         let base_op = match test_user_operation.clone() {
             VersionedUserOperation::UserOperation(op) => op,
             _ => panic!("expected UserOperation variant"),
@@ -453,7 +405,7 @@ mod tests {
             hash: hash1,
         };
 
-        mempool.add_operation(&operation1).unwrap().unwrap();
+        mempool.add_operation(&operation1).unwrap();
         let hash2 = FixedBytes::from([2u8; 32]);
         let operation2 = WrappedUserOperation {
             operation: VersionedUserOperation::UserOperation(erc4337::UserOperation {
@@ -463,7 +415,7 @@ mod tests {
             }),
             hash: hash2,
         };
-        mempool.add_operation(&operation2).unwrap().unwrap();
+        mempool.add_operation(&operation2).unwrap();
 
         let best: Vec<_> = mempool.get_top_operations(2).collect();
         assert_eq!(best.len(), 1);
