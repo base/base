@@ -2,7 +2,7 @@
 
 use reth_optimism_node::args::RollupArgs;
 
-use crate::extensions::FlashblocksCell;
+use crate::extensions::{EncryptedRelayConfig, FlashblocksCell};
 
 /// Captures the pieces of CLI configuration that the node logic cares about.
 #[derive(Debug, Clone)]
@@ -17,6 +17,8 @@ pub struct BaseNodeConfig {
     pub metering_enabled: bool,
     /// Shared Flashblocks state cache.
     pub flashblocks_cell: FlashblocksCell,
+    /// Optional encrypted relay configuration.
+    pub relay: Option<EncryptedRelayConfig>,
 }
 
 impl BaseNodeConfig {

@@ -22,9 +22,14 @@ reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
 reth-cli-util.workspace = true
 
+# alloy
+alloy-primitives.workspace = true
+
 # misc
 clap.workspace = true
+hex = "0.4"
 once_cell.workspace = true
+tracing.workspace = true
 
 [features]
 default = []

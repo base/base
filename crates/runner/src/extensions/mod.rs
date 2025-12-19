@@ -9,6 +9,9 @@ pub use extension::{BaseNodeExtension, ConfigurableBaseNodeExtension};
 mod canon;
 pub use canon::FlashblocksCanonExtension;
 
+mod relay;
+pub use relay::{EncryptedRelayConfig, EncryptedRelayExtension, RelayFetcherConfig};
+
 mod rpc;
 pub use rpc::BaseRpcExtension;
 

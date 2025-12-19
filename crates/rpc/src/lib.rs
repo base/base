@@ -11,7 +11,8 @@ pub use base::{
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
     pubsub::{EthPubSub, EthPubSubApiServer},
-    traits::{MeteringApiServer, TransactionStatusApiServer},
+    relay_rpc::{EncryptedRelayApiImpl, NoPoolSubmission, P2pForwarder},
+    traits::{EncryptedRelayApiServer, MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
     types::{BaseSubscriptionKind, ExtendedSubscriptionKind, Status, TransactionStatusResponse},
 };

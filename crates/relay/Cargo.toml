@@ -1,0 +1,61 @@
+[package]
+name = "base-reth-relay"
+description = "Encrypted Transaction Relay for Base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# alloy
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-sol-macro.workspace = true
+alloy-provider.workspace = true
+alloy-contract.workspace = true
+
+# crypto
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+ed25519-dalek = { version = "2.1", features = ["std", "rand_core"] }
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+hkdf = "0.12"
+rand = "0.8"
+
+# serialization
+serde.workspace = true
+alloy-rlp = "0.3"
+
+# async
+tokio.workspace = true
+tokio-stream = { workspace = true, optional = true }
+futures.workspace = true
+
+# reth network
+reth-network = { workspace = true, optional = true }
+reth-network-api = { workspace = true, optional = true }
+reth-network-types = { workspace = true, optional = true }
+reth-eth-wire = { workspace = true, optional = true }
+reth-eth-wire-types = { workspace = true, optional = true }
+
+# misc
+tracing.workspace = true
+thiserror = "2.0"
+arc-swap.workspace = true
+parking_lot = "0.12"
+bytes = "1.0"
+pin-project = "1.0"
+
+[features]
+default = []
+p2p = ["reth-network", "reth-network-api", "reth-network-types", "reth-eth-wire", "reth-eth-wire-types", "tokio-stream"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+serde_json.workspace = true
+hex = "0.4"

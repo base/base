@@ -64,10 +64,11 @@ impl BaseNodeRunner {
             .with_add_ons(op_node.add_ons())
             .on_component_initialized(move |_ctx| Ok(()));
 
+        // Apply extensions to the builder (uses references so we can call on_node_started later)
         let builder =
-            extensions.into_iter().fold(builder, |builder, extension| extension.apply(builder));
+            extensions.iter().fold(builder, |builder, extension| extension.apply(builder));
 
-        builder
+        let node_handle = builder
             .launch_with_fn(|builder| {
                 let engine_tree_config = TreeConfig::default()
                     .with_persistence_threshold(builder.config().engine.persistence_threshold)
@@ -83,6 +84,13 @@ impl BaseNodeRunner {
 
                 builder.launch_with(launcher)
             })
-            .await
+            .await?;
+
+        // Call on_node_started for each extension
+        for extension in &extensions {
+            extension.on_node_started(&node_handle)?;
+        }
+
+        Ok(node_handle)
     }
 }

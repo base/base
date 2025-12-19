@@ -6,7 +6,8 @@
 pub mod cli;
 
 use base_reth_runner::{
-    BaseNodeRunner, BaseRpcExtension, FlashblocksCanonExtension, TransactionTracingExtension,
+    BaseNodeRunner, BaseRpcExtension, EncryptedRelayExtension, FlashblocksCanonExtension,
+    TransactionTracingExtension,
 };
 
 #[global_allocator]
@@ -27,6 +28,7 @@ fn main() {
         runner.install_ext::<FlashblocksCanonExtension>()?;
         runner.install_ext::<TransactionTracingExtension>()?;
         runner.install_ext::<BaseRpcExtension>()?;
+        runner.install_ext::<EncryptedRelayExtension>()?;
         let handle = runner.run(builder);
         handle.await
     })

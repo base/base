@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 # Project
 base-reth-flashblocks.workspace = true
+base-reth-relay.workspace = true
 
 # base/tips
 tips-core.workspace = true
@@ -53,6 +54,7 @@ eyre.workspace = true
 serde.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 
 [dev-dependencies]
 reth-optimism-primitives.workspace = true
