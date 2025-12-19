@@ -1388,4 +1388,106 @@ mod sync {
 
         Ok(())
     }
+
+    /// Verifies that defense tasks are spawned in deadline-ascending order.
+    ///
+    /// This test creates 2 games, then challenges them in reverse order (game 1 first, then
+    /// game 0). Since the deadline is reset to `challenge_time + MAX_PROVE_DURATION` on challenge,
+    /// the game challenged first (game 1) will have the earliest deadline.
+    ///
+    /// Timeline:
+    /// - Game 0: Created at T0
+    /// - Game 1: Created at T0 + 100s
+    /// - Game 1: Challenged first → deadline = T_challenge + MAX_PROVE_DURATION
+    /// - Game 0: Challenged second → deadline = (T_challenge + ε) + MAX_PROVE_DURATION
+    ///
+    /// Result: game_1.deadline < game_0.deadline
+    /// Expected defense order: Game 1 first (earliest deadline)
+    ///
+    /// Note: This test only verifies that defense tasks are spawned for challenged games with
+    /// correct deadline ordering. It does not wait for proving to complete, as the actual proving
+    /// would fail in the Anvil test environment (no real L1 RPC).
+    #[tokio::test]
+    async fn test_defense_tasks_prioritize_earliest_deadline() -> Result<()> {
+        let env = TestEnvironment::setup().await?;
+        let factory = env.factory()?;
+        let init_bond = factory.initBonds(TEST_GAME_TYPE).call().await?;
+
+        let proposer = env.init_proposer().await?;
+
+        let starting_l2_block = env.anvil.starting_l2_block_number;
+        let time_gap = 100u64; // 100 seconds between game creations
+        let mut game_addresses = Vec::new();
+
+        // Create 2 games with increasing deadlines (time gap between creation)
+        for i in 0..2u64 {
+            let block = starting_l2_block + 1 + i;
+            let root_claim = env.compute_output_root_at_block(block).await?;
+            env.create_game(root_claim, block, M, init_bond).await?;
+            let (_, address) = env.last_game_info().await?;
+            game_addresses.push(address);
+            tracing::info!("✓ Created game {i} at block {block}");
+
+            // Add time gap before next game (except after last game)
+            if i < 1 {
+                env.warp_time(time_gap).await?;
+            }
+        }
+
+        // Challenge games in REVERSE creation order (game 1 first, then game 0).
+        // Since deadline = challenge_time + MAX_PROVE_DURATION, game 1 will have the earlier
+        // deadline.
+        env.challenge_game(game_addresses[1]).await?;
+        tracing::info!("✓ Challenged game 1 FIRST (will have earlier deadline)");
+
+        env.challenge_game(game_addresses[0]).await?;
+        tracing::info!("✓ Challenged game 0 SECOND (will have later deadline)");
+
+        // Sync state to update proposal status
+        proposer.sync_state().await?;
+
+        // Verify both games are challenged
+        for i in 0..2u64 {
+            let game = proposer.get_game(U256::from(i)).await.unwrap();
+            assert_eq!(
+                game.proposal_status,
+                ProposalStatus::Challenged,
+                "Game {i} should be challenged"
+            );
+        }
+
+        // Verify deadlines are in expected order (game 1 < game 0)
+        let game_0 = proposer.get_game(U256::from(0)).await.unwrap();
+        let game_1 = proposer.get_game(U256::from(1)).await.unwrap();
+
+        assert!(
+            game_1.deadline < game_0.deadline,
+            "Game 1 should have earlier deadline than game 0: {} < {}",
+            game_1.deadline,
+            game_0.deadline
+        );
+
+        tracing::info!("Deadlines - Game 0: {}, Game 1: {}", game_0.deadline, game_1.deadline);
+
+        // Spawn defense tasks - with max_concurrent_defense_tasks=1, only the earliest deadline
+        // game (game 1) should be selected for defense.
+        let spawned = proposer.spawn_defense_tasks_for_test().await?;
+        assert!(spawned, "Should have spawned at least one defense task");
+
+        // Verify the defense task was spawned for game 1 (earliest deadline).
+        let active_defense_addresses = proposer.get_active_defense_game_addresses().await;
+        assert_eq!(
+            active_defense_addresses.len(),
+            1,
+            "Should have exactly 1 active defense task (max_concurrent_defense_tasks=1)"
+        );
+        assert_eq!(
+            active_defense_addresses[0], game_addresses[1],
+            "Defense task should be for game 1 (earliest deadline)"
+        );
+
+        tracing::info!("✓ Defense task correctly spawned for game 1: {:?}", game_addresses[1]);
+
+        Ok(())
+    }
 }
