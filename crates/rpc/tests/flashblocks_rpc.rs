@@ -985,3 +985,109 @@ async fn test_eth_subscribe_new_heads() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_eth_subscribe_new_flashblock_transactions_hashes() -> eyre::Result<()> {
+    let setup = TestSetup::new().await?;
+    let _provider = setup.harness.provider();
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    // Subscribe to newFlashblockTransactions with default (hash only) mode
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": ["newFlashblockTransactions"]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+
+    let response = ws_stream.next().await.unwrap()?;
+    let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+    assert_eq!(sub["jsonrpc"], "2.0");
+    assert_eq!(sub["id"], 1);
+    let subscription_id = sub["result"].as_str().expect("subscription id expected");
+
+    // Send first flashblock with L1 deposit tx
+    setup.send_flashblock(setup.create_first_payload()).await?;
+
+    let notification = ws_stream.next().await.unwrap()?;
+    let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+    assert_eq!(notif["method"], "eth_subscription");
+    assert_eq!(notif["params"]["subscription"], subscription_id);
+
+    // Result should be an array of transaction hashes (strings)
+    let txs = notif["params"]["result"].as_array().expect("expected array of tx hashes");
+    assert_eq!(txs.len(), 1);
+    assert!(txs[0].is_string(), "Expected hash string, got: {:?}", txs[0]);
+
+    // Send second flashblock with more transactions
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    let notification2 = ws_stream.next().await.unwrap()?;
+    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
+    let txs2 = notif2["params"]["result"].as_array().expect("expected array of tx hashes");
+    assert_eq!(txs2.len(), 6);
+    assert!(txs2.iter().all(|tx| tx.is_string()));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_eth_subscribe_new_flashblock_transactions_full() -> eyre::Result<()> {
+    let setup = TestSetup::new().await?;
+    let _provider = setup.harness.provider();
+    let ws_url = setup.harness.ws_url();
+    let (mut ws_stream, _) = connect_async(&ws_url).await?;
+
+    // Subscribe to newFlashblockTransactions with full transaction objects (true)
+    ws_stream
+        .send(Message::Text(
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": ["newFlashblockTransactions", true]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await?;
+
+    let response = ws_stream.next().await.unwrap()?;
+    let sub: serde_json::Value = serde_json::from_str(response.to_text()?)?;
+    assert_eq!(sub["jsonrpc"], "2.0");
+    assert_eq!(sub["id"], 1);
+    let subscription_id = sub["result"].as_str().expect("subscription id expected");
+
+    // Send flashblocks
+    setup.send_flashblock(setup.create_first_payload()).await?;
+
+    let notification = ws_stream.next().await.unwrap()?;
+    let notif: serde_json::Value = serde_json::from_str(notification.to_text()?)?;
+    assert_eq!(notif["method"], "eth_subscription");
+    assert_eq!(notif["params"]["subscription"], subscription_id);
+
+    // Result should be an array of full transaction objects
+    let txs = notif["params"]["result"].as_array().expect("expected array of transactions");
+    assert_eq!(txs.len(), 1);
+    // Full transaction objects have fields like "hash", "from", "to", etc.
+    assert!(txs[0]["hash"].is_string(), "Expected full tx with hash field");
+    assert!(txs[0]["blockNumber"].is_string(), "Expected full tx with blockNumber field");
+
+    // Send second flashblock with more transactions
+    setup.send_flashblock(setup.create_second_payload()).await?;
+
+    let notification2 = ws_stream.next().await.unwrap()?;
+    let notif2: serde_json::Value = serde_json::from_str(notification2.to_text()?)?;
+    let txs2 = notif2["params"]["result"].as_array().expect("expected array of transactions");
+    assert_eq!(txs2.len(), 6);
+    assert!(txs2.iter().all(|tx| tx["hash"].is_string() && tx["blockNumber"].is_string()));
+
+    Ok(())
+}

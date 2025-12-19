@@ -280,6 +280,16 @@ impl PendingBlocks {
 
         logs
     }
+
+    /// Returns all pending transactions from flashblocks.
+    pub fn get_pending_transactions(&self) -> Vec<Transaction> {
+        self.transactions.clone()
+    }
+
+    /// Returns the hashes of all pending transactions from flashblocks.
+    pub fn get_pending_transaction_hashes(&self) -> Vec<B256> {
+        self.transactions.iter().map(|tx| tx.tx_hash()).collect()
+    }
 }
 
 impl PendingBlocksAPI for Guard<Option<Arc<PendingBlocks>>> {
