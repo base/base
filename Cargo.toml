@@ -97,6 +97,11 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", feature
 # revm
 revm = { version = "31.0.2", default-features = false }
 revm-bytecode = { version = "7.1.1", default-features = false }
+op-revm = { version = "12.0.2", default-features = false }
+
+# alloy-evm
+alloy-evm = { version = "0.23.0", default-features = false }
+alloy-op-evm = { version = "0.23.0", default-features = false }
 
 # alloy
 alloy-trie = "0.9.1"
