@@ -23,11 +23,13 @@ pub const AUTH_PRECOMPILE_ADDRESS: Address = Address::new([
 
 /// Selector for `register(address admin, tuple[] slots, bool hideEvents)`
 /// keccak256("register(address,(uint256,uint8,uint8)[],bool)")[:4]
-pub(super) const REGISTER_SELECTOR: [u8; 4] = [0x8f, 0x59, 0x8a, 0x70];
+/// Verified against Solidity interface compilation
+pub(super) const REGISTER_SELECTOR: [u8; 4] = [0x4b, 0xb0, 0x56, 0xb3];
 
 /// Selector for `addSlots(tuple[] slots)`
 /// keccak256("addSlots((uint256,uint8,uint8)[])")[:4]
-pub(super) const ADD_SLOTS_SELECTOR: [u8; 4] = [0x1a, 0x8b, 0x6b, 0x8f];
+/// Verified against Solidity interface compilation
+pub(super) const ADD_SLOTS_SELECTOR: [u8; 4] = [0x50, 0xad, 0x0d, 0x4c];
 
 /// Selector for `setHideEvents(bool hide)`
 /// keccak256("setHideEvents(bool)")[:4]
@@ -43,15 +45,18 @@ pub(super) const IS_REGISTERED_SELECTOR: [u8; 4] = [0xc3, 0xc5, 0xa5, 0x47];
 
 /// Selector for `grant(address contract, uint256 slot, address grantee, uint8 permission)`
 /// keccak256("grant(address,uint256,address,uint8)")[:4]
-pub(super) const GRANT_SELECTOR: [u8; 4] = [0x1a, 0x95, 0xe7, 0x9a];
+/// Verified against Solidity interface compilation
+pub(super) const GRANT_SELECTOR: [u8; 4] = [0x75, 0x8e, 0x42, 0xeb];
 
 /// Selector for `revoke(address contract, uint256 slot, address grantee)`
 /// keccak256("revoke(address,uint256,address)")[:4]
-pub(super) const REVOKE_SELECTOR: [u8; 4] = [0x8d, 0x2d, 0x7e, 0x10];
+/// Verified against Solidity interface compilation
+pub(super) const REVOKE_SELECTOR: [u8; 4] = [0x92, 0xf5, 0xf3, 0x4e];
 
 /// Selector for `isAuthorized(address contract, uint256 slot, address query)`
 /// keccak256("isAuthorized(address,uint256,address)")[:4]
-pub(super) const IS_AUTHORIZED_SELECTOR: [u8; 4] = [0x2f, 0x54, 0xbf, 0x6e];
+/// Verified against Solidity interface compilation
+pub(super) const IS_AUTHORIZED_SELECTOR: [u8; 4] = [0xe8, 0x77, 0x52, 0xe9];
 
 #[cfg(test)]
 mod tests {
@@ -110,5 +115,40 @@ mod tests {
     fn test_set_hide_events_selector() {
         let hash = keccak256(b"setHideEvents(bool)");
         assert_eq!(&hash[..4], &SET_HIDE_EVENTS_SELECTOR);
+    }
+
+    // Verify selectors match Solidity interface compilation
+    // These use tuple types, so we verify the canonical Solidity encoding
+
+    #[test]
+    fn test_register_selector() {
+        // register(address,(uint256,uint8,uint8)[],bool)
+        let hash = keccak256(b"register(address,(uint256,uint8,uint8)[],bool)");
+        assert_eq!(&hash[..4], &REGISTER_SELECTOR);
+    }
+
+    #[test]
+    fn test_add_slots_selector() {
+        // addSlots((uint256,uint8,uint8)[])
+        let hash = keccak256(b"addSlots((uint256,uint8,uint8)[])");
+        assert_eq!(&hash[..4], &ADD_SLOTS_SELECTOR);
+    }
+
+    #[test]
+    fn test_grant_selector() {
+        let hash = keccak256(b"grant(address,uint256,address,uint8)");
+        assert_eq!(&hash[..4], &GRANT_SELECTOR);
+    }
+
+    #[test]
+    fn test_revoke_selector() {
+        let hash = keccak256(b"revoke(address,uint256,address)");
+        assert_eq!(&hash[..4], &REVOKE_SELECTOR);
+    }
+
+    #[test]
+    fn test_is_authorized_selector() {
+        let hash = keccak256(b"isAuthorized(address,uint256,address)");
+        assert_eq!(&hash[..4], &IS_AUTHORIZED_SELECTOR);
     }
 }
