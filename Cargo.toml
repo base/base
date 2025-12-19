@@ -56,6 +56,7 @@ base-reth-cli = { path = "crates/cli" }
 base-reth-rpc = { path = "crates/rpc" }
 base-tracex = { path = "crates/tracex" }
 base-reth-runner = { path = "crates/runner" }
+base-reth-privacy = { path = "crates/privacy" }
 base-reth-test-utils = { path = "crates/test-utils" }
 base-reth-flashblocks = { path = "crates/flashblocks" }
 

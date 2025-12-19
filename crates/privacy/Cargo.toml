@@ -1,0 +1,60 @@
+[package]
+name = "base-reth-privacy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Privacy layer for Base node-reth - dual-store architecture for private contract storage"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Core types
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+alloy-rpc-types-eth.workspace = true
+
+# Execution
+revm = { workspace = true, features = ["std"] }
+alloy-evm.workspace = true
+alloy-op-evm.workspace = true
+op-revm.workspace = true
+
+# Reth
+reth-revm = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-primitives.workspace = true
+reth-provider = { workspace = true, optional = true }
+
+# Async
+tokio = { workspace = true, features = ["sync"] }
+
+# State management
+arc-swap.workspace = true
+once_cell.workspace = true
+
+# Serialization (for persistence)
+serde = { workspace = true, features = ["derive"] }
+
+# Logging/metrics
+tracing.workspace = true
+metrics.workspace = true
+metrics-derive.workspace = true
+
+# Error handling
+eyre.workspace = true
+
+# Misc
+derive_more = { workspace = true, features = ["display", "from"] }
+hex = "0.4"
+
+[dev-dependencies]
+# Testing
+rstest.workspace = true
+rand.workspace = true
+
+[features]
+default = []
+provider = ["dep:reth-provider"]
