@@ -41,7 +41,7 @@ pub async fn init_proposer(
         proposal_interval_in_blocks: 10, // Much smaller interval for testing
         fetch_interval: 5,               // Check more frequently in tests
         game_type,
-        max_concurrent_defense_tasks: 0,
+        max_concurrent_defense_tasks: 1,
         safe_db_fallback: false,
         metrics_port: 9000,
         fast_finality_proving_limit: 0,
