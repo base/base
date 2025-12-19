@@ -1,0 +1,55 @@
+[package]
+name = "tips-system-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tips-audit = { workspace = true }
+tips-core = { workspace = true }
+tips-ingress-rpc = { path = "../ingress-rpc" }
+
+alloy-primitives = { workspace = true }
+alloy-provider = { workspace = true }
+alloy-signer-local = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-network = { workspace = true }
+
+op-alloy-network = { workspace = true }
+op-alloy-consensus = { workspace = true }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+aws-sdk-s3 = { workspace = true }
+aws-config = { workspace = true }
+aws-credential-types = { workspace = true }
+
+rdkafka = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+anyhow = { workspace = true }
+
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+
+reqwest = { version = "0.12.12", features = ["json"] }
+bytes = { workspace = true }
+hex = "0.4.3"
+jsonrpsee = { workspace = true }
+op-revm = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }
+serial_test = "3"
+
