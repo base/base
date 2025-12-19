@@ -175,10 +175,14 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundles_received_total: Counter,
     /// Number of backrun bundles that reverted during execution (all-or-nothing)
     pub backrun_bundles_reverted_total: Counter,
+    /// Number of backrun bundles rejected due to priority fee below target tx
+    pub backrun_bundles_rejected_low_fee_total: Counter,
     /// Number of backrun bundles successfully landed in a block
     pub backrun_bundles_landed_total: Counter,
     /// Latency of inserting a backrun bundle into the store
     pub backrun_bundle_insert_duration: Histogram,
+    /// Duration of executing all backrun bundles for a target transaction
+    pub backrun_bundle_execution_duration: Histogram,
 }
 
 impl OpRBuilderMetrics {

@@ -31,11 +31,12 @@ async fn backrun_bundles_execution(rbuilder: LocalInstance) -> eyre::Result<()> 
         .await?;
 
     // 2. Create backrun transactions with different priority fees
+    //    Both must have priority fee >= target's (20) to pass validation
     //    We intentionally create backrun_low first to verify sorting reorders them
     let backrun_low = driver
         .create_transaction()
         .with_signer(accounts[1])
-        .with_max_priority_fee_per_gas(10)
+        .with_max_priority_fee_per_gas(25) // >= target's 20
         .build()
         .await;
     let backrun_low_hash = backrun_low.tx_hash();
@@ -43,7 +44,7 @@ async fn backrun_bundles_execution(rbuilder: LocalInstance) -> eyre::Result<()> 
     let backrun_high = driver
         .create_transaction()
         .with_signer(accounts[2])
-        .with_max_priority_fee_per_gas(50)
+        .with_max_priority_fee_per_gas(50) // >= target's 20
         .build()
         .await;
     let backrun_high_hash = backrun_high.tx_hash();
@@ -160,7 +161,8 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
 
     // 2. Create backrun transactions:
     //    - backrun_ok: valid tx with HIGH priority (executes first, succeeds)
-    //    - backrun_revert: tx that will REVERT with LOW priority (executes second, fails)
+    //    - backrun_revert: tx that will REVERT (executes second, fails)
+    //    Both must have priority fee >= target's (20) to pass fee validation
     let backrun_ok = driver
         .create_transaction()
         .with_signer(accounts[1])
@@ -172,7 +174,7 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     let backrun_revert = driver
         .create_transaction()
         .with_signer(accounts[2])
-        .with_max_priority_fee_per_gas(10) // Low priority - executes second
+        .with_max_priority_fee_per_gas(25) // >= target's 20, but executes second (lower than 50)
         .with_revert() // This tx will revert
         .build()
         .await;
@@ -233,6 +235,105 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     assert!(
         !tx_hashes.contains(&backrun_revert_hash),
         "backrun_revert should NOT be in block"
+    );
+
+    Ok(())
+}
+
+/// Tests that backrun bundles are rejected if any backrun tx has priority fee < target tx
+#[rb_test(flashblocks)]
+async fn backrun_bundle_rejected_low_priority_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(3, ONE_ETH).await?;
+
+    // 1. Build target tx with priority fee 20
+    let target_tx = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .with_max_priority_fee_per_gas(20)
+        .build()
+        .await;
+    let target_tx_hash = target_tx.tx_hash().clone();
+
+    // Send to mempool manually
+    let provider = rbuilder.provider().await?;
+    let _ = provider
+        .send_raw_transaction(target_tx.encoded_2718().as_slice())
+        .await?;
+
+    // 2. Create backrun transactions:
+    //    - backrun_ok: priority fee 50 (>= target's 20) ✓
+    //    - backrun_low_fee: priority fee 10 (< target's 20) ✗
+    let backrun_ok = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(50)
+        .build()
+        .await;
+    let backrun_ok_hash = backrun_ok.tx_hash().clone();
+
+    let backrun_low_fee = driver
+        .create_transaction()
+        .with_signer(accounts[2])
+        .with_max_priority_fee_per_gas(10) // < target's 20, should cause rejection
+        .build()
+        .await;
+    let backrun_low_fee_hash = backrun_low_fee.tx_hash().clone();
+
+    // 3. Insert backrun bundle into store
+    let bundle = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx, backrun_ok, backrun_low_fee],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    rbuilder
+        .backrun_bundle_store()
+        .insert(bundle)
+        .expect("Failed to insert backrun bundle");
+
+    // 4. Build the block
+    driver.build_new_block().await?;
+
+    // 5. Verify block contents
+    let block = driver.latest_full().await?;
+    let tx_hashes: Vec<_> = block.transactions.hashes().collect();
+
+    // Target tx SHOULD be in block (it was in mempool independently)
+    assert!(
+        tx_hashes.contains(&target_tx_hash),
+        "Target tx should be included in block"
+    );
+
+    // backrun_ok should NOT be in block (bundle rejected due to low fee tx)
+    assert!(
+        !tx_hashes.contains(&backrun_ok_hash),
+        "backrun_ok should NOT be in block (bundle rejected: low priority fee)"
+    );
+
+    // backrun_low_fee should NOT be in block (it caused the rejection)
+    assert!(
+        !tx_hashes.contains(&backrun_low_fee_hash),
+        "backrun_low_fee should NOT be in block"
     );
 
     Ok(())

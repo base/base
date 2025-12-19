@@ -606,6 +606,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
                 self.metrics.backrun_target_txs_found_total.increment(1);
+                let backrun_start_time = Instant::now();
 
                 'bundle_loop: for mut stored_bundle in backrun_bundles {
                     info!(
@@ -622,6 +623,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         let b_tip = b.effective_tip_per_gas(base_fee).unwrap_or(0);
                         b_tip.cmp(&a_tip)
                     });
+
+                    // Validate: all backrun txs must have priority fee >= target tx's priority fee
+                    if let Some(lowest_fee_tx) = stored_bundle.backrun_txs.last() {
+                        let lowest_backrun_fee =
+                            lowest_fee_tx.effective_tip_per_gas(base_fee).unwrap_or(0);
+                        if lowest_backrun_fee < miner_fee {
+                            self.metrics
+                                .backrun_bundles_rejected_low_fee_total
+                                .increment(1);
+                            info!(
+                                target: "payload_builder",
+                                bundle_id = ?stored_bundle.bundle_id,
+                                target_fee = miner_fee,
+                                lowest_backrun_fee = lowest_backrun_fee,
+                                "Backrun bundle rejected: priority fee below target tx"
+                            );
+                            continue 'bundle_loop;
+                        }
+                    }
 
                     // All-or-nothing: simulate all txs first, only commit if all succeed
                     let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
@@ -679,6 +699,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                     self.metrics.backrun_bundles_landed_total.increment(1);
                 }
+
+                self.metrics
+                    .backrun_bundle_execution_duration
+                    .record(backrun_start_time.elapsed());
 
                 // Remove the target tx from the backrun bundle store as already executed
                 self.backrun_bundle_store.remove(&tx_hash);
