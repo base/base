@@ -604,27 +604,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if is_success && let Some(mut backrun_bundles) = self.backrun_bundle_store.get(&tx_hash)
-            {
+            if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
 
-                // Sort bundles by total priority fee (descending)
-                backrun_bundles.sort_by(|a, b| {
-                    let a_total: u128 = a
-                        .backrun_txs
-                        .iter()
-                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .sum();
-                    let b_total: u128 = b
-                        .backrun_txs
-                        .iter()
-                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
-                        .sum();
-                    b_total.cmp(&a_total)
-                });
+                // Pre-compute total fees and sort bundles (descending)
+                let mut bundles_with_fees: Vec<_> = backrun_bundles
+                    .into_iter()
+                    .map(|bundle| {
+                        let total_fee: u128 = bundle
+                            .backrun_txs
+                            .iter()
+                            .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                            .sum();
+                        (bundle, total_fee)
+                    })
+                    .collect();
+                bundles_with_fees.sort_by(|a, b| b.1.cmp(&a.1));
 
-                'bundle_loop: for mut stored_bundle in backrun_bundles {
+                'bundle_loop: for (mut stored_bundle, total_bundle_fee) in bundles_with_fees {
                     info!(
                         target: "payload_builder",
                         message = "Executing backrun bundle",
@@ -633,31 +631,27 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         tx_count = stored_bundle.backrun_txs.len(),
                     );
 
+                    // Validate: total bundle priority fee must be >= target tx's priority fee
+                    if total_bundle_fee < miner_fee {
+                        self.metrics
+                            .backrun_bundles_rejected_low_fee_total
+                            .increment(1);
+                        info!(
+                            target: "payload_builder",
+                            bundle_id = ?stored_bundle.bundle_id,
+                            target_fee = miner_fee,
+                            total_bundle_fee = total_bundle_fee,
+                            "Backrun bundle rejected: total priority fee below target tx"
+                        );
+                        continue 'bundle_loop;
+                    }
+
                     // Sort backrun txs by priority fee (descending)
                     stored_bundle.backrun_txs.sort_unstable_by(|a, b| {
                         let a_tip = a.effective_tip_per_gas(base_fee).unwrap_or(0);
                         let b_tip = b.effective_tip_per_gas(base_fee).unwrap_or(0);
                         b_tip.cmp(&a_tip)
                     });
-
-                    // Validate: all backrun txs must have priority fee >= target tx's priority fee
-                    if let Some(lowest_fee_tx) = stored_bundle.backrun_txs.last() {
-                        let lowest_backrun_fee =
-                            lowest_fee_tx.effective_tip_per_gas(base_fee).unwrap_or(0);
-                        if lowest_backrun_fee < miner_fee {
-                            self.metrics
-                                .backrun_bundles_rejected_low_fee_total
-                                .increment(1);
-                            info!(
-                                target: "payload_builder",
-                                bundle_id = ?stored_bundle.bundle_id,
-                                target_fee = miner_fee,
-                                lowest_backrun_fee = lowest_backrun_fee,
-                                "Backrun bundle rejected: priority fee below target tx"
-                            );
-                            continue 'bundle_loop;
-                        }
-                    }
 
                     // All-or-nothing: simulate all txs first, only commit if all succeed
                     let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
