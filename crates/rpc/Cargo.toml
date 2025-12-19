@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 # Project
 base-reth-flashblocks.workspace = true
+base-reth-privacy = { workspace = true, optional = true }
 
 # base/tips
 tips-core.workspace = true
@@ -32,6 +33,7 @@ reth-rpc-eth-api.workspace = true
 alloy-primitives.workspace = true
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
+alloy-serde.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
 
@@ -80,6 +82,10 @@ alloy-provider.workspace = true
 alloy-sol-macro = { workspace = true, features = ["json"] }
 alloy-sol-types.workspace = true
 alloy-contract.workspace = true
+
+[features]
+default = []
+privacy = ["dep:base-reth-privacy"]
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["reth-optimism-cli"]

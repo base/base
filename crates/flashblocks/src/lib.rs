@@ -23,3 +23,10 @@ pub use traits::{FlashblocksAPI, FlashblocksReceiver, PendingBlocksAPI};
 
 mod blocks;
 pub use blocks::{Flashblock, FlashblockDecodeError, Metadata};
+
+// Re-export privacy types when the privacy feature is enabled
+#[cfg(feature = "privacy")]
+pub use base_reth_privacy::{
+    PrivacyDatabase, PrivacyDatabaseError, PrivacyRegistry, PrivacyRpcFilter, PrivateStateStore,
+    RpcFilterConfig,
+};

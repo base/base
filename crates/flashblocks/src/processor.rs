@@ -40,6 +40,9 @@ use tracing::{debug, error, info, warn};
 
 use crate::{Flashblock, Metrics, PendingBlocks, PendingBlocksBuilder};
 
+#[cfg(feature = "privacy")]
+use base_reth_privacy::{PrivacyDatabase, PrivacyRegistry, PrivateStateStore};
+
 /// Messages consumed by the state processor.
 #[derive(Debug, Clone)]
 pub enum StateUpdate {
@@ -58,6 +61,12 @@ pub struct StateProcessor<Client> {
     metrics: Metrics,
     client: Client,
     sender: Sender<Arc<PendingBlocks>>,
+    /// Privacy registry for slot classification (optional, requires `privacy` feature)
+    #[cfg(feature = "privacy")]
+    privacy_registry: Option<Arc<PrivacyRegistry>>,
+    /// Private state store for TEE-local storage (optional, requires `privacy` feature)
+    #[cfg(feature = "privacy")]
+    private_store: Option<Arc<PrivateStateStore>>,
 }
 
 impl<Client> StateProcessor<Client>
@@ -76,7 +85,58 @@ where
         rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
         sender: Sender<Arc<PendingBlocks>>,
     ) -> Self {
-        Self { metrics: Metrics::default(), pending_blocks, client, max_depth, rx, sender }
+        Self {
+            metrics: Metrics::default(),
+            pending_blocks,
+            client,
+            max_depth,
+            rx,
+            sender,
+            #[cfg(feature = "privacy")]
+            privacy_registry: None,
+            #[cfg(feature = "privacy")]
+            private_store: None,
+        }
+    }
+
+    /// Creates a new state processor with privacy layer support.
+    ///
+    /// When privacy is enabled, storage operations are routed through the
+    /// privacy database wrapper, which intercepts private slot reads/writes
+    /// and routes them to the TEE-local store.
+    #[cfg(feature = "privacy")]
+    pub fn with_privacy(
+        client: Client,
+        pending_blocks: Arc<ArcSwapOption<PendingBlocks>>,
+        max_depth: u64,
+        rx: Arc<Mutex<UnboundedReceiver<StateUpdate>>>,
+        sender: Sender<Arc<PendingBlocks>>,
+        privacy_registry: Arc<PrivacyRegistry>,
+        private_store: Arc<PrivateStateStore>,
+    ) -> Self {
+        Self {
+            metrics: Metrics::default(),
+            pending_blocks,
+            client,
+            max_depth,
+            rx,
+            sender,
+            privacy_registry: Some(privacy_registry),
+            private_store: Some(private_store),
+        }
+    }
+
+    /// Set the privacy layer components.
+    ///
+    /// This allows enabling privacy after construction.
+    #[cfg(feature = "privacy")]
+    pub fn set_privacy(
+        &mut self,
+        registry: Arc<PrivacyRegistry>,
+        store: Arc<PrivateStateStore>,
+    ) {
+        self.privacy_registry = Some(registry);
+        self.private_store = Some(store);
     }
 
     /// Processes updates from the queue until the channel closes.
@@ -291,8 +351,44 @@ where
         let evm_config = OpEvmConfig::optimism(self.client.chain_spec());
         let state_provider =
             self.client.state_by_block_number_or_tag(BlockNumberOrTag::Number(canonical_block))?;
-        let state_provider_db = StateProviderDatabase::new(state_provider);
-        let state = State::builder().with_database(state_provider_db).with_bundle_update().build();
+
+        // Build the database, optionally wrapping with privacy layer.
+        //
+        // When the privacy feature is enabled AND registry/store are provided,
+        // we wrap the database to intercept private slot reads/writes.
+        // This is optional - if not configured, the code works identically to before.
+        #[cfg(feature = "privacy")]
+        let state = {
+            let state_provider_db = StateProviderDatabase::new(state_provider);
+            match (&self.privacy_registry, &self.private_store) {
+                (Some(registry), Some(store)) => {
+                    let mut privacy_db = PrivacyDatabase::new(
+                        state_provider_db,
+                        Arc::clone(registry),
+                        Arc::clone(store),
+                    );
+                    privacy_db.set_block(*earliest_block_number);
+                    State::builder().with_database(privacy_db).with_bundle_update().build()
+                }
+                _ => {
+                    // Privacy layer not configured - use standard database.
+                    // We still need to wrap for type consistency, but with an empty registry
+                    // all slots are classified as public (pass-through behavior).
+                    let empty_registry = Arc::new(PrivacyRegistry::new());
+                    let empty_store = Arc::new(PrivateStateStore::new());
+                    let privacy_db =
+                        PrivacyDatabase::new(state_provider_db, empty_registry, empty_store);
+                    State::builder().with_database(privacy_db).with_bundle_update().build()
+                }
+            }
+        };
+
+        #[cfg(not(feature = "privacy"))]
+        let state = {
+            let state_provider_db = StateProviderDatabase::new(state_provider);
+            State::builder().with_database(state_provider_db).with_bundle_update().build()
+        };
+
         let mut pending_blocks_builder = PendingBlocksBuilder::new();
 
         let mut db = match &prev_pending_blocks {

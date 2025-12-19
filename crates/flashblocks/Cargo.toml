@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# Project
+base-reth-privacy = { workspace = true, optional = true }
+
 # reth
 reth.workspace = true
 reth-evm.workspace = true
@@ -76,6 +79,10 @@ base-reth-test-utils.workspace = true
 reth-primitives-traits.workspace = true
 reth-optimism-primitives.workspace = true
 criterion = { version = "0.5", features = ["async_tokio"] }
+
+[features]
+default = []
+privacy = ["dep:base-reth-privacy"]
 
 [[bench]]
 name = "pending_state"

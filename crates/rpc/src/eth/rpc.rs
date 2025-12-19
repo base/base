@@ -1,10 +1,13 @@
 //! RPC trait definitions and implementations for flashblocks.
+//!
+//! When the `privacy` feature is enabled, this module also supports
+//! privacy-aware filtering of storage and log responses.
 
 use std::{sync::Arc, time::Duration};
 
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_primitives::{
-    Address, TxHash, U256,
+    Address, B256, TxHash, U256,
     map::foldhash::{HashSet, HashSetExt},
 };
 use alloy_rpc_types::{
@@ -13,6 +16,7 @@ use alloy_rpc_types::{
     state::{EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_rpc_types_eth::{Filter, Log};
+use alloy_serde::JsonStorageKey;
 use base_reth_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::{
     core::{RpcResult, async_trait},
@@ -34,6 +38,9 @@ use tokio_stream::{StreamExt, wrappers::BroadcastStream};
 use tracing::{debug, trace, warn};
 
 use crate::metrics::Metrics;
+
+#[cfg(feature = "privacy")]
+use base_reth_privacy::PrivacyRpcFilter;
 
 /// Max configured timeout for `eth_sendRawTransactionSync` in milliseconds.
 const MAX_TIMEOUT_SEND_RAW_TX_SYNC_MS: u64 = 6_000;
@@ -115,21 +122,72 @@ pub trait EthApiOverride {
     /// Returns logs matching the filter, including pending flashblock logs.
     #[method(name = "getLogs")]
     async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>>;
+
+    /// Returns storage at a given address and index.
+    ///
+    /// When privacy filtering is enabled, private slots will return zero
+    /// for unauthorized callers.
+    #[method(name = "getStorageAt")]
+    async fn get_storage_at(
+        &self,
+        address: Address,
+        index: JsonStorageKey,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<B256>;
 }
 
 /// Extended Eth API with flashblocks support.
+///
+/// Optionally supports privacy filtering when the `privacy` feature is enabled
+/// and a [`PrivacyRpcFilter`] is provided.
 #[derive(Debug)]
 pub struct EthApiExt<Eth: EthApiTypes, FB> {
     eth_api: Eth,
     eth_filter: EthFilter<Eth>,
     flashblocks_state: Arc<FB>,
     metrics: Metrics,
+    /// Optional privacy filter for storage and log filtering.
+    /// When `None`, all responses are returned unfiltered (backwards compatible).
+    #[cfg(feature = "privacy")]
+    privacy_filter: Option<PrivacyRpcFilter>,
 }
 
 impl<Eth: EthApiTypes, FB> EthApiExt<Eth, FB> {
     /// Creates a new extended Eth API instance with flashblocks support.
+    ///
+    /// Privacy filtering is disabled by default. Use [`Self::with_privacy`] to enable it.
     pub fn new(eth_api: Eth, eth_filter: EthFilter<Eth>, flashblocks_state: Arc<FB>) -> Self {
-        Self { eth_api, eth_filter, flashblocks_state, metrics: Metrics::default() }
+        Self {
+            eth_api,
+            eth_filter,
+            flashblocks_state,
+            metrics: Metrics::default(),
+            #[cfg(feature = "privacy")]
+            privacy_filter: None,
+        }
+    }
+
+    /// Creates a new extended Eth API instance with privacy filtering enabled.
+    #[cfg(feature = "privacy")]
+    pub fn with_privacy(
+        eth_api: Eth,
+        eth_filter: EthFilter<Eth>,
+        flashblocks_state: Arc<FB>,
+        privacy_filter: PrivacyRpcFilter,
+    ) -> Self {
+        Self {
+            eth_api,
+            eth_filter,
+            flashblocks_state,
+            metrics: Metrics::default(),
+            privacy_filter: Some(privacy_filter),
+        }
+    }
+
+    /// Set the privacy filter.
+    #[cfg(feature = "privacy")]
+    pub fn set_privacy_filter(&mut self, filter: PrivacyRpcFilter) {
+        self.privacy_filter = Some(filter);
     }
 }
 
@@ -501,7 +559,50 @@ where
             .collect();
         all_logs.extend(deduped_pending_logs);
 
+        // Apply privacy filtering if enabled
+        #[cfg(feature = "privacy")]
+        let all_logs = if let Some(ref filter) = self.privacy_filter {
+            // Note: caller is None for RPC requests - in a full implementation,
+            // the caller would be extracted from request context (e.g., signed message)
+            filter.filter_logs(all_logs, None)
+        } else {
+            all_logs
+        };
+
         Ok(all_logs)
+    }
+
+    async fn get_storage_at(
+        &self,
+        address: Address,
+        index: JsonStorageKey,
+        block_number: Option<BlockId>,
+    ) -> RpcResult<B256> {
+        debug!(
+            message = "rpc::get_storage_at",
+            address = %address,
+            index = ?index,
+            block_number = ?block_number,
+        );
+
+        // Get the actual storage value from the underlying eth_api
+        let value = EthState::storage_at(&self.eth_api, address, index, block_number)
+            .await
+            .map_err(Into::into)?;
+
+        // Apply privacy filtering if enabled
+        #[cfg(feature = "privacy")]
+        let value = if let Some(ref filter) = self.privacy_filter {
+            // Convert JsonStorageKey to U256 for filtering
+            let slot = U256::from_be_bytes(index.as_b256().0);
+            // Note: caller is None for RPC requests - in a full implementation,
+            // the caller would be extracted from request context (e.g., signed message)
+            filter.filter_storage(address, slot, value, None)
+        } else {
+            value
+        };
+
+        Ok(value)
     }
 }
 
