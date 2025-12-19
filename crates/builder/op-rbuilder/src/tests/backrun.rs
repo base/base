@@ -240,6 +240,190 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     Ok(())
 }
 
+/// Tests that multiple backrun bundles for the same target tx are sorted by total priority fee
+/// - Bundles with higher total priority fee are processed first
+/// - Both bundles can land if they don't conflict
+#[rb_test(flashblocks)]
+async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(5, ONE_ETH).await?;
+
+    // 1. Build target tx with priority fee 20
+    let target_tx = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .with_max_priority_fee_per_gas(20)
+        .build()
+        .await;
+    let target_tx_hash = target_tx.tx_hash().clone();
+
+    // Send to mempool manually
+    let provider = rbuilder.provider().await?;
+    let _ = provider
+        .send_raw_transaction(target_tx.encoded_2718().as_slice())
+        .await?;
+
+    // 2. Create Bundle A with HIGH total priority fee
+    //    Two txs: 60 + 50 = 110 total
+    let bundle_a_tx1 = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(60)
+        .build()
+        .await;
+    let bundle_a_tx1_hash = bundle_a_tx1.tx_hash().clone();
+
+    let bundle_a_tx2 = driver
+        .create_transaction()
+        .with_signer(accounts[2])
+        .with_max_priority_fee_per_gas(50)
+        .build()
+        .await;
+    let bundle_a_tx2_hash = bundle_a_tx2.tx_hash().clone();
+
+    // 3. Create Bundle B with LOW total priority fee
+    //    Two txs: 30 + 25 = 55 total
+    let bundle_b_tx1 = driver
+        .create_transaction()
+        .with_signer(accounts[3])
+        .with_max_priority_fee_per_gas(30)
+        .build()
+        .await;
+    let bundle_b_tx1_hash = bundle_b_tx1.tx_hash().clone();
+
+    let bundle_b_tx2 = driver
+        .create_transaction()
+        .with_signer(accounts[4])
+        .with_max_priority_fee_per_gas(25)
+        .build()
+        .await;
+    let bundle_b_tx2_hash = bundle_b_tx2.tx_hash().clone();
+
+    // 4. Insert Bundle B FIRST (lower total fee), then Bundle A (higher total fee)
+    //    This verifies that sorting reorders them correctly
+    let bundle_b = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx.clone(), bundle_b_tx1, bundle_b_tx2],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    let bundle_a = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx, bundle_a_tx1, bundle_a_tx2],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    // Insert in "wrong" order - B first, then A
+    rbuilder
+        .backrun_bundle_store()
+        .insert(bundle_b)
+        .expect("Failed to insert bundle B");
+    rbuilder
+        .backrun_bundle_store()
+        .insert(bundle_a)
+        .expect("Failed to insert bundle A");
+
+    // 5. Build the block
+    driver.build_new_block().await?;
+
+    // 6. Verify block contents
+    let block = driver.latest_full().await?;
+    let tx_hashes: Vec<_> = block.transactions.hashes().collect();
+
+    // All txs should be in block
+    assert!(
+        tx_hashes.contains(&target_tx_hash),
+        "Target tx not included in block"
+    );
+    assert!(
+        tx_hashes.contains(&bundle_a_tx1_hash),
+        "Bundle A tx1 not included in block"
+    );
+    assert!(
+        tx_hashes.contains(&bundle_a_tx2_hash),
+        "Bundle A tx2 not included in block"
+    );
+    assert!(
+        tx_hashes.contains(&bundle_b_tx1_hash),
+        "Bundle B tx1 not included in block"
+    );
+    assert!(
+        tx_hashes.contains(&bundle_b_tx2_hash),
+        "Bundle B tx2 not included in block"
+    );
+
+    // 7. Verify ordering: Bundle A txs come BEFORE Bundle B txs
+    //    (higher total fee bundle processed first)
+    let a_tx1_pos = tx_hashes
+        .iter()
+        .position(|h| *h == bundle_a_tx1_hash)
+        .expect("Bundle A tx1 position not found");
+    let a_tx2_pos = tx_hashes
+        .iter()
+        .position(|h| *h == bundle_a_tx2_hash)
+        .expect("Bundle A tx2 position not found");
+    let b_tx1_pos = tx_hashes
+        .iter()
+        .position(|h| *h == bundle_b_tx1_hash)
+        .expect("Bundle B tx1 position not found");
+    let b_tx2_pos = tx_hashes
+        .iter()
+        .position(|h| *h == bundle_b_tx2_hash)
+        .expect("Bundle B tx2 position not found");
+
+    // Bundle A (higher total fee) should come before Bundle B
+    let bundle_a_last_pos = a_tx1_pos.max(a_tx2_pos);
+    let bundle_b_first_pos = b_tx1_pos.min(b_tx2_pos);
+
+    assert!(
+        bundle_a_last_pos < bundle_b_first_pos,
+        "Bundle A (total fee 110) should be processed before Bundle B (total fee 55). \
+         Bundle A last tx at pos {}, Bundle B first tx at pos {}",
+        bundle_a_last_pos,
+        bundle_b_first_pos
+    );
+
+    Ok(())
+}
+
 /// Tests that backrun bundles are rejected if any backrun tx has priority fee < target tx
 #[rb_test(flashblocks)]
 async fn backrun_bundle_rejected_low_priority_fee(rbuilder: LocalInstance) -> eyre::Result<()> {

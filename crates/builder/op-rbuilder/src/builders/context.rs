@@ -604,9 +604,25 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
+            if is_success && let Some(mut backrun_bundles) = self.backrun_bundle_store.get(&tx_hash)
+            {
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
+
+                // Sort bundles by total priority fee (descending)
+                backrun_bundles.sort_by(|a, b| {
+                    let a_total: u128 = a
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                        .sum();
+                    let b_total: u128 = b
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                        .sum();
+                    b_total.cmp(&a_total)
+                });
 
                 'bundle_loop: for mut stored_bundle in backrun_bundles {
                     info!(
@@ -617,7 +633,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         tx_count = stored_bundle.backrun_txs.len(),
                     );
 
-                    // Sort backrun txs by priority fee (highest first)
+                    // Sort backrun txs by priority fee (descending)
                     stored_bundle.backrun_txs.sort_unstable_by(|a, b| {
                         let a_tip = a.effective_tip_per_gas(base_fee).unwrap_or(0);
                         let b_tip = b.effective_tip_per_gas(base_fee).unwrap_or(0);
