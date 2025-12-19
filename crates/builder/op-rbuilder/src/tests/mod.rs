@@ -18,6 +18,9 @@ mod miner_gas_limit;
 mod gas_limiter;
 
 #[cfg(test)]
+mod backrun;
+
+#[cfg(test)]
 mod ordering;
 
 #[cfg(test)]

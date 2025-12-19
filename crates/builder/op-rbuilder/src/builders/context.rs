@@ -607,7 +607,14 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
                 self.metrics.backrun_target_txs_found_total.increment(1);
 
-                for stored_bundle in backrun_bundles {
+                for mut stored_bundle in backrun_bundles {
+                    // Sort backrun txs by priority fee (highest first)
+                    stored_bundle.backrun_txs.sort_unstable_by(|a, b| {
+                        let a_tip = a.effective_tip_per_gas(base_fee).unwrap_or(0);
+                        let b_tip = b.effective_tip_per_gas(base_fee).unwrap_or(0);
+                        b_tip.cmp(&a_tip)
+                    });
+
                     info!(
                         target: "payload_builder",
                         message = "Executing backrun bundles",
@@ -662,6 +669,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         info.executed_transactions.push(backrun_tx.into_inner());
                     }
                 }
+
+                // Remove the target tx from the backrun bundle store as already executed
+                self.backrun_bundle_store.remove(&tx_hash);
             }
         }
 
