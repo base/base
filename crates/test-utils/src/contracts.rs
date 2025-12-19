@@ -30,3 +30,12 @@ sol!(
         "/contracts/out/TransparentUpgradeableProxy.sol/TransparentUpgradeableProxy.json"
     )
 );
+
+sol!(
+    #[sol(rpc)]
+    PrivateBalance,
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/contracts/out/PrivateBalance.sol/PrivateBalance.json"
+    )
+);

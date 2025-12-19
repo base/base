@@ -13,7 +13,7 @@ pub use constants::{
 };
 
 mod contracts;
-pub use contracts::{DoubleCounter, MockERC20, TransparentUpgradeableProxy};
+pub use contracts::{DoubleCounter, MockERC20, PrivateBalance, TransparentUpgradeableProxy};
 
 mod engine;
 pub use engine::{EngineAddress, EngineApi, EngineProtocol, HttpEngine, IpcEngine};
