@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_register_already_registered() {
         let caller = test_address(1);
-        let (registry, _) = setup_context(caller);
+        let (_registry, _) = setup_context(caller);
 
         // Register once
         let admin = test_address(2);
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn test_is_registered_true() {
         let caller = test_address(1);
-        let (registry, _) = setup_context(caller);
+        let (_registry, _) = setup_context(caller);
 
         // Register the caller first
         let admin = test_address(2);

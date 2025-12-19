@@ -471,8 +471,8 @@ mod tests {
         let bob = test_address(20);
         let slot = U256::from(100);
 
-        let (registry, store) = setup_context(alice);
-        register_contract(&registry, contract, admin);
+        let (_registry, _store) = setup_context(alice);
+        register_contract(&_registry, contract, admin);
 
         // Bob is NOT authorized
         let input = build_is_authorized_input(contract, slot, bob);
