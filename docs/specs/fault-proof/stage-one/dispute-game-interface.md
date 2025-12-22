@@ -98,7 +98,31 @@ The `rootClaim` of created dispute games can either be a claim that the creator 
 This is an implementation detail that is left up to the `IDisputeGame` to handle within its `resolve` function.
 
 When the `DisputeGameFactory` creates a new `DisputeGame` contract, it calls `initialize()` on the clone to
-set up the game.
+set up the game. The factory passes immutable arguments to the clone using the CWIA (Clone With Immutable Args)
+pattern. There are two CWIA layouts depending on whether the game type has implementation args configured:
+
+**Standard CWIA Layout** (when `gameArgs[_gameType]` is empty):
+
+| Bytes | Description |
+|-------|-------------|
+| [0, 20) | Game creator address |
+| [20, 52) | Root claim |
+| [52, 84) | Parent block hash at creation time |
+| [84, 84 + n) | Extra data (opaque) |
+
+**Extended CWIA Layout** (when `gameArgs[_gameType]` is non-empty):
+
+| Bytes | Description |
+|-------|-------------|
+| [0, 20) | Game creator address |
+| [20, 52) | Root claim |
+| [52, 84) | Parent block hash at creation time |
+| [84, 88) | Game type |
+| [88, 88 + n) | Extra data (opaque) |
+| [88 + n, 88 + n + m) | Implementation args (opaque) |
+
+The implementation args allow chain-specific configuration to be passed to the game implementation at clone
+creation time, enabling a single implementation contract to be reused across different chain configurations.
 
 ```solidity
 /// @title IDisputeGameFactory
@@ -114,6 +138,11 @@ interface IDisputeGameFactory {
     /// @param impl The implementation contract for the given `GameType`.
     /// @param gameType The type of the DisputeGame.
     event ImplementationSet(address indexed impl, GameType indexed gameType);
+
+    /// @notice Emitted when a game type's implementation args are set
+    /// @param gameType The type of the DisputeGame.
+    /// @param args The constructor args for the game type.
+    event ImplementationArgsSet(GameType indexed gameType, bytes args);
 
     /// @notice Emitted when a game type's initialization bond is updated
     /// @param gameType The type of the DisputeGame.
@@ -291,6 +320,11 @@ interface IDisputeGame is IInitializable {
     /// @return l1Head_ The parent hash of the L1 block when the dispute game was created.
     function l1Head() external pure returns (Hash l1Head_);
 
+    /// @notice Getter for the L2 sequence number (typically the L2 block number).
+    /// @dev Extracted from the extra data supplied to the dispute game contract by the creator.
+    /// @return l2SequenceNumber_ The L2 sequence number for this dispute game.
+    function l2SequenceNumber() external pure returns (uint256 l2SequenceNumber_);
+
     /// @notice Getter for the extra data.
     /// @dev `clones-with-immutable-args` argument #4
     /// @return extraData_ Any extra data supplied to the dispute game contract by the creator.
@@ -312,5 +346,11 @@ interface IDisputeGame is IInitializable {
     /// @return rootClaim_ The root claim of the DisputeGame.
     /// @return extraData_ Any extra data supplied to the dispute game contract by the creator.
     function gameData() external view returns (GameType gameType_, Claim rootClaim_, bytes memory extraData_);
+
+    /// @notice Returns whether the game type was respected when this game was created.
+    /// @dev Used as a withdrawal finality condition - games created when their type wasn't
+    ///      respected cannot be used to finalize withdrawals.
+    /// @return wasRespected_ True if the game type was the respected game type when created.
+    function wasRespectedGameTypeWhenCreated() external view returns (bool wasRespected_);
 }
 ```
