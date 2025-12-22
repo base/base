@@ -10,7 +10,7 @@ mod base;
 pub use base::{
     block::meter_block,
     flashblock_trie_cache::{FlashblockTrieCache, FlashblockTrieData},
-    meter::{FlashblocksState, meter_bundle},
+    meter::{FlashblocksState, MeterBundleOutput, meter_bundle},
     meter_rpc::MeteringApiImpl,
     pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},

@@ -16,7 +16,8 @@ use tracing::{error, info};
 use crate::{FlashblockTrieCache, MeteringApiServer, meter_bundle};
 use super::{block::meter_block, types::MeterBlockResponse};
 
-/// Implementation of the metering RPC API
+/// Implementation of the metering RPC API.
+#[derive(Debug)]
 pub struct MeteringApiImpl<Provider, FB> {
     provider: Provider,
     flashblocks_state: Arc<FB>,

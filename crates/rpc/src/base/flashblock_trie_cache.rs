@@ -16,7 +16,9 @@ use crate::FlashblocksState;
 /// each bundle's state root time reflects only its own I/O cost.
 #[derive(Debug, Clone)]
 pub struct FlashblockTrieData {
+    /// The trie updates from computing the state root.
     pub trie_updates: TrieUpdates,
+    /// The hashed post state used for state root computation.
     pub hashed_state: HashedPostState,
 }
 
@@ -61,10 +63,11 @@ impl FlashblockTrieCache {
         canonical_state_provider: &dyn StateProvider,
     ) -> EyreResult<FlashblockTrieData> {
         let cached_entry = self.cache.load();
-        if let Some(cached) = cached_entry.as_ref() {
-            if cached.block_hash == block_hash && cached.flashblock_index == flashblock_index {
-                return Ok(cached.trie_data.clone());
-            }
+        if let Some(cached) = cached_entry.as_ref()
+            && cached.block_hash == block_hash
+            && cached.flashblock_index == flashblock_index
+        {
+            return Ok(cached.trie_data.clone());
         }
 
         let hashed_state =
