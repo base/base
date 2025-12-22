@@ -9,9 +9,10 @@ use alloy_consensus::Receipt;
 use alloy_eips::{BlockHashOrNumber, Encodable2718};
 use alloy_primitives::{Address, B256, BlockNumber, Bytes, U256, b256, bytes, hex::FromHex};
 use alloy_rpc_types_engine::PayloadId;
-use base_reth_flashblocks::{
-    Flashblock, FlashblocksAPI, FlashblocksReceiver, FlashblocksState, Metadata,
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
 };
+use base_reth_flashblocks::{FlashblocksAPI, FlashblocksReceiver, FlashblocksState};
 use base_reth_test_utils::{LocalNodeProvider, TestAccounts, TestHarness};
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use op_alloy_consensus::OpDepositReceipt;
@@ -22,7 +23,6 @@ use reth::{
 };
 use reth_optimism_primitives::{OpBlock, OpReceipt, OpTransactionSigned};
 use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
-use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use tokio::{runtime::Runtime, time::sleep};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 

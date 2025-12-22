@@ -1679,7 +1679,6 @@ dependencies = [
  "futures-util",
  "jsonrpsee",
  "once_cell",
- "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",
  "op-alloy-rpc-types-engine",

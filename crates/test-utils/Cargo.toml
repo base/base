@@ -52,7 +52,6 @@ alloy-signer-local = "1.1.0"
 op-alloy-rpc-types.workspace = true
 op-alloy-rpc-types-engine.workspace = true
 op-alloy-network.workspace = true
-op-alloy-consensus.workspace = true
 
 # tokio
 tokio.workspace = true
