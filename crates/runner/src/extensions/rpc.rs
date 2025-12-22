@@ -49,12 +49,6 @@ impl BaseNodeExtension for BaseRpcExtension {
         let sequencer_rpc = self.sequencer_rpc.clone();
 
         builder.extend_rpc_modules(move |ctx| {
-            if metering_enabled {
-                info!(message = "Starting Metering RPC");
-                let metering_api = MeteringApiImpl::new(ctx.provider().clone());
-                ctx.modules.merge_configured(metering_api.into_rpc())?;
-            }
-
             let proxy_api =
                 TransactionStatusApiImpl::new(sequencer_rpc.clone(), ctx.pool().clone())
                     .expect("Failed to create transaction status proxy");
@@ -77,6 +71,14 @@ impl BaseNodeExtension for BaseRpcExtension {
                 let mut flashblocks_client = FlashblocksSubscriber::new(fb.clone(), ws_url);
                 flashblocks_client.start();
 
+                // Metering API requires flashblocks state to access pending blocks for bundle simulation
+                if metering_enabled {
+                    info!(message = "Starting Metering RPC");
+                    let metering_api =
+                        MeteringApiImpl::new(ctx.provider().clone(), fb.clone());
+                    ctx.modules.merge_configured(metering_api.into_rpc())?;
+                }
+
                 let api_ext = EthApiExt::new(
                     ctx.registry.eth_api().clone(),
                     ctx.registry.eth_handlers().filter.clone(),
@@ -91,6 +93,9 @@ impl BaseNodeExtension for BaseRpcExtension {
                 ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
             } else {
                 info!(message = "flashblocks integration is disabled");
+                if metering_enabled {
+                    info!(message = "Metering RPC requires flashblocks to be enabled - skipping");
+                }
             }
 
             Ok(())

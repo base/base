@@ -2,6 +2,7 @@
 
 use std::{
     any::Any,
+    fmt,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
@@ -9,11 +10,9 @@ use std::{
 use alloy_genesis::Genesis;
 use alloy_provider::RootProvider;
 use alloy_rpc_client::RpcClient;
-use base_reth_flashblocks_rpc::{
-    rpc::{EthApiExt, EthApiOverrideServer},
-    state::FlashblocksState,
-    subscription::{Flashblock, FlashblocksReceiver},
-};
+use base_flashtypes::Flashblock;
+use base_reth_flashblocks::{FlashblocksReceiver, FlashblocksState};
+use base_reth_rpc::{EthApiExt, EthApiOverrideServer, EthPubSub, EthPubSubApiServer};
 use eyre::Result;
 use futures_util::Future;
 use once_cell::sync::OnceCell;
@@ -46,31 +45,52 @@ use tokio_stream::StreamExt;
 
 use crate::engine::EngineApi;
 
-pub const BASE_CHAIN_ID: u64 = 84532;
-
+/// Convenience alias for the local blockchain provider type.
 pub type LocalNodeProvider = BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>;
+/// Convenience alias for the Flashblocks state backing the local node.
 pub type LocalFlashblocksState = FlashblocksState<LocalNodeProvider>;
 
+/// Handle to a launched local node along with the resources required to keep it alive.
 pub struct LocalNode {
     pub(crate) http_api_addr: SocketAddr,
     engine_ipc_path: String,
+    pub(crate) ws_api_addr: SocketAddr,
     provider: LocalNodeProvider,
     _node_exit_future: NodeExitFuture,
     _node: Box<dyn Any + Sync + Send>,
     _task_manager: TaskManager,
 }
 
+impl fmt::Debug for LocalNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalNode")
+            .field("http_api_addr", &self.http_api_addr)
+            .field("ws_api_addr", &self.ws_api_addr)
+            .field("engine_ipc_path", &self.engine_ipc_path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Components that allow tests to interact with the Flashblocks worker tasks.
 #[derive(Clone)]
 pub struct FlashblocksParts {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
     state: Arc<LocalFlashblocksState>,
 }
 
+impl fmt::Debug for FlashblocksParts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksParts").finish_non_exhaustive()
+    }
+}
+
 impl FlashblocksParts {
+    /// Clone the shared [`FlashblocksState`] handle.
     pub fn state(&self) -> Arc<LocalFlashblocksState> {
         self.state.clone()
     }
 
+    /// Send a flashblock to the background processor and wait until it is handled.
     pub async fn send(&self, flashblock: Flashblock) -> Result<()> {
         let (tx, rx) = oneshot::channel();
         self.sender.send((flashblock, tx)).await.map_err(|err| eyre::eyre!(err))?;
@@ -86,6 +106,7 @@ struct FlashblocksNodeExtensions {
 
 struct FlashblocksNodeExtensionsInner {
     sender: mpsc::Sender<(Flashblock, oneshot::Sender<()>)>,
+    #[allow(clippy::type_complexity)]
     receiver: Arc<Mutex<Option<mpsc::Receiver<(Flashblock, oneshot::Sender<()>)>>>>,
     fb_cell: Arc<OnceCell<Arc<LocalFlashblocksState>>>,
     process_canonical: bool,
@@ -120,16 +141,16 @@ impl FlashblocksNodeExtensions {
                     Ok(async move {
                         while let Some(note) = ctx.notifications.try_next().await? {
                             if let Some(committed) = note.committed_chain() {
+                                let hash = committed.tip().num_hash();
                                 if process_canonical {
                                     // Many suites drive canonical updates manually to reproduce race conditions, so
                                     // allowing this to be disabled keeps canonical replay deterministic.
-                                    for block in committed.blocks_iter() {
+                                    let chain = Arc::unwrap_or_clone(committed);
+                                    for (_, block) in chain.into_blocks() {
                                         fb.on_canonical_block_received(block);
                                     }
                                 }
-                                let _ = ctx
-                                    .events
-                                    .send(ExExEvent::FinishedHeight(committed.tip().num_hash()));
+                                let _ = ctx.events.send(ExExEvent::FinishedHeight(hash));
                             }
                         }
                         Ok(())
@@ -156,6 +177,12 @@ impl FlashblocksNodeExtensions {
                     fb.clone(),
                 );
                 ctx.modules.replace_configured(api_ext.into_rpc())?;
+
+                // Register eth_subscribe subscription endpoint for flashblocks
+                // Uses replace_configured since eth_subscribe already exists from reth's standard module
+                // Pass eth_api to enable proxying standard subscription types to reth's implementation
+                let eth_pubsub = EthPubSub::new(ctx.registry.eth_api().clone(), fb.clone());
+                ctx.modules.replace_configured(eth_pubsub.into_rpc())?;
 
                 let fb_for_task = fb.clone();
                 let mut receiver = receiver
@@ -193,13 +220,18 @@ impl FlashblocksNodeExtensions {
     }
 }
 
+/// Optimism node types used for the local harness.
 pub type OpTypes =
     FullNodeTypesAdapter<OpNode, TmpDB, BlockchainProvider<NodeTypesWithDBAdapter<OpNode, TmpDB>>>;
+/// Builder that wires up the concrete node components.
 pub type OpComponentsBuilder = <OpNode as Node<OpTypes>>::ComponentsBuilder;
+/// Additional services attached to the node builder.
 pub type OpAddOns = <OpNode as Node<OpTypes>>::AddOns;
+/// Launcher builder used by the harness to customize node startup.
 pub type OpBuilder =
     WithLaunchContext<NodeBuilderWithComponents<OpTypes, OpComponentsBuilder, OpAddOns>>;
 
+/// Default launcher that is reused across the harness and integration tests.
 pub async fn default_launcher(
     builder: OpBuilder,
 ) -> eyre::Result<NodeHandle<Adapter<OpNode>, OpAddOns>> {
@@ -208,6 +240,7 @@ pub async fn default_launcher(
 }
 
 impl LocalNode {
+    /// Launch a new local node using the provided launcher function.
     pub async fn new<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -242,18 +275,26 @@ impl LocalNode {
         Ok(Arc::new(TempDatabase::new(db, path)))
     }
 
+    /// Create an HTTP provider pointed at the node's public RPC endpoint.
     pub fn provider(&self) -> Result<RootProvider<Optimism>> {
         let url = format!("http://{}", self.http_api_addr);
         let client = RpcClient::builder().http(url.parse()?);
         Ok(RootProvider::<Optimism>::new(client))
     }
 
+    /// Build an Engine API client that talks to the node's IPC endpoint.
     pub fn engine_api(&self) -> Result<EngineApi<crate::engine::IpcEngine>> {
         EngineApi::<crate::engine::IpcEngine>::new(self.engine_ipc_path.clone())
     }
 
+    /// Clone the underlying blockchain provider so callers can inspect chain state.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.provider.clone()
+    }
+
+    /// Websocket URL for the local node.
+    pub fn ws_url(&self) -> String {
+        format!("ws://{}", self.ws_api_addr)
     }
 }
 
@@ -280,7 +321,8 @@ where
         std::thread::current().id()
     );
 
-    let mut rpc_args = RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc();
+    let mut rpc_args =
+        RpcServerArgs::default().with_unused_ports().with_http().with_auth_ipc().with_ws();
     rpc_args.auth_ipc_path = unique_ipc_path;
 
     let node = OpNode::new(RollupArgs::default());
@@ -312,11 +354,17 @@ where
         .http_local_addr()
         .ok_or_else(|| eyre::eyre!("HTTP RPC server failed to bind to address"))?;
 
+    let ws_api_addr = node_handle
+        .rpc_server_handle()
+        .ws_local_addr()
+        .ok_or_else(|| eyre::eyre!("Failed to get websocket api address"))?;
+
     let engine_ipc_path = node_config.rpc.auth_ipc_path;
     let provider = node_handle.provider().clone();
 
     Ok(LocalNode {
         http_api_addr,
+        ws_api_addr,
         engine_ipc_path,
         provider,
         _node_exit_future: node_exit_future,
@@ -337,12 +385,23 @@ fn init_flashblocks_state(
     .clone()
 }
 
+/// Local node wrapper that exposes helpers specific to Flashblocks tests.
 pub struct FlashblocksLocalNode {
     node: LocalNode,
     parts: FlashblocksParts,
 }
 
+impl fmt::Debug for FlashblocksLocalNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlashblocksLocalNode")
+            .field("node", &self.node)
+            .field("parts", &self.parts)
+            .finish()
+    }
+}
+
 impl FlashblocksLocalNode {
+    /// Launch a flashblocks-enabled node using the default launcher.
     pub async fn new() -> Result<Self> {
         Self::with_launcher(default_launcher).await
     }
@@ -353,6 +412,7 @@ impl FlashblocksLocalNode {
         Self::with_manual_canonical_launcher(default_launcher).await
     }
 
+    /// Launch a flashblocks-enabled node with a custom launcher and canonical processing enabled.
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -361,6 +421,7 @@ impl FlashblocksLocalNode {
         Self::with_launcher_inner(launcher, true).await
     }
 
+    /// Same as [`Self::with_launcher`] but leaves canonical processing to the caller.
     pub async fn with_manual_canonical_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -382,18 +443,22 @@ impl FlashblocksLocalNode {
         Ok(Self { node, parts })
     }
 
+    /// Access the shared Flashblocks state for assertions or manual driving.
     pub fn flashblocks_state(&self) -> Arc<LocalFlashblocksState> {
         self.parts.state()
     }
 
+    /// Send a flashblock through the background processor and await completion.
     pub async fn send_flashblock(&self, flashblock: Flashblock) -> Result<()> {
         self.parts.send(flashblock).await
     }
 
+    /// Split the wrapper into the underlying node plus flashblocks parts.
     pub fn into_parts(self) -> (LocalNode, FlashblocksParts) {
         (self.node, self.parts)
     }
 
+    /// Borrow the underlying [`LocalNode`].
     pub fn as_node(&self) -> &LocalNode {
         &self.node
     }

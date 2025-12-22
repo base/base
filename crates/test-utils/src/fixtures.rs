@@ -1,6 +1,8 @@
+//! Shared fixtures and test data reused by integration tests across the Base codebase.
+
 use std::sync::Arc;
 
-use alloy_primitives::{B256, hex::FromHex};
+use alloy_genesis::Genesis;
 use reth::api::{NodeTypes, NodeTypesWithDBAdapter};
 use reth_db::{
     ClientVersion, DatabaseEnv, init_db,
@@ -9,10 +11,12 @@ use reth_db::{
 };
 use reth_provider::{ProviderFactory, providers::StaticFileProvider};
 
-pub fn secret_from_hex(hex_key: &str) -> B256 {
-    B256::from_hex(hex_key).expect("32-byte private key")
+/// Loads the shared test genesis configuration.
+pub fn load_genesis() -> Genesis {
+    serde_json::from_str(include_str!("../assets/genesis.json")).unwrap()
 }
 
+/// Creates a provider factory for tests with the given chain spec.
 pub fn create_provider_factory<N: NodeTypes>(
     chain_spec: Arc<N::ChainSpec>,
 ) -> ProviderFactory<NodeTypesWithDBAdapter<N, Arc<TempDatabase<DatabaseEnv>>>> {
@@ -25,6 +29,7 @@ pub fn create_provider_factory<N: NodeTypes>(
     )
 }
 
+/// Creates a temporary test database.
 fn create_test_db() -> Arc<TempDatabase<DatabaseEnv>> {
     let path = tempdir_path();
     let emsg = format!("{ERROR_DB_CREATION}: {path:?}");
