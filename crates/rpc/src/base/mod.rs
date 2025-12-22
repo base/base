@@ -1,5 +1,7 @@
+pub mod annotator;
 pub mod cache;
 pub mod estimator;
+pub mod kafka;
 pub(crate) mod meter;
 pub(crate) mod meter_rpc;
 pub(crate) mod pubsub;
