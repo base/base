@@ -17,7 +17,9 @@ use alloy_primitives::{Address, B256, Bytes, LogData, TxHash, U256, map::HashMap
 use alloy_provider::Provider;
 use alloy_rpc_types_engine::PayloadId;
 use alloy_sol_types::{SolConstructor, SolValue};
-use base_reth_flashblocks::{Flashblock, Metadata};
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
 use base_reth_test_utils::{
     FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH, MockERC20,
     TransparentUpgradeableProxy,
@@ -25,7 +27,6 @@ use base_reth_test_utils::{
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use reth_optimism_primitives::OpReceipt;
-use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 
 /// ERC-20 Transfer event topic (keccak256("Transfer(address,address,uint256)"))
 const TRANSFER_EVENT_TOPIC: B256 =

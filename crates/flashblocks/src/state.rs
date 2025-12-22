@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use arc_swap::{ArcSwapOption, Guard};
+use base_flashtypes::Flashblock;
 use reth::{
     chainspec::{ChainSpecProvider, EthChainSpec},
     providers::{BlockReaderIdExt, StateProviderFactory},
@@ -19,7 +20,7 @@ use tokio::sync::{
 use tracing::{error, info};
 
 use crate::{
-    Flashblock, FlashblocksAPI, FlashblocksReceiver, PendingBlocks,
+    FlashblocksAPI, FlashblocksReceiver, PendingBlocks,
     processor::{StateProcessor, StateUpdate},
 };
 

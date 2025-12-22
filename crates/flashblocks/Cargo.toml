@@ -12,6 +12,9 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+# workspace
+base-flashtypes.workspace = true
+
 # reth
 reth.workspace = true
 reth-evm.workspace = true
@@ -37,9 +40,6 @@ op-alloy-network.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-consensus.workspace = true
 
-# rollup-boost
-rollup-boost.workspace = true
-
 # tokio
 tokio.workspace = true
 tokio-tungstenite.workspace = true
@@ -50,19 +50,13 @@ futures-util.workspace = true
 # misc
 url.workspace = true
 eyre.workspace = true
-bytes.workspace = true
-serde.workspace = true
-brotli.workspace = true
 tracing.workspace = true
 metrics.workspace = true
 arc-swap.workspace = true
-serde_json.workspace = true
 metrics-derive.workspace = true
-derive_more = { workspace = true, features = ["display", "error"] }
 
 [dev-dependencies]
 rand.workspace = true
-rstest.workspace = true
 reth-db.workspace = true
 once_cell.workspace = true
 reth-provider.workspace = true

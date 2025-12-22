@@ -13,7 +13,9 @@ use alloy_rpc_client::RpcClient;
 use alloy_rpc_types::simulate::{SimBlock, SimulatePayload};
 use alloy_rpc_types_engine::PayloadId;
 use alloy_rpc_types_eth::{TransactionInput, error::EthRpcErrorCode};
-use base_reth_flashblocks::{Flashblock, Metadata};
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
 use base_reth_test_utils::{
     DoubleCounter, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
 };
@@ -25,7 +27,6 @@ use op_alloy_rpc_types::OpTransactionRequest;
 use reth::revm::context::TransactionType;
 use reth_optimism_primitives::OpReceipt;
 use reth_rpc_eth_api::RpcReceipt;
-use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 

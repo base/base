@@ -21,8 +21,8 @@ lychee:
   @command -v lychee >/dev/null 2>&1 || cargo install lychee
   lychee --config ./lychee.toml .
 
-# Checks formatting, clippy, and tests
-check: check-format check-clippy test
+# Checks formatting, udeps, clippy, and tests
+check: check-format check-udeps check-clippy test
 
 # Fixes formatting and clippy issues
 fix: format-fix clippy-fix zepter-fix

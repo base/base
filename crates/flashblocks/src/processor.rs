@@ -16,6 +16,7 @@ use alloy_rpc_types::{TransactionTrait, Withdrawal};
 use alloy_rpc_types_engine::{ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3};
 use alloy_rpc_types_eth::state::StateOverride;
 use arc_swap::ArcSwapOption;
+use base_flashtypes::Flashblock;
 use eyre::eyre;
 use op_alloy_consensus::OpTxEnvelope;
 use op_alloy_network::TransactionResponse;
@@ -38,7 +39,7 @@ use reth_rpc_convert::transaction::ConvertReceiptInput;
 use tokio::sync::{Mutex, broadcast::Sender, mpsc::UnboundedReceiver};
 use tracing::{debug, error, info, warn};
 
-use crate::{Flashblock, Metrics, PendingBlocks, PendingBlocksBuilder};
+use crate::{Metrics, PendingBlocks, PendingBlocksBuilder};
 
 /// Messages consumed by the state processor.
 #[derive(Debug, Clone)]
