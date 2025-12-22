@@ -2,7 +2,6 @@ use crate::metrics::OpRBuilderMetrics;
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_primitives::{Address, TxHash};
 use concurrent_queue::ConcurrentQueue;
-use dashmap::try_result::TryResult;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
@@ -84,7 +83,26 @@ impl TxDataStore {
     }
 
     pub fn get(&self, tx_hash: &TxHash) -> Option<TxData> {
-        self.data.by_tx_hash.get(tx_hash).map(|entry| entry.clone())
+        let metering_enabled = self.data.metering_enabled.load(Ordering::Relaxed);
+
+        let Some(entry) = self.data.by_tx_hash.get(tx_hash) else {
+            if metering_enabled {
+                self.metrics.metering_unknown_transaction.increment(1);
+            }
+            return None;
+        };
+
+        let data = entry.clone();
+
+        if metering_enabled {
+            if data.metering.is_some() {
+                self.metrics.metering_known_transaction.increment(1);
+            } else {
+                self.metrics.metering_unknown_transaction.increment(1);
+            }
+        }
+
+        Some(data)
     }
 
     pub fn insert_backrun_bundle(&self, bundle: AcceptedBundle) -> Result<(), String> {
@@ -147,16 +165,6 @@ impl TxDataStore {
         Ok(())
     }
 
-    pub fn get_backrun_bundles(&self, target_tx_hash: &TxHash) -> Option<Vec<StoredBackrunBundle>> {
-        self.data.by_tx_hash.get(target_tx_hash).and_then(|entry| {
-            if entry.backrun_bundles.is_empty() {
-                None
-            } else {
-                Some(entry.backrun_bundles.clone())
-            }
-        })
-    }
-
     pub fn remove_backrun_bundles(&self, target_tx_hash: &TxHash) {
         if let Some(mut entry) = self.data.by_tx_hash.get_mut(target_tx_hash) {
             let bundle_count = entry.backrun_bundles.len();
@@ -188,31 +196,6 @@ impl TxDataStore {
 
         let mut entry = self.data.by_tx_hash.entry(tx_hash).or_default();
         entry.metering = Some(metering_info);
-    }
-
-    pub fn get_metering(&self, tx_hash: &TxHash) -> Option<MeterBundleResponse> {
-        if !self.data.metering_enabled.load(Ordering::Relaxed) {
-            return None;
-        }
-
-        match self.data.by_tx_hash.try_get(tx_hash) {
-            TryResult::Present(entry) => {
-                if entry.metering.is_some() {
-                    self.metrics.metering_known_transaction.increment(1);
-                } else {
-                    self.metrics.metering_unknown_transaction.increment(1);
-                }
-                entry.metering.clone()
-            }
-            TryResult::Absent => {
-                self.metrics.metering_unknown_transaction.increment(1);
-                None
-            }
-            TryResult::Locked => {
-                self.metrics.metering_locked_transaction.increment(1);
-                None
-            }
-        }
     }
 
     pub fn clear_metering(&self) {
@@ -435,22 +418,28 @@ mod tests {
         assert!(store.insert_backrun_bundle(valid_bundle).is_ok());
         assert_eq!(store.len(), 1);
 
-        let retrieved = store.get_backrun_bundles(&target_tx_hash).unwrap();
-        assert_eq!(retrieved.len(), 1);
-        assert_eq!(retrieved[0].backrun_txs.len(), 1);
-        assert_eq!(retrieved[0].backrun_txs[0].tx_hash(), backrun_tx1.tx_hash());
+        let data = store.get(&target_tx_hash).unwrap();
+        assert_eq!(data.backrun_bundles.len(), 1);
+        assert_eq!(data.backrun_bundles[0].backrun_txs.len(), 1);
+        assert_eq!(
+            data.backrun_bundles[0].backrun_txs[0].tx_hash(),
+            backrun_tx1.tx_hash()
+        );
 
         let replacement_bundle =
             create_test_accepted_bundle(vec![target_tx.clone(), backrun_tx2.clone()]);
         assert!(store.insert_backrun_bundle(replacement_bundle).is_ok());
         assert_eq!(store.len(), 1);
 
-        let retrieved = store.get_backrun_bundles(&target_tx_hash).unwrap();
-        assert_eq!(retrieved.len(), 1);
-        assert_eq!(retrieved[0].backrun_txs[0].tx_hash(), backrun_tx2.tx_hash());
+        let data = store.get(&target_tx_hash).unwrap();
+        assert_eq!(data.backrun_bundles.len(), 1);
+        assert_eq!(
+            data.backrun_bundles[0].backrun_txs[0].tx_hash(),
+            backrun_tx2.tx_hash()
+        );
 
         store.remove_backrun_bundles(&target_tx_hash);
-        assert!(store.get_backrun_bundles(&target_tx_hash).is_none());
+        assert!(store.get(&target_tx_hash).is_none());
     }
 
     #[test]
@@ -472,8 +461,8 @@ mod tests {
         let charlie_bundle = create_test_accepted_bundle(vec![target_tx.clone(), charlie_backrun]);
         store.insert_backrun_bundle(charlie_bundle).unwrap();
 
-        let retrieved = store.get_backrun_bundles(&target_tx_hash).unwrap();
-        assert_eq!(retrieved.len(), 2);
+        let data = store.get(&target_tx_hash).unwrap();
+        assert_eq!(data.backrun_bundles.len(), 2);
     }
 
     #[test]
@@ -494,22 +483,18 @@ mod tests {
     }
 
     #[test]
-    fn test_metering_enable_disable() {
-        let store = TxDataStore::default();
+    fn test_metering_insert_and_get() {
+        let store = TxDataStore::new(true, 100);
         let tx_hash = TxHash::random();
         let meter_data = create_test_metering(21000);
 
         store.insert_metering(tx_hash, meter_data);
-        assert!(store.get_metering(&tx_hash).is_none());
-
-        store.set_metering_enabled(true);
-        assert_eq!(store.get_metering(&tx_hash).unwrap().total_gas_used, 21000);
+        let data = store.get(&tx_hash).unwrap();
+        assert_eq!(data.metering.unwrap().total_gas_used, 21000);
 
         store.insert_metering(tx_hash, create_test_metering(50000));
-        assert_eq!(store.get_metering(&tx_hash).unwrap().total_gas_used, 50000);
-
-        store.set_metering_enabled(false);
-        assert!(store.get_metering(&tx_hash).is_none());
+        let data = store.get(&tx_hash).unwrap();
+        assert_eq!(data.metering.unwrap().total_gas_used, 50000);
     }
 
     #[test]
@@ -522,12 +507,12 @@ mod tests {
         store.insert_metering(tx1, create_test_metering(1000));
         store.insert_metering(tx2, create_test_metering(2000));
 
-        assert!(store.get_metering(&tx1).is_some());
-        assert!(store.get_metering(&tx2).is_some());
+        assert!(store.get(&tx1).unwrap().metering.is_some());
+        assert!(store.get(&tx2).unwrap().metering.is_some());
 
         store.clear_metering();
 
-        assert!(store.get_metering(&tx1).is_none());
-        assert!(store.get_metering(&tx2).is_none());
+        assert!(store.get(&tx1).is_none());
+        assert!(store.get(&tx2).is_none());
     }
 }

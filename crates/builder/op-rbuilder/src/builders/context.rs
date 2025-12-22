@@ -445,7 +445,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            let _resource_usage = self.tx_data_store.get_metering(&tx_hash);
+            let tx_data = self.tx_data_store.get(&tx_hash);
+            let _resource_usage = tx_data.as_ref().and_then(|d| d.metering.clone());
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional
@@ -603,8 +604,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_transactions.push(tx.into_inner());
 
             if is_success
-                && let Some(backrun_bundles) = self.tx_data_store.get_backrun_bundles(&tx_hash)
+                && let Some(ref data) = tx_data
+                && !data.backrun_bundles.is_empty()
             {
+                let backrun_bundles = &data.backrun_bundles;
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
 
@@ -645,7 +648,11 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     let total_backrun_da_size: u64 = stored_bundle
                         .backrun_txs
                         .iter()
-                        .map(|tx| tx.encoded_2718().len() as u64)
+                        .map(|tx| {
+                            op_alloy_flz::tx_estimated_size_fjord_bytes(
+                                tx.encoded_2718().as_slice(),
+                            )
+                        })
                         .sum();
 
                     if let Err(result) = info.is_tx_over_limits(
@@ -700,7 +707,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         let backrun_gas_used = result.gas_used();
 
                         info.cumulative_gas_used += backrun_gas_used;
-                        info.cumulative_da_bytes_used += backrun_tx.encoded_2718().len() as u64;
+                        info.cumulative_da_bytes_used +=
+                            op_alloy_flz::tx_estimated_size_fjord_bytes(
+                                backrun_tx.encoded_2718().as_slice(),
+                            );
 
                         let ctx = ReceiptBuilderCtx {
                             tx: backrun_tx.inner(),
