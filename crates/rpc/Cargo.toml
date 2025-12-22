@@ -54,6 +54,11 @@ eyre.workspace = true
 serde.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
+parking_lot.workspace = true
+indexmap.workspace = true
+
+# priority fee estimation
+reth-optimism-payload-builder.workspace = true
 
 [dev-dependencies]
 base-flashtypes.workspace = true
