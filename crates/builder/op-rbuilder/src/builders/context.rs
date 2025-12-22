@@ -634,7 +634,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                             total_effective_tip = total_effective_tip,
                             "Backrun bundle rejected: total effective tip below target tx"
                         );
-                        continue 'bundle_loop;
+                        break 'bundle_loop;
                     }
 
                     let total_backrun_gas: u64 = stored_bundle
