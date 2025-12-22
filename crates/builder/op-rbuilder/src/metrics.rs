@@ -177,6 +177,8 @@ pub struct OpRBuilderMetrics {
     pub backrun_bundles_reverted_total: Counter,
     /// Number of backrun bundles rejected due to priority fee below target tx
     pub backrun_bundles_rejected_low_fee_total: Counter,
+    /// Number of backrun bundles rejected due to exceeding block limits
+    pub backrun_bundles_rejected_over_limits_total: Counter,
     /// Number of backrun bundles successfully landed in a block
     pub backrun_bundles_landed_total: Counter,
     /// Latency of inserting a backrun bundle into the store

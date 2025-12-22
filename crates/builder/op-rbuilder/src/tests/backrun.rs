@@ -393,3 +393,170 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
 
     Ok(())
 }
+
+#[rb_test(flashblocks)]
+async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+
+    // Set gas limit high enough for builder tx + target tx, but not backrun
+    // Flashblocks has additional overhead, so use higher limits
+    // Set limit to 500k, backrun requests 1M -> rejected
+    driver
+        .provider()
+        .raw_request::<(u64,), bool>("miner_setGasLimit".into(), (500_000,))
+        .await?;
+
+    let target_tx = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .with_max_priority_fee_per_gas(20)
+        .build()
+        .await;
+    let target_tx_hash = target_tx.tx_hash().clone();
+
+    let provider = rbuilder.provider().await?;
+    let _ = provider
+        .send_raw_transaction(target_tx.encoded_2718().as_slice())
+        .await?;
+
+    let backrun = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(50)
+        .with_gas_limit(1_000_000)
+        .build()
+        .await;
+    let backrun_hash = backrun.tx_hash().clone();
+
+    let bundle = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx, backrun],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    rbuilder
+        .backrun_bundle_store()
+        .insert(bundle)
+        .expect("Failed to insert backrun bundle");
+
+    driver.build_new_block().await?;
+
+    let block = driver.latest_full().await?;
+    let tx_hashes: Vec<_> = block.transactions.hashes().collect();
+
+    assert!(
+        tx_hashes.contains(&target_tx_hash),
+        "Target tx should be included in block"
+    );
+
+    assert!(
+        !tx_hashes.contains(&backrun_hash),
+        "Backrun should NOT be in block (exceeds gas limit)"
+    );
+
+    Ok(())
+}
+
+#[rb_test(flashblocks)]
+async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> eyre::Result<()> {
+    let driver = rbuilder.driver().await?;
+    let accounts = driver.fund_accounts(2, ONE_ETH).await?;
+
+    // Set DA limit high enough for builder tx + target tx, but not backrun
+    // Flashblocks has additional overhead, so use higher limits
+    // Set block limit to 500 bytes, then create a backrun with large calldata
+    driver
+        .provider()
+        .raw_request::<(i32, i32), bool>("miner_setMaxDASize".into(), (0, 500))
+        .await?;
+
+    let target_tx = driver
+        .create_transaction()
+        .with_signer(accounts[0])
+        .with_max_priority_fee_per_gas(20)
+        .build()
+        .await;
+    let target_tx_hash = target_tx.tx_hash().clone();
+
+    let provider = rbuilder.provider().await?;
+    let _ = provider
+        .send_raw_transaction(target_tx.encoded_2718().as_slice())
+        .await?;
+
+    // Create backrun with large calldata to exceed DA limit
+    let backrun = driver
+        .create_transaction()
+        .with_signer(accounts[1])
+        .with_max_priority_fee_per_gas(50)
+        .with_input(vec![0u8; 1000].into())
+        .build()
+        .await;
+    let backrun_hash = backrun.tx_hash().clone();
+
+    let bundle = AcceptedBundle {
+        uuid: Uuid::new_v4(),
+        txs: vec![target_tx, backrun],
+        block_number: driver.latest().await?.header.number + 1,
+        flashblock_number_min: None,
+        flashblock_number_max: None,
+        min_timestamp: None,
+        max_timestamp: None,
+        reverting_tx_hashes: vec![],
+        replacement_uuid: None,
+        dropping_tx_hashes: vec![],
+        meter_bundle_response: MeterBundleResponse {
+            bundle_gas_price: U256::ZERO,
+            bundle_hash: TxHash::ZERO,
+            coinbase_diff: U256::ZERO,
+            eth_sent_to_coinbase: U256::ZERO,
+            gas_fees: U256::ZERO,
+            results: vec![],
+            state_block_number: 0,
+            state_flashblock_index: None,
+            total_gas_used: 0,
+            total_execution_time_us: 0,
+        },
+    };
+
+    rbuilder
+        .backrun_bundle_store()
+        .insert(bundle)
+        .expect("Failed to insert backrun bundle");
+
+    driver.build_new_block().await?;
+
+    let block = driver.latest_full().await?;
+    let tx_hashes: Vec<_> = block.transactions.hashes().collect();
+
+    assert!(
+        tx_hashes.contains(&target_tx_hash),
+        "Target tx should be included in block"
+    );
+
+    assert!(
+        !tx_hashes.contains(&backrun_hash),
+        "Backrun should NOT be in block (exceeds DA limit)"
+    );
+
+    Ok(())
+}

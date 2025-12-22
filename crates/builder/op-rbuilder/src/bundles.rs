@@ -1,4 +1,4 @@
-use alloy_consensus::transaction::Recovered;
+use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_primitives::{Address, TxHash};
 use concurrent_queue::ConcurrentQueue;
 use jsonrpsee::{
@@ -18,6 +18,7 @@ pub struct StoredBackrunBundle {
     pub bundle_id: Uuid,
     pub sender: Address,
     pub backrun_txs: Vec<Recovered<OpTxEnvelope>>,
+    pub total_priority_fee: u128,
 }
 
 struct BackrunData {
@@ -72,10 +73,16 @@ impl BackrunBundleStore {
 
         let _ = self.data.lru.push(target_tx_hash);
 
+        let total_priority_fee: u128 = backrun_txs
+            .iter()
+            .map(|tx| tx.max_priority_fee_per_gas().unwrap_or(0))
+            .sum();
+
         let stored_bundle = StoredBackrunBundle {
             bundle_id: *bundle.uuid(),
             sender: backrun_sender,
-            backrun_txs: backrun_txs.clone(),
+            backrun_txs,
+            total_priority_fee,
         };
 
         let replaced = {
@@ -101,10 +108,12 @@ impl BackrunBundleStore {
     }
 
     pub fn get(&self, target_tx_hash: &TxHash) -> Option<Vec<StoredBackrunBundle>> {
-        self.data
-            .by_target_tx
-            .get(target_tx_hash)
-            .map(|entry| entry.values().cloned().collect())
+        self.data.by_target_tx.get(target_tx_hash).map(|entry| {
+            let mut bundles: Vec<_> = entry.values().cloned().collect();
+            // Sort bundles by total_priority_fee (descending)
+            bundles.sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
+            bundles
+        })
     }
 
     pub fn remove(&self, target_tx_hash: &TxHash) {

@@ -435,7 +435,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                info!(
+                debug!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
@@ -608,22 +608,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
 
-                // Pre-compute total fees and sort bundles (descending)
-                let mut bundles_with_fees: Vec<_> = backrun_bundles
-                    .into_iter()
-                    .map(|bundle| {
-                        let total_fee: u128 = bundle
-                            .backrun_txs
-                            .iter()
-                            .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
-                            .sum();
-                        (bundle, total_fee)
-                    })
-                    .collect();
-                bundles_with_fees.sort_by(|a, b| b.1.cmp(&a.1));
-
-                'bundle_loop: for (mut stored_bundle, total_bundle_fee) in bundles_with_fees {
-                    info!(
+                // Bundles are pre-sorted by total_priority_fee (descending) from the store
+                'bundle_loop: for stored_bundle in backrun_bundles {
+                    debug!(
                         target: "payload_builder",
                         message = "Executing backrun bundle",
                         tx_hash = ?tx_hash,
@@ -631,8 +618,12 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                         tx_count = stored_bundle.backrun_txs.len(),
                     );
 
-                    // Validate: total bundle priority fee must be >= target tx's priority fee
-                    if total_bundle_fee < miner_fee {
+                    let total_effective_tip: u128 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                        .sum();
+                    if total_effective_tip < miner_fee {
                         self.metrics
                             .backrun_bundles_rejected_low_fee_total
                             .increment(1);
@@ -640,18 +631,43 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                             target: "payload_builder",
                             bundle_id = ?stored_bundle.bundle_id,
                             target_fee = miner_fee,
-                            total_bundle_fee = total_bundle_fee,
-                            "Backrun bundle rejected: total priority fee below target tx"
+                            total_effective_tip = total_effective_tip,
+                            "Backrun bundle rejected: total effective tip below target tx"
                         );
                         continue 'bundle_loop;
                     }
 
-                    // Sort backrun txs by priority fee (descending)
-                    stored_bundle.backrun_txs.sort_unstable_by(|a, b| {
-                        let a_tip = a.effective_tip_per_gas(base_fee).unwrap_or(0);
-                        let b_tip = b.effective_tip_per_gas(base_fee).unwrap_or(0);
-                        b_tip.cmp(&a_tip)
-                    });
+                    let total_backrun_gas: u64 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.gas_limit())
+                        .sum();
+                    let total_backrun_da_size: u64 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.encoded_2718().len() as u64)
+                        .sum();
+
+                    if let Err(result) = info.is_tx_over_limits(
+                        total_backrun_da_size,
+                        block_gas_limit,
+                        tx_da_limit,
+                        block_da_limit,
+                        total_backrun_gas,
+                        info.da_footprint_scalar,
+                        block_da_footprint_limit,
+                    ) {
+                        self.metrics
+                            .backrun_bundles_rejected_over_limits_total
+                            .increment(1);
+                        info!(
+                            target: "payload_builder",
+                            bundle_id = ?stored_bundle.bundle_id,
+                            result = ?result,
+                            "Backrun bundle rejected: exceeds block limits"
+                        );
+                        continue 'bundle_loop;
+                    }
 
                     // All-or-nothing: simulate all txs first, only commit if all succeed
                     let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
