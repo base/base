@@ -1,3 +1,5 @@
+pub mod cache;
+pub mod estimator;
 pub(crate) mod meter;
 pub(crate) mod meter_rpc;
 pub(crate) mod pubsub;

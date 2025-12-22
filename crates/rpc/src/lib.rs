@@ -8,6 +8,12 @@ pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 
 mod base;
 pub use base::{
+    cache::{BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals},
+    estimator::{
+        BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
+        ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
+        RollingPriorityEstimates,
+    },
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
     pubsub::{EthPubSub, EthPubSubApiServer},
