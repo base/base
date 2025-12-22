@@ -6,7 +6,7 @@ use jsonrpsee::{
     proc_macros::rpc,
 };
 use op_alloy_consensus::OpTxEnvelope;
-use std::{collections::HashMap, fmt::Debug, sync::Arc, time::Instant};
+use std::{fmt::Debug, sync::Arc, time::Instant};
 use tips_core::AcceptedBundle;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub struct StoredBackrunBundle {
 }
 
 struct BackrunData {
-    by_target_tx: dashmap::DashMap<TxHash, HashMap<Address, StoredBackrunBundle>>,
+    by_target_tx: dashmap::DashMap<TxHash, Vec<StoredBackrunBundle>>,
     lru: ConcurrentQueue<TxHash>,
 }
 
@@ -87,7 +87,16 @@ impl BackrunBundleStore {
 
         let replaced = {
             let mut entry = self.data.by_target_tx.entry(target_tx_hash).or_default();
-            entry.insert(backrun_sender, stored_bundle).is_some()
+            let replaced = if let Some(pos) = entry.iter().position(|b| b.sender == backrun_sender)
+            {
+                entry[pos] = stored_bundle;
+                true
+            } else {
+                entry.push(stored_bundle);
+                false
+            };
+            entry.sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
+            replaced
         };
 
         if replaced {
@@ -108,12 +117,10 @@ impl BackrunBundleStore {
     }
 
     pub fn get(&self, target_tx_hash: &TxHash) -> Option<Vec<StoredBackrunBundle>> {
-        self.data.by_target_tx.get(target_tx_hash).map(|entry| {
-            let mut bundles: Vec<_> = entry.values().cloned().collect();
-            // Sort bundles by total_priority_fee (descending)
-            bundles.sort_by(|a, b| b.total_priority_fee.cmp(&a.total_priority_fee));
-            bundles
-        })
+        self.data
+            .by_target_tx
+            .get(target_tx_hash)
+            .map(|entry| entry.clone())
     }
 
     pub fn remove(&self, target_tx_hash: &TxHash) {
