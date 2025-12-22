@@ -45,7 +45,7 @@ use crate::{
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
-    tx_data_store::TxDataStore,
+    tx_data_store::{TxData, TxDataStore},
     tx_signer::Signer,
 };
 
@@ -445,8 +445,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            let tx_data = self.tx_data_store.get(&tx_hash);
-            let _resource_usage = tx_data.as_ref().and_then(|d| d.metering.clone());
+            let TxData {
+                metering: _resource_usage,
+                backrun_bundles,
+            } = self.tx_data_store.get(&tx_hash);
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional
@@ -603,11 +605,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if is_success
-                && let Some(ref data) = tx_data
-                && !data.backrun_bundles.is_empty()
-            {
-                let backrun_bundles = &data.backrun_bundles;
+            if is_success && !backrun_bundles.is_empty() {
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
 

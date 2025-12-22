@@ -82,14 +82,17 @@ impl TxDataStore {
         }
     }
 
-    pub fn get(&self, tx_hash: &TxHash) -> Option<TxData> {
+    pub fn get(&self, tx_hash: &TxHash) -> TxData {
         let metering_enabled = self.data.metering_enabled.load(Ordering::Relaxed);
 
         let Some(entry) = self.data.by_tx_hash.get(tx_hash) else {
             if metering_enabled {
                 self.metrics.metering_unknown_transaction.increment(1);
             }
-            return None;
+            return TxData {
+                metering: None,
+                backrun_bundles: vec![],
+            };
         };
 
         let data = entry.clone();
@@ -102,7 +105,7 @@ impl TxDataStore {
             }
         }
 
-        Some(data)
+        data
     }
 
     pub fn insert_backrun_bundle(&self, bundle: AcceptedBundle) -> Result<(), String> {
@@ -390,9 +393,9 @@ mod tests {
         let bundle = create_test_accepted_bundle(vec![target_tx, backrun_tx]);
         store.insert_backrun_bundle(bundle).unwrap();
 
-        let result = store.get(&target_tx_hash).unwrap();
+        let result = store.get(&target_tx_hash);
         assert!(result.metering.is_some());
-        assert_eq!(result.metering.unwrap().total_gas_used, 21000);
+        assert_eq!(result.metering.as_ref().unwrap().total_gas_used, 21000);
         assert_eq!(result.backrun_bundles.len(), 1);
     }
 
@@ -418,7 +421,7 @@ mod tests {
         assert!(store.insert_backrun_bundle(valid_bundle).is_ok());
         assert_eq!(store.len(), 1);
 
-        let data = store.get(&target_tx_hash).unwrap();
+        let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 1);
         assert_eq!(data.backrun_bundles[0].backrun_txs.len(), 1);
         assert_eq!(
@@ -431,7 +434,7 @@ mod tests {
         assert!(store.insert_backrun_bundle(replacement_bundle).is_ok());
         assert_eq!(store.len(), 1);
 
-        let data = store.get(&target_tx_hash).unwrap();
+        let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 1);
         assert_eq!(
             data.backrun_bundles[0].backrun_txs[0].tx_hash(),
@@ -439,7 +442,7 @@ mod tests {
         );
 
         store.remove_backrun_bundles(&target_tx_hash);
-        assert!(store.get(&target_tx_hash).is_none());
+        assert!(store.get(&target_tx_hash).backrun_bundles.is_empty());
     }
 
     #[test]
@@ -461,7 +464,7 @@ mod tests {
         let charlie_bundle = create_test_accepted_bundle(vec![target_tx.clone(), charlie_backrun]);
         store.insert_backrun_bundle(charlie_bundle).unwrap();
 
-        let data = store.get(&target_tx_hash).unwrap();
+        let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 2);
     }
 
@@ -489,12 +492,12 @@ mod tests {
         let meter_data = create_test_metering(21000);
 
         store.insert_metering(tx_hash, meter_data);
-        let data = store.get(&tx_hash).unwrap();
-        assert_eq!(data.metering.unwrap().total_gas_used, 21000);
+        let data = store.get(&tx_hash);
+        assert_eq!(data.metering.as_ref().unwrap().total_gas_used, 21000);
 
         store.insert_metering(tx_hash, create_test_metering(50000));
-        let data = store.get(&tx_hash).unwrap();
-        assert_eq!(data.metering.unwrap().total_gas_used, 50000);
+        let data = store.get(&tx_hash);
+        assert_eq!(data.metering.as_ref().unwrap().total_gas_used, 50000);
     }
 
     #[test]
@@ -507,12 +510,12 @@ mod tests {
         store.insert_metering(tx1, create_test_metering(1000));
         store.insert_metering(tx2, create_test_metering(2000));
 
-        assert!(store.get(&tx1).unwrap().metering.is_some());
-        assert!(store.get(&tx2).unwrap().metering.is_some());
+        assert!(store.get(&tx1).metering.is_some());
+        assert!(store.get(&tx2).metering.is_some());
 
         store.clear_metering();
 
-        assert!(store.get(&tx1).is_none());
-        assert!(store.get(&tx2).is_none());
+        assert!(store.get(&tx1).metering.is_none());
+        assert!(store.get(&tx2).metering.is_none());
     }
 }
