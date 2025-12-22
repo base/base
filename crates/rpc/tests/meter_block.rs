@@ -297,3 +297,87 @@ fn meter_block_timing_consistency() -> eyre::Result<()> {
 
     Ok(())
 }
+
+// ============================================================================
+// Error Path Tests
+// ============================================================================
+
+#[test]
+fn meter_block_parent_header_not_found() -> eyre::Result<()> {
+    let harness = setup_harness()?;
+
+    // Create a block that references a non-existent parent
+    let fake_parent_hash = B256::random();
+    let header = Header {
+        parent_hash: fake_parent_hash, // This parent doesn't exist
+        number: 999,
+        timestamp: harness.genesis_header_timestamp + 2,
+        gas_limit: 30_000_000,
+        beneficiary: Address::random(),
+        base_fee_per_gas: Some(1),
+        parent_beacon_block_root: Some(B256::ZERO),
+        ..Default::default()
+    };
+
+    let body = OpBlockBody { transactions: vec![], ommers: vec![], withdrawals: None };
+    let block = OpBlock::new(header, body);
+
+    let result = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block);
+
+    assert!(result.is_err(), "should fail when parent header is not found");
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("Parent header not found") || err_str.contains("not found"),
+        "error should indicate parent header not found: {}",
+        err_str
+    );
+
+    Ok(())
+}
+
+#[test]
+fn meter_block_invalid_transaction_signature() -> eyre::Result<()> {
+    use alloy_consensus::TxEip1559;
+    use alloy_primitives::Signature;
+
+    let harness = setup_harness()?;
+
+    // Create a transaction with an invalid signature
+    let tx = TxEip1559 {
+        chain_id: harness.chain_spec.chain_id(),
+        nonce: 0,
+        gas_limit: 21_000,
+        max_fee_per_gas: 10,
+        max_priority_fee_per_gas: 1,
+        to: alloy_primitives::TxKind::Call(Address::random()),
+        value: alloy_primitives::U256::from(1000),
+        access_list: Default::default(),
+        input: Default::default(),
+    };
+
+    // Create a signature with invalid values (all zeros is invalid for secp256k1)
+    let invalid_signature = Signature::new(
+        alloy_primitives::U256::ZERO,
+        alloy_primitives::U256::ZERO,
+        false,
+    );
+
+    let signed_tx = alloy_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
+    let op_tx = OpTransactionSigned::Eip1559(signed_tx);
+
+    let block = create_block_with_transactions(&harness, vec![op_tx]);
+
+    let result = meter_block(harness.provider.clone(), harness.chain_spec.clone(), &block);
+
+    assert!(result.is_err(), "should fail when transaction has invalid signature");
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("recover signer") || err_str.contains("signature"),
+        "error should indicate signer recovery failure: {}",
+        err_str
+    );
+
+    Ok(())
+}
