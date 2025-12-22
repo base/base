@@ -78,8 +78,8 @@ async fn backrun_bundle_all_or_nothing_revert(rbuilder: LocalInstance) -> eyre::
     };
 
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle)
         .expect("Failed to insert backrun bundle");
 
     // 4. Build the block
@@ -223,12 +223,12 @@ async fn backrun_bundles_sorted_by_total_fee(rbuilder: LocalInstance) -> eyre::R
 
     // Insert in "wrong" order - B first, then A
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle_b)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle_b)
         .expect("Failed to insert bundle B");
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle_a)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle_a)
         .expect("Failed to insert bundle A");
 
     // 5. Build the block
@@ -362,8 +362,8 @@ async fn backrun_bundle_rejected_low_total_fee(rbuilder: LocalInstance) -> eyre:
     };
 
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle)
         .expect("Failed to insert backrun bundle");
 
     // 4. Build the block
@@ -455,8 +455,8 @@ async fn backrun_bundle_rejected_exceeds_gas_limit(rbuilder: LocalInstance) -> e
     };
 
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle)
         .expect("Failed to insert backrun bundle");
 
     driver.build_new_block().await?;
@@ -539,8 +539,8 @@ async fn backrun_bundle_rejected_exceeds_da_limit(rbuilder: LocalInstance) -> ey
     };
 
     rbuilder
-        .backrun_bundle_store()
-        .insert(bundle)
+        .tx_data_store()
+        .insert_backrun_bundle(bundle)
         .expect("Failed to insert backrun bundle");
 
     driver.build_new_block().await?;

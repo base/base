@@ -43,9 +43,9 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
-    resource_metering::ResourceMetering,
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
+    tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
 
@@ -78,10 +78,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
-    /// Per transaction resource metering information
-    pub resource_metering: ResourceMetering,
-    /// Backrun bundle store for storing backrun transactions
-    pub backrun_bundle_store: crate::bundles::BackrunBundleStore,
+    /// Unified transaction data store (backrun bundles + resource metering)
+    pub tx_data_store: TxDataStore,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -447,7 +445,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            let _resource_usage = self.resource_metering.get(&tx_hash);
+            let _resource_usage = self.tx_data_store.get_metering(&tx_hash);
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional
@@ -604,7 +602,9 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
 
-            if is_success && let Some(backrun_bundles) = self.backrun_bundle_store.get(&tx_hash) {
+            if is_success
+                && let Some(backrun_bundles) = self.tx_data_store.get_backrun_bundles(&tx_hash)
+            {
                 self.metrics.backrun_target_txs_found_total.increment(1);
                 let backrun_start_time = Instant::now();
 
@@ -731,7 +731,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     .record(backrun_start_time.elapsed());
 
                 // Remove the target tx from the backrun bundle store as already executed
-                self.backrun_bundle_store.remove(&tx_hash);
+                self.tx_data_store.remove_backrun_bundles(&tx_hash);
             }
         }
 

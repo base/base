@@ -1,7 +1,6 @@
 use crate::{
     args::OpRbuilderArgs,
     builders::{BuilderConfig, FlashblocksBuilder, PayloadBuilder, StandardBuilder},
-    bundles::BackrunBundleStore,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tests::{
@@ -9,6 +8,7 @@ use crate::{
         framework::driver::ChainDriver, get_available_port,
     },
     tx::FBPooledTransaction,
+    tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
@@ -65,7 +65,7 @@ pub struct LocalInstance {
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
     attestation_server: Option<AttestationServer>,
-    backrun_bundle_store: BackrunBundleStore,
+    tx_data_store: TxDataStore,
 }
 
 impl LocalInstance {
@@ -114,7 +114,7 @@ impl LocalInstance {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
-        let backrun_bundle_store = builder_config.backrun_bundle_store.clone();
+        let tx_data_store = builder_config.tx_data_store.clone();
 
         let addons: OpAddOns<
             _,
@@ -190,7 +190,7 @@ impl LocalInstance {
             task_manager: Some(task_manager),
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
-            backrun_bundle_store,
+            tx_data_store,
         })
     }
 
@@ -271,8 +271,8 @@ impl LocalInstance {
         &self.attestation_server
     }
 
-    pub fn backrun_bundle_store(&self) -> &BackrunBundleStore {
-        &self.backrun_bundle_store
+    pub fn tx_data_store(&self) -> &TxDataStore {
+        &self.tx_data_store
     }
 
     pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {

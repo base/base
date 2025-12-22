@@ -21,7 +21,7 @@ mod flashblocks;
 mod generator;
 mod standard;
 
-use crate::{bundles::BackrunBundleStore, resource_metering::ResourceMetering};
+use crate::tx_data_store::TxDataStore;
 pub use builder_tx::{
     BuilderTransactionCtx, BuilderTransactionError, BuilderTransactions, InvalidContractDataError,
     SimulationSuccessResult, get_balance, get_nonce,
@@ -128,11 +128,8 @@ pub struct BuilderConfig<Specific: Clone> {
     /// Address gas limiter stuff
     pub gas_limiter_config: GasLimiterArgs,
 
-    /// Resource metering context
-    pub resource_metering: ResourceMetering,
-
-    /// Backrun bundle store for storing backrun transactions
-    pub backrun_bundle_store: BackrunBundleStore,
+    /// Unified transaction data store (backrun bundles + resource metering)
+    pub tx_data_store: TxDataStore,
 }
 
 impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
@@ -155,7 +152,7 @@ impl<S: Debug + Clone> core::fmt::Debug for BuilderConfig<S> {
             .field("specific", &self.specific)
             .field("max_gas_per_txn", &self.max_gas_per_txn)
             .field("gas_limiter_config", &self.gas_limiter_config)
-            .field("backrun_bundle_store", &self.backrun_bundle_store)
+            .field("tx_data_store", &self.tx_data_store)
             .finish()
     }
 }
@@ -174,8 +171,7 @@ impl<S: Default + Clone> Default for BuilderConfig<S> {
             sampling_ratio: 100,
             max_gas_per_txn: None,
             gas_limiter_config: GasLimiterArgs::default(),
-            resource_metering: ResourceMetering::default(),
-            backrun_bundle_store: BackrunBundleStore::default(),
+            tx_data_store: TxDataStore::default(),
         }
     }
 }
@@ -198,11 +194,11 @@ where
             sampling_ratio: args.telemetry.sampling_ratio,
             max_gas_per_txn: args.max_gas_per_txn,
             gas_limiter_config: args.gas_limiter.clone(),
-            resource_metering: ResourceMetering::new(
+            tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,
-                args.resource_metering_buffer_size,
+                args.resource_metering_buffer_size
+                    .max(args.backrun_bundle_buffer_size),
             ),
-            backrun_bundle_store: BackrunBundleStore::new(args.backrun_bundle_buffer_size),
             specific: S::try_from(args)?,
         })
     }
