@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use alloy_eips::{BlockHashOrNumber, eip7685::Requests};
-use alloy_primitives::{B64, B256, Bytes, bytes};
+use alloy_primitives::{B64, B256, Bytes};
 use alloy_provider::{Provider, RootProvider};
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types_engine::PayloadAttributes;
@@ -22,21 +22,15 @@ use reth_primitives_traits::{Block as BlockT, RecoveredBlock};
 use tokio::time::sleep;
 
 use crate::{
-    accounts::TestAccounts,
+    BLOCK_BUILD_DELAY_MS, BLOCK_TIME_SECONDS, GAS_LIMIT, L1_BLOCK_INFO_DEPOSIT_TX,
+    NODE_STARTUP_DELAY_MS, TestAccounts,
     engine::{EngineApi, IpcEngine},
     node::{LocalNode, LocalNodeProvider, OpAddOns, OpBuilder, default_launcher},
     tracing::init_silenced_tracing,
 };
 
-const BLOCK_TIME_SECONDS: u64 = 2;
-const GAS_LIMIT: u64 = 200_000_000;
-const NODE_STARTUP_DELAY_MS: u64 = 500;
-const BLOCK_BUILD_DELAY_MS: u64 = 100;
-// Pre-captured L1 block info deposit transaction required by OP Stack.
-const L1_BLOCK_INFO_DEPOSIT_TX: Bytes = bytes!(
-    "0x7ef90104a06c0c775b6b492bab9d7e81abdf27f77cafb698551226455a82f559e0f93fea3794deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8b0098999be000008dd00101c1200000000000000020000000068869d6300000000015f277f000000000000000000000000000000000000000000000000000000000d42ac290000000000000000000000000000000000000000000000000000000000000001abf52777e63959936b1bf633a2a643f0da38d63deffe49452fed1bf8a44975d50000000000000000000000005050f69a9786f081509234f1a7f4684b5e5b76c9000000000000000000000000"
-);
-
+/// High-level façade that bundles a local node, engine API client, and common helpers.
+#[derive(Debug)]
 pub struct TestHarness {
     node: LocalNode,
     engine: EngineApi<IpcEngine>,
@@ -44,10 +38,12 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
+    /// Launch a new harness using the default launcher configuration.
     pub async fn new() -> Result<Self> {
         Self::with_launcher(default_launcher).await
     }
 
+    /// Launch the harness with a custom node launcher (e.g. to tweak components).
     pub async fn with_launcher<L, LRet>(launcher: L) -> Result<Self>
     where
         L: FnOnce(OpBuilder) -> LRet,
@@ -58,6 +54,7 @@ impl TestHarness {
         Self::from_node(node).await
     }
 
+    /// Build a harness from an already-running [`LocalNode`].
     pub(crate) async fn from_node(node: LocalNode) -> Result<Self> {
         let engine = node.engine_api()?;
         let accounts = TestAccounts::new();
@@ -67,25 +64,35 @@ impl TestHarness {
         Ok(Self { node, engine, accounts })
     }
 
+    /// Return an Optimism JSON-RPC provider connected to the harness node.
     pub fn provider(&self) -> RootProvider<Optimism> {
         self.node.provider().expect("provider should always be available after node initialization")
     }
 
+    /// Access the deterministic test accounts backing the harness.
     pub fn accounts(&self) -> &TestAccounts {
         &self.accounts
     }
 
+    /// Access the low-level blockchain provider for direct database queries.
     pub fn blockchain_provider(&self) -> LocalNodeProvider {
         self.node.blockchain_provider()
     }
 
+    /// HTTP URL for sending JSON-RPC requests to the local node.
     pub fn rpc_url(&self) -> String {
         format!("http://{}", self.node.http_api_addr)
     }
 
+    /// Websocket URL for subscribing to JSON-RPC notifications.
+    pub fn ws_url(&self) -> String {
+        format!("ws://{}", self.node.ws_api_addr)
+    }
+
+    /// Build a block using the provided transactions and push it through the engine.
     pub async fn build_block_from_transactions(&self, mut transactions: Vec<Bytes>) -> Result<()> {
         // Ensure the block always starts with the required L1 block info deposit.
-        if !transactions.first().is_some_and(|tx| tx == &L1_BLOCK_INFO_DEPOSIT_TX) {
+        if transactions.first().is_none_or(|tx| tx != &L1_BLOCK_INFO_DEPOSIT_TX) {
             transactions.insert(0, L1_BLOCK_INFO_DEPOSIT_TX.clone());
         }
 
@@ -118,7 +125,6 @@ impl TestHarness {
             no_tx_pool: Some(true),
             min_base_fee: Some(min_base_fee),
             eip_1559_params: Some(B64::from(eip_1559_params)),
-            ..Default::default()
         };
 
         let forkchoice_result = self
@@ -163,6 +169,7 @@ impl TestHarness {
         Ok(())
     }
 
+    /// Advance the canonical chain by `n` empty blocks.
     pub async fn advance_chain(&self, n: u64) -> Result<()> {
         for _ in 0..n {
             self.build_block_from_transactions(vec![]).await?;
@@ -170,6 +177,7 @@ impl TestHarness {
         Ok(())
     }
 
+    /// Return the latest recovered block as seen by the local blockchain provider.
     pub fn latest_block(&self) -> RecoveredBlock<OpBlock> {
         let provider = self.blockchain_provider();
         let best_number = provider.best_block_number().expect("able to read best block number");
@@ -196,7 +204,7 @@ mod tests {
 
         let provider = harness.provider();
         let chain_id = provider.get_chain_id().await?;
-        assert_eq!(chain_id, crate::node::BASE_CHAIN_ID);
+        assert_eq!(chain_id, crate::BASE_CHAIN_ID);
 
         let alice_balance = provider.get_balance(harness.accounts().alice.address).await?;
         assert!(alice_balance > U256::ZERO);

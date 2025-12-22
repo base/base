@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_consensus::{Header, Sealed};
 use alloy_primitives::U256;
-use base_reth_flashblocks::FlashblocksAPI;
+use base_reth_flashblocks::{FlashblocksAPI, PendingBlocksAPI};
 use jsonrpsee::core::{RpcResult, async_trait};
 use reth::providers::BlockReaderIdExt;
 use reth_optimism_chainspec::OpChainSpec;
