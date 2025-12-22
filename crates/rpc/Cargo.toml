@@ -35,10 +35,8 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-types-eth.workspace = true
-alloy-sol-types.workspace = true
 
 # op-alloy
-op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
 op-alloy-network.workspace = true
 
@@ -47,7 +45,6 @@ tokio.workspace = true
 tokio-stream.workspace = true
 
 # revm
-revm.workspace = true
 revm-database.workspace = true
 
 # rpc

@@ -9,7 +9,7 @@ pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 mod base;
 pub use base::{
     flashblock_trie_cache::{FlashblockTrieCache, FlashblockTrieData},
-    meter::{FlashblocksState, meter_bundle},
+    meter::{FlashblocksState, MeterBundleOutput, meter_bundle},
     meter_rpc::MeteringApiImpl,
     pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},

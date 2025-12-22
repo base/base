@@ -74,8 +74,7 @@ impl BaseNodeExtension for BaseRpcExtension {
                 // Metering API requires flashblocks state to access pending blocks for bundle simulation
                 if metering_enabled {
                     info!(message = "Starting Metering RPC");
-                    let metering_api =
-                        MeteringApiImpl::new(ctx.provider().clone(), fb.clone());
+                    let metering_api = MeteringApiImpl::new(ctx.provider().clone(), fb.clone());
                     ctx.modules.merge_configured(metering_api.into_rpc())?;
                 }
 
