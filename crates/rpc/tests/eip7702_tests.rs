@@ -3,7 +3,7 @@
 //! These tests verify that EIP-7702 authorization and delegation
 //! transactions work correctly in the pending/flashblocks state.
 
-use alloy_consensus::{Receipt, SignableTransaction, TxEip7702};
+use alloy_consensus::{Receipt, SignableTransaction, TxEip1559, TxEip7702};
 use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
@@ -21,6 +21,10 @@ use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::ReceiptResponse;
 use reth_optimism_primitives::OpReceipt;
 use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
+
+/// Cumulative gas used after the base flashblock (deposit tx + contract deployment)
+/// This value must be used as the starting point for subsequent flashblocks.
+const BASE_CUMULATIVE_GAS: u64 = 500000;
 
 /// Test setup that holds harness and deployed contract info
 struct TestSetup {
@@ -52,7 +56,7 @@ impl TestSetup {
     }
 
     fn chain_id(&self) -> u64 {
-        8453 // Base mainnet chain ID
+        84532 // Base Sepolia chain ID (matches test harness)
     }
 
     fn alice(&self) -> &Account {
@@ -97,6 +101,33 @@ fn build_eip7702_tx(
         value,
         access_list: Default::default(),
         authorization_list,
+        input,
+    };
+
+    let signature = account.signer().sign_hash_sync(&tx.signature_hash()).expect("signing works");
+    let signed = tx.into_signed(signature);
+
+    signed.encoded_2718().into()
+}
+
+/// Build and sign an EIP-1559 transaction
+fn build_eip1559_tx(
+    chain_id: u64,
+    nonce: u64,
+    to: Address,
+    value: U256,
+    input: Bytes,
+    account: &Account,
+) -> Bytes {
+    let tx = TxEip1559 {
+        chain_id,
+        nonce,
+        gas_limit: 200_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        to: alloy_primitives::TxKind::Call(to),
+        value,
+        access_list: Default::default(),
         input,
     };
 
@@ -194,10 +225,7 @@ fn create_eip7702_flashblock(eip7702_tx: Bytes, tx_hash: B256, cumulative_gas: u
 
 /// Test that an EIP-7702 delegation transaction can be included in a flashblock
 /// and the pending state reflects the delegation.
-///
-/// NOTE: Ignored - surfaces overflow bug in flashblocks processor (issue #279)
 #[tokio::test]
-#[ignore = "surfaces overflow bug in flashblocks processor - see issue #279"]
 async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
     let setup = TestSetup::new().await?;
     let chain_id = setup.chain_id();
@@ -225,7 +253,9 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
     let tx_hash = alloy_primitives::keccak256(&eip7702_tx);
 
     // Create flashblock with the EIP-7702 transaction
-    let eip7702_flashblock = create_eip7702_flashblock(eip7702_tx, tx_hash, 50000);
+    // Cumulative gas must continue from where the base flashblock left off
+    let eip7702_flashblock =
+        create_eip7702_flashblock(eip7702_tx, tx_hash, BASE_CUMULATIVE_GAS + 50000);
     setup.send_flashblock(eip7702_flashblock).await?;
 
     // Query pending transaction to verify it was included
@@ -238,10 +268,7 @@ async fn test_eip7702_delegation_in_pending_flashblock() -> Result<()> {
 }
 
 /// Test that multiple EIP-7702 delegations in the same flashblock work correctly
-///
-/// NOTE: Ignored - surfaces overflow bug in flashblocks processor (issue #279)
 #[tokio::test]
-#[ignore = "surfaces overflow bug in flashblocks processor - see issue #279"]
 async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
     let setup = TestSetup::new().await?;
     let chain_id = setup.chain_id();
@@ -281,6 +308,9 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
     let tx_hash_bob = alloy_primitives::keccak256(&tx_bob);
 
     // Create flashblock with both transactions
+    // Cumulative gas must continue from where the base flashblock left off
+    let alice_cumulative = BASE_CUMULATIVE_GAS + 50000;
+    let bob_cumulative = BASE_CUMULATIVE_GAS + 100000;
     let flashblock = Flashblock {
         payload_id: alloy_rpc_types_engine::PayloadId::new([0; 8]),
         index: 1,
@@ -288,7 +318,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
         diff: ExecutionPayloadFlashblockDeltaV1 {
             state_root: B256::default(),
             receipts_root: B256::default(),
-            gas_used: 100000,
+            gas_used: bob_cumulative,
             block_hash: B256::default(),
             blob_gas_used: Some(0),
             transactions: vec![tx_alice, tx_bob],
@@ -304,7 +334,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
                     tx_hash_alice,
                     OpReceipt::Eip7702(Receipt {
                         status: true.into(),
-                        cumulative_gas_used: 50000,
+                        cumulative_gas_used: alice_cumulative,
                         logs: vec![],
                     }),
                 );
@@ -312,7 +342,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
                     tx_hash_bob,
                     OpReceipt::Eip7702(Receipt {
                         status: true.into(),
-                        cumulative_gas_used: 100000,
+                        cumulative_gas_used: bob_cumulative,
                         logs: vec![],
                     }),
                 );
@@ -336,10 +366,7 @@ async fn test_eip7702_multiple_delegations_same_flashblock() -> Result<()> {
 }
 
 /// Test that EIP-7702 transaction receipts are correctly returned from pending state
-///
-/// NOTE: Ignored - surfaces overflow bug in flashblocks processor (issue #279)
 #[tokio::test]
-#[ignore = "surfaces overflow bug in flashblocks processor - see issue #279"]
 async fn test_eip7702_pending_receipt() -> Result<()> {
     let setup = TestSetup::new().await?;
     let chain_id = setup.chain_id();
@@ -362,7 +389,9 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
     );
 
     let tx_hash = alloy_primitives::keccak256(&eip7702_tx);
-    let eip7702_flashblock = create_eip7702_flashblock(eip7702_tx, tx_hash, 50000);
+    // Cumulative gas must continue from where the base flashblock left off
+    let eip7702_flashblock =
+        create_eip7702_flashblock(eip7702_tx, tx_hash, BASE_CUMULATIVE_GAS + 50000);
     setup.send_flashblock(eip7702_flashblock).await?;
 
     // Query receipt from pending state
@@ -377,12 +406,7 @@ async fn test_eip7702_pending_receipt() -> Result<()> {
 }
 
 /// Test EIP-7702 delegation followed by execution in subsequent flashblock.
-///
-/// NOTE: This test is ignored because it surfaces a bug in the flashblocks processor
-/// (overflow at processor.rs:472). This demonstrates the sporadic behavior reported
-/// in issue #279. The test should be un-ignored once the underlying bug is fixed.
 #[tokio::test]
-#[ignore = "surfaces overflow bug in flashblocks processor - see issue #279"]
 async fn test_eip7702_delegation_then_execution() -> Result<()> {
     let setup = TestSetup::new().await?;
     let chain_id = setup.chain_id();
@@ -392,6 +416,10 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     setup.send_flashblock(base_payload).await?;
 
     // First flashblock: delegation only (no execution)
+    // Cumulative gas continues from base flashblock (500000)
+    let delegation_gas = 30000;
+    let delegation_cumulative = BASE_CUMULATIVE_GAS + delegation_gas;
+
     let auth = build_authorization(chain_id, setup.account_contract_address, 0, setup.alice());
     let delegation_tx = build_eip7702_tx(
         chain_id,
@@ -404,19 +432,24 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
     );
 
     let delegation_hash = alloy_primitives::keccak256(&delegation_tx);
-    let delegation_flashblock = create_eip7702_flashblock(delegation_tx, delegation_hash, 30000);
+    let delegation_flashblock =
+        create_eip7702_flashblock(delegation_tx, delegation_hash, delegation_cumulative);
     setup.send_flashblock(delegation_flashblock).await?;
 
     // Second flashblock: execute through delegated account
     // After delegation, calls to Alice's address execute Minimal7702Account code
+    // Use EIP-1559 transaction since the delegation is already set up
+    // Cumulative gas continues from delegation flashblock
+    let execution_gas = 25000;
+    let execution_cumulative = delegation_cumulative + execution_gas;
+
     let increment_call = Minimal7702Account::incrementCall {};
-    let execution_tx = build_eip7702_tx(
+    let execution_tx = build_eip1559_tx(
         chain_id,
         1, // incremented nonce
         setup.alice().address,
         U256::ZERO,
         Bytes::from(increment_call.abi_encode()),
-        vec![], // No new authorizations needed
         setup.alice(),
     );
 
@@ -428,7 +461,7 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
         diff: ExecutionPayloadFlashblockDeltaV1 {
             state_root: B256::default(),
             receipts_root: B256::default(),
-            gas_used: 25000,
+            gas_used: execution_cumulative,
             block_hash: B256::default(),
             blob_gas_used: Some(0),
             transactions: vec![execution_tx],
@@ -442,9 +475,9 @@ async fn test_eip7702_delegation_then_execution() -> Result<()> {
                 let mut receipts = alloy_primitives::map::HashMap::default();
                 receipts.insert(
                     execution_hash,
-                    OpReceipt::Eip7702(Receipt {
+                    OpReceipt::Eip1559(Receipt {
                         status: true.into(),
-                        cumulative_gas_used: 25000,
+                        cumulative_gas_used: execution_cumulative,
                         logs: vec![],
                     }),
                 );
