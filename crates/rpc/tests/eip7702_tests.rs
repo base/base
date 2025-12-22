@@ -8,19 +8,17 @@ use alloy_eips::{eip2718::Encodable2718, eip7702::Authorization};
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_sol_types::SolCall;
-use base_reth_flashblocks::{Flashblock, Metadata};
+use base_flashtypes::{
+    ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1, Flashblock, Metadata,
+};
 use base_reth_test_utils::{
-    SignerSync,
-    accounts::Account,
-    contracts::Minimal7702Account,
-    fixtures::{BLOCK_INFO_TXN, BLOCK_INFO_TXN_HASH},
-    flashblocks_harness::FlashblocksHarness,
+    Account, FlashblocksHarness, L1_BLOCK_INFO_DEPOSIT_TX, L1_BLOCK_INFO_DEPOSIT_TX_HASH,
+    Minimal7702Account, SignerSync,
 };
 use eyre::Result;
 use op_alloy_consensus::OpDepositReceipt;
 use op_alloy_network::ReceiptResponse;
 use reth_optimism_primitives::OpReceipt;
-use rollup_boost::{ExecutionPayloadBaseV1, ExecutionPayloadFlashblockDeltaV1};
 
 /// Cumulative gas used after the base flashblock (deposit tx + contract deployment)
 /// This value must be used as the starting point for subsequent flashblocks.
@@ -154,7 +152,7 @@ fn create_base_flashblock(setup: &TestSetup) -> Flashblock {
         }),
         diff: ExecutionPayloadFlashblockDeltaV1 {
             blob_gas_used: Some(0),
-            transactions: vec![BLOCK_INFO_TXN.clone(), setup.account_deploy_tx.clone()],
+            transactions: vec![L1_BLOCK_INFO_DEPOSIT_TX.clone(), setup.account_deploy_tx.clone()],
             ..Default::default()
         },
         metadata: Metadata {
@@ -162,7 +160,7 @@ fn create_base_flashblock(setup: &TestSetup) -> Flashblock {
             receipts: {
                 let mut receipts = alloy_primitives::map::HashMap::default();
                 receipts.insert(
-                    BLOCK_INFO_TXN_HASH,
+                    L1_BLOCK_INFO_DEPOSIT_TX_HASH,
                     OpReceipt::Deposit(OpDepositReceipt {
                         inner: Receipt {
                             status: true.into(),

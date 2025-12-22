@@ -34,7 +34,6 @@ pub use node::{
 };
 
 mod tracing;
-pub use tracing::init_silenced_tracing;
-
 // Re-export signer traits for use in tests
 pub use alloy_signer::SignerSync;
+pub use tracing::init_silenced_tracing;
