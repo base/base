@@ -1,3 +1,4 @@
+pub mod annotator;
 pub(crate) mod block;
 pub mod cache;
 pub mod estimator;

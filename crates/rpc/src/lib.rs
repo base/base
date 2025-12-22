@@ -8,7 +8,8 @@ pub use tips_core::types::{Bundle, MeterBundleResponse, TransactionResult};
 
 mod base;
 pub use base::{
-block::meter_block,
+annotator::{FlashblockInclusion, ResourceAnnotator},
+    block::meter_block,
     cache::{BlockMetrics, FlashblockMetrics, MeteredTransaction, MeteringCache, ResourceTotals},
     estimator::{
         BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,

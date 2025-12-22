@@ -52,6 +52,7 @@ jsonrpsee-types.workspace = true
 tracing.workspace = true
 eyre.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 metrics.workspace = true
 metrics-derive.workspace = true
 parking_lot.workspace = true
@@ -59,6 +60,14 @@ indexmap.workspace = true
 
 # priority fee estimation
 reth-optimism-payload-builder.workspace = true
+
+# Kafka consumer
+rdkafka.workspace = true
+chrono.workspace = true
+
+# DA calculation
+op-alloy-flz.workspace = true
+op-alloy-consensus.workspace = true
 
 [dev-dependencies]
 base-flashtypes.workspace = true
