@@ -1,12 +1,13 @@
-use crate::metrics::OpRBuilderMetrics;
-use alloy_consensus::{Transaction, transaction::Recovered};
+use crate::{metrics::OpRBuilderMetrics, tx::FBPooledTransaction};
+use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash};
 use concurrent_queue::ConcurrentQueue;
 use jsonrpsee::{
     core::{RpcResult, async_trait},
     proc_macros::rpc,
 };
-use op_alloy_consensus::OpTxEnvelope;
+use reth_optimism_txpool::OpPooledTransaction;
+use reth_transaction_pool::PoolTransaction;
 use std::{
     fmt::Debug,
     sync::{
@@ -23,7 +24,7 @@ use uuid::Uuid;
 pub struct StoredBackrunBundle {
     pub bundle_id: Uuid,
     pub sender: Address,
-    pub backrun_txs: Vec<Recovered<OpTxEnvelope>>,
+    pub backrun_txs: Vec<FBPooledTransaction>,
     pub total_priority_fee: u128,
 }
 
@@ -114,8 +115,26 @@ impl TxDataStore {
         }
 
         let target_tx_hash = bundle.txs[0].tx_hash();
-        let backrun_txs: Vec<Recovered<OpTxEnvelope>> = bundle.txs[1..].to_vec();
-        let backrun_sender = backrun_txs[0].signer();
+
+        // Convert OpTxEnvelope transactions to FBPooledTransaction
+        let backrun_txs: Vec<FBPooledTransaction> = bundle.txs[1..]
+            .iter()
+            .filter_map(|tx| {
+                let (envelope, signer) = tx.clone().into_parts();
+                let pooled_envelope: op_alloy_consensus::OpPooledTransaction =
+                    envelope.try_into().ok()?;
+                let recovered_pooled =
+                    alloy_consensus::transaction::Recovered::new_unchecked(pooled_envelope, signer);
+                let pooled = OpPooledTransaction::from_pooled(recovered_pooled);
+                Some(FBPooledTransaction::from(pooled))
+            })
+            .collect();
+
+        if backrun_txs.is_empty() {
+            return Err("No valid poolable transactions in backrun bundle".to_string());
+        }
+
+        let backrun_sender = backrun_txs[0].sender();
 
         self.evict_if_needed();
         let _ = self.data.lru.push(target_tx_hash);
@@ -307,7 +326,7 @@ impl BaseApiExtServer for TxDataStoreExt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::SignableTransaction;
+    use alloy_consensus::{SignableTransaction, transaction::Recovered};
     use alloy_primitives::{Address, B256, TxHash, U256};
     use alloy_provider::network::TxSignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -425,7 +444,7 @@ mod tests {
         assert_eq!(data.backrun_bundles.len(), 1);
         assert_eq!(data.backrun_bundles[0].backrun_txs.len(), 1);
         assert_eq!(
-            data.backrun_bundles[0].backrun_txs[0].tx_hash(),
+            *data.backrun_bundles[0].backrun_txs[0].hash(),
             backrun_tx1.tx_hash()
         );
 
@@ -437,7 +456,7 @@ mod tests {
         let data = store.get(&target_tx_hash);
         assert_eq!(data.backrun_bundles.len(), 1);
         assert_eq!(
-            data.backrun_bundles[0].backrun_txs[0].tx_hash(),
+            *data.backrun_bundles[0].backrun_txs[0].hash(),
             backrun_tx2.tx_hash()
         );
 

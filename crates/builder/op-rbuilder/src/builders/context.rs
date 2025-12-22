@@ -646,11 +646,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     let total_backrun_da_size: u64 = stored_bundle
                         .backrun_txs
                         .iter()
-                        .map(|tx| {
-                            op_alloy_flz::tx_estimated_size_fjord_bytes(
-                                tx.encoded_2718().as_slice(),
-                            )
-                        })
+                        .map(|tx| tx.estimated_da_size())
                         .sum();
 
                     if let Err(result) = info.is_tx_over_limits(
@@ -678,7 +674,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                     let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
 
                     for backrun_tx in &stored_bundle.backrun_txs {
-                        let ResultAndState { result, state } = match evm.transact(backrun_tx) {
+                        let consensus_tx = backrun_tx.clone_into_consensus();
+                        let ResultAndState { result, state } = match evm.transact(&consensus_tx) {
                             Ok(res) => res,
                             Err(err) => {
                                 return Err(PayloadBuilderError::evm(err));
@@ -690,7 +687,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                             info!(
                                 target: "payload_builder",
                                 target_tx = ?tx_hash,
-                                failed_tx = ?backrun_tx.tx_hash(),
+                                failed_tx = ?backrun_tx.hash(),
                                 bundle_id = ?stored_bundle.bundle_id,
                                 gas_used = result.gas_used(),
                                 "Backrun bundle reverted (all-or-nothing)"
@@ -698,20 +695,17 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                             continue 'bundle_loop;
                         }
 
-                        pending_results.push((backrun_tx, result, state));
+                        pending_results.push((backrun_tx.clone(), consensus_tx, result, state));
                     }
 
-                    for (backrun_tx, result, state) in pending_results {
+                    for (backrun_tx, consensus_tx, result, state) in pending_results {
                         let backrun_gas_used = result.gas_used();
 
                         info.cumulative_gas_used += backrun_gas_used;
-                        info.cumulative_da_bytes_used +=
-                            op_alloy_flz::tx_estimated_size_fjord_bytes(
-                                backrun_tx.encoded_2718().as_slice(),
-                            );
+                        info.cumulative_da_bytes_used += backrun_tx.estimated_da_size();
 
                         let ctx = ReceiptBuilderCtx {
-                            tx: backrun_tx.inner(),
+                            tx: consensus_tx.inner(),
                             evm: &evm,
                             result,
                             state: &state,
@@ -726,9 +720,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                             .expect("fee is always valid; execution succeeded");
                         info.total_fees += U256::from(miner_fee) * U256::from(backrun_gas_used);
 
-                        info.executed_senders.push(backrun_tx.signer());
-                        info.executed_transactions
-                            .push(backrun_tx.clone().into_inner());
+                        info.executed_senders.push(backrun_tx.sender());
+                        info.executed_transactions.push(consensus_tx.into_inner());
                     }
 
                     self.metrics.backrun_bundles_landed_total.increment(1);
