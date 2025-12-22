@@ -9,10 +9,9 @@ use reth_provider::{BlockReader, ChainSpecProvider, HeaderProvider, StateProvide
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{error, info};
 
-use super::block::meter_block;
-use super::meter::meter_bundle;
-use super::traits::MeteringApiServer;
-use super::types::MeterBlockResponse;
+use super::{
+    block::meter_block, meter::meter_bundle, traits::MeteringApiServer, types::MeterBlockResponse,
+};
 
 /// Implementation of the metering RPC API
 #[derive(Debug)]
@@ -169,7 +168,10 @@ where
         Ok(response)
     }
 
-    async fn meter_block_by_number(&self, number: BlockNumberOrTag) -> RpcResult<MeterBlockResponse> {
+    async fn meter_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> RpcResult<MeterBlockResponse> {
         info!(block_number = ?number, "Starting block metering by number");
 
         let block = self
@@ -221,15 +223,13 @@ where
 {
     /// Internal helper to meter a block's execution
     fn meter_block_internal(&self, block: &OpBlock) -> RpcResult<MeterBlockResponse> {
-        meter_block(self.provider.clone(), self.provider.chain_spec().clone(), block).map_err(
-            |e| {
-                error!(error = %e, "Block metering failed");
-                jsonrpsee::types::ErrorObjectOwned::owned(
-                    jsonrpsee::types::ErrorCode::InternalError.code(),
-                    format!("Block metering failed: {}", e),
-                    None::<()>,
-                )
-            },
-        )
+        meter_block(self.provider.clone(), self.provider.chain_spec(), block).map_err(|e| {
+            error!(error = %e, "Block metering failed");
+            jsonrpsee::types::ErrorObjectOwned::owned(
+                jsonrpsee::types::ErrorCode::InternalError.code(),
+                format!("Block metering failed: {}", e),
+                None::<()>,
+            )
+        })
     }
 }

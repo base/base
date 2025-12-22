@@ -37,7 +37,10 @@ pub trait MeteringApi {
     /// - `totalTimeUs`: Sum of execution and state root calculation time
     /// - `meteredTransactions`: Per-transaction execution times and gas usage
     #[method(name = "meterBlockByNumber")]
-    async fn meter_block_by_number(&self, number: BlockNumberOrTag) -> RpcResult<MeterBlockResponse>;
+    async fn meter_block_by_number(
+        &self,
+        number: BlockNumberOrTag,
+    ) -> RpcResult<MeterBlockResponse>;
 }
 
 /// RPC API for transaction status

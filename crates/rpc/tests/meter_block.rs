@@ -357,11 +357,8 @@ fn meter_block_invalid_transaction_signature() -> eyre::Result<()> {
     };
 
     // Create a signature with invalid values (all zeros is invalid for secp256k1)
-    let invalid_signature = Signature::new(
-        alloy_primitives::U256::ZERO,
-        alloy_primitives::U256::ZERO,
-        false,
-    );
+    let invalid_signature =
+        Signature::new(alloy_primitives::U256::ZERO, alloy_primitives::U256::ZERO, false);
 
     let signed_tx = alloy_consensus::Signed::new_unchecked(tx, invalid_signature, B256::random());
     let op_tx = OpTransactionSigned::Eip1559(signed_tx);
