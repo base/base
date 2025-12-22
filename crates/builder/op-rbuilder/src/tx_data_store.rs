@@ -71,15 +71,15 @@ impl TxDataStore {
     }
 
     fn evict_if_needed(&self) {
-        if self.data.lru.is_full() {
-            if let Ok(evicted_hash) = self.data.lru.pop() {
-                self.data.by_tx_hash.remove(&evicted_hash);
-                debug!(
-                    target: "tx_data_store",
-                    evicted_tx = ?evicted_hash,
-                    "Evicted old transaction data"
-                );
-            }
+        if self.data.lru.is_full()
+            && let Ok(evicted_hash) = self.data.lru.pop()
+        {
+            self.data.by_tx_hash.remove(&evicted_hash);
+            debug!(
+                target: "tx_data_store",
+                evicted_tx = ?evicted_hash,
+                "Evicted old transaction data"
+            );
         }
     }
 

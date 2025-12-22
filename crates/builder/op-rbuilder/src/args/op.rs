@@ -51,16 +51,10 @@ pub struct OpRbuilderArgs {
     /// Whether to enable TIPS Resource Metering
     #[arg(long = "builder.enable-resource-metering", default_value = "false")]
     pub enable_resource_metering: bool,
-    /// Whether to enable TIPS Resource Metering
-    #[arg(
-        long = "builder.resource-metering-buffer-size",
-        default_value = "10000"
-    )]
-    pub resource_metering_buffer_size: usize,
 
-    /// Buffer size for backrun bundles (LRU eviction when full)
-    #[arg(long = "builder.backrun-bundle-buffer-size", default_value = "10000")]
-    pub backrun_bundle_buffer_size: usize,
+    /// Buffer size for tx data store (LRU eviction when full)
+    #[arg(long = "builder.tx-data-store-buffer-size", default_value = "10000")]
+    pub tx_data_store_buffer_size: usize,
 
     /// Path to builder playgorund to automatically start up the node connected to it
     #[arg(

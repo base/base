@@ -196,8 +196,7 @@ where
             gas_limiter_config: args.gas_limiter.clone(),
             tx_data_store: TxDataStore::new(
                 args.enable_resource_metering,
-                args.resource_metering_buffer_size
-                    .max(args.backrun_bundle_buffer_size),
+                args.tx_data_store_buffer_size,
             ),
             specific: S::try_from(args)?,
         })
