@@ -23,6 +23,7 @@ reth-db.workspace = true
 reth-exex.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
+reth-optimism-payload-builder.workspace = true
 
 # alloy
 alloy-primitives.workspace = true

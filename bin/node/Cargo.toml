@@ -21,6 +21,7 @@ base-reth-runner.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-cli.workspace = true
 reth-cli-util.workspace = true
+reth-optimism-payload-builder.workspace = true
 
 # misc
 clap.workspace = true

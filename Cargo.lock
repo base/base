@@ -1576,6 +1576,7 @@ dependencies = [
  "reth-cli-util",
  "reth-optimism-cli",
  "reth-optimism-node",
+ "reth-optimism-payload-builder",
 ]
 
 [[package]]
@@ -1659,6 +1660,7 @@ dependencies = [
  "reth-exex",
  "reth-optimism-chainspec",
  "reth-optimism-node",
+ "reth-optimism-payload-builder",
  "tokio",
  "tracing",
  "url",

@@ -8,6 +8,7 @@ use base_reth_runner::{
 };
 use once_cell::sync::OnceCell;
 use reth_optimism_node::args::RollupArgs;
+use reth_optimism_payload_builder::config::OpDAConfig;
 
 /// CLI Arguments
 #[derive(Debug, Clone, PartialEq, clap::Args)]
@@ -73,7 +74,8 @@ pub struct Args {
     #[arg(long = "metering-state-root-time-us")]
     pub metering_state_root_time_us: Option<u64>,
 
-    /// Data availability bytes limit per flashblock
+    /// Data availability bytes limit per flashblock (default).
+    /// This value is used when `miner_setMaxDASize` has not been called.
     #[arg(long = "metering-da-bytes", default_value = "120000")]
     pub metering_da_bytes: u64,
 
@@ -135,6 +137,10 @@ impl From<Args> for BaseNodeConfig {
             cache_size: args.metering_cache_size,
         };
 
+        // Create shared DA config. This is shared between the payload builder and the
+        // priority fee estimator, allowing miner_setMaxDASize to affect both.
+        let da_config = OpDAConfig::default();
+
         Self {
             rollup_args: args.rollup_args,
             flashblocks,
@@ -145,6 +151,7 @@ impl From<Args> for BaseNodeConfig {
             metering_enabled: args.enable_metering,
             metering,
             flashblocks_cell,
+            da_config,
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Contains the Base node configuration structures.
 
 use reth_optimism_node::args::RollupArgs;
+use reth_optimism_payload_builder::config::OpDAConfig;
 
 use crate::extensions::FlashblocksCell;
 
@@ -19,6 +20,8 @@ pub struct BaseNodeConfig {
     pub metering: MeteringConfig,
     /// Shared Flashblocks state cache.
     pub flashblocks_cell: FlashblocksCell,
+    /// Shared DA config for dynamic updates via `miner_setMaxDASize`.
+    pub da_config: OpDAConfig,
 }
 
 impl BaseNodeConfig {

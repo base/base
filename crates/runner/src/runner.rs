@@ -56,7 +56,8 @@ impl BaseNodeRunner {
     ) -> Result<NodeHandleFor<OpNode>> {
         info!(target: "base-runner", "starting custom Base node");
 
-        let op_node = OpNode::new(config.rollup_args.clone());
+        let op_node =
+            OpNode::new(config.rollup_args.clone()).with_da_config(config.da_config.clone());
 
         let builder = builder
             .with_types_and_provider::<OpNode, BlockchainProvider<_>>()

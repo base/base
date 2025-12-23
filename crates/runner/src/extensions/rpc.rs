@@ -13,6 +13,7 @@ use base_reth_rpc::{
 };
 use parking_lot::RwLock;
 use rdkafka::ClientConfig;
+use reth_optimism_payload_builder::config::OpDAConfig;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use url::Url;
@@ -122,6 +123,8 @@ pub struct BaseRpcExtension {
     pub metering: MeteringConfig,
     /// Sequencer RPC endpoint for transaction status proxying.
     pub sequencer_rpc: Option<String>,
+    /// Shared DA config for dynamic updates via `miner_setMaxDASize`.
+    pub da_config: OpDAConfig,
 }
 
 impl BaseRpcExtension {
@@ -132,6 +135,7 @@ impl BaseRpcExtension {
             flashblocks: config.flashblocks.clone(),
             metering: config.metering.clone(),
             sequencer_rpc: config.rollup_args.sequencer.clone(),
+            da_config: config.da_config.clone(),
         }
     }
 }
@@ -143,8 +147,17 @@ impl BaseNodeExtension for BaseRpcExtension {
         let flashblocks = self.flashblocks.clone();
         let metering = self.metering.clone();
         let sequencer_rpc = self.sequencer_rpc.clone();
+        let da_config = self.da_config.clone();
 
         builder.extend_rpc_modules(move |ctx| {
+            // Warn if metering is enabled but Kafka is not configured
+            if metering.enabled && metering.kafka.is_none() {
+                warn!(
+                    message = "Metering enabled but Kafka not configured",
+                    help = "Priority fee estimation requires --metering-kafka-brokers, --metering-kafka-topic, and --metering-kafka-group-id"
+                );
+            }
+
             // Set up metering runtime if enabled with Kafka
             let metering_runtime = if metering.enabled && metering.kafka.is_some() {
                 info!(message = "Starting Metering RPC with priority fee estimation");
@@ -165,7 +178,7 @@ impl BaseNodeExtension for BaseRpcExtension {
                     metering.priority_fee_percentile,
                     limits,
                     default_fee,
-                    None, // Dynamic DA config not wired yet
+                    Some(da_config.clone()),
                 ));
 
                 // Create channels for the annotator
