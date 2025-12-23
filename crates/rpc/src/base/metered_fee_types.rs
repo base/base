@@ -53,7 +53,9 @@ pub fn build_priority_fee_response(
     }
 }
 
-fn build_resource_estimate_responses(estimates: &ResourceEstimates) -> Vec<ResourceFeeEstimateResponse> {
+fn build_resource_estimate_responses(
+    estimates: &ResourceEstimates,
+) -> Vec<ResourceFeeEstimateResponse> {
     estimates
         .iter()
         .map(|(kind, est)| ResourceFeeEstimateResponse {
