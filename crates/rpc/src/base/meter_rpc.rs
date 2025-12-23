@@ -45,7 +45,7 @@ where
     }
 
     /// Creates a new instance of MeteringApi with priority fee estimation enabled.
-    pub fn with_estimator(
+    pub const fn with_estimator(
         provider: Provider,
         priority_fee_estimator: Arc<PriorityFeeEstimator>,
     ) -> Self {
@@ -103,7 +103,7 @@ where
             )
         })?;
 
-        let chain_spec = self.provider.chain_spec().clone();
+        let chain_spec = self.provider.chain_spec();
 
         let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
             meter_bundle(state_provider, chain_spec, parsed_bundle, &header).map_err(|e| {

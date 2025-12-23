@@ -1,6 +1,6 @@
 //! Resource annotator that correlates Kafka metering data with flashblock inclusions.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use alloy_primitives::TxHash;
 use parking_lot::RwLock;
@@ -38,6 +38,14 @@ pub struct ResourceAnnotator {
     /// Pending metering data awaiting flashblock inclusion confirmation.
     /// Uses IndexMap to maintain insertion order for FIFO eviction.
     pending_transactions: indexmap::IndexMap<TxHash, MeteredTransaction>,
+}
+
+impl fmt::Debug for ResourceAnnotator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResourceAnnotator")
+            .field("pending_transactions", &self.pending_transactions.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ResourceAnnotator {

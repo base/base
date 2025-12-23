@@ -1,6 +1,6 @@
 //! Kafka consumer for accepted bundle events.
 
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use alloy_consensus::{Transaction, transaction::Recovered};
 use alloy_eips::Encodable2718;
@@ -36,6 +36,12 @@ pub struct KafkaBundleConsumer {
     consumer: StreamConsumer,
     tx_sender: UnboundedSender<MeteredTransaction>,
     topic: String,
+}
+
+impl fmt::Debug for KafkaBundleConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KafkaBundleConsumer").field("topic", &self.topic).finish_non_exhaustive()
+    }
 }
 
 impl KafkaBundleConsumer {
