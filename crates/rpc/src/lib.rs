@@ -13,7 +13,7 @@ pub use base::{
     estimator::{
         BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
         ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
-        RollingPriorityEstimates,
+        RollingPriorityEstimate,
     },
     kafka::{KafkaBundleConsumer, KafkaBundleConsumerConfig},
     meter::meter_bundle,
