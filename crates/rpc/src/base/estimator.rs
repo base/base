@@ -84,7 +84,7 @@ pub enum ResourceKind {
 
 impl ResourceKind {
     /// Returns all resource kinds in a fixed order.
-    pub fn all() -> [Self; 4] {
+    pub const fn all() -> [Self; 4] {
         [Self::GasUsed, Self::ExecutionTime, Self::StateRootTime, Self::DataAvailability]
     }
 
@@ -98,7 +98,7 @@ impl ResourceKind {
     ///
     /// Other resources like gas and DA bytes are bounded per-block but are
     /// evaluated per-flashblock since their limits apply independently.
-    fn use_it_or_lose_it(self) -> bool {
+    const fn use_it_or_lose_it(self) -> bool {
         matches!(self, Self::ExecutionTime)
     }
 
@@ -185,7 +185,7 @@ pub struct ResourceEstimates {
 
 impl ResourceEstimates {
     /// Returns the estimate for the given resource kind.
-    pub fn get(&self, kind: ResourceKind) -> Option<&ResourceEstimate> {
+    pub const fn get(&self, kind: ResourceKind) -> Option<&ResourceEstimate> {
         match kind {
             ResourceKind::GasUsed => self.gas_used.as_ref(),
             ResourceKind::ExecutionTime => self.execution_time.as_ref(),
@@ -195,7 +195,7 @@ impl ResourceEstimates {
     }
 
     /// Sets the estimate for the given resource kind.
-    pub fn set(&mut self, kind: ResourceKind, estimate: ResourceEstimate) {
+    pub const fn set(&mut self, kind: ResourceKind, estimate: ResourceEstimate) {
         match kind {
             ResourceKind::GasUsed => self.gas_used = Some(estimate),
             ResourceKind::ExecutionTime => self.execution_time = Some(estimate),
@@ -278,7 +278,7 @@ impl PriorityFeeEstimator {
     /// - `limits`: Configured resource capacity limits.
     /// - `default_priority_fee`: Fee to return when a resource is not congested.
     /// - `da_config`: Optional shared DA config for dynamic DA limit updates.
-    pub fn new(
+    pub const fn new(
         cache: Arc<RwLock<MeteringCache>>,
         percentile: f64,
         limits: ResourceLimits,
@@ -318,10 +318,8 @@ impl PriorityFeeEstimator {
         demand: ResourceDemand,
     ) -> Result<Option<BlockPriorityEstimates>, EstimateError> {
         let cache_guard = self.cache.read();
-        let block_metrics = match block_number {
-            Some(target) => cache_guard.block(target),
-            None => cache_guard.blocks_desc().next(),
-        };
+        let block_metrics = block_number
+            .map_or_else(|| cache_guard.blocks_desc().next(), |target| cache_guard.block(target));
         let Some(block_metrics) = block_metrics else {
             return Ok(None);
         };
@@ -555,8 +553,15 @@ fn compute_estimate(
         });
     }
 
-    let (supporting_count, threshold_fee, recommended_fee) = match last_included_idx {
-        Some(idx) => {
+    let (supporting_count, threshold_fee, recommended_fee) = last_included_idx.map_or_else(
+        || {
+            // No transactions fit - even the first transaction would crowd out
+            // the bundle. The bundle must beat the highest fee to be included.
+            // Report 0 supporting transactions since none were actually included.
+            let threshold_fee = transactions[0].priority_fee_per_gas;
+            (0, threshold_fee, threshold_fee)
+        },
+        |idx| {
             // At least one transaction fits alongside the bundle.
             // The threshold is the fee of the last included transaction.
             let threshold_fee = transactions[idx].priority_fee_per_gas;
@@ -574,15 +579,8 @@ fn compute_estimate(
             };
 
             (idx + 1, threshold_fee, recommended_fee)
-        }
-        None => {
-            // No transactions fit - even the first transaction would crowd out
-            // the bundle. The bundle must beat the highest fee to be included.
-            // Report 0 supporting transactions since none were actually included.
-            let threshold_fee = transactions[0].priority_fee_per_gas;
-            (0, threshold_fee, threshold_fee)
-        }
-    };
+        },
+    );
 
     Ok(ResourceEstimate {
         threshold_priority_fee: threshold_fee,

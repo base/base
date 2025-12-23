@@ -26,7 +26,7 @@ pub struct MeteredTransaction {
 
 impl MeteredTransaction {
     /// Creates a zeroed transaction (placeholder with no resource usage).
-    pub fn zeroed(tx_hash: B256) -> Self {
+    pub const fn zeroed(tx_hash: B256) -> Self {
         Self {
             tx_hash,
             priority_fee_per_gas: U256::ZERO,
@@ -52,7 +52,7 @@ pub struct ResourceTotals {
 }
 
 impl ResourceTotals {
-    fn accumulate(&mut self, tx: &MeteredTransaction) {
+    const fn accumulate(&mut self, tx: &MeteredTransaction) {
         self.gas_used = self.gas_used.saturating_add(tx.gas_used);
         self.execution_time_us = self.execution_time_us.saturating_add(tx.execution_time_us);
         self.state_root_time_us = self.state_root_time_us.saturating_add(tx.state_root_time_us);
@@ -93,7 +93,7 @@ impl FlashblockMetrics {
     }
 
     /// Returns the resource totals for this flashblock.
-    pub fn totals(&self) -> ResourceTotals {
+    pub const fn totals(&self) -> ResourceTotals {
         self.totals
     }
 
@@ -103,12 +103,12 @@ impl FlashblockMetrics {
     }
 
     /// Returns the number of transactions.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.transactions.len()
     }
 
     /// Returns true if empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.transactions.is_empty()
     }
 }
@@ -150,7 +150,7 @@ impl BlockMetrics {
     }
 
     /// Returns the resource totals for this block.
-    pub fn totals(&self) -> ResourceTotals {
+    pub const fn totals(&self) -> ResourceTotals {
         self.totals
     }
 
@@ -184,7 +184,7 @@ impl MeteringCache {
     }
 
     /// Returns the maximum number of blocks retained.
-    pub fn max_blocks(&self) -> usize {
+    pub const fn max_blocks(&self) -> usize {
         self.max_blocks
     }
 

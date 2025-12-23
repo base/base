@@ -26,8 +26,6 @@ use crate::{
 /// Runtime state for the metering pipeline.
 #[derive(Clone)]
 struct MeteringRuntime {
-    /// Shared cache for metered transactions.
-    cache: Arc<RwLock<MeteringCache>>,
     /// Priority fee estimator.
     estimator: Arc<PriorityFeeEstimator>,
     /// Sender for metered transactions from Kafka.
@@ -45,7 +43,7 @@ struct CompositeFlashblocksReceiver<Client> {
 }
 
 impl<Client> CompositeFlashblocksReceiver<Client> {
-    fn new(
+    const fn new(
         state: Arc<FlashblocksState<Client>>,
         metering_sender: Option<mpsc::UnboundedSender<FlashblockInclusion>>,
     ) -> Self {
@@ -84,8 +82,7 @@ fn flashblock_inclusion_from_flashblock(flashblock: &Flashblock) -> Option<Flash
         return None;
     }
 
-    let ordered_tx_hashes: Vec<B256> =
-        flashblock.diff.transactions.iter().map(|tx_bytes| keccak256(tx_bytes)).collect();
+    let ordered_tx_hashes: Vec<B256> = flashblock.diff.transactions.iter().map(keccak256).collect();
 
     Some(FlashblockInclusion {
         block_number: flashblock.metadata.block_number,
@@ -187,14 +184,11 @@ impl BaseNodeExtension for BaseRpcExtension {
                     mpsc::unbounded_channel::<FlashblockInclusion>();
 
                 // Spawn the resource annotator
-                let annotator_cache = cache.clone();
                 tokio::spawn(async move {
-                    ResourceAnnotator::new(annotator_cache, tx_receiver, flashblock_receiver)
-                        .run()
-                        .await;
+                    ResourceAnnotator::new(cache, tx_receiver, flashblock_receiver).run().await;
                 });
 
-                Some(MeteringRuntime { cache, estimator, tx_sender, flashblock_sender })
+                Some(MeteringRuntime { estimator, tx_sender, flashblock_sender })
             } else {
                 None
             };
