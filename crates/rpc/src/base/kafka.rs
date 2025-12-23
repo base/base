@@ -32,7 +32,6 @@ pub struct KafkaBundleConsumerConfig {
 const MAX_BACKOFF_SECS: u64 = 60;
 
 /// Consumes `AcceptedBundle` events from Kafka and publishes transaction-level metering data.
-#[derive(Debug)]
 pub struct KafkaBundleConsumer {
     consumer: StreamConsumer,
     tx_sender: UnboundedSender<MeteredTransaction>,

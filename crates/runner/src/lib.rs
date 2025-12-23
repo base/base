@@ -13,7 +13,10 @@ mod runner;
 pub use runner::BaseNodeRunner;
 
 mod config;
-pub use config::{BaseNodeConfig, FlashblocksConfig, TracingConfig};
+pub use config::{
+    BaseNodeConfig, FlashblocksConfig, KafkaConfig, MeteringConfig, ResourceLimitsConfig,
+    TracingConfig,
+};
 
 mod extensions;
 pub use extensions::{

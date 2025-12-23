@@ -1643,6 +1643,7 @@ dependencies = [
 name = "base-reth-runner"
 version = "0.2.1"
 dependencies = [
+ "alloy-primitives",
  "base-reth-flashblocks",
  "base-reth-rpc",
  "base-tracex",
@@ -1650,6 +1651,7 @@ dependencies = [
  "eyre",
  "futures-util",
  "once_cell",
+ "parking_lot",
  "reth",
  "reth-db",
  "reth-exex",
