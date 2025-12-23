@@ -2,8 +2,8 @@ use crate::{
     builders::{BuilderConfig, OpPayloadBuilderCtx, flashblocks::FlashblocksConfig},
     gas_limiter::{AddressGasLimiter, args::GasLimiterArgs},
     metrics::OpRBuilderMetrics,
-    resource_metering::ResourceMetering,
     traits::ClientBounds,
+    tx_data_store::TxDataStore,
 };
 use op_revm::OpSpecId;
 use reth_basic_payload_builder::PayloadConfig;
@@ -30,8 +30,8 @@ pub(super) struct OpPayloadSyncerCtx {
     max_gas_per_txn: Option<u64>,
     /// The metrics for the builder
     metrics: Arc<OpRBuilderMetrics>,
-    /// Resource metering tracking
-    resource_metering: ResourceMetering,
+    /// Unified transaction data store (backrun bundles + resource metering)
+    tx_data_store: TxDataStore,
 }
 
 impl OpPayloadSyncerCtx {
@@ -51,7 +51,7 @@ impl OpPayloadSyncerCtx {
             chain_spec,
             max_gas_per_txn: builder_config.max_gas_per_txn,
             metrics,
-            resource_metering: builder_config.resource_metering,
+            tx_data_store: builder_config.tx_data_store,
         })
     }
 
@@ -84,7 +84,7 @@ impl OpPayloadSyncerCtx {
             extra_ctx: (),
             max_gas_per_txn: self.max_gas_per_txn,
             address_gas_limiter: AddressGasLimiter::new(GasLimiterArgs::default()),
-            resource_metering: self.resource_metering.clone(),
+            tx_data_store: self.tx_data_store.clone(),
         }
     }
 }

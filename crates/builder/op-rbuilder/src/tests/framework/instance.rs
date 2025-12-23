@@ -8,6 +8,7 @@ use crate::{
         framework::driver::ChainDriver, get_available_port,
     },
     tx::FBPooledTransaction,
+    tx_data_store::TxDataStore,
     tx_signer::Signer,
 };
 use alloy_primitives::{Address, B256, Bytes, hex, keccak256};
@@ -64,6 +65,7 @@ pub struct LocalInstance {
     _node_handle: Box<dyn Any + Send>,
     pool_observer: TransactionPoolObserver,
     attestation_server: Option<AttestationServer>,
+    tx_data_store: TxDataStore,
 }
 
 impl LocalInstance {
@@ -112,6 +114,7 @@ impl LocalInstance {
             .expect("Failed to convert rollup args to builder config");
         let da_config = builder_config.da_config.clone();
         let gas_limit_config = builder_config.gas_limit_config.clone();
+        let tx_data_store = builder_config.tx_data_store.clone();
 
         let addons: OpAddOns<
             _,
@@ -187,6 +190,7 @@ impl LocalInstance {
             task_manager: Some(task_manager),
             pool_observer: TransactionPoolObserver::new(pool_monitor, reverted_cache_clone),
             attestation_server,
+            tx_data_store,
         })
     }
 
@@ -265,6 +269,10 @@ impl LocalInstance {
 
     pub const fn attestation_server(&self) -> &Option<AttestationServer> {
         &self.attestation_server
+    }
+
+    pub fn tx_data_store(&self) -> &TxDataStore {
+        &self.tx_data_store
     }
 
     pub async fn driver(&self) -> eyre::Result<ChainDriver<Ipc>> {

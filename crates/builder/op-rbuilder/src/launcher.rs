@@ -7,9 +7,9 @@ use crate::{
     metrics::{VERSION, record_flag_gauge_metrics},
     monitor_tx_pool::monitor_tx_pool,
     primitives::reth::engine_api_builder::OpEngineApiBuilder,
-    resource_metering::{BaseApiExtServer, ResourceMeteringExt},
     revert_protection::{EthApiExtServer, RevertProtectionExt},
     tx::FBPooledTransaction,
+    tx_data_store::{BaseApiExtServer, TxDataStoreExt},
 };
 use core::fmt::Debug;
 use moka::future::Cache;
@@ -110,7 +110,7 @@ where
         let op_node = OpNode::new(rollup_args.clone());
         let reverted_cache = Cache::builder().max_capacity(100).build();
         let reverted_cache_copy = reverted_cache.clone();
-        let resource_metering = builder_config.resource_metering.clone();
+        let tx_data_store = builder_config.tx_data_store.clone();
 
         let mut addons: OpAddOns<
             _,
@@ -166,9 +166,9 @@ where
                         .add_or_replace_configured(revert_protection_ext.into_rpc())?;
                 }
 
-                let resource_metering_ext = ResourceMeteringExt::new(resource_metering);
+                let tx_data_store_ext = TxDataStoreExt::new(tx_data_store);
                 ctx.modules
-                    .add_or_replace_configured(resource_metering_ext.into_rpc())?;
+                    .add_or_replace_configured(tx_data_store_ext.into_rpc())?;
 
                 Ok(())
             })

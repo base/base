@@ -167,6 +167,24 @@ pub struct OpRBuilderMetrics {
     pub metering_unknown_transaction: Counter,
     /// Count of the number of times we were unable to resolve metering information due to locking
     pub metering_locked_transaction: Counter,
+    /// Current number of backrun bundles in store
+    pub backrun_bundles_in_store: Gauge,
+    /// Number of target transactions found with backrun bundles
+    pub backrun_target_txs_found_total: Counter,
+    /// Number of backrun bundles received via RPC
+    pub backrun_bundles_received_total: Counter,
+    /// Number of backrun bundles that reverted during execution (all-or-nothing)
+    pub backrun_bundles_reverted_total: Counter,
+    /// Number of backrun bundles rejected due to priority fee below target tx
+    pub backrun_bundles_rejected_low_fee_total: Counter,
+    /// Number of backrun bundles rejected due to exceeding block limits
+    pub backrun_bundles_rejected_over_limits_total: Counter,
+    /// Number of backrun bundles successfully landed in a block
+    pub backrun_bundles_landed_total: Counter,
+    /// Latency of inserting a backrun bundle into the store
+    pub backrun_bundle_insert_duration: Histogram,
+    /// Duration of executing all backrun bundles for a target transaction
+    pub backrun_bundle_execution_duration: Histogram,
 }
 
 impl OpRBuilderMetrics {

@@ -43,9 +43,9 @@ use crate::{
     gas_limiter::AddressGasLimiter,
     metrics::OpRBuilderMetrics,
     primitives::reth::{ExecutionInfo, TxnExecutionResult},
-    resource_metering::ResourceMetering,
     traits::PayloadTxsBounds,
     tx::MaybeRevertingTransaction,
+    tx_data_store::{TxData, TxDataStore},
     tx_signer::Signer,
 };
 
@@ -78,8 +78,8 @@ pub struct OpPayloadBuilderCtx<ExtraCtx: Debug + Default = ()> {
     pub max_gas_per_txn: Option<u64>,
     /// Rate limiting based on gas. This is an optional feature.
     pub address_gas_limiter: AddressGasLimiter,
-    /// Per transaction resource metering information
-    pub resource_metering: ResourceMetering,
+    /// Unified transaction data store (backrun bundles + resource metering)
+    pub tx_data_store: TxDataStore,
 }
 
 impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
@@ -433,7 +433,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(
+                info!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
@@ -445,7 +445,10 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
             num_txs_considered += 1;
 
-            let _resource_usage = self.resource_metering.get(&tx_hash);
+            let TxData {
+                metering: _resource_usage,
+                backrun_bundles,
+            } = self.tx_data_store.get(&tx_hash);
 
             // TODO: ideally we should get this from the txpool stream
             if let Some(conditional) = conditional
@@ -543,7 +546,8 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 continue;
             }
 
-            if result.is_success() {
+            let is_success = result.is_success();
+            if is_success {
                 log_txn(TxnExecutionResult::Success);
                 num_txs_simulated_success += 1;
                 self.metrics.successful_tx_gas_used.record(gas_used as f64);
@@ -600,6 +604,136 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
             // append sender and transaction to the respective lists
             info.executed_senders.push(tx.signer());
             info.executed_transactions.push(tx.into_inner());
+
+            if is_success && !backrun_bundles.is_empty() {
+                self.metrics.backrun_target_txs_found_total.increment(1);
+                let backrun_start_time = Instant::now();
+
+                // Bundles are pre-sorted by total_priority_fee (descending) from the store
+                'bundle_loop: for stored_bundle in backrun_bundles {
+                    info!(
+                        target: "payload_builder",
+                        message = "Executing backrun bundle",
+                        tx_hash = ?tx_hash,
+                        bundle_id = ?stored_bundle.bundle_id,
+                        tx_count = stored_bundle.backrun_txs.len(),
+                    );
+
+                    let total_effective_tip: u128 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.effective_tip_per_gas(base_fee).unwrap_or(0))
+                        .sum();
+                    if total_effective_tip < miner_fee {
+                        self.metrics
+                            .backrun_bundles_rejected_low_fee_total
+                            .increment(1);
+                        info!(
+                            target: "payload_builder",
+                            bundle_id = ?stored_bundle.bundle_id,
+                            target_fee = miner_fee,
+                            total_effective_tip = total_effective_tip,
+                            "Backrun bundle rejected: total effective tip below target tx"
+                        );
+                        break 'bundle_loop;
+                    }
+
+                    let total_backrun_gas: u64 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.gas_limit())
+                        .sum();
+                    let total_backrun_da_size: u64 = stored_bundle
+                        .backrun_txs
+                        .iter()
+                        .map(|tx| tx.estimated_da_size())
+                        .sum();
+
+                    if let Err(result) = info.is_tx_over_limits(
+                        total_backrun_da_size,
+                        block_gas_limit,
+                        tx_da_limit,
+                        block_da_limit,
+                        total_backrun_gas,
+                        info.da_footprint_scalar,
+                        block_da_footprint_limit,
+                    ) {
+                        self.metrics
+                            .backrun_bundles_rejected_over_limits_total
+                            .increment(1);
+                        info!(
+                            target: "payload_builder",
+                            bundle_id = ?stored_bundle.bundle_id,
+                            result = ?result,
+                            "Backrun bundle rejected: exceeds block limits"
+                        );
+                        continue 'bundle_loop;
+                    }
+
+                    // All-or-nothing: simulate all txs first, only commit if all succeed
+                    let mut pending_results = Vec::with_capacity(stored_bundle.backrun_txs.len());
+
+                    for backrun_tx in &stored_bundle.backrun_txs {
+                        let consensus_tx = backrun_tx.clone_into_consensus();
+                        let ResultAndState { result, state } = match evm.transact(&consensus_tx) {
+                            Ok(res) => res,
+                            Err(err) => {
+                                return Err(PayloadBuilderError::evm(err));
+                            }
+                        };
+
+                        if !result.is_success() {
+                            self.metrics.backrun_bundles_reverted_total.increment(1);
+                            info!(
+                                target: "payload_builder",
+                                target_tx = ?tx_hash,
+                                failed_tx = ?backrun_tx.hash(),
+                                bundle_id = ?stored_bundle.bundle_id,
+                                gas_used = result.gas_used(),
+                                "Backrun bundle reverted (all-or-nothing)"
+                            );
+                            continue 'bundle_loop;
+                        }
+
+                        pending_results.push((backrun_tx.clone(), consensus_tx, result, state));
+                    }
+
+                    for (backrun_tx, consensus_tx, result, state) in pending_results {
+                        let backrun_gas_used = result.gas_used();
+
+                        info.cumulative_gas_used += backrun_gas_used;
+                        info.cumulative_da_bytes_used += backrun_tx.estimated_da_size();
+
+                        let ctx = ReceiptBuilderCtx {
+                            tx: consensus_tx.inner(),
+                            evm: &evm,
+                            result,
+                            state: &state,
+                            cumulative_gas_used: info.cumulative_gas_used,
+                        };
+                        info.receipts.push(self.build_receipt(ctx, None));
+
+                        evm.db_mut().commit(state);
+
+                        let miner_fee = backrun_tx
+                            .effective_tip_per_gas(base_fee)
+                            .expect("fee is always valid; execution succeeded");
+                        info.total_fees += U256::from(miner_fee) * U256::from(backrun_gas_used);
+
+                        info.executed_senders.push(backrun_tx.sender());
+                        info.executed_transactions.push(consensus_tx.into_inner());
+                    }
+
+                    self.metrics.backrun_bundles_landed_total.increment(1);
+                }
+
+                self.metrics
+                    .backrun_bundle_execution_duration
+                    .record(backrun_start_time.elapsed());
+
+                // Remove the target tx from the backrun bundle store as already executed
+                self.tx_data_store.remove_backrun_bundles(&tx_hash);
+            }
         }
 
         let payload_transaction_simulation_time = execute_txs_start_time.elapsed();
