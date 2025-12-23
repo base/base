@@ -154,7 +154,7 @@ impl BaseNodeExtension for BaseRpcExtension {
             if metering.enabled && metering.kafka.is_none() {
                 warn!(
                     message = "Metering enabled but Kafka not configured",
-                    help = "Priority fee estimation requires --metering-kafka-brokers, --metering-kafka-topic, and --metering-kafka-group-id"
+                    help = "Priority fee estimation requires --metering-kafka-properties-file"
                 );
             }
 
@@ -201,31 +201,34 @@ impl BaseNodeExtension for BaseRpcExtension {
 
             // Spawn Kafka consumer if configured
             if let (Some(runtime), Some(kafka_cfg)) = (&metering_runtime, &metering.kafka) {
-                info!(message = "Starting Kafka consumer for metering");
+                info!(
+                    message = "Starting Kafka consumer for metering",
+                    properties_file = %kafka_cfg.properties_file,
+                    topic = %kafka_cfg.topic
+                );
+
+                // Load all rdkafka settings from the properties file
+                let props = match load_kafka_config_from_file(&kafka_cfg.properties_file) {
+                    Ok(props) => props,
+                    Err(err) => {
+                        error!(
+                            target: "metering::kafka",
+                            file = %kafka_cfg.properties_file,
+                            %err,
+                            "Failed to load Kafka properties file"
+                        );
+                        return Ok(());
+                    }
+                };
 
                 let mut client_config = ClientConfig::new();
-                client_config.set("bootstrap.servers", &kafka_cfg.brokers);
-                client_config.set("group.id", &kafka_cfg.group_id);
-                client_config.set("enable.partition.eof", "false");
-                client_config.set("session.timeout.ms", "6000");
-                client_config.set("enable.auto.commit", "true");
-                client_config.set("auto.offset.reset", "earliest");
+                for (key, value) in props {
+                    client_config.set(key, value);
+                }
 
-                if let Some(path) = kafka_cfg.properties_file.as_ref() {
-                    match load_kafka_config_from_file(path) {
-                        Ok(props) => {
-                            for (key, value) in props {
-                                client_config.set(key, value);
-                            }
-                        }
-                        Err(err) => {
-                            warn!(
-                                message = "Failed to load Kafka properties file",
-                                file = %path,
-                                %err
-                            );
-                        }
-                    }
+                // Apply CLI override for group.id if specified
+                if let Some(group_id) = &kafka_cfg.group_id_override {
+                    client_config.set("group.id", group_id);
                 }
 
                 let tx_sender = runtime.tx_sender.clone();
