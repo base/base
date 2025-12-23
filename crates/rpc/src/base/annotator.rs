@@ -94,11 +94,9 @@ impl ResourceAnnotator {
         }
 
         metrics::gauge!("metering.pending.size").set(self.pending_transactions.len() as f64);
-        metrics::counter!("metering.kafka.tx_events_total").increment(1);
     }
 
     fn handle_flashblock_event(&mut self, event: FlashblockInclusion) {
-        metrics::counter!("metering.streams.flashblocks_total").increment(1);
 
         let mut matched = 0usize;
         let mut missed = 0usize;
@@ -138,6 +136,5 @@ impl ResourceAnnotator {
         }
 
         metrics::gauge!("metering.pending.size").set(self.pending_transactions.len() as f64);
-        metrics::counter!("metering.streams.tx_matched_total").increment(matched as u64);
     }
 }
