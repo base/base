@@ -1655,6 +1655,7 @@ name = "base-reth-runner"
 version = "0.2.1"
 dependencies = [
  "alloy-primitives",
+ "base-flashtypes",
  "base-reth-flashblocks",
  "base-reth-rpc",
  "base-tracex",
@@ -1663,11 +1664,13 @@ dependencies = [
  "futures-util",
  "once_cell",
  "parking_lot",
+ "rdkafka",
  "reth",
  "reth-db",
  "reth-exex",
  "reth-optimism-chainspec",
  "reth-optimism-node",
+ "tokio",
  "tracing",
  "url",
 ]

@@ -27,6 +27,9 @@ reth-optimism-chainspec.workspace = true
 # alloy
 alloy-primitives.workspace = true
 
+# flashblocks
+base-flashtypes.workspace = true
+
 # misc
 eyre.workspace = true
 futures-util.workspace = true
@@ -35,3 +38,5 @@ tracing.workspace = true
 url.workspace = true
 parking_lot.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
+rdkafka.workspace = true
+tokio.workspace = true
