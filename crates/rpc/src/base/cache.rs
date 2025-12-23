@@ -241,6 +241,30 @@ impl MeteringCache {
         self.blocks.iter().rev()
     }
 
+    /// Returns true if the specified block_number exists in the cache.
+    pub fn contains_block(&self, block_number: u64) -> bool {
+        self.block_index.contains_key(&block_number)
+    }
+
+    /// Clears all blocks with block_number >= the specified value.
+    /// Returns the number of blocks cleared.
+    pub fn clear_blocks_from(&mut self, block_number: u64) -> usize {
+        let mut cleared = 0;
+
+        // Remove from back to front (blocks stored oldest first)
+        while let Some(block) = self.blocks.back() {
+            if block.block_number >= block_number {
+                let removed = self.blocks.pop_back().unwrap();
+                self.block_index.remove(&removed.block_number);
+                cleared += 1;
+            } else {
+                break;
+            }
+        }
+
+        cleared
+    }
+
     fn evict_if_needed(&mut self) {
         let mut evicted = false;
         while self.blocks.len() > self.max_blocks {
@@ -302,11 +326,8 @@ mod tests {
 
         let block = cache.block(100).unwrap();
         let flashblock = block.flashblocks().next().unwrap();
-        let fees: Vec<_> = flashblock
-            .transactions()
-            .iter()
-            .map(|tx| tx.priority_fee_per_gas)
-            .collect();
+        let fees: Vec<_> =
+            flashblock.transactions().iter().map(|tx| tx.priority_fee_per_gas).collect();
         // Should be sorted descending: 30, 20, 10
         assert_eq!(fees, vec![U256::from(30u64), U256::from(20u64), U256::from(10u64)]);
     }
@@ -320,5 +341,68 @@ mod tests {
         assert!(cache.block(0).is_none());
         assert!(cache.block(1).is_some());
         assert!(cache.block(2).is_some());
+    }
+
+    #[test]
+    fn contains_block_returns_correct_values() {
+        let mut cache = MeteringCache::new(10);
+        cache.insert_transaction(100, 0, test_tx(1, 10));
+        cache.insert_transaction(101, 0, test_tx(2, 20));
+
+        assert!(cache.contains_block(100));
+        assert!(cache.contains_block(101));
+        assert!(!cache.contains_block(99));
+        assert!(!cache.contains_block(102));
+    }
+
+    #[test]
+    fn clear_blocks_from_clears_subsequent_blocks() {
+        let mut cache = MeteringCache::new(10);
+        cache.insert_transaction(100, 0, test_tx(1, 10));
+        cache.insert_transaction(101, 0, test_tx(2, 20));
+        cache.insert_transaction(102, 0, test_tx(3, 30));
+
+        let cleared = cache.clear_blocks_from(101);
+
+        assert_eq!(cleared, 2);
+        assert!(cache.contains_block(100));
+        assert!(!cache.contains_block(101));
+        assert!(!cache.contains_block(102));
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn clear_blocks_from_returns_zero_when_no_match() {
+        let mut cache = MeteringCache::new(10);
+        cache.insert_transaction(100, 0, test_tx(1, 10));
+        cache.insert_transaction(101, 0, test_tx(2, 20));
+
+        let cleared = cache.clear_blocks_from(200);
+
+        assert_eq!(cleared, 0);
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn clear_blocks_from_clears_all_blocks() {
+        let mut cache = MeteringCache::new(10);
+        cache.insert_transaction(100, 0, test_tx(1, 10));
+        cache.insert_transaction(101, 0, test_tx(2, 20));
+        cache.insert_transaction(102, 0, test_tx(3, 30));
+
+        let cleared = cache.clear_blocks_from(100);
+
+        assert_eq!(cleared, 3);
+        assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn clear_blocks_from_handles_empty_cache() {
+        let mut cache = MeteringCache::new(10);
+
+        let cleared = cache.clear_blocks_from(100);
+
+        assert_eq!(cleared, 0);
+        assert!(cache.is_empty());
     }
 }

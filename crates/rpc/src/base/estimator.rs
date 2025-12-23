@@ -543,8 +543,7 @@ fn compute_estimate(
     }
 
     // If we included all transactions and still have room, resource is not congested.
-    let is_uncongested =
-        last_included_idx == Some(transactions.len() - 1) && remaining >= demand;
+    let is_uncongested = last_included_idx == Some(transactions.len() - 1) && remaining >= demand;
 
     if is_uncongested {
         return Ok(ResourceEstimate {

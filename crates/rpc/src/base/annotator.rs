@@ -97,6 +97,18 @@ impl ResourceAnnotator {
     }
 
     fn handle_flashblock_event(&mut self, event: FlashblockInclusion) {
+        // Reorg detection: flashblock_index=0 for existing block indicates reorg
+        if event.flashblock_index == 0 && self.cache.read().contains_block(event.block_number) {
+            let cleared = self.cache.write().clear_blocks_from(event.block_number);
+
+            warn!(
+                target: "metering::annotator",
+                block_number = event.block_number,
+                blocks_cleared = cleared,
+                "Reorg detected: cleared cache from block"
+            );
+            metrics::counter!("metering.cache.reorgs_detected").increment(1);
+        }
 
         let mut matched = 0usize;
         let mut missed = 0usize;
@@ -136,5 +148,133 @@ impl ResourceAnnotator {
         }
 
         metrics::gauge!("metering.pending.size").set(self.pending_transactions.len() as f64);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, U256};
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn test_tx(hash: u64, priority: u64) -> MeteredTransaction {
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes[24..].copy_from_slice(&hash.to_be_bytes());
+        MeteredTransaction {
+            tx_hash: B256::new(hash_bytes),
+            priority_fee_per_gas: U256::from(priority),
+            gas_used: 10,
+            execution_time_us: 5,
+            state_root_time_us: 7,
+            data_availability_bytes: 20,
+        }
+    }
+
+    fn test_flashblock(
+        block_number: u64,
+        flashblock_index: u64,
+        hashes: Vec<u64>,
+    ) -> FlashblockInclusion {
+        FlashblockInclusion {
+            block_number,
+            flashblock_index,
+            ordered_tx_hashes: hashes
+                .into_iter()
+                .map(|h| {
+                    let mut hash_bytes = [0u8; 32];
+                    hash_bytes[24..].copy_from_slice(&h.to_be_bytes());
+                    B256::new(hash_bytes)
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn reorg_clears_affected_blocks() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+
+        // Pre-populate cache with blocks 100, 101, 102
+        {
+            let mut c = cache.write();
+            c.insert_transaction(100, 0, test_tx(1, 10));
+            c.insert_transaction(101, 0, test_tx(2, 20));
+            c.insert_transaction(102, 0, test_tx(3, 30));
+        }
+
+        assert!(cache.read().contains_block(100));
+        assert!(cache.read().contains_block(101));
+        assert!(cache.read().contains_block(102));
+
+        // Send flashblock_index=0 for existing block 101 (simulates reorg)
+        let event = test_flashblock(101, 0, vec![]);
+        annotator.handle_flashblock_event(event);
+
+        // Blocks 101 and 102 should be cleared, block 100 should remain
+        assert!(cache.read().contains_block(100));
+        assert!(!cache.read().contains_block(101));
+        assert!(!cache.read().contains_block(102));
+
+        drop(tx_sender);
+        drop(fb_sender);
+    }
+
+    #[tokio::test]
+    async fn non_zero_flashblock_does_not_trigger_reorg() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+
+        // Pre-populate cache with block 100
+        {
+            let mut c = cache.write();
+            c.insert_transaction(100, 0, test_tx(1, 10));
+        }
+
+        assert!(cache.read().contains_block(100));
+
+        // Send flashblock_index=1 for existing block 100 (not a reorg signal)
+        let event = test_flashblock(100, 1, vec![]);
+        annotator.handle_flashblock_event(event);
+
+        // Block 100 should still exist
+        assert!(cache.read().contains_block(100));
+
+        drop(tx_sender);
+        drop(fb_sender);
+    }
+
+    #[tokio::test]
+    async fn flashblock_zero_for_new_block_does_not_trigger_reorg() {
+        let cache = Arc::new(RwLock::new(MeteringCache::new(10)));
+        let (tx_sender, tx_rx) = mpsc::unbounded_channel();
+        let (fb_sender, fb_rx) = mpsc::unbounded_channel();
+
+        let mut annotator = ResourceAnnotator::new(cache.clone(), tx_rx, fb_rx);
+
+        // Pre-populate cache with block 100
+        {
+            let mut c = cache.write();
+            c.insert_transaction(100, 0, test_tx(1, 10));
+        }
+
+        assert!(cache.read().contains_block(100));
+        assert!(!cache.read().contains_block(101));
+
+        // Send flashblock_index=0 for NEW block 101 (not a reorg, just a new block)
+        let event = test_flashblock(101, 0, vec![]);
+        annotator.handle_flashblock_event(event);
+
+        // Block 100 should still exist (no reorg happened)
+        assert!(cache.read().contains_block(100));
+
+        drop(tx_sender);
+        drop(fb_sender);
     }
 }
