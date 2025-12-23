@@ -1,6 +1,7 @@
 //! Contains the Base node configuration structures.
 
 use reth_optimism_node::args::RollupArgs;
+use reth_optimism_payload_builder::config::OpDAConfig;
 
 use crate::extensions::FlashblocksCell;
 
@@ -15,8 +16,12 @@ pub struct BaseNodeConfig {
     pub tracing: TracingConfig,
     /// Indicates whether the metering RPC surface should be installed.
     pub metering_enabled: bool,
+    /// Configuration for priority fee estimation.
+    pub metering: MeteringConfig,
     /// Shared Flashblocks state cache.
     pub flashblocks_cell: FlashblocksCell,
+    /// Shared DA config for dynamic updates via `miner_setMaxDASize`.
+    pub da_config: OpDAConfig,
 }
 
 impl BaseNodeConfig {
@@ -42,4 +47,49 @@ pub struct TracingConfig {
     pub enabled: bool,
     /// Emits `info`-level logs for the tracing ExEx when enabled.
     pub logs_enabled: bool,
+}
+
+/// Configuration for priority fee estimation.
+#[derive(Debug, Clone)]
+pub struct MeteringConfig {
+    /// Whether metering is enabled.
+    pub enabled: bool,
+    /// Kafka configuration for bundle events.
+    pub kafka: Option<KafkaConfig>,
+    /// Resource limits for fee estimation.
+    pub resource_limits: ResourceLimitsConfig,
+    /// Percentile for recommended priority fee (0.0-1.0).
+    pub priority_fee_percentile: f64,
+    /// Default priority fee when resource is not congested (in wei).
+    pub uncongested_priority_fee: u128,
+    /// Number of recent blocks to retain in metering cache.
+    pub cache_size: usize,
+}
+
+/// Kafka connection configuration.
+///
+/// All rdkafka settings (bootstrap.servers, group.id, timeouts, etc.) should be
+/// specified in the properties file. The CLI only specifies the path to this file
+/// and the topic name.
+#[derive(Debug, Clone)]
+pub struct KafkaConfig {
+    /// Path to the Kafka properties file containing rdkafka settings.
+    pub properties_file: String,
+    /// Topic name for accepted bundle events.
+    pub topic: String,
+    /// Optional consumer group ID override (takes precedence over properties file).
+    pub group_id_override: Option<String>,
+}
+
+/// Resource limits for priority fee estimation.
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceLimitsConfig {
+    /// Gas limit per flashblock.
+    pub gas_limit: u64,
+    /// Execution time budget in microseconds.
+    pub execution_time_us: u64,
+    /// State root time budget in microseconds (optional).
+    pub state_root_time_us: Option<u64>,
+    /// Data availability bytes limit.
+    pub da_bytes: u64,
 }

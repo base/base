@@ -3,7 +3,7 @@
 use alloy_primitives::TxHash;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{Bundle, MeterBundleResponse, TransactionStatusResponse};
+use crate::{Bundle, MeterBundleResponse, MeteredPriorityFeeResponse, TransactionStatusResponse};
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]
@@ -11,6 +11,14 @@ pub trait MeteringApi {
     /// Simulates and meters a bundle of transactions
     #[method(name = "meterBundle")]
     async fn meter_bundle(&self, bundle: Bundle) -> RpcResult<MeterBundleResponse>;
+
+    /// Estimates the priority fee necessary for a bundle to be included in recently observed
+    /// flashblocks, considering multiple resource constraints.
+    #[method(name = "meteredPriorityFeePerGas")]
+    async fn metered_priority_fee_per_gas(
+        &self,
+        bundle: Bundle,
+    ) -> RpcResult<MeteredPriorityFeeResponse>;
 }
 
 /// RPC API for transaction status

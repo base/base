@@ -88,6 +88,7 @@ reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-chainspec = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
+reth-optimism-payload-builder = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-optimism-primitives = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", tag = "v1.9.3", features = [
     "op",
@@ -122,6 +123,7 @@ op-alloy-rpc-types = "0.22.0"
 op-alloy-consensus = "0.22.0"
 op-alloy-rpc-jsonrpsee = "0.22.0"
 op-alloy-rpc-types-engine = "0.22.0"
+op-alloy-flz = "0.13.1"
 
 # tokio
 tokio = "1.48.0"
@@ -161,3 +163,6 @@ derive_more = "2.1.0"
 serde_json = "1.0.145"
 metrics-derive = "0.1.0"
 tracing-subscriber = "0.3.22"
+parking_lot = "0.12.3"
+indexmap = "2.7.0"
+rdkafka = { version = "0.37.0", default-features = false, features = ["tokio", "ssl-vendored", "libz-static"] }

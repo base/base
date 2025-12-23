@@ -23,6 +23,13 @@ reth-db.workspace = true
 reth-exex.workspace = true
 reth-optimism-node.workspace = true
 reth-optimism-chainspec.workspace = true
+reth-optimism-payload-builder.workspace = true
+
+# alloy
+alloy-primitives.workspace = true
+
+# flashblocks
+base-flashtypes.workspace = true
 
 # misc
 eyre.workspace = true
@@ -30,4 +37,7 @@ futures-util.workspace = true
 once_cell.workspace = true
 tracing.workspace = true
 url.workspace = true
+parking_lot.workspace = true
 derive_more = { workspace = true, features = ["debug"] }
+rdkafka.workspace = true
+tokio.workspace = true
