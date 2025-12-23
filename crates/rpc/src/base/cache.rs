@@ -1,9 +1,11 @@
 //! In-memory cache for metering data used by the priority fee estimator.
+//!
+//! Transactions are stored sorted by priority fee (descending) so the estimator
+//! can iterate from highest to lowest fee without re-sorting on each request.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use alloy_primitives::{B256, U256};
-use indexmap::IndexMap;
 
 /// A metered transaction with resource consumption data.
 #[derive(Debug, Clone)]
@@ -57,25 +59,19 @@ impl ResourceTotals {
         self.data_availability_bytes =
             self.data_availability_bytes.saturating_add(tx.data_availability_bytes);
     }
-
-    fn subtract(&mut self, tx: &MeteredTransaction) {
-        self.gas_used = self.gas_used.saturating_sub(tx.gas_used);
-        self.execution_time_us = self.execution_time_us.saturating_sub(tx.execution_time_us);
-        self.state_root_time_us = self.state_root_time_us.saturating_sub(tx.state_root_time_us);
-        self.data_availability_bytes =
-            self.data_availability_bytes.saturating_sub(tx.data_availability_bytes);
-    }
 }
 
 /// Metrics for a single flashblock within a block.
+///
+/// Transactions are stored sorted by priority fee in descending order (highest first).
 #[derive(Debug)]
 pub struct FlashblockMetrics {
     /// Block number.
     pub block_number: u64,
     /// Flashblock index within the block.
     pub flashblock_index: u64,
-    /// Transactions keyed by hash in insertion order.
-    transactions: IndexMap<B256, MeteredTransaction>,
+    /// Transactions sorted by priority fee descending.
+    transactions: Vec<MeteredTransaction>,
     totals: ResourceTotals,
 }
 
@@ -85,28 +81,20 @@ impl FlashblockMetrics {
         Self {
             block_number,
             flashblock_index,
-            transactions: IndexMap::new(),
+            transactions: Vec::new(),
             totals: ResourceTotals::default(),
         }
     }
 
-    /// Inserts or updates a transaction.
-    pub fn upsert_transaction(&mut self, tx: MeteredTransaction) {
-        let tx_hash = tx.tx_hash;
-        if let Some(existing) = self.transactions.get(&tx_hash) {
-            self.totals.subtract(existing);
-        }
+    /// Inserts a transaction, maintaining descending sort order by priority fee.
+    pub fn insert_transaction(&mut self, tx: MeteredTransaction) {
         self.totals.accumulate(&tx);
-        self.transactions.insert(tx_hash, tx);
-    }
-
-    /// Removes a transaction by hash.
-    pub fn remove_transaction(&mut self, tx_hash: &B256) -> Option<MeteredTransaction> {
-        let removed = self.transactions.shift_remove(tx_hash);
-        if let Some(ref tx) = removed {
-            self.totals.subtract(tx);
-        }
-        removed
+        // Binary search for insertion point (descending order)
+        let pos = self
+            .transactions
+            .binary_search_by(|probe| tx.priority_fee_per_gas.cmp(&probe.priority_fee_per_gas))
+            .unwrap_or_else(|pos| pos);
+        self.transactions.insert(pos, tx);
     }
 
     /// Returns the resource totals for this flashblock.
@@ -114,16 +102,9 @@ impl FlashblockMetrics {
         self.totals
     }
 
-    /// Iterates over all transactions.
-    pub fn transactions(&self) -> impl Iterator<Item = &MeteredTransaction> {
-        self.transactions.values()
-    }
-
-    /// Returns transactions sorted by priority fee (ascending).
-    pub fn transactions_sorted_by_priority_fee(&self) -> Vec<&MeteredTransaction> {
-        let mut txs: Vec<&MeteredTransaction> = self.transactions.values().collect();
-        txs.sort_by(|a, b| a.priority_fee_per_gas.cmp(&b.priority_fee_per_gas));
-        txs
+    /// Returns transactions sorted by priority fee descending (highest first).
+    pub fn transactions(&self) -> &[MeteredTransaction] {
+        &self.transactions
     }
 
     /// Returns the number of transactions.
@@ -160,11 +141,6 @@ impl BlockMetrics {
     /// Iterates over all flashblocks.
     pub fn flashblocks(&self) -> impl Iterator<Item = &FlashblockMetrics> {
         self.flashblocks.values()
-    }
-
-    /// Returns the flashblock at the given index.
-    pub fn flashblock(&self, flashblock_index: u64) -> Option<&FlashblockMetrics> {
-        self.flashblocks.get(&flashblock_index)
     }
 
     /// Returns a mutable reference to the flashblock, creating it if necessary.
@@ -237,17 +213,8 @@ impl MeteringCache {
         self.blocks.get_mut(*self.block_index.get(&block_number).unwrap()).unwrap()
     }
 
-    /// Returns the flashblock metrics for the given block and flashblock index.
-    pub fn flashblock(
-        &self,
-        block_number: u64,
-        flashblock_index: u64,
-    ) -> Option<&FlashblockMetrics> {
-        self.block(block_number).and_then(|block| block.flashblock(flashblock_index))
-    }
-
-    /// Inserts or updates a transaction in the cache.
-    pub fn upsert_transaction(
+    /// Inserts a transaction into the cache.
+    pub fn insert_transaction(
         &mut self,
         block_number: u64,
         flashblock_index: u64,
@@ -255,22 +222,8 @@ impl MeteringCache {
     ) {
         let block = self.block_mut(block_number);
         let (flashblock, _) = block.flashblock_mut(flashblock_index);
-        flashblock.upsert_transaction(tx);
+        flashblock.insert_transaction(tx);
         block.recompute_totals();
-    }
-
-    /// Removes a transaction from the cache.
-    pub fn remove_transaction(
-        &mut self,
-        block_number: u64,
-        flashblock_index: u64,
-        tx_hash: &B256,
-    ) -> Option<MeteredTransaction> {
-        let block = self.block_mut(block_number);
-        let (flashblock, _) = block.flashblock_mut(flashblock_index);
-        let removed = flashblock.remove_transaction(tx_hash);
-        block.recompute_totals();
-        removed
     }
 
     /// Returns the number of cached blocks.
@@ -331,53 +284,41 @@ mod tests {
     fn insert_and_retrieve_transactions() {
         let mut cache = MeteringCache::new(12);
         let tx1 = test_tx(1, 2);
-        cache.upsert_transaction(100, 0, tx1.clone());
+        cache.insert_transaction(100, 0, tx1.clone());
 
         let block = cache.block(100).unwrap();
         let flashblock = block.flashblocks().next().unwrap();
         assert_eq!(flashblock.len(), 1);
-        assert_eq!(flashblock.transactions().next().unwrap().tx_hash, tx1.tx_hash);
+        assert_eq!(flashblock.transactions()[0].tx_hash, tx1.tx_hash);
     }
 
     #[test]
-    fn replaces_existing_transaction() {
+    fn transactions_sorted_descending_by_priority_fee() {
         let mut cache = MeteringCache::new(12);
-        let mut tx1 = test_tx(1, 2);
-        cache.upsert_transaction(100, 0, tx1.clone());
-        tx1.gas_used = 42;
-        cache.upsert_transaction(100, 0, tx1.clone());
+        // Insert in random order
+        cache.insert_transaction(100, 0, test_tx(1, 10));
+        cache.insert_transaction(100, 0, test_tx(2, 30));
+        cache.insert_transaction(100, 0, test_tx(3, 20));
 
         let block = cache.block(100).unwrap();
         let flashblock = block.flashblocks().next().unwrap();
-        assert_eq!(flashblock.len(), 1);
-        assert_eq!(flashblock.transactions().next().unwrap().gas_used, tx1.gas_used);
+        let fees: Vec<_> = flashblock
+            .transactions()
+            .iter()
+            .map(|tx| tx.priority_fee_per_gas)
+            .collect();
+        // Should be sorted descending: 30, 20, 10
+        assert_eq!(fees, vec![U256::from(30u64), U256::from(20u64), U256::from(10u64)]);
     }
 
     #[test]
     fn evicts_old_blocks() {
         let mut cache = MeteringCache::new(2);
         for block_number in 0..3u64 {
-            cache.upsert_transaction(block_number, 0, test_tx(block_number, block_number));
+            cache.insert_transaction(block_number, 0, test_tx(block_number, block_number));
         }
         assert!(cache.block(0).is_none());
         assert!(cache.block(1).is_some());
         assert!(cache.block(2).is_some());
-    }
-
-    #[test]
-    fn transactions_sorted_by_priority_fee() {
-        let mut cache = MeteringCache::new(12);
-        cache.upsert_transaction(100, 0, test_tx(1, 30));
-        cache.upsert_transaction(100, 0, test_tx(2, 10));
-        cache.upsert_transaction(100, 0, test_tx(3, 20));
-
-        let block = cache.block(100).unwrap();
-        let flashblock = block.flashblocks().next().unwrap();
-        let sorted: Vec<_> = flashblock
-            .transactions_sorted_by_priority_fee()
-            .iter()
-            .map(|tx| tx.priority_fee_per_gas)
-            .collect();
-        assert_eq!(sorted, vec![U256::from(10u64), U256::from(20u64), U256::from(30u64)]);
     }
 }

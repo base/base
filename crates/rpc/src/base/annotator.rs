@@ -107,7 +107,7 @@ impl ResourceAnnotator {
             let mut cache = self.cache.write();
             for tx_hash in &event.ordered_tx_hashes {
                 if let Some(tx) = self.pending_transactions.shift_remove(tx_hash) {
-                    cache.upsert_transaction(event.block_number, event.flashblock_index, tx);
+                    cache.insert_transaction(event.block_number, event.flashblock_index, tx);
                     matched += 1;
                 } else {
                     missed += 1;
