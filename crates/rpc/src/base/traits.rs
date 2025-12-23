@@ -4,7 +4,10 @@ use alloy_eips::BlockNumberOrTag;
 use alloy_primitives::{B256, TxHash};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{Bundle, MeterBlockResponse, MeterBundleResponse, TransactionStatusResponse};
+use crate::{
+    Bundle, MeterBlockResponse, MeterBundleResponse, TransactionStatusResponse,
+    base::metered_fee_types::MeteredPriorityFeeResponse,
+};
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]
@@ -41,6 +44,14 @@ pub trait MeteringApi {
         &self,
         number: BlockNumberOrTag,
     ) -> RpcResult<MeterBlockResponse>;
+
+    /// Estimates the priority fee necessary for a bundle to be included in recently observed
+    /// flashblocks, considering multiple resource constraints.
+    #[method(name = "meteredPriorityFeePerGas")]
+    async fn metered_priority_fee_per_gas(
+        &self,
+        bundle: Bundle,
+    ) -> RpcResult<MeteredPriorityFeeResponse>;
 }
 
 /// RPC API for transaction status
