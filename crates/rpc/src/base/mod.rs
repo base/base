@@ -4,7 +4,6 @@ pub mod cache;
 pub mod estimator;
 pub(crate) mod meter;
 pub(crate) mod meter_rpc;
-pub(crate) mod metered_fee_types;
 pub(crate) mod pubsub;
 pub(crate) mod traits;
 pub(crate) mod transaction_rpc;

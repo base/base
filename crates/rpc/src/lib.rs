@@ -18,13 +18,12 @@ annotator::{FlashblockInclusion, ResourceAnnotator},
     },
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
-    metered_fee_types::{MeteredPriorityFeeResponse, ResourceFeeEstimateResponse},
     pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
     types::{
         BaseSubscriptionKind, ExtendedSubscriptionKind, MeterBlockResponse, MeterBlockTransactions,
-        Status, TransactionStatusResponse,
+        MeteredPriorityFeeResponse, ResourceFeeEstimateResponse, Status, TransactionStatusResponse,
     },
 };
 

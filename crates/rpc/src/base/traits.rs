@@ -5,8 +5,8 @@ use alloy_primitives::{B256, TxHash};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
 use crate::{
-    Bundle, MeterBlockResponse, MeterBundleResponse, TransactionStatusResponse,
-    base::metered_fee_types::MeteredPriorityFeeResponse,
+    Bundle, MeterBlockResponse, MeterBundleResponse, MeteredPriorityFeeResponse,
+    TransactionStatusResponse,
 };
 
 /// RPC API for transaction metering
