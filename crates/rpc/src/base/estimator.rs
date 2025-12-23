@@ -328,18 +328,17 @@ impl PriorityFeeEstimator {
 
         let block_number = block_metrics.block_number;
 
-        // Materialise sorted transactions per flashblock so we can drop the lock before
-        // running the estimation logic.
+        // Clone transactions per flashblock so we can drop the lock.
+        // Transactions are pre-sorted descending by priority fee in the cache.
         let mut flashblock_transactions = Vec::new();
         let mut total_tx_count = 0usize;
         for flashblock in block_metrics.flashblocks() {
-            let sorted: Vec<MeteredTransaction> =
-                flashblock.transactions_sorted_by_priority_fee().into_iter().cloned().collect();
-            if sorted.is_empty() {
+            let txs: Vec<MeteredTransaction> = flashblock.transactions().to_vec();
+            if txs.is_empty() {
                 continue;
             }
-            total_tx_count += sorted.len();
-            flashblock_transactions.push((flashblock.flashblock_index, sorted));
+            total_tx_count += txs.len();
+            flashblock_transactions.push((flashblock.flashblock_index, txs));
         }
         drop(cache_guard);
 
@@ -347,13 +346,13 @@ impl PriorityFeeEstimator {
             return Ok(None);
         }
 
-        // Build the aggregate list for use-it-or-lose-it resources by collecting references
-        // to avoid cloning transactions twice.
+        // Build the aggregate list for use-it-or-lose-it resources.
+        // Need to sort since we're combining multiple pre-sorted flashblocks.
         let mut aggregate_refs: Vec<&MeteredTransaction> = Vec::with_capacity(total_tx_count);
         for (_, txs) in &flashblock_transactions {
             aggregate_refs.extend(txs.iter());
         }
-        aggregate_refs.sort_by(|a, b| a.priority_fee_per_gas.cmp(&b.priority_fee_per_gas));
+        aggregate_refs.sort_by(|a, b| b.priority_fee_per_gas.cmp(&a.priority_fee_per_gas));
 
         let mut flashblock_estimates = Vec::new();
 
@@ -479,18 +478,22 @@ impl PriorityFeeEstimator {
 
 /// Core estimation algorithm (top-down approach).
 ///
-/// Given a list of transactions and a resource limit, determines the minimum priority
+/// Given a sorted list of transactions and a resource limit, determines the minimum priority
 /// fee needed to be included alongside enough high-paying transactions while still
 /// leaving room for the bundle's demand.
 ///
+/// # Arguments
+///
+/// * `transactions` - Must be sorted by priority fee descending (highest first)
+///
 /// # Algorithm
 ///
-/// 1. Sort transactions from highest to lowest priority fee.
-/// 2. Walk from the top, subtracting each transaction's usage from remaining capacity.
-/// 3. Stop when including another transaction would leave less capacity than the bundle needs.
-/// 4. The threshold fee is the fee of the last included transaction (the minimum fee
+/// 1. Walk from highest-paying transactions, subtracting each transaction's usage from
+///    remaining capacity.
+/// 2. Stop when including another transaction would leave less capacity than the bundle needs.
+/// 3. The threshold fee is the fee of the last included transaction (the minimum fee
 ///    among transactions that would be included alongside the bundle).
-/// 5. If we include all transactions and still have capacity >= demand, the resource is
+/// 4. If we include all transactions and still have capacity >= demand, the resource is
 ///    not congested, so return the configured default fee.
 ///
 /// Returns `Err` if the bundle's demand exceeds the resource limit.
@@ -519,17 +522,13 @@ fn compute_estimate(
         });
     }
 
-    // Sort transactions by priority fee descending (highest first).
-    let mut sorted: Vec<_> = transactions.to_vec();
-    sorted.sort_by(|a, b| b.priority_fee_per_gas.cmp(&a.priority_fee_per_gas));
-
     // Walk from highest-paying transactions, subtracting usage from remaining capacity.
     // Stop when we can no longer fit another transaction while leaving room for demand.
     let mut remaining = limit;
     let mut included_usage = 0u128;
     let mut last_included_idx: Option<usize> = None;
 
-    for (idx, tx) in sorted.iter().enumerate() {
+    for (idx, tx) in transactions.iter().enumerate() {
         let usage = usage_fn(tx);
 
         // Check if we can include this transaction and still have room for the bundle.
@@ -544,15 +543,16 @@ fn compute_estimate(
     }
 
     // If we included all transactions and still have room, resource is not congested.
-    let is_uncongested = last_included_idx == Some(sorted.len() - 1) && remaining >= demand;
+    let is_uncongested =
+        last_included_idx == Some(transactions.len() - 1) && remaining >= demand;
 
     if is_uncongested {
         return Ok(ResourceEstimate {
             threshold_priority_fee: default_fee,
             recommended_priority_fee: default_fee,
             cumulative_usage: included_usage,
-            threshold_tx_count: sorted.len(),
-            total_transactions: sorted.len(),
+            threshold_tx_count: transactions.len(),
+            total_transactions: transactions.len(),
         });
     }
 
@@ -560,11 +560,11 @@ fn compute_estimate(
         Some(idx) => {
             // At least one transaction fits alongside the bundle.
             // The threshold is the fee of the last included transaction.
-            let threshold_fee = sorted[idx].priority_fee_per_gas;
+            let threshold_fee = transactions[idx].priority_fee_per_gas;
 
             // For recommended fee, look at included transactions (those above threshold)
             // and pick one at the specified percentile for a safety margin.
-            let included = &sorted[..=idx];
+            let included = &transactions[..=idx];
             let percentile = percentile.clamp(0.0, 1.0);
             let recommended_fee = if included.len() <= 1 {
                 threshold_fee
@@ -580,7 +580,7 @@ fn compute_estimate(
             // No transactions fit - even the first transaction would crowd out
             // the bundle. The bundle must beat the highest fee to be included.
             // Report 0 supporting transactions since none were actually included.
-            let threshold_fee = sorted[0].priority_fee_per_gas;
+            let threshold_fee = transactions[0].priority_fee_per_gas;
             (0, threshold_fee, threshold_fee)
         }
     };
@@ -590,7 +590,7 @@ fn compute_estimate(
         recommended_priority_fee: recommended_fee,
         cumulative_usage: included_usage,
         threshold_tx_count: supporting_count,
-        total_transactions: sorted.len(),
+        total_transactions: transactions.len(),
     })
 }
 
@@ -837,8 +837,8 @@ mod tests {
         let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
         {
             let mut guard = cache.write();
-            guard.upsert_transaction(1, 0, tx(10, 10));
-            guard.upsert_transaction(1, 0, tx(5, 10));
+            guard.insert_transaction(1, 0, tx(10, 10));
+            guard.insert_transaction(1, 0, tx(5, 10));
         }
         let mut demand = ResourceDemand::default();
         demand.gas_used = Some(15);
@@ -858,8 +858,8 @@ mod tests {
         let (cache, estimator) = setup_estimator(limits);
         {
             let mut guard = cache.write();
-            guard.upsert_transaction(1, 0, tx(10, 10));
-            guard.upsert_transaction(1, 0, tx(5, 10));
+            guard.insert_transaction(1, 0, tx(10, 10));
+            guard.insert_transaction(1, 0, tx(5, 10));
         }
         let mut demand = ResourceDemand::default();
         demand.gas_used = Some(15);
@@ -883,11 +883,11 @@ mod tests {
         {
             let mut guard = cache.write();
             // Block 1 → threshold 10
-            guard.upsert_transaction(1, 0, tx(10, 10));
-            guard.upsert_transaction(1, 0, tx(5, 10));
+            guard.insert_transaction(1, 0, tx(10, 10));
+            guard.insert_transaction(1, 0, tx(5, 10));
             // Block 2 → threshold 30
-            guard.upsert_transaction(2, 0, tx(30, 10));
-            guard.upsert_transaction(2, 0, tx(25, 10));
+            guard.insert_transaction(2, 0, tx(30, 10));
+            guard.insert_transaction(2, 0, tx(25, 10));
         }
 
         let mut demand = ResourceDemand::default();
