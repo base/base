@@ -33,7 +33,7 @@ let builder = TransactionTracingExtension::new(tracing).apply(builder);
 
 ## Metrics
 
-The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values are the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.
+The extension records a histogram named `reth_transaction_tracing_tx_event` with an `event` label for each lifecycle event (`pending`, `queued`, `replaced`, `dropped`, `block_inclusion`, etc.). Values represent the milliseconds a transaction spent in the mempool up to that event. When the in-memory log reaches its limit (20,000 transactions), an `overflowed` event is recorded so dashboards can alert on data loss.
 
 ## License
 
