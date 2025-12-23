@@ -1,7 +1,7 @@
 //! In-memory cache for metering data used by the priority fee estimator.
 //!
-//! Transactions are stored sorted by priority fee (descending) so the estimator
-//! can iterate from highest to lowest fee without re-sorting on each request.
+//! Transactions are stored in sequencer order (highest priority fee first) as received
+//! from flashblock events.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -63,14 +63,14 @@ impl ResourceTotals {
 
 /// Metrics for a single flashblock within a block.
 ///
-/// Transactions are stored sorted by priority fee in descending order (highest first).
+/// Transactions are stored in sequencer order (highest priority fee first).
 #[derive(Debug)]
 pub struct FlashblockMetrics {
     /// Block number.
     pub block_number: u64,
     /// Flashblock index within the block.
     pub flashblock_index: u64,
-    /// Transactions sorted by priority fee descending.
+    /// Transactions in sequencer order.
     transactions: Vec<MeteredTransaction>,
     totals: ResourceTotals,
 }
@@ -86,15 +86,10 @@ impl FlashblockMetrics {
         }
     }
 
-    /// Inserts a transaction, maintaining descending sort order by priority fee.
-    pub fn insert_transaction(&mut self, tx: MeteredTransaction) {
+    /// Appends a transaction, preserving sequencer order.
+    pub fn push_transaction(&mut self, tx: MeteredTransaction) {
         self.totals.accumulate(&tx);
-        // Binary search for insertion point (descending order)
-        let pos = self
-            .transactions
-            .binary_search_by(|probe| tx.priority_fee_per_gas.cmp(&probe.priority_fee_per_gas))
-            .unwrap_or_else(|pos| pos);
-        self.transactions.insert(pos, tx);
+        self.transactions.push(tx);
     }
 
     /// Returns the resource totals for this flashblock.
@@ -102,7 +97,7 @@ impl FlashblockMetrics {
         self.totals
     }
 
-    /// Returns transactions sorted by priority fee descending (highest first).
+    /// Returns transactions in sequencer order.
     pub fn transactions(&self) -> &[MeteredTransaction] {
         &self.transactions
     }
@@ -213,8 +208,8 @@ impl MeteringCache {
         self.blocks.get_mut(*self.block_index.get(&block_number).unwrap()).unwrap()
     }
 
-    /// Inserts a transaction into the cache.
-    pub fn insert_transaction(
+    /// Appends a transaction to the cache, preserving sequencer order.
+    pub fn push_transaction(
         &mut self,
         block_number: u64,
         flashblock_index: u64,
@@ -222,7 +217,7 @@ impl MeteringCache {
     ) {
         let block = self.block_mut(block_number);
         let (flashblock, _) = block.flashblock_mut(flashblock_index);
-        flashblock.insert_transaction(tx);
+        flashblock.push_transaction(tx);
         block.recompute_totals();
     }
 
@@ -308,7 +303,7 @@ mod tests {
     fn insert_and_retrieve_transactions() {
         let mut cache = MeteringCache::new(12);
         let tx1 = test_tx(1, 2);
-        cache.insert_transaction(100, 0, tx1.clone());
+        cache.push_transaction(100, 0, tx1.clone());
 
         let block = cache.block(100).unwrap();
         let flashblock = block.flashblocks().next().unwrap();
@@ -317,18 +312,18 @@ mod tests {
     }
 
     #[test]
-    fn transactions_sorted_descending_by_priority_fee() {
+    fn transactions_preserve_sequencer_order() {
         let mut cache = MeteringCache::new(12);
-        // Insert in random order
-        cache.insert_transaction(100, 0, test_tx(1, 10));
-        cache.insert_transaction(100, 0, test_tx(2, 30));
-        cache.insert_transaction(100, 0, test_tx(3, 20));
+        // Insert in sequencer order (highest priority first)
+        cache.push_transaction(100, 0, test_tx(1, 30));
+        cache.push_transaction(100, 0, test_tx(2, 20));
+        cache.push_transaction(100, 0, test_tx(3, 10));
 
         let block = cache.block(100).unwrap();
         let flashblock = block.flashblocks().next().unwrap();
         let fees: Vec<_> =
             flashblock.transactions().iter().map(|tx| tx.priority_fee_per_gas).collect();
-        // Should be sorted descending: 30, 20, 10
+        // Order should be preserved as inserted
         assert_eq!(fees, vec![U256::from(30u64), U256::from(20u64), U256::from(10u64)]);
     }
 
@@ -336,7 +331,7 @@ mod tests {
     fn evicts_old_blocks() {
         let mut cache = MeteringCache::new(2);
         for block_number in 0..3u64 {
-            cache.insert_transaction(block_number, 0, test_tx(block_number, block_number));
+            cache.push_transaction(block_number, 0, test_tx(block_number, block_number));
         }
         assert!(cache.block(0).is_none());
         assert!(cache.block(1).is_some());
@@ -346,8 +341,8 @@ mod tests {
     #[test]
     fn contains_block_returns_correct_values() {
         let mut cache = MeteringCache::new(10);
-        cache.insert_transaction(100, 0, test_tx(1, 10));
-        cache.insert_transaction(101, 0, test_tx(2, 20));
+        cache.push_transaction(100, 0, test_tx(1, 10));
+        cache.push_transaction(101, 0, test_tx(2, 20));
 
         assert!(cache.contains_block(100));
         assert!(cache.contains_block(101));
@@ -358,9 +353,9 @@ mod tests {
     #[test]
     fn clear_blocks_from_clears_subsequent_blocks() {
         let mut cache = MeteringCache::new(10);
-        cache.insert_transaction(100, 0, test_tx(1, 10));
-        cache.insert_transaction(101, 0, test_tx(2, 20));
-        cache.insert_transaction(102, 0, test_tx(3, 30));
+        cache.push_transaction(100, 0, test_tx(1, 10));
+        cache.push_transaction(101, 0, test_tx(2, 20));
+        cache.push_transaction(102, 0, test_tx(3, 30));
 
         let cleared = cache.clear_blocks_from(101);
 
@@ -374,8 +369,8 @@ mod tests {
     #[test]
     fn clear_blocks_from_returns_zero_when_no_match() {
         let mut cache = MeteringCache::new(10);
-        cache.insert_transaction(100, 0, test_tx(1, 10));
-        cache.insert_transaction(101, 0, test_tx(2, 20));
+        cache.push_transaction(100, 0, test_tx(1, 10));
+        cache.push_transaction(101, 0, test_tx(2, 20));
 
         let cleared = cache.clear_blocks_from(200);
 
@@ -386,9 +381,9 @@ mod tests {
     #[test]
     fn clear_blocks_from_clears_all_blocks() {
         let mut cache = MeteringCache::new(10);
-        cache.insert_transaction(100, 0, test_tx(1, 10));
-        cache.insert_transaction(101, 0, test_tx(2, 20));
-        cache.insert_transaction(102, 0, test_tx(3, 30));
+        cache.push_transaction(100, 0, test_tx(1, 10));
+        cache.push_transaction(101, 0, test_tx(2, 20));
+        cache.push_transaction(102, 0, test_tx(3, 30));
 
         let cleared = cache.clear_blocks_from(100);
 
