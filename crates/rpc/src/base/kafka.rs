@@ -93,7 +93,6 @@ impl KafkaBundleConsumer {
             message.payload().ok_or_else(|| eyre::eyre!("Kafka message missing payload"))?;
 
         let bundle: AcceptedBundle = serde_json::from_slice(payload)?;
-        metrics::counter!("metering.kafka.messages_total").increment(1);
 
         if let Some(ts) = message.timestamp().to_millis() {
             let now_ms = Utc::now().timestamp_millis();
