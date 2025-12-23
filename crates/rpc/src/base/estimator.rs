@@ -836,8 +836,8 @@ mod tests {
         let (cache, estimator) = setup_estimator(DEFAULT_LIMITS);
         {
             let mut guard = cache.write();
-            guard.insert_transaction(1, 0, tx(10, 10));
-            guard.insert_transaction(1, 0, tx(5, 10));
+            guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(1, 0, tx(5, 10));
         }
         let mut demand = ResourceDemand::default();
         demand.gas_used = Some(15);
@@ -857,8 +857,8 @@ mod tests {
         let (cache, estimator) = setup_estimator(limits);
         {
             let mut guard = cache.write();
-            guard.insert_transaction(1, 0, tx(10, 10));
-            guard.insert_transaction(1, 0, tx(5, 10));
+            guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(1, 0, tx(5, 10));
         }
         let mut demand = ResourceDemand::default();
         demand.gas_used = Some(15);
@@ -882,11 +882,11 @@ mod tests {
         {
             let mut guard = cache.write();
             // Block 1 → threshold 10
-            guard.insert_transaction(1, 0, tx(10, 10));
-            guard.insert_transaction(1, 0, tx(5, 10));
+            guard.push_transaction(1, 0, tx(10, 10));
+            guard.push_transaction(1, 0, tx(5, 10));
             // Block 2 → threshold 30
-            guard.insert_transaction(2, 0, tx(30, 10));
-            guard.insert_transaction(2, 0, tx(25, 10));
+            guard.push_transaction(2, 0, tx(30, 10));
+            guard.push_transaction(2, 0, tx(25, 10));
         }
 
         let mut demand = ResourceDemand::default();

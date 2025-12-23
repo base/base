@@ -117,7 +117,7 @@ impl ResourceAnnotator {
             let mut cache = self.cache.write();
             for tx_hash in &event.ordered_tx_hashes {
                 if let Some(tx) = self.pending_transactions.shift_remove(tx_hash) {
-                    cache.insert_transaction(event.block_number, event.flashblock_index, tx);
+                    cache.push_transaction(event.block_number, event.flashblock_index, tx);
                     matched += 1;
                 } else {
                     missed += 1;
@@ -201,9 +201,9 @@ mod tests {
         // Pre-populate cache with blocks 100, 101, 102
         {
             let mut c = cache.write();
-            c.insert_transaction(100, 0, test_tx(1, 10));
-            c.insert_transaction(101, 0, test_tx(2, 20));
-            c.insert_transaction(102, 0, test_tx(3, 30));
+            c.push_transaction(100, 0, test_tx(1, 10));
+            c.push_transaction(101, 0, test_tx(2, 20));
+            c.push_transaction(102, 0, test_tx(3, 30));
         }
 
         assert!(cache.read().contains_block(100));
@@ -234,7 +234,7 @@ mod tests {
         // Pre-populate cache with block 100
         {
             let mut c = cache.write();
-            c.insert_transaction(100, 0, test_tx(1, 10));
+            c.push_transaction(100, 0, test_tx(1, 10));
         }
 
         assert!(cache.read().contains_block(100));
@@ -261,7 +261,7 @@ mod tests {
         // Pre-populate cache with block 100
         {
             let mut c = cache.write();
-            c.insert_transaction(100, 0, test_tx(1, 10));
+            c.push_transaction(100, 0, test_tx(1, 10));
         }
 
         assert!(cache.read().contains_block(100));
