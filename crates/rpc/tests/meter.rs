@@ -11,7 +11,11 @@ use base_reth_test_utils::create_provider_factory;
 use eyre::Context;
 use op_alloy_consensus::OpTxEnvelope;
 use rand::{SeedableRng, rngs::StdRng};
-use reth::{api::NodeTypesWithDBAdapter, chainspec::EthChainSpec};
+use reth::{
+    api::NodeTypesWithDBAdapter,
+    chainspec::EthChainSpec,
+    revm::db::{BundleState, Cache},
+};
 use reth_db::{DatabaseEnv, test_utils::TempDatabase};
 use reth_optimism_chainspec::{BASE_MAINNET, OpChainSpec, OpChainSpecBuilder};
 use reth_optimism_node::OpNode;
@@ -20,6 +24,7 @@ use reth_primitives_traits::SealedHeader;
 use reth_provider::{HeaderProvider, StateProviderFactory, providers::BlockchainProvider};
 use reth_testing_utils::generators::generate_keys;
 use reth_transaction_pool::test_utils::TransactionBuilder;
+use revm::primitives::KECCAK_EMPTY;
 use tips_core::types::{Bundle, ParsedBundle};
 
 type NodeTypes = NodeTypesWithDBAdapter<OpNode, Arc<TempDatabase<DatabaseEnv>>>;
@@ -136,15 +141,22 @@ fn meter_bundle_empty_transactions() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(Vec::new())?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+        None,
+    )?;
 
-    assert!(results.is_empty());
-    assert_eq!(total_gas_used, 0);
-    assert_eq!(total_gas_fees, U256::ZERO);
+    assert!(output.results.is_empty());
+    assert_eq!(output.total_gas_used, 0);
+    assert_eq!(output.total_gas_fees, U256::ZERO);
     // Even empty bundles have some EVM setup overhead
-    assert!(total_execution_time > 0);
-    assert_eq!(bundle_hash, keccak256([]));
+    assert!(output.total_time_us > 0);
+    assert!(output.state_root_time_us > 0);
+    assert_eq!(output.bundle_hash, keccak256([]));
 
     Ok(())
 }
@@ -178,12 +190,19 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+        None,
+    )?;
 
-    assert_eq!(results.len(), 1);
-    let result = &results[0];
-    assert!(total_execution_time > 0);
+    assert_eq!(output.results.len(), 1);
+    let result = &output.results[0];
+    assert!(output.total_time_us > 0);
+    assert!(output.state_root_time_us > 0);
 
     assert_eq!(result.from_address, harness.address(User::Alice));
     assert_eq!(result.to_address, Some(to));
@@ -192,12 +211,12 @@ fn meter_bundle_single_transaction() -> eyre::Result<()> {
     assert_eq!(result.gas_used, 21_000);
     assert_eq!(result.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
-    assert_eq!(total_gas_used, 21_000);
-    assert_eq!(total_gas_fees, U256::from(21_000) * U256::from(10));
+    assert_eq!(output.total_gas_used, 21_000);
+    assert_eq!(output.total_gas_fees, U256::from(21_000) * U256::from(10));
 
     let mut concatenated = Vec::with_capacity(32);
     concatenated.extend_from_slice(tx_hash.as_slice());
-    assert_eq!(bundle_hash, keccak256(concatenated));
+    assert_eq!(output.bundle_hash, keccak256(concatenated));
 
     assert!(result.execution_time_us > 0, "execution_time_us should be greater than zero");
 
@@ -255,14 +274,21 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
 
     let parsed_bundle = create_parsed_bundle(vec![envelope_1.clone(), envelope_2.clone()])?;
 
-    let (results, total_gas_used, total_gas_fees, bundle_hash, total_execution_time) =
-        meter_bundle(state_provider, harness.chain_spec.clone(), parsed_bundle, &harness.header)?;
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+        None,
+    )?;
 
-    assert_eq!(results.len(), 2);
-    assert!(total_execution_time > 0);
+    assert_eq!(output.results.len(), 2);
+    assert!(output.total_time_us > 0);
+    assert!(output.state_root_time_us > 0);
 
     // Check first transaction
-    let result_1 = &results[0];
+    let result_1 = &output.results[0];
     assert_eq!(result_1.from_address, harness.address(User::Alice));
     assert_eq!(result_1.to_address, Some(to_1));
     assert_eq!(result_1.tx_hash, tx_hash_1);
@@ -271,7 +297,7 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     assert_eq!(result_1.coinbase_diff, (U256::from(21_000) * U256::from(10)),);
 
     // Check second transaction
-    let result_2 = &results[1];
+    let result_2 = &output.results[1];
     assert_eq!(result_2.from_address, harness.address(User::Bob));
     assert_eq!(result_2.to_address, Some(to_2));
     assert_eq!(result_2.tx_hash, tx_hash_2);
@@ -280,19 +306,166 @@ fn meter_bundle_multiple_transactions() -> eyre::Result<()> {
     assert_eq!(result_2.coinbase_diff, U256::from(21_000) * U256::from(15),);
 
     // Check aggregated values
-    assert_eq!(total_gas_used, 42_000);
+    assert_eq!(output.total_gas_used, 42_000);
     let expected_total_fees =
         U256::from(21_000) * U256::from(10) + U256::from(21_000) * U256::from(15);
-    assert_eq!(total_gas_fees, expected_total_fees);
+    assert_eq!(output.total_gas_fees, expected_total_fees);
 
     // Check bundle hash includes both transactions
     let mut concatenated = Vec::with_capacity(64);
     concatenated.extend_from_slice(tx_hash_1.as_slice());
     concatenated.extend_from_slice(tx_hash_2.as_slice());
-    assert_eq!(bundle_hash, keccak256(concatenated));
+    assert_eq!(output.bundle_hash, keccak256(concatenated));
 
     assert!(result_1.execution_time_us > 0, "execution_time_us should be greater than zero");
     assert!(result_2.execution_time_us > 0, "execution_time_us should be greater than zero");
+
+    Ok(())
+}
+
+#[test]
+fn meter_bundle_state_root_time_invariant() -> eyre::Result<()> {
+    let harness = setup_harness()?;
+
+    let to = Address::random();
+    let signed_tx = TransactionBuilder::default()
+        .signer(harness.signer(User::Alice))
+        .chain_id(harness.chain_spec.chain_id())
+        .nonce(0)
+        .to(to)
+        .value(1_000)
+        .gas_limit(21_000)
+        .max_fee_per_gas(10)
+        .max_priority_fee_per_gas(1)
+        .into_eip1559();
+
+    let tx =
+        OpTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone());
+
+    let envelope = envelope_from_signed(&tx)?;
+
+    let state_provider = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let parsed_bundle = create_parsed_bundle(vec![envelope.clone()])?;
+
+    let output = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        None,
+        None,
+    )?;
+
+    // Verify invariant: total time must include state root time
+    assert!(
+        output.total_time_us >= output.state_root_time_us,
+        "total_time_us ({}) should be >= state_root_time_us ({})",
+        output.total_time_us,
+        output.state_root_time_us
+    );
+
+    // State root time should be non-zero
+    assert!(output.state_root_time_us > 0, "state_root_time_us should be greater than zero");
+
+    Ok(())
+}
+
+/// Integration test: verifies meter_bundle uses flashblocks state correctly.
+///
+/// A transaction using nonce=1 should fail without flashblocks state (since
+/// canonical nonce is 0), but succeed when flashblocks state indicates nonce=1.
+#[test]
+fn meter_bundle_requires_correct_layering_for_pending_nonce() -> eyre::Result<()> {
+    let harness = setup_harness()?;
+    let alice_address = harness.address(User::Alice);
+
+    // Create a transaction that requires nonce=1 (assuming canonical nonce is 0)
+    let to = Address::random();
+    let signed_tx = TransactionBuilder::default()
+        .signer(harness.signer(User::Alice))
+        .chain_id(harness.chain_spec.chain_id())
+        .nonce(1) // Requires pending state to have nonce=1
+        .to(to)
+        .value(100)
+        .gas_limit(21_000)
+        .max_fee_per_gas(10)
+        .max_priority_fee_per_gas(1)
+        .into_eip1559();
+
+    let tx =
+        OpTransactionSigned::Eip1559(signed_tx.as_eip1559().expect("eip1559 transaction").clone());
+    let envelope = envelope_from_signed(&tx)?;
+    let parsed_bundle = create_parsed_bundle(vec![envelope])?;
+
+    // Without flashblocks state, transaction should fail (nonce mismatch)
+    let state_provider = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let result_without_flashblocks = meter_bundle(
+        state_provider,
+        harness.chain_spec.clone(),
+        parsed_bundle.clone(),
+        &harness.header,
+        None, // No flashblocks state
+        None,
+    );
+
+    assert!(
+        result_without_flashblocks.is_err(),
+        "Transaction with nonce=1 should fail without pending state (canonical nonce is 0)"
+    );
+
+    // Now create flashblocks state with nonce=1 for Alice
+    // Use BundleState::new() to properly calculate state_size
+    let bundle_state = BundleState::new(
+        [(
+            alice_address,
+            Some(revm::state::AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 0, // original
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            }),
+            Some(revm::state::AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                nonce: 1, // pending (after first flashblock tx)
+                code_hash: KECCAK_EMPTY,
+                code: None,
+            }),
+            Default::default(), // no storage changes
+        )],
+        Vec::<Vec<(Address, Option<Option<revm::state::AccountInfo>>, Vec<(U256, U256)>)>>::new(),
+        Vec::<(B256, revm::bytecode::Bytecode)>::new(),
+    );
+
+    let flashblocks_state = FlashblocksState { cache: Cache::default(), bundle_state };
+
+    // With correct flashblocks state, transaction should succeed
+    let state_provider2 = harness
+        .provider
+        .state_by_block_hash(harness.header.hash())
+        .context("getting state provider")?;
+
+    let result_with_flashblocks = meter_bundle(
+        state_provider2,
+        harness.chain_spec.clone(),
+        parsed_bundle,
+        &harness.header,
+        Some(flashblocks_state),
+        None,
+    );
+
+    assert!(
+        result_with_flashblocks.is_ok(),
+        "Transaction with nonce=1 should succeed with pending state showing nonce=1: {:?}",
+        result_with_flashblocks.err()
+    );
 
     Ok(())
 }
