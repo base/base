@@ -288,10 +288,13 @@ contract OPSuccinctL2OutputOracle is Initializable, ISemver {
 
     /// @notice Deletes all output proposals after and including the proposal that corresponds to
     ///         the given output index. Only the challenger address can delete outputs.
-    /// @param _l2OutputIndex Index of the first L2 output to be deleted.
+    ///         The genesis output (index 0) cannot be deleted.
+    /// @param _l2OutputIndex Index of the first L2 output to be deleted. Must be greater than 0.
     ///                       All outputs after this output will also be deleted.
     function deleteL2Outputs(uint256 _l2OutputIndex) external {
         require(msg.sender == challenger, "L2OutputOracle: only the challenger address can delete outputs");
+
+        require(_l2OutputIndex > 0, "L2OutputOracle: cannot delete genesis output");
 
         // Make sure we're not *increasing* the length of the array.
         require(

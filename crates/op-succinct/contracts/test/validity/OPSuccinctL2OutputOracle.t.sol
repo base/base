@@ -168,6 +168,50 @@ contract OPSuccinctL2OutputOracleFallbackTest is Test, Utils {
     }
 }
 
+contract OPSuccinctL2OutputOracleDeleteOutputsTest is Test, Utils {
+    OPSuccinctL2OutputOracle l2oo;
+
+    address approvedProposer = address(0x1234);
+    address challenger = address(0x9ABC);
+    address owner = address(0xDEF0);
+
+    bytes32 genesisConfigName;
+    bytes proof = hex"";
+    address proverAddress = address(0x7890);
+
+    function setUp() public {
+        address verifier = address(new SP1MockVerifier());
+        OPSuccinctL2OutputOracle.InitParams memory initParams =
+            createStandardInitParams(verifier, approvedProposer, challenger, owner);
+        l2oo = deployL2OutputOracle(initParams);
+        genesisConfigName = l2oo.GENESIS_CONFIG_NAME();
+        vm.warp(block.timestamp + 1000);
+    }
+
+    function testDeleteL2Outputs_CannotDeleteGenesisOutput() public {
+        vm.prank(challenger);
+        vm.expectRevert("L2OutputOracle: cannot delete genesis output");
+        l2oo.deleteL2Outputs(0);
+    }
+
+    function testDeleteL2Outputs_CanDeleteNonGenesisOutput() public {
+        uint256 nextBlockNumber = l2oo.nextBlockNumber();
+        bytes32 outputRoot = keccak256("test_output");
+
+        vm.warp(l2oo.computeL2Timestamp(nextBlockNumber) + 1);
+        uint256 currentL1Block = block.number;
+        checkpointAndRoll(l2oo, currentL1Block);
+
+        vm.prank(approvedProposer, approvedProposer);
+        l2oo.proposeL2Output(genesisConfigName, outputRoot, nextBlockNumber, currentL1Block, proof, proverAddress);
+        assertEq(l2oo.latestOutputIndex(), 1);
+
+        vm.prank(challenger);
+        l2oo.deleteL2Outputs(1);
+        assertEq(l2oo.latestOutputIndex(), 0);
+    }
+}
+
 contract OPSuccinctConfigManagementTest is Test, Utils {
     OPSuccinctL2OutputOracle l2oo;
 
