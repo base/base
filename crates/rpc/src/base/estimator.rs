@@ -244,15 +244,15 @@ pub struct BlockPriorityEstimates {
     pub max_across_flashblocks: ResourceEstimates,
 }
 
-/// Rolling estimates aggregated across multiple recent blocks.
+/// Priority fee estimate aggregated across multiple recent blocks.
 #[derive(Debug, Clone)]
-pub struct RollingPriorityEstimates {
+pub struct RollingPriorityEstimate {
     /// Number of blocks that contributed to this estimate.
     pub blocks_sampled: usize,
     /// Per-resource estimates (median across sampled blocks).
     pub estimates: ResourceEstimates,
-    /// Single recommended fee: maximum across all resources.
-    pub recommended_priority_fee: U256,
+    /// Recommended priority fee: maximum across all resources.
+    pub priority_fee: U256,
 }
 
 /// Computes resource fee estimates based on cached flashblock metering data.
@@ -412,7 +412,7 @@ impl PriorityFeeEstimator {
     pub fn estimate_rolling(
         &self,
         demand: ResourceDemand,
-    ) -> Result<Option<RollingPriorityEstimates>, EstimateError> {
+    ) -> Result<Option<RollingPriorityEstimate>, EstimateError> {
         let cache_guard = self.cache.read();
         let block_numbers: Vec<u64> = cache_guard.blocks_desc().map(|b| b.block_number).collect();
         drop(cache_guard);
@@ -468,10 +468,10 @@ impl PriorityFeeEstimator {
             return Ok(None);
         }
 
-        Ok(Some(RollingPriorityEstimates {
+        Ok(Some(RollingPriorityEstimate {
             blocks_sampled: block_numbers.len(),
             estimates,
-            recommended_priority_fee: max_fee,
+            priority_fee: max_fee,
         }))
     }
 }
@@ -900,6 +900,6 @@ mod tests {
         let gas_estimate = rolling.estimates.gas_used.expect("gas estimate present");
         // Median across [10, 30] = 30 (upper median for even count)
         assert_eq!(gas_estimate.recommended_priority_fee, U256::from(30));
-        assert_eq!(rolling.recommended_priority_fee, U256::from(30));
+        assert_eq!(rolling.priority_fee, U256::from(30));
     }
 }

@@ -14,7 +14,7 @@ annotator::{FlashblockInclusion, ResourceAnnotator},
     estimator::{
         BlockPriorityEstimates, EstimateError, FlashblockResourceEstimates, PriorityFeeEstimator,
         ResourceDemand, ResourceEstimate, ResourceEstimates, ResourceKind, ResourceLimits,
-        RollingPriorityEstimates,
+        RollingPriorityEstimate,
     },
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
