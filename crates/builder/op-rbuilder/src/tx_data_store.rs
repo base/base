@@ -180,6 +180,14 @@ impl TxDataStore {
             );
         }
 
+        info!(
+            target: "tx_data_store",
+            target_tx = ?target_tx_hash,
+            sender = ?backrun_sender,
+            bundle_id = ?bundle.uuid(),
+            "Stored backrun bundle"
+        );
+
         self.metrics
             .backrun_bundles_in_store
             .set(self.data.by_tx_hash.len() as f64);
@@ -193,7 +201,7 @@ impl TxDataStore {
             entry.backrun_bundles.clear();
 
             if bundle_count > 0 {
-                debug!(
+                info!(
                     target: "tx_data_store",
                     target_tx = ?target_tx_hash,
                     bundle_count,

@@ -433,7 +433,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
                 is_bundle_tx && !reverted_hashes.unwrap().contains(&tx_hash);
 
             let log_txn = |result: TxnExecutionResult| {
-                debug!(
+                info!(
                     target: "payload_builder",
                     message = "Considering transaction",
                     tx_hash = ?tx_hash,
@@ -611,7 +611,7 @@ impl<ExtraCtx: Debug + Default> OpPayloadBuilderCtx<ExtraCtx> {
 
                 // Bundles are pre-sorted by total_priority_fee (descending) from the store
                 'bundle_loop: for stored_bundle in backrun_bundles {
-                    debug!(
+                    info!(
                         target: "payload_builder",
                         message = "Executing backrun bundle",
                         tx_hash = ?tx_hash,
