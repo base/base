@@ -46,21 +46,19 @@ pub struct Args {
     pub enable_metering: bool,
 
     // --- Priority fee estimation args ---
-    /// Kafka brokers for metering bundle events (comma-separated)
-    #[arg(long = "metering-kafka-brokers")]
-    pub metering_kafka_brokers: Option<String>,
-
-    /// Kafka topic for accepted bundle events
-    #[arg(long = "metering-kafka-topic")]
-    pub metering_kafka_topic: Option<String>,
-
-    /// Kafka consumer group ID
-    #[arg(long = "metering-kafka-group-id")]
-    pub metering_kafka_group_id: Option<String>,
-
-    /// Optional path to Kafka properties file
+    /// Path to Kafka properties file (required for priority fee estimation).
+    /// The properties file should contain rdkafka settings like bootstrap.servers,
+    /// group.id, session.timeout.ms, etc.
     #[arg(long = "metering-kafka-properties-file")]
     pub metering_kafka_properties_file: Option<String>,
+
+    /// Kafka topic for accepted bundle events
+    #[arg(long = "metering-kafka-topic", default_value = "tips-ingress")]
+    pub metering_kafka_topic: String,
+
+    /// Kafka consumer group ID (overrides group.id in properties file if set)
+    #[arg(long = "metering-kafka-group-id")]
+    pub metering_kafka_group_id: Option<String>,
 
     /// Gas limit per flashblock for priority fee estimation
     #[arg(long = "metering-gas-limit", default_value = "30000000")]
@@ -108,20 +106,12 @@ impl From<Args> for BaseNodeConfig {
             max_pending_blocks_depth: args.max_pending_blocks_depth,
         });
 
-        // Build Kafka config if all required fields are present
-        let kafka = match (
-            args.metering_kafka_brokers,
-            args.metering_kafka_topic,
-            args.metering_kafka_group_id,
-        ) {
-            (Some(brokers), Some(topic), Some(group_id)) => Some(KafkaConfig {
-                brokers,
-                topic,
-                group_id,
-                properties_file: args.metering_kafka_properties_file,
-            }),
-            _ => None,
-        };
+        // Build Kafka config if properties file is provided
+        let kafka = args.metering_kafka_properties_file.map(|properties_file| KafkaConfig {
+            properties_file,
+            topic: args.metering_kafka_topic,
+            group_id_override: args.metering_kafka_group_id,
+        });
 
         let metering = MeteringConfig {
             enabled: args.enable_metering,

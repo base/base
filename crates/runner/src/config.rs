@@ -67,16 +67,18 @@ pub struct MeteringConfig {
 }
 
 /// Kafka connection configuration.
+///
+/// All rdkafka settings (bootstrap.servers, group.id, timeouts, etc.) should be
+/// specified in the properties file. The CLI only specifies the path to this file
+/// and the topic name.
 #[derive(Debug, Clone)]
 pub struct KafkaConfig {
-    /// Comma-separated broker addresses.
-    pub brokers: String,
+    /// Path to the Kafka properties file containing rdkafka settings.
+    pub properties_file: String,
     /// Topic name for accepted bundle events.
     pub topic: String,
-    /// Consumer group ID.
-    pub group_id: String,
-    /// Optional path to properties file.
-    pub properties_file: Option<String>,
+    /// Optional consumer group ID override (takes precedence over properties file).
+    pub group_id_override: Option<String>,
 }
 
 /// Resource limits for priority fee estimation.
