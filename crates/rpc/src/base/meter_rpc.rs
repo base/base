@@ -16,10 +16,10 @@ use reth_provider::{ChainSpecProvider, StateProviderFactory};
 use tips_core::types::{Bundle, MeterBundleResponse, ParsedBundle};
 use tracing::{debug, error, info};
 
+use super::types::{MeteredPriorityFeeResponse, ResourceFeeEstimateResponse};
 use crate::{
-    MeteringApiServer, PriorityFeeEstimator, ResourceDemand,
-    base::metered_fee_types::{MeteredPriorityFeeResponse, build_priority_fee_response},
-    meter_bundle,
+    MeteringApiServer, PriorityFeeEstimator, ResourceDemand, ResourceEstimates,
+    RollingPriorityEstimate, meter_bundle,
 };
 
 /// Implementation of the metering RPC API
@@ -198,4 +198,35 @@ where
         let response = build_priority_fee_response(meter_bundle, estimates);
         Ok(response)
     }
+}
+
+/// Converts a rolling estimate to the response format.
+fn build_priority_fee_response(
+    meter_bundle: MeterBundleResponse,
+    estimate: RollingPriorityEstimate,
+) -> MeteredPriorityFeeResponse {
+    let resource_estimates = build_resource_estimate_responses(&estimate.estimates);
+
+    MeteredPriorityFeeResponse {
+        meter_bundle,
+        priority_fee: estimate.priority_fee,
+        blocks_sampled: estimate.blocks_sampled as u64,
+        resource_estimates,
+    }
+}
+
+fn build_resource_estimate_responses(
+    estimates: &ResourceEstimates,
+) -> Vec<ResourceFeeEstimateResponse> {
+    estimates
+        .iter()
+        .map(|(kind, est)| ResourceFeeEstimateResponse {
+            resource: kind.as_camel_case().to_string(),
+            threshold_priority_fee: est.threshold_priority_fee,
+            recommended_priority_fee: est.recommended_priority_fee,
+            cumulative_usage: U256::from(est.cumulative_usage),
+            threshold_tx_count: est.threshold_tx_count.try_into().unwrap_or(u64::MAX),
+            total_transactions: est.total_transactions.try_into().unwrap_or(u64::MAX),
+        })
+        .collect()
 }

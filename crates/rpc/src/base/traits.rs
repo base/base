@@ -3,10 +3,7 @@
 use alloy_primitives::TxHash;
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 
-use crate::{
-    Bundle, MeterBundleResponse, TransactionStatusResponse,
-    base::metered_fee_types::MeteredPriorityFeeResponse,
-};
+use crate::{Bundle, MeterBundleResponse, MeteredPriorityFeeResponse, TransactionStatusResponse};
 
 /// RPC API for transaction metering
 #[rpc(server, namespace = "base")]

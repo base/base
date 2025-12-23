@@ -18,11 +18,13 @@ pub use base::{
     kafka::{KafkaBundleConsumer, KafkaBundleConsumerConfig},
     meter::meter_bundle,
     meter_rpc::MeteringApiImpl,
-    metered_fee_types::{MeteredPriorityFeeResponse, ResourceFeeEstimateResponse},
     pubsub::{EthPubSub, EthPubSubApiServer},
     traits::{MeteringApiServer, TransactionStatusApiServer},
     transaction_rpc::TransactionStatusApiImpl,
-    types::{BaseSubscriptionKind, ExtendedSubscriptionKind, Status, TransactionStatusResponse},
+    types::{
+        BaseSubscriptionKind, ExtendedSubscriptionKind, MeteredPriorityFeeResponse,
+        ResourceFeeEstimateResponse, Status, TransactionStatusResponse,
+    },
 };
 
 mod eth;
