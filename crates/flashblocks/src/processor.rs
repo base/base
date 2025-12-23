@@ -470,7 +470,7 @@ where
                         let input: ConvertReceiptInput<'_, OpPrimitives> = ConvertReceiptInput {
                             receipt: receipt.clone(),
                             tx: Recovered::new_unchecked(transaction, sender),
-                            gas_used: receipt.cumulative_gas_used().saturating_sub(gas_used),
+                            gas_used: receipt.cumulative_gas_used() - gas_used,
                             next_log_index,
                             meta,
                         };
