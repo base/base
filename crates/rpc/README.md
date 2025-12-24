@@ -30,7 +30,7 @@ The method accepts a Bundle object with the following fields:
 - `ethSentToCoinbase`: ETH sent directly to coinbase
 - `gasFees`: Total gas fees
 - `stateBlockNumber`: Actual block used for simulation (may differ from requested blockNumber if fallback applied)
-- `requestedBlockNumber`: The blockNumber from request (for logging/debugging)
+- `requestedBlockNumber`: The blockNumber from the request (for logging/debugging)
 - `totalGasUsed`: Total gas consumed
 - `totalExecutionTimeUs`: Total execution time (μs)
 - `results`: Array of per-transaction results:
@@ -55,4 +55,4 @@ The method accepts a Bundle object with the following fields:
 }
 ```
 
-Note: While some fields like `revertingTxHashes` are part of the TIPS Bundle format, they are currently ignored during simulation. The metering focuses on gas usage and execution time measurement.
+**Note:** While some fields like `revertingTxHashes` are part of the TIPS Bundle format, they are currently ignored during simulation. The metering focuses on gas usage and execution time measurement.
