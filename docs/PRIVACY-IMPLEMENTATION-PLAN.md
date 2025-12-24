@@ -1539,6 +1539,191 @@ echo "=== All smoke tests passed ==="
 
 ---
 
+## 13. Phase 7: priv_* Transaction Layer (v5.0 Spec)
+
+> **Status**: Not yet implemented
+> **Spec Reference**: PRIVACY-TECHNICAL-SPEC.md v5.0
+
+This phase implements the remaining features from the v5.0 technical specification.
+
+### 13.1 What's Already Done
+
+| Component | Status |
+|-----------|--------|
+| Privacy precompiles (0x200, 0x201) | ✅ Complete |
+| Storage routing (private/public) | ✅ Complete |
+| Slot classification | ✅ Complete |
+| SHA3 opcode interception | ✅ Complete |
+| RPC filtering | ✅ Complete |
+| 143 tests | ✅ Passing |
+
+### 13.2 What Needs Implementation
+
+| Component | Status |
+|-----------|--------|
+| PrivacyMode enum (Real/Shielded) | ⬜ Not started |
+| Shielded address derivation | ⬜ Not started |
+| priv_sendRawTransaction | ⬜ Not started |
+| Private nonce management | ⬜ Not started |
+| Block transaction creation | ⬜ Not started |
+
+### 13.3 New Files to Create
+
+```
+crates/privacy/src/
+├── mode.rs           # PrivacyMode enum
+├── transaction.rs    # PrivateTransaction struct
+├── nonce.rs          # PrivateNonceManager
+├── shielded.rs       # ShieldedKeyManager, address derivation
+└── executor.rs       # PrivateTransactionExecutor
+```
+
+### 13.4 Core Data Structures
+
+#### PrivacyMode
+
+```rust
+pub enum PrivacyMode {
+    /// msg.sender = real user. Identity visible on-chain.
+    Real,
+    /// msg.sender = derived shielded address. Identity hidden.
+    /// index=0: persistent per protocol
+    /// index>0: fresh/unlinkable
+    Shielded { protocol: Address, index: u64 },
+}
+```
+
+#### PrivateTransaction
+
+```rust
+pub struct PrivateTransaction {
+    pub from: Address,           // Real user (for auth + nonce)
+    pub to: Address,
+    pub data: Bytes,
+    pub value: U256,             // Must be 0
+    pub gas_limit: u64,
+    pub private_nonce: u64,
+    pub mode: PrivacyMode,
+    pub chain_id: u64,
+    pub signature: Signature,
+}
+```
+
+### 13.5 Execution Flow
+
+```
+1. priv_sendRawTransaction received
+   ├─ Validate signature (from tx.from)
+   ├─ Validate private_nonce
+   └─ Validate value == 0
+
+2. Determine effective sender
+   ├─ Real: msg.sender = tx.from
+   └─ Shielded: msg.sender = derive_shielded(seed, protocol, index)
+
+3. Execute transaction
+   ├─ Set tx_env.caller = effective_sender
+   └─ Track storage writes (private vs public)
+
+4. Handle result
+   ├─ Private writes only → commit, no block tx
+   └─ Has public writes → create block transaction
+
+5. Create block tx (if public writes)
+   ├─ Real: user's tx in block
+   └─ Shielded: sign with derived key, sequencer funds gas
+
+6. Increment private nonce
+```
+
+### 13.6 Nonce Architecture
+
+**Private nonces**: Keyed by REAL user, incremented for ALL priv_* transactions.
+
+**Ethereum nonces**:
+- Real mode: user's ETH nonce when block tx created
+- Shielded mode: shielded address's ETH nonce (managed by sequencer)
+
+### 13.7 Shielded Address Derivation
+
+```rust
+fn derive_shielded(seed, protocol, chain_id, index) -> (Address, PrivateKey) {
+    let derived = keccak256(seed || protocol || chain_id || index || "shielded");
+    let privkey = PrivateKey::from(derived);
+    (privkey.to_address(), privkey)
+}
+```
+
+User controls linkability:
+- `index=0`: Same address per protocol (positions consolidate)
+- `index>0`: Fresh address (unlinkable)
+
+### 13.8 New RPC Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `priv_sendRawTransaction` | Submit private tx with mode |
+| `priv_getPrivateNonce` | Get current private nonce |
+| `priv_getStorageAt` | Get private storage (with auth) |
+| `priv_getShieldedAddress` | Get shielded address for params |
+
+### 13.9 New MDBX Tables
+
+```rust
+table!(PrivateNonces);      // Address → u64
+table!(ShieldedSeeds);      // Address → encrypted [u8; 32]
+table!(ShieldedNonces);     // Address → u64 (ETH nonces for shielded)
+```
+
+### 13.10 Implementation Sub-Phases
+
+#### Phase 7a: Core Data Structures
+- [ ] `mode.rs` - PrivacyMode enum
+- [ ] `transaction.rs` - PrivateTransaction struct
+- [ ] `nonce.rs` - PrivateNonceManager
+- [ ] Unit tests
+
+#### Phase 7b: Shielded Address Derivation
+- [ ] `shielded.rs` - ShieldedKeyManager
+- [ ] Seed storage (in-memory initially)
+- [ ] Key derivation with caching
+- [ ] Determinism tests
+
+#### Phase 7c: Private Transaction Executor
+- [ ] `executor.rs` - PrivateTransactionExecutor
+- [ ] Integration with PrivacyDatabase
+- [ ] Public/private write detection
+- [ ] Extend `database.rs` to track writes
+
+#### Phase 7d: RPC Integration
+- [ ] Extend `rpc.rs` with priv_* namespace
+- [ ] Wire up to executor
+- [ ] Integration tests
+
+#### Phase 7e: Block Transaction Creation
+- [ ] Shielded mode block tx creation
+- [ ] Sign with derived keys
+- [ ] Flashblocks integration
+- [ ] Gas funding for shielded addresses
+
+#### Phase 7f: Persistence
+- [ ] MDBX persistence for new tables
+- [ ] Seed encryption
+- [ ] Crash recovery
+
+### 13.11 Key Technical Insights
+
+**How msg.sender modification works:**
+We control EVM execution as the sequencer. User signs PrivateTransaction, we validate signature, then build EVM with `tx_env.caller = effective_sender`.
+
+**Detecting public vs private writes:**
+PrivacyDatabase already classifies slots during commit. We extend it to track `public_write_occurred: bool`.
+
+**Shielded key security:**
+Seeds encrypted at rest (TEE sealing in production). Keys derived on-demand, cached in memory, cleared on restart.
+
+---
+
 **End of Implementation Plan**
 
 *Proceed to PRIVACY-TESTING-PLAN.md for comprehensive testing strategy.*

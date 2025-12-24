@@ -225,8 +225,11 @@ struct PrivateTransaction {
     from: Address,           // Real user (for nonce, signature)
     to: Address,
     data: Bytes,
+    value: U256,             // Must be 0 (ETH transfers not supported)
+    gas_limit: u64,
     private_nonce: u64,
     mode: PrivacyMode,
+    chain_id: u64,
     signature: Signature,
 }
 
