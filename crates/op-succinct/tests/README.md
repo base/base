@@ -6,7 +6,10 @@ run the suite with the expected environment.
 
 ## Layout
 
-- `e2e/`: Go e2e tests (validity and faultproof proposers).
+- `e2e/`: Go e2e tests.
+  - `nodes/`: Nodes-only tests (no proposer) for local development.
+  - `validity/`: Validity proposer tests.
+  - `faultproof/`: Fault proof proposer tests.
 - `artifacts/`: Contract artifacts; a compressed tarball lives at
   `artifacts/compressed/artifacts.tzst` and is unpacked into `artifacts/src`
   before tests.
@@ -40,7 +43,7 @@ run the suite with the expected environment.
    just unzip-contract-artifacts
    ```
 
-## Running the e2e suite
+## Running the e2e Suite
 
 - Run everything (builds both binaries, unpacks artifacts):
 
@@ -68,27 +71,49 @@ run the suite with the expected environment.
 
 ## Long-Running Tests
 
-Keep the stack running indefinitely for manual debugging:
+Keep the stack running indefinitely for manual debugging. Press `Ctrl+C` to stop.
+Output is logged to `tests/logs/<mode>-<timestamp>.log`.
+
+### Nodes Only
+
+Start L1/L2 nodes without a proposer for local development:
 
 ```bash
-# Validity proposer
-just long-running validity
-
-# Fault proof proposer
-just long-running faultproof
-
-# Fault proof proposer with fast finality
-just long-running faultproof-ff
+just long-running nodes
 ```
 
-Press `Ctrl+C` to stop.
+This creates the following files:
 
-### Environment Files
+| File | Purpose |
+|------|---------|
+| `tests/.env` | RPC endpoints using `127.0.0.1` for running the proposer natively |
+| `tests/.env.docker` | RPC endpoints using `host.docker.internal` for Docker containers |
+| `configs/L1/900.json` | L1 chain config (chain ID 900 for local devnet) |
 
-At startup, an env file is written with all variables needed for debugging:
+To run a proposer in Docker against the local devnet:
 
-- Validity: `.env.validity`
-- Fault proof: `.env.faultproof`
+```bash
+docker compose --env-file tests/.env.docker run \
+  -v ./configs/L1/900.json:/app/configs/L1/900.json \
+  op-succinct
+```
+
+### With Proposer
+
+Run nodes with a proposer:
+
+```bash
+just long-running validity      # Validity proposer
+just long-running faultproof    # Fault proof proposer
+just long-running faultproof-ff # Fault proof with fast finality
+```
+
+At startup, an env file is written with variables needed for debugging:
+
+| Mode | Env File |
+|------|----------|
+| validity | `.env.validity` |
+| faultproof / faultproof-ff | `.env.faultproof` |
 
 Source it to use with tools like `cast`:
 

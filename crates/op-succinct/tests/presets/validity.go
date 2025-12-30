@@ -14,6 +14,9 @@ type ValidityConfig struct {
 	StartingBlock      uint64
 	SubmissionInterval uint64
 	RangeProofInterval uint64
+	// FinalizationPeriodSecs is the finalization period used for L2OO starting block calculation.
+	// Default is 60 seconds for e2e tests (production default is 3600 = 1 hour).
+	FinalizationPeriodSecs uint64
 	// MaxConcurrentProofRequests limits concurrent proof requests.
 	// If nil, the proposer's default is used.
 	MaxConcurrentProofRequests *uint64
@@ -40,10 +43,11 @@ type ValidityConfig struct {
 func DefaultValidityConfig() ValidityConfig {
 	loopInterval := uint64(1) // 1s lock expiry; recovery tests wait 2s before restart
 	return ValidityConfig{
-		StartingBlock:      1,
-		SubmissionInterval: 10,
-		RangeProofInterval: 10,
-		LoopInterval:       &loopInterval,
+		StartingBlock:          1,
+		SubmissionInterval:     10,
+		RangeProofInterval:     10,
+		FinalizationPeriodSecs: 60,
+		LoopInterval:           &loopInterval,
 	}
 }
 
@@ -117,7 +121,8 @@ func WithSuccinctValidityProposer(dest *sysgo.DefaultSingleChainInteropSystemIDs
 		opt.Add(sysgo.WithSuperDeployOpSuccinctL2OutputOracle(ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL,
 			sysgo.WithL2OOStartingBlockNumber(cfg.StartingBlock),
 			sysgo.WithL2OOSubmissionInterval(cfg.SubmissionInterval),
-			sysgo.WithL2OORangeProofInterval(cfg.RangeProofInterval)))
+			sysgo.WithL2OORangeProofInterval(cfg.RangeProofInterval),
+			sysgo.WithL2OOFinalizationPeriodSecs(cfg.FinalizationPeriodSecs)))
 		opt.Add(sysgo.WithSuperSuccinctValidityProposer(ids.L2AProposer, ids.L1CL, ids.L1EL, ids.L2ACL, ids.L2AEL, cfg.ProposerOptions()...))
 	})
 }

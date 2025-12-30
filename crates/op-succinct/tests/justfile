@@ -45,16 +45,25 @@ test-e2e-sysgo PKG="" FILTER="" TIMEOUT="90m": build-contracts unzip-contract-ar
     cd {{SOURCE}} && go test -p 1 -count=1 -timeout {{TIMEOUT}} -v "$TEST_PATH" $FILTER
 
 # Long-running tests - logs to tests/logs/<mode>-<timestamp>.log
-# Usage: just long-running <validity|faultproof|faultproof-ff>
+# Usage: just long-running <nodes|validity|faultproof|faultproof-ff>
 long-running MODE:
     #!/bin/bash
     set -euo pipefail
     case "{{MODE}}" in
-        validity)     just logged {{MODE}} just test-e2e-sysgo "./e2e/validity/long-running/..." "TestValidityProposer_LongRunning" "0" ;;
-        faultproof)   just logged {{MODE}} just test-e2e-sysgo "./e2e/faultproof/long-running/..." "TestFaultProofProposer_LongRunning" "0" ;;
+        nodes)         just logged {{MODE}} just nodes ;;
+        validity)      just logged {{MODE}} just test-e2e-sysgo "./e2e/validity/long-running/..." "TestValidityProposer_LongRunning" "0" ;;
+        faultproof)    just logged {{MODE}} just test-e2e-sysgo "./e2e/faultproof/long-running/..." "TestFaultProofProposer_LongRunning" "0" ;;
         faultproof-ff) just logged {{MODE}} just test-e2e-sysgo "./e2e/faultproof/long-running/..." "TestFaultProofProposer_FastFinality_LongRunning" "0" ;;
-        *) echo "Usage: just long-running <validity|faultproof|faultproof-ff>"; exit 1 ;;
+        *) echo "Usage: just long-running <nodes|validity|faultproof|faultproof-ff>"; exit 1 ;;
     esac
+
+# Run only L1/L2 nodes (no proposer) - outputs RPC endpoints to tests/.env
+nodes: build-contracts unzip-contract-artifacts
+    #!/bin/bash
+    export DEVSTACK_ORCHESTRATOR=sysgo
+    export OP_DEPLOYER_ARTIFACTS="{{SOURCE}}/artifacts/src/forge-artifacts"
+    export DISABLE_OP_E2E_LEGACY=true
+    cd {{SOURCE}} && go test -p 1 -count=1 -timeout 0 -v "./e2e/nodes/..." -run TestNodes_RunOnly
 
 unzip-contract-artifacts DEST_DIR="":
     #!/bin/bash
