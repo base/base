@@ -239,6 +239,10 @@ impl ProposerConfig {
 pub struct ChallengerConfig {
     pub l1_rpc: Url,
     pub l2_rpc: Url,
+
+    /// The address of the AnchorStateRegistry contract.
+    pub anchor_state_registry_address: Address,
+
     pub factory_address: Address,
 
     /// The interval in seconds between checking for new challenges opportunities.
@@ -261,6 +265,9 @@ impl ChallengerConfig {
         Ok(Self {
             l1_rpc: env::var("L1_RPC")?.parse().expect("L1_RPC not set"),
             l2_rpc: env::var("L2_RPC")?.parse().expect("L2_RPC not set"),
+            anchor_state_registry_address: env::var("ANCHOR_STATE_REGISTRY_ADDRESS")?
+                .parse()
+                .expect("ANCHOR_STATE_REGISTRY_ADDRESS not set"),
             factory_address: env::var("FACTORY_ADDRESS")?.parse().expect("FACTORY_ADDRESS not set"),
             game_type: env::var("GAME_TYPE").expect("GAME_TYPE not set").parse()?,
             fetch_interval: env::var("FETCH_INTERVAL").unwrap_or("30".to_string()).parse()?,
@@ -278,6 +285,7 @@ impl ChallengerConfig {
         tracing::info!(
             l1_rpc = %self.l1_rpc,
             l2_rpc = %self.l2_rpc,
+            anchor_state_registry_address = %self.anchor_state_registry_address,
             factory_address = %self.factory_address,
             game_type = self.game_type,
             fetch_interval = self.fetch_interval,

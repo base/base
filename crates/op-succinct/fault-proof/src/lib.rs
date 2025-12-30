@@ -15,8 +15,7 @@ use op_alloy_network::Optimism;
 use op_alloy_rpc_types::Transaction;
 
 use crate::contract::{
-    AnchorStateRegistry, DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, IDisputeGame,
-    IFaultDisputeGame, IFaultDisputeGame::IFaultDisputeGameInstance, L2Output,
+    DisputeGameFactory::DisputeGameFactoryInstance, GameStatus, IDisputeGame, L2Output,
     OPSuccinctFaultDisputeGame,
 };
 
@@ -106,28 +105,18 @@ pub trait FactoryTrait<P>
 where
     P: Provider + Clone,
 {
+    /// Returns the game implementation for the given game type.
+    /// Errors if the game type is not registered (zero address).
+    async fn game_impl(
+        &self,
+        game_type: u32,
+    ) -> Result<OPSuccinctFaultDisputeGame::OPSuccinctFaultDisputeGameInstance<P>>;
+
     /// Fetches the bond required to create a game.
     async fn fetch_init_bond(&self, game_type: u32) -> Result<U256>;
 
-    /// Fetches the challenger bond required to challenge a game.
-    async fn fetch_challenger_bond(&self, game_type: u32) -> Result<U256>;
-
     /// Fetches the latest game index.
     async fn fetch_latest_game_index(&self) -> Result<Option<U256>>;
-
-    /// Get the anchor state registry address.
-    async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address>;
-
-    /// Get the anchor L2 block number.
-    ///
-    /// This function returns the L2 block number of the anchor game for a given game type.
-    async fn get_anchor_l2_block_number(&self, game_type: u32) -> Result<U256>;
-
-    /// Get the anchor game for the given game type.
-    async fn get_anchor_game(&self, game_type: u32) -> Result<IFaultDisputeGameInstance<P>>;
-
-    /// Check if a game is finalized.
-    async fn is_game_finalized(&self, game_type: u32, game_address: Address) -> Result<bool>;
 }
 
 #[async_trait]
@@ -135,18 +124,23 @@ impl<P> FactoryTrait<P> for DisputeGameFactoryInstance<P>
 where
     P: Provider + Clone,
 {
+    /// Returns the game implementation for the given game type.
+    /// Errors if the game type is not registered (zero address).
+    async fn game_impl(
+        &self,
+        game_type: u32,
+    ) -> Result<OPSuccinctFaultDisputeGame::OPSuccinctFaultDisputeGameInstance<P>> {
+        let game_impl_address = self.gameImpls(game_type).call().await?;
+        if game_impl_address == Address::ZERO {
+            bail!("Game type {game_type} is not registered in the factory");
+        }
+        Ok(OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider().clone()))
+    }
+
     /// Fetches the bond required to create a game.
     async fn fetch_init_bond(&self, game_type: u32) -> Result<U256> {
         let init_bond = self.initBonds(game_type).call().await?;
         Ok(init_bond)
-    }
-
-    /// Fetches the challenger bond required to challenge a game.
-    async fn fetch_challenger_bond(&self, game_type: u32) -> Result<U256> {
-        let game_impl_address = self.gameImpls(game_type).call().await?;
-        let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
-        let challenger_bond = game_impl.challengerBond().call().await?;
-        Ok(challenger_bond)
     }
 
     /// Fetches the latest game index.
@@ -162,47 +156,6 @@ where
         tracing::debug!("Latest game index: {:?}", latest_game_index);
 
         Ok(Some(latest_game_index))
-    }
-
-    /// Get the anchor state registry address.
-    async fn get_anchor_state_registry_address(&self, game_type: u32) -> Result<Address> {
-        let game_impl_address = self.gameImpls(game_type).call().await?;
-        let game_impl = OPSuccinctFaultDisputeGame::new(game_impl_address, self.provider());
-        let anchor_state_registry_address = game_impl.anchorStateRegistry().call().await?;
-        Ok(anchor_state_registry_address)
-    }
-
-    /// Get the anchor L2 block number.
-    ///
-    /// This function returns the L2 block number of the anchor game for a given game type.
-    async fn get_anchor_l2_block_number(&self, game_type: u32) -> Result<U256> {
-        let anchor_state_registry_address =
-            self.get_anchor_state_registry_address(game_type).await?;
-        let anchor_state_registry =
-            AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
-        let anchor_l2_block_number = anchor_state_registry.getAnchorRoot().call().await?._1;
-        Ok(anchor_l2_block_number)
-    }
-
-    /// Get the anchor game for the given game type.
-    async fn get_anchor_game(&self, game_type: u32) -> Result<IFaultDisputeGameInstance<P>> {
-        let anchor_state_registry_address =
-            self.get_anchor_state_registry_address(game_type).await?;
-        let anchor_state_registry =
-            AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
-        let anchor_game = anchor_state_registry.anchorGame().call().await?;
-        let anchor_game = IFaultDisputeGame::new(anchor_game, self.provider().clone());
-        Ok(anchor_game)
-    }
-
-    /// Check if a game is finalized.
-    async fn is_game_finalized(&self, game_type: u32, game_address: Address) -> Result<bool> {
-        let anchor_state_registry_address =
-            self.get_anchor_state_registry_address(game_type).await?;
-        let anchor_state_registry =
-            AnchorStateRegistry::new(anchor_state_registry_address, self.provider());
-        let is_finalized = anchor_state_registry.isGameFinalized(game_address).call().await?;
-        Ok(is_finalized)
     }
 }
 

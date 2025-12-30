@@ -19,7 +19,7 @@ use op_succinct_signer_utils::SignerLock;
 use sp1_sdk::{network::FulfillmentStrategy, SP1ProofMode};
 use tracing::Instrument;
 
-pub async fn init_proposer(
+pub async fn new_proposer(
     rpc_config: &RPCConfig,
     private_key: &str,
     anchor_state_registry_address: &Address,
@@ -79,7 +79,7 @@ pub async fn start_proposer(
     factory_address: &Address,
     game_type: u32,
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    let proposer = init_proposer(
+    let proposer = new_proposer(
         rpc_config,
         private_key,
         anchor_state_registry_address,
@@ -92,10 +92,11 @@ pub async fn start_proposer(
     }))
 }
 
-/// Initialize a challenger without starting its run loop.
-pub async fn init_challenger(
+/// Create a new challenger instance.
+pub async fn new_challenger(
     rpc_config: &RPCConfig,
     private_key: &str,
+    anchor_state_registry_address: &Address,
     factory_address: &Address,
     game_type: u32,
     malicious_percentage: Option<f64>,
@@ -105,6 +106,7 @@ pub async fn init_challenger(
     let config = ChallengerConfig {
         l1_rpc: rpc_config.l1_rpc.clone(),
         l2_rpc: rpc_config.l2_rpc.clone(),
+        anchor_state_registry_address: *anchor_state_registry_address,
         factory_address: *factory_address,
         fetch_interval: 2,
         game_type,
@@ -113,23 +115,31 @@ pub async fn init_challenger(
     };
 
     let l1_provider = ProviderBuilder::default().connect_http(rpc_config.l1_rpc.clone());
+    let anchor_state_registry =
+        AnchorStateRegistry::new(*anchor_state_registry_address, l1_provider.clone());
     let factory = DisputeGameFactory::new(*factory_address, l1_provider.clone());
 
-    OPSuccinctChallenger::new(config, l1_provider, factory, signer).await
+    Ok(OPSuccinctChallenger::new(config, l1_provider, anchor_state_registry, factory, signer))
 }
 
 /// Start a challenger, and return a handle to the challenger task.
 pub async fn start_challenger(
     rpc_config: &RPCConfig,
     private_key: &str,
+    anchor_state_registry_address: &Address,
     factory_address: &Address,
     game_type: u32,
     malicious_percentage: Option<f64>,
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    // Initialize challenger with test configuration but do not run yet.
-    let challenger =
-        init_challenger(rpc_config, private_key, factory_address, game_type, malicious_percentage)
-            .await?;
+    let challenger = new_challenger(
+        rpc_config,
+        private_key,
+        anchor_state_registry_address,
+        factory_address,
+        game_type,
+        malicious_percentage,
+    )
+    .await?;
 
     Ok(tokio::spawn(async move {
         let mut challenger = challenger;

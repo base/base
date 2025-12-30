@@ -10,9 +10,8 @@ use alloy_sol_types::SolValue;
 use alloy_transport_http::reqwest::Url;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use fault_proof::{
-    contract::{DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus},
-    FactoryTrait,
+use fault_proof::contract::{
+    AnchorStateRegistry, DisputeGameFactory, OPSuccinctFaultDisputeGame, ProposalStatus,
 };
 use op_succinct_client_utils::boot::BootInfoStruct;
 use op_succinct_elfs::AGGREGATION_ELF;
@@ -133,17 +132,22 @@ async fn main() -> Result<()> {
 
     let data_fetcher = OPSuccinctDataFetcher::new_with_rollup_config().await?;
 
-    let factory = DisputeGameFactory::new(
-        env::var("FACTORY_ADDRESS")?.parse::<Address>().expect("FACTORY_ADDRESS must be set"),
-        data_fetcher.l1_provider.clone(),
-    );
-    info!("Factory at address: {}", factory.address());
+    let anchor_state_registry_address = env::var("ANCHOR_STATE_REGISTRY_ADDRESS")?
+        .parse::<Address>()
+        .expect("ANCHOR_STATE_REGISTRY_ADDRESS must be set");
+    let anchor_state_registry =
+        AnchorStateRegistry::new(anchor_state_registry_address, data_fetcher.l1_provider.clone());
+    info!("AnchorStateRegistry at address: {anchor_state_registry_address}");
+
+    let factory_address =
+        env::var("FACTORY_ADDRESS")?.parse::<Address>().expect("FACTORY_ADDRESS must be set");
+    let factory = DisputeGameFactory::new(factory_address, data_fetcher.l1_provider.clone());
+    info!("Factory at address: {factory_address}");
 
     let game_type = env::var("GAME_TYPE")?.parse::<u32>().expect("GAME_TYPE must be set");
 
-    let anchor_l2_block_number = factory.get_anchor_l2_block_number(game_type).await?;
+    let anchor_l2_block_number = anchor_state_registry.getAnchorRoot().call().await?._1;
     info!("Anchor L2 block number: {}", anchor_l2_block_number);
-
     let l2_start_block = anchor_l2_block_number.to::<u64>();
     let l2_end_block = l2_start_block + 10;
 
